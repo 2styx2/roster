@@ -753,12 +753,12 @@ Badges on Host rows.
 
 ### `roster.badges.set(host, text)`
 
-Puts a badge on a Host's Inventory row, or takes it off. One badge per Host per Plugin; setting it again replaces it. A name that isn't a Host shows nowhere.
+Puts a badge on a Host's Inventory row, or takes it off. One badge per Host per Plugin; setting it again replaces it. A name that isn't a Host shows nowhere. The app draws it as a small chip right after the Host's name, in the text colour (never the accent, which means live), and cuts it after 12 characters; its tooltip and the row's accessible name have it whole, after your Plugin's name (`recent-alerts: 2`). So say the count, not what's counted: your Plugin's name says that.
 
 **Parameters**
 
 - `host` (`string`): The Host's name in the Inventory.
-- `text` (`string?`, optional): The badge (`"2 alerts"`, at most 40 characters); `nil` takes it off.
+- `text` (`string?`, optional): The badge: keep it short, a count (`"2"`) or a word (at most 40 characters); `nil` takes it off.
 
 **Returns**
 
@@ -773,7 +773,7 @@ Only [those of every function](#errors).
 **Example**
 
 ```lua
-roster.badges.set("esx-02", "2 alerts")
+roster.badges.set("esx-02", tostring(2))
 roster.badges.set("esx-02", nil)
 ```
 
@@ -783,7 +783,7 @@ A floating window over the terminal.
 
 ### `roster.float.open(float)`
 
-Opens a floating window over the terminal, or replaces the Plugin's. `Esc` closes it. It has no actions.
+Opens a floating window over the terminal, or replaces the Plugin's. It lies over the terminal, on the side away from the Sidebar, so it never resizes a Session. `Esc` closes it. It has no actions.
 
 **Parameters**
 
@@ -1719,7 +1719,7 @@ What you type into a Session is never an event, but the shell echoes it back, so
 |---|---|---|---|
 | `session` | `integer` | yes | The Session's id. |
 | `host` | `string` | no | The Host's name; `nil` for a Quick Connect Session. |
-| `text` | `string` | yes | What it printed since the last one, as text without colours or escape sequences (at most the last 16 KB). A line can be split across two batches. |
+| `text` | `string` | yes | What it printed since the last one, as text without colours or escape sequences (at most the last 16 KB); a cursor move to a row is a line break. A line can be split across two batches. Right after the app resizes the Session, the screen it prints again (ConPTY does on Windows, and full-screen programs redraw) isn't sent: for a second, lines it already sent lately are left out, and only new ones come. |
 
 ## Editor support
 

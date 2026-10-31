@@ -167,3 +167,22 @@ describe("the Sidebar's row buttons (decision Q88)", () => {
     expect(all.some(([sel]) => /\.sb-row\.raised \.sb-action/.test(sel))).toBe(false);
   });
 });
+
+describe("Plugins' UI (ticket 73)", () => {
+  const body = (selector: string) =>
+    rules(stylesCss)
+      .filter(([s, , at]) => at.length === 0 && s.split(",").some((x) => x.trim() === selector))
+      .map(([, b]) => b)
+      .join(";");
+
+  it("a Plugin's float lies over the terminal in every layout, so opening it never resizes a Session", () => {
+    expect(body(".side-panel.plugin-float")).toMatch(/position\s*:\s*absolute/);
+  });
+
+  it("a Plugin's badge is a chip with tabular digits, cut when long, and never the accent", () => {
+    const tag = body(".sb-tag");
+    expect(tag).toMatch(/font-variant-numeric\s*:\s*tabular-nums/);
+    expect(tag).toMatch(/text-overflow\s*:\s*ellipsis/);
+    expect(tag).not.toMatch(/--accent/);
+  });
+});

@@ -323,7 +323,7 @@ fn lines_that_match_become_alerts_with_their_host_badge_count_and_a_notice() {
     assert_eq!(one(ops, "status")["spec"]["run"], "finder alerts");
     assert_eq!(
         one(ops, "badge"),
-        &json!({ "op": "badge", "host": "esx-02", "text": "1 alert" })
+        &json!({ "op": "badge", "host": "esx-02", "text": "1" })
     );
     assert_eq!(
         one(ops, "notify"),
@@ -353,8 +353,8 @@ fn lines_that_match_become_alerts_with_their_host_badge_count_and_a_notice() {
     assert_eq!(
         find(ops, "badge"),
         [
-            &json!({ "op": "badge", "host": "appliance", "text": "3 alerts" }),
-            &json!({ "op": "badge", "host": "esx-02", "text": "1 alert" })
+            &json!({ "op": "badge", "host": "appliance", "text": "3" }),
+            &json!({ "op": "badge", "host": "esx-02", "text": "1" })
         ]
     );
     // appliance had its notice a moment ago (kernel panic): these wait for its next one.
@@ -526,7 +526,7 @@ fn its_actions_show_the_details_copy_the_line_and_dismiss_it_and_alerts_clear_di
         find(&r.ops, "badge"),
         [
             &json!({ "op": "badge", "host": "appliance", "text": null }),
-            &json!({ "op": "badge", "host": "esx-02", "text": "1 alert" })
+            &json!({ "op": "badge", "host": "esx-02", "text": "1" })
         ]
     );
 

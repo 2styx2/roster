@@ -155,10 +155,67 @@ export function parseInstalled(json: unknown): Installed[] {
 export const describeError = (e: PluginErrorInfo) =>
   `${e.plugin}: ${e.file ? `${e.file}${e.line === null ? "" : `:${e.line}`}: ` : ""}${e.message}`;
 
-/** ESC sequences (colours, cursor moves, titles) out of terminal output, for Plugins to match on. */
+/** After the app resizes a Session, how long what it prints is checked for a repaint. */
+const REPAINT_MS = 1000;
+/** How many of a Session's last lines a repaint is checked against (more than a screenful). */
+const RECENT_LINES = 500;
+
+/** ESC sequences (colours, cursor moves, titles) out of terminal output, for Plugins to match on.
+ * A move to a row (`ESC[r;cH`, `ESC[H`, `ESC[rd`) is a line break: ConPTY and full-screen
+ * programs draw rows by position, and those rows mustn't run together into one line. */
 export function plainText(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]|\r/g, "");
+  return (
+    s
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[[0-9;]*[Hfd]/g, "\n")
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]|\r/g, "")
+  );
+}
+
+/** What a Session printed lately, as Plugins got it: the lines already sent, and the one not
+ * finished yet, so a repaint of its screen can be told from new output. */
+interface Seen {
+  lines: string[];
+  set: Map<string, number>;
+  partial: string;
+  /** Until when what it prints may be its screen again (a resize was just sent). */
+  repaintUntil: number;
+}
+
+/** Takes `text` from Plugins' view when it's a repaint: each whole line already sent lately is
+ * dropped (a new line goes through, and is remembered). Returns what's left to send. */
+function unrepainted(seen: Seen, text: string, repaint: boolean): string {
+  const parts = (seen.partial + text).split("\n");
+  const rest = parts.pop() ?? "";
+  const kept: string[] = [];
+  // The first part finishes the line held back last time: only its new end is sent.
+  let first = seen.partial !== "";
+  const remember = (line: string) => {
+    seen.lines.push(line);
+    seen.set.set(line, (seen.set.get(line) ?? 0) + 1);
+    while (seen.lines.length > RECENT_LINES) {
+      const old = seen.lines.shift() as string;
+      const n = (seen.set.get(old) ?? 1) - 1;
+      if (n === 0) seen.set.delete(old);
+      else seen.set.set(old, n);
+    }
+  };
+  for (const part of parts) {
+    const line = part.trim();
+    const again = repaint && line !== "" && (seen.set.has(line) || line === seen.partial.trim());
+    if (first) {
+      first = false;
+      kept.push(part.slice(seen.partial.length));
+    } else if (!again) kept.push(part);
+    if (line !== "" && !again) remember(line);
+  }
+  const partial = seen.partial;
+  seen.partial = rest;
+  // The line not finished yet: a repaint draws it again too (the prompt).
+  if (repaint && rest.trim() !== "" && rest.trim() === partial.trim()) return kept.length ? `${kept.join("\n")}\n` : "";
+  if (parts.length === 0) return rest.slice(partial.length);
+  return [...kept, rest].join("\n");
 }
 
 interface Loaded {
@@ -190,7 +247,9 @@ export class PluginManager {
   /** Package work runs one at a time (a sync, an update, a clean). */
   private packageWork: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
-  private readonly pendingOutput = new Map<number, { host: string | null; text: string; decoder: TextDecoder }>();
+  private readonly pendingOutput = new Map<number, { host: string | null; text: string; decoder: TextDecoder; repaint: boolean }>();
+  /** Each Session's recent output as Plugins got it, to tell a repaint from new lines. */
+  private readonly seenOutput = new Map<number, Seen>();
   private outputTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
 
@@ -508,6 +567,7 @@ export class PluginManager {
 
   /** Tells the Plugins that listen. */
   async event(name: PluginEventName, payload: Record<string, unknown> = {}): Promise<void> {
+    if (name === "session_exit" && typeof payload.session === "number") this.sessionGone(payload.session);
     if (this.loaded.size === 0) return;
     const replies = await this.backend.pluginEvent(name, payload).catch(() => []);
     for (const r of replies) {
@@ -527,9 +587,10 @@ export class PluginManager {
     if (!this.readsTerminal()) return;
     let p = this.pendingOutput.get(session);
     if (!p) {
-      p = { host, text: "", decoder: new TextDecoder() };
+      p = { host, text: "", decoder: new TextDecoder(), repaint: false };
       this.pendingOutput.set(session, p);
     }
+    if (this.now() < (this.seenOutput.get(session)?.repaintUntil ?? 0)) p.repaint = true;
     p.text = (p.text + p.decoder.decode(data, { stream: true })).slice(-OUTPUT_MAX);
     this.outputTimer ??= setTimeout(() => this.flushOutput(), OUTPUT_EVERY_MS);
   }
@@ -539,10 +600,35 @@ export class PluginManager {
     if (this.outputTimer) clearTimeout(this.outputTimer);
     this.outputTimer = null;
     for (const [session, p] of this.pendingOutput) {
-      const text = plainText(p.text);
+      let seen = this.seenOutput.get(session);
+      if (!seen) {
+        seen = { lines: [], set: new Map(), partial: "", repaintUntil: 0 };
+        this.seenOutput.set(session, seen);
+      }
+      const text = unrepainted(seen, plainText(p.text), p.repaint);
       p.text = "";
+      p.repaint = false;
       if (text) void this.event("terminal_output", { session, host: p.host, text });
     }
+  }
+
+  /** The app just resized `session`'s terminal: what it prints for a moment may be its screen
+   * again (ConPTY repaints it on Windows; full-screen programs redraw), which isn't new output
+   * (ticket 73). Lines it already sent are kept from the Plugins then; new ones still go. */
+  resized(session: number) {
+    if (!this.readsTerminal()) return;
+    let seen = this.seenOutput.get(session);
+    if (!seen) {
+      seen = { lines: [], set: new Map(), partial: "", repaintUntil: 0 };
+      this.seenOutput.set(session, seen);
+    }
+    seen.repaintUntil = this.now() + REPAINT_MS;
+  }
+
+  /** A Session that ended takes what it printed with it. */
+  sessionGone(session: number) {
+    this.seenOutput.delete(session);
+    this.pendingOutput.delete(session);
   }
 
   dismissNotice(id: number) {

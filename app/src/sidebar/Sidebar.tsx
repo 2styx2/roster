@@ -59,6 +59,9 @@ export interface SidebarRow {
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
    * cursor, and always in the tooltip. */
   badge?: string;
+  /** Plugins' badges (`roster.badges.set`): a small chip each, right after the name, never cut
+   * away (a long one is cut short); each named with its Plugin ("recent-alerts: 2"). */
+  tags?: readonly { source: string; text: string }[];
   /** A glyph before the label: a Folder, an Inventory group. */
   icon?: "folder" | "group";
   /** A tooltip (and accessible description), e.g. "password login". */
@@ -152,11 +155,15 @@ export function rowFacts(row: SidebarRow): string[] {
   if (row.note) facts.push(row.note);
   // An unreviewed Host's badge is what its dot already said.
   if (row.badge && row.dot !== "off") facts.push(row.badge);
+  for (const t of row.tags ?? []) facts.push(tagName(t));
   if (row.detail) facts.push(row.detail);
   if (row.count !== undefined) facts.push(hostsCount(row.count));
   if (row.pending) facts.push("not Published yet");
   return facts;
 }
+
+/** A Plugin badge's name, for its tooltip and the row's accessible name: "recent-alerts: 2". */
+const tagName = (t: { source: string; text: string }) => `${t.source}: ${t.text}`;
 
 /** The row's accessible name: "esxi-02, password login, 10.19.77.5". */
 export const rowName = (row: SidebarRow) => [row.label, ...rowFacts(row)].join(", ");
@@ -328,6 +335,11 @@ const Row = memo(function Row({
             {cut && <span className="sb-tail">{row.tail}</span>}
             {row.note && <span className="sb-note"> {row.note}</span>}
             {row.pending && <span className="sb-pending-dot" aria-hidden="true" title="Not Published yet" />}
+            {row.tags?.map((t) => (
+              <span key={t.source} className="sb-tag" title={tagName(t)}>
+                {t.text}
+              </span>
+            ))}
           </span>
           {row.badge && <span className="sb-badge"> {row.badge}</span>}
           {row.detail && <span className="sb-detail"> {row.detail}</span>}

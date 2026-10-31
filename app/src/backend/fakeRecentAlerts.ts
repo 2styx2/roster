@@ -184,7 +184,7 @@ function load(roster: FakeRoster, options: RecentAlertsOptions) {
     const hosts = [...new Set([...perHost.keys(), ...badged.keys()])].sort();
     for (const host of hosts) {
       const n = perHost.get(host);
-      roster.badges.set(host, n ? plural(n, "alert", "alerts") : null);
+      roster.badges.set(host, n ? String(n) : null);
     }
     badged = perHost;
   };

@@ -340,7 +340,7 @@
 ---@class roster.TerminalOutputEvent
 ---@field session integer The Session's id.
 ---@field host? string The Host's name; `nil` for a Quick Connect Session.
----@field text string What it printed since the last one, as text without colours or escape sequences (at most the last 16 KB). A line can be split across two batches.
+---@field text string What it printed since the last one, as text without colours or escape sequences (at most the last 16 KB); a cursor move to a row is a line break. A line can be split across two batches. Right after the app resizes the Session, the screen it prints again (ConPTY does on Windows, and full-screen programs redraw) isn't sent: for a second, lines it already sent lately are left out, and only new ones come.
 
 ---@class roster.module
 ---@field api_version integer The version of the `roster` module this app has
@@ -490,7 +490,7 @@ roster.badges = {}
 --- Puts a badge on a Host's Inventory row, or takes it off.
 --- Permission: none. Since: api 2.
 ---@param host string The Host's name in the Inventory.
----@param text? string The badge (`"2 alerts"`, at most 40 characters); `nil` takes it off.
+---@param text? string The badge: keep it short, a count (`"2"`) or a word (at most 40 characters); `nil` takes it off.
 function roster.badges.set(host, text) end
 
 --- A floating window over the terminal. 

@@ -14,7 +14,7 @@ export interface StatusSegmentDef extends Entry {
 
 export type StatusRegistry = Registry<StatusSegmentDef>;
 
-/** A badge a Plugin puts on a Host's rows ("2 alerts"). Its id is `plugin:host`. */
+/** A badge a Plugin puts on a Host's rows (a count: "2"). Its id is `plugin:host`. */
 export interface BadgeEntry extends Entry {
   host: string;
   text: string;
@@ -22,9 +22,15 @@ export interface BadgeEntry extends Entry {
 
 export type BadgeRegistry = Registry<BadgeEntry>;
 
-/** Each Host's badges, joined: what the Inventory's rows show. */
-export function badgesByHost(entries: readonly BadgeEntry[]): ReadonlyMap<string, string> {
-  const out = new Map<string, string>();
-  for (const b of entries) out.set(b.host, out.has(b.host) ? `${out.get(b.host)} · ${b.text}` : b.text);
+/** One Plugin's badge on a row: its text, and the Plugin it's from (the chip's name says so). */
+export interface HostBadge {
+  source: string;
+  text: string;
+}
+
+/** Each Host's badges, one per Plugin: what the Inventory's rows show. */
+export function badgesByHost(entries: readonly BadgeEntry[]): ReadonlyMap<string, readonly HostBadge[]> {
+  const out = new Map<string, HostBadge[]>();
+  for (const b of entries) out.set(b.host, [...(out.get(b.host) ?? []), { source: b.source, text: b.text }]);
   return out;
 }

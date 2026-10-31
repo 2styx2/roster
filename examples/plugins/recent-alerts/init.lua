@@ -145,7 +145,8 @@ show = function()
   table.sort(hosts)
   for _, host in ipairs(hosts) do
     local n = per_host[host]
-    roster.badges.set(host, n and plural(n, "alert", "alerts") or nil)
+    -- A count, kept short: the app draws it as a small chip after the Host's name.
+    roster.badges.set(host, n and tostring(n) or nil)
   end
   badged = per_host
 end

@@ -127,7 +127,7 @@
         {
           "host": "esx-02",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         },
         {
           "level": "warn",
@@ -239,12 +239,12 @@
         {
           "host": "appliance",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         },
         {
           "host": "esx-02",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         },
         {
           "level": "warn",
@@ -387,12 +387,12 @@
         {
           "host": "appliance",
           "op": "badge",
-          "text": "2 alerts"
+          "text": "2"
         },
         {
           "host": "esx-02",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         }
       ],
       "payload": {
@@ -580,12 +580,12 @@
         {
           "host": "appliance",
           "op": "badge",
-          "text": "2 alerts"
+          "text": "2"
         },
         {
           "host": "esx-02",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         },
         {
           "level": "warn",
@@ -783,12 +783,12 @@
         {
           "host": "appliance",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         },
         {
           "host": "esx-02",
           "op": "badge",
-          "text": "1 alert"
+          "text": "1"
         }
       ]
     },

@@ -8,6 +8,7 @@ import { connectPhase, linkOf, statusText } from "../session/Sessions";
 import type { Tab, TabsSnapshot } from "../session/tabs";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./Sidebar";
+import type { HostBadge } from "../view/status";
 
 /** What a section can build from. */
 export interface SidebarContext {
@@ -32,7 +33,7 @@ export interface SidebarContext {
    * Inventory heading has no "Add a Host" button. */
   addHost?: { keys: string | null; tooOld: string | null };
   /** Badges Plugins put on Hosts ("2 alerts"), by Host name (ticket 23). */
-  badges?: ReadonlyMap<string, string>;
+  badges?: ReadonlyMap<string, readonly HostBadge[]>;
 }
 
 export interface SidebarSectionDef extends Entry {
@@ -276,9 +277,9 @@ export const inventorySection: SidebarSectionDef = {
         },
         ...members.map((h): SidebarRow => {
           const plain = hostRow(h, `inventory:${h.name}`, 1);
-          // A Plugin's badge, unless the row has roster's own ("unreviewed").
-          const badge = badges?.get(h.name);
-          const row = badge && !plain.badge ? { ...plain, badge } : plain;
+          // Plugins' badges: a chip each beside the name (ticket 73), whatever roster's own says.
+          const tags = badges?.get(h.name);
+          const row = tags?.length ? { ...plain, tags } : plain;
           if (!live) return row;
           return {
             ...row,

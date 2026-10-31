@@ -9,7 +9,7 @@ It's also the template for writing your own: copy this folder, rename it, and ch
 | Where | What |
 |---|---|
 | Sidebar | A **Recent alerts** section, newest first: the line, its Host and the time. Enter goes to the Host's Session; the buttons show the details, copy the line or dismiss it. A Quick Connect Session has no Host: its alerts say "Quick Connect", with no badge and nothing for Enter to go to |
-| Inventory | A badge on each Host that has alerts: `2 alerts` |
+| Inventory | A badge on each Host that has alerts: its count, `2`, as a small chip after the name (a screen reader hears `recent-alerts: 2`) |
 | Status bar | `⚠ 3`, which opens the finder |
 | Finder | `:finder alerts` (and `␣ w w`): search the alerts; Enter shows one's details |
 | Floating window | An alert's details: Host, Session, time, the pattern, and the lines before it. `Esc` closes it |

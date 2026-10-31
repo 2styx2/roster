@@ -383,6 +383,21 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   white-space: nowrap;
 }
 .sb-row.raised .sb-badge, .sb-row.cursor .sb-badge, .sb-row.selected .sb-badge { display: block; }
+/* A Plugin's badge (roster.badges.set, ticket 73): a quiet count chip right after the name, so the
+   address keeps its place at the end. A fill, not an outline, and never the accent (that means
+   live) nor warn (the Plugin's own section says what kind of thing it counts). One size: 16px
+   high, at least as wide (a pill around one digit), Iosevka's tabular digits; text past 12
+   characters is cut, and the tooltip and the row's name have it whole. It changes as the Plugin
+   says, with no motion: nothing to confirm (taste.md). The transparent border is its edge in
+   forced colours, where the fill is dropped. */
+.sb-tag {
+  flex: none; align-self: center; box-sizing: border-box; height: 16px; min-width: 16px; max-width: calc(12ch + 10px);
+  margin-left: 6px; padding: 0 4px; border: 1px solid transparent; border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--text);
+  font: 500 var(--text-xs)/14px var(--font-mono); font-variant-numeric: tabular-nums; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sb-tag + .sb-tag { margin-left: 4px; }
 .sb-badge + .sb-detail { display: none; }
 .sidebar .sb-action {
   display: none; flex: none; width: 22px; height: 22px; margin-right: 2px; place-items: center; color: var(--muted);
@@ -1156,6 +1171,17 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .plugin-state.problem, .plugin-problem { color: var(--error); }
 .plugin-problem { overflow-wrap: anywhere; margin: 2px 0 4px; }
 .plugin-uses { margin-top: 4px; }
+/* A Plugin's float (roster.float.open) lies over the terminal in every layout, as its name says,
+   never beside it: a docked panel narrows the terminal, and a resized Session prints its screen
+   again (ConPTY on Windows), which Plugins that read the output took for new lines (ticket 73).
+   It opens from a click or a key and closes with Esc, so like the other panels it doesn't animate. */
+.side-panel.plugin-float {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; max-width: 100%;
+  border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow); overscroll-behavior: contain;
+}
+.body.sidebar-right .side-panel.plugin-float {
+  left: 0; right: auto; border-left: 0; border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
+}
 .plugin-float-lines {
   margin: 0 0 8px; font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere;
 }

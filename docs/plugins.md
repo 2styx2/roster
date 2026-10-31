@@ -146,6 +146,8 @@ No permission reaches a secret. The vault, a session's password, askpass and the
 
 Everywhere a Plugin hands the app something to run (a row, a button, a finder item, a status segment, a command), `run` is a function or a command line; a function runs in your Plugin when the user chooses the thing. [Events](plugin-api.md#events) come through `roster.on`; a Quick Connect Session's `host` is `nil` in them, since it isn't on a Host: don't badge it or make a row go to it. What you type into a Session is never an event, but the shell echoes it back, so it's in `terminal_output` like anything else the Session prints (recent-alerts skips a line that looks like a prompt and a command).
 
+After the app resizes a Session (a panel, Focus, the window), the Session may print its screen again: ConPTY does on Windows, and full-screen programs redraw. The app keeps that repaint out of `terminal_output` for a second (lines it already sent you lately are left out; new ones still come), so a Plugin that counts lines doesn't count them twice.
+
 Text you hand the app (a label, a notice, a float's lines, a badge, what you copy) that isn't valid UTF-8, such as a line you cut in the middle of a character, is shown with `�` where it breaks; it isn't an error. A name that isn't (an id, a table key) is.
 
 A tutorial (`roster.tutor.set`) runs on the demo Inventory, where your Plugin isn't loaded: a step can wait for your command being run there, but your command won't do anything there yet. Its steps wait for the app's own events ([`StepMatch`](plugin-api.md#stepmatch)).

@@ -28,14 +28,19 @@ function alerts(seen: string[] = []): FakePlugin {
   };
 }
 
-function setup(plugins: Record<string, FakePlugin> = {}, state: Record<string, unknown> = {}, copy: PluginUi["copy"] = async () => undefined) {
+function setup(
+  plugins: Record<string, FakePlugin> = {},
+  state: Record<string, unknown> = {},
+  copy: PluginUi["copy"] = async () => undefined,
+  now: () => number = Date.now,
+) {
   const backend = fakeBackend({ hosts: makeHosts(3), plugins });
   const registries = builtinRegistries();
   const store = { get: (k: string) => state[k], set: (k: string, v: unknown) => void (state[k] = v) };
   const ran: string[] = [];
   const sent: [number, string][] = [];
   const ui: PluginUi = { run: (l) => void ran.push(l), send: (id, t) => void sent.push([id, t]), copy };
-  const manager = new PluginManager(backend, registries, store, ui);
+  const manager = new PluginManager(backend, registries, store, ui, now);
   return { manager, registries, state, ran, sent, backend };
 }
 
@@ -102,6 +107,35 @@ describe("running", () => {
     manager.flushOutput();
     await new Promise((r) => setTimeout(r, 0));
     expect(seen).toHaveLength(1);
+  });
+
+  // Ticket 73 (#126): after a resize, ConPTY (every Windows Session) prints the whole screen again,
+  // and a full-screen program redraws; recent-alerts took each repaint for new lines, so opening
+  // a float beside the terminal (which narrows it) added a copy of every alert on screen.
+  it("a Session's screen printed again after a resize isn't new output; what's new is", async () => {
+    const seen: string[] = [];
+    let t = 1_000;
+    const { manager } = setup({ [ALERTS]: alerts(seen) }, { ...installed }, undefined, () => t);
+    await manager.start();
+    const say = async (text: string) => {
+      manager.output(1, "esx-02", new TextEncoder().encode(text));
+      manager.flushOutput();
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    await say("mounting\r\nERROR: disk full\r\nesx-02$ ");
+    expect(seen).toEqual(["esx-02: mounting\nERROR: disk full\nesx-02$"]);
+    manager.resized(1);
+    t += 50;
+    // ConPTY's repaint: home, each row cleared to its end, the cursor back where it was.
+    await say("\x1b[?25l\x1b[H(fake, 100x30)\x1b[K\r\nmounting\x1b[K\r\nERROR: disk full   \x1b[K\r\nesx-02$ \x1b[K\x1b[3;9H\x1b[?25h");
+    expect(seen).toHaveLength(1);
+    // A new line in the same moment still goes through; the window closes after a second.
+    t += 100;
+    await say("\r\nERROR: new one\r\n");
+    expect(seen.at(-1)).toMatch(/ERROR: new one/);
+    t += 2_000;
+    await say("ERROR: disk full\r\n");
+    expect(seen).toHaveLength(3);
   });
 
   it("a function it handed over runs through `plugins call`, and its float shows", async () => {
@@ -179,6 +213,10 @@ describe("ops from a Plugin are checked", () => {
 
   it("strips escape sequences from terminal output", () => {
     expect(plainText("\x1b]0;title\x07\x1b[1;31mERROR\x1b[0m\r\n")).toBe("ERROR\n");
+  });
+
+  it("a cursor move to a row is a line break, so rows drawn by position don't run together", () => {
+    expect(plainText("\x1b[Hone\x1b[2;1Htwo\x1b[K")).toBe("\none\ntwo");
   });
 });
 

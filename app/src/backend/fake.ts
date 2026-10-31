@@ -167,6 +167,9 @@ export interface FakeScenario {
   /** Every Session's shell prints a busy log at this many lines a second once it has logged in, like
    * app/scripts/perf/serve.py's: the perf fixture (docs/app/performance.md). */
   stream?: number;
+  /** Each Session repaints its screen when resized, as ConPTY does on Windows (ticket 73): home,
+   * its last rows again, each cleared to its end. */
+  repaints?: boolean;
   /** Plugin folders by path (ticket 23): `:plugins install PATH` finds them here. */
   plugins?: Record<string, FakePlugin>;
   /** Packages (ticket 24): what init.lua names, the repos' versions and roster.lock. */
@@ -612,8 +615,19 @@ function fakeSession(
   size: TermSize,
   events: SessionEvents,
   loginMs = 0,
-  extra: { onLogin?: () => void; title?: string; stream?: number | undefined; printers?: Printers } = {},
+  extra: { onLogin?: () => void; title?: string; stream?: number | undefined; printers?: Printers; repaints?: boolean | undefined } = {},
 ): SessionHandle {
+  // What it printed, without escapes, for a ConPTY-style repaint.
+  let screen = "";
+  const out = (bytes: Uint8Array) => {
+    // eslint-disable-next-line no-control-regex
+    if (extra.repaints) screen = (screen + new TextDecoder().decode(bytes).replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\r/g, "")).slice(-8000);
+    events.output(bytes);
+  };
+  const repaint = (s: TermSize) => {
+    const rows = screen.split("\n").slice(-s.rows);
+    events.output(encode(`\x1b[?25l\x1b[H${rows.map((r) => `${r}\x1b[K`).join("\r\n")}\x1b[?25h`));
+  };
   let line = "";
   let ended = false;
   let streaming: ReturnType<typeof setInterval> | undefined;
@@ -623,9 +637,9 @@ function fakeSession(
   const printer = {
     host,
     say: (text: string) => {
-      events.output(encode(atPrompt ? `\r\n${text}` : text));
+      out(encode(atPrompt ? `\r\n${text}` : text));
       atPrompt = text.endsWith("\n");
-      if (atPrompt) events.output(encode(prompt));
+      if (atPrompt) out(encode(prompt));
     },
   };
   const end = (code: number | null, closed: boolean) => {
@@ -639,16 +653,16 @@ function fakeSession(
   // Like ssh, nothing is printed until the Host answers (the login takes `loginMs`).
   let loggedIn = false;
   let resized: TermSize | null = null;
-  const sayResized = (s: TermSize) => events.output(encode(`[resized to ${s.cols}x${s.rows}]`));
+  const sayResized = (s: TermSize) => out(encode(`[resized to ${s.cols}x${s.rows}]`));
   setTimeout(() => {
     loggedIn = true;
     extra.onLogin?.();
     // A shell that names its box in the window title, as most Linux prompts do (OSC 0).
-    if (extra.title) events.output(encode(`\x1b]0;${extra.title}\x07`));
-    events.output(encode(`Connected to ${host} (fake, ${size.cols}x${size.rows})\r\n${prompt}`));
+    if (extra.title) out(encode(`\x1b]0;${extra.title}\x07`));
+    out(encode(`Connected to ${host} (fake, ${size.cols}x${size.rows})\r\n${prompt}`));
     atPrompt = true;
     if (resized && !ended) sayResized(resized);
-    if (extra.stream && !ended) streaming = streamLog(extra.stream, (text) => events.output(encode(text)));
+    if (extra.stream && !ended) streaming = streamLog(extra.stream, (text) => out(encode(text)));
     if (!ended) extra.printers?.add(printer);
   }, loginMs);
   return {
@@ -658,21 +672,22 @@ function fakeSession(
       if (ended) throw new BackendCallError(`session ${id} isn't open`);
       for (const ch of data) {
         if (ch === "\r") {
-          events.output(encode("\r\n"));
+          out(encode("\r\n"));
           if (line.trim() === "exit") return end(0, false);
           line = "";
-          events.output(encode(prompt));
+          out(encode(prompt));
           atPrompt = true;
         } else {
           line += ch;
           atPrompt = false;
-          events.output(encode(ch === "\x1b" ? "^[" : ch));
+          out(encode(ch === "\x1b" ? "^[" : ch));
         }
       }
     },
     async resize(s) {
       if (ended) return;
-      if (loggedIn) sayResized(s);
+      if (loggedIn && extra.repaints) repaint(s);
+      else if (loggedIn) sayResized(s);
       else resized = s;
     },
     async close() {
@@ -1291,7 +1306,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       }
       const failure = scenario.sshFailures?.[host];
       if (failure !== undefined) return failingSession(++sessions, auth, failure, events);
-      return fakeSession(++sessions, host, auth, size, events, scenario.loginMs, { stream: scenario.stream, printers });
+      return fakeSession(++sessions, host, auth, size, events, scenario.loginMs, { stream: scenario.stream, printers, repaints: scenario.repaints });
     },
     async openQuickSession(to, password, size, events, options = {}) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));

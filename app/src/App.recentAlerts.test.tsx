@@ -44,9 +44,9 @@ interface Ready {
   platform: MemoryPlatform;
 }
 
-async function ready(pk = packages()): Promise<Ready> {
+async function ready(pk = packages(), repaints = false): Promise<Ready> {
   const user = userEvent.setup();
-  const backend = fakeBackend({ hosts, packages: pk, apiVersion: SAVE_TO_VAULT_API_VERSION });
+  const backend = fakeBackend({ hosts, packages: pk, apiVersion: SAVE_TO_VAULT_API_VERSION, repaints });
   const platform = memoryPlatform();
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -57,8 +57,8 @@ async function ready(pk = packages()): Promise<Ready> {
 const prompt = () => screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
 const section = () => screen.getByRole("group", { name: "Recent alerts" });
 
-async function installed(pk = packages()): Promise<Ready> {
-  const r = await ready(pk);
+async function installed(pk = packages(), repaints = false): Promise<Ready> {
+  const r = await ready(pk, repaints);
   await r.user.click(within(await prompt()).getByRole("button", { name: "Install" }));
   await screen.findByText("No alerts. Lines with ERROR or panic show here.");
   return r;
@@ -133,8 +133,14 @@ describe("allowed", () => {
     expect(row.closest('[role="treeitem"]')).toHaveAttribute("title", expect.stringMatching(new RegExp(`^${HOST} at \\d\\d:\\d\\d:\\d\\d: ERROR`)));
     // The status segment opens its finder.
     expect(screen.getByText("⚠ 1")).toHaveAttribute("title", "1 recent alert");
-    // The badge sits on the Host's Inventory row.
-    expect(screen.getAllByText("1 alert").length).toBeGreaterThan(0);
+    // The badge sits on the Host's Inventory row: a small count chip (ticket 73), named with its
+    // Plugin for screen readers, and the address stays beside it.
+    const inventory = screen.getByRole("group", { name: "Inventory" });
+    const hostRow = within(inventory).getByRole("treeitem", { name: new RegExp(`^${HOST}, .*recent-alerts: 1`) });
+    const chip = hostRow.querySelector(".sb-tag");
+    expect(chip).toHaveTextContent(/^1$/);
+    expect(chip).toHaveAttribute("title", "recent-alerts: 1");
+    expect(hostRow.querySelector(".sb-detail")).not.toBeNull();
     expect(await screen.findByRole("alert", { name: "From recent-alerts" })).toHaveTextContent(`recent-alerts: ${HOST}: ERROR: disk /dev/sda1 full`);
   });
 
@@ -170,7 +176,25 @@ describe("allowed", () => {
     await r.user.click(screen.getByRole("button", { name: "Dismiss ERROR: disk /dev/sda1 full" }));
     await waitFor(() => expect(screen.queryByText("⚠ 1")).toBeNull());
     expect(within(section()).queryByText("ERROR: disk /dev/sda1 full")).toBeNull();
-    expect(screen.queryByText("1 alert")).toBeNull();
+    expect(document.querySelector(".sb-tag")).toBeNull();
+  });
+
+  // Ticket 73 (#126): on Windows each Details click added a copy of the alert. The float narrowed
+  // the terminal, and ConPTY prints a resized Session's whole screen again, ERROR line and all.
+  it("a Session that prints its screen again after a resize (ConPTY) doesn't add its alerts again", async () => {
+    const r = await installed(packages(), true);
+    await connect(r);
+    r.backend.print(HOST, "mounting\r\nERROR: disk /dev/sda1 full\r\n");
+    await screen.findByText("⚠ 1");
+    // Focus and back: two resizes, two repaints of the screen.
+    await r.user.keyboard(`${LEADER}m`);
+    await r.user.keyboard(`${LEADER}m`);
+    await new Promise((done) => setTimeout(done, 500));
+    expect(screen.getByText("⚠ 1")).toBeInTheDocument();
+    expect(within(section()).getAllByText("ERROR: disk /dev/sda1 full")).toHaveLength(1);
+    // What's new still counts.
+    r.backend.print(HOST, "ERROR: disk /dev/sdb1 full\r\n");
+    expect(await screen.findByText("⚠ 2")).toBeInTheDocument();
   });
 
   it("its Leader key (from init.lua's settings) opens its finder; :alerts shows them; :alerts clear dismisses them", async () => {
@@ -290,7 +314,7 @@ describe("trust", () => {
     await screen.findByText(/Removed recent-alerts/);
     expect(r.pk.lock).toEqual({});
     expect(r.pk.clones).toEqual({});
-    expect(screen.queryByText("1 alert")).toBeNull();
+    expect(document.querySelector(".sb-tag")).toBeNull();
     // The Session it watched is open now; otherwise the Sidebar and status bar are as they were.
     expect(regions()).toEqual(before.regions);
     expect(bar()?.replace(/⚠ \d+/, "")).toBe(before.bar);
