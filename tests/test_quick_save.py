@@ -66,6 +66,8 @@ def test_a_logged_in_quick_connect_is_saved_as_a_vault_item_and_a_host(app, box,
     r = result(save(app, spec))
     assert app.notes == [{"jsonrpc": "2.0", "method": "session.logged_in", "params": {"held": spec["quick"]}}]
     assert r["added"] is True and r["warnings"] == []
+    assert r["sync"] == {"ok": True}                  # T150: this Box's ssh config has it now, no `roster sync`
+    assert "Host nas\n" in (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
     assert r["item"]["name"] == "nas ssh" and r["item"]["provider"] == "bw"
     made = next(i for i in json.loads(vault.read_text()) if i["name"] == "nas ssh")
     assert made["login"]["username"] == "root"

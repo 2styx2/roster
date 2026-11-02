@@ -155,7 +155,7 @@ def test_add_writes_the_picked_hosts_as_a_pending_change_unreviewed(serve, net, 
     group = r["group"]
     assert group.startswith("discovered-")
     assert r["added"] == [{"address": "10.0.0.7", "name": "appliance"}, {"address": "10.0.0.9", "name": "db-10-0-0-9"}]
-    assert r["backup"]
+    assert r["backup"] and r["sync"] == {"ok": True}       # T150: this Box's ssh config has them now
     text = inventory.read_text()
     assert text.startswith(before.rstrip("\n").split("\n")[0])
     raw = yaml.safe_load(text)["groups"]

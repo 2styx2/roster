@@ -75,4 +75,4 @@ This follows WezTerm's model (ADR 0004):
 
 ## Inventory writes
 
-Writes edit `roster.yml` text in place, keeping comments, the same way `discover --write` does. Each one is checked by loading it and keeps a `.bak`. Pending changes are the uncommitted diff in `~/infra`. Publish commits and pushes to `main`, refuses a non-fast-forward, then runs `roster sync`.
+Writes edit `roster.yml` text in place, keeping comments, the same way `discover --write` does. Each one is checked by loading it and keeps a `.bak`. Pending changes are the uncommitted diff in `~/infra`. Publish commits and pushes to `main`, refuses a non-fast-forward, then runs `roster sync`. Every other write runs `roster sync` for this Box too (T150, decision Q137), so its ssh config follows `roster.yml` as serve has it loaded.
