@@ -68,6 +68,28 @@ export const backend: Backend = isTauri() ? tauriBackend() : fakeBackend(fixture
 - `@playwright/test` 1.64.1: `webServer: { command: "npm run dev -- --port 5179 --strictPort", url: "http://localhost:5179" }` and `await expect(page).toHaveScreenshot()`. WebGL in headless Chromium wasn't tested. Force the DOM renderer for stable pixel diffs (`?renderer=dom`).
 - These screenshots are Chromium, not WebView2 or WebKitGTK. Real-window checks still go through the Windows build loop (windows-build-loop.md).
 
+## End to end: copy and paste (headless Chromium)
+
+`app/e2e/` (T158, #294) runs roster's real `TerminalView` (xterm.js, `terminal/input.ts`, `terminal/clipboard.ts`) in headless Chromium, with real key and mouse events and the browser's own paste. `npm run e2e` in `app/` (CI's App frontend job runs it after `npm run check`, which needs no browser).
+
+```text
+app/e2e/
+  vitest.config.ts     Vitest in Node; one file at a time
+  server.ts            globalSetup: Vite (the app's vite.config.ts) on a free port, the URL by inject("url")
+  index.html, harness.tsx  the page: TerminalView with a fake Session (records every byte sent) and a
+                       clipboard the test sets and reads; `window.e2e`
+  browser.ts           playwright-core: the browser, the page, typed calls into window.e2e, drag, right-click,
+                       raw DevTools key events (Ctrl+м, AltGr)
+  copy-paste.e2e.ts    every path in #294
+```
+
+- **The browser** is the Chromium headless shell that `playwright-core` (pinned in `package-lock.json`) names: `npx playwright-core install --only-shell chromium` once (CI adds `--with-deps`). `$CHROME` picks another binary.
+- **It looks like Windows.** The page's `navigator.platform` and user agent are WebView2's, so xterm.js runs its Windows handling (AltGr as Ctrl+Alt); one group opens a Linux page for the off-Windows keys (decision Q138).
+- **Deterministic (T146's rules).** Every wait is for an event: a chunk sent to the Session (`sentCount`), a clipboard write (`copiedCount`), xterm having parsed output (`output` resolves in its write callback). "Nothing else was sent" is checked after `settled()` (a 0 ms timer: every event, microtask and the paste the key fired have run). The one timer in the code a test must get past, copy-on-select's 120 ms, runs on Playwright's page clock (`page.clock.runFor`).
+- **Secrets.** Each test's clipboard texts are checked against every console line of the page; the password test also checks the screen, the DOM and storage.
+- **Skipped tests** name the issue they wait for (`#293`: OSC 52 writes, right-click under mouse reporting) or the question they ask; remove `skip` when it lands.
+- **What it can't show:** WebView2, ConPTY, keys another program injects (SendInput) and real programs: [copy-paste-checklist.md](copy-paste-checklist.md), by hand on the Windows build.
+
 ## Commands for the README
 
-`npx tsc --noEmit` · `npx eslint .` · `npx vitest run` · `cargo test` (WSL: core only) · `npx playwright test`
+`npx tsc --noEmit` · `npx eslint .` · `npx vitest run` · `npm run e2e` · `cargo test` (WSL: core only)
