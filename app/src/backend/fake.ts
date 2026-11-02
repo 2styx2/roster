@@ -1685,14 +1685,19 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         },
       });
       const { atPasswordPrompt, ...handle } = session;
-      // The core's prompt fill (ticket 119), as the Tauri build's: serve's refusals first (the Host
-      // changed since the Session connected, a prompt that isn't sudo's or ssh's for this Host's own
-      // Login, no saved password, the vault), then the probe (an echoing prompt, or no prompt,
-      // refuses), then the password typed into the Session.
+      // The core's prompt fill (ticket 119), as the Tauri build's: the core's printed-prompt check
+      // first (ticket 137), then serve's refusals (the Host changed since the Session connected, a
+      // prompt that isn't sudo's or ssh's for this Host's own Login, no saved password, the
+      // vault), then the probe (an echoing prompt, or no prompt, refuses), then the password typed
+      // into the Session.
       const connected = { ip: h.ip, port: h.ssh.port, user: h.ssh.user };
       // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
       const fill = async (prompt: string, hop?: NestedHost) => {
         await wait();
+        // The core's check comes first (ticket 137): the Session must be at a prompt, or nothing is asked.
+        if (!atPasswordPrompt()) {
+          throw new BackendCallError("the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it");
+        }
         const self = hosts.find((x) => x.name === host);
         if (!self) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
         if (self.ip !== connected.ip || self.ssh.port !== connected.port || self.ssh.user !== connected.user) {

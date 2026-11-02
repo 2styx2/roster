@@ -1053,13 +1053,14 @@ const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 /// Fills the password prompt Session `id` shows, when the user pressed the fill key at one
 /// (ticket 119, decision Q129). The core asks serve (`session.fill`) for the password of the
 /// Host the Session was opened to (its own record, never a name from the frontend), with the
-/// prompt line the frontend read off the screen, then types it only if the prompt doesn't echo
-/// (`SessionManager::fill`). Only the Host's name comes back; the password never reaches the
+/// prompt line the frontend read off the screen, then types it only if the Session's output ends
+/// with that prompt (ticket 137, decision Q136: before the vault is asked) and the prompt doesn't
+/// echo (`SessionManager::fill`). Only the Host's name comes back; the password never reaches the
 /// frontend, a log or an error.
 ///
 /// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
-/// decision Q131): serve answers for that Host (still checking the Session's own), and the core
-/// types it only if the Session printed that prompt itself (`SessionManager::fill_at_prompt`).
+/// decision Q131): serve answers for that Host (still checking the Session's own), with the same
+/// printed-prompt check in the core.
 #[tauri::command]
 async fn session_fill(
     state: tauri::State<'_, Arc<BackendState>>,
@@ -1071,12 +1072,9 @@ async fn session_fill(
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
-        let filled = match &hop {
-            None => sessions.fill(id, FILL_WAIT, |target| backend.fill_secret(target, &prompt, None)),
-            Some(hop) => sessions.fill_at_prompt(id, FILL_WAIT, &prompt, hop, |target| {
-                backend.fill_secret(target, &prompt, Some(hop))
-            }),
-        };
+        let filled = sessions.fill(id, FILL_WAIT, &prompt, hop.as_ref(), |target| {
+            backend.fill_secret(target, &prompt, hop.as_ref())
+        });
         filled.map(|host| json!({ "host": host })).map_err(|e| match e {
             FillError::Lookup(e) => e,
             other => CallError::Io {

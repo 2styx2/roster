@@ -388,14 +388,19 @@ export function shellHooksOn(init: boolean | null, host: boolean | null | undefi
  * the marks carry it, and anything that prints the shell's prompt settings or history shows it.
  * Each token character becomes a dash, found even when a terminal wraps it (a line break, or
  * cursor moves and erases, inside it, as ConPTY draws a long line). Output ending part-way into
- * what may be the token waits for the next read (`holding`); `flush` lets it out with that part
- * dashed when it's long enough to be the token's (6 characters) or follows `roster=`, so a held
- * part never goes out as it was. Output with nothing of it passes as the same bytes, uncopied. */
+ * what may be the token waits for the next read (`holding`); output that can't be gets no wait.
+ * `flush` (the hold's 50 ms are up, or the Session ended) lets the held part out with every
+ * character of it dashed, however short, and remembers it: a next read that carries on with the
+ * rest of the token is dashed too (ticket 137, decision Q136). So no character of the token goes
+ * out as it was, however the reads split it; the cost is that output pausing on what merely
+ * looks like the token's start (its first characters, at the very end of a read, for 50 ms) has
+ * those characters dashed. Output with nothing of it passes as the same bytes, uncopied. */
 export class TokenMask {
   private readonly token: Uint8Array;
+  /** Output from where it may be the token on, waiting for the next read; its first `sent` bytes
+   * have gone out already (dashed, by `flush`). */
   private carry: Uint8Array | null = null;
-  /** The held part follows `roster=`. */
-  private carryAfterLead = false;
+  private sent = 0;
 
   constructor(nonce: string) {
     this.token = encoder.encode(nonce);
@@ -403,13 +408,16 @@ export class TokenMask {
 
   /** Whether output is held back, waiting for the read that tells whether it's the token. */
   holding(): boolean {
-    return this.carry !== null;
+    return this.carry !== null && this.carry.length > this.sent;
   }
 
   mask(data: Uint8Array): Uint8Array {
     const buf = this.carry ? joined([this.carry, data]) : data;
+    const sent = this.carry ? this.sent : 0;
     this.carry = null;
+    this.sent = 0;
     let out: Uint8Array | null = null;
+    let end = buf.length;
     const first = this.token[0] ?? 0;
     for (let i = buf.indexOf(first); i >= 0; i = buf.indexOf(first, i + 1)) {
       const m = this.matchAt(buf, i);
@@ -417,23 +425,27 @@ export class TokenMask {
         out ??= buf === data ? buf.slice() : buf;
         for (const at of m.at) out[at] = 45;
       } else if (m.atEnd) {
-        const kept = out ?? buf;
-        this.carry = kept.slice(i);
-        this.carryAfterLead = indexOf(kept.subarray(Math.max(0, i - 7), i), "roster=") === 0;
-        return kept.subarray(0, i);
+        end = i;
+        break;
       }
     }
-    return out ?? buf;
+    const kept = out ?? buf;
+    if (end < buf.length) {
+      this.carry = kept.slice(end);
+      this.sent = Math.max(0, sent - end);
+    }
+    return sent === 0 && end === buf.length ? kept : kept.subarray(Math.min(sent, end), end);
   }
 
-  /** What's held back, with any part of the token in it dashed when it may be the token's. */
+  /** What's held back, with every character of the token's it may be dashed. It's remembered as
+   * it came, so the next read is still checked as the rest of it. */
   flush(): Uint8Array {
     const rest = this.carry;
-    this.carry = null;
-    if (!rest) return new Uint8Array(0);
-    const m = this.matchAt(rest, 0);
-    if (m.at.length >= 6 || this.carryAfterLead) for (const at of m.at) rest[at] = 45;
-    return rest;
+    if (!rest || rest.length <= this.sent) return new Uint8Array(0);
+    const out = rest.slice(this.sent);
+    for (const at of this.matchAt(rest, 0).at) if (at >= this.sent) out[at - this.sent] = 45;
+    this.sent = rest.length;
+    return out;
   }
 
   /** The token's characters from `i` on, skipping line breaks and escape sequences between them:
@@ -459,7 +471,13 @@ export class TokenMask {
   }
 }
 
-/** How long the line break or escape sequence at `k` is (0: neither; -1: cut off at the end). */
+/** The longest escape sequences `TokenMask` looks through inside the token (a CSI's, an OSC's or
+ * string's): a longer one isn't a terminal drawing a wrapped line, and it keeps the hold bounded. */
+const CSI_MAX = 64;
+const OSC_MAX = 2048;
+
+/** How long the line break or escape sequence at `k` is (0: neither, or too long; -1: cut off at
+ * the end). */
 function ignorable(buf: Uint8Array, k: number): number {
   const b = buf[k];
   if (b === 13 || b === 10) return 1;
@@ -467,15 +485,17 @@ function ignorable(buf: Uint8Array, k: number): number {
   const next = buf[k + 1];
   if (next === undefined) return -1;
   if (next === 91) {
-    for (let j = k + 2; j < buf.length; j++) if ((buf[j] ?? 0) >= 0x40 && (buf[j] ?? 0) <= 0x7e) return j - k + 1;
-    return -1;
+    const end = Math.min(buf.length, k + CSI_MAX);
+    for (let j = k + 2; j < end; j++) if ((buf[j] ?? 0) >= 0x40 && (buf[j] ?? 0) <= 0x7e) return j - k + 1;
+    return end === buf.length ? -1 : 0;
   }
   if (next === 93) {
-    for (let j = k + 2; j < buf.length; j++) {
+    const end = Math.min(buf.length, k + OSC_MAX);
+    for (let j = k + 2; j < end; j++) {
       if (buf[j] === 7) return j - k + 1;
       if (buf[j] === 27 && buf[j + 1] === 92) return j - k + 2;
     }
-    return -1;
+    return end === buf.length ? -1 : 0;
   }
   return 2;
 }

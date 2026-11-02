@@ -79,7 +79,7 @@ fn a_no_echo_prompt_gets_the_secret_and_enter() {
     until(&rx, "Password: ");
     let mut asked = None;
     let host = m
-        .fill(id, WAIT, |h| {
+        .fill(id, WAIT, "Password:", None, |h| {
             asked = Some(format!(
                 "{}@{}:{} ({})",
                 h.login.user, h.login.address, h.login.port, h.host
@@ -106,7 +106,7 @@ fn what_was_typed_at_the_prompt_before_is_cleared_first() {
     until(&rx, "Password: ");
     m.write(id, b"half-typ").unwrap();
     std::thread::sleep(Duration::from_millis(100));
-    m.fill(id, WAIT, |_| secret()).expect("filled");
+    m.fill(id, WAIT, "Password:", None, |_| secret()).expect("filled");
     let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     m.close(id).unwrap();
@@ -120,7 +120,7 @@ fn an_echoing_prompt_is_refused_and_the_secret_never_typed() {
         host_sh("printf 'Password: '; read -r pw; echo \"got:[$pw]\"; sleep 5"),
     );
     until(&rx, "Password: ");
-    let err = m.fill(id, WAIT, |_| secret()).unwrap_err();
+    let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
     assert!(matches!(err, FillError::Echoes), "{err:?}");
     // The probe's letter was echoed and taken back; nothing else reached the prompt.
     m.write(id, b"\r").unwrap();
@@ -134,10 +134,10 @@ fn an_echoing_prompt_is_refused_and_the_secret_never_typed() {
 fn output_while_it_checks_refuses_too() {
     let m = SessionManager::new();
     let script =
-        "stty -echo; printf 'Password: '; (sleep 0.1; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5";
+        "stty -echo; printf 'Password: '; (sleep 0.2; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5";
     let (id, rx) = open(&m, host_sh(script));
     until(&rx, "Password: ");
-    let err = m.fill(id, WAIT, |_| secret()).unwrap_err();
+    let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
     assert!(matches!(err, FillError::Echoes), "{err:?}");
     m.close(id).unwrap();
 }
@@ -154,7 +154,7 @@ fn keys_typed_while_it_checks_refuse() {
             m.write(id, b"a").unwrap();
         })
     };
-    let err = m.fill(id, WAIT, |_| secret()).unwrap_err();
+    let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
     typer.join().unwrap();
     assert!(matches!(err, FillError::Typed), "{err:?}");
     m.close(id).unwrap();
@@ -169,7 +169,7 @@ fn a_refused_lookup_types_nothing() {
     );
     until(&rx, "Password: ");
     let err = m
-        .fill(id, WAIT, |_| Err::<Secret, _>("locked".to_string()))
+        .fill(id, WAIT, "Password:", None, |_| Err::<Secret, _>("locked".to_string()))
         .unwrap_err();
     assert!(matches!(&err, FillError::Lookup(e) if e == "locked"), "{err:?}");
     // Not even the probe: an echoing prompt shows nothing.
@@ -185,7 +185,7 @@ fn a_session_with_no_host_is_never_filled() {
     until(&rx, "Password: ");
     let mut asked = false;
     let err = m
-        .fill(id, WAIT, |_| {
+        .fill(id, WAIT, "Password:", None, |_| {
             asked = true;
             secret()
         })
@@ -197,7 +197,7 @@ fn a_session_with_no_host_is_never_filled() {
 #[test]
 fn an_ended_session_is_not_found() {
     let m = SessionManager::new();
-    let err = m.fill(42, WAIT, |_| secret()).unwrap_err();
+    let err = m.fill(42, WAIT, "Password:", None, |_| secret()).unwrap_err();
     assert!(matches!(err, FillError::NotFound(42)), "{err:?}");
 }
 
@@ -218,7 +218,7 @@ fn keys_sent_while_the_vault_answers_refuse() {
     );
     until(&rx, "Password: ");
     let err = m
-        .fill(id, WAIT, |_| {
+        .fill(id, WAIT, "Password:", None, |_| {
             // A key goes to the Session while the lookup waits on the vault.
             m.write(id, b"").ok();
             std::thread::sleep(Duration::from_millis(50));
@@ -233,17 +233,61 @@ fn keys_sent_while_the_vault_answers_refuse() {
 fn output_while_the_vault_answers_refuses_too() {
     let m = SessionManager::new();
     let script =
-        "stty -echo; printf 'Password: '; (sleep 0.1; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5";
+        "stty -echo; printf 'Password: '; (sleep 0.2; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5";
     let (id, rx) = open(&m, host_sh(script));
     until(&rx, "Password: ");
     // The lookup outlasts the late output, which is over before the probe goes.
     let err = m
-        .fill(id, WAIT, |_| {
+        .fill(id, WAIT, "Password:", None, |_| {
             std::thread::sleep(Duration::from_millis(400));
             secret()
         })
         .unwrap_err();
     assert!(matches!(err, FillError::Echoes), "{err:?}");
+    m.close(id).unwrap();
+}
+
+/// Ticket 137 (#243 b): the Session's own Host's fill types only at a prompt its output ends with,
+/// as a nested fill does; the frontend's word that a prompt is up isn't enough.
+#[test]
+fn an_own_host_fill_types_only_at_a_prompt_the_session_ends_with() {
+    let m = SessionManager::new();
+    // The prompt went by, then other output: the cursor isn't at it any more.
+    let script = "stty -echo; printf '[sudo] password for ops: \\nsudo: 1 incorrect password attempt\\n$ '; read -r pw; echo \"got:[$pw]\"; sleep 5";
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, "attempt");
+    std::thread::sleep(Duration::from_millis(100));
+    for prompt in ["[sudo] password for ops:", "[sudo] password for root:", "", "   "] {
+        let mut asked = false;
+        match m.fill(id, WAIT, prompt, None, |_| {
+            asked = true;
+            secret()
+        }) {
+            Err(FillError::NotPrinted) => {}
+            other => panic!("{prompt:?}: {other:?}"),
+        }
+        assert!(!asked, "{prompt:?}: the vault was asked");
+    }
+    // Nothing was typed: not the probe, not the secret.
+    m.write(id, b"\r").unwrap();
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    assert!(out.contains("got:[]"), "{out:?}");
+    m.close(id).unwrap();
+}
+
+#[test]
+fn an_own_host_fill_types_at_sudos_prompt_when_the_output_ends_with_it() {
+    let m = SessionManager::new();
+    let script = "printf 'motd\\n$ sudo ls\\n'; stty -echo; printf '\\033[1m[sudo] password for ops:\\033[m '; read -r pw; stty echo; echo; echo \"got:[$pw]\"; sleep 5";
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, "ops:");
+    std::thread::sleep(Duration::from_millis(100));
+    let host = m
+        .fill(id, WAIT, "[sudo] password for ops:", None, |_| secret())
+        .expect("filled");
+    assert_eq!(host, "esx");
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     m.close(id).unwrap();
 }
 
@@ -266,7 +310,7 @@ fn a_nested_fill_types_only_at_a_prompt_the_session_printed() {
             user: "ops".into(),
         },
     };
-    match m.fill_at_prompt(id, WAIT, "ops@esx-03's password:", &hop, |_| {
+    match m.fill(id, WAIT, "ops@esx-03's password:", Some(&hop), |_| {
         asked = true;
         secret()
     }) {
@@ -274,7 +318,7 @@ fn a_nested_fill_types_only_at_a_prompt_the_session_printed() {
         other => panic!("{other:?}"),
     }
     assert!(!asked);
-    m.fill_at_prompt(id, WAIT, "ops@esx-02's password:", &hop, |_| secret())
+    m.fill(id, WAIT, "ops@esx-02's password:", Some(&hop), |_| secret())
         .expect("filled");
     let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
@@ -334,7 +378,7 @@ fn a_nested_fill_says_the_host_whose_password_it_typed() {
         },
     };
     let host = m
-        .fill_at_prompt(id, WAIT, "ops@esx-02's password:", &hop, |_| secret())
+        .fill(id, WAIT, "ops@esx-02's password:", Some(&hop), |_| secret())
         .expect("filled");
     assert_eq!(host, "esx-02");
     m.close(id).unwrap();

@@ -402,33 +402,45 @@ impl SessionManager {
         w.write_all(data).and_then(|_| w.flush()).map_err(io)
     }
 
-    /// Fills the password prompt the Session shows (ticket 119, decision Q129), when the user
-    /// pressed the fill key at one. In order: the Session must be to an Inventory Host (else
+    /// Fills the password prompt the Session shows (tickets 119, 120 and 137; decisions Q129,
+    /// Q131 and Q136), when the user pressed the fill key at one. `prompt` is the prompt line the
+    /// frontend read off the screen; `hop` is a nested ssh's Host, as the frontend resolved it
+    /// (none for the Session's own Host). In order: the Session must be to an Inventory Host (else
     /// [`FillError::NoHost`], and nothing is asked); what it has printed and been sent so far is
-    /// noted; `lookup` gets that Host and what the Session connected to, and returns the secret
-    /// (serve's `session.fill`), and a refusal there types nothing; then the probe,
-    /// [`PROBE`], goes to the prompt: Ctrl+U (the line-kill key, which empties whatever was typed
-    /// there already) around a letter. A prompt that doesn't echo, as sudo's, su's and ssh's
-    /// don't, prints nothing for it; one that echoes prints the letter (and takes it back). So if
-    /// anything was printed since the lookup started (through `wait` after the probe), or a key was
-    /// sent meanwhile, the secret isn't typed
-    /// ([`FillError::Echoes`], [`FillError::Typed`]). Otherwise the secret and Enter go to the PTY
-    /// in one write, and the secret is wiped as it's dropped. Returns the Host's name.
+    /// noted; its output must end with `prompt`, the cursor right after it
+    /// ([`SessionManager::at_prompt`]), else [`FillError::NotPrinted`] and nothing is asked or
+    /// typed, so the frontend's word alone never sends a password to a Session that isn't asking
+    /// for it, on its own Host or another; `lookup` gets the Host the Session was opened to and
+    /// what it connected to, and returns the secret (serve's `session.fill`, which judges `prompt`
+    /// and `hop`), and a refusal there types nothing; then the probe, [`PROBE`], goes to the
+    /// prompt: Ctrl+U (the line-kill key, which empties whatever was typed there already) around a
+    /// letter. A prompt that doesn't echo, as sudo's, su's and ssh's don't, prints nothing for it;
+    /// one that echoes prints the letter (and takes it back). So if anything was printed since
+    /// the check (through `wait` after the probe), or a key was sent meanwhile, the secret isn't
+    /// typed ([`FillError::Echoes`], [`FillError::Typed`]). Otherwise the secret and Enter go to
+    /// the PTY in one write, and the secret is wiped as it's dropped. Returns the name of the Host
+    /// whose password it typed: `hop`'s, else the Session's own.
     ///
     /// The secret never leaves this call: not in a return value, an error, a log or an event.
     pub fn fill<E>(
         &self,
         id: SessionId,
         wait: Duration,
+        prompt: &str,
+        hop: Option<&FillTarget>,
         lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
     ) -> Result<String, FillError<E>> {
         let running = self.get(id).map_err(|_| FillError::NotFound(id))?;
         let target = running.fill_as.clone().ok_or(FillError::NoHost)?;
-        // Before the lookup, which may wait on the vault: what's printed or typed meanwhile counts.
+        // Before the prompt check and the lookup, which may wait on the vault: what's printed or
+        // typed from here on counts.
         let (output, writes) = (
             running.output.load(Ordering::SeqCst),
             running.writes.load(Ordering::SeqCst),
         );
+        if !ends_with_prompt(&running, prompt) {
+            return Err(FillError::NotPrinted);
+        }
         let secret = lookup(&target).map_err(FillError::Lookup)?;
         {
             let mut w = running.writer.lock().unwrap();
@@ -449,46 +461,17 @@ impl SessionManager {
         line.0.push(b'\r');
         drop(secret);
         w.write_all(&line.0).and_then(|_| w.flush()).map_err(fill_io)?;
-        Ok(target.host)
+        Ok(hop.map_or(target.host, |h| h.host.clone()))
     }
 
     /// Whether the Session's output, read as text, ends with `text`: the cursor sits right after
-    /// it, as at a prompt (ticket 120). Its last [`TAIL`] bytes are read with escape sequences
-    /// taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every run of
-    /// whitespace as one space, on both sides; trailing whitespace doesn't count. So a prompt
-    /// redrawn with colours or cursor moves still counts, and one with other output after it doesn't.
+    /// it, as at a prompt (tickets 120 and 137). Its last [`TAIL`] bytes are read with escape
+    /// sequences taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every
+    /// run of whitespace as one space, on both sides; trailing whitespace doesn't count. So a
+    /// prompt redrawn with colours or cursor moves still counts, and one with other output after
+    /// it doesn't. An empty `text` never does.
     pub fn at_prompt(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
-        let running = self.get(id)?;
-        let tail = running.tail.lock().unwrap();
-        let (a, b) = tail.as_slices();
-        let mut seen = Vec::with_capacity(a.len() + b.len());
-        seen.extend_from_slice(a);
-        seen.extend_from_slice(b);
-        let hay = plain_text(&seen);
-        let needle = plain_text(text.as_bytes());
-        let needle = needle.trim_ascii();
-        Ok(!needle.is_empty() && hay.trim_ascii_end().ends_with(needle))
-    }
-
-    /// [`SessionManager::fill`] for a nested ssh's prompt (ticket 120, decision Q131), whose Host
-    /// the frontend names: only when the Session's output ends with `prompt` itself
-    /// ([`SessionManager::at_prompt`]), so the frontend's word alone can't send another Host's
-    /// password to a Session that isn't asking for it ([`FillError::NotPrinted`], before anything
-    /// is looked up).
-    /// Returns the name of `hop`, the Host whose password it typed.
-    pub fn fill_at_prompt<E>(
-        &self,
-        id: SessionId,
-        wait: Duration,
-        prompt: &str,
-        hop: &FillTarget,
-        lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
-    ) -> Result<String, FillError<E>> {
-        match self.at_prompt(id, prompt.trim()) {
-            Ok(true) => self.fill(id, wait, lookup).map(|_| hop.host.clone()),
-            Ok(false) => Err(FillError::NotPrinted),
-            Err(_) => Err(FillError::NotFound(id)),
-        }
+        Ok(ends_with_prompt(&*self.get(id)?, text))
     }
 
     pub fn resize(&self, id: SessionId, size: Size) -> Result<(), SessionError> {
@@ -588,6 +571,19 @@ fn plain_text(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// [`SessionManager::at_prompt`] for a Session in hand.
+fn ends_with_prompt(running: &Running, text: &str) -> bool {
+    let tail = running.tail.lock().unwrap();
+    let (a, b) = tail.as_slices();
+    let mut seen = Vec::with_capacity(a.len() + b.len());
+    seen.extend_from_slice(a);
+    seen.extend_from_slice(b);
+    let hay = plain_text(&seen);
+    let needle = plain_text(text.as_bytes());
+    let needle = needle.trim_ascii();
+    !needle.is_empty() && hay.trim_ascii_end().ends_with(needle)
+}
+
 fn keep_tail(tail: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
     let mut t = tail.lock().unwrap();
     let chunk = &chunk[chunk.len().saturating_sub(TAIL)..];
@@ -637,7 +633,7 @@ pub enum FillError<E> {
     Echoes,
     /// A key was sent to the Session while roster checked the prompt.
     Typed,
-    /// The Session's output doesn't end with the nested fill's prompt (ticket 120). Nothing was
+    /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
     /// looked up or typed.
     NotPrinted,
     /// Writing to the PTY failed.

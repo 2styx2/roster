@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Security
+
+**App**
+
+- **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the Session's output ends with that very prompt, the cursor right after it, as a nested ssh's fill already did; a sudo prompt that went by, with other output after it, gets nothing, and the vault isn't asked. `terminal.read` Plugins can no longer get a few characters of a Session's shell-hook token when its output pauses part-way into the token: whatever is held then goes out dashed, and the rest of the token after the pause is dashed too.
+
 ## v0.3.0
 
 ### Breaking

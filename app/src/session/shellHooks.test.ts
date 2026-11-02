@@ -376,6 +376,89 @@ describe("TokenMask: Plugins never see the Session's token (ticket 120)", () => 
     expect(out).not.toContain(NONCE.slice(0, 5));
   });
 
+  // Ticket 137 (#243 f): output that stops part-way into the token for the 50 ms hold went out
+  // with up to 5 of its characters as they were, and the rest of the token, arriving in the next
+  // read, wasn't recognised at all. Every split point, with the hold timing out (flush) after
+  // every read, and the token byte by byte: no character of it ever reaches Plugins.
+  describe("every way a read can split it, the hold timing out between reads", () => {
+    const run = (nonce: string, chunks: Uint8Array[], timeOut: boolean) => {
+      const mask = new TokenMask(nonce);
+      const out: number[] = [];
+      for (const c of chunks) {
+        out.push(...mask.mask(c));
+        if (timeOut && mask.holding()) out.push(...mask.flush());
+      }
+      out.push(...mask.flush());
+      return Uint8Array.from(out);
+    };
+    // The token's bytes in `text`, each as one dash: where it lies, and the rest unchanged.
+    const expectMasked = (text: Uint8Array, at: number, len: number, out: Uint8Array, why: string) => {
+      expect(out.length, why).toBe(text.length);
+      for (let k = at; k < at + len; k++) expect(String.fromCharCode(out[k] ?? 0), `${why}: byte ${k}`).toBe("-");
+    };
+    const cases = (nonce: string): [string, string, string][] => [
+      ["roster mark", "\x1b]133;A;roster=", "\x07user$ "],
+      ["printed by echo $PS1", "$ echo $PS1\r\n\\[\\e]133;A;roster=", "\\a\\]\\u$ \r\n$ "],
+      ["in history output", "  12  printf x roster ", " done\r\n$ "],
+      ["after a near miss of its own start", `x ${nonce.slice(0, 3)}Z ${nonce.slice(0, 2)}`, "\r\n"],
+    ];
+    const NONCES = [NONCE, "aaaaaaaaaaaaaaaaaaaaaaab", "abababababababababababac", newNonce(), newNonce()];
+
+    it.each(NONCES)("with one cut anywhere and two cuts across the token (%s)", (nonce) => {
+      for (const [name, before, after] of cases(nonce)) {
+        // The near-miss case puts the start of the token right before it: those may be dashed too.
+        const text = enc.encode(before + nonce + after);
+        const at = before.length;
+        for (let i = 0; i <= text.length; i++) {
+          for (const timeOut of [true, false]) {
+            const out = run(nonce, [text.slice(0, i), text.slice(i)], timeOut);
+            expectMasked(text, at, nonce.length, out, `${name}, cut at ${i}, timeOut ${timeOut}`);
+          }
+        }
+        for (let i = at; i <= at + nonce.length; i++) {
+          for (let j = i; j <= at + nonce.length; j++) {
+            const out = run(nonce, [text.slice(0, i), text.slice(i, j), text.slice(j)], true);
+            expectMasked(text, at, nonce.length, out, `${name}, cuts at ${i} and ${j}`);
+          }
+        }
+      }
+    });
+
+    it.each(NONCES)("byte by byte (%s)", (nonce) => {
+      for (const [name, before, after] of cases(nonce)) {
+        const text = enc.encode(before + nonce + after);
+        const bytes = Array.from(text, (b) => Uint8Array.of(b));
+        for (const timeOut of [true, false]) {
+          expectMasked(text, before.length, nonce.length, run(nonce, bytes, timeOut), `${name}, timeOut ${timeOut}`);
+        }
+      }
+    });
+
+    it("byte by byte through a wrap inside it", () => {
+      const before = "history: roster=";
+      const text = enc.encode(`${before}${NONCE.slice(0, 9)}\x1b[K\r\n${NONCE.slice(9)} done\r\n`);
+      const bytes = Array.from(text, (b) => Uint8Array.of(b));
+      const out = dec.decode(run(NONCE, bytes, true));
+      expect(hidden(out)).toBe(`${before}${"-".repeat(24)} done`);
+    });
+
+    it("holds a bounded amount: an escape sequence that never ends isn't inside the token", () => {
+      const mask = new TokenMask(NONCE);
+      const head = mask.mask(enc.encode(`roster=${NONCE.slice(0, 4)}\x1b]0;`));
+      expect(mask.holding()).toBe(true);
+      const tail = mask.mask(enc.encode("t".repeat(5000)));
+      expect(mask.holding()).toBe(false);
+      expect(head.length + tail.length).toBe(7 + 4 + 4 + 5000);
+    });
+
+    it("holds nothing back from output that can't be the token", () => {
+      const mask = new TokenMask(NONCE);
+      const data = enc.encode("ls\r\nfile-9 a\r\n$ ");
+      expect(mask.mask(data)).toBe(data);
+      expect(mask.holding()).toBe(false);
+    });
+  });
+
   it("passes everything else as it came, without copying it", () => {
     const mask = new TokenMask(NONCE);
     const data = enc.encode("ls\r\nfile-0123 a\r\n$ ");
