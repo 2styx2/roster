@@ -21,6 +21,13 @@ KB = 1000
 # KB, minified. Measured 2026-10-31: JS 1,972 raw / 591 gzipped, CSS 75 / 14; about 10 % above that.
 # JS measured again 2026-11-01 (ticket 100): 2,195 raw / 654 gzipped, the Plugin API reference and
 # its types (both bundled for :help) having grown by the typed serve results; about 10 % above that.
+# JS raw 2,410 -> 2,450 on 2026-11-02: the Plugin API's get/has/list (ticket 145) took the bundled
+# reference and its types to 2,427.
+# CSS raw 83 -> 85 on 2026-11-02: a nested ssh's breadcrumb (ticket 120) took it to 83.3 when dev's own
+# build was already a few hundred bytes under 83 (#232, #243). It's the app's own stylesheets, grown a
+# rule at a time with features, not a dependency, so 2 KB of room lets the next small feature through
+# while a stylesheet library (tens of KB) still fails. Measured 83.3 raw / 15.2 gzipped on 2026-11-02.
+# docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
     "js": {"raw": 2450, "gzip": 720},
     "css": {"raw": 85, "gzip": 15.5},

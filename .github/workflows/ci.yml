@@ -79,6 +79,10 @@ jobs:
   # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
   # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
+  # It took 15-19 min, nearly all of it pytest (918-1148 s against Linux's 233-266 s), and 62% of that the Mesh
+  # suite: each stand-in Host command starts Python and Git for Windows' sh, whose every fork is slow, so a Mesh
+  # test there takes about 7 times as long as on Linux. The runner has 4 cores, so the tests run on 4 workers
+  # (pytest-xdist; #234). --durations lists the slowest, to measure again.
   cli-test-windows:
     name: CLI tests (Windows)
     runs-on: windows-latest
@@ -95,7 +99,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen
-      - run: uv run pytest --junitxml=report.xml
+      - run: uv run pytest -n 4 --durations=15 --junitxml=report.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -131,6 +135,13 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+      # The shell-hook tests run each hook line in the real shell when it's installed, and skip it when
+      # it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh; add the rest (#242).
+      - name: Install zsh, fish and tcsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish tcsh
+          zsh --version; fish --version; tcsh --version; pwsh --version
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
