@@ -100,6 +100,10 @@ _Avoid_: normal mode, command mode
 Typing a Host's password from the vault at sudo's prompt for its login user in its Session, when the user presses the fill key (`␣ p`); only at a prompt that doesn't echo, and only one that's provably the Session's own Host's (decision Q129), or the Host a nested ssh provably went to (decision Q131).
 _Avoid_: autofill, auto-type
 
+**Hook token**:
+The random value, new for each Session attempt, that roster's shell hooks put on every OSC 133 mark (`roster=…`); a mark with it is provably the Session's own shell's, since no other machine sees it (decision Q131). Plugins never get it.
+_Avoid_: nonce (in user-facing text), session key
+
 **Nested ssh**:
 An `ssh` the user runs inside a Session, to another Host. roster follows one to an Inventory Host only with the shell's marks, shows it as the Session's breadcrumb (`esx-01 ─ esx-02`) until that ssh ends, and may fill that Host's login and sudo prompts (decision Q131).
 _Avoid_: jump (that's ssh's `-J`, which roster refuses), hop chain
