@@ -285,8 +285,8 @@ describe("a nested ssh to another Host (ticket 120)", () => {
 // the refusal carries 130, so the app offers the prompt again.
 describe("the fake's printed-prompt check, as the core's", () => {
   const td = new TextDecoder();
-  async function session() {
-    const backend = fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, vault: { status: "unlocked" } });
+  async function session(scenario: Partial<FakeScenario> = {}) {
+    const backend = fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, vault: { status: "unlocked" }, ...scenario });
     let seen = "";
     const handle = await backend.openSession(vaultHost, { cols: 80, rows: 24 }, {
       output: (d) => void (seen += td.decode(d)),
@@ -308,6 +308,15 @@ describe("the fake's printed-prompt check, as the core's", () => {
     // At the very prompt it fills.
     await expect(fill("[sudo] password for admin:")).resolves.toEqual({ host: vaultHost });
     await until(/\[sudo ok\]/);
+  });
+
+  it("takes sudo's pwfeedback star for the probe, drawn and taken back, as no echo (ticket 154)", async () => {
+    const { handle, fill, until, seen } = await session({ pwfeedback: { [vaultHost]: true } });
+    for (const c of "sudo -v\r") await handle.write(c);
+    await until(/password for admin: $/);
+    await expect(fill("[sudo] password for admin:")).resolves.toEqual({ host: vaultHost });
+    await until(/\[sudo ok\]/);
+    expect(seen()).toContain(`*\b \b${"*".repeat(FAKE_LOGIN_PASSWORD.length)}`);
   });
 
   it("refuses with the probe's echo when the line ends with the prompt's text but echoes", async () => {

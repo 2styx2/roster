@@ -863,7 +863,7 @@ function fakeSession(
      * Login's password (ticket 120): then `ssh` asks, without echo, and takes FAKE_LOGIN_PASSWORD. */
     reach?: (target: string) => { name: string; user: string; password: boolean } | null;
   } = {},
-): SessionHandle & { atPasswordPrompt(): boolean; masks(): boolean; endsWith(text: string): boolean } {
+): SessionHandle & { atPasswordPrompt(): boolean; masks(): boolean; endsWith(text: string): boolean; lineIs(text: string): boolean } {
   // What it printed, without escapes, for a ConPTY-style repaint.
   let screen = "";
   // Its last output as text, for the core's printed-prompt check (ticket 137).
@@ -1048,6 +1048,21 @@ function fakeSession(
     },
     atPasswordPrompt: () => password && !ended,
     masks: () => password && masking && !ended,
+    // The cursor's line as a terminal draws it (carriage returns and backspaces overwrite) is
+    // `text` and nothing else: the core's whole-line check for sudo's pwfeedback (ticket 154).
+    lineIs: (text) => {
+      // eslint-disable-next-line no-control-regex
+      const last = (shown.split("\n").pop() ?? "").replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g, "");
+      const cells: string[] = [];
+      let col = 0;
+      for (const ch of last) {
+        if (ch === "\r") col = 0;
+        else if (ch === "\b") col = Math.max(0, col - 1);
+        else cells[col++] = ch;
+      }
+      const want = asText(text).trim();
+      return !ended && want !== "" && asText(Array.from(cells, (c) => c ?? " ").join("")).trim() === want;
+    },
     endsWith: (text) => {
       const want = asText(text).trim();
       return !ended && want !== "" && asText(shown).trimEnd().endsWith(want);
@@ -1747,7 +1762,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
         },
       });
-      const { atPasswordPrompt, masks, endsWith, ...handle } = session;
+      const { atPasswordPrompt, masks, endsWith, lineIs, ...handle } = session;
       // The core's prompt fill (ticket 119), as the Tauri build's: the core's printed-prompt check
       // first (ticket 137), then serve's refusals (the Host changed since the Session connected, a
       // prompt that isn't sudo's or ssh's for this Host's own Login, no saved password, the
@@ -1797,14 +1812,16 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           });
         }
         if (vaultNow() === "locked") throw new BackendCallError(VAULT_LOCKED, SessionRefusal.vaultLocked);
-        // sudo's pwfeedback mask for the probe (ticket 154) passes only at sudo's own prompt for
-        // the Login's user, as in the core; anywhere else it's an echo.
-        if (!atPasswordPrompt() || (masks() && sudoFor !== now.ssh.user)) {
-          throw new BackendCallError(
-            "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it",
-          );
-        }
-        await handle.write(`\x15x\x15${FAKE_LOGIN_PASSWORD}\r`);
+        const echoes = () =>
+          new BackendCallError("the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it");
+        if (!atPasswordPrompt()) throw echoes();
+        // The probe. sudo with pwfeedback draws a `*` for it and takes it back (ticket 154): as in
+        // the core, that's no echo only for the Session's own Host, at sudo's prompt for its ssh
+        // user, when that prompt is the whole of the line again once the `*` is gone.
+        const masked = masks();
+        await handle.write("\x15x\x15");
+        if (masked && !(hop === undefined && sudoFor === self.ssh.user && lineIs(prompt))) throw echoes();
+        await handle.write(`${FAKE_LOGIN_PASSWORD}\r`);
         return { host: now.name };
       };
       return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...handle, fill } : handle;

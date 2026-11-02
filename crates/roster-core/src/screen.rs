@@ -39,6 +39,22 @@ pub(crate) struct Screen {
     parse: Parse,
     csi: Vec<u8>,
     csi_long: bool,
+    /// What a fill's probe draws, while it waits (ticket 154): [`Screen::watch_mask`].
+    mask: Option<MaskWatch>,
+}
+
+/// The cursor and its line as they were when a fill typed its probe, and what the output has done
+/// since, as this parser reads it (ticket 154, decision Q144): never bytes taken out of the stream.
+struct MaskWatch {
+    row: usize,
+    col: usize,
+    pending_wrap: bool,
+    line: Vec<u8>,
+    /// `*`s drawn.
+    stars: usize,
+    /// Anything else: another character (a space aside), a line feed, a tab, a control or escape sequence that
+    /// isn't a cursor move, an erase within the line or the cursor's hide and show, a resize.
+    other: bool,
 }
 
 impl Screen {
@@ -56,11 +72,56 @@ impl Screen {
             parse: Parse::Ground,
             csi: Vec::new(),
             csi_long: false,
+            mask: None,
         }
+    }
+
+    /// Starts noting what the output draws from here on, with the cursor and its line as they are
+    /// now: a fill does this as it types its probe (ticket 154).
+    pub(crate) fn watch_mask(&mut self) {
+        self.mask = Some(MaskWatch {
+            row: self.row,
+            col: self.col,
+            pending_wrap: self.pending_wrap,
+            line: self.grid[self.row].clone(),
+            stars: 0,
+            other: false,
+        });
+    }
+
+    /// Stops noting, and says whether everything since [`Screen::watch_mask`] was at most `stars`
+    /// `*`s and any spaces drawn, cursor moves (`BS`, `CR`, CSI `A`-`H`, `a`, `d`, `e`, `f` and the backtick), erases within the
+    /// line (CSI `K`, `X`) and the cursor's hide and show (CSI `?25l`, `?25h`), with nothing else
+    /// at all, and left the cursor where it was on a line that's exactly as it was: sudo's
+    /// `pwfeedback` mask for the probe and its erasure, however a terminal (ConPTY) redraws it.
+    pub(crate) fn end_mask_watch(&mut self, stars: usize) -> bool {
+        let Some(w) = self.mask.take() else {
+            return false;
+        };
+        !w.other
+            && w.stars <= stars
+            && (w.row, w.col, w.pending_wrap) == (self.row, self.col, self.pending_wrap)
+            && self.grid[self.row] == w.line
+    }
+
+    /// Notes something the mask watch doesn't allow.
+    fn not_mask(&mut self) {
+        if let Some(w) = &mut self.mask {
+            w.other = true;
+        }
+    }
+
+    /// Whether the cursor's whole line, read as [`Screen::cursor_after`] reads it, is `text`
+    /// and nothing else (ticket 154).
+    pub(crate) fn line_is(&self, text: &str) -> bool {
+        let needle = squash(text.bytes().filter(|b| !(0x80..0xc0).contains(b)));
+        let needle = needle.trim_ascii();
+        !needle.is_empty() && squash(self.grid[self.row].iter().copied()).trim_ascii() == needle
     }
 
     /// The terminal was resized: the cursor's row stays on screen, cells beyond the new width go.
     pub(crate) fn resize(&mut self, rows: u16, cols: u16) {
+        self.not_mask();
         let (rows, cols) = (usize::from(rows.max(1)), usize::from(cols.max(1)));
         let fit = |grid: &mut Vec<Vec<u8>>, row: &mut usize| {
             if *row >= rows {
@@ -116,8 +177,11 @@ impl Screen {
                     self.parse = Parse::Ground;
                     if !self.csi_long {
                         self.csi_exec(b);
+                    } else {
+                        self.not_mask();
                     }
                 } else if b == 0x1b {
+                    self.not_mask();
                     self.parse = Parse::Esc;
                 } else if (0x20..=0x3f).contains(&b) {
                     if self.csi.len() < CSI_MAX {
@@ -125,6 +189,9 @@ impl Screen {
                     } else {
                         self.csi_long = true;
                     }
+                } else {
+                    // A control inside the sequence, which a terminal would act on.
+                    self.not_mask();
                 }
             }
             Parse::Str => {
@@ -150,6 +217,18 @@ impl Screen {
     }
 
     fn ground(&mut self, b: u8) {
+        if self.mask.is_some() {
+            match b {
+                b'*' => {
+                    if let Some(w) = &mut self.mask {
+                        w.stars += 1;
+                    }
+                }
+                // A space draws a blank: how sudo takes a `*` back.
+                0x1b | b'\r' | 0x08 | b' ' => {}
+                _ => self.not_mask(),
+            }
+        }
         match b {
             0x1b => self.parse = Parse::Esc,
             b'\r' => {
@@ -177,6 +256,9 @@ impl Screen {
 
     fn esc(&mut self, b: u8) {
         self.parse = Parse::Ground;
+        if b != b'[' {
+            self.not_mask();
+        }
         match b {
             b'[' => {
                 self.parse = Parse::Csi;
@@ -237,6 +319,9 @@ impl Screen {
     }
 
     fn csi_exec(&mut self, fin: u8) {
+        if self.mask.is_some() && !self.csi_draws_nothing(fin) {
+            self.not_mask();
+        }
         let private = self.csi.first() == Some(&b'?');
         let params: Vec<usize> = self
             .csi
@@ -345,6 +430,19 @@ impl Screen {
         }
     }
 
+    /// Whether a CSI is one sudo's mask may be redrawn with (ticket 154): a cursor move or an
+    /// erase within the line with plain numeric parameters, or the cursor's hide or show.
+    fn csi_draws_nothing(&self, fin: u8) -> bool {
+        let plain = self.csi.iter().all(|&c| c.is_ascii_digit() || c == b';');
+        match fin {
+            b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | b'H' | b'a' | b'd' | b'e' | b'f' | b'`' | b'K' | b'X' => {
+                plain
+            }
+            b'h' | b'l' => self.csi == b"?25",
+            _ => false,
+        }
+    }
+
     /// Into the alternate screen (a blank one, the main one kept) or back to the main one.
     fn alternate(&mut self, on: bool) {
         if on && self.main.is_none() {
@@ -413,5 +511,73 @@ mod tests {
     #[test]
     fn an_empty_prompt_never_matches() {
         assert!(!screen(b"$ ").cursor_after("  "));
+    }
+
+    /// Ticket 154: what a fill's probe may draw at sudo's `pwfeedback` prompt and still count as
+    /// no echo, read as a terminal reads it.
+    #[test]
+    fn a_mask_watch_takes_only_a_star_taken_back_however_its_drawn() {
+        const PROMPT: &[u8] = b"$ sudo -v\r\n[sudo] password for ops: ";
+        let watched = |out: &[u8]| {
+            let mut s = screen(PROMPT);
+            s.watch_mask();
+            s.feed(out);
+            s.end_mask_watch(1)
+        };
+        let yes: &[&[u8]] = &[
+            b"",
+            b"*\x08 \x08",
+            b"\x1b[K*\x08 \x08\x1b[K",
+            b"\x1b[?25l*\x1b[?25h\x1b[?25l\x08 \x08\x1b[?25h",
+            b"*\x1b[?25l\x1b[26G\x1b[K\x1b[?25h",
+            b"*\x1b[D\x1b[K",
+            b"*\x08\x1b[X",
+            b"*\x1b[1D \x1b[1D",
+            b"*\r\x1b[25C \x1b[D",
+            b"*\x1b[2;26H\x1b[K",
+        ];
+        for out in yes {
+            assert!(watched(out), "{:?}", String::from_utf8_lossy(out));
+        }
+        let no: &[&[u8]] = &[
+            b"x\x08 \x08",
+            b"*",
+            b"**\x08 \x08\x08 \x08",
+            b"#\x08 \x08",
+            b"*\x08 \x08\r\n",
+            b"*\x08 \x08\t",
+            b"*\x08 \x08\x07",
+            b"*\x08 \x08\x1b[1m",
+            b"*\x08 \x08\x1b[2K",
+            b"*\x08 \x08\x1b[J",
+            b"*\x08 \x08\x1b]0;title\x07",
+            b"*\x08 \x08\x1b7\x1b8",
+            b"*\x08 \x08\x1b[?1049h\x1b[?1049l",
+            b"*\x08 \x08\x1b[?2\x1b[?25l5h",
+            b"\x1b[\x1b[?25lK*\x08 \x08",
+            b"*\x1b[\x08D \x08",
+            b"*\x1b[>1D \x08",
+            b"*\x08 \x08\x1b[1;1H",
+            b"*\x08 \x08\x1b[A",
+            b"\x08\x08 \x1b[25G",
+        ];
+        for out in no {
+            assert!(!watched(out), "{:?}", String::from_utf8_lossy(out));
+        }
+        // A resize while it watches, or no watch at all, is never a mask.
+        let mut s = screen(PROMPT);
+        s.watch_mask();
+        s.resize(24, 100);
+        assert!(!s.end_mask_watch(1));
+        assert!(!s.end_mask_watch(1));
+    }
+
+    #[test]
+    fn the_whole_line_must_be_the_prompt() {
+        let s = screen(b"Enter vault PIN for [sudo] password for ops: ");
+        assert!(s.cursor_after("[sudo] password for ops:"));
+        assert!(!s.line_is("[sudo] password for ops:"));
+        let s = screen(b"\x1b[1m[sudo]  password for ops:\x1b[m ");
+        assert!(s.line_is("[sudo] password for ops:"));
     }
 }

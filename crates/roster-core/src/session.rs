@@ -255,34 +255,19 @@ struct Running {
 }
 
 /// What a Session has printed, as a fill checks it: the screen a terminal would draw (the
-/// cursor's line for the prompt check, tickets 120 and 137), how many bytes it has printed, and
-/// its last few, which a fill reads to tell sudo's `pwfeedback` mask from an echo (ticket 154).
-/// One lock for all three, so a fill sees the screen as of exactly the bytes it counted.
+/// cursor's line for the prompt check, tickets 120 and 137; what the probe drew, ticket 154) and
+/// how many bytes it has printed, under one lock, so a fill sees the screen as of exactly the
+/// bytes it counted.
 struct Shown {
     screen: Screen,
     /// Bytes printed so far.
     total: u64,
-    /// The last [`SHOWN_TAIL`] of them (the Session's output, never what's typed into it).
-    tail: Vec<u8>,
 }
-
-/// How many of a Session's last output bytes [`Shown`] keeps: more than sudo's mask and erasure
-/// with ConPTY's cursor hiding round them; more output since the probe than this is an echo.
-const SHOWN_TAIL: usize = 64;
 
 impl Shown {
     fn feed(&mut self, chunk: &[u8]) {
         self.screen.feed(chunk);
         self.total += chunk.len() as u64;
-        self.tail.extend_from_slice(chunk);
-        let over = self.tail.len().saturating_sub(SHOWN_TAIL);
-        self.tail.drain(..over);
-    }
-
-    /// What was printed since `total` was `from`, if it's all still kept.
-    fn since(&self, from: u64) -> Option<&[u8]> {
-        let n = usize::try_from(self.total - from).ok()?;
-        (n <= self.tail.len()).then(|| &self.tail[self.tail.len() - n..])
     }
 }
 
@@ -367,7 +352,6 @@ impl SessionManager {
             shown: Arc::new(Mutex::new(Shown {
                 screen: Screen::new(size.rows, size.cols),
                 total: 0,
-                tail: Vec::with_capacity(SHOWN_TAIL),
             })),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
@@ -451,10 +435,12 @@ impl SessionManager {
     /// one that echoes prints the letter (and takes it back). So if anything was printed since
     /// the check (through `wait` after the probe), or a key was sent meanwhile, the secret isn't
     /// typed ([`FillError::Echoes`], [`FillError::Typed`]). The one exception (ticket 154,
-    /// decision Q144): at sudo's own prompt for the user whose password it is (`hop`'s, else the
-    /// Session's), sudo with `pwfeedback` draws a `*` for the letter and erases it; if that, and
-    /// only that ([`SUDO_MASKS`]), was printed, and the cursor is right after the prompt again,
-    /// the prompt doesn't echo. Otherwise the secret and Enter go to
+    /// decision Q144): for the Session's own Host (no `hop`), at sudo's own prompt for its ssh
+    /// user, which is the whole of the cursor's line, sudo with `pwfeedback` draws a `*` for the
+    /// letter and erases it; if nothing was printed before the probe, and after it the screen saw
+    /// at most that `*`, cursor moves, erases within the line and the cursor's hide and show, and
+    /// the cursor and its line end exactly as they were ([`Screen::end_mask_watch`]), the prompt
+    /// doesn't echo. Otherwise the secret and Enter go to
     /// the PTY in one write, and the secret is wiped as it's dropped. Returns the name of the Host
     /// whose password it typed: `hop`'s, else the Session's own.
     ///
@@ -480,10 +466,16 @@ impl SessionManager {
             shown.total
         };
         // sudo with `pwfeedback` draws a `*` for the probe's letter and erases it (ticket 154):
-        // allowed only at sudo's own prompt for the user whose password this is.
-        let user = hop.map_or(&target.login.user, |h| &h.login.user);
-        let masked = sudo_prompt_for(prompt, user);
+        // allowed only for the Session's own Host, at sudo's own prompt for its ssh user.
+        let maskable = hop.is_none() && sudo_prompt_for(prompt, &target.login.user);
         let secret = lookup(&target).map_err(FillError::Lookup)?;
+        let probed = {
+            let mut shown = running.shown.lock().unwrap();
+            if maskable {
+                shown.screen.watch_mask();
+            }
+            shown.total
+        };
         {
             let mut w = running.writer.lock().unwrap();
             let w = w.as_mut().ok_or(FillError::NotFound(id))?;
@@ -493,9 +485,10 @@ impl SessionManager {
         let mut w = running.writer.lock().unwrap();
         let w = w.as_mut().ok_or(FillError::NotFound(id))?;
         {
-            let shown = running.shown.lock().unwrap();
+            let mut shown = running.shown.lock().unwrap();
+            let masked = maskable && shown.screen.end_mask_watch(PROBE_KEYS);
             if shown.total != printed
-                && !(masked && shown.since(printed).is_some_and(is_sudo_mask) && shown.screen.cursor_after(prompt))
+                && !(masked && probed == printed && shown.screen.line_is(prompt) && shown.screen.cursor_after(prompt))
             {
                 return Err(FillError::Echoes);
             }
@@ -561,8 +554,8 @@ pub const PROBE: &[u8] = b"\x15x\x15";
 
 /// Whether `prompt` is exactly sudo's own prompt for `user` (`[sudo] password for USER:`, read
 /// with runs of whitespace as one and none at the ends), the one prompt where sudo's `pwfeedback`
-/// mask ([`is_sudo_mask`]) isn't taken for an echo (ticket 154, decision Q144). The frontend
-/// offers, and serve fills, no other sudo prompt.
+/// mask isn't taken for an echo (ticket 154, decision Q144); the core also checks it's the whole
+/// of the cursor's line. The frontend offers, and serve fills, no other sudo prompt.
 fn sudo_prompt_for(prompt: &str, user: &str) -> bool {
     let words: Vec<&str> = prompt.split_whitespace().collect();
     !user.is_empty()
@@ -572,38 +565,8 @@ fn sudo_prompt_for(prompt: &str, user: &str) -> bool {
         && words[3].strip_suffix(':') == Some(user)
 }
 
-/// Shows and hides the cursor: they draw nothing. ConPTY puts them round what it repaints.
-const CURSOR_TOGGLES: [&[u8]; 2] = [b"\x1b[?25l", b"\x1b[?25h"];
-
-/// Everything sudo with `Defaults pwfeedback` prints for [`PROBE`], as sudo's `tgetpass.c`
-/// `getln()` does it, once [`CURSOR_TOGGLES`] are taken out (ticket 154, decision Q144): `*` for
-/// the letter, `\b \b` to erase it at the second Ctrl+U, and, in sudo since 2026-05 (after
-/// 1.9.17p2), `ESC [ K` after every Ctrl+U, the first included. The ones with a single `ESC [ K`
-/// are what a terminal that drops one that erases nothing (ConPTY) may pass on. Erase to the end
-/// of the line, from the cursor right after the prompt, takes nothing of the prompt.
-const SUDO_MASKS: [&[u8]; 4] = [
-    b"*\x08 \x08",
-    b"\x1b[K*\x08 \x08\x1b[K",
-    b"\x1b[K*\x08 \x08",
-    b"*\x08 \x08\x1b[K",
-];
-
-/// Whether `out`, all a Session printed from before the fill's lookup until the probe's wait
-/// ended, is sudo's `pwfeedback` mask for the probe and its erasure, and nothing else
-/// ([`SUDO_MASKS`]).
-fn is_sudo_mask(out: &[u8]) -> bool {
-    let mut rest = Vec::with_capacity(out.len());
-    let mut i = 0;
-    while i < out.len() {
-        if let Some(t) = CURSOR_TOGGLES.iter().find(|t| out[i..].starts_with(t)) {
-            i += t.len();
-        } else {
-            rest.push(out[i]);
-            i += 1;
-        }
-    }
-    SUDO_MASKS.contains(&rest.as_slice())
-}
+/// The printable keys in [`PROBE`]: sudo's `pwfeedback` draws a `*` for each (ticket 154).
+const PROBE_KEYS: usize = 1;
 
 /// A secret on its way from serve to a PTY: no Debug value, no Display, no Clone, no Serialize,
 /// and its bytes are overwritten when it's dropped (best effort: copies serve's answer passed
@@ -759,51 +722,6 @@ impl Reader {
 mod tests {
     use super::*;
 
-    /// Ticket 154: the whole list of what's taken for sudo's `pwfeedback` mask, and what isn't.
-    #[test]
-    fn only_sudos_mask_and_erasure_pass_for_no_echo() {
-        let yes: &[&[u8]] = &[
-            b"*\x08 \x08",
-            b"\x1b[K*\x08 \x08\x1b[K",
-            b"\x1b[K*\x08 \x08",
-            b"*\x08 \x08\x1b[K",
-            // ConPTY's cursor hiding round a repaint, anywhere.
-            b"\x1b[?25l*\x08 \x08\x1b[?25h",
-            b"\x1b[?25l*\x1b[?25h\x1b[?25l\x08 \x08\x1b[?25h",
-            b"\x1b[K*\x1b[?25l\x08 \x08\x1b[K\x1b[?25h",
-        ];
-        for out in yes {
-            assert!(is_sudo_mask(out), "{:?}", String::from_utf8_lossy(out));
-        }
-        let no: &[&[u8]] = &[
-            b"",
-            b"x",
-            b"x\x08 \x08",
-            b"*",
-            b"*\x08",
-            b"*\x08 ",
-            b"\x1b[K",
-            b"\x1b[K\x1b[K",
-            b"**\x08 \x08\x08 \x08",
-            b"*\x08 \x08*\x08 \x08",
-            b"#\x08 \x08",
-            b"*\x08 \x08x",
-            b"*\x08 \x08\r\n",
-            b"*\x1b[D \x1b[D",
-            b"*\x08 \x08\x1b[2K",
-            b"*\x08 \x08\x1b[0K",
-            b"\x1b[K\x1b[K*\x08 \x08",
-            b"*\x08 \x08\x1b[K\x1b[K",
-            b"\x1b[?25l",
-            b"\x1b[?25*\x08 \x08",
-            b"*\x08 \x08\x1b[?25",
-            b"\x1b[?1049h*\x08 \x08",
-        ];
-        for out in no {
-            assert!(!is_sudo_mask(out), "{:?}", String::from_utf8_lossy(out));
-        }
-    }
-
     #[test]
     fn the_mask_counts_only_at_sudos_own_prompt_for_the_user() {
         for (prompt, user, ok) in [
@@ -822,22 +740,5 @@ mod tests {
         ] {
             assert_eq!(sudo_prompt_for(prompt, user), ok, "{prompt:?} for {user:?}");
         }
-    }
-
-    #[test]
-    fn shown_keeps_what_was_printed_since_a_count_while_it_fits() {
-        let mut s = Shown {
-            screen: Screen::new(24, 80),
-            total: 0,
-            tail: Vec::new(),
-        };
-        s.feed(b"[sudo] password for ops: ");
-        let from = s.total;
-        assert_eq!(s.since(from), Some(&b""[..]));
-        s.feed(b"*");
-        s.feed(b"\x08 \x08");
-        assert_eq!(s.since(from), Some(&b"*\x08 \x08"[..]));
-        s.feed(&[b'.'; SHOWN_TAIL]);
-        assert_eq!(s.since(from), None);
     }
 }

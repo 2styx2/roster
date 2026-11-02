@@ -510,13 +510,19 @@ fn a_refusal_that_typed_nothing_has_a_code_and_one_that_typed_the_probe_doesnt()
 /// `prompt`, `before` (run once the prompt is up) and `mask` (what it draws per key) vary it for
 /// the cases that must still refuse. It reports what it read, as the other stand-ins do.
 fn pwfeedback(prompt: &str, kill_tail: &str, mask: &str, before: &str) -> String {
+    erasing(prompt, "\\b \\b", kill_tail, mask, before)
+}
+
+/// [`pwfeedback`] with `erase` for each `*` it takes back: `\b \b` as sudo writes it, or what a
+/// terminal layer (ConPTY) may redraw it as.
+fn erasing(prompt: &str, erase: &str, kill_tail: &str, mask: &str, before: &str) -> String {
     format!(
         "U=$(printf '\\025'); stty -echo -icanon min 1 time 0; printf '%s' '{prompt}'; {before}; pw=''; n=0; \
          while :; do c=$(dd bs=1 count=1 2>/dev/null); \
-         if [ \"$c\" = \"$U\" ]; then while [ $n -gt 0 ]; do printf '\\b \\b'; n=$((n-1)); done; printf '{kill_tail}'; pw=''; \
+         if [ \"$c\" = \"$U\" ]; then while [ $n -gt 0 ]; do printf '{erase}'; n=$((n-1)); done; printf '{kill_tail}'; pw=''; \
          elif [ -z \"$c\" ]; then break; \
          else pw=\"$pw$c\"; n=$((n+1)); printf '{mask}'; fi; done; \
-         while [ $n -gt 0 ]; do printf '\\b \\b'; n=$((n-1)); done; stty sane; echo; echo \"got:[$pw]\"; sleep 5",
+         while [ $n -gt 0 ]; do printf '{erase}'; n=$((n-1)); done; stty sane; echo; echo \"got:[$pw]\"; sleep 5",
         prompt = prompt.replace('\'', "'\"'\"'")
     )
 }
@@ -558,8 +564,10 @@ fn sudo_with_pwfeedback_is_filled_both_ways_sudo_erases() {
     }
 }
 
+/// Ticket 154, after the review of #283 (#4): the mask is taken as no echo only for the Session's
+/// own Host. A nested ssh's Host's sudo with pwfeedback refuses, as before.
 #[test]
-fn sudo_with_pwfeedback_is_filled_for_a_nested_hosts_own_user() {
+fn sudo_with_pwfeedback_on_a_nested_host_still_refuses() {
     let hop = FillTarget {
         host: "esx-02".into(),
         login: LoginAs {
@@ -568,20 +576,68 @@ fn sudo_with_pwfeedback_is_filled_for_a_nested_hosts_own_user() {
             user: "admin".into(),
         },
     };
+    for (prompt, line) in [
+        ("[sudo] password for admin: ", "[sudo] password for admin:"),
+        (SUDO_OPS, "[sudo] password for ops:"),
+    ] {
+        let (got, out) = fill_pwfeedback(&pwfeedback(prompt, "", "*", ":"), line, Some(&hop));
+        assert!(matches!(got, Err(FillError::Echoes)), "{line}: {got:?}");
+        assert!(out.contains("got:[]") && !out.contains(SECRET), "{line}: {out:?}");
+    }
+}
+
+/// Ticket 154 (the review of #283, #7): ConPTY on Windows renders the Session's output itself, so
+/// sudo's `\b \b` may reach the core as other cursor moves and erases. What the terminal draws
+/// decides, not the bytes: each of these leaves the prompt line and the cursor as they were.
+#[test]
+fn sudo_with_pwfeedback_is_filled_through_conpty_style_redraws() {
+    for (name, erase, tail) in [
+        (
+            "a column set and an erase, the cursor hidden",
+            "\\033[?25l\\033[26G\\033[K\\033[?25h",
+            "",
+        ),
+        ("cursor back and an erase", "\\033[D\\033[K", ""),
+        ("backspace and erase characters", "\\b\\033[X", ""),
+        ("a carriage return and cursor forward", "\\r\\033[25C \\033[D", ""),
+        ("cursor position on the line", "\\033[1;26H\\033[K", "\\033[?25h"),
+    ] {
+        let (got, out) = fill_pwfeedback(
+            &erasing(SUDO_OPS, erase, tail, "*", ":"),
+            "[sudo] password for ops:",
+            None,
+        );
+        assert_eq!(got.as_deref().ok(), Some("esx"), "{name}: {got:?} {out:?}");
+        assert!(out.contains(&format!("got:[{SECRET}]")), "{name}: {out:?}");
+    }
+}
+
+/// Ticket 154 (the review of #283, #3): a cursor hide or show inside another sequence isn't one.
+/// Taken out byte by byte, `ESC [ ESC[?25l K` would read as sudo's `ESC [ K`; a terminal reads a
+/// broken sequence, then a hide, then a `K` drawn on the line.
+#[test]
+fn a_cursor_toggle_inside_another_sequence_refuses() {
+    let forged = "\\033[\\033[?25lK";
     let (got, out) = fill_pwfeedback(
-        &pwfeedback("[sudo] password for admin: ", "", "*", ":"),
-        "[sudo] password for admin:",
-        Some(&hop),
-    );
-    assert_eq!(got.as_deref().ok(), Some("esx-02"), "{got:?} {out:?}");
-    // The Session's own user's sudo prompt is not that Host's: the mask is an echo there.
-    let (got, out) = fill_pwfeedback(
-        &pwfeedback(SUDO_OPS, "", "*", ":"),
+        &pwfeedback(SUDO_OPS, forged, "*", ":"),
         "[sudo] password for ops:",
-        Some(&hop),
+        None,
     );
-    assert!(matches!(got, Err(FillError::Echoes)), "{got:?}");
-    assert!(out.contains("got:[]"), "{out:?}");
+    assert!(matches!(got, Err(FillError::Echoes)), "{got:?} {out:?}");
+    assert!(!out.contains(SECRET), "{out:?}");
+}
+
+/// Ticket 154 (the review of #283, #2): the mask counts only when sudo's prompt is the whole of
+/// the cursor's line, not the end of a longer one that only ends like it.
+#[test]
+fn a_mask_at_a_line_that_only_ends_with_sudos_prompt_refuses() {
+    let (got, out) = fill_pwfeedback(
+        &pwfeedback("Enter vault PIN for [sudo] password for ops: ", "", "*", ":"),
+        "[sudo] password for ops:",
+        None,
+    );
+    assert!(matches!(got, Err(FillError::Echoes)), "{got:?} {out:?}");
+    assert!(!out.contains(SECRET), "{out:?}");
 }
 
 /// Ticket 154: everything but sudo's own mask and erasure, at sudo's own prompt for the login
