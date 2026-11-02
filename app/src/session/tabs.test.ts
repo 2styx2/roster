@@ -10,7 +10,13 @@ const reviewed = hosts.hosts.filter((h) => h.reviewed).map((h) => h.name);
 const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;
 
 const text = (chunks: Uint8Array[]) => chunks.map((c) => new TextDecoder().decode(c)).join("");
-const settle = () => new Promise((r) => setTimeout(r, 10));
+/** Lets the fake Backend's work run out: its steps are 0 ms timers, one after another. Each turn
+ * here is a timer set after theirs, so it runs after the step that's due, however late a busy
+ * machine runs them. 10 ms alone wasn't: woken late, it was due before their next step (T146). */
+const settle = async () => {
+  await new Promise((r) => setTimeout(r, 10));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+};
 /** serve's vault unlocked, as behind an unlocked lock screen (password Hosts need it). */
 const unlocked = { vault: { status: "unlocked" } } as const;
 

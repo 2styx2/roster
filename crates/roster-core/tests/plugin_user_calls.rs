@@ -67,6 +67,15 @@ fn listening(serve: &Arc<Recorded>, limits: Limits) -> (PluginHost, Receiver<Rep
     (host, rx)
 }
 
+/// Limits far beyond what any machine needs, for tests that aren't about time.
+fn unhurried() -> Limits {
+    Limits {
+        load: Duration::from_secs(60),
+        call: Duration::from_secs(60),
+        ..Limits::default()
+    }
+}
+
 fn load(host: &PluginHost, test: &str, permissions: &[&str], init: &str) -> (Reply, common::Temp) {
     let grants: Vec<Permission> = permissions.iter().map(|p| Permission::parse(p).unwrap()).collect();
     let folder = plugin_dir(test, permissions, init);
@@ -150,7 +159,9 @@ end
 #[test]
 fn every_flagged_serve_method_waits_for_the_users_call_and_the_reads_dont() {
     let serve = Arc::new(Recorded::default());
-    let (host, _rx) = listening(&serve, Limits::default());
+    // What's refused is the point here, not how long Lua may take: with the default 250 ms a call,
+    // a machine that paused the test mid-call failed it with "took longer than 250 ms" (T146).
+    let (host, _rx) = listening(&serve, unhurried());
     let methods = [
         "mesh.apply",
         "mesh.cut",
