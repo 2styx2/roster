@@ -30,15 +30,13 @@ Without `terminal.read` (Cancel it in the update prompt, or turn it off in `:plu
 As a Package, in your `init.lua`:
 
 ```lua
-packages = {
-  { "someone/recent-alerts", tag = "v1.0.0", config = {
-    patterns = { "ERROR", "panic", "disk full" }, -- plain text, matched as is (not Lua patterns)
-    leader = "w w",                               -- the keys after the Leader that open its finder
-    max = 100,                                    -- how many alerts it keeps
-    notify = true,                                -- a notice when new alerts arrive (true or false)
-    quiet = 30,                                   -- seconds between a Host's notices (0 to 3600)
-  } },
-},
+roster.packages.add({ "someone/recent-alerts", tag = "v1.0.0", config = {
+  patterns = { "ERROR", "panic", "disk full" }, -- plain text, matched as is (not Lua patterns)
+  leader = "w w",                               -- the keys after the Leader that open its finder
+  max = 100,                                    -- how many alerts it keeps
+  notify = true,                                -- a notice when new alerts arrive (true or false)
+  quiet = 30,                                   -- seconds between a Host's notices (0 to 3600)
+} })
 ```
 
 The app clones it, shows who wrote it and where it's from (unverified), and asks before it runs. Or, from a folder on this machine: `:plugins install ~/plugins/recent-alerts`.

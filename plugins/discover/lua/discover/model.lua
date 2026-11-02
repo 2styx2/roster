@@ -27,7 +27,7 @@ local function is_range(s)
   return type(s) == "string" and #s <= 64 and s:find("^[%x%.:/]+$") ~= nil
 end
 
--- The settings from init.lua's `packages = { { …, dir = "plugins/discover", config = { … } } }`,
+-- The settings from init.lua's `roster.packages.add({ …, dir = "plugins/discover", config = { … } })`,
 -- checked. Gives the settings, and the problems to tell the user about (bad values use the default).
 ---@param config any
 ---@return discover.Settings, string[]

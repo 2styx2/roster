@@ -1,9 +1,7 @@
 // The hand-written guides, bundled from docs/ at build time. The Markdown in docs/ is the one
 // copy: Vite reads it as text (`?raw`) when the app is built, so a guide in the app is always the
-// docs of the commit it was built from, and there's nothing to copy by hand. options.ts reads
-// config.md's option tables the same way, and options.test.ts fails CI when an option in the
-// core's schema isn't in them (or one in them isn't in the schema). lint.test.ts fails CI on a
-// link in any of them that goes nowhere.
+// docs of the commit it was built from, and there's nothing to copy by hand. lint.test.ts fails
+// CI on a link in any of them that goes nowhere.
 import config from "../../../docs/app/config.md?raw";
 import errors from "../../../docs/app/errors.md?raw";
 import extending from "../../../docs/app/extending.md?raw";
@@ -91,7 +89,7 @@ export const guides: readonly Guide[] = [
     id: "config",
     path: "docs/app/config.md",
     title: "Your init.lua",
-    summary: "Where the Config lives, :config and :source, errors, the sandbox, the roster table, folders.yml",
+    summary: "Writing it, in one file or in modules; :config and :source, errors, the sandbox, the roster table, folders.yml",
     part: "Make it yours",
     order: 20,
     aliases: { "init.lua": "config", "folders.yml": "config#foldersyml", sandbox: "config#the-sandbox", layout: "config#layout" },
@@ -257,8 +255,6 @@ export const guides: readonly Guide[] = [
     markdown: deprecated,
   },
 ];
-
-export const configMarkdown = config;
 
 /** A path from the repo's root, `.` and `..` resolved: `docs/app/../serve-api.md` → `docs/serve-api.md`. */
 export function repoPath(from: string, href: string): string {

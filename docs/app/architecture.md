@@ -65,7 +65,7 @@ The askpass socket (on native Windows, a named pipe only the user can open) is t
 ## Config (`init.lua`)
 
 This follows WezTerm's model (ADR 0004):
-- `~/.config/roster/init.lua` (`%APPDATA%\roster\init.lua` on Windows) returns a table, and the Rust core runs it with mlua (Lua 5.4 built in).
+- `~/.config/roster/init.lua` (`%APPDATA%\roster\init.lua` on Windows) is written the way Neovim's is: `roster.o.terminal.size = "16pt"`, `roster.keymap.set(…)`, modules under `lua/`. It may also return a table (older Configs), which wins over the calls. The Rust core runs it with mlua (Lua 5.4 built in).
 - It's layered: built-in defaults, then `init.lua`. There's no Settings screen.
 - `:source` reloads it (or every save, with `auto_reload = true`). An error shows a toast with the file and line, and the last good Config stays active.
 - The core checks the result against a schema and sends a plain typed object to the frontend, which never runs Lua.

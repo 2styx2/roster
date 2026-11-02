@@ -9,9 +9,7 @@ It's a first-party Plugin ([plugins/README.md](../README.md)): roster's core sta
 In your `init.lua`, then `:source`:
 
 ```lua
-packages = {
-  { "https://github.com/2styx2/roster", dir = "plugins/mesh" },
-},
+roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/mesh" })
 ```
 
 The app clones roster's repo, shows the folder, the commit and every permission, and asks first. Allow pins the commit in `roster.lock`. Add `tag = "vX.Y.Z"` to stay on a release, and `config = { leader = "y m" }` to pick its key (below).

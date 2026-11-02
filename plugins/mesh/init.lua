@@ -13,7 +13,7 @@
 -- `mesh.job` once a second instead, one question at a time.
 --
 -- Install it as a Package (plugins/README.md):
---   packages = { { "https://github.com/2styx2/roster", dir = "plugins/mesh" } }
+--   roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/mesh" })
 local roster = require("roster")
 local words = require("mesh.words")
 

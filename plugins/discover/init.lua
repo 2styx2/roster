@@ -7,8 +7,8 @@
 -- doesn't wait (decision Q103): the app's Publish can hold serve for a minute or two.
 --
 -- Settings come from init.lua, where you name it as a Package:
---   packages = { { "https://github.com/2styx2/roster", dir = "plugins/discover",
---                  config = { ranges = { "10.0.0.0/24" }, leader = "y d" } } }
+--   roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/discover",
+--                         config = { ranges = { "10.0.0.0/24" }, leader = "y d" } })
 local roster = require("roster")
 local model = require("discover.model")
 

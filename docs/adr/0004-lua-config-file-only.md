@@ -4,6 +4,8 @@ _Formerly roster-desk ADR 0002; renumbered when the app joined the roster repo (
 
 _Amended (decision Q58): the Config reloads on `:source`, or on every save with `auto_reload = true`._
 
+_Amended (decision Q132): the documented style is Neovim-like (`roster.o.terminal.size = "16pt"`, `roster.keymap.set`, `roster.packages.add`, modules under `lua/`); a file that returns a table still loads, and that table wins over the calls._
+
 The roster app is configured by one `init.lua` in the user config directory. It works like WezTerm and Neovim: the file returns a table that the Rust core evaluates with mlua (Lua 5.4 built in), and it reloads on save. There is no Settings screen. The user wants a terminal-first, keyboard-first tool whose setup is code they can keep in dotfiles, and Lua leaves room for logic and, later, hooks without a format migration.
 
 ## Considered Options

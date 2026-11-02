@@ -42,14 +42,12 @@ Without the first four it still loads, and its view says which are missing; with
 As a Package, in your `init.lua`:
 
 ```lua
-packages = {
-  { "https://github.com/2styx2/roster", dir = "plugins/discover", config = {
-    ranges = { "10.0.0.0/24" }, -- what :discover alone offers to scan (none: name a range each time)
-    leader = "y d",             -- the keys after the Leader that open it
-    ports = "22,80,443,8443",   -- the TCP ports to try (roster discover's list if left out)
-    group = "found",            -- the new group the kept Hosts go into (discovered-YYYYMMDD if left out)
-  } },
-},
+roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/discover", config = {
+  ranges = { "10.0.0.0/24" }, -- what :discover alone offers to scan (none: name a range each time)
+  leader = "y d",             -- the keys after the Leader that open it
+  ports = "22,80,443,8443",   -- the TCP ports to try (roster discover's list if left out)
+  group = "found",            -- the new group the kept Hosts go into (discovered-YYYYMMDD if left out)
+} })
 ```
 
 Then `:source`. The app clones roster's repo, loads the Plugin from `plugins/discover` and asks first, with every permission above. Allow pins the commit in `roster.lock`. Add `tag = "vX.Y.Z"` to stay on a release.

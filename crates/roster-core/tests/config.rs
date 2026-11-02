@@ -1640,3 +1640,52 @@ fn the_split_example_loads_with_each_value_at_its_modules_line() {
         "line {line}"
     );
 }
+
+/// Every `lua` block in the Config's guides is an init.lua that loads when pasted on its own
+/// (recipes promise it): a block that starts with `-- lua/NAME.lua` is that module, written
+/// beside the init.lua of the blocks around it.
+#[test]
+fn every_init_lua_snippet_in_the_guides_loads() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/app");
+    let mut total = 0;
+    for page in ["config.md", "recipes.md", "keyboard.md"] {
+        let text = std::fs::read_to_string(root.join(page)).unwrap();
+        let mut blocks: Vec<(usize, String)> = Vec::new();
+        let mut current: Option<(usize, String)> = None;
+        for (i, line) in text.lines().enumerate() {
+            match (&mut current, line.trim_end()) {
+                (None, "```lua") => current = Some((i + 1, String::new())),
+                (Some(_), "```") => blocks.push(current.take().unwrap()),
+                (Some((_, b)), l) => {
+                    b.push_str(l);
+                    b.push('\n');
+                }
+                _ => {}
+            }
+        }
+        total += blocks.len();
+        let mut modules: Vec<(String, String)> = Vec::new();
+        for (n, (line, block)) in blocks.iter().enumerate() {
+            let first = block.lines().next().unwrap_or_default();
+            if let Some(module) = first
+                .strip_prefix("-- ")
+                .filter(|m| m.starts_with("lua/") && m.ends_with(".lua"))
+            {
+                modules.push((module.to_string(), block.clone()));
+                continue;
+            }
+            let dir = temp_dir(&format!("snippet-{}-{n}", page.trim_end_matches(".md")));
+            for (path, source) in modules.drain(..) {
+                let path = dir.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, source).unwrap();
+            }
+            std::fs::write(dir.join("init.lua"), block).unwrap();
+            if let Err(e) = config::load(&dir) {
+                panic!("{page}:{line}: this block doesn't load as init.lua: {e}\n{block}");
+            }
+        }
+        assert!(modules.is_empty(), "{page}: a module block with no init.lua after it");
+    }
+    assert!(total > 20, "only {total} lua blocks found");
+}
