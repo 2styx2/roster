@@ -81,11 +81,21 @@ jobs:
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
   # It took 15-19 min, nearly all of it pytest (918-1148 s against Linux's 233-266 s), and 62% of that the Mesh
   # suite: each stand-in Host command starts Python and Git for Windows' sh, whose every fork is slow, so a Mesh
-  # test there takes about 7 times as long as on Linux. The runner has 4 cores, so the tests run on 4 workers
-  # (pytest-xdist; #234). --durations lists the slowest, to measure again.
+  # test there takes about 7 times as long as on Linux (#234). So it's two jobs side by side: the Mesh suite on
+  # the runner's 4 cores (pytest-xdist), and the rest one at a time as before, since many of those time how soon
+  # serve answers or notices a change (within a second) and miss it when 4 workers share the cores.
+  # --durations lists the slowest, to measure again.
   cli-test-windows:
-    name: CLI tests (Windows)
+    name: CLI tests (Windows, ${{ matrix.part }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: Mesh
+            args: tests/test_mesh.py -n 4
+          - part: the rest
+            args: --ignore=tests/test_mesh.py
     env:
       UV_PYTHON: "3.12"
     steps:
@@ -99,11 +109,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen
-      - run: uv run pytest -n 4 --durations=15 --junitxml=report.xml
+      - run: uv run pytest ${{ matrix.args }} --durations=10 --junitxml=report.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pytest-report-windows
+          name: pytest-report-windows-${{ strategy.job-index }}
           path: report.xml
           retention-days: 7
 
