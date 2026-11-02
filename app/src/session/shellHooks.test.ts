@@ -44,6 +44,65 @@ describe("promptShell: which shell an idle prompt is, from what it printed", () 
   });
 });
 
+/** A prompt as fish 3.x draws it (from real fish output on CI, names made up): the window title,
+ * a colour reset with a charset designator (`ESC ( B`) between the parts, then `ESC[K`, a carriage
+ * return and a move right to the end of the prompt, so the text after the last `\r` is empty. */
+function fish3(user: string, host: string, cwd: string, vcs = "", status = "", suffix = ">"): string {
+  const reset = "\x1b(B\x1b[m";
+  const parts = `${user}${reset}@${host}${reset} ${cwd}${reset}${vcs}${reset}${status ? ` ${status}` : ""}${suffix} `;
+  const width = `${user}@${host} ${cwd}${vcs}${status ? ` ${status}` : ""}${suffix} `.length;
+  return `\x1b]0;${cwd}\x07\x1b[30m${reset}\r${parts}\x1b[K\r\x1b[${width}C`;
+}
+
+describe("promptShell reads the prompt line as a terminal draws it (ticket 159, #296)", () => {
+  it.each([
+    [fish3("user", "web-01", "~/src/app", " ((f5c479ed))"), "fish 3 in a detached HEAD", "fish"],
+    [fish3("user", "web-01", "~/src/app", " (main)"), "fish 3 on a branch", "fish"],
+    [fish3("user", "web-01", "/tmp"), "fish 3's default prompt", "fish"],
+    [fish3("user", "web-01", "~", "", "[1]"), "fish 3 after a failed command", "fish"],
+    [fish3("user", "web-01", "~", " (main)", "[1|0]"), "fish 3 after a failed pipeline", "fish"],
+    [fish3("root", "web-01", "/etc", "", "", "#"), "fish 3 as root", "fish"],
+    ["\x1b(Buser@web-01 ~> ", "fish after a charset designator", "fish"],
+    ["user@web-01 ~/src (feature/x|REBASE-i 1/3)> ", "fish's informative git prompt", "fish"],
+    ["user@web-01:~$ ls\b\b\x1b[K", "bash after the typed-ahead text was erased", "posix"],
+    ["\r\x1b[Kuser@web-01:~$ ", "bash after clearing the line", "posix"],
+    ["user@web-01:~$ x\b \b", "bash after a backspace", "posix"],
+    ["%" + " ".repeat(79) + "\r \r" + "web-01% ", "zsh after its end-of-line mark (PROMPT_SP)", "posix"],
+    ["web-01% \x1b[K\r\x1b[8C", "zsh moving the cursor back to its prompt's end", "posix"],
+    ["web-01\x1b[3D\x1b[3C% ", "a prompt drawn with moves back and forth", "posix"],
+    ["\x1b[2J\x1b[H\x1b[1Guser@web-01:~$ ", "a prompt after a cleared screen", "posix"],
+    ["PS /home/admin> \x1b[K\r\x1b[16C", "PowerShell moving the cursor back to its prompt's end", "pwsh"],
+    ["PS C:\\Users\\admin> \x1b[?25l\x1b[?25h", "PowerShell hiding and showing the cursor", "pwsh"],
+  ])("%j (%s) is %s", (out, _, shell) => {
+    expect(promptShell(out)).toBe(shell);
+  });
+
+  // The hook line is a write into the user's shell, with the Session's token: never at a password
+  // prompt, however it was drawn, nor at a prompt with anything after the cursor.
+  it.each([
+    ["[sudo] password for user: ", "sudo's prompt"],
+    ["Password: ", "su's prompt"],
+    ["user@web-01's password: ", "ssh's prompt"],
+    ["Enter passphrase for key '/home/user/.ssh/id_ed25519': ", "ssh's key passphrase"],
+    ["user@web-01:~$ sudo -i\r\n[sudo] password for user: ", "sudo's prompt after a shell prompt"],
+    ["user@web-01:~$ \rPassword: ", "a password prompt drawn over a shell prompt"],
+    [fish3("user", "web-01", "~") + "\r[sudo] password for user: ", "sudo's prompt drawn over fish's"],
+    ["\x1b[K[sudo] password for user: \r\x1b[26C", "sudo's prompt with the cursor moved back to its end"],
+    ["Password# ", "a password prompt ending like a root prompt"],
+    ["[sudo] password for user$ ", "a sudo prompt ending like a shell prompt"],
+    ["user@web-01 ~/passwords> \rPassphrase> ", "a passphrase prompt drawn over fish's"],
+    ["user@web-01:~$ ls\x1b[2D", "a prompt with text after the cursor"],
+    ["user@web-01:~$ \x1b[3D", "the cursor moved back into the prompt"],
+    ["user@web-01:~$ \x1b[1A", "the cursor moved up off the prompt"],
+    ["user@web-01:~$ \x1b[5;1H", "the cursor moved somewhere it can't tell"],
+    ["user@web-01:~$ \r\x1b[K", "a cleared line"],
+    ["user@web-01:~$ \x1b[2K", "a line erased under the cursor"],
+    ["user@web-01 ~ (main> ", "fish's prompt with a parenthesis that isn't closed"],
+  ])("%j (%s) is nothing it sends to", (out) => {
+    expect(promptShell(out)).toBeNull();
+  });
+});
+
 describe("the Session's token in roster's marks (ticket 120)", () => {
   it("is in every mark of every hook line, and differs from Session to Session", () => {
     for (const kind of ["posix", "fish", "pwsh"] as const) {
@@ -99,6 +158,20 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     vi.advanceTimersByTime(IDLE_MS);
     expect(sent).toEqual([hookLine("posix", NONCE) + "\r"]);
     expect(screen()).toBe(PROMPT);
+  });
+
+  it("sends fish's line at a prompt fish 3 drew, with its carriage return and move right (#296)", () => {
+    const { sent, print } = setup();
+    print(fish3("user", "web-01", "~/src/app", " ((f5c479ed))"));
+    vi.advanceTimersByTime(IDLE_MS);
+    expect(sent).toEqual([hookLine("fish", NONCE) + "\r"]);
+  });
+
+  it("sends nothing at sudo's prompt after a fish prompt", () => {
+    const { sent, print } = setup();
+    print(fish3("user", "web-01", "~") + "sudo -v\r\n[sudo] password for user: ");
+    vi.advanceTimersByTime(IDLE_MS);
+    expect(sent).toEqual([]);
   });
 
   it("sends nothing when it's off, or the user has typed, or the shell marks its prompts already", () => {

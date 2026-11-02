@@ -47,11 +47,11 @@ const shown = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07
  * console waits for a cursor-position answer is lost). Then Enter, on its own, once the shell has
  * drawn the line. Each step waits for a sign, never for the shell to go quiet: on a busy machine
  * a shell still starting is quiet too. */
-function runPty(argv: string[], lines: string[], ready: (since: string) => boolean): Promise<string> {
+function runPty(argv: string[], lines: string[], ready: (since: string) => boolean, cwd?: string): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
-    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV });
+    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV, cwd });
     let out = "";
     let answered = 0;
     // Where the last thing typed went in: what the shell printed after it is its answer.
@@ -135,6 +135,27 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
     expect(out, tail(out)).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
   }, 60_000);
 });
+
+// Ticket 159 (#296): the auto-send must see each shell's own idle prompt as it draws it (fish
+// moves the cursor back over its prompt with `\r ESC[<n>C`), in a folder with no git and in this
+// repo's checkout (fish's prompt then shows the branch, or `((f5c479ed))` on CI's detached HEAD).
+// Every shell runs on a pty here, as in a Session. One whose prompt it doesn't see is killed at 40 s.
+const REPO = new URL("../../..", import.meta.url).pathname;
+describe.each(SHELLS.flatMap((s) => [[s.name, "/tmp", s] as const, [s.name, "a git checkout", s] as const]))(
+  "promptShell at %s's first prompt, in %s",
+  (_, where, shell) => {
+    it.skipIf(!has(shell.name) || !hasPty)("knows the shell", async () => {
+      let seen = false;
+      const ready = (since: string) => {
+        if (promptShell(since) !== shell.kind || (shell.pty && !shell.pty(since))) return false;
+        seen = true;
+        return true;
+      };
+      const out = await runPty(shell.argv, ["exit"], ready, where === "/tmp" ? "/tmp" : REPO);
+      expect(seen, tail(out)).toBe(true);
+    }, 60_000);
+  },
+);
 
 /** The rc-file snippet for `lang` in docs/plugins.md's "Shell integration": its first block. */
 function snippet(lang: string): string {
