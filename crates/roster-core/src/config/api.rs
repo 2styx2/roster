@@ -1141,6 +1141,14 @@ fn keymap(lua: &Lua) -> R<Table> {
         })?,
     )?;
     t.raw_set(
+        "has",
+        lua.create_function(|lua, (cx, keys): (String, String)| {
+            context(lua, &cx)?;
+            let path = vec!["keys".to_string(), cx, keys];
+            Ok(ctx(lua)?.store.borrow().get(&path).is_some())
+        })?,
+    )?;
+    t.raw_set(
         "list",
         lua.create_function(|lua, cx: String| {
             context(lua, &cx)?;
@@ -1246,6 +1254,13 @@ fn themes(lua: &Lua) -> R<Table> {
     t.raw_set(
         "get",
         lua.create_function(move |lua, id: String| read(lua, &path(&id)))?,
+    )?;
+    // Whether there's a Theme by that id, as list names them: a bundled one or init.lua's.
+    t.raw_set(
+        "has",
+        lua.create_function(move |lua, id: String| {
+            Ok(shape::BUNDLED_THEMES.contains(&id.as_str()) || ctx(lua)?.store.borrow().get(&path(&id)).is_some())
+        })?,
     )?;
     t.raw_set(
         "list",

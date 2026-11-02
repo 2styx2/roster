@@ -163,7 +163,7 @@ export function meshPlugin(): FakePlugin {
       version: "1.0.0",
       description: "The Mesh's controls: who reaches whom, plan and apply it, and Cut a Host out",
       author: "roster",
-      api: 4,
+      api: 5,
       permissions: MESH_PERMISSIONS,
     },
     load,
@@ -269,7 +269,7 @@ function load(roster: FakeRoster) {
     if (state.timer !== null) roster.cancel(state.timer);
     state.timer = null;
     state.done = 0;
-    roster.progress.remove("mesh");
+    if (roster.progress.has("mesh")) roster.progress.remove("mesh");
     const action = state.job?.action ?? "";
     const host = state.job?.host ?? "";
     state.job = null;
@@ -551,7 +551,7 @@ function load(roster: FakeRoster) {
         for (const [i, x] of (mine.get(h) ?? []).entries()) {
           rows.push({
             id: `l${i + 1}`,
-            cells: { link: words.link(x), status: words.status(x.status), member: "yes" },
+            cells: { link: words.link(x), status: words.status(x.status) },
             tone: x.status && words.LEFT_OUT[x.status] ? "error" : undefined,
           });
         }
@@ -609,7 +609,11 @@ function load(roster: FakeRoster) {
   };
 
   const segment = (st: Status | null): void => {
-    if (state.job || !st) return roster.status.remove("mesh");
+    // Takes the segment off if it's there: from api 5 removing one that isn't is an error.
+    const noSegment = () => {
+      if (roster.status.has("mesh")) roster.status.remove("mesh");
+    };
+    if (state.job || !st) return noSegment();
     const cuts = words.keys(st.cut_pending);
     const pending = words.keys(st.pending);
     if (cuts.length > 0) {
@@ -618,7 +622,7 @@ function load(roster: FakeRoster) {
       roster.status.set("mesh", { text: "Mesh out of date", title: "roster.yml changed the Mesh since the last apply: plan it, then apply", run: "mesh plan" });
     } else if (pending.length > 0) {
       roster.status.set("mesh", { text: `Mesh: ${words.count(pending.length)} pending`, title: "Hosts that didn't answer: the next apply finishes them", run: "view mesh" });
-    } else roster.status.remove("mesh");
+    } else noSegment();
   };
 
   const overview = (st: Status | null): [string[], Obj[]] => {

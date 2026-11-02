@@ -63,7 +63,7 @@ A setting it can't use is named in a notice, and the default is used.
 
 ```text
 mesh/
-  roster-plugin.lua      the manifest: name, version, api 3, the permissions above
+  roster-plugin.lua      the manifest: name, version, api 5, the permissions above
   init.lua               the Plugin: the views, Host details, badges, status, commands, jobs
   lua/mesh/words.lua     the pure part: what serve's answers say, in words
 ```
@@ -75,4 +75,4 @@ mesh/
 
 ## Testing it
 
-`crates/roster-core/tests/plugin_mesh.rs` installs it as a Package from a git repo with `dir = "plugins/mesh"` and drives it through the Plugin host against a stand-in roster serve: every view and section, plan and apply behind the question, Cut behind the typed name and its warnings, stopping, no permissions, an older serve, a reload mid-run, a serve busy with a Publish, and 500 and 1,000 Hosts. It waits for every request's answer after each step, and records a run in `app/src/plugins/mesh.transcript.json` (each step's own ops, then each answer's), which `app/src/plugins/mesh.test.ts` replays against the app's stand-in (`app/src/backend/fakeMesh.ts`); `app/src/App.mesh.test.tsx` then tests it in the app. `?fixture=mesh` (and `?fixture=mesh-worst`, 500 Hosts with long and non-Latin names) shows it in a plain browser. Change the Lua, run `ROSTER_UPDATE_TRANSCRIPT=1 cargo test -p roster-core --test plugin_mesh`, and update the stand-in to match. serve's side is `tests/test_mesh.py`.
+`crates/roster-core/tests/plugin_mesh.rs` installs it as a Package from a git repo with `dir = "plugins/mesh"` and drives it through the Plugin host against a stand-in roster serve: every view and section, plan and apply behind the question, Cut behind the typed name and its warnings, stopping, no permissions, an older serve, a reload mid-run, a serve busy with a Publish, and 500 and 1,000 Hosts (`cargo test --release -p roster-core --test plugin_mesh -- --ignored` times the 1,000 against the 250 ms a call may take; see [performance.md](../../docs/app/performance.md#budgets)). It waits for every request's answer after each step, and records a run in `app/src/plugins/mesh.transcript.json` (each step's own ops, then each answer's), which `app/src/plugins/mesh.test.ts` replays against the app's stand-in (`app/src/backend/fakeMesh.ts`); `app/src/App.mesh.test.tsx` then tests it in the app. `?fixture=mesh` (and `?fixture=mesh-worst`, 500 Hosts with long and non-Latin names) shows it in a plain browser. Change the Lua, run `ROSTER_UPDATE_TRANSCRIPT=1 cargo test -p roster-core --test plugin_mesh`, and update the stand-in to match. serve's side is `tests/test_mesh.py`.

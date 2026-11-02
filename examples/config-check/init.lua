@@ -63,6 +63,11 @@ do
   if not roster.keymap.get("leader", "p") then roster.keymap.set("leader", "p", "close") end
 end
 
+-- roster.keymap.has
+do
+  if not roster.keymap.has("leader", "p") then roster.keymap.set("leader", "p", "close") end
+end
+
 -- roster.keymap.list
 do
   for keys, action in pairs(roster.keymap.list("leader")) do print(keys, action) end
@@ -87,6 +92,11 @@ end
 do
   local paper = roster.themes.get("paper")
   if paper then print(paper.label) end
+end
+
+-- roster.themes.has
+do
+  if not roster.themes.has("paper") then roster.themes.define("paper", { appearance = "light" }) end
 end
 
 -- roster.themes.list

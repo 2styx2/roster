@@ -529,6 +529,27 @@ return { theme = roster.keymap.get("leader", "p") .. "," .. tostring(roster.keym
     }
 }
 
+#[test]
+fn keymap_and_themes_say_whether_they_have_one() {
+    let c = ok(r#"
+roster.keymap.set("leader", "p", "close")
+roster.keymap.set("list", "d d", false)
+roster.themes.define("paper", { appearance = "light" })
+roster.themes.define("gone", { colors = {} })
+roster.themes.remove("gone")
+return { theme = table.concat({
+  tostring(roster.keymap.has("leader", "p")), tostring(roster.keymap.has("leader", "q")),
+  tostring(roster.keymap.has("list", "d d")),
+  tostring(roster.themes.has("paper")), tostring(roster.themes.has("nord")),
+  tostring(roster.themes.has("gone")),
+}, ",") }
+"#);
+    // A binding to false is init.lua's too (it unbinds a default), as del takes it off.
+    assert_eq!(c.theme, "true,false,true,true,true,false");
+    let e = err("roster.keymap.has(\"leadr\", \"p\")\n");
+    assert!(e.message.contains("did you mean"), "{e}");
+}
+
 // ---------------------------------------------------------------- roster.themes
 
 #[test]

@@ -244,7 +244,7 @@ local function progress()
       cancel = stop,
     })
   else
-    roster.progress.remove("scan")
+    if roster.progress.has("scan") then roster.progress.remove("scan") end
   end
 end
 

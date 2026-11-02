@@ -138,7 +138,7 @@ show = function()
   if #alerts > 0 then
     roster.status.set("alerts", { text = "⚠ " .. #alerts, title = plural(#alerts, "recent alert", "recent alerts"), run = "finder alerts" })
   else
-    roster.status.remove("alerts")
+    if roster.status.has("alerts") then roster.status.remove("alerts") end
   end
 
   -- In name order, so the same alerts always make the same changes.

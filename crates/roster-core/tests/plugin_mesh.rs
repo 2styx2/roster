@@ -594,7 +594,7 @@ fn it_installs_from_roster_s_repo_with_dir_and_asks_for_exactly_its_permissions(
     let (dir, _) = packages.loadable(&specs, NAME).unwrap();
     let m = read_manifest(&dir).unwrap();
     assert_eq!(m.name, NAME);
-    assert_eq!(m.api, 4);
+    assert_eq!(m.api, 5);
     let mut asked: Vec<String> = m.permissions.iter().map(|p| p.to_string()).collect();
     asked.sort();
     let mut want: Vec<String> = ALL.iter().map(|s| s.to_string()).collect();
@@ -652,6 +652,17 @@ fn it_shows_each_hosts_reach_out_of_date_and_no_via() {
         d["spec"]["table"]["rows"][0]["cells"]["link"],
         "orion-3 → db-9 via jump-1"
     );
+    // Each row has a cell for each column and no other (#232: no unused `member` cell).
+    let columns: Vec<&str> = d["spec"]["table"]["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    for row in d["spec"]["table"]["rows"].as_array().unwrap() {
+        let cells: Vec<&str> = row["cells"].as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        assert_eq!(cells, columns, "{row}");
+    }
     assert_eq!(d["spec"]["actions"][0]["key"], "x");
     assert!(d["spec"]["table"]["actions"].as_array().is_none_or(|a| a.is_empty()));
     let sw = run.last(|o| o["op"] == "details" && o["host"] == "sw-1");
@@ -976,6 +987,33 @@ fn a_thousand_hosts_get_their_details_in_batches_until_every_one_has_its_section
         .map(|d| d["host"].as_str().unwrap())
         .collect();
     assert_eq!(hosts.len(), 1002);
+}
+
+/// The same 1,000 Hosts within the app's own limits (a quarter of a second a call, #222): a
+/// performance budget, so it times this machine, and a busy one fails it however fast the Plugin
+/// is (T146). Run it on an idle machine, in a release build as the app ships:
+/// `cargo test --release -p roster-core --test plugin_mesh -- --ignored`.
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn a_thousand_hosts_draw_inside_the_apps_own_limits() {
+    let t = Instant::now();
+    // Default limits: a call over its budget is an error, which `take` fails on.
+    let mut run = Run::new(
+        World {
+            lab: 1000,
+            ..World::default()
+        },
+        ALL,
+    );
+    eprintln!("1,000 Hosts: loaded in {:?}", t.elapsed());
+    let mut calls = 0;
+    while of(&run.ops, "details").len() < 1002 {
+        let t = Instant::now();
+        run.tick();
+        calls += 1;
+        eprintln!("1,000 Hosts: call {calls} (with its answers) in {:?}", t.elapsed());
+        assert!(calls <= 5, "still not done after {calls} calls");
+    }
 }
 
 #[test]
