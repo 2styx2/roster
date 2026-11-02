@@ -815,6 +815,16 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .tab-host { display: inline-flex; max-width: 28ch; vertical-align: bottom; font-family: var(--font-mono); }
 .tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
 .tab-tail { flex: none; white-space: pre; }
+/* A nested ssh's breadcrumb (ticket 120): after the Session's Host, an edge drawn to the Host it's
+   on now, then that Host's name. The edge draws like the connect edge (--dur-draw, from the
+   Session's Host outward), the name fades in; both go at once when the ssh ends. Reduced motion
+   keeps the fade and drops the draw. No accent: the live bar is the Session's own. Dashed and muted
+   when roster can't resolve where the ssh went. */
+.hop { display: inline-flex; align-items: center; gap: 4px; margin-left: 5px; max-width: 18ch; font-family: var(--font-mono); }
+.hop-edge { width: 10px; border-top: 1px solid var(--muted); transform-origin: left; transition: transform var(--dur-draw) var(--ease-out); @starting-style { transform: scaleX(0); } }
+.hop-name { overflow: hidden; text-overflow: ellipsis; transition: opacity var(--dur-fade) ease; @starting-style { opacity: 0; } }
+.hop.unknown { color: var(--muted); }
+.hop.unknown .hop-edge { border-top-style: dashed; }
 /* State dots in the tab strip. */
 .st {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px;

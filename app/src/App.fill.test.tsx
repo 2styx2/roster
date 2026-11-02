@@ -8,14 +8,21 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_LOGIN_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
-import { FILL_API_VERSION, FillRefusal } from "./backend/types";
+import { FILL_API_VERSION, FillRefusal, NESTED_FILL_API_VERSION } from "./backend/types";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
 
-const hosts = makeHosts(6);
+const hosts = makeHosts(12);
 // makeHosts: every third Host has a vault Login (bw:…), the rest log in with keys (auth: key).
-const vaultHost = hosts.hosts.find((h) => h.reviewed && h.ssh.auth.startsWith("bw:"))?.name ?? "";
-const keyHost = hosts.hosts.find((h) => h.reviewed && h.ssh.auth === "key")?.name ?? "";
+const vaultHosts = hosts.hosts.filter((h) => h.reviewed && h.ssh.auth.startsWith("bw:"));
+const vaultHost = vaultHosts[0]?.name ?? "";
+const keyHosts = hosts.hosts.filter((h) => h.reviewed && h.ssh.auth === "key");
+const keyHost = keyHosts[0]?.name ?? "";
+// Every Host with `shell_hooks: true`: roster sends its hook line, so the shell's marks carry the
+// Session's token (ticket 120).
+const hooked = { ...hosts, hosts: hosts.hosts.map((h) => ({ ...h, shell_hooks: true })) };
+/** Waits for roster's hook line to have gone (the login idle at its prompt for IDLE_MS). */
+const hooksOn = () => new Promise((r) => setTimeout(r, 700));
 const LEADER = "{Control>} {/Control}";
 type User = ReturnType<typeof userEvent.setup>;
 
@@ -23,7 +30,7 @@ async function ready(scenario: Partial<FakeScenario> = {}) {
   const user = userEvent.setup();
   render(
     <App
-      backend={fakeBackend({ hosts, apiVersion: FILL_API_VERSION, ...scenario })}
+      backend={fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, ...scenario })}
       terminalView={StubTerminal}
       registries={builtinRegistries()}
     />,
@@ -124,7 +131,7 @@ describe("filling a password prompt", () => {
     await waitFor(() => expect(messageLine()).toHaveTextContent(/root@10\.0\.0\.9/));
   });
 
-  it("offers nothing, and says why, while an ssh the shell marked is running", async () => {
+  it("offers nothing, and says why, while an ssh runs under marks that aren't roster's own", async () => {
     const user = await ready({ shellMarks: true });
     await connect(user, vaultHost);
     await user.keyboard("ssh other{Enter}");
@@ -132,16 +139,30 @@ describe("filling a password prompt", () => {
     await sudo(user);
     const note = await screen.findByRole("status", { name: "Password prompt" });
     expect(note).toHaveTextContent(/ssh other.*won't fill it/);
-    expect(note).not.toHaveTextContent(/can't tell/);
+    expect(note).not.toHaveTextContent(/can't tell whether you're still/);
     expect(within(note).queryByRole("button")).toBeNull();
     await user.keyboard(`${LEADER}p`);
     await waitFor(() => expect(messageLine()).toHaveTextContent(/may be another machine's/));
     expect(output()).not.toHaveTextContent(/sudo ok/);
   });
 
-  it("offers it again once that ssh has ended", async () => {
+  it("fills nothing more after that ssh when the marks aren't roster's own, and says how to fix it", async () => {
     const user = await ready({ shellMarks: true });
     await connect(user, vaultHost);
+    await user.keyboard("ssh other{Enter}");
+    await within(output()).findByText(/Connected to other/);
+    await user.keyboard("exit{Enter}");
+    await within(output()).findByText(/logout/);
+    await sudo(user);
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(/aren't roster's own.*shell hooks/);
+    expect(within(note).queryByRole("button")).toBeNull();
+  });
+
+  it("offers it again once that ssh has ended, under roster's own marks", async () => {
+    const user = await ready({ hosts: hooked });
+    await connect(user, vaultHost);
+    await hooksOn();
     await user.keyboard("ssh other{Enter}");
     await within(output()).findByText(/Connected to other/);
     await user.keyboard("exit{Enter}");
@@ -159,5 +180,89 @@ describe("filling a password prompt", () => {
     expect(offer()).toBeNull();
     await user.keyboard(`${LEADER}p`);
     await waitFor(() => expect(messageLine()).toHaveTextContent(/needs a newer roster \(API version 25/));
+  });
+});
+
+describe("a nested ssh to another Host (ticket 120)", () => {
+  // The Session is on a key Host; the ssh goes to a Host whose Login is in the vault.
+  const there = vaultHosts[1]?.name ?? "";
+  // The Session's row in the Sidebar's Sessions section (the default; tabs are an option).
+  const tab = () => screen.getAllByRole("treeitem").find((el) => el.id.startsWith("sb-session-")) as HTMLElement;
+
+  async function nested(user: User, to = there, from = keyHost) {
+    await connect(user, from);
+    await hooksOn();
+    await user.keyboard(`ssh ${to}{Enter}`);
+  }
+
+  it("shows the Host the Session is on now, until that ssh ends", async () => {
+    const user = await ready({ hosts: hooked });
+    await nested(user, keyHosts[1]?.name);
+    await within(output()).findByText(new RegExp(`Connected to ${keyHosts[1]?.name}`));
+    await waitFor(() => expect(tab()).toHaveAccessibleName(new RegExp(`${keyHost}.*now on ${keyHosts[1]?.name}`)));
+    expect(screen.getByRole("status", { name: "Where this Session is" })).toHaveTextContent(`Now on ${keyHosts[1]?.name}`);
+    // A key Login: nothing is typed, nothing offered.
+    expect(offer()).toBeNull();
+    await user.keyboard("exit{Enter}");
+    await waitFor(() => expect(tab()).not.toHaveAccessibleName(/now on/));
+  });
+
+  it("fills that Host's ssh prompt from its own Login, without the password reaching the page", async () => {
+    const user = await ready({ hosts: hooked });
+    await nested(user);
+    await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(`ssh's password prompt · fill ${there}'s from the vault`);
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(new RegExp(`Connected to ${there}`));
+    expect(document.body.innerHTML).not.toContain(FAKE_LOGIN_PASSWORD);
+    expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
+  });
+
+  it("fills that Host's sudo at the first command its marked shell runs", async () => {
+    const user = await ready({ hosts: hooked, innerMarks: true });
+    await nested(user);
+    await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(new RegExp(`Connected to ${there}`));
+    await sudo(user);
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(`fill ${there}'s from the vault`);
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(/\[sudo ok\]/);
+  });
+
+  it("never fills the Session's own Host's password into the far shell, which marks a D before its first prompt", async () => {
+    // The Session's Host has a vault Login too: taking the far shell for its own would leak it.
+    const user = await ready({ hosts: hooked, innerMarks: true });
+    await nested(user, there, vaultHost);
+    await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(new RegExp(`Connected to ${there}`));
+    await sudo(user);
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(`fill ${there}'s from the vault`);
+    expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
+  });
+
+  it("offers nothing without the shell's marks, and says so", async () => {
+    const user = await ready();
+    await connect(user, keyHost);
+    await user.keyboard(`ssh ${there}{Enter}`);
+    await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(/can't tell where this ssh went/);
+    expect(within(note).queryByRole("button")).toBeNull();
+    await user.keyboard(`${LEADER}p`);
+    await waitFor(() => expect(messageLine()).toHaveTextContent(/can't tell where this ssh went/));
+  });
+
+  it("shows the Host but offers no fill on a roster before API 26", async () => {
+    const user = await ready({ hosts: hooked, apiVersion: FILL_API_VERSION });
+    await nested(user);
+    await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
+    expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(/newer roster \(API 26\)/);
   });
 });

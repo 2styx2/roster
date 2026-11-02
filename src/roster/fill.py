@@ -34,8 +34,8 @@ def login_for(h, prompt, sudo=None):
     user = h["ssh"]["user"]
     if m := SSH.fullmatch(line):
         who, where = m["user"], m["host"]
-        # Not localhost: through a tunnel or a port forward it may be any machine.
-        if who != user or where not in {h["name"], h["ip"]}:
+        # Not localhost: through a tunnel or a port forward it may be any machine. ssh prints the host lowercased.
+        if who != user or where.lower() not in {h["name"].lower(), h["ip"].lower()}:
             raise refused(h, f"the prompt asks for {who}@{where}'s password, not {user}@{h['name']}'s",
                           "ssh", "roster fills only the Session's own Host; type that password yourself")
         return "ssh", saved(h, h["ssh"]["auth"], "ssh")
@@ -70,13 +70,16 @@ def has_password(ref):
     return name not in ("", "prompt", *providers.NO_PASSWORD)
 
 
-def same_login(h, address, port, user):
+def same_login(h, address, port, user, nested=False):
     """Problem 130 unless Host H still has the address, port and user its Session connected to (session.prepare's
-    `login`): one edited since may be another box now."""
+    `login`), or, NESTED, that the app resolved a nested ssh in the Session to (ticket 120): one edited since may be
+    another box now."""
     now = (h["ip"], h["ssh"]["port"], h["ssh"]["user"])
     if now != (address, port, user):
-        raise refused(h, f"{h['name']} changed since this Session connected ({user}@{address}:{port}, now "
-                         f"{now[2]}@{now[0]}:{now[1]})", None, "reconnect the Session, then fill")
+        since, fix = (("this ssh started", "run the ssh again, then fill") if nested else
+                      ("this Session connected", "reconnect the Session, then fill"))
+        raise refused(h, f"{h['name']} changed since {since} ({user}@{address}:{port}, now "
+                         f"{now[2]}@{now[0]}:{now[1]})", None, fix)
 
 
 def refused(h, message, kind, fix):

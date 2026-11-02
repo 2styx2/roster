@@ -46,37 +46,45 @@ const POSIX = /(?:[^\s$#%][$#%]|^\$) $/;
 // rather than replacing it.
 const BASH =
   "[ -n \"${BASH_VERSION-}\" ] && eval '" +
-  '__roster_d(){ local c=$?; printf "\\e]133;D;%s\\a\\e]7;file://%s%s\\a" "$c" "${HOSTNAME-}" "$PWD"; return $c; }; ' +
-  '__roster_w(){ case $PS1 in *"]133;A"*) ;; *) PS1="\\[\\e]133;A\\a\\]$PS1\\[\\e]133;B\\a\\]";; esac; }; ' +
+  '__roster_d(){ local c=$?; printf "\\e]133;D;%s;roster=@N@\\a\\e]7;file://%s%s\\a" "$c" "${HOSTNAME-}" "$PWD"; return $c; }; ' +
+  '__roster_w(){ case $PS1 in *"roster=@N@"*) ;; *) PS1="\\[\\e]133;A;roster=@N@\\a\\]$PS1\\[\\e]133;B;roster=@N@\\a\\]";; esac; }; ' +
   'case $BASH_VERSION in [1-4].*|5.0.*) PROMPT_COMMAND="__roster_d${PROMPT_COMMAND:+;$PROMPT_COMMAND};__roster_w";; ' +
   '*) PROMPT_COMMAND=(__roster_d ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"} __roster_w);; esac; ' +
-  'case $BASH_VERSION in [1-3].*|4.[0-3].*) ;; *) PS0="\\e]133;C\\a${PS0-}";; esac' +
+  'case $BASH_VERSION in [1-3].*|4.[0-3].*) ;; *) PS0="\\e]133;C;roster=@N@\\a${PS0-}";; esac' +
   "'";
 const ZSH =
   "[ -n \"${ZSH_VERSION-}\" ] && eval '" +
   "typeset -ga precmd_functions preexec_functions; " +
-  '__roster_d(){ printf "\\e]133;D;%s\\a\\e]7;file://%s%s\\a" $? "${HOST-}" "$PWD"; }; ' +
-  '__roster_c(){ printf "\\e]133;C\\a"; }; ' +
-  '__roster_w(){ [[ $PS1 == *"]133;A"* ]] || PS1="%{$(printf "\\e]133;A\\a")%}$PS1%{$(printf "\\e]133;B\\a")%}"; }; ' +
+  '__roster_d(){ printf "\\e]133;D;%s;roster=@N@\\a\\e]7;file://%s%s\\a" $? "${HOST-}" "$PWD"; }; ' +
+  '__roster_c(){ printf "\\e]133;C;roster=@N@\\a"; }; ' +
+  '__roster_w(){ [[ $PS1 == *"roster=@N@"* ]] || PS1="%{$(printf "\\e]133;A;roster=@N@\\a")%}$PS1%{$(printf "\\e]133;B;roster=@N@\\a")%}"; }; ' +
   "precmd_functions=(__roster_d $precmd_functions __roster_w); preexec_functions+=(__roster_c)" +
   "'";
 const FISH_HOOK =
-  "function __roster_a --on-event fish_prompt; printf '\\e]7;file://%s%s\\a\\e]133;A\\a' $hostname $PWD; end; " +
-  "functions -c fish_prompt __roster_p; function fish_prompt; __roster_p; printf '\\e]133;B\\a'; end; " +
-  "function __roster_c --on-event fish_preexec; printf '\\e]133;C\\a'; end; " +
-  "function __roster_d --on-event fish_postexec; printf '\\e]133;D;%s\\a' $status; end";
+  "function __roster_a --on-event fish_prompt; printf '\\e]7;file://%s%s\\a\\e]133;A;roster=@N@\\a' $hostname $PWD; end; " +
+  "functions -c fish_prompt __roster_p; function fish_prompt; __roster_p; printf '\\e]133;B;roster=@N@\\a'; end; " +
+  "function __roster_c --on-event fish_preexec; printf '\\e]133;C;roster=@N@\\a'; end; " +
+  "function __roster_d --on-event fish_postexec; printf '\\e]133;D;%s;roster=@N@\\a' $status; end";
 const PWSH_HOOK =
   "$Global:__roster_p=$function:prompt; function Global:prompt { $c=if($?){0}elseif($LASTEXITCODE){$LASTEXITCODE}else{1}; " +
   "$e=[char]27; $b=[char]7; $d='/'+($PWD.ProviderPath -replace '\\\\','/').TrimStart('/'); " +
-  '"$e]133;D;$c$b$e]7;file://$([Environment]::MachineName)$d$b$e]133;A$b$(& $Global:__roster_p)$e]133;B$b" }; ' +
+  '"$e]133;D;$c;roster=@N@$b$e]7;file://$([Environment]::MachineName)$d$b$e]133;A;roster=@N@$b$(& $Global:__roster_p)$e]133;B;roster=@N@$b" }; ' +
   "try { $h=(Get-PSReadLineOption).AddToHistoryHandler; Set-PSReadLineOption -AddToHistoryHandler ({ param($l) " +
-  '[Console]::Write("$([char]27)]133;C$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}';
+  '[Console]::Write("$([char]27)]133;C;roster=@N@$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}';
 
-/** The one line roster sends (without the Enter) to turn the marks on in a `kind` shell. */
-export function hookLine(kind: ShellKind): string {
-  if (kind === "fish") return ` ${FISH_HOOK}`;
-  if (kind === "pwsh") return ` ${PWSH_HOOK}`;
-  return ` ${BASH}; ${ZSH}`;
+/** The one line roster sends (without the Enter) to turn the marks on in a `kind` shell, every
+ * mark carrying the Session's token `nonce` (`roster=NONCE`, ticket 120, decision Q131): only a
+ * mark with it is the Session's own shell's, since no other machine ever sees it. */
+export function hookLine(kind: ShellKind, nonce: string): string {
+  if (!/^[0-9a-f]{8,64}$/.test(nonce)) throw new Error("a shell hook token is hex");
+  const line = kind === "fish" ? FISH_HOOK : kind === "pwsh" ? PWSH_HOOK : `${BASH}; ${ZSH}`;
+  return ` ${line.replaceAll("@N@", nonce)}`;
+}
+
+/** A new Session token for roster's marks: 96 random bits, in hex. */
+export function newNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** The shell whose idle prompt ends `out`, or null when it isn't a prompt roster knows. */
@@ -111,12 +119,20 @@ export interface ShellHooksIo {
   cwd(path: string): void;
   /** Whether roster may send the line by itself (`shell_hooks`). */
   enabled(): boolean;
+  /** What came of the line, once it's known (ticket 120: the echo window for Plugins closes). */
+  settled?(outcome: "on" | "no-marks"): void;
 }
 
 /** Escape sequences in what's typed: CSI (keys, and the terminal's reports: cursor, attributes,
  * modes, keyboard protocol, mouse, focus), OSC and DCS answers, SS3 keys. What's left after them is
  * typing. */
 const SEQUENCES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]P_^][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bO.|\x1b[ -~]/g;
+
+/** Whether what the terminal sent has typing in it, once its escape sequences (reports, mouse,
+ * focus, cursor keys) are taken out. */
+export function hasTyping(data: string): boolean {
+  return data.replace(SEQUENCES, "") !== "";
+}
 const MARK = "\x1b]133;";
 const MARK_A = /\x1b\]133;A[^\x07\x1b]*(?:\x07|\x1b\\)/;
 const MARK_B = /\x1b\]133;B[^\x07\x1b]*(?:\x07|\x1b\\)/;
@@ -164,6 +180,10 @@ function indexOf(bytes: Uint8Array, needle: string, from = 0): number {
  * once, holds the echo back until the new prompt comes, and reads OSC 7. */
 export class ShellHooks {
   private readonly io: ShellHooksIo;
+  /** The Session's token in roster's marks. */
+  private readonly nonce: string;
+  /** The shell prints roster's own marks (with this Session's token). */
+  private ours = false;
   private tail = "";
   private armed = true;
   private typedYet = false;
@@ -181,8 +201,9 @@ export class ShellHooks {
   private holdTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly windowTimer: ReturnType<typeof setTimeout>;
 
-  constructor(io: ShellHooksIo) {
+  constructor(io: ShellHooksIo, nonce: string) {
     this.io = io;
+    this.nonce = nonce;
     this.windowTimer = setTimeout(() => {
       this.armed = false;
       clearTimeout(this.idleTimer);
@@ -201,6 +222,7 @@ export class ShellHooks {
     }
     this.tail = (this.tail + text).slice(-TAIL_MAX);
     if (this.tail.includes(MARK)) this.marked = true;
+    if (this.tail.includes(`roster=${this.nonce}`)) this.ours = true;
     if (this.armed && this.sentLine === null) {
       clearTimeout(this.idleTimer);
       this.idleTimer = setTimeout(() => this.idle(), IDLE_MS);
@@ -211,7 +233,7 @@ export class ShellHooks {
   /** The user's terminal sent `data` to the Session: typing, unless it's only the terminal's own
    * answers or keys that move the cursor (whose effect the prompt check sees). */
   typed(data: string) {
-    if (data.replace(SEQUENCES, "") === "") return;
+    if (!hasTyping(data)) return;
     this.typedYet = true;
     clearTimeout(this.idleTimer);
     this.giveUp();
@@ -222,7 +244,9 @@ export class ShellHooks {
   integrate(): Promise<IntegrateResult> {
     if (this.outcome) return Promise.resolve(this.outcome);
     if (this.sentLine !== null) return new Promise((resolve) => this.waiting.push(resolve));
-    if (this.marked) return Promise.resolve("marked");
+    // Marks that aren't roster's (the shell's own integration) don't stop it: the user asked, and
+    // roster's marks, with the token, go round them.
+    if (this.ours) return Promise.resolve("marked");
     const kind = promptShell(this.tail);
     if (!kind) return Promise.resolve("no-prompt");
     if (!this.send(kind)) return Promise.resolve("not-open");
@@ -244,7 +268,7 @@ export class ShellHooks {
   }
 
   private send(kind: ShellKind): boolean {
-    const line = hookLine(kind);
+    const line = hookLine(kind, this.nonce);
     if (!this.io.write(line + "\r")) return false;
     this.sentLine = line;
     this.sentAt = lastLine(this.tail);
@@ -258,6 +282,7 @@ export class ShellHooks {
 
   private settle(outcome: "on" | "no-marks") {
     this.outcome = outcome;
+    this.io.settled?.(outcome);
     for (const resolve of this.waiting.splice(0)) resolve(outcome);
   }
 
@@ -357,4 +382,100 @@ export class ShellHooks {
 export function shellHooksOn(init: boolean | null, host: boolean | null | undefined): boolean {
   if (init === false) return false;
   return host ?? init ?? false;
+}
+
+/** Takes a Session's token out of its output before Plugins get it (ticket 120, decision Q131):
+ * the marks carry it, and anything that prints the shell's prompt settings or history shows it.
+ * Each token character becomes a dash, found even when a terminal wraps it (a line break, or
+ * cursor moves and erases, inside it, as ConPTY draws a long line). Output ending part-way into
+ * what may be the token waits for the next read (`holding`); `flush` lets it out with that part
+ * dashed when it's long enough to be the token's (6 characters) or follows `roster=`, so a held
+ * part never goes out as it was. Output with nothing of it passes as the same bytes, uncopied. */
+export class TokenMask {
+  private readonly token: Uint8Array;
+  private carry: Uint8Array | null = null;
+  /** The held part follows `roster=`. */
+  private carryAfterLead = false;
+
+  constructor(nonce: string) {
+    this.token = encoder.encode(nonce);
+  }
+
+  /** Whether output is held back, waiting for the read that tells whether it's the token. */
+  holding(): boolean {
+    return this.carry !== null;
+  }
+
+  mask(data: Uint8Array): Uint8Array {
+    const buf = this.carry ? joined([this.carry, data]) : data;
+    this.carry = null;
+    let out: Uint8Array | null = null;
+    const first = this.token[0] ?? 0;
+    for (let i = buf.indexOf(first); i >= 0; i = buf.indexOf(first, i + 1)) {
+      const m = this.matchAt(buf, i);
+      if (m.complete) {
+        out ??= buf === data ? buf.slice() : buf;
+        for (const at of m.at) out[at] = 45;
+      } else if (m.atEnd) {
+        const kept = out ?? buf;
+        this.carry = kept.slice(i);
+        this.carryAfterLead = indexOf(kept.subarray(Math.max(0, i - 7), i), "roster=") === 0;
+        return kept.subarray(0, i);
+      }
+    }
+    return out ?? buf;
+  }
+
+  /** What's held back, with any part of the token in it dashed when it may be the token's. */
+  flush(): Uint8Array {
+    const rest = this.carry;
+    this.carry = null;
+    if (!rest) return new Uint8Array(0);
+    const m = this.matchAt(rest, 0);
+    if (m.at.length >= 6 || this.carryAfterLead) for (const at of m.at) rest[at] = 45;
+    return rest;
+  }
+
+  /** The token's characters from `i` on, skipping line breaks and escape sequences between them:
+   * where each was, whether it's all there, and whether `buf` ended part-way. */
+  private matchAt(buf: Uint8Array, i: number): { at: number[]; complete: boolean; atEnd: boolean } {
+    const t = this.token;
+    const at: number[] = [];
+    let k = i;
+    while (at.length < t.length) {
+      if (k >= buf.length) return { at, complete: false, atEnd: true };
+      const b = buf[k];
+      if (b === t[at.length]) {
+        at.push(k++);
+        continue;
+      }
+      if (at.length === 0) break;
+      const skip = ignorable(buf, k);
+      if (skip === 0) break;
+      if (skip < 0) return { at, complete: false, atEnd: true };
+      k += skip;
+    }
+    return { at, complete: at.length === t.length, atEnd: false };
+  }
+}
+
+/** How long the line break or escape sequence at `k` is (0: neither; -1: cut off at the end). */
+function ignorable(buf: Uint8Array, k: number): number {
+  const b = buf[k];
+  if (b === 13 || b === 10) return 1;
+  if (b !== 27) return 0;
+  const next = buf[k + 1];
+  if (next === undefined) return -1;
+  if (next === 91) {
+    for (let j = k + 2; j < buf.length; j++) if ((buf[j] ?? 0) >= 0x40 && (buf[j] ?? 0) <= 0x7e) return j - k + 1;
+    return -1;
+  }
+  if (next === 93) {
+    for (let j = k + 2; j < buf.length; j++) {
+      if (buf[j] === 7) return j - k + 1;
+      if (buf[j] === 27 && buf[j + 1] === 92) return j - k + 2;
+    }
+    return -1;
+  }
+  return 2;
 }

@@ -379,7 +379,7 @@ fn sw_core() -> FillTarget {
 #[test]
 fn a_fill_secret_comes_from_session_fill_and_never_prints() {
     let b = Backend::start(&fake("ok")).unwrap();
-    let secret = b.fill_secret(&sw_core(), "[sudo] password for root: ").unwrap();
+    let secret = b.fill_secret(&sw_core(), "[sudo] password for root: ", None).unwrap();
     assert!(!format!("{secret:?}").contains(FILL_PASSWORD));
 }
 
@@ -393,6 +393,7 @@ fn a_refused_fill_keeps_serves_code_and_a_malformed_one_never_shows_its_value() 
                 ..sw_core()
             },
             "Username: ",
+            None,
         )
         .unwrap_err()
     {
@@ -401,14 +402,16 @@ fn a_refused_fill_keeps_serves_code_and_a_malformed_one_never_shows_its_value() 
     }
     let locked = Backend::start(&fake("locked")).unwrap();
     match locked
-        .fill_secret(&sw_core(), "[sudo] password for root: ")
+        .fill_secret(&sw_core(), "[sudo] password for root: ", None)
         .unwrap_err()
     {
         roster_core::rpc::CallError::Rpc { code, .. } => assert_eq!(code, 14),
         other => panic!("{other:?}"),
     }
     let bad = Backend::start(&fake("bad-fill")).unwrap();
-    let err = bad.fill_secret(&sw_core(), "[sudo] password for root: ").unwrap_err();
+    let err = bad
+        .fill_secret(&sw_core(), "[sudo] password for root: ", None)
+        .unwrap_err();
     let text = format!("{err} {err:?}");
     assert!(text.contains("`password`") && !text.contains("31337"), "{text}");
 }
@@ -445,10 +448,59 @@ fn a_fill_sends_what_the_session_connected_to() {
         },
         ..sw_core()
     };
-    match b.fill_secret(&moved, "[sudo] password for root: ").unwrap_err() {
+    match b.fill_secret(&moved, "[sudo] password for root: ", None).unwrap_err() {
         roster_core::rpc::CallError::Rpc { code, .. } => assert_eq!(code, 130),
         other => panic!("{other:?}"),
     }
+}
+
+/// esxi-02, the Host a nested ssh in sw-core's Session went to, as the app resolved it (ticket 120).
+fn esxi_02() -> FillTarget {
+    FillTarget {
+        host: "esxi-02".into(),
+        login: LoginAs {
+            address: "10.19.1.3".into(),
+            port: 22,
+            user: "root".into(),
+        },
+    }
+}
+
+#[test]
+fn a_nested_fill_names_the_host_the_ssh_went_to() {
+    // fake_serve.py fills esxi-02's own prompt only with its `hop`, and refuses another address.
+    let b = Backend::start(&fake("nested")).unwrap();
+    let prompt = "root@esxi-02's password: ";
+    assert!(b.fill_secret(&sw_core(), prompt, Some(&esxi_02())).is_ok());
+    let moved = FillTarget {
+        login: LoginAs {
+            address: "10.19.1.99".into(),
+            ..esxi_02().login
+        },
+        ..esxi_02()
+    };
+    match b.fill_secret(&sw_core(), prompt, Some(&moved)).unwrap_err() {
+        roster_core::rpc::CallError::Rpc { code, .. } => assert_eq!(code, 130),
+        other => panic!("{other:?}"),
+    }
+    match b.fill_secret(&sw_core(), prompt, None).unwrap_err() {
+        roster_core::rpc::CallError::Rpc { code, .. } => assert_eq!(code, 130),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_nested_fill_is_never_sent_to_a_serve_that_would_ignore_the_hop() {
+    // serve before API 26 doesn't know `hop`: it would answer for the Session's own Host, whose
+    // password would then be typed on the nested one. The core refuses before asking.
+    let b = Backend::start(&fake("fill-25")).unwrap();
+    let err = b
+        .fill_secret(&sw_core(), "root@esxi-02's password: ", Some(&esxi_02()))
+        .unwrap_err();
+    assert!(err.to_string().contains("API 26"), "{err}");
+    assert!(!err.to_string().contains(FILL_PASSWORD));
+    // Its own Host's fill still goes.
+    assert!(b.fill_secret(&sw_core(), "[sudo] password for root: ", None).is_ok());
 }
 
 #[test]

@@ -252,7 +252,7 @@ export const builtinCommands: readonly CommandDef[] = [
     id: "fill",
     source: BUILTIN,
     area: "Sessions",
-    label: () => "Fill sudo's password prompt on screen from the Host's Login in the vault",
+    label: () => "Fill sudo's (or a nested ssh's) password prompt on screen from the Host's Login in the vault",
     run: (ctx) => ctx.fillPrompt(),
   },
   {

@@ -58,6 +58,7 @@ import {
   FILL_API_VERSION,
   FillRefusal,
   NO_PASSWORD_AUTHS,
+  type NestedHost,
   HostKeyError,
   type QuickConnect,
   type QuickSave,
@@ -118,6 +119,8 @@ export interface FakeScenario {
   refusals?: Record<string, Refusal>;
   /** The fake shells print OSC 133 marks (Q121), and `ssh NAME` stays in NAME until `exit`. */
   shellMarks?: boolean;
+  /** With `shellMarks`, the shell a nested `ssh NAME` reaches marks its prompts too (ticket 120). */
+  innerMarks?: boolean;
   /** Per Host: its `sudo: {auth}` in roster.yml (ticket 119), which a prompt fill uses first. */
   sudoRefs?: Record<string, string>;
   /** Per Host: `session.fill` refuses with this (ticket 119: 130, 131, the vault's codes). */
@@ -846,6 +849,11 @@ function fakeSession(
     /** A shell with integration (Q121): OSC 133 marks around its prompt and each command, and
      * `ssh NAME` stays "in" NAME (a shell without marks) until `exit`. */
     marks?: boolean | undefined;
+    /** The shell `ssh NAME` reaches marks its prompts and commands too (ticket 120). */
+    innerMarks?: boolean | undefined;
+    /** The Inventory Host `ssh TARGET` reaches (by name or address), and whether it asks for its
+     * Login's password (ticket 120): then `ssh` asks, without echo, and takes FAKE_LOGIN_PASSWORD. */
+    reach?: (target: string) => { name: string; user: string; password: boolean } | null;
   } = {},
 ): SessionHandle & { atPasswordPrompt(): boolean } {
   // What it printed, without escapes, for a ConPTY-style repaint.
@@ -862,6 +870,9 @@ function fakeSession(
   let line = "";
   // `sudo …` (ticket 119): a password prompt that doesn't echo what's typed, as sudo's.
   let password = false;
+  // A nested `ssh` asking for its Host's password (ticket 120): the Host it logs in to, and the
+  // prompt it asks with.
+  let sshLogin: { name: string; asks: string } | null = null;
   let ended = false;
   let streaming: ReturnType<typeof setInterval> | undefined;
   // Whether the cursor sits right after the prompt: what the box prints then (a log, `wall`)
@@ -882,9 +893,17 @@ function fakeSession(
     clearInterval(streaming);
     setTimeout(() => events.exit({ code, closed }), 0);
   };
-  // Inside a pretend `ssh NAME` (with `marks`): NAME's own prompt, unmarked, until `exit`.
+  // Inside a pretend `ssh NAME`: NAME's own prompt (marked with `innerMarks`), until `exit`.
   let nested: string | null = null;
-  const promptOf = () => (nested !== null ? `${nested}$ ` : extra.marks ? `\x1b]133;A\x07${host}$ \x1b]133;B\x07` : `${host}$ `);
+  // roster's hook line, once the shell has run it (ticket 120): its marks carry this token.
+  let token: string | null = null;
+  const marksHere = () => (nested === null ? extra.marks || token !== null : extra.innerMarks);
+  const mark = (m: string) => `\x1b]133;${m}${nested === null && token !== null ? `;roster=${token}` : ""}\x07`;
+  const marked = (p: string) => (marksHere() ? `${mark("A")}${p}${mark("B")}` : p);
+  const promptOf = () => marked(`${nested ?? host}$ `);
+  // A marked shell's first prompt comes after a D with no command before it, as roster's own hook,
+  // kitty's and VS Code's integrations print (the review's leak, ticket 120).
+  const firstPrompt = () => (marksHere() ? `\x1b]133;D;0\x07${promptOf()}` : promptOf());
   const prompt = `${host}$ `;
   // Like ssh, nothing is printed until the Host answers (the login takes `loginMs`).
   let loggedIn = false;
@@ -910,30 +929,58 @@ function fakeSession(
         if (password) {
           if (ch === "\x15") line = "";
           else if (ch !== "\r") line += ch;
-          else {
+          else if (sshLogin) {
+            const right = line === FAKE_LOGIN_PASSWORD;
+            line = "";
+            if (right) {
+              password = false;
+              nested = sshLogin.name;
+              sshLogin = null;
+              out(encode(`\r\nConnected to ${nested}\r\n${firstPrompt()}`));
+              atPrompt = true;
+            } else out(encode(`\r\nPermission denied, please try again.\r\n${sshLogin.asks}`));
+          } else {
             password = false;
             out(encode(line === FAKE_LOGIN_PASSWORD ? "\r\n[sudo ok]\r\n" : "\r\nSorry, try again.\r\n"));
             line = "";
-            if (extra.marks && nested === null) out(encode("\x1b]133;D;0\x07"));
+            if (marksHere()) out(encode(mark("D;0")));
             out(encode(promptOf()));
             atPrompt = true;
           }
           continue;
         }
         if (ch === "\r") {
-          if (extra.marks && nested === null) out(encode("\x1b]133;C\x07"));
-          out(encode("\r\n"));
-          const ssh = extra.marks && nested === null ? /^ssh\s+(\S+)/.exec(line.trim()) : null;
-          if (ssh) {
-            nested = ssh[1] ?? "";
+          const hook = nested === null ? /roster=([0-9a-f]{24})/.exec(line) : null;
+          if (hook) {
+            // roster's hook line: from now on this shell marks its prompts with the token.
+            token = hook[1] ?? null;
             line = "";
-            out(encode(`Connected to ${nested}\r\n${promptOf()}`));
+            out(encode(`\r\n${mark("D;0")}${promptOf()}`));
+            atPrompt = true;
+            continue;
+          }
+          if (marksHere()) out(encode(mark("C")));
+          out(encode("\r\n"));
+          const ssh = nested === null ? /^ssh\s+(?:(\S+)@)?(\S+)$/.exec(line.trim()) : null;
+          const reached = ssh ? (extra.reach?.(ssh[2] ?? "") ?? null) : null;
+          if (ssh && (marksHere() || reached)) {
+            line = "";
+            if (reached?.password) {
+              // ssh asks for the Host's password, as OpenSSH does: user@host as typed, lowercased.
+              sshLogin = { name: reached.name, asks: `${ssh[1] ?? reached.user}@${(ssh[2] ?? "").toLowerCase()}'s password: ` };
+              password = true;
+              out(encode(sshLogin.asks));
+              atPrompt = false;
+              continue;
+            }
+            nested = reached?.name ?? ssh[2] ?? "";
+            out(encode(`Connected to ${nested}\r\n${firstPrompt()}`));
             continue;
           }
           if (line.trim() === "exit" && nested !== null) {
             nested = null;
             line = "";
-            out(encode(`logout\r\n\x1b]133;D;0\x07${promptOf()}`));
+            out(encode(`logout\r\n${extra.marks || token !== null ? mark("D;0") : ""}${promptOf()}`));
             continue;
           }
           if (line.trim() === "exit") return end(0, false);
@@ -947,7 +994,7 @@ function fakeSession(
             continue;
           }
           line = "";
-          if (extra.marks && nested === null) out(encode("\x1b]133;D;0\x07"));
+          if (marksHere()) out(encode(mark("D;0")));
           out(encode(promptOf()));
           atPrompt = true;
         } else {
@@ -1631,6 +1678,11 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         log: scenario.logs?.[host],
         user: h.ssh.user,
         marks: scenario.shellMarks,
+        innerMarks: scenario.innerMarks,
+        reach: (target) => {
+          const to = hosts.find((x) => x.name.toLowerCase() === target.toLowerCase() || x.ip === target);
+          return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
+        },
       });
       const { atPasswordPrompt, ...handle } = session;
       // The core's prompt fill (ticket 119), as the Tauri build's: serve's refusals first (the Host
@@ -1638,31 +1690,39 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       // Login, no saved password, the vault), then the probe (an echoing prompt, or no prompt,
       // refuses), then the password typed into the Session.
       const connected = { ip: h.ip, port: h.ssh.port, user: h.ssh.user };
-      const fill = async (prompt: string) => {
+      // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
+      const fill = async (prompt: string, hop?: NestedHost) => {
         await wait();
-        const now = hosts.find((x) => x.name === host);
-        if (!now) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
-        if (now.ip !== connected.ip || now.ssh.port !== connected.port || now.ssh.user !== connected.user) {
+        const self = hosts.find((x) => x.name === host);
+        if (!self) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
+        if (self.ip !== connected.ip || self.ssh.port !== connected.port || self.ssh.user !== connected.user) {
           throw new BackendCallError(`won't fill on ${host}: ${host} changed since this Session connected`, FillRefusal.refused, {
             fix: "reconnect the Session, then fill",
           });
         }
-        const refusal = scenario.fillRefusals?.[host];
+        const now = hop ? hosts.find((x) => x.name === hop.host) : self;
+        if (!now) throw new BackendCallError(`unknown host '${hop?.host}'`, SessionRefusal.unknownHost);
+        if (hop && (now.ip !== hop.address || now.ssh.port !== hop.port || now.ssh.user !== hop.user)) {
+          throw new BackendCallError(`won't fill on ${now.name}: ${now.name} changed since this ssh started`, FillRefusal.refused, {
+            fix: "run the ssh again, then fill",
+          });
+        }
+        const refusal = scenario.fillRefusals?.[now.name];
         if (refusal) throw refuse(refusal);
         const line = prompt.trim();
         const sudoFor = /^\[sudo\] password for ([^\s:]+):$/.exec(line)?.[1];
         const sshFor = /^([^\s@']+)@([^\s@']+)'s password:$/.exec(line);
-        const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name, now.ip].includes(sshFor[2] ?? ""));
+        const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name.toLowerCase(), now.ip.toLowerCase()].includes((sshFor[2] ?? "").toLowerCase()));
         if (!own) {
-          throw new BackendCallError(`won't fill on ${host}: '${line}' isn't a prompt roster fills for ${now.ssh.user}@${host}`, FillRefusal.refused, {
+          throw new BackendCallError(`won't fill on ${now.name}: '${line}' isn't a prompt roster fills for ${now.ssh.user}@${now.name}`, FillRefusal.refused, {
             fix: "type that password yourself",
           });
         }
-        const sudoRef = sudoFor !== undefined ? scenario.sudoRefs?.[host] : undefined;
+        const sudoRef = sudoFor !== undefined ? scenario.sudoRefs?.[now.name] : undefined;
         const ref = sudoRef ?? now.ssh.auth;
         if (ref === "prompt" || (NO_PASSWORD_AUTHS as readonly string[]).includes(ref)) {
-          throw new BackendCallError(`${host}'s ssh Login has no saved password to fill (auth: ${ref})`, FillRefusal.nothingToFill, {
-            fix: `add a sudo: {auth: VAULT-REFERENCE} to ${host} in roster.yml for its own sudo password, or type it yourself`,
+          throw new BackendCallError(`${now.name}'s ssh Login has no saved password to fill (auth: ${ref})`, FillRefusal.nothingToFill, {
+            fix: `add a sudo: {auth: VAULT-REFERENCE} to ${now.name} in roster.yml for its own sudo password, or type it yourself`,
           });
         }
         if (vaultNow() === "locked") throw new BackendCallError(VAULT_LOCKED, SessionRefusal.vaultLocked);
@@ -1672,7 +1732,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           );
         }
         await handle.write(`\x15x\x15${FAKE_LOGIN_PASSWORD}\r`);
-        return { host };
+        return { host: now.name };
       };
       return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...handle, fill } : handle;
     },

@@ -665,8 +665,11 @@ export interface SessionHandle {
    * the password of the Host the Session was opened to and types it only if the prompt doesn't
    * echo; nothing of it comes back here, only the Host's name. Rejects with serve's code (130 a
    * prompt roster won't fill, 131 no saved password, the vault's 11, 12, 14, 31-35) or the core's
-   * refusal (it echoes, a key was typed meanwhile). Absent on a Quick Connect: no Login to fill. */
-  fill?(prompt: string): Promise<{ host: string }>;
+   * refusal (it echoes, a key was typed meanwhile). Absent on a Quick Connect: no Login to fill.
+   * `hop` (serve API 26, ticket 120): a nested ssh's Inventory Host, as roster resolved it from the
+   * command line; serve answers for that Host, and the core types it only if the Session printed
+   * `prompt` itself. */
+  fill?(prompt: string, hop?: NestedHost): Promise<{ host: string }>;
 }
 
 /** `session.prepare`'s error codes (docs/serve-api.md): the message is roster's, ready to show.
@@ -724,6 +727,19 @@ export const NO_PASSWORD_AUTHS = ["agent", "key", "none"] as const;
 
 /** The first `api_version` with `session.fill` (ticket 119): filling a password prompt. */
 export const FILL_API_VERSION = 25;
+
+/** The first `api_version` with `session.fill`'s `hop` (ticket 120): filling a nested ssh's
+ * prompt, or that Host's sudo, with that Host's Login. */
+export const NESTED_FILL_API_VERSION = 26;
+
+/** The Inventory Host a nested ssh went to and what roster resolved it to (`session.fill`'s
+ * `hop`). Never a password. */
+export interface NestedHost {
+  host: string;
+  address: string;
+  port: number;
+  user: string;
+}
 
 /** `session.fill`'s codes (docs/serve-api.md): rows 143 and 144 in docs/app/errors.md. */
 export const FillRefusal = {

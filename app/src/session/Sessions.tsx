@@ -9,7 +9,8 @@ import { ErrorPanel, type ProblemActions } from "../errors/ErrorPanel";
 import type { CommandLine } from "../keymap";
 import type { TerminalEnv, TerminalViewComponent } from "../terminal/TerminalView";
 import { Keys } from "../ui/Keys";
-import { tabFacts, type Tab, type Tabs, type TabsSnapshot } from "./tabs";
+import { tabFacts, type PasswordPrompt, type Tab, type Tabs, type TabsSnapshot } from "./tabs";
+import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
 
@@ -99,6 +100,7 @@ export function TabStrip({ snapshot, run }: TabStripProps) {
                 <span className="tab-name">{tab.label === tab.host ? tab.label : tab.label.slice(0, tab.host.length)}</span>
                 {tab.label !== tab.host && <span className="tab-tail">{tab.label.slice(tab.host.length)}</span>}
               </span>
+              {tab.hop && <HopCrumb hop={tab.hop} spoken />}
               {status && <span className="tab-status"> {status}</span>}
             </button>
             <button
@@ -424,38 +426,40 @@ function SaveOffer({
  * tell whether the Session is still on the Host. A quiet note in the pane's corner, as "Save to
  * vault": it never takes the terminal's focus (its button keeps it there), and it goes as soon as
  * the prompt does. When the shell's marks say the prompt may be another Host's, it says so and
- * offers nothing. */
+ * offers nothing. A nested ssh's prompt (ticket 120) names the Host that ssh went to. */
 function FillOffer({
   host,
-  elsewhere,
-  marked,
+  prompt,
   fillKeys,
   leader,
   run,
 }: {
+  /** The Session's own Host. */
   host: string;
-  elsewhere: string | null;
-  /** The shell's marks said what runs; without them roster can't tell you're still on the Host. */
-  marked: boolean;
+  prompt: PasswordPrompt;
   fillKeys: string | null;
   leader: string;
   run(line: CommandLine): void;
 }) {
-  if (elsewhere !== null) {
+  const whose = prompt.kind === "ssh" ? "ssh's" : "sudo's";
+  if (prompt.elsewhere !== null) {
     return (
       <div className="session-note fill-offer elsewhere" role="status" aria-label="Password prompt">
-        <span>sudo's password prompt: {elsewhere}. roster won't fill it.</span>
+        <span>
+          {whose} password prompt: {prompt.elsewhere}. roster won't fill it.
+        </span>
       </div>
     );
   }
+  const to = prompt.hop?.host ?? host;
   return (
     <div className="session-note save-offer fill-offer" role="status" aria-label="Password prompt">
       <span>
-        sudo's password prompt · fill <span className="connect-name">{host}</span>'s from the vault
-        {!marked && (
+        {whose} password prompt · fill <span className="connect-name">{to}</span>'s from the vault
+        {!prompt.marked && (
           <>
             {" "}
-            <span className="muted">(roster can't tell whether you're still on {host})</span>
+            <span className="muted">(roster can't tell whether you're still on {host}: without the shell's marks a nested shell can't be ruled out)</span>
           </>
         )}
       </span>
@@ -573,8 +577,12 @@ export function SessionPanes({
               <SaveOffer host={tab.host} saveKeys={saveKeys} leader={leader} run={run} dismiss={() => tabs.dismissSave(tab.id)} />
             )}
             {canFill && tab.prompt && !tab.quick && s.state === "open" && (
-              <FillOffer host={tab.host} elsewhere={tab.prompt.elsewhere} marked={tab.prompt.marked} fillKeys={fillKeys} leader={leader} run={run} />
+              <FillOffer host={tab.host} prompt={tab.prompt} fillKeys={fillKeys} leader={leader} run={run} />
             )}
+            {/* Where a nested ssh took the Session (ticket 120), said once when it changes. */}
+            <span className="visually-hidden" role="status" aria-label="Where this Session is">
+              {tab.hop ? `Now on ${tab.hop.to}${tab.hop.known ? "" : ", not a Host roster can resolve"}` : ""}
+            </span>
             {s.state === "ended" && s.problem && (
               <div className="session-error overlay">
                 <ErrorPanel title="Session ended" problem={s.problem} rows={errorRows} actions={actions} />

@@ -23,7 +23,7 @@ KB = 1000
 # its types (both bundled for :help) having grown by the typed serve results; about 10 % above that.
 BUDGETS = {
     "js": {"raw": 2410, "gzip": 720},
-    "css": {"raw": 83, "gzip": 15.5},
+    "css": {"raw": 85, "gzip": 15.5},
 }
 
 

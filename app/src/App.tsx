@@ -44,6 +44,7 @@ import {
   QUICK_CONNECT_API_VERSION,
   SAVE_TO_VAULT_API_VERSION,
   FILL_API_VERSION,
+  NESTED_FILL_API_VERSION,
   SIGN_OUT_API_VERSION,
   type VaultAccount,
   type VaultSettings,
@@ -911,12 +912,22 @@ function Workspace({
   // A prompt fill (ticket 119): Sessions to Hosts are watched for sudo's prompt for their login
   // user, only on a roster that can fill one.
   const canFill = apiVersion >= FILL_API_VERSION;
+  // A nested ssh (ticket 120): the watch follows it to an Inventory Host (the breadcrumb), read at
+  // the shell's C mark against the Inventory as it is then; filling that Host's prompts needs API 26.
+  const canNestedFill = apiVersion >= NESTED_FILL_API_VERSION;
+  const inventoryNow = useRef<readonly Host[]>([]);
+  inventoryNow.current = hosts?.hosts ?? [];
   useEffect(
     () =>
       tabs.setFillPrompts(
-        canFill ? { userOf: (host) => hostByName.get(host)?.ssh.user ?? null, watch: (size, user) => new PromptWatch(size, user) } : null,
+        canFill
+          ? {
+              userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
+              watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: () => inventoryNow.current, fill: canNestedFill }, nonce),
+            }
+          : null,
       ),
-    [tabs, canFill, hostByName],
+    [tabs, canFill, canNestedFill, hostByName],
   );
   const canEdit = apiVersion >= EDIT_API_VERSION;
   const canPublish = apiVersion >= PUBLISH_API_VERSION;

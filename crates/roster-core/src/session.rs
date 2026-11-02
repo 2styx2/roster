@@ -12,7 +12,7 @@
 use crate::detect::Target;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -50,10 +50,12 @@ pub struct LoginAs {
 }
 
 /// The Inventory Host a Session is to, and what it connected to: all a prompt fill may ask serve
-/// about ([`SessionManager::fill`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// about ([`SessionManager::fill`]). Also a nested ssh's Host, as the frontend resolved it
+/// (ticket 120), read from `{host, address, port, user}`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FillTarget {
     pub host: String,
+    #[serde(flatten)]
     pub login: LoginAs,
 }
 
@@ -248,6 +250,9 @@ struct Running {
     /// while it checked the prompt.
     output: Arc<AtomicU64>,
     writes: AtomicU64,
+    /// Its last [`TAIL`] bytes of output, as the PTY gave them: a nested fill's prompt must end
+    /// them ([`SessionManager::at_prompt`]).
+    tail: Arc<Mutex<VecDeque<u8>>>,
 }
 
 impl Running {
@@ -329,6 +334,7 @@ impl SessionManager {
             fill_as: cmd.fill_as.clone(),
             output: Arc::new(AtomicU64::new(0)),
             writes: AtomicU64::new(0),
+            tail: Arc::new(Mutex::new(VecDeque::with_capacity(TAIL))),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(id, Arc::clone(&running));
@@ -341,11 +347,13 @@ impl SessionManager {
         let (drained_tx, drained) = mpsc::channel::<()>();
         let out = Arc::clone(&gate);
         let read = Arc::clone(&running.output);
+        let tail = Arc::clone(&running.tail);
         let reader_stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name(format!("session-{id}-read"))
             .spawn(move || {
                 reader.pump(&reader_stop, |chunk| {
+                    keep_tail(&tail, &chunk);
                     read.fetch_add(1, Ordering::SeqCst);
                     out.output(chunk)
                 });
@@ -444,6 +452,45 @@ impl SessionManager {
         Ok(target.host)
     }
 
+    /// Whether the Session's output, read as text, ends with `text`: the cursor sits right after
+    /// it, as at a prompt (ticket 120). Its last [`TAIL`] bytes are read with escape sequences
+    /// taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every run of
+    /// whitespace as one space, on both sides; trailing whitespace doesn't count. So a prompt
+    /// redrawn with colours or cursor moves still counts, and one with other output after it doesn't.
+    pub fn at_prompt(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
+        let running = self.get(id)?;
+        let tail = running.tail.lock().unwrap();
+        let (a, b) = tail.as_slices();
+        let mut seen = Vec::with_capacity(a.len() + b.len());
+        seen.extend_from_slice(a);
+        seen.extend_from_slice(b);
+        let hay = plain_text(&seen);
+        let needle = plain_text(text.as_bytes());
+        let needle = needle.trim_ascii();
+        Ok(!needle.is_empty() && hay.trim_ascii_end().ends_with(needle))
+    }
+
+    /// [`SessionManager::fill`] for a nested ssh's prompt (ticket 120, decision Q131), whose Host
+    /// the frontend names: only when the Session's output ends with `prompt` itself
+    /// ([`SessionManager::at_prompt`]), so the frontend's word alone can't send another Host's
+    /// password to a Session that isn't asking for it ([`FillError::NotPrinted`], before anything
+    /// is looked up).
+    /// Returns the name of `hop`, the Host whose password it typed.
+    pub fn fill_at_prompt<E>(
+        &self,
+        id: SessionId,
+        wait: Duration,
+        prompt: &str,
+        hop: &FillTarget,
+        lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
+    ) -> Result<String, FillError<E>> {
+        match self.at_prompt(id, prompt.trim()) {
+            Ok(true) => self.fill(id, wait, lookup).map(|_| hop.host.clone()),
+            Ok(false) => Err(FillError::NotPrinted),
+            Err(_) => Err(FillError::NotFound(id)),
+        }
+    }
+
     pub fn resize(&self, id: SessionId, size: Size) -> Result<(), SessionError> {
         let running = self.get(id)?;
         let m = running.master.lock().unwrap();
@@ -491,6 +538,64 @@ impl SessionManager {
 /// echoes, the letter is printed, which is how roster tells.
 pub const PROBE: &[u8] = b"\x15x\x15";
 
+/// How much of a Session's latest output the core keeps, for [`SessionManager::at_prompt`].
+pub const TAIL: usize = 4096;
+
+/// `bytes` as the text a screen shows, for [`SessionManager::at_prompt`]: CSI, OSC and other escape
+/// sequences out (a cursor-forward, `ESC [ n C`, as one space), control characters as spaces, and
+/// each run of whitespace as one space. A sequence cut off at the start of the tail is dropped.
+fn plain_text(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let space = |out: &mut Vec<u8>| {
+        if out.last() != Some(&b' ') {
+            out.push(b' ');
+        }
+    };
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x1b {
+            match bytes.get(i + 1) {
+                Some(b'[') => {
+                    let mut j = i + 2;
+                    while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                        j += 1;
+                    }
+                    if bytes.get(j) == Some(&b'C') {
+                        space(&mut out);
+                    }
+                    i = j + 1;
+                }
+                Some(b']') | Some(b'P') | Some(b'_') | Some(b'^') => {
+                    let mut j = i + 2;
+                    while j < bytes.len() && bytes[j] != 0x07 && !(bytes[j] == 0x1b && bytes.get(j + 1) == Some(&b'\\'))
+                    {
+                        j += 1;
+                    }
+                    i = if bytes.get(j) == Some(&0x07) { j + 1 } else { j + 2 };
+                }
+                _ => i += 2,
+            }
+            continue;
+        }
+        if c <= b' ' || c == 0x7f {
+            space(&mut out);
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
+fn keep_tail(tail: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
+    let mut t = tail.lock().unwrap();
+    let chunk = &chunk[chunk.len().saturating_sub(TAIL)..];
+    let over = (t.len() + chunk.len()).saturating_sub(TAIL);
+    t.drain(..over);
+    t.extend(chunk);
+}
+
 /// A secret on its way from serve to a PTY: no Debug value, no Display, no Clone, no Serialize,
 /// and its bytes are overwritten when it's dropped (best effort: copies serve's answer passed
 /// through on the way here, such as the JSON line it came in, aren't).
@@ -532,6 +637,9 @@ pub enum FillError<E> {
     Echoes,
     /// A key was sent to the Session while roster checked the prompt.
     Typed,
+    /// The Session's output doesn't end with the nested fill's prompt (ticket 120). Nothing was
+    /// looked up or typed.
+    NotPrinted,
     /// Writing to the PTY failed.
     Io(String),
 }
@@ -546,6 +654,9 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
                 "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it",
             ),
             FillError::Typed => f.write_str("a key was typed while roster checked the prompt, so roster didn't fill it"),
+            FillError::NotPrinted => f.write_str(
+                "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
+            ),
             FillError::Io(m) => f.write_str(m),
         }
     }
