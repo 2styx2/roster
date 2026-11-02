@@ -1088,14 +1088,30 @@ fn the_starter_file_is_the_example_commented_out_and_loads_as_the_defaults() {
             "not commented out: {line:?}"
         );
     }
-    // Every option of the example is in it, ready to uncomment.
-    assert!(starter.contains("--   theme = \"auto\","));
-    assert!(starter.contains("--     size = \"13pt\","));
+    // Every option of the example is in it, one line each, ready to uncomment.
+    assert!(starter.contains("\n-- roster.o.theme = \"auto\"\n"));
+    assert!(starter.contains("\n-- roster.o.terminal.size = \"13pt\"\n"));
+    // Saving doesn't apply it (decision Q58): :source does.
+    let header: String = starter
+        .lines()
+        .take_while(|l| l.starts_with("--") && !l.trim().eq("--"))
+        .collect();
+    assert!(header.contains(":source"), "{header}");
+    assert!(!header.contains("at once"), "{header}");
     let dir = with_init("starter", &starter);
     let mut loaded = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
     loaded.lines.clear();
     loaded.set.clear();
     assert_eq!(loaded, Config::default());
+    // One line uncommented is a working Config on its own.
+    let one = starter.replace(
+        "\n-- roster.o.terminal.size = \"13pt\"\n",
+        "\nroster.o.terminal.size = \"16pt\"\n",
+    );
+    let dir = with_init("starter-one-line", &one);
+    let loaded = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(loaded.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(loaded.set, ["terminal.size"]);
 }
 
 #[test]

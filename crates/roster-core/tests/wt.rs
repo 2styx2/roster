@@ -94,7 +94,10 @@ fn the_block_loads_as_the_profile_and_defines_a_theme_for_its_scheme() {
     assert!(!block.contains("roster.o.theme"), "{block}");
     // Written as init.lua's documented style: one `roster.o` line per option.
     assert!(block.contains("\nroster.o.terminal.size = \"12.5pt\"\n"), "{block}");
-    assert!(block.contains("\nroster.o.terminal.cursor_style = \"bar\"\n"), "{block}");
+    assert!(
+        block.contains("\nroster.o.terminal.cursor_style = \"bar\"\n"),
+        "{block}"
+    );
     assert!(!block.contains("roster.set("), "{block}");
     let theme = &c.themes["wt-my-night"];
     assert_eq!(theme.label.as_deref(), Some("My Night (Windows Terminal)"));
