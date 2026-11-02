@@ -387,7 +387,8 @@ export function shellHooksOn(init: boolean | null, host: boolean | null | undefi
 /** A held start of the token goes out dashed when its hold times out if it follows `roster=` or is
  * at least this long; a shorter one, anywhere else, goes out as it was (ticket 137, Q136). */
 const PLAUSIBLE = 4;
-/** The most `TokenMask` holds back: past it, what's held goes out as if its 50 ms were up. */
+/** The most `TokenMask` holds back: past it, what's held goes out with every start of the token
+ * in it dashed, however short (a bound fails toward masking). */
 const MASK_HOLD_MAX = 4096;
 const LEAD = encoder.encode("roster=");
 
@@ -447,8 +448,8 @@ function escStep(phase: number, c: number): number {
  * still followed, so the rest of the token is dashed. So at most its first 3 characters (12 of
  * its 96 bits), only without `roster=` before them and only when the output pauses for 50 ms
  * right after them, ever go out; ordinary output reaches Plugins unchanged. A hold is bounded:
- * past 4 KB it goes out as when its time is up. Output with nothing of it passes as the same
- * bytes, uncopied. */
+ * past 4 KB (a long string inside the token) every start held goes out dashed, however short,
+ * and is still followed. Output with nothing of it passes as the same bytes, uncopied. */
 export class TokenMask {
   private readonly token: Uint8Array;
   private states: Partial[] = [];
@@ -541,18 +542,21 @@ export class TokenMask {
       else if (c !== 13 && c !== 10) this.states.splice(n, 1);
     }
     if (c === t[0]) this.states.push({ k: 1, at: [offset], lead: this.leadAt(data, j), committed: false, skip: 0 });
-    if (this.held.length > MASK_HOLD_MAX) this.settle();
+    // Past the bound it fails toward masking: every start held goes out dashed, however short.
+    if (this.held.length > MASK_HOLD_MAX) this.settle(true);
     // Out goes everything before the earliest start still held.
     let from = Infinity;
     for (const s of this.states) if (!s.committed && s.at.length > 0) from = Math.min(from, s.at[0] ?? Infinity);
     this.release(Math.min(this.held.length, from - this.heldBase), emit);
   }
 
-  /** The hold is over: each start held is taken as the token (dashed) or let go as it was. */
-  private settle() {
+  /** The hold is over: each start held is taken as the token (dashed) or, when its 50 ms are up
+   * and it's short and not after `roster=`, let go as it was; `bound`: the hold passed its size
+   * bound, and every start held is taken as the token. */
+  private settle(bound = false) {
     for (const s of this.states) {
       if (s.committed || s.at.length === 0) continue;
-      if (s.lead || s.k >= PLAUSIBLE) {
+      if (bound || s.lead || s.k >= PLAUSIBLE) {
         s.committed = true;
         for (const at of s.at) this.dash(at);
       }

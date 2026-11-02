@@ -386,6 +386,7 @@ describe("TokenMask: Plugins never see the Session's token (ticket 120)", () => 
   // shorter than 4 characters goes out as it was when the hold times out (it looks like ordinary
   // output then: an echoed key, a counter, a hex id), so at most its first 3 hex characters, 12 of
   // its 96 bits, and only when the output pauses for 50 ms right after them; the rest is dashed.
+  // That pause is the only case: a hold that passes its 4 KB bound dashes every start it holds.
   describe("every way a read can split it, the hold timing out between reads", () => {
     const run = (nonce: string, chunks: Uint8Array[], timeOut: boolean) => {
       const mask = new TokenMask(nonce);
@@ -510,6 +511,27 @@ describe("TokenMask: Plugins never see the Session's token (ticket 120)", () => 
         sent += out.length;
       }
       expect(sent).toBe(11 + 2000 * move.length);
+    });
+
+    // Re-review of #266: hitting the 4 KB bound fails toward masking, for a short start too, and
+    // the start is still followed, so none of the token goes out however long the string inside it.
+    it.each([
+      ["an OSC", "\x1b]0;", "\x07"],
+      ["a DCS", "\x1bP", "\x1b\\"],
+      ["an APC", "\x1b_", "\x1b\\"],
+    ])("dashes a short start when %s string inside it passes the bound", (_, open, close) => {
+      for (const n of [1, 2, 3]) {
+        const text = `x ${NONCE.slice(0, n)}${open}${"t".repeat(5000)}${close}${NONCE.slice(n)} done`;
+        for (const step of [text.length, 700, 1]) {
+          const mask = new TokenMask(NONCE);
+          let out = "";
+          for (let i = 0; i < text.length; i += step) out += dec.decode(mask.mask(enc.encode(text.slice(i, i + step))));
+          out += dec.decode(mask.flush());
+          expect(out.length).toBe(text.length);
+          expect(out.startsWith(`x ${"-".repeat(n)}`), `${n} chars, step ${step}`).toBe(true);
+          expect(out.endsWith(`${"-".repeat(24 - n)} done`), `${n} chars, step ${step}`).toBe(true);
+        }
+      }
     });
 
     it("bounds a hold that never resolves: a sequence that never ends goes out, the token's part dashed", () => {
