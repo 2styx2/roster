@@ -101,6 +101,44 @@ describe("Copying and pasting", () => {
     expect(term.sent).toEqual(["10.19.1.2"]);
   });
 
+  // Windows Terminal (ControlInteractivity.cpp, PointerPressed): while a program has mouse
+  // reporting on, a click without Shift is the program's (_canSendVTMouseInput), right-click too.
+  it("with mouse reporting on and nothing selected, right-click is the program's: no paste (Windows Terminal)", async () => {
+    const platform = memoryPlatform({ clipboard: "rm -rf ~" });
+    const term = fakeTerm("");
+    await rightClick(term, platform.clipboard, { programHasMouse: true });
+    expect(term.sent).toEqual([]);
+    expect(platform.clipboardText()).toBe("rm -rf ~");
+  });
+
+  it("Shift+right-click under mouse reporting pastes as without it (the program never sees it)", async () => {
+    const term = fakeTerm("");
+    await rightClick(term, memoryPlatform({ clipboard: "uptime" }).clipboard, { programHasMouse: false });
+    expect(term.sent).toEqual(["uptime"]);
+  });
+
+  it("a Shift+drag selection under mouse reporting: right-click copies it and clears it", async () => {
+    const platform = memoryPlatform({ clipboard: "old" });
+    const term = fakeTerm("10.0.0.5 esx-02");
+    await rightClick(term, platform.clipboard, { programHasMouse: true });
+    expect(platform.clipboardText()).toBe("10.0.0.5 esx-02");
+    expect(term.hasSelection()).toBe(false);
+    expect(term.sent).toEqual([]);
+  });
+
+  it("copies each line without the spaces after its end, as Windows Terminal trims them", async () => {
+    const platform = memoryPlatform({ clipboard: "" });
+    expect(copySelection(fakeTerm("ab        \nxy     z   \n  indented  "), platform.clipboard)).toBe(true);
+    await Promise.resolve();
+    expect(platform.clipboardText()).toBe("ab\nxy     z\n  indented");
+  });
+
+  it("a selection of nothing but spaces copies nothing", () => {
+    const platform = memoryPlatform({ clipboard: "kept" });
+    expect(copySelection(fakeTerm("     "), platform.clipboard)).toBe(false);
+    expect(platform.clipboardText()).toBe("kept");
+  });
+
   it("a failing clipboard doesn't throw (the WebView can refuse it)", async () => {
     const broken = { readText: () => Promise.reject(new Error("denied")), writeText: () => Promise.reject(new Error("denied")) };
     expect(copySelection(fakeTerm("x"), broken)).toBe(true);

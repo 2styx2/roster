@@ -10,6 +10,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **Copying in Claude Code, vim and tmux works** (#293): a program that turns on mouse reporting draws its own selection and copies it with OSC 52, which roster now puts on the clipboard, as Windows Terminal does, so a plain drag in Claude Code copies. Write only, from the Session on screen, text up to 1 MiB; `roster.o.terminal.osc52 = false` turns it off (decision Q149). While such a program has mouse reporting on, a right-click with nothing selected is the program's and no longer pastes; Shift+drag and Shift+right-click are the terminal's own, as before. Copied lines drop the spaces a program padded them with, as in Windows Terminal. See [Copy and paste](app/keyboard.md#copy-and-paste).
 - **The fill key at sudo with `pwfeedback` doesn't work on Windows yet:** v0.4.0's fill takes sudo's `*` as no echo, but Windows' ConPTY redraws it in a form the check doesn't accept yet, so the fill is refused ("the prompt printed what roster typed to check it"). It fails safe: nothing but roster's check was typed, no Enter, so sudo counts no attempt; type that password yourself for now. Each such refusal now writes one line to the app's log (stderr) saying what the prompt drew, with no text but `*` and space, so the real form can be added. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
 
 ## v0.4.0

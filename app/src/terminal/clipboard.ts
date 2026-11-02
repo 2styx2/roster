@@ -13,9 +13,17 @@ export interface Selectable {
   paste(text: string): void;
 }
 
+/** The selection as it's copied: each line without the spaces after its end, as Windows
+ * Terminal trims them (TextBuffer's CopyRequest, trimTrailingWhitespace). A full-screen program
+ * pads its rows with spaces, which xterm keeps. A line that wrapped comes as one line, so the
+ * spaces where it wrapped stay; xterm ends lines with \r\n on Windows. */
+export function copiedText(selection: string): string {
+  return selection.replace(/ +(?=\r?\n)| +$/g, "");
+}
+
 /** Copies the selection; false (and the clipboard untouched) when nothing is selected. */
 export function copySelection(term: Selectable, clipboard: Clipboard): boolean {
-  const text = term.getSelection();
+  const text = copiedText(term.getSelection());
   if (text) void clipboard.writeText(text).catch(() => {});
   return Boolean(text);
 }
@@ -39,12 +47,16 @@ export async function pasteClipboard(term: Selectable, clipboard: Clipboard): Pr
   }
 }
 
-/** Right-click: copy the selection and clear it, or paste when there's none. */
-export async function rightClick(term: Selectable, clipboard: Clipboard): Promise<void> {
+/** Right-click: copy the selection and clear it, or paste when there's none. With
+ * `programHasMouse` (a program turned mouse reporting on, and Shift isn't held) and nothing
+ * selected, it's the program's, as in Windows Terminal: xterm has sent it the click, and nothing
+ * is pasted (decision Q149). A selection (made with Shift+drag) is still copied. */
+export async function rightClick(term: Selectable, clipboard: Clipboard, { programHasMouse = false }: { programHasMouse?: boolean } = {}): Promise<void> {
   if (term.hasSelection()) {
     copySelection(term, clipboard);
     term.clearSelection();
     return;
   }
+  if (programHasMouse) return;
   await pasteClipboard(term, clipboard);
 }
