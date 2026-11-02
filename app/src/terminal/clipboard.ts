@@ -37,11 +37,26 @@ export function copyIfSelected(term: Selectable, clipboard: Clipboard): boolean 
   return true;
 }
 
+/** A paste without its control characters, as Windows Terminal pastes (ControlCore::PasteText,
+ * FilterStringForPaste with ControlCodes): every C0 but tab, CR and LF goes, and DEL and C1. So
+ * text holding ESC can't end a bracketed paste early (`ESC [ 201 ~`) and run the rest as typed,
+ * nor send a program keys of its own. Bracketed paste or not, as Windows Terminal. */
+export function pasteFilter(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+}
+
+/** Pastes `text` into the terminal, filtered (pasteFilter): every paste goes through here. */
+export function pasteText(term: Pick<Selectable, "paste">, text: string): void {
+  const filtered = pasteFilter(text);
+  if (filtered) term.paste(filtered);
+}
+
 /** Pastes the clipboard's text into the terminal. A refused or empty clipboard does nothing. */
 export async function pasteClipboard(term: Selectable, clipboard: Clipboard): Promise<void> {
   try {
     const text = await clipboard.readText();
-    if (text) term.paste(text);
+    if (text) pasteText(term, text);
   } catch {
     // the WebView refused the clipboard: nothing to paste
   }

@@ -161,6 +161,14 @@ describe("What a paste sends to the shell (xterm.js)", () => {
     expect(await sent("echo one\necho two\r\necho three", false)).toBe("echo one\recho two\recho three");
   });
 
+  it("takes control characters out of it, so the end mark in a paste can't end it early (right-click too)", async () => {
+    const out = await sent("safe\x1b[201~rm -rf /tmp/x\n", true);
+    expect(out).toBe("\x1b[200~safe[201~rm -rf /tmp/x\r\x1b[201~");
+    const term = fakeTerm();
+    await rightClick(term, memoryPlatform({ clipboard: "x\x1b[201~y" }).clipboard);
+    expect(term.sent).toEqual(["x[201~y"]);
+  });
+
   it("wraps it in bracketed-paste marks when the shell asked for them, so it doesn't run line by line", async () => {
     expect(await sent("echo one\necho two\n", true)).toBe("\x1b[200~echo one\recho two\r\x1b[201~");
   });

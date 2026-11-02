@@ -259,6 +259,50 @@ describe("A paste event (the Edit menu, or a tool pasting without a key)", () =>
   });
 });
 
+// Windows Terminal takes every control character but tab, CR and LF out of a paste
+// (ControlCore::PasteText, FilterStringForPaste with ControlCodes), so a paste holding the
+// bracketed-paste end mark can't end the paste early and run what follows as typed.
+describe("A paste can't carry control characters to the program", () => {
+  const evil = "safe\x1b[201~rm -rf /tmp/x\n";
+  const once = (s: string) => s.split("\x1b[201~").length - 1;
+
+  it("Ctrl+V's paste event: ESC is taken out, so only roster's own end mark ends the paste", async () => {
+    const { t, sent, textarea } = open();
+    await brackets(t);
+    ctrlV(textarea, evil);
+    await settle();
+    expect(sent).toEqual(["\x1b[200~safe[201~rm -rf /tmp/x\r\x1b[201~"]);
+    expect(once(sent.join(""))).toBe(1);
+  });
+
+  it.each([
+    ["Ctrl+Shift+V", "v", { ctrl: true, shift: true }, "KeyV"],
+    ["Shift+Insert", "Insert", { shift: true }, "Insert"],
+  ] as const)("%s: the same", async (_, key, mods, code) => {
+    const { t, sent, textarea, platform } = open();
+    await brackets(t);
+    await platform.clipboard.writeText(evil);
+    press(textarea, key, mods, "keydown", false, code);
+    await settle();
+    await settle();
+    expect(sent).toEqual(["\x1b[200~safe[201~rm -rf /tmp/x\r\x1b[201~"]);
+  });
+
+  it("without bracketed paste too, as Windows Terminal: NUL, ^C, DEL and C1 go, tab and line ends stay", async () => {
+    const { sent, textarea } = open();
+    pasteEvent(textarea, "a\tb\x00\x03\x7f\x9b31m\r\nc\u00e9\u65e5");
+    await settle();
+    expect(sent).toEqual(["a\tb31m\rc\u00e9\u65e5"]);
+  });
+
+  it("a paste of nothing but control characters sends nothing", async () => {
+    const { sent, textarea } = open();
+    pasteEvent(textarea, "\x1b\x1b");
+    await settle();
+    expect(sent).toEqual([]);
+  });
+});
+
 describe("AltGr (Ctrl+Alt on Windows) types its character", () => {
   it("AltGr+A (ą on a Polish layout) isn't taken for a Ctrl+Alt+a binding by its physical key", async () => {
     const { searches, textarea } = open({ overrides: { terminal: { "Ctrl+Alt+a": "terminal.search" } } });
