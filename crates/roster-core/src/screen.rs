@@ -55,6 +55,149 @@ struct MaskWatch {
     /// Anything else: another character (a space aside), a line feed, a tab, a control or escape sequence that
     /// isn't a cursor move, an erase within the line or the cursor's hide and show, a resize.
     other: bool,
+    /// What the parser saw, for the log when it isn't a mask (ticket 155): [`Drawn`].
+    seen: Vec<Seen>,
+    /// What it saw past [`SEEN_MAX`].
+    more: usize,
+    /// The kind of the last thing seen (kept or not), so a run of text is one.
+    last: Option<Kind>,
+}
+
+/// The most things [`Drawn`] names; past it, it says how many more.
+const SEEN_MAX: usize = 64;
+/// The most of a CSI's parameters [`Drawn`] shows.
+const SEEN_PARAMS: usize = 16;
+
+/// One thing a fill's probe drew, as the core's screen parsed it (ticket 155): never the text of
+/// a character other than `*` and space, nor an escape string's contents, only how many.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Seen {
+    Star,
+    Space,
+    /// A run of this many other printed characters.
+    Text(usize),
+    /// A control character.
+    Ctl(u8),
+    /// An escape sequence that isn't a CSI or a string: the bytes after ESC.
+    Esc(Vec<u8>),
+    /// A CSI: its parameters (cut to [`SEEN_PARAMS`], or `None` past [`CSI_MAX`]) and its final
+    /// byte, none when another ESC cut it short.
+    Csi(Option<Vec<u8>>, Option<u8>),
+    /// An OSC, DCS, APC, PM or SOS string (its opening byte) of this many bytes.
+    Str(u8, usize),
+    Resize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Text,
+    Str,
+    Esc,
+    Other,
+}
+
+/// What a fill's probe drew between the probe and the check, for the app's log when the mask
+/// watch refused it (ticket 155, #284): each thing the core's screen parsed, in order (at most
+/// [`SEEN_MAX`]), and whether the cursor or its line ended other than they began. Printed text
+/// other than `*` and space shows only as how many characters (`text(3)`), an escape string only
+/// as its length (`OSC(12)`); a sequence's own parameters and command show (`CSI[?25l`). This is
+/// before any password is typed, but it's kept that narrow anyway.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Drawn {
+    seen: Vec<Seen>,
+    more: usize,
+    /// The cursor (row, column, from 1) when the probe went and at the check, if they differ.
+    moved: Option<((usize, usize), (usize, usize))>,
+    line_changed: bool,
+    /// Bytes the Session printed after the prompt check and before the probe (the fill sets it).
+    pub(crate) before: u64,
+}
+
+/// What [`Screen::end_mask_watch`] found.
+pub(crate) struct Watched {
+    /// sudo's `pwfeedback` mask and its erasure, and nothing else.
+    pub(crate) masked: bool,
+    /// What was drawn, for the log.
+    pub(crate) drawn: Drawn,
+}
+
+impl std::fmt::Display for Drawn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.seen.is_empty() {
+            f.write_str("nothing")?;
+        }
+        for (i, seen) in self.seen.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            match seen {
+                Seen::Star => f.write_str("'*'")?,
+                Seen::Space => f.write_str("' '")?,
+                Seen::Text(n) => write!(f, "text({n})")?,
+                Seen::Ctl(b) => match b {
+                    0x00 => f.write_str("NUL")?,
+                    0x07 => f.write_str("BEL")?,
+                    0x08 => f.write_str("BS")?,
+                    b'\t' => f.write_str("HT")?,
+                    b'\n' => f.write_str("LF")?,
+                    0x0b => f.write_str("VT")?,
+                    0x0c => f.write_str("FF")?,
+                    b'\r' => f.write_str("CR")?,
+                    0x7f => f.write_str("DEL")?,
+                    b => write!(f, "0x{b:02x}")?,
+                },
+                Seen::Esc(bytes) => {
+                    f.write_str("ESC")?;
+                    for (i, &b) in bytes.iter().enumerate() {
+                        // Intermediates, then a final byte only if it's a command a terminal
+                        // knows (a letter could be text).
+                        let shown = (0x20..=0x2f).contains(&b)
+                            || (i == 0 && b"78DEHMNOZc=>\\".contains(&b))
+                            || (i > 0 && b"0AB<>=".contains(&b));
+                        write!(f, "{}", if shown { char::from(b) } else { '?' })?;
+                    }
+                }
+                Seen::Csi(params, fin) => {
+                    f.write_str("CSI[")?;
+                    match params {
+                        Some(p) => f.write_str(&String::from_utf8_lossy(&p[..p.len().min(SEEN_PARAMS)]))?,
+                        None => f.write_str("…")?,
+                    }
+                    if params.as_ref().is_some_and(|p| p.len() > SEEN_PARAMS) {
+                        f.write_str("…")?;
+                    }
+                    match fin {
+                        Some(b) => write!(f, "{}", char::from(*b))?,
+                        None => f.write_str("(cut)")?,
+                    }
+                }
+                Seen::Str(open, n) => {
+                    let name = match open {
+                        b']' => "OSC",
+                        b'P' => "DCS",
+                        b'_' => "APC",
+                        b'^' => "PM",
+                        _ => "SOS",
+                    };
+                    write!(f, "{name}({n})")?
+                }
+                Seen::Resize => f.write_str("resize")?,
+            }
+        }
+        if self.more > 0 {
+            write!(f, " and {} more", self.more)?;
+        }
+        if let Some(((r0, c0), (r1, c1))) = self.moved {
+            write!(f, "; the cursor moved from {r0}:{c0} to {r1}:{c1}")?;
+        }
+        if self.line_changed {
+            f.write_str("; the line changed")?;
+        }
+        if self.before > 0 {
+            write!(f, "; {} bytes printed before the probe", self.before)?;
+        }
+        Ok(())
+    }
 }
 
 impl Screen {
@@ -86,6 +229,9 @@ impl Screen {
             line: self.grid[self.row].clone(),
             stars: 0,
             other: false,
+            seen: Vec::new(),
+            more: 0,
+            last: None,
         });
     }
 
@@ -94,14 +240,72 @@ impl Screen {
     /// line (CSI `K`, `X`) and the cursor's hide and show (CSI `?25l`, `?25h`), with nothing else
     /// at all, and left the cursor where it was on a line that's exactly as it was: sudo's
     /// `pwfeedback` mask for the probe and its erasure, however a terminal (ConPTY) redraws it.
-    pub(crate) fn end_mask_watch(&mut self, stars: usize) -> bool {
+    /// [`Watched::drawn`] says what it saw, for the log.
+    pub(crate) fn end_mask_watch(&mut self, stars: usize) -> Watched {
         let Some(w) = self.mask.take() else {
-            return false;
+            return Watched {
+                masked: false,
+                drawn: Drawn::default(),
+            };
         };
-        !w.other
-            && w.stars <= stars
-            && (w.row, w.col, w.pending_wrap) == (self.row, self.col, self.pending_wrap)
-            && self.grid[self.row] == w.line
+        let stayed = (w.row, w.col, w.pending_wrap) == (self.row, self.col, self.pending_wrap);
+        let line_same = self.grid[self.row] == w.line;
+        Watched {
+            masked: !w.other && w.stars <= stars && stayed && line_same,
+            drawn: Drawn {
+                moved: (!stayed).then_some(((w.row + 1, w.col + 1), (self.row + 1, self.col + 1))),
+                // The prompt's own line, wherever the cursor went.
+                line_changed: self.grid.get(w.row) != Some(&w.line),
+                seen: w.seen,
+                more: w.more,
+                before: 0,
+            },
+        }
+    }
+
+    /// Notes something the watch saw (ticket 155), unless it has seen [`SEEN_MAX`] things.
+    fn saw(&mut self, seen: Seen) {
+        let Some(w) = &mut self.mask else { return };
+        w.last = Some(match seen {
+            Seen::Text(_) => Kind::Text,
+            Seen::Str(..) => Kind::Str,
+            Seen::Esc(_) => Kind::Esc,
+            _ => Kind::Other,
+        });
+        if w.seen.len() < SEEN_MAX {
+            w.seen.push(seen);
+        } else {
+            w.more += 1;
+        }
+    }
+
+    /// Adds to the last thing seen when it's a `kind` (a run of text, a string's length, an escape
+    /// sequence's bytes); returns whether it was. Past [`SEEN_MAX`] there's nothing to add to.
+    fn saw_more(&mut self, kind: Kind, b: u8) -> bool {
+        let Some(w) = &mut self.mask else { return true };
+        if w.last != Some(kind) {
+            return false;
+        }
+        if w.more == 0 {
+            match w.seen.last_mut() {
+                Some(Seen::Text(n) | Seen::Str(_, n)) => *n += 1,
+                Some(Seen::Esc(bytes)) if bytes.len() < 4 => bytes.push(b),
+                _ => {}
+            }
+        }
+        true
+    }
+
+    /// Notes a printed byte other than `*` and space: a character, or the rest of one (UTF-8).
+    fn saw_text(&mut self, b: u8) {
+        if (0x80..0xc0).contains(&b) {
+            if self.mask.as_ref().is_some_and(|w| w.last == Some(Kind::Text)) {
+                return;
+            }
+        } else if self.saw_more(Kind::Text, b) {
+            return;
+        }
+        self.saw(Seen::Text(1));
     }
 
     /// Notes something the mask watch doesn't allow.
@@ -122,6 +326,7 @@ impl Screen {
     /// The terminal was resized: the cursor's row stays on screen, cells beyond the new width go.
     pub(crate) fn resize(&mut self, rows: u16, cols: u16) {
         self.not_mask();
+        self.saw(Seen::Resize);
         let (rows, cols) = (usize::from(rows.max(1)), usize::from(cols.max(1)));
         let fit = |grid: &mut Vec<Vec<u8>>, row: &mut usize| {
             if *row >= rows {
@@ -175,6 +380,10 @@ impl Screen {
             Parse::Csi => {
                 if (0x40..=0x7e).contains(&b) {
                     self.parse = Parse::Ground;
+                    if self.mask.is_some() {
+                        let params = (!self.csi_long).then(|| self.csi.clone());
+                        self.saw(Seen::Csi(params, Some(b)));
+                    }
                     if !self.csi_long {
                         self.csi_exec(b);
                     } else {
@@ -182,6 +391,10 @@ impl Screen {
                     }
                 } else if b == 0x1b {
                     self.not_mask();
+                    if self.mask.is_some() {
+                        let params = (!self.csi_long).then(|| self.csi.clone());
+                        self.saw(Seen::Csi(params, None));
+                    }
                     self.parse = Parse::Esc;
                 } else if (0x20..=0x3f).contains(&b) {
                     if self.csi.len() < CSI_MAX {
@@ -192,6 +405,7 @@ impl Screen {
                 } else {
                     // A control inside the sequence, which a terminal would act on.
                     self.not_mask();
+                    self.saw(Seen::Ctl(b));
                 }
             }
             Parse::Str => {
@@ -199,6 +413,8 @@ impl Screen {
                     self.parse = Parse::Ground;
                 } else if b == 0x1b {
                     self.parse = Parse::StrEsc;
+                } else {
+                    self.saw_more(Kind::Str, b);
                 }
             }
             Parse::StrEsc => {
@@ -209,6 +425,9 @@ impl Screen {
                 }
             }
             Parse::Inter => {
+                if b != 0x1b {
+                    self.saw_more(Kind::Esc, b);
+                }
                 if !(0x20..=0x2f).contains(&b) {
                     self.parse = if b == 0x1b { Parse::Esc } else { Parse::Ground };
                 }
@@ -223,10 +442,20 @@ impl Screen {
                     if let Some(w) = &mut self.mask {
                         w.stars += 1;
                     }
+                    self.saw(Seen::Star);
                 }
                 // A space draws a blank: how sudo takes a `*` back.
-                0x1b | b'\r' | 0x08 | b' ' => {}
-                _ => self.not_mask(),
+                b' ' => self.saw(Seen::Space),
+                0x1b => {}
+                b'\r' | 0x08 => self.saw(Seen::Ctl(b)),
+                0x00..=0x1f | 0x7f => {
+                    self.not_mask();
+                    self.saw(Seen::Ctl(b));
+                }
+                _ => {
+                    self.not_mask();
+                    self.saw_text(b);
+                }
             }
         }
         match b {
@@ -258,6 +487,15 @@ impl Screen {
         self.parse = Parse::Ground;
         if b != b'[' {
             self.not_mask();
+        }
+        if self.mask.is_some() {
+            match b {
+                // Its CSI is noted whole, at its end.
+                b'[' => {}
+                b']' | b'P' | b'_' | b'^' | b'X' => self.saw(Seen::Str(b, 0)),
+                0x1b => self.saw(Seen::Esc(Vec::new())),
+                _ => self.saw(Seen::Esc(vec![b])),
+            }
         }
         match b {
             b'[' => {
@@ -522,7 +760,7 @@ mod tests {
             let mut s = screen(PROMPT);
             s.watch_mask();
             s.feed(out);
-            s.end_mask_watch(1)
+            s.end_mask_watch(1).masked
         };
         let yes: &[&[u8]] = &[
             b"",
@@ -568,8 +806,8 @@ mod tests {
         let mut s = screen(PROMPT);
         s.watch_mask();
         s.resize(24, 100);
-        assert!(!s.end_mask_watch(1));
-        assert!(!s.end_mask_watch(1));
+        assert!(!s.end_mask_watch(1).masked);
+        assert!(!s.end_mask_watch(1).masked);
     }
 
     #[test]
@@ -579,5 +817,67 @@ mod tests {
         assert!(!s.line_is("[sudo] password for ops:"));
         let s = screen(b"\x1b[1m[sudo]  password for ops:\x1b[m ");
         assert!(s.line_is("[sudo] password for ops:"));
+    }
+
+    /// Ticket 155 (#284): what the probe drew, for the log, when the mask watch refuses it: each
+    /// thing the parser saw, in order, with printed text other than `*` and space as a count.
+    #[test]
+    fn a_mask_watch_says_what_it_saw() {
+        const PROMPT: &[u8] = b"$ sudo -v\r\n[sudo] password for ops: ";
+        let drawn = |out: &[u8]| {
+            let mut s = screen(PROMPT);
+            s.watch_mask();
+            s.feed(out);
+            s.end_mask_watch(1).drawn.to_string()
+        };
+        assert_eq!(
+            drawn(b"\x1b[1m*\x1b[0m\x1b[?25l\x1b[26G\x1b[K\x1b[?25h"),
+            "CSI[1m '*' CSI[0m CSI[?25l CSI[26G CSI[K CSI[?25h"
+        );
+        assert_eq!(
+            drawn(b"*\x08 \x08\r\n"),
+            "'*' BS ' ' BS CR LF; the cursor moved from 2:26 to 3:1"
+        );
+        assert_eq!(drawn(b"x\x08 \x08"), "text(1) BS ' ' BS");
+        assert_eq!(drawn(b"**\x08\x08"), "'*' '*' BS BS; the line changed");
+        assert_eq!(
+            drawn(b"\x1b]0;my title\x07\x1b(B\x1b7\x07\t\x1b[2;3H"),
+            "OSC(10) ESC(B ESC7 BEL HT CSI[2;3H; the cursor moved from 2:26 to 2:3"
+        );
+        assert_eq!(drawn(b""), "nothing");
+        let mut s = screen(PROMPT);
+        s.watch_mask();
+        s.resize(24, 100);
+        assert_eq!(s.end_mask_watch(1).drawn.to_string(), "resize; the line changed");
+        // At most 64 things, then how many more.
+        let many = drawn(&b"\x1b[K".repeat(70));
+        assert!(many.ends_with("CSI[K and 6 more"), "{many}");
+        assert_eq!(many.matches("CSI[K").count(), 64, "{many}");
+    }
+
+    /// Ticket 155: printed text other than `*` and space never reaches the description, only how
+    /// many characters there were, whatever wraps it.
+    #[test]
+    fn a_mask_watch_never_says_the_text_it_saw() {
+        const PROMPT: &[u8] = b"[sudo] password for ops: ";
+        for out in [
+            &b"hunter2"[..],
+            b"*\x1b[1mhunter2\x1b[0m",
+            b"\x1b]0;hunter2\x07",
+            b"\x1bP+qhunter2\x1b\\",
+            b"\x1b_hunter2\x1b\\",
+            b"h\x1b[Ku\x1b[Kn\x1b[Kt",
+            "h\u{e9}llo w\u{f6}rld".as_bytes(),
+            b"\x1b[\x1bhunter2",
+            b"\x1b[1;hunter2",
+        ] {
+            let mut s = screen(PROMPT);
+            s.watch_mask();
+            s.feed(out);
+            let said = s.end_mask_watch(1).drawn.to_string();
+            for word in ["hunter", "unter", "llo", "rld", "ello"] {
+                assert!(!said.contains(word), "{:?} -> {said}", String::from_utf8_lossy(out));
+            }
+        }
     }
 }
