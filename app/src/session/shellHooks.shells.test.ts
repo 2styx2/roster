@@ -40,7 +40,9 @@ const ASK = /\x1b\[0?c|\x1b\[6n/g;
  * answer), answering the terminal questions it asks; what it printed, once it exits (or after 20 s). */
 function runPty(argv: string[], lines: string[]): Promise<string> {
   return new Promise((resolve) => {
-    const child = spawn("script", ["-qfec", argv.map(quote).join(" "), "/dev/null"], { env: ENV });
+    // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
+    const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
+    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV });
     let out = "";
     let answered = 0;
     const todo = [...lines];
