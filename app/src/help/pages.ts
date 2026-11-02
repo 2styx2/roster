@@ -128,7 +128,7 @@ export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[
         add({ tag, page: pg.id, anchor: tag, label: plain(b.text), path: pg.title, kind: "heading" });
       } else if (b.t === "defs") {
         for (const d of b.items) {
-          if (d.anchor) add({ tag: d.anchor, page: pg.id, anchor: d.anchor, label: d.anchor, path: plain(d.body).slice(0, 80) || pg.title, kind: "entry" });
+          if (d.anchor) add({ tag: d.anchor, page: pg.id, anchor: d.anchor, label: d.anchor, path: clip(plain(d.body), 80) || pg.title, kind: "entry" });
         }
       } else if (b.t === "table" && b.anchors) {
         for (const a of b.anchors) if (a) add({ tag: a, page: pg.id, anchor: a, label: a, path: pg.title, kind: "entry" });
@@ -144,6 +144,9 @@ export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[
   }
   return { topics: out, clashes };
 }
+
+/** `s` cut to at most `max` characters, ending with an ellipsis when it was cut. */
+const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
 
 /** A heading's topic: its anchor, which a page may write whole (`commands#hosts`) or as a slug. */
 export const headingTag = (page: string, anchor: string): string => (anchor.includes("#") ? anchor : `${page}#${anchor}`);

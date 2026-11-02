@@ -55,7 +55,7 @@ function parse(argv: string[]): Args {
   return args;
 }
 
-function chrome(): string {
+export function chrome(): string {
   const env = process.env.CHROME;
   if (env) return env;
   for (const name of ["google-chrome", "chromium", "chromium-browser"]) {

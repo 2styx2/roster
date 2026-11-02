@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["scripts/gen-docs-site.ts", "src/vite-env.d.ts"],
+  "include": ["scripts/gen-docs-site.ts", "scripts/check-docs-a11y.ts", "src/vite-env.d.ts"],
   "references": []
 }

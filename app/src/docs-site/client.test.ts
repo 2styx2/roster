@@ -3,7 +3,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { markPage, mountSearchBox, renderResults } from "./client";
+import { focusableCode, markPage, mountSearchBox, renderResults } from "./client";
 import type { SearchIndex } from "./search";
 
 const INDEX: SearchIndex = {
@@ -182,5 +182,27 @@ describe("arriving from a text result", () => {
     document.body.innerHTML = `<main><div class="help-doc"><p>a font here</p></div></main>`;
     markPage(document, "", "");
     expect(document.querySelector("mark")).toBeNull();
+  });
+});
+
+describe("code blocks wider than the page", () => {
+  const sized = (pre: HTMLElement, scroll: number, client: number) => {
+    Object.defineProperty(pre, "scrollWidth", { configurable: true, value: scroll });
+    Object.defineProperty(pre, "clientWidth", { configurable: true, value: client });
+  };
+
+  it("can be focused, so the keyboard can scroll them; the others stay out of the tab order", () => {
+    document.body.innerHTML = `<main><pre id="wide">a long line</pre><pre id="narrow">short</pre></main>`;
+    const wide = document.getElementById("wide") as HTMLElement;
+    const narrow = document.getElementById("narrow") as HTMLElement;
+    sized(wide, 900, 600);
+    sized(narrow, 600, 600);
+    focusableCode(document);
+    expect(wide.tabIndex).toBe(0);
+    expect(narrow.hasAttribute("tabindex")).toBe(false);
+    // The window grew: the block fits now.
+    sized(wide, 900, 900);
+    focusableCode(document);
+    expect(wide.hasAttribute("tabindex")).toBe(false);
   });
 });

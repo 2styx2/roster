@@ -22,6 +22,19 @@ describe("parseMarkdown (the guides' Markdown, as help blocks)", () => {
     ]);
   });
 
+  it("reads an image as a link to it, named by its alt text or else its file (help shows no images)", () => {
+    expect(parseMarkdown("![](design/themes/nord-picker.png) and ![The picker, light](a/b.png)")).toEqual([
+      {
+        t: "p",
+        text: [
+          { t: "link", href: "design/themes/nord-picker.png", children: [{ t: "text", text: "nord-picker.png" }] },
+          { t: "text", text: " and " },
+          { t: "link", href: "a/b.png", children: [{ t: "text", text: "The picker, light" }] },
+        ],
+      },
+    ]);
+  });
+
   it("reads tables, with escaped pipes inside cells", () => {
     const [table] = parseMarkdown("| Option | Default |\n|---|---|\n| `theme` | `\"a\"\\|\"b\"` |\n");
     expect(table).toEqual({

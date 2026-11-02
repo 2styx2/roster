@@ -6,7 +6,7 @@ import { defaultOptions, keymapOf, registerBindings } from "../keymap";
 import { builtinRegistries, type Registries } from "../registries";
 import { CONFIG } from "../registry";
 import { plain, type Block, type Def } from "./doc";
-import { findTopic, helpContext, pageBody, topics, type HelpContext } from "./pages";
+import { findTopic, helpContext, pageBody, topicIndex, topics, type HelpContext } from "./pages";
 
 function ctxOf(r: Registries = builtinRegistries(), more: Partial<HelpContext> = {}): HelpContext {
   return helpContext(r, {
@@ -45,6 +45,22 @@ describe("topics", () => {
     expect(findTopic(ctx, "folders.yml")).toMatchObject({ page: "config", anchor: "config#foldersyml" });
     expect(findTopic(ctx, "sandbox")).toMatchObject({ page: "config", anchor: "config#the-sandbox" });
     expect(findTopic(ctx, "zzqxj")).toBeUndefined();
+  });
+
+  it("an entry's path is its doc cut to 80 characters, with an ellipsis when it was cut", () => {
+    const ctx = ctxOf();
+    const docs = new Map(ctx.pages.flatMap((pg) => defs(pageBody(ctx, pg.id)).map((d) => [d.anchor, plain(d.body)] as const)));
+    const entries = topicIndex(ctx).topics.filter((t) => t.kind === "entry" && docs.get(t.tag));
+    const long = entries.filter((t) => docs.get(t.tag)!.length > 80);
+    const short = entries.filter((t) => docs.get(t.tag)!.length <= 80);
+    expect(long.length).toBeGreaterThan(0);
+    expect(short.length).toBeGreaterThan(0);
+    for (const t of long) {
+      expect(t.path!.length).toBeLessThanOrEqual(80);
+      expect(t.path).toMatch(/\S…$/);
+      expect(docs.get(t.tag)!.startsWith(t.path!.slice(0, -1))).toBe(true);
+    }
+    for (const t of short) expect(t.path).toBe(docs.get(t.tag));
   });
 });
 

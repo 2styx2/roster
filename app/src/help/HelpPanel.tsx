@@ -465,7 +465,13 @@ function InlineView({ item }: { item: Inline }): ReactNode {
       // on the website).
       if (kind !== "topic") {
         const to = env.outside?.(item.href);
-        if (to) return <a className="help-link" href={to}>{children}</a>;
+        // A code span inside it that names a topic stays code: a link can't hold another.
+        if (to)
+          return (
+            <a className="help-link" href={to}>
+              <NoLinks>{children}</NoLinks>
+            </a>
+          );
         return (
           <span className="help-file" title={item.href.replace(/^file:/, "")}>
             {children}
