@@ -210,7 +210,7 @@ pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Rena
 
     let returned = out.value;
     let mut value = returned.clone();
-    under_calls(&mut value, &out.api);
+    under_calls(&mut value, &out.calls, &out.api);
     // A deprecated option moves to its new name (which wins when both are set), before the schema
     // check would call it unknown.
     let used = rename_deprecated(&mut value, renamed);
@@ -435,10 +435,9 @@ fn place(mut e: ConfigError, sources: &Sources, api: &[(Vec<String>, Location)])
     e
 }
 
-/// The calls whose value is in the Config, with their lines: the last call at its path (no
-/// later call replaced it or a table above it), at a path the returned table doesn't set.
-fn winning_calls(returned: &serde_json::Value, api: &[store::ApiEntry]) -> Vec<(Vec<String>, Location)> {
-    let replaced = |i: usize| api[i + 1..].iter().any(|later| api[i].path.starts_with(&later.path));
+/// The calls whose value is in the Config, with their lines: the last write at its path (no
+/// later write replaced it or a table above it), at a path the returned table doesn't set.
+fn winning_calls(returned: &serde_json::Value, api: &[store::Write]) -> Vec<(Vec<String>, Location)> {
     let reached = |path: &[String]| {
         let mut node = returned;
         for key in path {
@@ -452,29 +451,36 @@ fn winning_calls(returned: &serde_json::Value, api: &[store::ApiEntry]) -> Vec<(
         }
         false
     };
-    api.iter()
-        .enumerate()
-        .filter(|&(i, e)| e.value.is_some() && !replaced(i) && reached(&e.path))
-        .filter_map(|(_, e)| e.at.clone().map(|at| (e.path.clone(), at)))
-        .collect()
-}
-
-/// Lays the API's registrations under what the returned table sets itself. Among the calls the
-/// last one wins (ticket 139: a base module, then an override): each replaces what earlier calls
-/// put at its path, and a removal (`roster.o.views.x = nil`, `reset`) takes it away. The returned
-/// table wins over every call, value by value.
-fn under_calls(value: &mut serde_json::Value, api: &[store::ApiEntry]) {
-    let mut calls = serde_json::Value::Object(Default::default());
-    for entry in api {
-        match &entry.value {
-            Some(v) => store::set_replacing(&mut calls, &entry.path, v.clone()),
-            None => store::remove(&mut calls, &entry.path),
+    // From the last write back: one is replaced when a later one is at its path or above it.
+    let mut later: std::collections::HashSet<&[String]> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for w in api.iter().rev() {
+        let replaced = (1..=w.path.len()).any(|n| later.contains(&w.path[..n]));
+        later.insert(&w.path);
+        if !replaced
+            && !w.removed
+            && reached(&w.path)
+            && let Some(at) = &w.at
+        {
+            out.push((w.path.clone(), at.clone()));
         }
     }
-    for entry in api.iter().filter(|e| e.value.is_some()) {
-        let pointer: String = entry.path.iter().map(|k| format!("/{}", pointer_escape(k))).collect();
+    out.reverse();
+    out
+}
+
+/// Lays what the calls wrote (`calls`, where the last write at a path won, ticket 139) under what
+/// the returned table sets itself, path by written path: the returned table wins over every call,
+/// value by value.
+fn under_calls(value: &mut serde_json::Value, calls: &serde_json::Value, api: &[store::Write]) {
+    let mut done = std::collections::HashSet::new();
+    for w in api.iter().filter(|w| !w.removed) {
+        if !done.insert(&w.path) {
+            continue;
+        }
+        let pointer: String = w.path.iter().map(|k| format!("/{}", pointer_escape(k))).collect();
         if let Some(v) = calls.pointer(&pointer) {
-            set_if_absent(value, &entry.path, v.clone());
+            set_if_absent(value, &w.path, v.clone());
         }
     }
 }
@@ -655,17 +661,15 @@ fn lines(
     folder_lines: &[(String, Location)],
 ) -> std::collections::BTreeMap<String, Location> {
     let mut out = std::collections::BTreeMap::new();
+    let by_path: std::collections::HashMap<&[String], &Location> =
+        api.iter().map(|(p, at)| (p.as_slice(), at)).collect();
     // `found` looks in the sources only when no call set it.
     let mut put = |path: Vec<String>, found: &dyn Fn(&[String]) -> Option<Location>| {
         let key = path.join(".");
         // The call that set it: at its path, or a table above it (`roster.o.fonts = { ui = … }`
         // gives fonts.ui its line). Only calls that won are here (ticket 139).
-        if let Some((_, at)) = api
-            .iter()
-            .filter(|(p, _)| path.starts_with(p))
-            .max_by_key(|(p, _)| p.len())
-        {
-            out.insert(key, at.clone());
+        if let Some(at) = (1..=path.len()).rev().find_map(|n| by_path.get(&path[..n])) {
+            out.insert(key, (*at).clone());
         } else if let Some(at) = found(&path) {
             out.insert(key, at);
         }

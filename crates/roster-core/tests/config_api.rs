@@ -608,3 +608,135 @@ fn a_big_neovim_style_config_loads_within_the_budget() {
         start.elapsed()
     );
 }
+
+// ---------------------------------------------------------------- review of #253
+
+#[test]
+fn a_package_list_finds_an_item_by_its_name_or_source() {
+    let c = ok(r#"
+roster.packages.add("someone/alerts", { "someone/pinned", tag = "v1" })
+local p = roster.o.packages
+local found = tostring(p:has("alerts")) .. tostring(p:has("someone/pinned")) .. tostring(p:has("nope"))
+p:remove("alerts")
+p:remove("someone/pinned")
+return { theme = found }
+"#);
+    assert_eq!(c.theme, "truetruefalse");
+    assert!(c.packages.is_empty());
+}
+
+#[test]
+fn a_write_keeps_its_own_line_after_an_earlier_one_of_the_same_name() {
+    let c = ok(r#"roster.o.terminal = {
+  size = "14pt",
+}
+for k, v in pairs({ scrollback = 5 }) do
+  roster.o.terminal[k] = v
+end
+roster.o.vim = true
+local key = "vim"
+roster.o[key] = false
+"#);
+    assert_eq!(line_of(&c, "terminal.scrollback"), ("init.lua".into(), 5));
+    assert_eq!(line_of(&c, "terminal.size"), ("init.lua".into(), 1));
+    assert_eq!(line_of(&c, "vim"), ("init.lua".into(), 9));
+}
+
+#[test]
+fn copying_an_unset_table_copies_its_default_or_says_there_is_nothing() {
+    let c = ok("roster.o.terminal.font = { \"Hack\" }\nroster.o.terminal.font = roster.o.terminal.font\n");
+    assert_eq!(c.terminal.font.0, ["Hack"]);
+    let c = ok("roster.o.terminal.size = \"16pt\"\nroster.o.terminal.font = roster.o.terminal.font\n");
+    assert_eq!(c.terminal.font.0, ["Iosevka Nerd Font", "Iosevka Term", "Iosevka"]);
+    assert_eq!(c.terminal.size, FontSize::Pt(16.0), "nothing else is wiped");
+    let e = err(
+        "roster.o.modes.focus.sidebar.sections = { \"sessions\" }\nroster.o.modes.focus.sidebar.sections = roster.o.modes.standard.sidebar.sections\n",
+    );
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(e.message.contains("unset"), "{e}");
+}
+
+#[test]
+fn a_list_inside_a_written_value_takes_each_item_once_too() {
+    for lua in [
+        "roster.folders.add({ name = \"Lab\", hosts = { \"esx-02\", \"esx-02\" } })",
+        "roster.o.terminal = { font = { \"Hack\", \"Hack\" } }",
+        "roster.folders.add({ name = \"Lab\" })\nroster.folders.update(\"Lab\", { hosts = { \"a\", \"a\" } })",
+        "roster.o.folders = { { name = \"Lab\", hosts = { \"a\", \"a\" } } }",
+    ] {
+        let e = err(lua);
+        assert!(e.message.contains("already"), "{lua}: {e}");
+    }
+}
+
+#[test]
+fn a_second_define_says_to_use_update() {
+    let e = err("roster.themes.define(\"mine\", {})\nroster.themes.define(\"mine\", {})\n");
+    assert!(e.message.contains("roster.themes.update(\"mine\""), "{e}");
+}
+
+#[test]
+fn a_duplicate_names_the_latest_line_that_touched_it() {
+    let e = err(
+        "roster.themes.define(\"mine\", {})\nroster.o.themes.mine.label = \"Mine\"\nroster.themes.define(\"mine\", {})\n",
+    );
+    assert!(e.message.contains("init.lua:2"), "{e}");
+}
+
+#[test]
+fn a_map_key_named_like_a_method_reads_as_the_key_once_set() {
+    let c = ok(r#"
+roster.o.themes.keys = { label = "Keys" }
+roster.o.views.reset = { width = 30 }
+local ids = roster.o.views:get()
+return { theme = roster.o.themes.keys.label .. "," .. roster.o.views.reset.width .. "," .. tostring(ids.reset.width) }
+"#);
+    assert_eq!(c.theme, "Keys,30,30");
+    assert_eq!(c.views["reset"].width, Some(30));
+    // The methods are still there for a key that isn't set, and roster.o.reset always is.
+    let c = ok(
+        "roster.o.views.x = { width = 30 }\nlocal n = #roster.o.views:keys()\nroster.o.reset(\"views\")\nreturn { theme = tostring(n) }\n",
+    );
+    assert_eq!(c.theme, "1");
+    assert!(c.views.is_empty());
+}
+
+#[test]
+fn updates_normalise_and_check_as_adds_do() {
+    let c = ok(
+        "roster.packages.add(\"someone/alerts\")\nroster.packages.update(\"alerts\", { \"someone/alerts\", tag = \"v2\" })\n",
+    );
+    assert_eq!(c.packages[0].tag.as_deref(), Some("v2"));
+    let e = err(
+        "roster.packages.add(\"someone/alerts\")\nroster.packages.update(\"alerts\", { config = function() end })\n",
+    );
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(e.message.contains("roster.plugin.config"), "{e}");
+    let e = err("roster.folders.add({ name = \"Lab\" })\nroster.folders.update(\"Lab\", { hots = {} })\n");
+    assert!(e.message.contains("hots"), "{e}");
+}
+
+#[test]
+fn five_thousand_writes_stay_well_within_the_budget() {
+    let mut lua = String::new();
+    for i in 0..10 {
+        lua.push_str(&format!("roster.folders.add({{ name = \"F{i}\" }})\n"));
+    }
+    for i in 0..2000 {
+        if i % 4 == 0 {
+            lua.push_str(&format!("roster.o.views[\"v{i}\"] = {{ width = 40 }}\n"));
+        } else {
+            lua.push_str(&format!("roster.o.terminal.scrollback = {i}\n"));
+        }
+        lua.push_str(&format!("roster.keymap.set(\"leader\", \"k{i}\", \"close\")\n"));
+    }
+    for i in 0..1000 {
+        lua.push_str(&format!("roster.folders.add_hosts(\"F{}\", \"h{i}\")\n", i % 10));
+    }
+    let start = std::time::Instant::now();
+    let c =
+        config::load_source(&common::temp("config-api-5000"), &lua, &Env::default()).unwrap_or_else(|e| panic!("{e}"));
+    let took = start.elapsed();
+    assert_eq!(c.folders[3].hosts.len(), 100);
+    assert!(took < std::time::Duration::from_millis(600), "{took:?}");
+}

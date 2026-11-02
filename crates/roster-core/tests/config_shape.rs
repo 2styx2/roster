@@ -277,6 +277,7 @@ fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
         (shape::DOC_PATH, shape::markdown()),
         (shape::STUBS_PATH, shape::stubs()),
         (shape::JSON_PATH, shape::json_text()),
+        (shape::CHECK_PATH, shape::check_lua()),
     ] {
         let committed = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         assert!(

@@ -56,7 +56,7 @@ print("Config in " .. roster.config_dir)
 
 `roster.config.Options`
 
-Every option, as a table you assign to and read: roster.o.terminal.size = `"16pt"`. Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch. The table init.lua returns, if any, wins over what roster.o sets.
+Every option, as a table you assign to and read: roster.o.terminal.size = `"16pt"`. Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch; assigning one roster.o table to another option copies what it holds (what init.lua set, else its default), and one that holds neither is an error. The table init.lua returns, if any, wins over what roster.o sets.
 
 ```lua
 roster.o.terminal.size = "16pt"
@@ -195,6 +195,7 @@ A copy of init.lua's spec for a Theme, or nil. Nil for a bundled Theme init.lua 
 
 ```lua
 local paper = roster.themes.get("paper")
+if paper then print(paper.label) end
 ```
 
 ### `roster.themes.list()`
@@ -256,6 +257,7 @@ A copy of a Package's spec, or nil. Its source is in source.
 
 ```lua
 local alerts = roster.packages.get("recent-alerts")
+if alerts then print(alerts.tag) end
 ```
 
 ### `roster.packages.list()`
@@ -331,6 +333,7 @@ A copy of a Folder's spec, or nil.
 
 ```lua
 local lab = roster.folders.get("Lab")
+if lab then print(#lab.hosts) end
 ```
 
 ### `roster.folders.list()`
@@ -395,6 +398,7 @@ A copy of what init.lua set in an object (a table of named options), or nil. Def
 
 ```lua
 local t = roster.o.terminal:get()
+if t then print(t.size) end
 ```
 
 ### `roster.o.Object:reset()`
@@ -412,14 +416,15 @@ returns `table?`
 A copy of a map (a table keyed by names you pick): key → value, or nil when nothing is set. Read one key with map.KEY; set one with map.KEY = value, remove it with map.KEY = nil.
 
 ```lua
-local views = roster.o.views:get()
+local views = roster.o.views:get() or {}
+for id in pairs(views) do print(id) end
 ```
 
 ### `roster.o.Map:has(key)`
 
 returns `boolean`
 
-Whether init.lua set this key of a map. A key named like a method (has, keys, get, reset) is read with map:get()[KEY].
+Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.
 
 | Parameter | Type | |
 |---|---|---|
@@ -455,6 +460,7 @@ A copy of a list, or nil when init.lua didn't set it.
 
 ```lua
 local fonts = roster.o.terminal.font:get()
+if fonts then print(#fonts) end
 ```
 
 ### `roster.o.List:append(...)`
