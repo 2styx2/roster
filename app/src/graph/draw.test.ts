@@ -1,8 +1,9 @@
 // A cluster's title on the map (T89): whole when there's room, even past a small circle, and cut
 // only where it would cover another title.
 import { describe, expect, it } from "vitest";
-import { drawFrame, fitTitle, type Palette } from "./draw";
+import { drawFrame, fitTitle, toScreen, type Palette } from "./draw";
 import type { Scene } from "./scene";
+import { budget } from "../test-budget";
 
 // Iosevka is monospaced: 7 px a character at the map's size.
 const measure = (s: string) => Array.from(s).length * 7;
@@ -66,14 +67,42 @@ describe("cluster titles on the map", () => {
     }
   });
 
-  it("places 500 clusters' titles within a frame's budget", () => {
-    const clusters = Array.from({ length: 500 }, (_, i) => ({ id: `c${i}`, title: `group ${i} · password peers`, x: (i % 25) * 300, y: Math.floor(i / 25) * 300, r: 120, mesh: i % 3 === 0, count: 4, collapsed: false }));
-    const scene: Scene = { nodes: [], byId: new Map(), edges: [], clusters, shownAs: new Map() };
+  it("places a title for every one of 500 clusters on screen", () => {
+    const { ctx, texts } = recorder();
+    drawFrame(ctx, fiveHundred);
+    const shown = fiveHundred.scene.clusters.filter((c) => {
+      const s = toScreen(fiveHundred.camera, fiveHundred.width, fiveHundred.height, c.x, c.y);
+      const pad = 40 + c.r * fiveHundred.camera.k;
+      return s.x > -pad && s.y > -pad && s.x < fiveHundred.width + pad && s.y < fiveHundred.height + pad;
+    });
+    expect(shown.length).toBeGreaterThan(400);
+    expect(texts).toHaveLength(shown.length);
+  });
+
+  budget("places 500 clusters' titles within a frame's budget", () => {
     const { ctx } = recorder();
-    const frame = { scene, camera: { x: 3600, y: 2850, k: 0.2 }, width: 1600, height: 1000, palette: PALETTE, selected: null, highlight: null, matches: null, drawing: new Map() };
-    drawFrame(ctx, frame);
+    drawFrame(ctx, fiveHundred);
     const t = performance.now();
-    for (let i = 0; i < 5; i++) drawFrame(ctx, frame);
+    for (let i = 0; i < 5; i++) drawFrame(ctx, fiveHundred);
     expect((performance.now() - t) / 5).toBeLessThan(16);
   });
 });
+
+/** 500 open clusters in a 25 by 20 grid, most of them on screen at this zoom. */
+const fiveHundred = {
+  scene: {
+    nodes: [],
+    byId: new Map(),
+    edges: [],
+    clusters: Array.from({ length: 500 }, (_, i) => ({ id: `c${i}`, title: `group ${i} · password peers`, x: (i % 25) * 300, y: Math.floor(i / 25) * 300, r: 120, mesh: i % 3 === 0, count: 4, collapsed: false })),
+    shownAs: new Map(),
+  } satisfies Scene,
+  camera: { x: 3600, y: 2850, k: 0.2 },
+  width: 1600,
+  height: 1000,
+  palette: PALETTE,
+  selected: null,
+  highlight: null,
+  matches: null,
+  drawing: new Map(),
+};

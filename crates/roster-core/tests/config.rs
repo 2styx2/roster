@@ -900,19 +900,29 @@ fn the_backend_plan_refuses_a_roster_command_that_isnt_roster_but_the_env_var_ma
     assert_eq!(plan.command, ["my-wrapper", "roster"]);
 }
 
-/// A loader for an init.lua that keeps Lua busy for at least `ms` of wall-clock time (os.time
-/// counts seconds and os.clock is the whole process's CPU, so it counts its own iterations,
-/// calibrated first), then sets the leader. Its limits are generous so it isn't cut off. Returns its
-/// folder too, deleted when the test drops it.
-fn slow_loader(name: &str, ms: u32) -> (Loader, common::Temp) {
+/// A loader for an init.lua that keeps Lua busy until the test lets it go
+/// ([`Held::release`]), then sets the leader. It waits on a module that isn't there yet (a
+/// failed `require` isn't remembered, so it looks again), not on the clock: how long it runs never
+/// depends on how busy the machine is (T146: a loop calibrated on a busy machine ran in under
+/// 100 ms once it was idle). Its limits are generous so it isn't cut off. Returns its folder too,
+/// deleted when the test drops it.
+fn held_loader(name: &str) -> (Loader, Held) {
     let dir = with_init(
         name,
-        &format!(
-            "local n = 0\nfor i = 1, {} do n = n + i end\nreturn {{ leader = 'Ctrl+b' }}",
-            iterations_for(ms)
-        ),
+        "while not pcall(require, 'go') do end\nreturn { leader = 'Ctrl+b' }",
     );
-    (Loader::with_env(&dir, generous()), dir)
+    (Loader::with_env(&dir, generous()), Held(dir))
+}
+
+/// The folder of a [`held_loader`]'s init.lua.
+struct Held(common::Temp);
+
+impl Held {
+    /// Lets its init.lua finish.
+    fn release(&self) {
+        std::fs::create_dir_all(self.0.join("lua")).unwrap();
+        std::fs::write(self.0.join("lua/go.lua"), "return true").unwrap();
+    }
 }
 
 fn generous() -> config::Env {
@@ -926,41 +936,36 @@ fn generous() -> config::Env {
     }
 }
 
-/// How many loop iterations take at least `ms` here.
-fn iterations_for(ms: u32) -> u64 {
-    let n = 2_000_000u64;
-    let dir = with_init(
-        &format!("calibrate-{ms}"),
-        &format!("local n = 0\nfor i = 1, {n} do n = n + i end\nreturn {{}}"),
-    );
-    let started = std::time::Instant::now();
-    config::load_with(&dir, &generous()).unwrap();
-    let per_ms = n as f64 / started.elapsed().as_millis().max(1) as f64;
-    (per_ms * f64::from(ms)) as u64
-}
-
 /// The Tauri shell reads the Config from async commands (backend_connect, config_load) while a
 /// reload may be running Lua on another thread: reading must never wait for Lua.
 #[test]
 fn reading_the_config_never_waits_for_a_reload_in_progress() {
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
-    let (loader, _dir) = slow_loader("loader-busy", 600);
+    use std::time::Duration;
+    let (loader, held) = held_loader("loader-busy");
     let loader = Arc::new(loader);
     let l = Arc::clone(&loader);
     let reload = std::thread::spawn(move || l.reload());
+    // Time for the reload to get into Lua (nothing outside shows it has). On a machine too busy
+    // for that, the read below comes before the reload instead: it still passes, proving less.
     std::thread::sleep(Duration::from_millis(100));
 
-    let started = Instant::now();
-    assert_eq!(
-        loader.current().leader,
-        "Ctrl+Space",
-        "the defaults until the reload is done"
-    );
-    assert!(loader.last().is_none(), "nothing loaded yet");
-    assert!(started.elapsed() < Duration::from_millis(50), "{:?}", started.elapsed());
+    // Read on another thread while init.lua is held: a read that waited for Lua would never come
+    // back until it's let go, so the answer can't come at all before then.
+    let l = Arc::clone(&loader);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send((l.current().leader.clone(), l.last().is_none()));
+    });
+    let (leader, nothing_yet) = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("reading came back while init.lua was still running");
+    assert_eq!(leader, "Ctrl+Space", "the defaults until the reload is done");
+    assert!(nothing_yet, "nothing loaded yet");
+    assert!(!reload.is_finished(), "init.lua was still running");
 
     // `settled` is for blocking threads: it waits for the reload, and sees its result.
+    held.release();
     assert_eq!(loader.settled().leader, "Ctrl+b");
     assert_eq!(reload.join().unwrap().config.leader, "Ctrl+b");
     assert_eq!(loader.last().unwrap().config.leader, "Ctrl+b");
@@ -972,31 +977,35 @@ fn reading_the_config_never_waits_for_a_reload_in_progress() {
 fn a_startup_reload_waits_only_so_long_then_reports_when_done() {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    let (loader, _dir) = slow_loader("loader-startup", 600);
+    let (loader, held) = held_loader("loader-startup");
     let loader = Arc::new(loader);
     let (tx, rx) = std::sync::mpsc::channel();
     let started = Instant::now();
     let now = loader.reload_within(Duration::from_millis(100), move |report| {
         let _ = tx.send(report);
     });
+    // It gave up waiting while init.lua was still held: it waits only so long, never for Lua.
     assert!(now.is_none(), "not done within the wait");
     assert!(
-        started.elapsed() < Duration::from_millis(300),
+        started.elapsed() >= Duration::from_millis(100),
         "{:?}",
         started.elapsed()
     );
-    let later = rx.recv_timeout(Duration::from_secs(5)).expect("reported when done");
+    assert!(rx.try_recv().is_err(), "nothing reported before init.lua is done");
+    held.release();
+    let later = rx.recv_timeout(Duration::from_secs(30)).expect("reported when done");
     assert_eq!(later.config.leader, "Ctrl+b");
 
-    // A quick one is there straight away (and still reported).
+    // A quick one is there straight away (and still reported). The wait is the most it waits,
+    // so a long one costs nothing when the Config is quick, and a busy machine can't fail it.
     let dir = with_init("loader-quick", "return { vim = false }");
     let loader = Arc::new(Loader::new(&dir));
     let (tx, rx) = std::sync::mpsc::channel();
-    let now = loader.reload_within(Duration::from_secs(2), move |report| {
+    let now = loader.reload_within(Duration::from_secs(30), move |report| {
         let _ = tx.send(report);
     });
     assert!(!now.expect("done within the wait").config.vim);
-    assert!(!rx.recv_timeout(Duration::from_secs(2)).unwrap().config.vim);
+    assert!(!rx.recv_timeout(Duration::from_secs(30)).unwrap().config.vim);
 }
 
 /// Dotfile managers (stow, chezmoi's symlink mode) make init.lua and its modules symlinks into

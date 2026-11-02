@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { layoutGraph, SPACING, type Layout } from "./layout";
 import type { GraphData, GraphNode } from "./model";
+import { budget } from "../test-budget";
 
 const node = (id: string, cluster?: string): GraphNode => ({ id, label: id, shape: "dot", ...(cluster ? { cluster } : {}) });
 
@@ -98,12 +99,17 @@ describe("the graph's layout", () => {
     }
   });
 
-  it("every cluster growing at once still ends up apart, quickly", () => {
+  it("every cluster growing at once still ends up apart", () => {
+    const first = layoutGraph(bigGraph(40, 40));
+    const second = layoutGraph(bigGraph(2000, 40), first.saved);
+    expect(overlaps(second)).toEqual([]);
+  });
+
+  budget("every cluster growing at once ends up apart quickly", () => {
     const first = layoutGraph(bigGraph(40, 40));
     const t = performance.now();
-    const second = layoutGraph(bigGraph(2000, 40), first.saved);
+    layoutGraph(bigGraph(2000, 40), first.saved);
     expect(performance.now() - t).toBeLessThan(150);
-    expect(overlaps(second)).toEqual([]);
   });
 
   it("a node the user drags out past a neighbour moves nothing else: only clusters that got new nodes move", () => {

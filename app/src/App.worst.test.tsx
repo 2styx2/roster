@@ -31,8 +31,8 @@ async function open(name: string, options: Partial<Options> = {}) {
       {...fixtureProps(scenario.app, memoryPlatform())}
     />,
   );
-  // 1,284 Hosts take jsdom a while to draw.
-  const slow = { timeout: 10_000 };
+  // 1,284 Hosts take jsdom a while to draw, longer than the usual 10 s on a busy machine (T146).
+  const slow = { timeout: 20_000 };
   await user.type(await screen.findByLabelText(/master password/i, {}, slow), `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i }, slow);
   return user;

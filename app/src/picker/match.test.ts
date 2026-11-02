@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { searchHosts } from "./match";
+import { budget } from "../test-budget";
 import type { Host, HostList } from "../backend/types";
 
 function host(name: string, more: Partial<Host> = {}): Host {
@@ -75,7 +76,7 @@ describe("searchHosts", () => {
     expect(names(list, "", ["esxi-2"])).toEqual(["esxi-2", "esxi-1", "esxi-3"]);
   });
 
-  it("filters a thousand Hosts quickly", () => {
+  budget("filters a thousand Hosts quickly", () => {
     const hosts = Array.from({ length: 1000 }, (_, i) => host(`host-${i}`, { ip: `10.0.${i % 255}.${i % 7}`, title: `box ${i}` }));
     const start = performance.now();
     for (const q of ["h", "ho", "hos", "host-9", "host-99", "10.0.9"]) searchHosts({ hosts, groups }, q, []);
