@@ -5,7 +5,8 @@
 #        cargo test on Linux (with the WebKitGTK/D-Bus dev packages, so clippy covers the Tauri
 #        crate too); roster-core's cargo test on Windows; the JS and CSS size budget; release
 #        builds of the Windows and Linux apps; lua-language-server over the example and first-party
-#        Plugins, against the Plugin API's generated stubs. The first-party Plugins' own tests
+#        Plugins, against the Plugin API's generated stubs, and over the example init.lua files,
+#        against the Config's. The first-party Plugins' own tests
 #        (plugins/README.md) run in cargo test and npm run check.
 name: CI
 
@@ -142,7 +143,7 @@ jobs:
       - run: python3 ../scripts/check-bundle-size.py dist
 
   plugin-types:
-    name: Plugin types (lua-language-server)
+    name: Plugin and Config types (lua-language-server)
     runs-on: ubuntu-latest
     env:
       LUALS_VERSION: "3.19.2"
@@ -161,6 +162,21 @@ jobs:
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/plugins --checklevel=Hint'
       # The first-party Plugins (plugins/, decision Q94), against the same stubs (plugins/.luarc.json).
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
+      # The example Configs (examples/init.lua, examples/init-split), against the Config's generated
+      # types, set up the way docs/app/options.md's "Editor support" says: types/roster-config.lua
+      # and a .luarc.json next to init.lua.
+      - name: Check the example Configs against examples/types/roster-config.lua
+        run: |
+          check() {
+            dir="$RUNNER_TEMP/config-$1"; mkdir -p "$dir/types"; cp -R "$2"/. "$dir"/
+            cp examples/types/roster-config.lua "$dir/types/"
+            printf '%s\n' '{' '  "runtime.version": "Lua 5.4",' '  "runtime.path": ["lua/?.lua", "lua/?/init.lua"],' \
+              '  "workspace.library": ["types"],' '  "diagnostics.globals": ["roster"]' '}' > "$dir/.luarc.json"
+            "$RUNNER_TEMP/luals/bin/lua-language-server" --check "$dir" --checklevel=Hint
+          }
+          mkdir -p "$RUNNER_TEMP/one" && cp examples/init.lua "$RUNNER_TEMP/one/"
+          check one "$RUNNER_TEMP/one"
+          check split examples/init-split
 
   app-rust:
     name: App Rust (fmt, clippy, cargo test)

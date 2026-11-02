@@ -1607,3 +1607,36 @@ roster.set("fonts.ui_size", 12)
     assert_eq!((config.fonts.ui.as_str(), config.fonts.ui_size), ("Inter", 12));
     assert_eq!(config.lines["fonts.ui_size"].line, 4);
 }
+
+/// examples/init-split: a Config split as Neovim's is (init.lua requires lua/myconf/…), loading
+/// through the real loader, with every value placed at the module and line that set it.
+#[test]
+fn the_split_example_loads_with_each_value_at_its_modules_line() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/init-split");
+    let c = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(c.terminal.font.0.first().map(String::as_str), Some("Cascadia Mono"));
+    assert!(!c.vim);
+    assert_eq!(c.theme, "roster-ember");
+    assert!(c.themes.contains_key("roster-ember"));
+    assert!(
+        c.keys
+            .0
+            .iter()
+            .any(|b| b.context == config::KeyContext::Leader && b.keys == "t"),
+        "{:?}",
+        c.keys
+    );
+    assert_eq!(c.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Lab"]);
+    assert_eq!(c.folders[0].hosts, ["esx-02", "esx-03", "esx-04"]);
+    let at = |name: &str| c.lines.get(name).map(|l| l.file.as_str()).unwrap_or("none");
+    assert_eq!(at("terminal.size"), "lua/myconf/options.lua");
+    assert_eq!(at("theme"), "lua/myconf/themes.lua");
+    // Each module's lines are right: the line that names terminal.size says so.
+    let line = c.lines["terminal.size"].line as usize;
+    let text = std::fs::read_to_string(dir.join("lua/myconf/options.lua")).unwrap();
+    assert!(
+        text.lines().nth(line - 1).unwrap().contains("roster.o.terminal.size ="),
+        "line {line}"
+    );
+}

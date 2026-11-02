@@ -535,7 +535,7 @@ roster.config_dir = nil
 --- roster.o.terminal.font:prepend("Cascadia Mono")
 --- if roster.o.vim then roster.o.keys.leader.p = "connect esx-02" end
 --- ```
----@class roster.o : roster.config.Options
+---@type roster.config.Options
 roster.o = {}
 
 --- Puts an option back to its default: what init.lua set there is taken away.

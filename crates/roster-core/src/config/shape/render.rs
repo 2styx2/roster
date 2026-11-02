@@ -647,14 +647,15 @@ pub fn stubs() -> String {
                 let _ = writeln!(s, "function {}({}) end\n", a.path, names.join(", "));
             }
             None => {
-                // A value with functions of its own (roster.o) is a class of its own here, built on
-                // its type, so lua-language-server lets the functions below be declared on it.
+                // A value with functions of its own (roster.o) is a table here.
                 let holds = all.iter().any(|b| b.path.starts_with(&format!("{}.", a.path)));
-                if holds {
-                    let _ = writeln!(s, "---@class {} : {}\n{} = {{}}\n", a.path, a.ty, a.path);
-                } else {
-                    let _ = writeln!(s, "---@type {}\n{} = nil\n", a.ty, a.path);
-                }
+                let _ = writeln!(
+                    s,
+                    "---@type {}\n{} = {}\n",
+                    a.ty,
+                    a.path,
+                    if holds { "{}" } else { "nil" }
+                );
                 if holds {
                     tables.push(a.path.to_string());
                 }
