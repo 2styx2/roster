@@ -703,10 +703,10 @@ struct LookupSlot(Arc<Log>);
 
 impl LookupSlot {
     fn take(log: &Arc<Log>) -> Option<LookupSlot> {
-        let taken = log.lookups.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            (n < MAX_LOOKUPS).then_some(n + 1)
-        });
-        taken.is_ok().then(|| LookupSlot(Arc::clone(log)))
+        // Taken first, so two requests can't both see the last slot free; dropped (given back)
+        // when it was over.
+        let slot = LookupSlot(Arc::clone(log));
+        (log.lookups.fetch_add(1, Ordering::SeqCst) < MAX_LOOKUPS).then_some(slot)
     }
 }
 
