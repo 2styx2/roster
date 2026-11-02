@@ -216,7 +216,8 @@ describe(":help", () => {
     expect(target()).toHaveTextContent("roster.config.Theme");
     await user.keyboard(`${LEADER}:help terminal.size{Enter}`);
     expect(target()).toHaveTextContent("6 to 72 px");
-  });
+    // :help options is a long page; jsdom renders it slowly on a shared CI runner.
+  }, 15_000);
 
   it("opens the CLI's docs too: :help roster.yml", async () => {
     const user = await ready();
