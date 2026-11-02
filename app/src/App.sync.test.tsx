@@ -72,6 +72,24 @@ describe("this Box's ssh config after a change", () => {
     expect(await screen.findByText(FOLLOW)).toBeInTheDocument();
   });
 
+  // T153: the pull a form runs before saving syncs too, when it brought commits.
+  const pulling = { ...(fixtures.edit as FakeScenario), syncError: SYNC_ERROR, pullBrings: { commits: 2, changes: {} } };
+  const pullFollow = (commits: string) =>
+    new RegExp(`^Pulled 2 ${commits} from origin/main, but this Box's ssh config didn't follow \\(${SYNC_ERROR}\\): run roster sync\\.$`);
+
+  it("a sync that failed after a form's pull says so in the form", async () => {
+    const { user } = await ready(pulling);
+    await user.keyboard(`${LEADER}:edit linux-1-000{Enter}`);
+    const panel = await screen.findByRole("region", { name: "Edit linux-1-000" });
+    expect(await within(panel).findByText(pullFollow("new commits"))).toBeInTheDocument();
+  });
+
+  it("a sync that failed after :pull says so", async () => {
+    const { user } = await ready(pulling);
+    await user.keyboard(`${LEADER}:pull{Enter}`);
+    expect(await screen.findByText(pullFollow("commits"))).toBeInTheDocument();
+  });
+
   it("a sync that failed after an outside edit was applied is a warning", async () => {
     const { backend } = await ready({ ...live, syncError: SYNC_ERROR }, configWith({ autoReload: true }));
     await waitFor(() => expect(backend.watching()).toBe(true));

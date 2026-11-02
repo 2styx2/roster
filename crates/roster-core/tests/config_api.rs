@@ -339,6 +339,31 @@ fn the_returned_table_still_wins_over_roster_o() {
     assert_eq!(c.terminal.size, FontSize::Pt(20.0));
 }
 
+/// Ticket 148: what `:config import-terminal` writes (a Theme with a `terminal` table, then a
+/// `roster.o` line) above a returned table that sets the same option: the returned table wins,
+/// so its line is the one `:options` shows, not the `roster.o` line it beat.
+#[test]
+fn the_returned_tables_line_is_shown_when_it_wins_over_roster_o() {
+    let c = ok(
+        "roster.themes.define(\"wt\", { base = \"roster-dark\", terminal = { background = \"#000000\" } })\n\
+                roster.o.terminal.size = 20\n\
+                return {\n  terminal = { size = 14 },\n}\n",
+    );
+    assert_eq!(c.terminal.size, FontSize::Px(14.0));
+    assert_eq!(line_of(&c, "terminal.size"), ("init.lua".into(), 4));
+}
+
+/// Ticket 148: and a bad value in that returned table is reported at its line too.
+#[test]
+fn a_bad_value_in_the_winning_returned_table_is_placed_at_its_line() {
+    let e = err(
+        "roster.themes.define(\"wt\", { base = \"roster-dark\", terminal = { background = \"#000000\" } })\n\
+                 roster.o.terminal.size = 20\n\
+                 return {\n  terminal = { size = \"900pt\" },\n}\n",
+    );
+    assert_eq!((e.file.as_str(), e.line), ("init.lua", Some(4)), "{e}");
+}
+
 #[test]
 fn roster_set_checks_names_at_its_line_too() {
     let e = err("\nroster.set(\"terminal.szie\", 1)\n");
