@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "../backend/fake";
-import { BackendCallError, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
+import { BackendCallError, FillRefusal, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
 import { IDLE_MS, hookLine } from "./shellHooks";
 import { PromptWatch } from "./prompt";
 import { Tabs, type TabStatus } from "./tabs";
@@ -1050,6 +1050,50 @@ describe("filling a password prompt (ticket 119)", () => {
     await at.print("typed by hand");
     // The token mask may hold a trailing hex letter for up to 50 ms.
     await vi.waitFor(() => expect(seen.join("")).toContain("typed by hand"));
+  });
+
+  // Ticket 155 (#284): after a refusal the app sends the Session nothing of its own: no retry, no
+  // shell hook line, no Enter. (The core types only its probe, which holds no Enter: pty_fill.rs.)
+  it("sends the Session nothing after a refused fill, pressed again or left alone", async () => {
+    const backend = fakeBackend({ ...unlocked, hosts });
+    let ev: SessionEvents | null = null;
+    const writes: string[] = [];
+    const refusals = [
+      new BackendCallError("the prompt printed what roster typed to check it, so roster didn't fill it"),
+      new BackendCallError("won't fill on h: h changed since this Session connected", FillRefusal.refused),
+    ];
+    let fills = 0;
+    backend.openSession = async (_host, _size, events) => {
+      ev = events;
+      const done = async () => {};
+      const fill = async () => {
+        fills++;
+        throw refusals[(fills - 1) % refusals.length];
+      };
+      return { id: 1, auth: "key", write: async (d: string) => void writes.push(d), resize: done, close: done, fill };
+    };
+    const tabs = new Tabs(backend);
+    tabs.setShellHooks(() => true);
+    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    const id = tabs.open(reviewed[0] ?? "");
+    await settle();
+    const print = async (s: string) => {
+      (ev as SessionEvents | null)?.output(new TextEncoder().encode(s));
+      await settle();
+    };
+    await print("$ sudo -v\r\n[sudo] password for admin: ");
+    await expect(tabs.fill(id)).rejects.toThrow(/printed what roster typed/);
+    // Spent: a second press asks nothing.
+    await expect(tabs.fill(id)).rejects.toThrow(/No password prompt/);
+    // sudo redraws its prompt (Windows' ConPTY does), and the login goes quiet there.
+    await print("\x1b[?25l\r[sudo] password for admin: \x1b[K\x1b[?25h");
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    // The offer is back; a serve refusal (a code) typed nothing either.
+    await expect(tabs.fill(id)).rejects.toThrow(/changed since/);
+    await expect(tabs.fill(id)).rejects.toThrow(/printed what roster typed/);
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    expect(fills).toBe(3);
+    expect(writes).toEqual([]);
   });
 
   it("watches nothing on an older roster, or a Quick Connect", async () => {

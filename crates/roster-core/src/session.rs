@@ -10,6 +10,7 @@
 //! readable by other processes and logged by process auditing for its whole life).
 
 use crate::detect::Target;
+pub use crate::screen::Drawn;
 use crate::screen::Screen;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -486,11 +487,17 @@ impl SessionManager {
         let w = w.as_mut().ok_or(FillError::NotFound(id))?;
         {
             let mut shown = running.shown.lock().unwrap();
-            let masked = maskable && shown.screen.end_mask_watch(PROBE_KEYS);
+            let watched = maskable.then(|| shown.screen.end_mask_watch(PROBE_KEYS));
+            let masked = watched.as_ref().is_some_and(|w| w.masked);
             if shown.total != printed
                 && !(masked && probed == printed && shown.screen.line_is(prompt) && shown.screen.cursor_after(prompt))
             {
-                return Err(FillError::Echoes);
+                // What the probe drew, for the log (ticket 155): only where the mask could count.
+                return Err(FillError::Echoes(watched.map(|w| {
+                    let mut drawn = w.drawn;
+                    drawn.before = probed - printed;
+                    drawn
+                })));
             }
         }
         if running.writes.load(Ordering::SeqCst) != writes {
@@ -606,7 +613,9 @@ pub enum FillError<E> {
     Lookup(E),
     /// The Session printed something while roster checked the prompt: it echoes what's typed, or
     /// it isn't waiting quietly at a prompt (sudo's `pwfeedback` mask at its own prompt aside). Only the probe was typed, and it left the line empty.
-    Echoes,
+    /// At sudo's own prompt for the Session's own Host, where the mask could have counted, it
+    /// holds what the probe drew, for the log only ([`FillError::log_line`], ticket 155).
+    Echoes(Option<Drawn>),
     /// A key was sent to the Session while roster checked the prompt.
     Typed,
     /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
@@ -622,7 +631,7 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
             FillError::NotFound(id) => write!(f, "session {id} isn't open"),
             FillError::NoHost => f.write_str("this Session isn't to a Host of the Inventory, so roster has no Login to fill"),
             FillError::Lookup(e) => write!(f, "{e}"),
-            FillError::Echoes => f.write_str(
+            FillError::Echoes(_) => f.write_str(
                 "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it",
             ),
             FillError::Typed => f.write_str("a key was typed while roster checked the prompt, so roster didn't fill it"),
@@ -630,6 +639,22 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
                 "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
             ),
             FillError::Io(m) => f.write_str(m),
+        }
+    }
+}
+
+impl<E> FillError<E> {
+    /// The line for the app's log (stderr) about this refusal, if it has one: at sudo's own
+    /// prompt for the Session's own Host, what the probe drew there that wasn't sudo's
+    /// `pwfeedback` mask as roster takes it (ticket 155, #284), so the form a terminal (Windows'
+    /// ConPTY) draws can be added. Never the message line, the State, Plugins or serve: the
+    /// error's own text doesn't hold it. No printed text but `*` and space is in it ([`Drawn`]).
+    pub fn log_line(&self) -> Option<String> {
+        match self {
+            FillError::Echoes(Some(drawn)) => Some(format!(
+                "prompt fill refused at sudo's prompt: the probe drew {drawn}, not sudo's pwfeedback mask as roster takes it"
+            )),
+            _ => None,
         }
     }
 }

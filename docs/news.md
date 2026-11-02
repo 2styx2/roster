@@ -11,6 +11,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - A Plugin's request through `plugin_proxy` that's redirected to a name this computer is slow to look up now ends at the request's `timeout` ("no answer within N s") instead of waiting on the lookup, and holds up none of the Plugin's other requests. Every redirect is still checked the same way before it's followed. A user or password in a redirect's address is never sent. See [The network](plugins.md#the-network).
+- **The fill key at sudo with `pwfeedback` doesn't work on Windows yet:** v0.4.0's fill takes sudo's `*` as no echo, but Windows' ConPTY redraws it in a form the check doesn't accept yet, so the fill is refused ("the prompt printed what roster typed to check it"). It fails safe: nothing but roster's check was typed, no Enter, so sudo counts no attempt; type that password yourself for now. Each such refusal now writes one line to the app's log (stderr) saying what the prompt drew, with no text but `*` and space, so the real form can be added. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
 
 ## v0.4.0
 
