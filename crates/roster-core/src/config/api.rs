@@ -660,11 +660,16 @@ fn method(lua: &Lua, name: &str) -> R<Value> {
     methods.raw_get(name)
 }
 
+/// `roster.o`'s own functions, by an option's dotted name: `roster.o.get("views.get")` reads even
+/// a map's key named like a method, and `roster.o.reset(name)` resets any option.
+const ROOT_FUNCTIONS: &[&str] = &["get", "reset"];
+
 /// What `p.key` gives: a method, an option's value (a copy, or nil), or the table under it.
 fn index(lua: &Lua, p: &OptProxy, key: Value) -> R<Value> {
     let key = key_text(lua, p, &key)?;
     let kind = p.kind();
-    let is_method = kind.methods().contains(&key.as_str()) || (p.path.is_empty() && key == "reset");
+    let at_root = p.path.is_empty() && ROOT_FUNCTIONS.contains(&key.as_str());
+    let is_method = kind.methods().contains(&key.as_str()) || at_root;
     // An object's own names come first (none is a method's); a map's keys come after its methods.
     if kind == Kind::Object && shape::lookup(&refs(&p.child(&key))).is_some() {
         return child(lua, p.child(&key));
@@ -676,14 +681,7 @@ fn index(lua: &Lua, p: &OptProxy, key: Value) -> R<Value> {
         return child(lua, p.child(&key));
     }
     if is_method {
-        return method(
-            lua,
-            if p.path.is_empty() && key == "reset" {
-                "reset_path"
-            } else {
-                &key
-            },
-        );
+        return method(lua, &if at_root { format!("{key}_path") } else { key });
     }
     match kind {
         Kind::Map => child(lua, p.child(&key)),
@@ -716,8 +714,8 @@ fn new_index(lua: &Lua, p: &OptProxy, key: Value, value: Value) -> R<()> {
             format!("{}: change a list whole, or with its methods", p.name()),
         ));
     }
-    if p.path.is_empty() && key == "reset" {
-        return Err(fail(lua, "roster.o.reset is a function, not an option"));
+    if p.path.is_empty() && ROOT_FUNCTIONS.contains(&key.as_str()) {
+        return Err(fail(lua, format!("roster.o.{key} is a function, not an option")));
     }
     write(lua, &p.child(&key), value)
 }
@@ -982,6 +980,31 @@ fn add_methods(lua: &Lua) -> R<()> {
     def("clear", |lua, p, _| {
         write_list(lua, &p, Vec::new()).map(|()| Value::Nil)
     })?;
+    // `roster.o.get("terminal.size")`; `roster.o:get()` is still the root's own method.
+    methods.raw_set(
+        "get_path",
+        lua.create_function(|lua, name: Value| match name {
+            Value::UserData(ud) if ud.is::<OptProxy>() => read(lua, &ud.borrow::<OptProxy>()?.path),
+            Value::String(name) => {
+                let path: Vec<String> = name.to_str()?.split('.').map(str::to_string).collect();
+                if path.iter().any(String::is_empty) {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "roster.o.get: {:?} isn't an option name like \"terminal.size\"",
+                            path.join(".")
+                        ),
+                    ));
+                }
+                option(&path).map_err(|m| fail(lua, m))?;
+                read(lua, &path)
+            }
+            _ => Err(fail(
+                lua,
+                "roster.o.get(name) takes an option's name: roster.o.get(\"terminal.size\")",
+            )),
+        })?,
+    )?;
     // `roster.o.reset("terminal.size")`.
     methods.raw_set(
         "reset_path",

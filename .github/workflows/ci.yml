@@ -164,6 +164,8 @@ jobs:
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
       # Every example in init.lua's option reference (docs/app/options.md, decision Q132), against
       # init.lua's generated stubs (examples/types/roster-config.lua): what :help shows type-checks.
+      # lua-language-server lets through a string outside a "a"|"b" type (cursor_style = "triangle"),
+      # so cargo test also loads every documented init.lua example through the real loader.
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/config-check --checklevel=Hint'
       # The example Configs (examples/init.lua, examples/init-split), against the Config's generated
       # types, set up the way docs/app/options.md's "Editor support" says: types/roster-config.lua

@@ -1641,31 +1641,93 @@ fn the_split_example_loads_with_each_value_at_its_modules_line() {
     );
 }
 
-/// Every `lua` block in the Config's guides is an init.lua that loads when pasted on its own
-/// (recipes promise it): a block that starts with `-- lua/NAME.lua` is that module, written
-/// beside the init.lua of the blocks around it.
+/// The `lua` blocks of a Markdown page, each with the line it starts on.
+fn lua_blocks(text: &str) -> Vec<(usize, String)> {
+    let mut blocks: Vec<(usize, String)> = Vec::new();
+    let mut current: Option<(usize, String)> = None;
+    for (i, line) in text.lines().enumerate() {
+        match (&mut current, line.trim_end()) {
+            (None, "```lua") => current = Some((i + 1, String::new())),
+            (Some(_), "```") => blocks.push(current.take().unwrap()),
+            (Some((_, b)), l) => {
+                b.push_str(l);
+                b.push('\n');
+            }
+            _ => {}
+        }
+    }
+    blocks
+}
+
+/// Whether a block is init.lua code: it uses init.lua's `roster` table and nothing only a Plugin
+/// has (`roster.commands`, `require("roster")`), so a Plugin's code in the same page is left out.
+fn is_init_lua(block: &str) -> bool {
+    let names: Vec<&str> = config::shape::api()
+        .map(|a| a.path.trim_start_matches("roster.").split('.').next().unwrap())
+        .collect();
+    // The code, without comments (a Plugin's manifest names roster.api_version in one).
+    let block: String = block
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut used = block.match_indices("roster.").filter_map(|(i, _)| {
+        let before = block[..i].chars().next_back();
+        let rest = &block[i + "roster.".len()..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        (!before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '"' || c == '/'))
+            .then_some(name)
+    });
+    let mut any = false;
+    let all_init = used.all(|n| {
+        any = true;
+        names.contains(&n.as_str())
+    });
+    any && all_init && !block.contains("require(\"roster\")")
+}
+
+/// Every init.lua snippet in the docs loads through the real loader when pasted on its own
+/// (recipes promise it), so a value lua-language-server lets through (a string outside its
+/// `"a"|"b"` type, `cursor_style = "triangle"`) fails here (ticket 144). The Config's guides are
+/// init.lua through and through; elsewhere (docs/, a Plugin's README) a block is init.lua when it
+/// uses only init.lua's `roster` table. A block that starts with `-- lua/NAME.lua` is that module,
+/// written beside the init.lua of the blocks around it. The option reference's examples load in
+/// config_shape.rs, examples/init.lua and examples/init-split above.
 #[test]
-fn every_init_lua_snippet_in_the_guides_loads() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/app");
-    let mut total = 0;
-    for page in ["config.md", "recipes.md", "keyboard.md"] {
-        let text = std::fs::read_to_string(root.join(page)).unwrap();
-        let mut blocks: Vec<(usize, String)> = Vec::new();
-        let mut current: Option<(usize, String)> = None;
-        for (i, line) in text.lines().enumerate() {
-            match (&mut current, line.trim_end()) {
-                (None, "```lua") => current = Some((i + 1, String::new())),
-                (Some(_), "```") => blocks.push(current.take().unwrap()),
-                (Some((_, b)), l) => {
-                    b.push_str(l);
-                    b.push('\n');
-                }
-                _ => {}
+fn every_init_lua_snippet_in_the_docs_loads() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let guides = ["docs/app/config.md", "docs/app/recipes.md", "docs/app/keyboard.md"];
+    let mut pages: Vec<std::path::PathBuf> = Vec::new();
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let path = e.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if path.is_dir() && name != "node_modules" && !name.starts_with('.') {
+                walk(&path, out);
+            } else if name.ends_with(".md") {
+                out.push(path);
             }
         }
-        total += blocks.len();
+    }
+    for dir in ["docs", "plugins", "examples"] {
+        walk(&root.join(dir), &mut pages);
+    }
+    pages.sort();
+    let mut total = 0;
+    let mut elsewhere = 0;
+    for path in pages {
+        let page = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        // Generated: the option reference is config_shape.rs's, the Plugin API's is Plugin code.
+        if page == "docs/app/options.md" || page == "docs/plugin-api.md" {
+            continue;
+        }
+        let guide = guides.contains(&page.as_str());
+        let text = std::fs::read_to_string(&path).unwrap();
         let mut modules: Vec<(String, String)> = Vec::new();
-        for (n, (line, block)) in blocks.iter().enumerate() {
+        for (n, (line, block)) in lua_blocks(&text).iter().enumerate() {
             let first = block.lines().next().unwrap_or_default();
             if let Some(module) = first
                 .strip_prefix("-- ")
@@ -1674,7 +1736,12 @@ fn every_init_lua_snippet_in_the_guides_loads() {
                 modules.push((module.to_string(), block.clone()));
                 continue;
             }
-            let dir = temp_dir(&format!("snippet-{}-{n}", page.trim_end_matches(".md")));
+            if !guide && !is_init_lua(block) {
+                continue;
+            }
+            total += 1;
+            elsewhere += usize::from(!guide);
+            let dir = temp_dir(&format!("snippet-{}-{n}", page.replace(['/', '.'], "-")));
             for (path, source) in modules.drain(..) {
                 let path = dir.join(path);
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1688,4 +1755,9 @@ fn every_init_lua_snippet_in_the_guides_loads() {
         assert!(modules.is_empty(), "{page}: a module block with no init.lua after it");
     }
     assert!(total > 20, "only {total} lua blocks found");
+    // docs/plugins.md and docs/mesh.md add Packages; each first-party Plugin's README its own.
+    assert!(
+        elsewhere >= 5,
+        "only {elsewhere} init.lua blocks found outside the guides"
+    );
 }

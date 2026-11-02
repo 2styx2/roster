@@ -4,6 +4,16 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Fixed
+
+**App**
+
+- `roster.o.get("views")` reads any option by its dotted name, so a map with a key named `get`, `has`, `keys` or `reset` (where `:get()` and `:keys()` read that key) still has a read that always works.
+- `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.
+- Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
+
 ## v0.3.0
 
 ### Breaking
