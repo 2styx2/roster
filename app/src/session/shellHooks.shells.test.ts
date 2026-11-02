@@ -35,9 +35,9 @@ const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 // eslint-disable-next-line no-control-regex -- the questions are escape sequences
 const ASK = /\x1b\[0?c|\x1b\[6n/g;
 
-/** Runs `argv` on a pty and types `lines`, each followed by Enter once the shell has been quiet
- * for a moment (as a person would: typed ahead, .NET's console can lose its cursor-position
- * answer), answering the terminal questions it asks; what it printed, once it exits (or after 20 s). */
+/** Runs `argv` on a pty and types `lines`, each followed by Enter, each once the shell has been
+ * quiet for a moment (as a person would: typed ahead, .NET's console loses keys), answering the
+ * terminal questions it asks; what it printed, once it exits (or after 40 s). */
 function runPty(argv: string[], lines: string[]): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
@@ -45,7 +45,9 @@ function runPty(argv: string[], lines: string[]): Promise<string> {
     const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV });
     let out = "";
     let answered = 0;
-    const todo = [...lines];
+    // The text, then Enter on its own once the shell has drawn it: an Enter that comes while .NET's
+    // console waits for a cursor-position answer is lost.
+    const todo = lines.flatMap((l) => [l, "\r"]);
     let idle: ReturnType<typeof setTimeout> | undefined;
     const typeSoon = () => {
       clearTimeout(idle);
@@ -54,11 +56,11 @@ function runPty(argv: string[], lines: string[]): Promise<string> {
       idle = setTimeout(() => {
         const line = todo.shift();
         if (line === undefined) return;
-        child.stdin.write(`${line}\r`);
+        child.stdin.write(line);
         typeSoon();
-      }, 500);
+      }, 300);
     };
-    const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    const timer = setTimeout(() => child.kill("SIGKILL"), 40_000);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => {
       out += d;
@@ -109,7 +111,7 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
     expect(out, tail(out)).toContain(own("D;1"));
     expect(out, tail(out)).toContain(own("D;0"));
     expect(out, tail(out)).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
-  }, 30_000);
+  }, 60_000);
 });
 
 /** The rc-file snippet for `lang` in docs/plugins.md's "Shell integration": its first block. */
@@ -139,7 +141,7 @@ describe.each([
     for (const mark of ["A", "B", "C", "D;1", "D;0"]) {
       expect(count(out, mark), `${mark}: ${tail(out)}`).toBeGreaterThan(count(bare, mark));
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("the hook line in bash, set up as people have it", () => {
