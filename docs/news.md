@@ -13,6 +13,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - `roster.o.get("views")` reads any option by its dotted name, so a map with a key named `get`, `has`, `keys` or `reset` (where `:get()` and `:keys()` read that key) still has a read that always works.
 - `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.
 - Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
+- A Plugin's view no longer goes back to an older state on a busy machine: when roster serve's answer to one of a Plugin's requests led it to ask again (the Mesh Plugin's job ending, then its status), the second answer's changes could reach the window first and be drawn over by the first's. The app now gets them in the order the Plugin made them. See [Asking roster serve](plugins.md#asking-roster-serve).
 
 ## v0.3.0
 
