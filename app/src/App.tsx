@@ -84,7 +84,7 @@ import { defaultConfig } from "./config/fixture";
 import { bindingRows } from "./keyboard/bindings";
 import { press, terminalMode, type KeyState } from "./keyboard/mode";
 import { realClock, type Clock } from "./lock/idle";
-import { pullGate } from "./edit/pull";
+import { afterPull, pullGate, syncFailed } from "./edit/pull";
 import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
 import { useVault } from "./lock/useVault";
 import { actionsOf, chordOf, defaultOptions, keymapOf, type CommandLine as Line, type Keymap, type Options } from "./keymap";
@@ -1722,7 +1722,7 @@ function Workspace({
             !r.upstream
               ? "This branch has no upstream: nothing to pull."
               : r.updated
-                ? `Pulled ${countOf(r.commits, "commit")} from ${r.upstream}.`
+                ? `Pulled ${countOf(r.commits, "commit")} from ${r.upstream}${afterPull(r)}.`
                 : `Up to date with ${r.upstream}.`,
           );
         },
@@ -2734,10 +2734,6 @@ function afterChange(r: { warnings?: readonly string[]; sync?: BoxSync }): strin
   const warnings = [...(r.warnings ?? [])];
   if (r.sync && !r.sync.ok) warnings.push(syncFailed(r.sync));
   return warnings;
-}
-
-function syncFailed(sync: BoxSync): string {
-  return `this Box's ssh config didn't follow (${sync.error ?? "roster sync failed"}): run roster sync`;
 }
 
 function butWarnings(warnings: readonly string[] | undefined): string {

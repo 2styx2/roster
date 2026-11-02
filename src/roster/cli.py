@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, jsonout, mesh
+from . import __version__, boxsync, jsonout, mesh
 from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
 from .config import access_label, find_config, load_config, matches, selected
@@ -208,6 +208,7 @@ def cmd_mesh(cfg, args):
         say(f"cut {args.target}: confirmed on {', '.join(r['confirmed']) or 'no Host'}")
         if change.get("written"):
             say(f"roster.yml   mesh: false for {args.target}, a Pending change (publish it so the cut stays)")
+            boxsync.after_edit(cfg["path"])           # T153: this Box follows, as after serve's mesh.cut
         say(f"note: {change['note']}") if change.get("note") else None
         if change.get("error"):
             say(f"warning: mesh: false not written: {change['error']} - {change['fix']}")

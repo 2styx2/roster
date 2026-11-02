@@ -957,6 +957,24 @@ def test_cut_without_a_git_repo_still_writes_mesh_false(net, capsys):
     assert "isn't in a git repo" in capsys.readouterr().out
 
 
+def test_cut_syncs_this_box_after_writing_mesh_false(net, isolated, capsys):
+    """T153: the CLI's cut syncs this Box after it writes mesh: false, as serve's mesh.cut does (T150)."""
+    ssh = isolated["home"] / ".ssh" / "config.d" / "roster"
+    assert not ssh.exists()
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
+    assert "Host orion-3" in ssh.read_text()
+    assert "roster sync" not in capsys.readouterr().err
+
+
+def test_a_failed_sync_after_a_cut_keeps_mesh_false_and_says_on_stderr(net, isolated, capsys):
+    (isolated["home"] / ".ssh" / "config.d" / "roster").mkdir(parents=True)     # a folder there: writing it fails
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
+    assert net.cfg()["hosts"]["orion-3"]["mesh"] is False
+    err = capsys.readouterr().err
+    assert "warning: this Box's ssh config didn't follow roster.yml (" in err
+    assert err.rstrip().endswith("run `roster sync` on this box")
+
+
 def test_cut_keeps_the_peers_that_confirmed_it_in_the_meshs_bookkeeping(net):
     mesh.run(net.cfg(), apply=True)
     r = mesh.cut(net.cfg(), "esx-02")

@@ -26,9 +26,17 @@ import threading
 import time
 from contextlib import contextmanager
 
-from . import __version__, askpass, changes, diagnose, discover, edit, fill, health, jobs, mesh, providers
-from .claude import write_claude_files
-from .common import current_deadline, deadline, deadline_at, not_reviewed, ssh_config_file, ssh_path
+from . import __version__, askpass, boxsync, changes, diagnose, discover, edit, fill, health, jobs, mesh, providers
+from .common import (
+    current_deadline,
+    deadline,
+    deadline_at,
+    die_message,
+    failure_text,
+    not_reviewed,
+    ssh_config_file,
+    ssh_path,
+)
 from .config import find_config, load_config
 from .errors import (  # noqa: F401 (the codes are part of serve's API)
     ALREADY_SIGNED_OUT,
@@ -80,7 +88,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     write_problem,
 )
 from .providers import PROVIDERS, setup_providers
-from .sshops import fingerprint, in_ssh_config, record_host_key, recorded_host_keys, write_ssh_config
+from .sshops import fingerprint, in_ssh_config, record_host_key, recorded_host_keys
 
 API_VERSION = 26            # bump when a method or result changes in a way the app has to know about
 
@@ -101,12 +109,6 @@ def busy_error(resource, who, subject=None):
 def closing_error():
     """serve's stdin closed: nothing new starts (code 3)."""
     return RpcError(ROSTER_ERROR, "roster serve is closing")
-
-
-def die_message(e):
-    """The text of a die() (SystemExit("error: ...")), without the prefix."""
-    msg = str(e.code) if e.code is not None else "exited"
-    return msg.removeprefix("error: ")
 
 
 class State:
@@ -765,21 +767,14 @@ def sync_box(state):
     """`roster sync` for this Box after serve changed roster.yml (T150): its ssh config and Claude files follow the
     Inventory as it loads now, so a Session to a Host just added or changed opens without `roster sync`. Never
     undoes the change: a failure is only reported, as `{ok: false, error, fix}` (else `{ok: true}`). A roster.yml
-    that doesn't load syncs nothing (the last good Inventory isn't what the file says)."""
+    that doesn't load syncs nothing (the last good Inventory isn't what the file says). The CLI's edits sync the
+    same way (boxsync.py, T153)."""
+    def loaded():
+        if state.error is not None:
+            raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
+        return state.inventory()
     with state.lock:                        # one writer of the ssh config at a time; a write already holds it
-        try:
-            if state.error is not None:
-                raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
-            cfg = state.inventory()
-            write_ssh_config(cfg)
-            write_claude_files(cfg)
-            return {"ok": True}
-        except Exception as e:              # anything at all: the change is written already, and the watcher must live
-            # a Problem's own message; an OSError's own words (paths only); else just its type, never its text
-            why = e.message if isinstance(e, Problem) else failure_text(e)
-            return {"ok": False, "error": why, "fix": "run `roster sync` on this box"}
-        except SystemExit as e:             # a die() isn't an Exception
-            return {"ok": False, "error": die_message(e), "fix": "run `roster sync` on this box"}
+        return boxsync.sync(loaded)
 
 
 # ---------------------------------------------------------------- adding a Host (ticket 11, decision Q43)
@@ -1392,13 +1387,6 @@ def add_host(state, params):
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "verify": verify,
             "item": made, "warnings": warnings, "sync": sync_box(state)}
-
-
-def failure_text(e):
-    """What went wrong, safe to show: an OSError's own words (paths only), else just the exception's type."""
-    if isinstance(e, OSError):
-        return f"{e.strerror or type(e).__name__}" + (f": {e.filename}" if e.filename else "")
-    return type(e).__name__
 
 
 def write_failed(what, path, e):
