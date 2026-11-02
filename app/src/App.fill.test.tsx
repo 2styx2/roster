@@ -85,6 +85,19 @@ describe("filling a password prompt", () => {
     await within(output()).findByText(/\[sudo ok\]/);
   });
 
+  it("fills sudo with pwfeedback, whose stars aren't an echo (ticket 154)", async () => {
+    const user = await ready({ pwfeedback: { [vaultHost]: true } });
+    await connect(user, vaultHost);
+    await sudo(user);
+    await screen.findByRole("status", { name: "Password prompt" });
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(/\[sudo ok\]/);
+    // sudo drew a star for each key of the password, and erased them; never the password.
+    expect(output().textContent).toContain("*".repeat(FAKE_LOGIN_PASSWORD.length));
+    expect(document.body.innerHTML).not.toContain(FAKE_LOGIN_PASSWORD);
+    expect(messageLine()).not.toHaveTextContent(/echoes|didn't fill/);
+  });
+
   it("says there's no prompt when there's none, and types nothing", async () => {
     const user = await ready();
     await connect(user, vaultHost);

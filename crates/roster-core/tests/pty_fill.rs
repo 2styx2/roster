@@ -501,3 +501,235 @@ fn a_refusal_that_typed_nothing_has_a_code_and_one_that_typed_the_probe_doesnt()
         CallError::Rpc { code: 131, .. }
     ));
 }
+
+/// sudo with `Defaults pwfeedback` (ticket 154, #279), as sudo's `tgetpass.c` does it: echo off
+/// and the line discipline's canonical mode off, its prompt, then a `*` for each key read and, on
+/// the line-kill key (Ctrl+U), `\b \b` for each `*` shown. `kill_tail` is what it adds after a
+/// kill: nothing in released sudo (to 1.9.17p2), `ESC [ K` (erase to the end of the line) in sudo
+/// since 2026-05 (commit 0abd1b1), which prints it after every kill, even of an empty line.
+/// `prompt`, `before` (run once the prompt is up) and `mask` (what it draws per key) vary it for
+/// the cases that must still refuse. It reports what it read, as the other stand-ins do.
+fn pwfeedback(prompt: &str, kill_tail: &str, mask: &str, before: &str) -> String {
+    format!(
+        "U=$(printf '\\025'); stty -echo -icanon min 1 time 0; printf '%s' '{prompt}'; {before}; pw=''; n=0; \
+         while :; do c=$(dd bs=1 count=1 2>/dev/null); \
+         if [ \"$c\" = \"$U\" ]; then while [ $n -gt 0 ]; do printf '\\b \\b'; n=$((n-1)); done; printf '{kill_tail}'; pw=''; \
+         elif [ -z \"$c\" ]; then break; \
+         else pw=\"$pw$c\"; n=$((n+1)); printf '{mask}'; fi; done; \
+         while [ $n -gt 0 ]; do printf '\\b \\b'; n=$((n-1)); done; stty sane; echo; echo \"got:[$pw]\"; sleep 5",
+        prompt = prompt.replace('\'', "'\"'\"'")
+    )
+}
+
+const SUDO_OPS: &str = "[sudo] password for ops: ";
+/// sudo since 2026-05: `ESC [ K` after each kill.
+const ERASE_LINE: &str = "\\033[K";
+
+/// Fills the stand-in at `prompt` (as the frontend names it), with `hop` for a nested ssh's Host.
+fn fill_pwfeedback(
+    script: &str,
+    prompt: &str,
+    hop: Option<&FillTarget>,
+) -> (Result<String, FillError<String>>, String) {
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, prompt.trim_end());
+    std::thread::sleep(Duration::from_millis(150));
+    let _ = quiet_for(&rx, Duration::from_millis(50));
+    let got = m.fill(id, WAIT, prompt, hop, |_| secret());
+    if got.is_err() {
+        // Nothing but the probe was typed: Enter shows what the prompt holds.
+        m.write(id, b"\r").unwrap();
+    }
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    m.close(id).unwrap();
+    (got, out)
+}
+
+#[test]
+fn sudo_with_pwfeedback_is_filled_both_ways_sudo_erases() {
+    for (name, tail) in [("released sudo", ""), ("sudo since 2026-05", ERASE_LINE)] {
+        let (got, out) = fill_pwfeedback(&pwfeedback(SUDO_OPS, tail, "*", ":"), "[sudo] password for ops:", None);
+        assert_eq!(got.as_deref().ok(), Some("esx"), "{name}: {got:?} {out:?}");
+        assert!(out.contains(&format!("got:[{SECRET}]")), "{name}: {out:?}");
+        // The password drew stars and was never printed: only the stand-in's own report has it.
+        assert_eq!(out.matches(SECRET).count(), 1, "{name}: {out:?}");
+        assert!(out.contains(&"*".repeat(SECRET.len())), "{name}: {out:?}");
+    }
+}
+
+#[test]
+fn sudo_with_pwfeedback_is_filled_for_a_nested_hosts_own_user() {
+    let hop = FillTarget {
+        host: "esx-02".into(),
+        login: LoginAs {
+            address: "10.0.0.12".into(),
+            port: 22,
+            user: "admin".into(),
+        },
+    };
+    let (got, out) = fill_pwfeedback(
+        &pwfeedback("[sudo] password for admin: ", "", "*", ":"),
+        "[sudo] password for admin:",
+        Some(&hop),
+    );
+    assert_eq!(got.as_deref().ok(), Some("esx-02"), "{got:?} {out:?}");
+    // The Session's own user's sudo prompt is not that Host's: the mask is an echo there.
+    let (got, out) = fill_pwfeedback(
+        &pwfeedback(SUDO_OPS, "", "*", ":"),
+        "[sudo] password for ops:",
+        Some(&hop),
+    );
+    assert!(matches!(got, Err(FillError::Echoes)), "{got:?}");
+    assert!(out.contains("got:[]"), "{out:?}");
+}
+
+/// Ticket 154: everything but sudo's own mask and erasure, at sudo's own prompt for the login
+/// user, still refuses, and the secret is never typed.
+#[test]
+fn a_mask_anywhere_else_or_with_anything_more_still_refuses() {
+    let nested = FillTarget {
+        host: "esx-02".into(),
+        login: LoginAs {
+            address: "10.0.0.12".into(),
+            port: 22,
+            user: "ops".into(),
+        },
+    };
+    // Each: name, the stand-in, the prompt the fill names, its hop.
+    let cases: Vec<(&str, String, &str, Option<&FillTarget>)> = vec![
+        (
+            "a prompt that names no one",
+            pwfeedback("Password: ", "", "*", ":"),
+            "Password:",
+            None,
+        ),
+        (
+            "sudo's prompt for another user",
+            pwfeedback("[sudo] password for root: ", "", "*", ":"),
+            "[sudo] password for root:",
+            None,
+        ),
+        (
+            "a nested ssh's login prompt",
+            pwfeedback("ops@esx-02's password: ", "", "*", ":"),
+            "ops@esx-02's password:",
+            Some(&nested),
+        ),
+        (
+            "sudo's prompt with text after it",
+            pwfeedback("[sudo] password for ops: x", "", "*", ":"),
+            "[sudo] password for ops: x",
+            None,
+        ),
+        (
+            "another mask character",
+            pwfeedback(SUDO_OPS, "", "#", ":"),
+            "[sudo] password for ops:",
+            None,
+        ),
+        (
+            "the probe's own letter",
+            pwfeedback(SUDO_OPS, "", "x", ":"),
+            "[sudo] password for ops:",
+            None,
+        ),
+        (
+            "two masks per key",
+            pwfeedback(SUDO_OPS, "", "**", ":"),
+            "[sudo] password for ops:",
+            None,
+        ),
+        (
+            "a mask that's never erased",
+            pwfeedback(SUDO_OPS, "", "*\\033[1C", ":"),
+            "[sudo] password for ops:",
+            None,
+        ),
+        (
+            "more after the erasure",
+            pwfeedback(SUDO_OPS, "!\\b", "*", ":"),
+            "[sudo] password for ops:",
+            None,
+        ),
+        (
+            "another escape after the erasure",
+            pwfeedback(SUDO_OPS, "\\033[1m", "*", ":"),
+            "[sudo] password for ops:",
+            None,
+        ),
+        (
+            "the erasure after the window",
+            pwfeedback(SUDO_OPS, "", "*", ":").replacen(
+                "while [ $n -gt 0 ]; do printf '\\b \\b'",
+                "[ $n -gt 0 ] && sleep 0.6; while [ $n -gt 0 ]; do printf '\\b \\b'",
+                1,
+            ),
+            "[sudo] password for ops:",
+            None,
+        ),
+    ];
+    for (name, script, prompt, hop) in cases {
+        let (got, out) = fill_pwfeedback(&script, prompt, hop);
+        assert!(matches!(got, Err(FillError::Echoes)), "{name}: {got:?} {out:?}");
+        assert!(!out.contains(SECRET), "{name}: {out:?}");
+    }
+}
+
+#[test]
+fn output_while_the_vault_answers_then_the_mask_refuses() {
+    let m = SessionManager::new();
+    // A dot 0.4 s after the prompt: while the lookup below waits on the vault.
+    let script = pwfeedback(SUDO_OPS, "", "*", "(sleep 0.4; printf .) & :");
+    let (id, rx) = open(&m, host_sh(&script));
+    until(&rx, "ops: ");
+    let err = m
+        .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+            std::thread::sleep(Duration::from_millis(600));
+            secret()
+        })
+        .unwrap_err();
+    assert!(matches!(err, FillError::Echoes), "{err:?}");
+    m.write(id, b"\r").unwrap();
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
+    m.close(id).unwrap();
+}
+
+#[test]
+fn a_key_typed_while_sudo_masks_the_probe_refuses() {
+    let m = std::sync::Arc::new(SessionManager::new());
+    let (id, rx) = open(&m, host_sh(&pwfeedback(SUDO_OPS, "", "*", ":")));
+    until(&rx, "ops: ");
+    std::thread::sleep(Duration::from_millis(100));
+    let typer = {
+        let m = std::sync::Arc::clone(&m);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            m.write(id, b"\x15").unwrap();
+        })
+    };
+    let err = m
+        .fill(id, WAIT, "[sudo] password for ops:", None, |_| secret())
+        .unwrap_err();
+    typer.join().unwrap();
+    assert!(matches!(err, FillError::Typed), "{err:?}");
+    m.write(id, b"\r").unwrap();
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
+    m.close(id).unwrap();
+}
+
+/// Ticket 154 (3): once the mask is erased the cursor must be right after the prompt again, as
+/// the core's screen draws it. A prompt that leaves one column puts the `*` in the last column,
+/// with the wrap pending: the backspace then lands a column early and sudo's space wipes the
+/// prompt's colon, so the cursor isn't after the prompt: refused, though the bytes are sudo's.
+#[test]
+fn a_mask_that_leaves_the_cursor_off_the_prompt_refuses() {
+    // 80 columns: 55 of padding, then sudo's prompt (24 without its space), then the `*`.
+    let pad = "~".repeat(55);
+    let prompt = format!("{pad}{}", SUDO_OPS.trim_end());
+    let (got, out) = fill_pwfeedback(&pwfeedback(&prompt, "", "*", ":"), "[sudo] password for ops:", None);
+    assert!(matches!(got, Err(FillError::Echoes)), "{got:?} {out:?}");
+    assert!(!out.contains(SECRET), "{out:?}");
+}
