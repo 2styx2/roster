@@ -94,6 +94,10 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
         "/redirect-out" => reply("302 Found", "Location: https://elsewhere.example/steal\r\n", b""),
         "/redirect-loopback" => reply("302 Found", "Location: http://127.0.0.2/hello\r\n", b""),
         "/redirect-loop" => reply("302 Found", "Location: /redirect-loop\r\n", b""),
+        "/found" => reply("302 Found", "Location: /echo\r\n", b""),
+        "/see-other" => reply("303 See Other", "Location: /echo\r\n", b""),
+        "/temporary" => reply("307 Temporary Redirect", "Location: /echo\r\n", b""),
+        "/no-location" => reply("302 Found", "", b"stay"),
         "/big" => reply("200 OK", "", &vec![b'x'; 2 * 1024 * 1024]),
         "/big-unsized" => {
             // No Content-Length: the cap must hold while reading.
@@ -109,6 +113,11 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
         p if p.starts_with("/to/") => reply(
             "302 Found",
             &format!("Location: http://127.0.0.1:{}/echo\r\n", &p[4..]),
+            b"",
+        ),
+        p if p.starts_with("/creds/") => reply(
+            "302 Found",
+            &format!("Location: http://someone:secret@127.0.0.1:{}/echo\r\n", &p[7..]),
             b"",
         ),
         p if p.starts_with("/tls/") => reply(
@@ -444,6 +453,30 @@ fn redirects_are_followed_only_to_its_sites() {
     assert!(looped.contains("more than 5 redirects"), "{looped}");
 }
 
+/// A redirect changes the method and drops the body as browsers do: a POST answered with 302 or
+/// 303 goes on as a GET with no body; 307 (and 308) keep both. One with no `Location` is the answer.
+#[test]
+fn a_redirect_keeps_or_drops_the_method_and_body_as_http_says() {
+    let server = Server::start();
+    let post = json!({ "method": "POST", "body": "data", "headers": { "Content-Type": "text/plain" } });
+    for (path, method, kept) in [
+        ("/found", "GET", false),
+        ("/see-other", "GET", false),
+        ("/temporary", "POST", true),
+    ] {
+        let out = fetch(&format!("redir-method{}", &path[1..]), &server, path, post.clone());
+        assert!(
+            out.starts_with("200 ") && out.contains(&format!("{method} /echo")),
+            "{path}: {out}"
+        );
+        let lower = out.to_ascii_lowercase();
+        assert_eq!(lower.contains("content-length: 4"), kept, "{path}: {out}");
+        assert_eq!(lower.contains("content-type: text/plain"), kept, "{path}: {out}");
+    }
+    let stay = fetch("redir-none", &server, "/no-location", json!({}));
+    assert!(stay.starts_with("302 4 stay"), "{stay}");
+}
+
 #[test]
 fn a_token_isnt_carried_to_another_site_by_a_redirect() {
     let (a, b) = (Server::start(), Server::start());
@@ -457,6 +490,14 @@ fn a_token_isnt_carried_to_another_site_by_a_redirect() {
     assert!(got[0].starts_with("200 ") && got[0].contains("GET /echo"), "{got:?}");
     assert!(!got[0].to_ascii_lowercase().contains("authorization"), "{got:?}");
     assert!(a.heads.lock().unwrap()[0].contains("authorization: Bearer t0ken"));
+}
+
+#[test]
+fn a_user_or_password_in_a_redirect_isnt_sent() {
+    let server = Server::start();
+    let out = fetch("redir-creds", &server, &format!("/creds/{}", server.port), json!({}));
+    assert!(out.starts_with("200 ") && out.contains("GET /echo"), "{out}");
+    assert!(!out.to_ascii_lowercase().contains("authorization"), "{out}");
 }
 
 #[test]

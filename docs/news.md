@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Fixed
+
+**App**
+
+- A Plugin's request through `plugin_proxy` that's redirected to a name this computer is slow to look up now ends at the request's `timeout` ("no answer within N s") instead of waiting on the lookup, and holds up none of the Plugin's other requests. Every redirect is still checked the same way before it's followed. A user or password in a redirect's address is never sent. See [The network](plugins.md#the-network).
+
 ## v0.4.0
 
 ### New
