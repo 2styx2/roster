@@ -388,7 +388,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 - roster's own folder is `%APPDATA%\roster` (where the app's `init.lua` is too), so `roster.yml` can live there, as can `providers/` and `bw-session`.
 - `roster run` waits for ssh and exits with its status (Windows has no `exec`).
 - A vault CLI installed as a batch file (npm installs `bw` as `bw.cmd`) runs through `cmd.exe`, so roster won't pass it an argument with `"`, `%`, `^`, `&`, `|`, `<`, `>` or `!` in it: rename the item, or install the tool as an `.exe`.
-- Signing the vault in from the app with a password or SSO drives `bw login` on a pseudoconsole (ConPTY, Windows 10 1809 or later), as Linux does on a PTY. For SSO, bw opens the sign-in page in your default browser itself, so the app has no link to show or copy.
+- Signing the vault in from the app with a password or SSO drives `bw login` on a pseudoconsole (ConPTY, Windows 10 1809 or later), as Linux does on a PTY. For SSO, bw opens the sign-in page in your default browser itself, so the app has no link to show or copy, and `ROSTER_NO_BROWSER` can't stop it opening there.
 - Commands that run a shell script on this machine (a `cmd:` provider, a provider's `command:`) run it with `cmd.exe`.
 
 ## Exit status
