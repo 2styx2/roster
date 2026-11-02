@@ -281,6 +281,8 @@ export function guideLink(from: Guide, href: string): string {
   const [file = "", anchor] = href.split("#", 2) as [string, string | undefined];
   if (!file.includes("/") && !FILE.test(file)) return href;
   const path = repoPath(from.path, file);
+  // The option reference's Markdown is the `options` page, made from the same data.
+  if (path === "docs/app/options.md") return "options";
   const guide = guides.find((g) => g.path === path);
   if (!guide) return `file:${path}${anchor ? `#${anchor}` : ""}`;
   return anchor ? `${guide.id}#${anchor}` : guide.id;

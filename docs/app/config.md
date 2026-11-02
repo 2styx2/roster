@@ -15,6 +15,8 @@ The roster app is configured by one Lua file, the way WezTerm and Neovim are (AD
 | `:source` (`:so`, `␣ S`) | Reloads the Config now, as Neovim's `:source` does: `init.lua` with its modules, and `roster.yml` (ticket 28). `:source PATH` reloads only the file that owns PATH (`:source lua/keys.lua` is `init.lua` again). Tab completes the files |
 | `:config reload` | The same as `:source init.lua` |
 | `:config path` | Says where the file is |
+| `:config types` | Writes every option's type and description as `types/roster-config.lua` in the config folder, for lua-language-server: your editor completes option names and shows what each does ([Editor support](options.md#editor-support)) |
+| `:options` | Finds an option, with its value now, its default and where it was set (the file and line, or default). Enter opens its entry in `:help options` |
 | `:config import-terminal` | Copies Windows Terminal's default profile into `init.lua` (ticket 33): font, size, weight, cell height, cursor, how bold text looks, and a Theme made from its colour scheme, which it defines but doesn't set as `theme`: the app chooses it as `:theme` does, so `:theme` can still change it (decision Q69). It reads `settings.json` (Store, Preview or unpackaged), shows the change as a diff, and on Enter writes exactly that diff: if `init.lua` or Windows Terminal's `settings.json` changed since the preview, it writes nothing and asks you to run the import again to see the new diff. The block goes between `-- >>> Windows Terminal >>>` and `-- <<< Windows Terminal <<<` lines, before the file's `return`, and running the import again replaces it. It uses `roster.set`, so a value the file's own returned table sets wins, and the diff names those. Windows only |
 
 Everything configurable says its name where it shows, so you can tell where to change it: each row of the Key bindings panel (`␣ K`) names its option (`keys.leader`, `keys.list_vim`, `leader`) under its label, next to its source (`builtin`, `init.lua`, a Plugin), and the filter finds rows by it; the `:theme` finder says `theme = "<id>"` for the Theme under the cursor; and `␣ e` / `␣ s` say which `modes.<mode>.<piece>` keeps what they just showed or hid.
@@ -61,6 +63,8 @@ Calls and the returned table go to the same place. Among calls, the last one win
 ## Options
 
 Names are snake_case in Lua. The frontend's object is camelCase (`bold_weight` → `boldWeight`).
+
+The [option reference](options.md) (`:help options`) has every option below and every name of the `roster` table, one entry each: its type, its default, the values it takes and an example, generated from the core so it can't fall behind.
 
 ### Themes and colours
 
@@ -225,4 +229,4 @@ Plugins fetched from git repos, the way lazy.nvim fetches Neovim's ([plugins.md]
 
 ## See also
 
-[Recipes](recipes.md) · [Options](options) · [Keyboard](keyboard.md) · [Themes](themes.md) · [How far roster bends](extending.md)
+[Recipes](recipes.md) · [Options](options) · [Option reference](options.md) · [Keyboard](keyboard.md) · [Themes](themes.md) · [How far roster bends](extending.md)

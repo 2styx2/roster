@@ -109,8 +109,8 @@ export interface CommandContext {
 export const VAULT_ACTIONS = ["signout"] as const;
 export type VaultAction = (typeof VAULT_ACTIONS)[number];
 
-/** What `:config` does: `:config`, `:config reload`, `:config path`. */
-export const CONFIG_ACTIONS = ["open", "reload", "path", "import-terminal"] as const;
+/** What `:config` does: `:config`, `:config reload`, `:config path`, `:config types`. */
+export const CONFIG_ACTIONS = ["open", "reload", "path", "import-terminal", "types"] as const;
 export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
 /** The ones typed after `config` (open is `:config` alone). */
 const CONFIG_SUBCOMMANDS: readonly string[] = CONFIG_ACTIONS.filter((a) => a !== "open");
@@ -413,7 +413,9 @@ export const builtinCommands: readonly CommandDef[] = [
           ? "Say where init.lua is"
           : what === "import-terminal"
             ? "Copy Windows Terminal's font and colours into init.lua"
-            : "Open init.lua, the Config",
+            : what === "types"
+              ? "Write the option types for your editor (types/roster-config.lua)"
+              : "Open init.lua, the Config",
     run: (ctx, what) => {
       if (what === undefined) return ctx.config("open");
       const action = CONFIG_SUBCOMMANDS.find((a) => a === what.toLowerCase()) as ConfigAction | undefined;

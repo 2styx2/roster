@@ -1,0 +1,413 @@
+---@meta
+-- Generated from crates/roster-core/src/config/shape by `cargo run -p roster-core --example gen_config_options`.
+-- The types of init.lua's options and its `roster` table, for lua-language-server: `:config types`
+-- writes this file as types/roster-config.lua in the config folder. `:help options` has the same text.
+
+--- Every option init.lua takes. `---@type roster.config.Options` on the table it returns checks it.
+---@class roster.config.Options
+---@field theme? string The Theme to use, or "auto" to follow the OS's light or dark setting with dark_theme and light_theme. Default: `"auto"`. Takes a Theme's id, or "auto".
+---@field dark_theme? string The Theme "auto" picks while the OS is dark. Default: `"roster-dark"`. Takes a Theme's id.
+---@field light_theme? string The Theme "auto" picks while the OS is light. Default: `"roster-light"`. Takes a Theme's id.
+---@field themes? table<string, roster.config.Theme> New Themes, or changed copies of bundled ones, by id: each a Theme spec.
+---@field colors? roster.config.UiColors UI colour tokens set over whichever Theme is in use.
+---@field fonts? roster.config.Fonts The UI's fonts.
+---@field ui? roster.config.Ui The rest of the UI's look.
+---@field terminal? roster.config.Terminal The terminal's font, look and behaviour.
+---@field leader? string The chord that takes the keyboard back from a terminal. Default: `"Ctrl+Space"`. Takes a chord: "Ctrl+Space", "ctrl+b", "C-b" or "<C-b>", with Ctrl, Alt or Meta.
+---@field vim? boolean j/k/h/l/gg/G in lists and the Picker. Default: `true`.
+---@field keys? roster.config.Keys Key bindings, per context: key or sequence → action.
+---@field default_mode? "standard"|"focus" The view mode at start (read at start only). Default: `"standard"`.
+---@field sessions? "sidebar"|"tabs" Open Sessions in the Sidebar, or in a tab strip. Default: `"sidebar"`.
+---@field modes? roster.config.Modes Each view mode's layout.
+---@field panel? roster.config.Panel What every panel and view starts with.
+---@field views? table<string, roster.config.View> Per panel or view id (help, details, a Plugin view's id): where it opens first, and its width.
+---@field folders? roster.config.Folder[] Folders kept in the Config, read-only in the app: each a Folder spec.
+---@field vault? roster.config.Vault This Box's own vault settings, over roster.yml's providers. Paths and choices, never a secret.
+---@field packages? (string|roster.config.Package)[] Plugins fetched from git repos and pinned in roster.lock: each a Package spec, or just its source.
+---@field plugin_proxy? string The proxy Plugins' requests to public names go through. Unset, they go direct. Takes http://HOST:PORT, the port written out, with no user or password.
+---@field idle_lock_minutes? integer Lock after this many minutes without input. Default: `15`. Takes 1 to 1440 minutes.
+---@field pull_fresh_minutes? integer How old the last pull of the infra repo may be before a form pulls again; 0 pulls every time. Default: `5`. Takes 0 to 1440 minutes.
+---@field auto_reload? boolean Reload on every save of a .lua file of the Config, and of roster.yml. Off, :source reloads. Default: `false`.
+---@field editor? "os"|"wsl" What :config opens init.lua with: the desktop's app for .lua files, or $EDITOR inside WSL. Default: `"os"`.
+---@field backend? string Which roster the app runs: detected, this machine's, or WSL's. Default: `"auto"`. Takes "auto", "local", "wsl" or "wsl:<distro>".
+---@field roster_command? string|string[] The command that runs roster, for development: a command line (split on spaces) or a list of words. Unset, roster. Takes roster itself: "roster", a path ending in /roster, or "uv run --project <dir> roster".
+
+--- A Theme spec: a bundled Theme (base) with tokens changed, or a new one.
+---@class roster.config.Theme
+---@field label? string Its name in the app; the id when left out.
+---@field appearance? "dark"|"light" Which OS appearance it suits; the base's when left out.
+---@field base? string The Theme it starts from: every token it doesn't set comes from there (Roster dark, or Roster light for appearance = "light", when left out). Takes a Theme's id.
+---@field colors? roster.config.UiColors UI colour tokens over the base's.
+---@field terminal? roster.config.ThemeTerminalColors The terminal's colours, apart from the 16 ANSI ones, over the base's.
+---@field ansi? false|roster.config.Ansi The 16 ANSI colours; false keeps the standard palette even when the base has its own; the base's when left out.
+
+--- UI colour tokens over the base's.
+---@class roster.config.UiColors
+---@field accent? string The `accent` colour. Takes a CSS colour, such as "#e8a33d".
+---@field accent_text? string The `accent_text` colour. Takes a CSS colour, such as "#e8a33d".
+---@field accent_ink? string The `accent_ink` colour. Takes a CSS colour, such as "#e8a33d".
+---@field tone? string The `tone` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bg? string The `bg` colour. Takes a CSS colour, such as "#e8a33d".
+---@field chrome? string The `chrome` colour. Takes a CSS colour, such as "#e8a33d".
+---@field sidebar? string The `sidebar` colour. Takes a CSS colour, such as "#e8a33d".
+---@field panel? string The `panel` colour. Takes a CSS colour, such as "#e8a33d".
+---@field raised? string The `raised` colour. Takes a CSS colour, such as "#e8a33d".
+---@field raised_line? string The `raised_line` colour. Takes a CSS colour, such as "#e8a33d".
+---@field hover? string The `hover` colour. Takes a CSS colour, such as "#e8a33d".
+---@field line? string The `line` colour. Takes a CSS colour, such as "#e8a33d".
+---@field line_strong? string The `line_strong` colour. Takes a CSS colour, such as "#e8a33d".
+---@field text? string The `text` colour. Takes a CSS colour, such as "#e8a33d".
+---@field muted? string The `muted` colour. Takes a CSS colour, such as "#e8a33d".
+---@field faint? string The `faint` colour. Takes a CSS colour, such as "#e8a33d".
+---@field warn? string The `warn` colour. Takes a CSS colour, such as "#e8a33d".
+---@field error? string The `error` colour. Takes a CSS colour, such as "#e8a33d".
+---@field danger? string The `danger` colour. Takes a CSS colour, such as "#e8a33d".
+---@field danger_text? string The `danger_text` colour. Takes a CSS colour, such as "#e8a33d".
+---@field backdrop? string The `backdrop` colour. Takes a CSS colour, such as "#e8a33d".
+---@field shadow? string The `shadow` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_keyword? string The `syntax_keyword` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_string? string The `syntax_string` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_number? string The `syntax_number` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_comment? string The `syntax_comment` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_function? string The `syntax_function` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_punctuation? string The `syntax_punctuation` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_key? string The `syntax_key` colour. Takes a CSS colour, such as "#e8a33d".
+---@field syntax_command? string The `syntax_command` colour. Takes a CSS colour, such as "#e8a33d".
+
+--- The terminal's colours, apart from the 16 ANSI ones, over the base's.
+---@class roster.config.ThemeTerminalColors
+---@field background? string The `background` colour. Takes a CSS colour, such as "#e8a33d".
+---@field foreground? string The `foreground` colour. Takes a CSS colour, such as "#e8a33d".
+---@field cursor? string The `cursor` colour. Takes a CSS colour, such as "#e8a33d".
+---@field cursor_accent? string The `cursor_accent` colour. Takes a CSS colour, such as "#e8a33d".
+---@field selection_background? string The `selection_background` colour. Takes a CSS colour, such as "#e8a33d".
+---@field search_match? string The `search_match` colour. Takes a CSS colour, such as "#e8a33d".
+---@field search_active_match? string The `search_active_match` colour. Takes a CSS colour, such as "#e8a33d".
+
+--- The 16 ANSI colours; false keeps the standard palette even when the base has its own; the base's when left out.
+---@class roster.config.Ansi
+---@field black? string The `black` colour. Takes a CSS colour, such as "#e8a33d".
+---@field red? string The `red` colour. Takes a CSS colour, such as "#e8a33d".
+---@field green? string The `green` colour. Takes a CSS colour, such as "#e8a33d".
+---@field yellow? string The `yellow` colour. Takes a CSS colour, such as "#e8a33d".
+---@field blue? string The `blue` colour. Takes a CSS colour, such as "#e8a33d".
+---@field magenta? string The `magenta` colour. Takes a CSS colour, such as "#e8a33d".
+---@field cyan? string The `cyan` colour. Takes a CSS colour, such as "#e8a33d".
+---@field white? string The `white` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_black? string The `bright_black` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_red? string The `bright_red` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_green? string The `bright_green` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_yellow? string The `bright_yellow` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_blue? string The `bright_blue` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_magenta? string The `bright_magenta` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_cyan? string The `bright_cyan` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_white? string The `bright_white` colour. Takes a CSS colour, such as "#e8a33d".
+
+--- The UI's fonts.
+---@class roster.config.Fonts
+---@field ui? string The UI's font. Default: `"Inter"`. Takes a family name, or a CSS font stack (anything with a comma).
+---@field mono? string The wordmark's and code-like UI text's font. Default: `"Iosevka"`. Takes a family name, or a CSS font stack.
+---@field ui_size? integer The UI's text size; the smaller steps, the row height and the Sidebar's width follow it. Default: `15`. Takes 11 to 20 px.
+
+--- The rest of the UI's look.
+---@class roster.config.Ui
+---@field hints? boolean false hides every keycap hint. Unset, :hints decides and the State keeps its choice; set, it wins.
+---@field messages? "quiet"|"all" What the message line shows: errors, warnings and answers only ("quiet"), or routine confirmations too ("all"). Unset, :messages decides.
+
+--- The terminal's font, look and behaviour.
+---@class roster.config.Terminal
+---@field font? string|string[] Font families, most wanted first: the first one installed is used. Default: `{ "Iosevka Nerd Font", "Iosevka Term", "Iosevka" }`. Takes a font name, a CSS font stack, or a list of names.
+---@field size? number|string The font size: a number is px, "16pt" is points (as Windows Terminal converts them), "21px" works too. Default: `"13pt"`. Takes 6 to 72 px (4.5 to 54 pt).
+---@field weight? integer The font weight; the bundled Iosevka has 400, 500 and 700. Default: `500`. Takes 100 to 900.
+---@field bold_weight? integer The weight of bold (SGR 1) text. Default: `700`. Takes 100 to 900.
+---@field bold_is_bright? boolean Bold text in the bright ANSI colours too. Default: `true`.
+---@field line_height? number A multiple of the font's own line height. Default: `1.0`. Takes 0.5 to 3.
+---@field cell_height? number A multiple of the font size, as Windows Terminal's cellHeight; wins over line_height. Takes 0.5 to 3.
+---@field renderer? "webgl"|"dom" WebGL (fast) or the DOM (the browser's own text rendering). Default: `"webgl"`.
+---@field cursor_style? "block"|"bar"|"underline" The cursor's shape. Default: `"block"`.
+---@field scrollback? integer How many lines the terminal keeps above the screen. Default: `10000`. Takes 0 to 1000000 lines.
+---@field copy_on_select? boolean Selecting text copies it. Default: `true`.
+---@field right_click_paste? boolean Right-click copies the selection, or pastes when there's none. Default: `true`.
+---@field colors? roster.config.TerminalColors Any terminal or ANSI colour, set over the Theme's.
+---@field shell_hooks? boolean Send each Session's shell the line that turns on prompt marks (OSC 133) and its folder (OSC 7). Unset, a Host's shell_hooks in roster.yml decides.
+
+--- Any terminal or ANSI colour, set over the Theme's.
+---@class roster.config.TerminalColors
+---@field background? string The `background` colour. Takes a CSS colour, such as "#e8a33d".
+---@field foreground? string The `foreground` colour. Takes a CSS colour, such as "#e8a33d".
+---@field cursor? string The `cursor` colour. Takes a CSS colour, such as "#e8a33d".
+---@field cursor_accent? string The `cursor_accent` colour. Takes a CSS colour, such as "#e8a33d".
+---@field selection_background? string The `selection_background` colour. Takes a CSS colour, such as "#e8a33d".
+---@field search_match? string The `search_match` colour. Takes a CSS colour, such as "#e8a33d".
+---@field search_active_match? string The `search_active_match` colour. Takes a CSS colour, such as "#e8a33d".
+---@field black? string The `black` colour. Takes a CSS colour, such as "#e8a33d".
+---@field red? string The `red` colour. Takes a CSS colour, such as "#e8a33d".
+---@field green? string The `green` colour. Takes a CSS colour, such as "#e8a33d".
+---@field yellow? string The `yellow` colour. Takes a CSS colour, such as "#e8a33d".
+---@field blue? string The `blue` colour. Takes a CSS colour, such as "#e8a33d".
+---@field magenta? string The `magenta` colour. Takes a CSS colour, such as "#e8a33d".
+---@field cyan? string The `cyan` colour. Takes a CSS colour, such as "#e8a33d".
+---@field white? string The `white` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_black? string The `bright_black` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_red? string The `bright_red` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_green? string The `bright_green` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_yellow? string The `bright_yellow` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_blue? string The `bright_blue` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_magenta? string The `bright_magenta` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_cyan? string The `bright_cyan` colour. Takes a CSS colour, such as "#e8a33d".
+---@field bright_white? string The `bright_white` colour. Takes a CSS colour, such as "#e8a33d".
+
+--- Key bindings, per context: key or sequence → action.
+---@class roster.config.Keys
+---@field leader? table<string, roster.config.KeyAction> After the Leader: key or sequence (chords separated by spaces: "d d") → key action.
+---@field list? table<string, roster.config.KeyAction> In a list (the Sidebar): key or sequence (chords separated by spaces: "d d") → key action.
+---@field list_vim? table<string, roster.config.KeyAction> In a list while vim keys are on: key or sequence (chords separated by spaces: "d d") → key action.
+---@field picker? table<string, roster.config.KeyAction> In the Picker and every finder: key or sequence (chords separated by spaces: "d d") → key action.
+---@field picker_vim? table<string, roster.config.KeyAction> In the Picker's list while vim keys are on: key or sequence (chords separated by spaces: "d d") → key action.
+---@field cmdline? table<string, roster.config.KeyAction> In the : command line: key or sequence (chords separated by spaces: "d d") → key action.
+---@field terminal? table<string, roster.config.KeyAction> In a terminal, before the shell sees the key: key or sequence (chords separated by spaces: "d d") → key action.
+---@field global? table<string, roster.config.KeyAction> Everywhere, with no Leader (keep it to keys a shell doesn't use): key or sequence (chords separated by spaces: "d d") → key action.
+
+--- A key action: the command line a key runs, or false to unbind a default.
+---@alias roster.config.KeyAction string|false
+
+--- Each view mode's layout.
+---@class roster.config.Modes
+---@field standard? roster.config.Mode The Standard mode's pieces; a piece left out keeps this mode's default.
+---@field focus? roster.config.Mode The Focus mode's pieces; a piece left out keeps this mode's default.
+
+--- The Standard mode's pieces; a piece left out keeps this mode's default.
+---@class roster.config.Mode
+---@field titlebar? boolean The title bar. Default: `true`.
+---@field sidebar? boolean|roster.config.Sidebar The Sidebar: shown or hidden, the side it's on, and its sections. Default: `{ side = "left" }`. Takes true, false, or a table of the options below (which shows it).
+---@field sessionbar? false|"bottom"|"top" The thin tmux-style bar of open Sessions, and its edge. Default: `false`.
+---@field statusbar? boolean|string[] The status bar, and its segments. Default: `true`. Takes true, false, or segments in order: "backend", "box", "hosts", "path", "changes", "hints", "mode".
+---@field fullscreen? boolean OS fullscreen. Default: `false`.
+---@field toolbar? boolean|string[] The controls for common commands, in the title bar (or a bar of their own without one). Default: `true`. Takes true, false, or controls in order: "sidebar", "find", "quick", "add", "changes", "publish", "details", "cmdline", "keys", "help", "lock", "mode", or a Plugin control's id.
+
+--- The Sidebar: shown or hidden, the side it's on, and its sections.
+---@class roster.config.Sidebar
+---@field side? "left"|"right" The side of the window it's on. Default: `"left"`.
+---@field sections? string[] Its sections, in order; all of them when left out. Takes section ids in order: "sessions", "folders", "inventory", or a Plugin section's id.
+
+--- What every panel and view starts with.
+---@class roster.config.Panel
+---@field width? integer A docked panel's width, for every panel and view views doesn't give one. Unset, each keeps its own. Takes 10 to 95 percent of the window.
+
+--- A view spec: one panel's or view's default place and width.
+---@class roster.config.View
+---@field place? "panel"|"full" Docked beside the terminal, or over the whole window.
+---@field width? integer Its docked width. Takes 10 to 95 percent of the window.
+
+--- A Folder spec: a name and the Hosts in it.
+---@class roster.config.Folder
+---@field name string The Folder's name. Takes unique, ignoring case, with no double quote.
+---@field hosts? string[] The Hosts in it, in order. Takes Host names.
+
+--- This Box's own vault settings, over roster.yml's providers. Paths and choices, never a secret.
+---@class roster.config.Vault
+---@field save_to? "personal"|{ organization: string, collection: string }|{ group: string } Where Save to vault puts a new password by default. Takes "personal", { organization = …, collection = … } (Bitwarden) or { group = … } (KeePassXC).
+---@field kp? roster.config.KeePassXC KeePassXC's files, on the Box roster runs on.
+
+--- KeePassXC's files, on the Box roster runs on.
+---@class roster.config.KeePassXC
+---@field database? string KeePassXC's .kdbx. Takes an absolute path, or one starting with ~.
+---@field key_file? string A key file used with the database's master password. Takes an absolute path, or one starting with ~.
+
+--- A Package spec: { SOURCE, tag = …, config = { … } }, or just SOURCE.
+---@class roster.config.Package
+---@field source string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path.
+---@field name? string Its name (its folder and its line in roster.lock); the repo's (or dir's) name when left out.
+---@field tag? string The tag to pin. At most one of tag, branch and commit; none means the default branch.
+---@field branch? string The branch to follow.
+---@field commit? string The commit to pin. Takes 4 to 40 hex digits.
+---@field dir? string The repo's folder that holds the Plugin, when it isn't the top. Takes a folder inside the repo, relative, / between folders, no ...
+---@field config? table Settings the Package reads as roster.plugin.config. Takes a table (never a function).
+
+--- An option's dotted name, for roster.set.
+---@alias roster.config.OptionName
+---| "theme"
+---| "dark_theme"
+---| "light_theme"
+---| "themes"
+---| "colors"
+---| "colors.accent"
+---| "colors.accent_text"
+---| "colors.accent_ink"
+---| "colors.tone"
+---| "colors.bg"
+---| "colors.chrome"
+---| "colors.sidebar"
+---| "colors.panel"
+---| "colors.raised"
+---| "colors.raised_line"
+---| "colors.hover"
+---| "colors.line"
+---| "colors.line_strong"
+---| "colors.text"
+---| "colors.muted"
+---| "colors.faint"
+---| "colors.warn"
+---| "colors.error"
+---| "colors.danger"
+---| "colors.danger_text"
+---| "colors.backdrop"
+---| "colors.shadow"
+---| "colors.syntax_keyword"
+---| "colors.syntax_string"
+---| "colors.syntax_number"
+---| "colors.syntax_comment"
+---| "colors.syntax_function"
+---| "colors.syntax_punctuation"
+---| "colors.syntax_key"
+---| "colors.syntax_command"
+---| "fonts"
+---| "fonts.ui"
+---| "fonts.mono"
+---| "fonts.ui_size"
+---| "ui"
+---| "ui.hints"
+---| "ui.messages"
+---| "terminal"
+---| "terminal.font"
+---| "terminal.size"
+---| "terminal.weight"
+---| "terminal.bold_weight"
+---| "terminal.bold_is_bright"
+---| "terminal.line_height"
+---| "terminal.cell_height"
+---| "terminal.renderer"
+---| "terminal.cursor_style"
+---| "terminal.scrollback"
+---| "terminal.copy_on_select"
+---| "terminal.right_click_paste"
+---| "terminal.colors"
+---| "terminal.colors.background"
+---| "terminal.colors.foreground"
+---| "terminal.colors.cursor"
+---| "terminal.colors.cursor_accent"
+---| "terminal.colors.selection_background"
+---| "terminal.colors.search_match"
+---| "terminal.colors.search_active_match"
+---| "terminal.colors.black"
+---| "terminal.colors.red"
+---| "terminal.colors.green"
+---| "terminal.colors.yellow"
+---| "terminal.colors.blue"
+---| "terminal.colors.magenta"
+---| "terminal.colors.cyan"
+---| "terminal.colors.white"
+---| "terminal.colors.bright_black"
+---| "terminal.colors.bright_red"
+---| "terminal.colors.bright_green"
+---| "terminal.colors.bright_yellow"
+---| "terminal.colors.bright_blue"
+---| "terminal.colors.bright_magenta"
+---| "terminal.colors.bright_cyan"
+---| "terminal.colors.bright_white"
+---| "terminal.shell_hooks"
+---| "leader"
+---| "vim"
+---| "keys"
+---| "keys.leader"
+---| "keys.list"
+---| "keys.list_vim"
+---| "keys.picker"
+---| "keys.picker_vim"
+---| "keys.cmdline"
+---| "keys.terminal"
+---| "keys.global"
+---| "default_mode"
+---| "sessions"
+---| "modes"
+---| "modes.standard"
+---| "modes.standard.titlebar"
+---| "modes.standard.sidebar"
+---| "modes.standard.sidebar.side"
+---| "modes.standard.sidebar.sections"
+---| "modes.standard.sessionbar"
+---| "modes.standard.statusbar"
+---| "modes.standard.fullscreen"
+---| "modes.standard.toolbar"
+---| "modes.focus"
+---| "modes.focus.titlebar"
+---| "modes.focus.sidebar"
+---| "modes.focus.sidebar.side"
+---| "modes.focus.sidebar.sections"
+---| "modes.focus.sessionbar"
+---| "modes.focus.statusbar"
+---| "modes.focus.fullscreen"
+---| "modes.focus.toolbar"
+---| "panel"
+---| "panel.width"
+---| "views"
+---| "folders"
+---| "vault"
+---| "vault.save_to"
+---| "vault.kp"
+---| "vault.kp.database"
+---| "vault.kp.key_file"
+---| "packages"
+---| "plugin_proxy"
+---| "idle_lock_minutes"
+---| "pull_fresh_minutes"
+---| "auto_reload"
+---| "editor"
+---| "backend"
+---| "roster_command"
+
+--- init.lua's `roster` table. A Plugin's is another one (types/roster.lua).
+roster = {}
+
+--- The OS the app runs on.
+---
+--- ```lua
+--- if roster.os == "windows" then
+---   roster.set("backend", "wsl")
+--- end
+--- ```
+---@type "windows"|"linux"|"macos"
+roster.os = nil
+
+--- The version of this table, raised when it changes.
+---
+--- ```lua
+--- if roster.api_version >= 4 then … end
+--- ```
+---@type integer
+roster.api_version = nil
+
+--- Sets any option by its dotted name.
+--- The name and the value are checked like the returned table's; an error points at the call's line. The returned table wins over a call that sets the same option.
+---
+--- ```lua
+--- roster.set("terminal.size", "16pt")
+--- ```
+---@param name roster.config.OptionName An option's dotted name: "terminal.size".
+---@param value any Its value, as the option takes it.
+function roster.set(name, value) end
+
+roster.keymap = {}
+
+--- Binds a key, as `keys.<context>` does.
+---
+--- ```lua
+--- roster.keymap.set("leader", "p", "connect esx-02")
+--- ```
+---@param context "leader"|"list"|"list_vim"|"picker"|"picker_vim"|"cmdline"|"terminal"|"global" The keymap's context.
+---@param keys string A chord or a sequence of chords separated by spaces: "Ctrl+n", "d d".
+---@param action roster.config.KeyAction A command line, or false to unbind a default.
+function roster.keymap.set(context, keys, action) end
+
+roster.themes = {}
+
+--- Defines a Theme, as `themes.<id>` does.
+---
+--- ```lua
+--- roster.themes.define("paper", { appearance = "light", colors = { accent = "#b85c00" } })
+--- ```
+---@param id string The Theme's id (not "auto").
+---@param theme roster.config.Theme A Theme spec.
+function roster.themes.define(id, theme) end
+
+return roster

@@ -22,6 +22,10 @@ export interface MemoryPlatform extends Platform {
   opened(): string[];
   /** Makes the next `:config` fail with `message`. */
   failOpen(message: string): void;
+  /** How many times `:config types` wrote the types. */
+  typesWritten(): number;
+  /** The next `:config types` fails with this. */
+  failTypes(message: string): void;
   /** The `base` of each import written, in order. */
   imported(): Previewed[];
   /** Makes the next import preview fail with `message`. */
@@ -65,6 +69,8 @@ export function memoryPlatform(
   const opened: string[] = [];
   const urls: string[] = [];
   let openError: string | null = null;
+  let typesError: string | null = null;
+  let typesWritten = 0;
   let importError: string | null = null;
   const imported: Previewed[] = [];
   let foldersText = start.folders ?? null;
@@ -120,6 +126,15 @@ export function memoryPlatform(
         if (!start.importPreview) throw new Error("no Windows Terminal settings.json found");
         return start.importPreview;
       },
+      async writeTypes() {
+        if (typesError !== null) {
+          const message = typesError;
+          typesError = null;
+          throw new Error(message);
+        }
+        typesWritten += 1;
+        return path().replace(/init\.lua$/, "types/roster-config.lua");
+      },
       async importApply(previewed) {
         imported.push(previewed);
       },
@@ -149,6 +164,7 @@ export function memoryPlatform(
     },
     configFile: () => file,
     opened: () => [...opened],
+    typesWritten: () => typesWritten,
     async openUrl(url) {
       urls.push(url);
     },
@@ -156,6 +172,9 @@ export function memoryPlatform(
     imported: () => [...imported],
     failImport(message) {
       importError = message;
+    },
+    failTypes(message) {
+      typesError = message;
     },
     failOpen(message) {
       openError = message;

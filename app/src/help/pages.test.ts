@@ -86,15 +86,15 @@ describe("generated pages follow the registries", () => {
     expect(plain(connect?.more ?? [])).toMatch(/Quick Connect/);
   });
 
-  it("options: the value in effect and where it was set", () => {
+  it("options: each option's type, default and values, with the value in effect and where it was set", () => {
     const config = configWith({
       terminal: { ...defaultConfig.terminal, size: 18.666666 },
       set: ["terminal.size"],
       lines: { "terminal.size": { file: "init.lua", line: 6 } },
     });
     const size = entry(ctxOf(builtinRegistries(), { config }), "options", "terminal.size");
-    expect(plain(size?.meta ?? [])).toMatch(/18\.67.*init\.lua:6/);
-    expect(plain(size?.body ?? [])).toMatch(/Default: "13pt"/);
+    expect(plain(size?.meta ?? [])).toMatch(/number\|string.*default"13pt"now"18\.67px".*init\.lua:6/);
+    expect(plain(size?.body ?? [])).toMatch(/Takes 6 to 72 px/);
     const leader = entry(ctxOf(), "options", "leader");
     expect(plain(leader?.meta ?? [])).toMatch(/"Ctrl\+Space".*default/);
     const theme = entry(ctxOf(builtinRegistries(), { state: { theme: "nord" } }), "options", "theme");

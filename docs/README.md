@@ -16,6 +16,7 @@ Everything about roster, the CLI and the app, in one place. The pages marked **:
 | Page | What it's for | :help |
 |---|---|---|
 | [app/config.md](app/config.md) | Your `init.lua`: where it lives, `:config` and `:source`, every option, the sandbox | `config` |
+| [app/options.md](app/options.md) | The option reference: every `init.lua` option and `roster` function, its type, default, values and an example, generated from the core | `options` |
 | [app/recipes.md](app/recipes.md) | Short `init.lua` snippets to paste: the Leader, keys, Themes, fonts, layout, modules | `recipes` |
 | [app/keyboard.md](app/keyboard.md) | The Leader, the two modes, every default binding, copy and paste, completion | `keyboard` |
 | [app/themes.md](app/themes.md) | The bundled Themes, their colour tokens, making your own | `themes-guide` |

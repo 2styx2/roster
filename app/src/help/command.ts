@@ -5,6 +5,7 @@ import { matching, type CommandDef } from "../commands/table";
 import type { FinderItem, FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
+import { optionRows, optionTag } from "../config/reference";
 import { plain } from "./doc";
 import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
@@ -236,6 +237,42 @@ export function outlineFinder(view: HelpView): FinderSourceDef {
   };
 }
 
+/** `:options [TEXT]`: the `options` finder, Neovim's `:options` window as a finder. */
+export function optionsCommand(): CommandDef {
+  return {
+    id: "options",
+    source: BUILTIN,
+    area: "App",
+    arg: "text",
+    optionalArg: true,
+    label: (text) => (text ? `Find the option ${text}` : "Find an option: its value now, its default and where it was set"),
+    doc: "Every init.lua option, with the value it has now and where that was set: a file and line of the Config, `default`, or the State. Read-only: Enter opens the option's entry in [`:help options`](options); [`:config`](:config) opens init.lua to change it.",
+    run: (ctx, text) => ctx.openFinder("options", text),
+  };
+}
+
+/** The `options` finder: each option that holds a value, its value now on the left after the
+ * name, where it was set on the right, and its default and type in the footer. Enter opens its help. */
+export function optionsFinder(view: HelpView): FinderSourceDef {
+  const rows = () => {
+    const ctx = view.context();
+    return ctx ? optionRows(ctx.config, ctx.state) : [];
+  };
+  return {
+    id: "options",
+    source: BUILTIN,
+    title: "Find an option",
+    prompt: "Options",
+    items: (): FinderItem[] =>
+      rows().map((r) => ({ id: r.name, label: r.name, path: r.value, detail: r.where, command: `help ${optionTag(r.name)}` })),
+    note: (item) => {
+      const r = item && rows().find((x) => x.name === item.id);
+      return r ? `Default ${r.default} · ${r.entry.ty}` : undefined;
+    },
+    help: (item) => optionTag(item.id),
+  };
+}
+
 /** Registers `:help`, `:helpgrep` and their finders; returns what removes them. */
 export function registerHelp(registries: Registries, view: HelpView): () => void {
   const disposers = [
@@ -245,6 +282,8 @@ export function registerHelp(registries: Registries, view: HelpView): () => void
     registries.finders.register(helpFinder(view)),
     registries.finders.register(helpgrepFinder(view)),
     registries.finders.register(outlineFinder(view)),
+    registries.commands.register(optionsCommand()),
+    registries.finders.register(optionsFinder(view)),
   ];
   return () => disposers.forEach((d) => d());
 }

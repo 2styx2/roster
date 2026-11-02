@@ -220,6 +220,9 @@ export interface ConfigSource {
   /** Writes exactly what the preview showed: refused (nothing written) if init.lua or Windows
    * Terminal's settings changed since, with a message to run the import again. */
   importApply(previewed: Previewed): Promise<void>;
+  /** `:config types`: writes the option types (LuaCATS, for lua-language-server) as
+   * `types/roster-config.lua` in the config folder; resolves to the file's path. */
+  writeTypes(): Promise<string>;
   /** `:source`: reads init.lua again now (watchers get it too). */
   reload(): Promise<ConfigReport | null>;
 }

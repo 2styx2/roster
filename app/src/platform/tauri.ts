@@ -43,6 +43,7 @@ export function tauriPlatform(): Platform {
         await invoke("config_import_apply", { previewed: { base, result, date } });
       },
       reload: () => invoke<ConfigReport | null>("config_reload"),
+      writeTypes: () => invoke<string>("config_types"),
     },
     // roster-core config/folders.rs: read once at start, to move its Folders into the Folders
     // Plugin (ticket 61). The app never writes it now.
