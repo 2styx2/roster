@@ -26,6 +26,7 @@ import {
   UNREVIEW_API_VERSION,
   BackendStartError,
   CHECK_API_VERSION,
+  CHECK_JOBS_API_VERSION,
   BOX_CHECK_API_VERSION,
   EDIT_API_VERSION,
   PUBLISH_API_VERSION,
@@ -66,7 +67,7 @@ import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkProgressed, checkStarted } from "./errors/checkProgress";
+import { checkJoined, checkProgressed, checkStarted } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -1448,6 +1449,13 @@ function Workspace({
       }
       const run = ++checkRun.current;
       setCheck((prev) => checkStarted(prev, host, Date.now()));
+      // A check already running (serve joins it) sent its progress before now: ask once where it is.
+      if (api >= CHECK_JOBS_API_VERSION) {
+        backend.listJobs().then(
+          (jobs) => run === checkRun.current && setCheck((c) => checkJoined(c, jobs, Date.now())),
+          () => undefined,
+        );
+      }
       // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
       const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
       backend.checkHost(host).then(

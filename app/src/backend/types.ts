@@ -485,6 +485,8 @@ export const MESH_API_VERSION = 15;
 /** serve API 20 (ticket 101, decision Q112): serve answers requests concurrently, its jobs push
  * `job.progress`, and `host.get` takes `settled`. */
 export const JOBS_API_VERSION = 20;
+/** serve API 21 (ticket 108): a Host's check is a job, with `job.progress` and in `jobs.list`. */
+export const CHECK_JOBS_API_VERSION = 21;
 
 /** serve's `job.progress` notification: a job started, moved on or ended. Never its result. */
 export type JobProgress = {
@@ -934,6 +936,9 @@ export interface Backend {
   /** Calls `onProgress` for each `job.progress` (serve API 20): a Mesh run's or a scan's progress,
    * for the Plugins' `job_progress` event. Returns stop. */
   onJobProgress(onProgress: (job: JobProgress) => void): () => void;
+  /** `jobs.list` (serve API 20): each kind's latest job, each Host's latest check (API 21), in the
+   * shape of `job.progress`. `:check` asks it once on joining a check already running (#221). */
+  listJobs(): Promise<JobProgress[]>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host
