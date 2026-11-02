@@ -19,9 +19,10 @@ import { BUILTIN, Registry, type Entry, type Source } from "../registry";
 import type { Theme } from "../theme/theme";
 import { healthSummary, type HealthReport, type HealthSection } from "../health/health";
 import { code, h, keys, link, p, plain, slug, text, type Block, type Inline } from "./doc";
-import { configMarkdown, guideLink, guides, PARTS, type Guide } from "./guides";
+import { guideLink, guides, PARTS, type Guide } from "./guides";
 import { inline, parseMarkdown, withoutDevNotes } from "./markdown";
-import { luaValue, optionDocs, optionSource, optionValue, type StateChoices } from "./options";
+import { optionRows, optionTag, reference, referenceAliases } from "../config/reference";
+import type { StateChoices } from "./options";
 
 /** Everything a page is generated from, read when it's shown. */
 export interface HelpContext {
@@ -312,63 +313,107 @@ function keysPage(ctx: HelpContext): Block[] {
   ];
 }
 
+/** Text with `code` spans, as the shape's summaries write a name or a value. */
+function spans(s: string): Inline[] {
+  return s.split("`").map((part, k) => (k % 2 ? code(part) : text(part))).filter((i) => i.t !== "text" || i.text !== "");
+}
+
 function optionsPage(ctx: HelpContext): Block[] {
-  const docs = optionDocs(withoutDevNotes(configMarkdown));
-  const bySection = new Map<string, typeof docs>();
-  for (const d of docs) bySection.set(d.section, [...(bySection.get(d.section) ?? []), d]);
-  const where = (name: string): Inline[] => {
-    const s = optionSource(ctx.config, name, ctx.state);
-    if (s.kind === "init.lua") return [code(s.at ? `${s.at.file}:${s.at.line}` : "init.lua")];
-    if (s.kind === "State") {
-      if (name !== "theme") return [text(name === "ui.messages" ? "State (:messages)" : "State (:hints)")];
-      return [text(s.over ? `State (:theme, over ${s.over.file}:${s.over.line})` : "State (:theme)")];
-    }
-    return [text("default")];
-  };
-  const valueOf = (name: string): string => {
-    const s = optionSource(ctx.config, name, ctx.state);
-    return luaValue(s.kind === "State" ? s.value : optionValue(ctx.config, name));
-  };
-  return [
+  const now = new Map(optionRows(ctx.config, ctx.state).map((r) => [r.name, r]));
+  const last = (tag: string) => tag.split(".").at(-1) ?? tag;
+  const out: Block[] = [
     h(1, "Options", "options"),
     p(
-      "Every option init.lua takes, with the value in effect now and where it came from: ",
+      "Every option init.lua takes and every name of its ",
+      code("roster"),
+      " table, one entry each, as Neovim's ",
+      code(":help 'option'"),
+      " lists its options: its type, its default, the values it can have, what it does and an example. Beside each option, the value it has now and where that was set: ",
       code("default"),
-      ", ",
-      code("init.lua"),
-      " (with its line), or the State (a choice ",
+      ", the file and line in init.lua, or the State (a choice ",
       code(":theme"),
       ", ",
       code(":hints"),
       " or ",
       code(":messages"),
-      " keeps when init.lua leaves it to them, or one ",
-      code(":theme"),
-      " made over init.lua's own). ",
+      " keeps when init.lua leaves it to them). ",
+      code(":options"),
+      " finds one; ",
       code(":config"),
       " opens init.lua",
       ...(ctx.configPath ? [text(" ("), code(ctx.configPath), text(")")] : []),
       "; ",
       code(":source"),
-      " applies it. The descriptions are ",
-      link("config#options", "the Config guide's"),
-      ".",
+      " applies it; ",
+      code(":config types"),
+      " writes these as types for your editor. ",
+      link("config#options", "The Config guide"),
+      " says more about each option.",
     ),
-    ...[...bySection].flatMap(([section, list]): Block[] => [
-      h(2, section, `options#${section.toLowerCase().replace(/\s+/g, "-")}`),
-      {
-        t: "defs",
-        items: list.map((d) => ({
-          // An option named like a page (`keys`, `themes`) is `'keys'`, as Neovim writes options:
-          // `:help keys` is the page.
-          anchor: ctx.pages.some((pg) => pg.id === d.name) ? `'${d.name}'` : d.name,
-          term: [code(d.name)],
-          meta: [code(valueOf(d.name)), ...where(d.name)],
-          body: [...fixLinks(configGuide, d.about), ...(d.about.length ? [text(". ")] : []), text("Default: "), ...fixLinks(configGuide, d.default)],
-        })),
-      },
-    ]),
+    p(
+      "Types are written as LuaCATS writes them: ",
+      code("string[]"),
+      " is a list of strings, ",
+      code("table<string, X>"),
+      " a table of X by name, ",
+      code('"webgl"|"dom"'),
+      " one of those strings. An object (such as ",
+      code("terminal"),
+      ") needs no setup: give only the options you change. Unset means nothing is set and the app, or a choice it keeps, decides.",
+    ),
   ];
+  for (const section of reference.sections) {
+    out.push(h(2, section.title, `options#${slug(section.title)}`));
+    if (section.intro) out.push(p(section.intro));
+    for (const e of section.entries) {
+      const row = now.get(e.tag);
+      const meta: Inline[] = [];
+      if (e.written) meta.push(code(e.written));
+      if (e.ty && e.what !== "function") meta.push(code(e.ty));
+      if (e.default) meta.push(text("default"), e.default === "unset" || e.default === "required" ? text(e.default) : code(e.default));
+      if (row) meta.push(text("now"), code(row.value), row.where.includes(":") && !row.where.startsWith("State") ? code(row.where) : text(`(${row.where})`));
+      const body: Inline[] = spans(e.about);
+      if (e.takes) body.push(text(" Takes "), ...spans(e.takes), text("."));
+      if (e.names.length) body.push(text(` Names: ${e.names.join(", ")}.`));
+      if (e.item) body.push(text(e.kind === "map" ? " Each value is a " : " Each item is a "), link(optionTag(e.item), [code(e.item)]), text("."));
+      if (e.fields.length) {
+        body.push(text(" Options in it: "));
+        e.fields.forEach((f, k) => body.push(...(k ? [text(", ")] : []), link(optionTag(f), [code(last(f))])));
+        body.push(text("."));
+      }
+      const more: Inline[] = e.methods.length ? [text("Methods: "), code(e.methods.join(", "))] : [];
+      out.push({ t: "defs", items: [{ anchor: optionTag(e.tag), term: [code(e.heading)], meta, body, ...(more.length ? { more } : {}) }] });
+      if (e.rows.length) {
+        const fn = e.what === "function";
+        out.push({
+          t: "table",
+          head: fn ? [[text("Parameter")], [text("Type")], []] : [[text("Field")], [text("Type")], [text("Default")], []],
+          rows: e.rows.map((r) => {
+            const about = spans(r.names.length ? `${r.about} Names: ${r.names.join(", ")}.` : r.about);
+            return fn ? [[code(r.name)], [code(r.ty)], about] : [[code(r.name)], [code(r.ty)], [r.default === "unset" || r.default === "required" ? text(r.default) : code(r.default)], about];
+          }),
+        });
+      }
+      if (e.example) out.push({ t: "pre", text: e.example, lang: "lua" });
+    }
+  }
+  out.push(
+    h(2, "Editor support", "options#editor-support"),
+    p(
+      code(":config types"),
+      " writes all of the above as LuaCATS annotations into ",
+      code("types/roster-config.lua"),
+      " in the config folder, so lua-language-server completes option names and shows these descriptions as you type. Point it at the folder with a ",
+      code(".luarc.json"),
+      " next to init.lua, then put ",
+      code("---@type roster.config.Options"),
+      " on the table init.lua returns to check every name and value in it. Run ",
+      code(":config types"),
+      " again after an update.",
+    ),
+    { t: "pre", text: '{\n  "runtime.version": "Lua 5.4",\n  "workspace.library": ["types"],\n  "diagnostics.globals": ["roster"]\n}', lang: "json" },
+  );
+  return out;
 }
 
 function themesPage(ctx: HelpContext): Block[] {
@@ -695,7 +740,6 @@ function allPage(ctx: HelpContext): Block[] {
 }
 
 const guideCache = new Map<string, Block[]>();
-const configGuide = guides.find((g) => g.id === "config") as Guide;
 
 /** A guide's inlines with its links made help links (guideLink). */
 function fixLinks(guide: Guide, inlines: readonly Inline[]): Inline[] {
@@ -749,7 +793,9 @@ export const builtinHelpPages: readonly HelpPage[] = [
   page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { qr: "quickref", cheatsheet: "quickref" }),
   page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage),
   page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage),
-  page("options", 52, "Reference", "Options", "Every init.lua option, its value now and where it was set", optionsPage),
+  page("options", 52, "Reference", "Options", "Every init.lua option and roster function: type, default, values, example, and its value now", optionsPage, {
+    ...referenceAliases(),
+  }),
   page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage),
   page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage),
   page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage),

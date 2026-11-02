@@ -1721,6 +1721,13 @@ function Workspace({
         );
         return;
       }
+      if (what === "types") {
+        source.writeTypes().then(
+          (file) => setMessage(`Wrote ${file}: init.lua's option types, for lua-language-server (:help options#editor-support)`),
+          (e: unknown) => setMessage(`Couldn't write the types: ${failed(e)}`),
+        );
+        return;
+      }
       // `:config reload` is `:source init.lua` (decision Q58).
       if (what === "reload") return void runLine(commands, ctx, "source init.lua");
       source.open().then(

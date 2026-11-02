@@ -13,6 +13,7 @@ pub mod folders;
 mod locate;
 pub(crate) mod lua;
 pub mod schema;
+pub mod shape;
 mod watch;
 
 pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};

@@ -106,7 +106,22 @@ describe(":config", () => {
     expect(screen.getByRole("combobox")).toHaveValue("config reload");
     await user.keyboard("{Escape}");
     await command(user, "config nope");
-    expect(messageLine()).toHaveTextContent("config takes nothing, reload, path or import-terminal");
+    expect(messageLine()).toHaveTextContent("config takes nothing, reload, path, import-terminal or types");
+  });
+
+  it("types writes the option types into the config folder, for lua-language-server", async () => {
+    const { user, platform } = await ready();
+    await command(user, "config types");
+    await screen.findByText(/^Wrote \/home\/me\/\.config\/roster\/types\/roster-config\.lua/);
+    expect(messageLine()).toHaveTextContent(":help options#editor-support");
+    expect(platform.typesWritten()).toBe(1);
+  });
+
+  it("says why the types couldn't be written", async () => {
+    const { user, platform } = await ready();
+    platform.failTypes("/home/me/.config/roster/types is a link: roster won't write through it");
+    await command(user, "config types");
+    await screen.findByText(/Couldn't write the types: .*is a link/);
   });
 });
 

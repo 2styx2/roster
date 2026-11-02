@@ -631,6 +631,19 @@ async fn plugin_manifest(
     .await
 }
 
+/// `:config types` (ticket 141): writes init.lua's option types (LuaCATS, generated from the
+/// core's shape table) as `types/roster-config.lua` in the config folder; gives the file's path.
+#[tauri::command]
+async fn config_types(config: tauri::State<'_, ConfigState>) -> Result<String, String> {
+    let dir = config_dir(&config)?;
+    blocking(move || {
+        // A first `:config types` before there's an init.lua makes the folder, as `:config` does.
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        roster_core::config::shape::write_types(&dir).map(|f| f.display().to_string())
+    })
+    .await
+}
+
 /// `:plugins types PATH` (ticket 74): writes the Plugin API's stubs for this app's version as
 /// `types/roster.lua` in the Plugin folder PATH; gives the file's path.
 #[tauri::command]
@@ -1289,6 +1302,7 @@ pub fn run() {
             config_reload,
             config_import_preview,
             config_import_apply,
+            config_types,
             plugin_manifest,
             plugin_types,
             plugin_load,
