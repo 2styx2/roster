@@ -43,7 +43,7 @@ It comes in two parts that share that file:
 - **The CLI, `roster`** (Python). It sets up each box with its own SSH key, runs commands on password-only gear, calls web APIs with the stored login, scans networks into the inventory, tells Claude which hosts exist without ever showing it a secret, links your Hosts to each other with their own keys (the Mesh), and prints its data as JSON (`--json`) for scripts and other tools, never a secret.
 - **The roster app** (Tauri, for Windows and Linux). Fast, keyboard-first access to every Host: find one in a few keystrokes and you're in a shell over your own ssh, with the password fetched from the vault and never shown. It talks to the CLI through `roster serve`, so the file and the vault stay roster's.
 
-> **Status:** pre-release. The latest Release is [v0.2.0](https://github.com/2styx2/roster/releases) (Plugins and Packages); `dev` has iterations 8 and 9 (first-party Plugins, a concurrent `roster serve`, `--json`), listed in [what's new](docs/news.md#unreleased). See the [roadmap](docs/app/roadmap.md).
+> **Status:** pre-release. The latest Release is [v0.3.0](https://github.com/2styx2/roster/releases): first-party Plugins, a concurrent `roster serve` and `--json`, password-prompt fill and nested ssh logins, shell integration, and a Neovim-style `init.lua` with an option reference. See [what's new](docs/news.md#v030) and the [roadmap](docs/app/roadmap.md).
 
 ## Features
 
