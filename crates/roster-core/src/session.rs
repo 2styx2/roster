@@ -10,9 +10,10 @@
 //! readable by other processes and logged by process auditing for its whole life).
 
 use crate::detect::Target;
+use crate::screen::Screen;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -246,13 +247,28 @@ struct Running {
     closed: AtomicBool,
     /// The Inventory Host it's to ([`SessionCommand::fill_as`]).
     fill_as: Option<FillTarget>,
-    /// Output chunks read so far, and writes sent: a fill types its secret only if neither moved
-    /// while it checked the prompt.
-    output: Arc<AtomicU64>,
+    /// Writes sent: a fill types its secret only if none was sent while it checked the prompt.
     writes: AtomicU64,
-    /// Its last [`TAIL`] bytes of output, as the PTY gave them: a nested fill's prompt must end
-    /// them ([`SessionManager::at_prompt`]).
-    tail: Arc<Mutex<VecDeque<u8>>>,
+    /// Its output as a terminal draws it, and how much of it there has been
+    /// ([`SessionManager::fill`], tickets 120, 137 and 154).
+    shown: Arc<Mutex<Shown>>,
+}
+
+/// What a Session has printed, as a fill checks it: the screen a terminal would draw (the
+/// cursor's line for the prompt check, tickets 120 and 137; what the probe drew, ticket 154) and
+/// how many bytes it has printed, under one lock, so a fill sees the screen as of exactly the
+/// bytes it counted.
+struct Shown {
+    screen: Screen,
+    /// Bytes printed so far.
+    total: u64,
+}
+
+impl Shown {
+    fn feed(&mut self, chunk: &[u8]) {
+        self.screen.feed(chunk);
+        self.total += chunk.len() as u64;
+    }
 }
 
 impl Running {
@@ -332,9 +348,11 @@ impl SessionManager {
             writer: Mutex::new(Some(writer)),
             closed: AtomicBool::new(false),
             fill_as: cmd.fill_as.clone(),
-            output: Arc::new(AtomicU64::new(0)),
             writes: AtomicU64::new(0),
-            tail: Arc::new(Mutex::new(VecDeque::with_capacity(TAIL))),
+            shown: Arc::new(Mutex::new(Shown {
+                screen: Screen::new(size.rows, size.cols),
+                total: 0,
+            })),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(id, Arc::clone(&running));
@@ -346,15 +364,13 @@ impl SessionManager {
         let stop = Arc::new(AtomicBool::new(false));
         let (drained_tx, drained) = mpsc::channel::<()>();
         let out = Arc::clone(&gate);
-        let read = Arc::clone(&running.output);
-        let tail = Arc::clone(&running.tail);
+        let shown = Arc::clone(&running.shown);
         let reader_stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name(format!("session-{id}-read"))
             .spawn(move || {
                 reader.pump(&reader_stop, |chunk| {
-                    keep_tail(&tail, &chunk);
-                    read.fetch_add(1, Ordering::SeqCst);
+                    shown.lock().unwrap().feed(&chunk);
                     out.output(chunk)
                 });
                 let _ = drained_tx.send(());
@@ -402,34 +418,64 @@ impl SessionManager {
         w.write_all(data).and_then(|_| w.flush()).map_err(io)
     }
 
-    /// Fills the password prompt the Session shows (ticket 119, decision Q129), when the user
-    /// pressed the fill key at one. In order: the Session must be to an Inventory Host (else
+    /// Fills the password prompt the Session shows (tickets 119, 120 and 137; decisions Q129,
+    /// Q131 and Q136), when the user pressed the fill key at one. `prompt` is the prompt line the
+    /// frontend read off the screen; `hop` is a nested ssh's Host, as the frontend resolved it
+    /// (none for the Session's own Host). In order: the Session must be to an Inventory Host (else
     /// [`FillError::NoHost`], and nothing is asked); what it has printed and been sent so far is
-    /// noted; `lookup` gets that Host and what the Session connected to, and returns the secret
-    /// (serve's `session.fill`), and a refusal there types nothing; then the probe,
-    /// [`PROBE`], goes to the prompt: Ctrl+U (the line-kill key, which empties whatever was typed
-    /// there already) around a letter. A prompt that doesn't echo, as sudo's, su's and ssh's
-    /// don't, prints nothing for it; one that echoes prints the letter (and takes it back). So if
-    /// anything was printed since the lookup started (through `wait` after the probe), or a key was
-    /// sent meanwhile, the secret isn't typed
-    /// ([`FillError::Echoes`], [`FillError::Typed`]). Otherwise the secret and Enter go to the PTY
-    /// in one write, and the secret is wiped as it's dropped. Returns the Host's name.
+    /// noted; the cursor must sit right after `prompt` on its line, as a terminal draws the
+    /// Session's output (through ConPTY's redraws), with nothing after it there, else
+    /// [`FillError::NotPrinted`] and nothing is asked or
+    /// typed, so the frontend's word alone never sends a password to a Session that isn't asking
+    /// for it, on its own Host or another; `lookup` gets the Host the Session was opened to and
+    /// what it connected to, and returns the secret (serve's `session.fill`, which judges `prompt`
+    /// and `hop`), and a refusal there types nothing; then the probe, [`PROBE`], goes to the
+    /// prompt: Ctrl+U (the line-kill key, which empties whatever was typed there already) around a
+    /// letter. A prompt that doesn't echo, as sudo's, su's and ssh's don't, prints nothing for it;
+    /// one that echoes prints the letter (and takes it back). So if anything was printed since
+    /// the check (through `wait` after the probe), or a key was sent meanwhile, the secret isn't
+    /// typed ([`FillError::Echoes`], [`FillError::Typed`]). The one exception (ticket 154,
+    /// decision Q144): for the Session's own Host (no `hop`), at sudo's own prompt for its ssh
+    /// user, which is the whole of the cursor's line, sudo with `pwfeedback` draws a `*` for the
+    /// letter and erases it; if nothing was printed before the probe, and after it the screen saw
+    /// at most that `*`, cursor moves, erases within the line and the cursor's hide and show, and
+    /// the cursor and its line end exactly as they were ([`Screen::end_mask_watch`]), the prompt
+    /// doesn't echo. Otherwise the secret and Enter go to
+    /// the PTY in one write, and the secret is wiped as it's dropped. Returns the name of the Host
+    /// whose password it typed: `hop`'s, else the Session's own.
     ///
     /// The secret never leaves this call: not in a return value, an error, a log or an event.
     pub fn fill<E>(
         &self,
         id: SessionId,
         wait: Duration,
+        prompt: &str,
+        hop: Option<&FillTarget>,
         lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
     ) -> Result<String, FillError<E>> {
         let running = self.get(id).map_err(|_| FillError::NotFound(id))?;
         let target = running.fill_as.clone().ok_or(FillError::NoHost)?;
-        // Before the lookup, which may wait on the vault: what's printed or typed meanwhile counts.
-        let (output, writes) = (
-            running.output.load(Ordering::SeqCst),
-            running.writes.load(Ordering::SeqCst),
-        );
+        // Before the prompt check and the lookup, which may wait on the vault: what's printed or
+        // typed from here on counts. The check reads the screen as of exactly the bytes counted.
+        let writes = running.writes.load(Ordering::SeqCst);
+        let printed = {
+            let shown = running.shown.lock().unwrap();
+            if !shown.screen.cursor_after(prompt) {
+                return Err(FillError::NotPrinted);
+            }
+            shown.total
+        };
+        // sudo with `pwfeedback` draws a `*` for the probe's letter and erases it (ticket 154):
+        // allowed only for the Session's own Host, at sudo's own prompt for its ssh user.
+        let maskable = hop.is_none() && sudo_prompt_for(prompt, &target.login.user);
         let secret = lookup(&target).map_err(FillError::Lookup)?;
+        let probed = {
+            let mut shown = running.shown.lock().unwrap();
+            if maskable {
+                shown.screen.watch_mask();
+            }
+            shown.total
+        };
         {
             let mut w = running.writer.lock().unwrap();
             let w = w.as_mut().ok_or(FillError::NotFound(id))?;
@@ -438,8 +484,14 @@ impl SessionManager {
         std::thread::sleep(wait);
         let mut w = running.writer.lock().unwrap();
         let w = w.as_mut().ok_or(FillError::NotFound(id))?;
-        if running.output.load(Ordering::SeqCst) != output {
-            return Err(FillError::Echoes);
+        {
+            let mut shown = running.shown.lock().unwrap();
+            let masked = maskable && shown.screen.end_mask_watch(PROBE_KEYS);
+            if shown.total != printed
+                && !(masked && probed == printed && shown.screen.line_is(prompt) && shown.screen.cursor_after(prompt))
+            {
+                return Err(FillError::Echoes);
+            }
         }
         if running.writes.load(Ordering::SeqCst) != writes {
             return Err(FillError::Typed);
@@ -449,50 +501,12 @@ impl SessionManager {
         line.0.push(b'\r');
         drop(secret);
         w.write_all(&line.0).and_then(|_| w.flush()).map_err(fill_io)?;
-        Ok(target.host)
-    }
-
-    /// Whether the Session's output, read as text, ends with `text`: the cursor sits right after
-    /// it, as at a prompt (ticket 120). Its last [`TAIL`] bytes are read with escape sequences
-    /// taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every run of
-    /// whitespace as one space, on both sides; trailing whitespace doesn't count. So a prompt
-    /// redrawn with colours or cursor moves still counts, and one with other output after it doesn't.
-    pub fn at_prompt(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
-        let running = self.get(id)?;
-        let tail = running.tail.lock().unwrap();
-        let (a, b) = tail.as_slices();
-        let mut seen = Vec::with_capacity(a.len() + b.len());
-        seen.extend_from_slice(a);
-        seen.extend_from_slice(b);
-        let hay = plain_text(&seen);
-        let needle = plain_text(text.as_bytes());
-        let needle = needle.trim_ascii();
-        Ok(!needle.is_empty() && hay.trim_ascii_end().ends_with(needle))
-    }
-
-    /// [`SessionManager::fill`] for a nested ssh's prompt (ticket 120, decision Q131), whose Host
-    /// the frontend names: only when the Session's output ends with `prompt` itself
-    /// ([`SessionManager::at_prompt`]), so the frontend's word alone can't send another Host's
-    /// password to a Session that isn't asking for it ([`FillError::NotPrinted`], before anything
-    /// is looked up).
-    /// Returns the name of `hop`, the Host whose password it typed.
-    pub fn fill_at_prompt<E>(
-        &self,
-        id: SessionId,
-        wait: Duration,
-        prompt: &str,
-        hop: &FillTarget,
-        lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
-    ) -> Result<String, FillError<E>> {
-        match self.at_prompt(id, prompt.trim()) {
-            Ok(true) => self.fill(id, wait, lookup).map(|_| hop.host.clone()),
-            Ok(false) => Err(FillError::NotPrinted),
-            Err(_) => Err(FillError::NotFound(id)),
-        }
+        Ok(hop.map_or(target.host, |h| h.host.clone()))
     }
 
     pub fn resize(&self, id: SessionId, size: Size) -> Result<(), SessionError> {
         let running = self.get(id)?;
+        running.shown.lock().unwrap().screen.resize(size.rows, size.cols);
         let m = running.master.lock().unwrap();
         m.as_ref()
             .ok_or(SessionError::NotFound(id))?
@@ -538,63 +552,21 @@ impl SessionManager {
 /// echoes, the letter is printed, which is how roster tells.
 pub const PROBE: &[u8] = b"\x15x\x15";
 
-/// How much of a Session's latest output the core keeps, for [`SessionManager::at_prompt`].
-pub const TAIL: usize = 4096;
-
-/// `bytes` as the text a screen shows, for [`SessionManager::at_prompt`]: CSI, OSC and other escape
-/// sequences out (a cursor-forward, `ESC [ n C`, as one space), control characters as spaces, and
-/// each run of whitespace as one space. A sequence cut off at the start of the tail is dropped.
-fn plain_text(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    let space = |out: &mut Vec<u8>| {
-        if out.last() != Some(&b' ') {
-            out.push(b' ');
-        }
-    };
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == 0x1b {
-            match bytes.get(i + 1) {
-                Some(b'[') => {
-                    let mut j = i + 2;
-                    while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
-                        j += 1;
-                    }
-                    if bytes.get(j) == Some(&b'C') {
-                        space(&mut out);
-                    }
-                    i = j + 1;
-                }
-                Some(b']') | Some(b'P') | Some(b'_') | Some(b'^') => {
-                    let mut j = i + 2;
-                    while j < bytes.len() && bytes[j] != 0x07 && !(bytes[j] == 0x1b && bytes.get(j + 1) == Some(&b'\\'))
-                    {
-                        j += 1;
-                    }
-                    i = if bytes.get(j) == Some(&0x07) { j + 1 } else { j + 2 };
-                }
-                _ => i += 2,
-            }
-            continue;
-        }
-        if c <= b' ' || c == 0x7f {
-            space(&mut out);
-        } else {
-            out.push(c);
-        }
-        i += 1;
-    }
-    out
+/// Whether `prompt` is exactly sudo's own prompt for `user` (`[sudo] password for USER:`, read
+/// with runs of whitespace as one and none at the ends), the one prompt where sudo's `pwfeedback`
+/// mask isn't taken for an echo (ticket 154, decision Q144); the core also checks it's the whole
+/// of the cursor's line. The frontend offers, and serve fills, no other sudo prompt.
+fn sudo_prompt_for(prompt: &str, user: &str) -> bool {
+    let words: Vec<&str> = prompt.split_whitespace().collect();
+    !user.is_empty()
+        && !user.chars().any(char::is_whitespace)
+        && words.len() == 4
+        && words[..3] == ["[sudo]", "password", "for"]
+        && words[3].strip_suffix(':') == Some(user)
 }
 
-fn keep_tail(tail: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
-    let mut t = tail.lock().unwrap();
-    let chunk = &chunk[chunk.len().saturating_sub(TAIL)..];
-    let over = (t.len() + chunk.len()).saturating_sub(TAIL);
-    t.drain(..over);
-    t.extend(chunk);
-}
+/// The printable keys in [`PROBE`]: sudo's `pwfeedback` draws a `*` for each (ticket 154).
+const PROBE_KEYS: usize = 1;
 
 /// A secret on its way from serve to a PTY: no Debug value, no Display, no Clone, no Serialize,
 /// and its bytes are overwritten when it's dropped (best effort: copies serve's answer passed
@@ -633,11 +605,11 @@ pub enum FillError<E> {
     /// The lookup refused (serve's error: the prompt, the Login, the vault). Nothing was typed.
     Lookup(E),
     /// The Session printed something while roster checked the prompt: it echoes what's typed, or
-    /// it isn't waiting quietly at a prompt. Only the probe was typed, and it left the line empty.
+    /// it isn't waiting quietly at a prompt (sudo's `pwfeedback` mask at its own prompt aside). Only the probe was typed, and it left the line empty.
     Echoes,
     /// A key was sent to the Session while roster checked the prompt.
     Typed,
-    /// The Session's output doesn't end with the nested fill's prompt (ticket 120). Nothing was
+    /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
     /// looked up or typed.
     NotPrinted,
     /// Writing to the PTY failed.
@@ -742,6 +714,31 @@ impl Reader {
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => return,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mask_counts_only_at_sudos_own_prompt_for_the_user() {
+        for (prompt, user, ok) in [
+            ("[sudo] password for ops:", "ops", true),
+            ("  [sudo]  password for ops: ", "ops", true),
+            ("[sudo] password for root:", "ops", false),
+            ("[sudo] password for ops:", "root", false),
+            ("[sudo] password for ops", "ops", false),
+            ("[sudo] password for ops: x", "ops", false),
+            ("x [sudo] password for ops:", "ops", false),
+            ("[sudo] Password for ops:", "ops", false),
+            ("Password:", "ops", false),
+            ("ops@esx-02's password:", "ops", false),
+            ("[sudo] password for :", "", false),
+            ("[sudo] password for o ps:", "o ps", false),
+        ] {
+            assert_eq!(sudo_prompt_for(prompt, user), ok, "{prompt:?} for {user:?}");
         }
     }
 }

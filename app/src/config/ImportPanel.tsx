@@ -73,8 +73,20 @@ export function ImportPanel({
           <div className="import-notes">
             {preview.created && <p>There's no init.lua yet: it's made from the example, every line commented out, with this block at the end.</p>}
             {preview.overridden.map((o) => (
-              <p key={o} className="warn">
-                init.lua's own <code>{o}</code> wins over the import. Delete it there to use Windows Terminal's.
+              <p key={o.option} className="warn">
+                {o.by === "later" && o.at ? (
+                  <>
+                    <code>
+                      {o.at.file}:{o.at.line}
+                    </code>{" "}
+                    sets <code>{o.option}</code> again after the import block, and the later line wins.
+                  </>
+                ) : (
+                  <>
+                    init.lua's returned table sets <code>{o.option}</code>, and it wins over the import.
+                  </>
+                )}{" "}
+                Delete it there to use Windows Terminal's.
               </p>
             ))}
             {preview.error && <p className="warn">With this block, init.lua would have an error: {preview.error}</p>}

@@ -97,6 +97,32 @@
           "listed": false
         },
         {
+          "tag": "roster.o.get",
+          "heading": "roster.o.get(name)",
+          "what": "function",
+          "kind": "",
+          "written": "",
+          "ty": "any",
+          "default": "",
+          "about": "Reads any option by its dotted name: a copy of what init.lua set there, or nil. The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [
+            {
+              "name": "name",
+              "ty": "roster.config.OptionName",
+              "default": "",
+              "about": "An option's dotted name: \"terminal.size\", \"views.get\".",
+              "names": []
+            }
+          ],
+          "example": "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end",
+          "methods": [],
+          "listed": false
+        },
+        {
           "tag": "roster.o.reset",
           "heading": "roster.o.reset(name)",
           "what": "function",
@@ -262,6 +288,39 @@
           "listed": false
         },
         {
+          "tag": "roster.keymap.has",
+          "heading": "roster.keymap.has(context, keys)",
+          "what": "function",
+          "kind": "",
+          "written": "",
+          "ty": "boolean",
+          "default": "",
+          "about": "Whether init.lua bound keys in a context. A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [
+            {
+              "name": "context",
+              "ty": "\"leader\"|\"list\"|\"list_vim\"|\"picker\"|\"picker_vim\"|\"cmdline\"|\"terminal\"|\"global\"",
+              "default": "",
+              "about": "The keymap's context.",
+              "names": []
+            },
+            {
+              "name": "keys",
+              "ty": "string",
+              "default": "",
+              "about": "The keys, as set took them.",
+              "names": []
+            }
+          ],
+          "example": "if not roster.keymap.has(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
+          "methods": [],
+          "listed": false
+        },
+        {
           "tag": "roster.keymap.list",
           "heading": "roster.keymap.list(context)",
           "what": "function",
@@ -402,6 +461,32 @@
             }
           ],
           "example": "local paper = roster.themes.get(\"paper\")\nif paper then print(paper.label) end",
+          "methods": [],
+          "listed": false
+        },
+        {
+          "tag": "roster.themes.has",
+          "heading": "roster.themes.has(id)",
+          "what": "function",
+          "kind": "",
+          "written": "",
+          "ty": "boolean",
+          "default": "",
+          "about": "Whether there's a Theme by that id: a bundled one or init.lua's. As list names them; get says whether init.lua has a spec of its own for it.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [
+            {
+              "name": "id",
+              "ty": "string",
+              "default": "",
+              "about": "A Theme's id.",
+              "names": []
+            }
+          ],
+          "example": "if not roster.themes.has(\"paper\") then roster.themes.define(\"paper\", { appearance = \"light\" }) end",
           "methods": [],
           "listed": false
         },
@@ -867,7 +952,7 @@
           "written": "",
           "ty": "boolean",
           "default": "",
-          "about": "Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.",
+          "about": "Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.get(name) always reads and roster.o.reset(name) always resets.",
           "takes": "",
           "names": [],
           "item": null,
@@ -1020,7 +1105,7 @@
               "names": []
             }
           ],
-          "example": "roster.o.modes.standard.sidebar.sections:insert(1, \"folders\")",
+          "example": "roster.o.terminal.font:insert(2, \"Cascadia Mono\")",
           "methods": [],
           "listed": false
         },
@@ -1084,13 +1169,13 @@
           "written": "",
           "ty": "",
           "default": "",
-          "about": "Empties a list.",
+          "about": "Empties a list. A list that needs an item (terminal.font) refuses to be empty, at the line.",
           "takes": "",
           "names": [],
           "item": null,
           "fields": [],
           "rows": [],
-          "example": "roster.o.terminal.font:clear()",
+          "example": "roster.o.folders:clear()",
           "methods": [],
           "listed": false
         },
@@ -3366,6 +3451,7 @@
     "roster.folders.update()": "roster.folders.update",
     "roster.keymap.del()": "roster.keymap.del",
     "roster.keymap.get()": "roster.keymap.get",
+    "roster.keymap.has()": "roster.keymap.has",
     "roster.keymap.list()": "roster.keymap.list",
     "roster.keymap.set()": "roster.keymap.set",
     "roster.o.List:append()": "roster.o.List:append",
@@ -3393,6 +3479,7 @@
     "roster.o.fonts.mono": "fonts.mono",
     "roster.o.fonts.ui": "fonts.ui",
     "roster.o.fonts.ui_size": "fonts.ui_size",
+    "roster.o.get()": "roster.o.get",
     "roster.o.idle_lock_minutes": "idle_lock_minutes",
     "roster.o.keys": "keys",
     "roster.o.keys.cmdline": "keys.cmdline",
@@ -3468,6 +3555,7 @@
     "roster.set()": "roster.set",
     "roster.themes.define()": "roster.themes.define",
     "roster.themes.get()": "roster.themes.get",
+    "roster.themes.has()": "roster.themes.has",
     "roster.themes.list()": "roster.themes.list",
     "roster.themes.remove()": "roster.themes.remove",
     "roster.themes.update()": "roster.themes.update"

@@ -208,6 +208,14 @@ export const LOGIN_FIELDS = ["ip", "user", "port", "auth"] as const satisfies re
 /** `host.verify_login`'s steps, in order. */
 export const VERIFY_STEPS = ["user", "provider", "vault-item", "dns", "tcp", "host-key", "auth"] as const;
 
+/** `roster sync` for this Box after a change roster wrote (its ssh config and Claude files; T150):
+ * `ok: false` says why, and the change stands. Left out by an older roster, which didn't sync. */
+export interface BoxSync {
+  ok: boolean;
+  error?: string;
+  fix?: string;
+}
+
 /** `inventory.pull`: the infra repo fast-forwarded (or already up to date, or no upstream). */
 export interface PullResult {
   updated: boolean;
@@ -215,6 +223,8 @@ export interface PullResult {
   commits: number;
   ahead: number;
   message?: string;
+  /** T150: the sync after a pull that updated. */
+  sync?: BoxSync;
 }
 
 /** `host.update`. */
@@ -225,6 +235,8 @@ export interface HostUpdate {
   backup: string | null;
   /** `host.update`: what failed after the edit was written (recording a moved Host's key). */
   warnings?: string[];
+  /** T150: the sync after a change (left out when nothing changed). */
+  sync?: BoxSync;
 }
 
 /** One Host the Pending changes touch. */
@@ -275,7 +287,7 @@ export interface PublishResult {
   /** Upstream commits that left roster.yml alone, fast-forwarded over first. */
   pulled: number;
   /** `roster sync` after the push: this Box's ssh config. A failure doesn't undo the Publish. */
-  sync: { ok: boolean; error?: string; fix?: string };
+  sync: BoxSync;
 }
 
 /** The first `api_version` with the Live Inventory (ticket 28): `host.remove`, `host.rename`,
@@ -297,6 +309,8 @@ export interface InventoryReload {
   changed: boolean;
   host_count: number;
   error: InventoryFileError | null;
+  /** T150, decision Q137: the sync after a changed file that loads. */
+  sync?: BoxSync;
 }
 
 /** serve's `inventory.changed` notification: an outside edit of roster.yml. `applied`: it was
@@ -304,6 +318,8 @@ export interface InventoryReload {
 export interface InventoryChanged {
   applied: boolean;
   error: InventoryFileError | null;
+  /** T150, decision Q137: the sync after an applied edit that loads. */
+  sync?: BoxSync;
 }
 
 /** roster's codes for publishing (ticket 12; docs/app/errors.md rows 46-52). A failed fetch is 73. */
@@ -365,6 +381,8 @@ export interface HostAdd {
   item: { provider: string; id: string; name: string; target?: Omit<SaveTarget, "save_to"> } | null;
   /** What went wrong after the Host was written (recording its host key): it's added all the same. */
   warnings?: string[];
+  /** T150: the sync after the Host was written, so its Session opens straight away. */
+  sync?: BoxSync;
 }
 
 /** `host.scan_key`: the key the address offers, and how it compares with the recorded one. */
@@ -467,6 +485,8 @@ export const MESH_API_VERSION = 15;
 /** serve API 20 (ticket 101, decision Q112): serve answers requests concurrently, its jobs push
  * `job.progress`, and `host.get` takes `settled`. */
 export const JOBS_API_VERSION = 20;
+/** serve API 21 (ticket 108): a Host's check is a job, with `job.progress` and in `jobs.list`. */
+export const CHECK_JOBS_API_VERSION = 21;
 
 /** serve's `job.progress` notification: a job started, moved on or ended. Never its result. */
 export type JobProgress = {
@@ -523,7 +543,7 @@ export interface MeshCut {
   host: string;
   confirmed: string[];
   pending: Record<string, string>;
-  change: { written: boolean; backup?: string | null; note?: string; error?: string; fix?: string };
+  change: { written: boolean; backup?: string | null; note?: string; error?: string; fix?: string; sync?: BoxSync };
 }
 
 /** `mesh.status`: no connections. */
@@ -790,6 +810,8 @@ export interface SaveLogin {
   backup: string;
   item: NonNullable<HostAdd["item"]>;
   warnings?: string[];
+  /** T150: the sync after the Login was written. */
+  sync?: BoxSync;
 }
 
 /** roster's codes for "Save to vault" after a Session's login, besides vault.create_item's (60-65)
@@ -887,24 +909,24 @@ export interface Backend {
   /** `changes.diff`: the Pending changes. */
   pendingChanges(): Promise<PendingChanges>;
   /** `changes.discard`: roster.yml back as the last commit has it. */
-  discardChanges(): Promise<{ discarded: boolean; backup: string | null }>;
+  discardChanges(): Promise<{ discarded: boolean; backup: string | null; sync?: BoxSync }>;
   /** `changes.publish`: commit roster.yml with `message` and push it (never forced), then
    * `roster sync`. Rejects with a PublishError code (or 73 fetch failed, 1 roster.yml broken). */
   publishChanges(message: string): Promise<PublishResult>;
   /** `host.remove`: take the Host out of roster.yml as a Pending change. Never touches the vault. */
-  removeHost(host: string): Promise<{ removed: string; group: string; backup: string }>;
+  removeHost(host: string): Promise<{ removed: string; group: string; backup: string; sync?: BoxSync }>;
   /** `host.rename`: the Host's name in roster.yml, nothing else. Rejects with 100 (taken) or 80. */
   renameHost(host: string, to: string): Promise<HostUpdate>;
   /** `host.move`: to the end of another group; what it inherited and wouldn't there is written on
    * it (`pinned`). Rejects with 101 (no such group) or 103 (it would come out different). */
   moveHost(host: string, group: string): Promise<HostUpdate & { pinned: string[] }>;
   /** `group.new`: an empty group after the last one. */
-  newGroup(name: string, title?: string): Promise<{ group: string; backup: string }>;
+  newGroup(name: string, title?: string): Promise<{ group: string; backup: string; sync?: BoxSync }>;
   /** `group.rename`: its Hosts go with it. */
-  renameGroup(group: string, to: string): Promise<{ changed: boolean; group: string; backup: string | null }>;
+  renameGroup(group: string, to: string): Promise<{ changed: boolean; group: string; backup: string | null; sync?: BoxSync }>;
   /** `group.delete`: refuses (102, `data.hosts`) a group that still has Hosts unless `to` says
    * where they go. */
-  deleteGroup(group: string, to?: string): Promise<{ deleted: string; moved: string[]; to: string | null; backup: string }>;
+  deleteGroup(group: string, to?: string): Promise<{ deleted: string; moved: string[]; to: string | null; backup: string; sync?: BoxSync }>;
   /** `inventory.reload`: `:source` for roster.yml. */
   reloadInventory(): Promise<InventoryReload>;
   /** `inventory.watch`: notice outside edits of roster.yml; `auto` applies them (auto_reload). */
@@ -914,6 +936,9 @@ export interface Backend {
   /** Calls `onProgress` for each `job.progress` (serve API 20): a Mesh run's or a scan's progress,
    * for the Plugins' `job_progress` event. Returns stop. */
   onJobProgress(onProgress: (job: JobProgress) => void): () => void;
+  /** `jobs.list` (serve API 20): each kind's latest job, each Host's latest check (API 21), in the
+   * shape of `job.progress`. `:check` asks it once on joining a check already running (#221). */
+  listJobs(): Promise<JobProgress[]>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host

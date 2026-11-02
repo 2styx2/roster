@@ -77,7 +77,8 @@ app/src/quick/        Quick Connect (ticket 14): target.ts (user@address[:port],
                       "Save to vault" (ticket 15): hostname.ts (the box's name from its shell's title or prompt),
                       SavePanel.tsx (`:save`: name, group, Save to, then quick.save; for an
                       `auth: prompt` Host (ticket 16), Save to, then host.save_login)
-app/src/platform/     State file, clipboard, Windows build: types.ts, tauri.ts, browser.ts, memory.ts (tests)
+app/src/platform/     State file, clipboard, Windows build: types.ts, tauri.ts, browser.ts, memory.ts (tests);
+                      os.ts (Windows or not, at start, for the built-in keys)
 app/src/state/        appState.ts: the State's shape (recent Hosts), parsed leniently
 app/src/session/      Sessions: tabs.ts (store: open/close/select/reconnect/replay/resize, outside React), Sessions.tsx
                       (terminal panes + the basic tab strip for `sessions = "tabs"`), prompt.ts (a password prompt at
@@ -88,7 +89,8 @@ app/src/terminal/     TerminalView.tsx (xterm.js, WebGL → DOM; copy/paste, fin
                       renderer.ts (WebGL, or DOM when its context can't start or is lost; what `:info` says, ticket 20),
                       options.ts (font, colour overrides, standard ANSI palette as data), fonts.ts (which installed font is
                       in use, cells rounded as Windows Terminal does, ticket 33), keymap.ts (ticket 08's keys),
-                      keys.ts (Leader filter), StubTerminal (tests)
+                      keys.ts (Leader filter), input.ts (keys and pastes to the Session: Ctrl+V on Windows, Q138),
+                      StubTerminal (tests)
 app/src/errors/       clean connection errors (ticket 26, docs/app/errors.md): classify.ts (classifyExit: ssh's last lines +
                       exit code + askpass line → a Problem), catalog.ts (the rows as a Registry: where, fix, actions,
                       extras), ErrorPanel.tsx (the Session pane's error), CheckPanel.tsx (`:check HOST`; checkProgress.ts follows its steps as they run)
@@ -192,6 +194,8 @@ app/src/docs-site/    the docs website and PDF (ticket 46, ADR 0008): site.tsx r
                       matching over search-index.js; entry.ts is bundled into the site's search.js
 app/scripts/gen-docs-site.ts  `npm run docs` (`-- --out DIR`, `--pdf FILE`): writes it, and bundles search.js; run through vite-run.mjs
                       (Vite's module runner, so the app's `?raw` imports work)
+app/scripts/check-docs-a11y.ts  `npm run docs:a11y -- DIR`: axe-core over the built site in headless Chrome (dark, light,
+                      the search box open); fails on any WCAG 2.x A/AA problem. docs.yml runs it on every PR
 app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [--build]`, `serve`;
                       perf/serve.py is a stand-in `roster serve` (made-up Hosts, Sessions that print a busy log;
                       `--latency DIR`: a `latency` Host whose Session, perf/latency.py, measures the terminal path)

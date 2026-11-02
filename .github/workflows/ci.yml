@@ -79,9 +79,23 @@ jobs:
   # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
   # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
+  # It took 15-19 min, nearly all of it pytest (918-1148 s against Linux's 233-266 s), and 62% of that the Mesh
+  # suite: each stand-in Host command starts Python and Git for Windows' sh, whose every fork is slow, so a Mesh
+  # test there takes about 7 times as long as on Linux (#234). So it's two jobs side by side: the Mesh suite on
+  # the runner's 4 cores (pytest-xdist), and the rest one at a time as before, since many of those time how soon
+  # serve answers or notices a change (within a second) and miss it when 4 workers share the cores.
+  # --durations lists the slowest, to measure again.
   cli-test-windows:
-    name: CLI tests (Windows)
+    name: CLI tests (Windows, ${{ matrix.part }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: Mesh
+            args: tests/test_mesh.py -n 4
+          - part: the rest
+            args: --ignore=tests/test_mesh.py
     env:
       UV_PYTHON: "3.12"
     steps:
@@ -95,11 +109,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen
-      - run: uv run pytest --junitxml=report.xml
+      - run: uv run pytest ${{ matrix.args }} --durations=10 --junitxml=report.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pytest-report-windows
+          name: pytest-report-windows-${{ strategy.job-index }}
           path: report.xml
           retention-days: 7
 
@@ -131,6 +145,14 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+      # The shell-hook tests run each hook line and rc snippet in the real shell when it's installed, and
+      # skip it when it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh;
+      # add zsh, fish and tcsh (#242). fish and pwsh run under a pty (util-linux `script`, in the image).
+      - name: Install zsh, fish and tcsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish tcsh
+          zsh --version; fish --version; tcsh --version; pwsh --version; script --version
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -164,6 +186,8 @@ jobs:
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
       # Every example in init.lua's option reference (docs/app/options.md, decision Q132), against
       # init.lua's generated stubs (examples/types/roster-config.lua): what :help shows type-checks.
+      # lua-language-server lets through a string outside a "a"|"b" type (cursor_style = "triangle"),
+      # so cargo test also loads every documented init.lua example through the real loader.
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/config-check --checklevel=Hint'
       # The example Configs (examples/init.lua, examples/init-split), against the Config's generated
       # types, set up the way docs/app/options.md's "Editor support" says: types/roster-config.lua

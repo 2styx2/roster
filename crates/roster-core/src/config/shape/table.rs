@@ -861,6 +861,18 @@ pub(super) const API: &[ApiItem] = &[
         "roster.o.terminal.size = \"16pt\"\nroster.o.terminal.font:prepend(\"Cascadia Mono\")\nif roster.o.vim then roster.o.keys.leader.p = \"connect esx-02\" end",
     ),
     item(
+        "roster.o.get",
+        Some(&[param(
+            "name",
+            "roster.config.OptionName",
+            "An option's dotted name: \"terminal.size\", \"views.get\".",
+        )]),
+        "any",
+        "Reads any option by its dotted name: a copy of what init.lua set there, or nil.",
+        "The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.",
+        "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end",
+    ),
+    item(
         "roster.o.reset",
         Some(&[param(
             "name",
@@ -936,6 +948,17 @@ pub(super) const API: &[ApiItem] = &[
         "if not roster.keymap.get(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
     ),
     item(
+        "roster.keymap.has",
+        Some(&[
+            param("context", CONTEXTS, "The keymap's context."),
+            param("keys", "string", "The keys, as set took them."),
+        ]),
+        "boolean",
+        "Whether init.lua bound keys in a context.",
+        "A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.",
+        "if not roster.keymap.has(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
+    ),
+    item(
         "roster.keymap.list",
         Some(&[param("context", CONTEXTS, "The keymap's context.")]),
         "table<string, roster.config.KeyAction>",
@@ -987,6 +1010,14 @@ pub(super) const API: &[ApiItem] = &[
         "A copy of init.lua's spec for a Theme, or nil.",
         "Nil for a bundled Theme init.lua didn't change.",
         "local paper = roster.themes.get(\"paper\")\nif paper then print(paper.label) end",
+    ),
+    item(
+        "roster.themes.has",
+        Some(&[param("id", "string", "A Theme's id.")]),
+        "boolean",
+        "Whether there's a Theme by that id: a bundled one or init.lua's.",
+        "As list names them; get says whether init.lua has a spec of its own for it.",
+        "if not roster.themes.has(\"paper\") then roster.themes.define(\"paper\", { appearance = \"light\" }) end",
     ),
     item(
         "roster.themes.list",
@@ -1169,7 +1200,7 @@ pub(super) const METHODS: &[ApiItem] = &[
         Some(&[param("key", "string", "A key.")]),
         "boolean",
         "Whether init.lua set this key of a map.",
-        "A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.",
+        "A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.get(name) always reads and roster.o.reset(name) always resets.",
         "if not roster.o.views:has(\"topology\") then roster.o.views.topology = { place = \"panel\" } end",
     ),
     item(
@@ -1221,7 +1252,7 @@ pub(super) const METHODS: &[ApiItem] = &[
         "",
         "Puts an item at a position of a list.",
         "A position outside the list is an error at the line.",
-        "roster.o.modes.standard.sidebar.sections:insert(1, \"folders\")",
+        "roster.o.terminal.font:insert(2, \"Cascadia Mono\")",
     ),
     item(
         "roster.o.List:remove",
@@ -1252,8 +1283,8 @@ pub(super) const METHODS: &[ApiItem] = &[
         Some(&[]),
         "",
         "Empties a list.",
-        "",
-        "roster.o.terminal.font:clear()",
+        "A list that needs an item (terminal.font) refuses to be empty, at the line.",
+        "roster.o.folders:clear()",
     ),
     item(
         "roster.o.List:reset",

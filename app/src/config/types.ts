@@ -177,6 +177,14 @@ export interface DiffLine {
   text: string;
 }
 
+/** An option the import sets that init.lua sets again where it wins (roster-core wt.rs Overridden). */
+export interface ImportOverridden {
+  option: string;
+  by: "returned" | "later";
+  /** The later line; null for the returned table. */
+  at: ConfigLocation | null;
+}
+
 /** What `:config import-terminal` would write (roster-core wt.rs Preview), before it does. */
 export interface ImportPreview {
   /** Windows Terminal's settings.json it read. */
@@ -184,8 +192,9 @@ export interface ImportPreview {
   /** One line per thing it takes ("Font: Iosevka Nerd Font, 16 pt (21.3 px)"). */
   summary: string[];
   diff: DiffLine[];
-  /** Options it sets that init.lua's own returned table also sets: those win. */
-  overridden: string[];
+  /** Options it sets that init.lua sets again where that wins: its returned table, or a line
+   * after the block (an older block is replaced in place, so a line below it stays later). */
+  overridden: ImportOverridden[];
   /** There's no init.lua yet: it's made from the commented-out example. */
   created: boolean;
   /** What the write checks init.lua against. */

@@ -20,6 +20,11 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // A test's whole time, past which it fails (the default is 5 s). The App tests spend it
+    // rendering, not waiting (dev-mode React in jsdom: :help's pages are thousands of elements), and
+    // several take 2 to 4 s on an idle machine, so a busy one put them past 5 s (T146). A test
+    // that hangs still fails; one about speed says so with its own budget (src/test-budget.ts).
+    testTimeout: 30_000,
     // App.worst.test.tsx reads styles.css (`?raw`) for the rules that cut text off, and
     // styles.test.ts reads every stylesheet to keep `--faint` out of text. Keycaps, the mark and
     // the help page have their own sheets, which the docs website uses too (src/docs-site).

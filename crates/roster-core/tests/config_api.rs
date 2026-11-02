@@ -529,6 +529,27 @@ return { theme = roster.keymap.get("leader", "p") .. "," .. tostring(roster.keym
     }
 }
 
+#[test]
+fn keymap_and_themes_say_whether_they_have_one() {
+    let c = ok(r#"
+roster.keymap.set("leader", "p", "close")
+roster.keymap.set("list", "d d", false)
+roster.themes.define("paper", { appearance = "light" })
+roster.themes.define("gone", { colors = {} })
+roster.themes.remove("gone")
+return { theme = table.concat({
+  tostring(roster.keymap.has("leader", "p")), tostring(roster.keymap.has("leader", "q")),
+  tostring(roster.keymap.has("list", "d d")),
+  tostring(roster.themes.has("paper")), tostring(roster.themes.has("nord")),
+  tostring(roster.themes.has("gone")),
+}, ",") }
+"#);
+    // A binding to false is init.lua's too (it unbinds a default), as del takes it off.
+    assert_eq!(c.theme, "true,false,true,true,true,false");
+    let e = err("roster.keymap.has(\"leadr\", \"p\")\n");
+    assert!(e.message.contains("did you mean"), "{e}");
+}
+
 // ---------------------------------------------------------------- roster.themes
 
 #[test]
@@ -699,6 +720,47 @@ return { theme = roster.o.themes.keys.label .. "," .. roster.o.views.reset.width
     );
     assert_eq!(c.theme, "1");
     assert!(c.views.is_empty());
+}
+
+/// `roster.o.get(name)` reads any option by its dotted name, so a map whose keys are named like
+/// its methods still has a read that always works (ticket 144).
+#[test]
+fn roster_o_get_reads_any_option_even_a_map_with_method_named_keys() {
+    let lua = r#"
+roster.o.views.get = { width = 30 }
+roster.o.views.keys = { width = 40 }
+roster.o.terminal.size = "16pt"
+local views = roster.o.get("views")
+local n = 0
+for _ in pairs(views) do n = n + 1 end
+return { theme = table.concat({
+  n,
+  roster.o.get("views.get").width,
+  roster.o.get("views.keys").width,
+  roster.o.get("terminal.size"),
+  roster.o.get("terminal").size,
+  tostring(roster.o.get("terminal.scrollback")),
+  tostring(roster.o.get("themes.nothing")),
+}, ",") }
+"#;
+    assert_eq!(says(lua), "2,30,40,16pt,16pt,nil,nil");
+    // A copy: changing it changes nothing.
+    let c = ok("roster.o.views.get = { width = 30 }\nroster.o.get(\"views\").get.width = 99\n");
+    assert_eq!(c.views["get"].width, Some(30));
+    // A bad name is an error at its line, as reset's is.
+    let e = err("\nroster.o.get(\"terminal.szie\")\n");
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(e.message.contains("did you mean terminal.size?"), "{e}");
+    let e = err("roster.o.get(42)\n");
+    assert!(e.message.contains("roster.o.get(\"terminal.size\")"), "{e}");
+    // It's a function, not an option.
+    let e = err("roster.o.get = 1\n");
+    assert!(e.message.contains("roster.o.get is a function"), "{e}");
+    // The root's own :get() still gives everything set.
+    assert_eq!(
+        says("roster.o.vim = false\nreturn { theme = tostring(roster.o:get().vim) }\n"),
+        "false"
+    );
 }
 
 #[test]

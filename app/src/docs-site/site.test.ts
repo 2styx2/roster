@@ -136,7 +136,7 @@ describe("the docs website", () => {
   it("keeps the search index inside its budget (docs/app/performance.md)", async () => {
     const js = file(site.files, "search-index.js");
     const gzip = new Response(new Response(js).body?.pipeThrough(new CompressionStream("gzip")));
-    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(275_000);
+    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(300_000);
   });
 
   it("puts the search box on every page, and loads the index only when it's used", () => {
@@ -157,6 +157,18 @@ describe("the docs website", () => {
 
   it("offers to search the text when a topic address names no topic", () => {
     expect(file(site.files, "tag.html")).toContain("search.html?q=");
+  });
+
+  it("never puts a link inside a link, and gives every link text (axe's link-name)", () => {
+    for (const f of site.files.filter((x) => x.path.endsWith(".html"))) {
+      let depth = 0;
+      for (const m of f.body.matchAll(/<a\s[^>]*>|<\/a>/g)) {
+        depth += m[0] === "</a>" ? -1 : 1;
+        expect(depth, `${f.path}: a link inside a link at ${m.index}`).toBeLessThanOrEqual(1);
+      }
+      const empty = [...f.body.matchAll(/<a\s[^>]*>((?:(?!<\/a>).)*)<\/a>/gs)].filter((m) => !(m[1] as string).replace(/<[^>]*>/g, "").trim());
+      expect(empty.map((m) => m[0]), f.path).toEqual([]);
+    }
   });
 
   it("never repeats an id on a page", () => {

@@ -592,7 +592,11 @@ class Channel:
             reason = refused_prompt_reason(label, prompt)
             self.log(f"askpass: {label or 'unknown Session'}: refused an unexpected prompt: '{shown_prompt(prompt)}'")
             return f"no {UNEXPECTED_PROMPT}\n{reason}".encode()
-        found = self.redeem(request) if request else None
+        if not request:                         # no token at all: most likely a starting serve's sweep checking that
+            self.log("askpass: a connection hung up without a request (another serve checking this one is "
+                     "alive, most likely) - ignored")
+            return b""                          # nothing to answer; not a refused token (#222)
+        found = self.redeem(request)
         if found is None:
             self.log("askpass: refused a token that is unknown, used, expired or cleared by vault.lock")
             return (f"no {TOKEN_SPENT}\nthe askpass token is used up, expired or cleared by a lock - "

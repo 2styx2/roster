@@ -678,7 +678,12 @@ impl PluginHost {
         proxy: &Arc<network::ProxyCell>,
     ) -> Jobs {
         let (tx, rx) = channel::<(Job, Sender<Answer>)>();
-        let (name, version, dir) = (manifest.name.clone(), manifest.version.clone(), dir.to_path_buf());
+        let (name, version, api, dir) = (
+            manifest.name.clone(),
+            manifest.version.clone(),
+            manifest.api,
+            dir.to_path_buf(),
+        );
         // Its calls into serve go through its own share and the one all Plugins have (fair.rs).
         let serve: Arc<dyn Serve> = Arc::new(fair::Fair {
             inner: Arc::clone(&self.serve),
@@ -719,6 +724,7 @@ impl PluginHost {
                 let runtime = runtime::Runtime::new(
                     &name,
                     &version,
+                    api,
                     &dir,
                     &config,
                     grants,
@@ -790,6 +796,10 @@ fn deliver(slots: &Slots, listener: &Mutex<Option<Listener>>, limits: Limits, pl
         _ => None,
     };
     let Some((jobs, serving)) = target else { return };
+    let _turn = serving
+        .answering
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let start = Instant::now();
     let answer = send(&jobs, job).and_then(|rx| wait(&rx, start, limits.call + limits.grace, &serving));
     let reply = settle(slots, limits, plugin, Some(generation), answer);
@@ -910,6 +920,10 @@ pub(crate) struct ServeWait {
     serve: Mutex<(Duration, Option<Instant>)>,
     /// `roster.serve.request` and `roster.http` requests not yet answered and run.
     pub(crate) requests: std::sync::atomic::AtomicUsize,
+    /// Held by an answer from handing it to the Plugin until its reply is with the listener, so
+    /// replies reach the app in the order the Plugin made them: an answer's reply never lands
+    /// after the reply of a request that answer made (each answer comes on a thread of its own).
+    answering: Mutex<()>,
 }
 
 impl ServeWait {

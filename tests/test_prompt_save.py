@@ -88,6 +88,7 @@ def test_a_logged_in_prompt_host_gets_its_vault_item_and_login(prompted, app, ss
     assert app.notes == [{"jsonrpc": "2.0", "method": "session.logged_in", "params": {"held": spec["held"]}}]
     assert r["changed"] is True and r["item"]["name"] == "pve ssh"
     assert r["host"]["ssh"]["auth"] == "bw:pve ssh"
+    assert r["sync"] == {"ok": True}                  # T150: this Box's ssh config follows its new Login
     made = next(i for i in json.loads(vault.read_text()) if i["name"] == "pve ssh")
     assert made["login"]["username"] == "root"
     assert made["login"]["uris"] == [{"uri": f"ssh://127.0.0.1:{sshd.port}", "match": None}]

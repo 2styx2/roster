@@ -181,7 +181,15 @@ interface Entry {
    * the Session prints is kept from Plugins: it's the echo of a line with the attempt's token.
    * `tail` is the window's last bytes, to find that prompt's mark across reads. */
   echoWindow: { tail: Uint8Array } | null;
+  /** From a fill starting until the next line break the Session prints (sudo's own, after Enter),
+   * or the fill's refusal, what it prints is kept from Plugins (ticket 154): sudo's `pwfeedback`
+   * draws a `*` for the probe's letter and one per character of the password, so its stars would
+   * tell a Plugin the password's length. `dropped` bounds it. */
+  fillWindow: { dropped: number } | null;
 }
+
+/** The most a fill's window keeps from Plugins when no line break ends it. */
+const FILL_WINDOW_LIMIT = 4 * 1024;
 
 /** How much of the output after the login is searched for the box's name. */
 const SAVE_SCAN_LIMIT = 4 * 1024;
@@ -439,6 +447,7 @@ export class Tabs {
       filling: false,
       hooks: null,
       echoWindow: null,
+      fillWindow: null,
       wiring: {
         attach: (sink) => this.attach(id, sink),
         onData: (data) => this.write(id, data),
@@ -503,6 +512,7 @@ export class Tabs {
     entry.late = "";
     entry.decoder = new TextDecoder();
     entry.saveScan = "";
+    entry.fillWindow = null;
     entry.watch?.dispose();
     // The attempt's token in roster's own shell marks (ticket 120): only its own shell ever knows it.
     const nonce = newNonce();
@@ -526,7 +536,8 @@ export class Tabs {
           // A Quick Connect Session isn't on a Host of the Inventory: no Host to name.
           // Plugins never see the attempt's token: not the echoed hook line (its whole window stays
           // out), nor anything after that prints it.
-          const plugins = this.outputTap ? this.pastEchoWindow(entry, nonce, data) : null;
+          const echoed = this.outputTap ? this.pastEchoWindow(entry, nonce, data) : null;
+          const plugins = echoed ? this.pastFillWindow(entry, echoed) : null;
           if (plugins && plugins.length > 0) this.tapOut(entry, id, mask, mask.mask(plugins));
           if (!entry.tab.shell && data.length > 0) entry.tab = { ...entry.tab, shell: true };
           if (entry.tab !== before) this.changed();
@@ -535,6 +546,7 @@ export class Tabs {
           if (!current()) return;
           entry.session = null;
           entry.echoWindow = null;
+          entry.fillWindow = null;
           const rest = mask.flush();
           if (rest.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, rest, entry.sentSize);
           watch?.dispose();
@@ -864,11 +876,16 @@ export class Tabs {
     watch?.spent();
     entry.tab = { ...entry.tab, prompt: null };
     this.changed();
+    // What the Session prints from here until its next line break stays out of Plugins' sight:
+    // with sudo's pwfeedback that's a `*` per key of the password (ticket 154).
+    entry.fillWindow = { dropped: 0 };
     try {
       // A nested ssh's prompt names the Host roster resolved it to (ticket 120); the core checks the
       // Session printed it, and serve that the Host is still what it was resolved to.
       return (await session.fill(prompt.line, prompt.hop ?? undefined)).host;
     } catch (e) {
+      // Nothing was typed but at most the probe: what comes next is the Session's own.
+      entry.fillWindow = null;
       if (watch && e instanceof BackendCallError && typeof e.code === "number") {
         watch.unspent();
         this.promptChanged(entry, watch);
@@ -929,6 +946,21 @@ export class Tabs {
     }
     entry.echoWindow = null;
     return seen.subarray(at);
+  }
+
+  /** What of `data` Plugins may get while a fill's window is open: nothing before the Session's
+   * next line break (`\n`), then from that line break on (ticket 154). */
+  private pastFillWindow(entry: Entry, data: Uint8Array): Uint8Array | null {
+    const window = entry.fillWindow;
+    if (!window) return data;
+    const at = data.indexOf(0x0a);
+    if (at < 0) {
+      window.dropped += data.length;
+      if (window.dropped > FILL_WINDOW_LIMIT) entry.fillWindow = null;
+      return null;
+    }
+    entry.fillWindow = null;
+    return data.subarray(at);
   }
 
   /** Hands Plugins `data`; output the mask holds back goes after 50 ms if nothing follows it. */

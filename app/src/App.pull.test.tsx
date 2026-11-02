@@ -17,16 +17,21 @@ const LEADER = "{Control>} {/Control}";
 const HOST = "linux-1-000";
 const MIN = 60_000;
 
-async function ready(scenario: FakeScenario = fixtures.edit as FakeScenario, pullFreshMinutes = 5) {
+/** With `held`, each pull waits until the test calls `release`: what a test sees while it runs
+ * never depends on how long the machine takes to type (a 200 ms pull once ended first, T146). */
+async function ready(scenario: FakeScenario = fixtures.edit as FakeScenario, pullFreshMinutes = 5, { held = false } = {}) {
   const user = userEvent.setup();
   const backend = fakeBackend(scenario);
   let pulls = 0;
+  let release = () => {};
+  const gate = held ? new Promise<void>((r) => (release = r)) : Promise.resolve();
   const counted: Backend = new Proxy(backend, {
     get(target, prop: keyof Backend) {
       const v = target[prop];
       if (prop !== "pullInventory" || typeof v !== "function") return v;
-      return () => {
+      return async () => {
         pulls++;
+        await gate;
         return target.pullInventory();
       };
     },
@@ -45,7 +50,7 @@ async function ready(scenario: FakeScenario = fixtures.edit as FakeScenario, pul
   await screen.findByRole("main", { name: /workspace/i });
   // The confirmations' whole text shows with every message on (ticket 111).
   await user.keyboard(`${LEADER}:messages all{Enter}`);
-  return { user, backend, clock, pulls: () => pulls };
+  return { user, backend, clock, pulls: () => pulls, release };
 }
 
 const editForm = () => screen.findByRole("region", { name: `Edit ${HOST}` });
@@ -56,15 +61,13 @@ const closeForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 describe("the pull before an Inventory write (Q88)", () => {
   it("opens the form at once and pulls in the background, then not again while that pull is fresh", async () => {
-    const { user, pulls } = await ready({
-      ...(fixtures.edit as FakeScenario),
-      pullDelay: 200,
-    });
+    const { user, pulls, release } = await ready(fixtures.edit as FakeScenario, 5, { held: true });
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
     const panel = await editForm();
     // The form is usable while the pull runs.
     expect(within(panel).getByLabelText("Title")).toHaveFocus();
     expect(within(panel).getByText("Pulling the infra repo in the background…")).toBeInTheDocument();
+    release();
     expect(await within(panel).findByText("Up to date with origin/main.")).toBeInTheDocument();
     expect(pulls()).toBe(1);
     await closeForm(user);
@@ -102,15 +105,14 @@ describe("the pull before an Inventory write (Q88)", () => {
   });
 
   it("saves only once the background pull is done", async () => {
-    const { user, backend, pulls } = await ready({
-      ...(fixtures.edit as FakeScenario),
-      pullDelay: 300,
-    });
+    const { user, backend, pulls, release } = await ready(fixtures.edit as FakeScenario, 5, { held: true });
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
     const panel = await editForm();
     const title = within(panel).getByLabelText("Title");
     await user.clear(title);
     await user.type(title, "Build box{Enter}");
+    expect((await backend.getHost(HOST)).title).not.toBe("Build box");
+    release();
     expect(await screen.findByText(/Saved linux-1-000 as a Pending change/)).toBeInTheDocument();
     expect((await backend.getHost(HOST)).title).toBe("Build box");
     expect(pulls()).toBe(1);
@@ -137,18 +139,18 @@ describe("the pull before an Inventory write (Q88)", () => {
   it("says so when the pull changed the Host, and keeps what you typed", async () => {
     const scenario: FakeScenario = {
       ...(fixtures.edit as FakeScenario),
-      pullDelay: 200,
       pullBrings: {
         commits: 2,
         changes: { [HOST]: { ip: "10.0.0.9", title: "Theirs" } },
       },
     };
-    const { user } = await ready(scenario);
+    const { user, release } = await ready(scenario, 5, { held: true });
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
     const panel = await editForm();
     const title = within(panel).getByLabelText("Title");
     await user.clear(title);
     await user.type(title, "Mine");
+    release();
     const note = await within(panel).findByRole("status");
     await waitFor(() =>
       expect(note).toHaveTextContent(
@@ -162,15 +164,12 @@ describe("the pull before an Inventory write (Q88)", () => {
 
   it("in :host add, calls out a name the pull brought (T72)", async () => {
     const theirs = { ...makeHosts(1).hosts[0]!, name: "nas-01" };
-    const { user } = await ready({
-      ...(fixtures.edit as FakeScenario),
-      pullDelay: 200,
-      pullBrings: { commits: 1, changes: {}, adds: [theirs] },
-    });
+    const { user, release } = await ready({ ...(fixtures.edit as FakeScenario), pullBrings: { commits: 1, changes: {}, adds: [theirs] } }, 5, { held: true });
     await user.keyboard(`${LEADER}:host add{Enter}`);
     const panel = await screen.findByRole("region", { name: "Add a Host" });
     await user.type(within(panel).getByLabelText(/^Name/), "nas-01");
     expect(within(panel).queryByText(/The pull brought a Host named/)).toBeNull();
+    release();
     const note = await within(panel).findByText(/The pull brought a Host named/);
     expect(note).toHaveTextContent("The pull brought a Host named nas-01, so this one needs another name.");
   });

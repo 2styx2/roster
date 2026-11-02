@@ -36,10 +36,22 @@ describe("The terminal's copy and paste keys", () => {
     expect(resolveKeymap().terminal[chord]).toEqual({ action, source: "builtin" });
   });
 
-  it("Ctrl+C copies only while something is selected, as in Windows Terminal; Ctrl+V stays the shell's", () => {
+  it("Ctrl+C copies only while something is selected, as in Windows Terminal", () => {
     const { terminal } = resolveKeymap();
     expect(terminal["Ctrl+c"]).toEqual({ action: "terminal.copyIfSelected", source: "builtin" });
-    expect(terminal["Ctrl+v"]).toBeUndefined();
+  });
+
+  it("Ctrl+V pastes the clipboard's text on Windows, as Windows Terminal (decision Q138)", () => {
+    expect(resolveKeymap({}, { windows: true }).terminal["Ctrl+v"]).toEqual({ action: "terminal.pasteIfText", source: "builtin" });
+  });
+
+  it("Ctrl+V stays the program's elsewhere (Linux and macOS terminals paste with Ctrl+Shift+V)", () => {
+    expect(resolveKeymap({}, { windows: false }).terminal["Ctrl+v"]).toBeUndefined();
+    expect(resolveKeymap().terminal["Ctrl+v"]).toBeUndefined();
+  });
+
+  it("Ctrl+V can be unbound on Windows in init.lua", () => {
+    expect(resolveKeymap({ terminal: { "Ctrl+v": null } }, { windows: true }).terminal["Ctrl+v"]).toBeUndefined();
   });
 
   it("can be unbound or moved in init.lua", () => {

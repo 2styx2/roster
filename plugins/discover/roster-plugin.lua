@@ -5,7 +5,7 @@ return {
   version = "1.0.0",
   description = "Scan a network from the app and add what it finds, as Pending changes you review",
   author = "roster",
-  api = 3,
+  api = 5,
   -- The scan runs in roster serve, never here: these are the only serve methods it calls.
   --   discover.plan    how many addresses a range holds, and with what it'd scan (connects nowhere)
   --   discover.start   start a scan you confirmed (flagged: it's a network action)

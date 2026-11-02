@@ -188,7 +188,10 @@ fn mesh_cut(name: &str) -> Value {
 /// A `roster serve` that answers from the made-up network and records every call.
 struct FakeServe {
     calls: Mutex<Vec<(String, Value)>>,
-    hosts: Value,
+    hosts: Mutex<Value>,
+    /// While set, `hosts.list` waits for a word on it (at most 5 s) before it answers: a serve
+    /// busy with a big Inventory.
+    hosts_gate: Mutex<Option<Receiver<()>>>,
     mesh: Mutex<Value>,
     /// What `mesh.status { grouped = true }` answers; Null: a serve before API 19, which ignores it.
     grouped: Value,
@@ -200,7 +203,8 @@ impl FakeServe {
     fn new(hosts: Value, mesh: Value) -> FakeServe {
         FakeServe {
             calls: Mutex::new(Vec::new()),
-            hosts,
+            hosts: Mutex::new(hosts),
+            hosts_gate: Mutex::new(None),
             mesh: Mutex::new(mesh),
             grouped: Value::Null,
             slow_check: Mutex::new(None),
@@ -225,7 +229,12 @@ impl Serve for FakeServe {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         match method {
-            "hosts.list" => Ok(self.hosts.clone()),
+            "hosts.list" => {
+                if let Some(gate) = self.hosts_gate.lock().unwrap().take() {
+                    let _ = gate.recv_timeout(Duration::from_secs(5));
+                }
+                Ok(self.hosts.lock().unwrap().clone())
+            }
             "mesh.status" if params["grouped"] == true && !self.grouped.is_null() => Ok(self.grouped.clone()),
             "mesh.status" => Ok(self.mesh.lock().unwrap().clone()),
             // A check's result once it's over (serve API 21): nas-01's failed at tcp, the rest passed.
@@ -270,6 +279,17 @@ fn limits() -> Limits {
     Limits::default()
 }
 
+/// Limits far beyond what any machine needs, for a test that checks what the Plugin builds, not
+/// how long it takes: the 2,000-Host one failed 19 of 48 runs on a loaded machine with the app's
+/// own (T146). [`two_thousand_hosts_load_inside_the_apps_own_limits`] times it, on request.
+fn unhurried() -> Limits {
+    Limits {
+        load: Duration::from_secs(60),
+        call: Duration::from_secs(60),
+        ..Limits::default()
+    }
+}
+
 fn perms(names: &[&str]) -> Vec<Permission> {
     names.iter().map(|n| Permission::parse(n).unwrap()).collect()
 }
@@ -288,6 +308,11 @@ struct World {
 
 impl World {
     fn with(test: &str, serve: FakeServe) -> World {
+        World::within(test, serve, limits())
+    }
+
+    /// [`World::with`] under `limits`.
+    fn within(test: &str, serve: FakeServe, limits: Limits) -> World {
         let root = temp(test);
         let (bare, work) = (root.join("remote/roster.git"), root.join("work"));
         std::fs::create_dir_all(&bare).unwrap();
@@ -311,7 +336,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(serve);
-        let host = PluginHost::new(serve.clone(), limits());
+        let host = PluginHost::new(serve.clone(), limits);
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -471,7 +496,7 @@ fn it_installs_from_its_folder_asking_for_what_its_readme_explains() {
     let w = World::new("manifest");
     let manifest = read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 4);
+    assert_eq!(manifest.api, 5);
     let asked: Vec<String> = manifest.permissions.iter().map(|p| p.to_string()).collect();
     assert_eq!(asked, ALL);
     let readme = std::fs::read_to_string(plugins_dir().join("topology/README.md")).unwrap();
@@ -848,6 +873,58 @@ fn topology_group_opens_the_view_filtered_to_that_groups_clusters() {
     assert_eq!(one(&r.ops, "notify")["text"], "There's no group nope on the map.");
 }
 
+#[test]
+fn it_reads_the_inventory_without_holding_up_its_own_calls() {
+    let w = World::new("async-inventory");
+    let reply = w.load(ALL);
+    let run = handler(&one(&reply.ops, "command")["run"]);
+    // roster.yml changes and roster serve is slow to list it (a big Inventory, a Publish).
+    let (release, gate) = channel();
+    *w.serve.hosts_gate.lock().unwrap() = Some(gate);
+    let mut more = inventory();
+    more["hosts"]
+        .as_array_mut()
+        .unwrap()
+        .push(host("esx-09", "lab", "10.0.0.9", json!({})));
+    *w.serve.hosts.lock().unwrap() = more;
+    let before = w.serve.called("hosts.list").len();
+    let _ = w.host.event(Event {
+        name: "inventory_changed".into(),
+        payload: json!({}),
+    });
+    let started = Instant::now();
+    while w.serve.called("hosts.list").len() == before {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "it never asked for the Hosts again"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // While serve hasn't answered, the user's :topology still answers at once (#239).
+    let started = Instant::now();
+    let r = w.host.call(NAME, run, json!({ "args": "", "words": [] }));
+    ok(&r);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        ":topology waited {:?} for roster serve",
+        started.elapsed()
+    );
+    // Once serve answers, the new Host is on the map.
+    release.send(()).unwrap();
+    let after = w.settle(Reply {
+        plugin: NAME.into(),
+        result: Value::Null,
+        ops: Vec::new(),
+        error: None,
+        disabled: None,
+    });
+    let added = find(&after.ops, "view_update")
+        .iter()
+        .flat_map(|u| u["changes"]["nodes"].as_array().cloned().unwrap_or_default())
+        .any(|n| n["id"] == "esx-09");
+    assert!(added, "{:#?}", after.ops);
+}
+
 // ------------------------------------------------------------------- without its permissions
 
 #[test]
@@ -949,10 +1026,10 @@ fn what_it_wasnt_granted_isnt_in_its_sandbox() {
 
 // ------------------------------------------------------------------- 2,000 Hosts
 
-#[test]
-fn two_thousand_hosts_in_a_mesh_of_98000_links_load_inside_the_limits_as_40_meshed_clusters() {
-    // With mesh.status grouped (serve API 19) it's 2,000 names; the 98,000 Links one by one, from a
-    // serve before 19, are more than a quarter of a second of Lua could take in.
+/// 2,000 Hosts in 40 groups of 50, each group meshed: 98,000 Links. With mesh.status grouped
+/// (serve API 19) it's 2,000 names; the 98,000 Links one by one, from a serve before 19, are more
+/// than a quarter of a second of Lua could take in.
+fn two_thousand_hosts(test: &str, limits: Limits) -> World {
     let groups = 40;
     let per = 50;
     let mut hosts = Vec::new();
@@ -986,14 +1063,18 @@ fn two_thousand_hosts_in_a_mesh_of_98000_links_load_inside_the_limits_as_40_mesh
     let mut grouped = mesh.clone();
     grouped["links"] = json!([]);
     grouped["meshed"] = Value::Object(meshed);
-    let w = World::with(
-        "big",
+    World::within(
+        test,
         FakeServe::new(json!({ "hosts": hosts, "groups": groups_map, "error": null }), mesh).grouped(grouped),
-    );
-    let t = Instant::now();
+        limits,
+    )
+}
+
+#[test]
+fn two_thousand_hosts_in_a_mesh_of_98000_links_load_as_40_meshed_clusters() {
+    let w = two_thousand_hosts("big", unhurried());
     let reply = w.load(ALL);
     ok(&reply);
-    eprintln!("2,000 Hosts, 98,000 Links: loaded in {:?}", t.elapsed());
     let g = &view(&reply)["graph"];
     assert!(
         view(&reply)["text"]
@@ -1023,6 +1104,25 @@ fn two_thousand_hosts_in_a_mesh_of_98000_links_load_inside_the_limits_as_40_mesh
     let r = w.call(handler(&timer["run"]), json!({}));
     ok(&r);
     assert!(find(&r.ops, "view_update").is_empty());
+}
+
+/// The same load and refresh within the app's own limits (a quarter of a second a call): a
+/// performance budget, so it times this machine, and a busy machine fails it however fast the
+/// Plugin is (T146). Run it on an idle one:
+/// `cargo test -p roster-core --test plugin_topology -- --ignored`.
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn two_thousand_hosts_load_inside_the_apps_own_limits() {
+    let w = two_thousand_hosts("big-timed", limits());
+    let t = Instant::now();
+    let reply = w.load(ALL);
+    ok(&reply);
+    eprintln!("2,000 Hosts, 98,000 Links: loaded in {:?}", t.elapsed());
+    let timer = find(&reply.ops, "timer")
+        .into_iter()
+        .find(|t| t["every"] == true)
+        .unwrap();
+    ok(&w.call(handler(&timer["run"]), json!({})));
 }
 
 // ------------------------------------------------------------------- transcript

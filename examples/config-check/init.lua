@@ -1,6 +1,7 @@
 -- Generated from crates/roster-core/src/config/shape by `cargo run -p roster-core --example gen_config_options`: every example in
 -- the option reference, for lua-language-server to check against examples/types/roster-config.lua
--- (CI runs `lua-language-server --check examples/config-check --checklevel=Hint`).
+-- (CI runs `lua-language-server --check examples/config-check --checklevel=Hint`). It doesn't
+-- flag a string outside a "a"|"b" type, so tests/config_shape.rs loads every example too.
 
 -- roster.os
 do
@@ -31,6 +32,12 @@ do
   if roster.o.vim then roster.o.keys.leader.p = "connect esx-02" end
 end
 
+-- roster.o.get
+do
+  local views = roster.o.get("views") or {}
+  for id in pairs(views) do print(id) end
+end
+
 -- roster.o.reset
 do
   roster.o.reset("terminal.size")
@@ -54,6 +61,11 @@ end
 -- roster.keymap.get
 do
   if not roster.keymap.get("leader", "p") then roster.keymap.set("leader", "p", "close") end
+end
+
+-- roster.keymap.has
+do
+  if not roster.keymap.has("leader", "p") then roster.keymap.set("leader", "p", "close") end
 end
 
 -- roster.keymap.list
@@ -80,6 +92,11 @@ end
 do
   local paper = roster.themes.get("paper")
   if paper then print(paper.label) end
+end
+
+-- roster.themes.has
+do
+  if not roster.themes.has("paper") then roster.themes.define("paper", { appearance = "light" }) end
 end
 
 -- roster.themes.list
@@ -209,7 +226,7 @@ end
 
 -- roster.o.List:insert
 do
-  roster.o.modes.standard.sidebar.sections:insert(1, "folders")
+  roster.o.terminal.font:insert(2, "Cascadia Mono")
 end
 
 -- roster.o.List:remove
@@ -224,7 +241,7 @@ end
 
 -- roster.o.List:clear
 do
-  roster.o.terminal.font:clear()
+  roster.o.folders:clear()
 end
 
 -- roster.o.List:reset

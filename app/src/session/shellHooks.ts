@@ -384,18 +384,84 @@ export function shellHooksOn(init: boolean | null, host: boolean | null | undefi
   return host ?? init ?? false;
 }
 
-/** Takes a Session's token out of its output before Plugins get it (ticket 120, decision Q131):
- * the marks carry it, and anything that prints the shell's prompt settings or history shows it.
- * Each token character becomes a dash, found even when a terminal wraps it (a line break, or
- * cursor moves and erases, inside it, as ConPTY draws a long line). Output ending part-way into
- * what may be the token waits for the next read (`holding`); `flush` lets it out with that part
- * dashed when it's long enough to be the token's (6 characters) or follows `roster=`, so a held
- * part never goes out as it was. Output with nothing of it passes as the same bytes, uncopied. */
+/** A held start of the token goes out dashed when its hold times out if it follows `roster=` or is
+ * at least this long; a shorter one, anywhere else, goes out as it was (ticket 137, Q136). */
+const PLAUSIBLE = 4;
+/** The most `TokenMask` holds back: past it, what's held goes out with every start of the token
+ * in it dashed, however short (a bound fails toward masking). */
+const MASK_HOLD_MAX = 4096;
+const LEAD = encoder.encode("roster=");
+
+/** A start of the token `TokenMask` is following through the output. */
+interface Partial {
+  /** How many of the token's characters it has matched so far. */
+  k: number;
+  /** Where (stream offsets) the matched characters still held back are. */
+  at: number[];
+  /** It follows `roster=`, as everywhere roster's hook line puts the token. */
+  lead: boolean;
+  /** Taken as the token: each character it matches from now on goes out dashed, unheld. */
+  committed: boolean;
+  /** Inside an escape sequence between two of its characters (an `Esc` phase; 0: not). */
+  skip: number;
+}
+
+/** Where `escStep` is in an escape sequence: after ESC, in a CSI, in a string (OSC, DCS, APC,
+ * PM, SOS), after an ESC in a string, after an intermediate byte (`ESC ( B`, `ESC # 8`). */
+const Esc = { start: 1, csi: 2, string: 3, stringEsc: 4, inter: 5 } as const;
+
+/** The phase after byte `c` in an escape sequence at phase `phase`; 0 when it has ended. */
+function escStep(phase: number, c: number): number {
+  switch (phase) {
+    case Esc.start:
+      if (c === 0x5b) return Esc.csi;
+      if (c === 0x5d || c === 0x50 || c === 0x5f || c === 0x5e || c === 0x58) return Esc.string;
+      if (c >= 0x20 && c <= 0x2f) return Esc.inter;
+      return c === 27 ? Esc.start : 0;
+    case Esc.csi:
+      if (c >= 0x40 && c <= 0x7e) return 0;
+      return c === 27 ? Esc.start : Esc.csi;
+    case Esc.string:
+      if (c === 7) return 0;
+      return c === 27 ? Esc.stringEsc : Esc.string;
+    case Esc.stringEsc:
+      return c === 0x5c ? 0 : escStep(Esc.start, c);
+    case Esc.inter:
+      if (c >= 0x20 && c <= 0x2f) return Esc.inter;
+      return c === 27 ? Esc.start : 0;
+    default:
+      return 0;
+  }
+}
+
+/** Takes a Session's token out of its output before Plugins get it (tickets 120 and 137,
+ * decisions Q131 and Q136): the marks carry it, and anything that prints the shell's prompt
+ * settings or history shows it. Each token character becomes a dash, found however the reads
+ * split it and through what a terminal draws inside a wrapped line (line breaks, and any escape
+ * sequence: cursor moves, erases, colours, charset designators, OSC 8 links, titles, DCS and APC
+ * strings). It follows every start of the token through the stream. Output from such a start on
+ * waits (`holding`) for the read that tells; output that can't be the token isn't held at all.
+ * `flush` (the hold's 50 ms are up, or the Session ended) lets what's held out: a start that
+ * follows `roster=` (everywhere roster's hook line puts the token) or is 4 characters or more
+ * goes out dashed, and every later character of it too, as it comes; a shorter one anywhere else
+ * goes out as it was, since it looks like any output (an echoed key, a counter, a hex id), and is
+ * still followed, so the rest of the token is dashed. So at most its first 3 characters (12 of
+ * its 96 bits), only without `roster=` before them and only when the output pauses for 50 ms
+ * right after them, ever go out; ordinary output reaches Plugins unchanged. A hold is bounded:
+ * past 4 KB (a long string inside the token) every start held goes out dashed, however short,
+ * and is still followed. Output with nothing of it passes as the same bytes, uncopied. */
 export class TokenMask {
   private readonly token: Uint8Array;
-  private carry: Uint8Array | null = null;
-  /** The held part follows `roster=`. */
-  private carryAfterLead = false;
+  private states: Partial[] = [];
+  /** Output held back (the stream's last bytes), and which of it goes out dashed. */
+  private held: number[] = [];
+  private heldDash: boolean[] = [];
+  /** A dash went out in this `mask` call. */
+  private dashedOut = false;
+  /** The stream offset of the next byte. */
+  private pos = 0;
+  /** The stream's last bytes, to tell whether a start of the token follows `roster=`. */
+  private tail: Uint8Array = new Uint8Array(0);
 
   constructor(nonce: string) {
     this.token = encoder.encode(nonce);
@@ -403,79 +469,142 @@ export class TokenMask {
 
   /** Whether output is held back, waiting for the read that tells whether it's the token. */
   holding(): boolean {
-    return this.carry !== null;
+    return this.held.length > 0;
   }
 
   mask(data: Uint8Array): Uint8Array {
-    const buf = this.carry ? joined([this.carry, data]) : data;
-    this.carry = null;
-    let out: Uint8Array | null = null;
     const first = this.token[0] ?? 0;
-    for (let i = buf.indexOf(first); i >= 0; i = buf.indexOf(first, i + 1)) {
-      const m = this.matchAt(buf, i);
-      if (m.complete) {
-        out ??= buf === data ? buf.slice() : buf;
-        for (const at of m.at) out[at] = 45;
-      } else if (m.atEnd) {
-        const kept = out ?? buf;
-        this.carry = kept.slice(i);
-        this.carryAfterLead = indexOf(kept.subarray(Math.max(0, i - 7), i), "roster=") === 0;
-        return kept.subarray(0, i);
+    const heldBefore = this.held.length;
+    this.dashedOut = false;
+    const parts: Uint8Array[] = [];
+    let bytes: number[] = [];
+    const cut = () => {
+      if (bytes.length === 0) return;
+      parts.push(Uint8Array.from(bytes));
+      bytes = [];
+    };
+    const emit = (b: number) => bytes.push(b);
+    let j = 0;
+    while (j < data.length) {
+      if (this.states.length === 0 && this.held.length === 0) {
+        // Nothing followed: straight to the next byte that may start the token.
+        const next = data.indexOf(first, j);
+        const end = next < 0 ? data.length : next;
+        if (end > j) {
+          cut();
+          parts.push(data.subarray(j, end));
+          this.pos += end - j;
+          j = end;
+          continue;
+        }
       }
+      this.step(data, j, emit);
+      j++;
     }
-    return out ?? buf;
+    cut();
+    this.keepTail(data);
+    // All of it went out, nothing held before or after and nothing dashed: the same bytes.
+    if (heldBefore === 0 && this.held.length === 0 && !this.dashedOut) return data;
+    return joined(parts);
   }
 
-  /** What's held back, with any part of the token in it dashed when it may be the token's. */
+  /** What's held back, now: each start of the token in it that follows `roster=` or is 4
+   * characters or more dashed (and followed on, dashed), any other as it was (and followed on). */
   flush(): Uint8Array {
-    const rest = this.carry;
-    this.carry = null;
-    if (!rest) return new Uint8Array(0);
-    const m = this.matchAt(rest, 0);
-    if (m.at.length >= 6 || this.carryAfterLead) for (const at of m.at) rest[at] = 45;
-    return rest;
+    this.settle();
+    const out: number[] = [];
+    this.release(this.held.length, (b) => out.push(b));
+    return Uint8Array.from(out);
   }
 
-  /** The token's characters from `i` on, skipping line breaks and escape sequences between them:
-   * where each was, whether it's all there, and whether `buf` ended part-way. */
-  private matchAt(buf: Uint8Array, i: number): { at: number[]; complete: boolean; atEnd: boolean } {
+  private step(data: Uint8Array, j: number, emit: (b: number) => void) {
+    const c = data[j] ?? 0;
+    const offset = this.pos++;
+    this.held.push(c);
+    this.heldDash.push(false);
     const t = this.token;
-    const at: number[] = [];
-    let k = i;
-    while (at.length < t.length) {
-      if (k >= buf.length) return { at, complete: false, atEnd: true };
-      const b = buf[k];
-      if (b === t[at.length]) {
-        at.push(k++);
+    for (let n = this.states.length - 1; n >= 0; n--) {
+      const s = this.states[n];
+      if (!s) continue;
+      if (s.skip) {
+        s.skip = escStep(s.skip, c);
         continue;
       }
-      if (at.length === 0) break;
-      const skip = ignorable(buf, k);
-      if (skip === 0) break;
-      if (skip < 0) return { at, complete: false, atEnd: true };
-      k += skip;
+      if (c === t[s.k]) {
+        s.k++;
+        if (s.committed) this.dash(offset);
+        else s.at.push(offset);
+        if (s.k === t.length) {
+          for (const at of s.at) this.dash(at);
+          this.states.splice(n, 1);
+        }
+      } else if (c === 27) s.skip = Esc.start;
+      else if (c !== 13 && c !== 10) this.states.splice(n, 1);
     }
-    return { at, complete: at.length === t.length, atEnd: false };
+    if (c === t[0]) this.states.push({ k: 1, at: [offset], lead: this.leadAt(data, j), committed: false, skip: 0 });
+    // Past the bound it fails toward masking: every start held goes out dashed, however short.
+    if (this.held.length > MASK_HOLD_MAX) this.settle(true);
+    // Out goes everything before the earliest start still held.
+    let from = Infinity;
+    for (const s of this.states) if (!s.committed && s.at.length > 0) from = Math.min(from, s.at[0] ?? Infinity);
+    this.release(Math.min(this.held.length, from - this.heldBase), emit);
   }
-}
 
-/** How long the line break or escape sequence at `k` is (0: neither; -1: cut off at the end). */
-function ignorable(buf: Uint8Array, k: number): number {
-  const b = buf[k];
-  if (b === 13 || b === 10) return 1;
-  if (b !== 27) return 0;
-  const next = buf[k + 1];
-  if (next === undefined) return -1;
-  if (next === 91) {
-    for (let j = k + 2; j < buf.length; j++) if ((buf[j] ?? 0) >= 0x40 && (buf[j] ?? 0) <= 0x7e) return j - k + 1;
-    return -1;
-  }
-  if (next === 93) {
-    for (let j = k + 2; j < buf.length; j++) {
-      if (buf[j] === 7) return j - k + 1;
-      if (buf[j] === 27 && buf[j + 1] === 92) return j - k + 2;
+  /** The hold is over: each start held is taken as the token (dashed) or, when its 50 ms are up
+   * and it's short and not after `roster=`, let go as it was; `bound`: the hold passed its size
+   * bound, and every start held is taken as the token. */
+  private settle(bound = false) {
+    for (const s of this.states) {
+      if (s.committed || s.at.length === 0) continue;
+      if (bound || s.lead || s.k >= PLAUSIBLE) {
+        s.committed = true;
+        for (const at of s.at) this.dash(at);
+      }
+      s.at = [];
     }
-    return -1;
   }
-  return 2;
+
+  private dash(offset: number) {
+    const i = offset - this.heldBase;
+    if (i >= 0 && i < this.heldDash.length) this.heldDash[i] = true;
+  }
+
+  private release(count: number, emit: (b: number) => void) {
+    if (count <= 0) return;
+    for (let i = 0; i < count; i++) {
+      if (this.heldDash[i]) this.dashedOut = true;
+      emit(this.heldDash[i] ? 45 : (this.held[i] ?? 0));
+    }
+    this.held.splice(0, count);
+    this.heldDash.splice(0, count);
+  }
+
+  /** The stream offset of the first byte held. */
+  private get heldBase(): number {
+    return this.pos - this.held.length;
+  }
+
+  /** Whether the text before `data[j]` ends with `roster=`, line breaks and CSI sequences (a
+   * terminal's wrap) left out. */
+  private leadAt(data: Uint8Array, j: number): boolean {
+    const window = joined([this.tail, data.subarray(Math.max(0, j - 64), j)]);
+    const text: number[] = [];
+    for (let i = 0; i < window.length; i++) {
+      const b = window[i] ?? 0;
+      if (b === 13 || b === 10) continue;
+      if (b === 27 && window[i + 1] === 0x5b) {
+        i += 2;
+        while (i < window.length && !((window[i] ?? 0) >= 0x40 && (window[i] ?? 0) <= 0x7e)) i++;
+        continue;
+      }
+      text.push(b);
+    }
+    if (text.length < LEAD.length) return false;
+    for (let i = 0; i < LEAD.length; i++) if (text[text.length - LEAD.length + i] !== LEAD[i]) return false;
+    return true;
+  }
+
+  private keepTail(data: Uint8Array) {
+    this.tail = data.length >= 64 ? data.slice(-64) : joined([this.tail, data]).slice(-64);
+  }
 }

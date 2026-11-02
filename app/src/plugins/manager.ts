@@ -12,8 +12,8 @@
 //
 // - Packages (ticket 24): Plugins from git repos that init.lua names. The core clones and pins them
 //   (`packagesSync`); each one is the Plugin `package:NAME` and goes through the same install
-//   prompt, showing its git URL as the unverified source. Cancel removes the clone and is kept in
-//   the State (`DECLINED_KEY`) until `:packages install NAME`. `:packages update [NAME]` shows each
+//   prompt, showing its git URL as the unverified source. Cancel (or `:plugins remove`) removes the clone and
+//   is kept in the State (`DECLINED_KEY`) until `:packages install NAME`. `:packages update [NAME]` shows each
 //   new commit with its diff and any new permission before applying it, and declining keeps the
 //   old version.
 //
@@ -116,8 +116,8 @@ export interface DemoPlugins {
 export const BUILTIN_PLUGINS = ["builtin:hosts", "builtin:folders"] as const;
 
 export const STATE_KEY = "plugins";
-/** The State's Packages whose install the user cancelled: not asked again while init.lua names
- * the same repo and folder for them (issue #111). */
+/** The State's Packages whose install the user cancelled, or that `:plugins remove` took out: not
+ * asked again while init.lua names the same repo and folder for them (issues #111, #213). */
 export const DECLINED_KEY = "packagesDeclined";
 
 /** A cancelled Package install as the State keeps it: its name, and the repo and folder it was
@@ -250,6 +250,15 @@ const MAX_USES = 8;
 const MAX_NOTICES = 4;
 /** How often the Sessions' output goes to the Plugins that read it, and how much at once. */
 const OUTPUT_EVERY_MS = 200;
+/** How long a call the user made waits for the core to take roster's own commands, the first time
+ * (issue #241): a Folders drop's `roster.cmd("folder add …")` is refused until then. It tries
+ * again every second meanwhile; past this the call runs and the core refuses the line as ever. */
+export const BUILTINS_WAIT_MS = 5_000;
+const BUILTINS_TRY_MS = 1_000;
+/** What the core says refusing a Plugin's own command line before it has the list (runtime.rs). */
+const NOT_YET = "can't run yet: the app hasn't told roster its own commands";
+/** At most this many calls wait at once; another runs at once (and is refused the same way). */
+export const BUILTINS_HELD_MAX = 8;
 
 /** The Installed entries in the State (untrusted): anything malformed is dropped. */
 export function parseInstalled(json: unknown): Installed[] {
@@ -318,9 +327,6 @@ export class PluginManager {
   private snap: Snapshot = { plugins: [], packages: [], prompts: [], notices: [], float: null, confirm: null, progress: [], declined: [], settled: false };
   private settled = false;
   private packages: PackageStatus[] = [];
-  /** Packages `:plugins remove` took out this run while init.lua still names them: not asked
-   * again until the next start. A cancelled install is kept in the State instead (`DECLINED_KEY`). */
-  private readonly declined = new Set<string>();
   /** The settings each loaded Package got, so a changed init.lua reloads it. */
   private readonly packageConfig = new Map<string, string>();
   private starting: Promise<void> | null = null;
@@ -338,13 +344,22 @@ export class PluginManager {
   /** Every built-in command id seen so far (issue #184): it only grows, so a built-in an effect
    * takes out and puts back is never a Plugin's own in between. */
   private readonly builtinsSeen = new Set<string>();
-  /** The list the core has taken, as sent (sorted, one per line): "" until a send succeeds. */
-  private builtinsHeld = "";
+  /** The list the core has taken, as sent (sorted, one per line): null until a send succeeds (an
+   * empty list is a real send). */
+  private builtinsHeld: string | null = null;
   /** The last send: each waits for the one before, so the core gets them in order. */
   private builtinsSending: Promise<void> = Promise.resolve();
   /** Sends that failed in a row, and the retry waiting. */
   private builtinsFailed = 0;
   private builtinsRetry: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the core has taken a list once, and the user's calls waiting until it has (issue #241). */
+  private builtinsTaken = false;
+  private builtinsWaiting = 0;
+  /** What the held calls wait on: settled when the core takes a list (by any send) or the manager
+   * stops. Null while none waits. */
+  private builtinsReady: { promise: Promise<void>; settle: () => void } | null = null;
+  /** Whether the held calls' own tries are under way (one loop, one send at a time, for all). */
+  private builtinsTrying = false;
   private stopBuiltins: (() => void) | null = null;
   /** Stopped for good (`stop`): nothing loads, no event or call reaches the core. */
   private stopped = false;
@@ -389,10 +404,10 @@ export class PluginManager {
     this.store.set(DECLINED_KEY, list);
   }
 
-  /** Whether the user cancelled this Package's install, this run or before, from the repo and
-   * folder init.lua names now. */
+  /** Whether the user cancelled this Package's install, or took it out with `:plugins remove`,
+   * this run or before, from the repo and folder init.lua names now. */
   private isDeclined(p: { name: string; url: string; dir: string | null }): boolean {
-    return this.declined.has(p.name) || this.cancelledInstalls().some((d) => d.name === p.name && d.url === p.url && d.dir === p.dir);
+    return this.cancelledInstalls().some((d) => d.name === p.name && d.url === p.url && d.dir === p.dir);
   }
 
   /** Loads the built-in Plugins and every installed one. One that asks for a permission the user
@@ -594,7 +609,6 @@ export class PluginManager {
       if (!p) return `init.lua names no Package ${name}`;
       const path = `${PACKAGE_PREFIX}${name}`;
       if (p.pinned && this.installed().some((e) => e.path === path)) return `${name} is installed already: :packages update ${name} checks it for a new version`;
-      this.declined.delete(name);
       this.saveCancelled(this.cancelledInstalls().filter((d) => d.name !== name));
       await this.syncPackagesNow();
       if (this.prompts.some((x) => x.path === path)) return null;
@@ -716,7 +730,10 @@ export class PluginManager {
       } catch (e) {
         return `Couldn't remove ${pkg}: ${e instanceof Error ? e.message : String(e)}`;
       }
-      this.declined.add(pkg);
+      // Remembered like a cancelled install (issue #213): the next start doesn't ask again while
+      // init.lua names the same repo and folder; `:packages install NAME` does.
+      const named = this.packages.find((p) => p.name === pkg);
+      if (named) this.saveCancelled([...this.cancelledInstalls().filter((d) => d.name !== pkg), { name: pkg, url: named.url, dir: named.dir }]);
       this.packages = this.packages.map((p) => (p.name === pkg ? { ...p, commit: null, locked: null, pinned: false } : p));
     }
     await this.forget(name);
@@ -725,7 +742,7 @@ export class PluginManager {
     this.saveInstalled(this.installed().filter((e) => e.name !== name));
     this.changed();
     const stillNamed = pkg !== null && this.packages.some((p) => p.name === pkg);
-    return stillNamed ? `Removed ${name}. init.lua still names it: take it out, or it asks again at the next start` : null;
+    return stillNamed ? `Removed ${name}. init.lua still names it: :packages install ${pkg} brings it back` : null;
   }
 
   /** Unloads a Plugin and forgets what the manager knew of it (not its State entry). */
@@ -758,8 +775,12 @@ export class PluginManager {
    * command its `roster.cmd` ran from the user's call, that call one hop on). */
   async call(plugin: string, handler: number, args: unknown = {}, what: string | null = "ran an action", user: PluginCaller = true): Promise<unknown> {
     if (!this.loaded.has(plugin)) return undefined;
+    // Only the user's own call: a carried one is a hop from a call that has waited already.
+    if (user === true) await this.waitForBuiltins();
+    if (!this.loaded.has(plugin)) return undefined;
     if (what !== null) this.used(plugin, what);
     const reply = await this.backend.pluginCall(plugin, handler, args, user).catch((e: unknown) => this.lost(plugin, e));
+    this.builtinsLost(reply);
     this.apply(reply);
     return reply.result;
   }
@@ -920,6 +941,7 @@ export class PluginManager {
     this.stopBuiltins = null;
     if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
     this.builtinsRetry = null;
+    this.builtinsSettled();
     for (const [name, l] of [...this.loaded]) {
       for (const d of l.disposers.values()) d();
       this.loaded.delete(name);
@@ -940,24 +962,89 @@ export class PluginManager {
   /** Tells the core every built-in command seen, unless it has that list already. A send that
    * fails is said once (quietly), retried after 1 s, 2 s, … up to 30 s apart, and tried again before
    * each Plugin loads; until one gets through the core refuses every Plugin's own command line too
-   * (runtime.rs), and the app checks every line itself. */
-  private sendBuiltins(): Promise<void> {
+   * (runtime.rs), and the app checks every line itself. A call the user makes meanwhile waits for it
+   * a moment first (`waitForBuiltins`, issue #241). */
+  private sendBuiltins(forWaiters = false): Promise<void> {
     for (const c of this.registries.commands.list()) if (c.source === BUILTIN) this.builtinsSeen.add(c.id);
-    this.builtinsSending = this.builtinsSending.then(() => this.sendBuiltinsNow());
+    this.builtinsSending = this.builtinsSending.then(() => this.sendBuiltinsNow(forWaiters));
     return this.builtinsSending;
   }
 
-  private async sendBuiltinsNow(): Promise<void> {
+  /** Before a call the user made: until the core has taken roster's own commands once, it refuses
+   * every Plugin's own command line (`:NAME can't run yet`, runtime.rs), so a Folders drop would
+   * fail (issue #241). The call waits for the list instead: every held call waits on one promise,
+   * settled when any send gets through, so they run in the order they were made. Each waits at
+   * most BUILTINS_WAIT_MS (a timer, so neither a send that never answers nor the clock moving holds
+   * it longer), and at most BUILTINS_HELD_MAX wait at once; then it runs as ever and the core still
+   * refuses the line. Nothing is let through: the core's rule doesn't change, only when the call
+   * reaches it. */
+  private async waitForBuiltins(): Promise<void> {
+    if (this.builtinsTaken || this.stopped || this.builtinsWaiting >= BUILTINS_HELD_MAX) return;
+    this.builtinsWaiting++;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!this.builtinsReady) {
+        let settle: () => void = () => undefined;
+        const promise = new Promise<void>((r) => {
+          settle = r;
+        });
+        this.builtinsReady = { promise, settle };
+      }
+      const ready = this.builtinsReady.promise;
+      void this.tryForWaiters();
+      await Promise.race([ready, new Promise<void>((r) => (timer = setTimeout(r, BUILTINS_WAIT_MS)))]);
+    } finally {
+      clearTimeout(timer);
+      this.builtinsWaiting--;
+    }
+  }
+
+  /** Lets the held calls go: the core took a list, or the manager stopped. */
+  private builtinsSettled(): void {
+    this.builtinsReady?.settle();
+    this.builtinsReady = null;
+  }
+
+  /** While calls are held: a send at once, then every second, for all of them, one at a time
+   * after any send under way. A failure here isn't counted toward the app's own retries. */
+  private async tryForWaiters(): Promise<void> {
+    if (this.builtinsTrying) return;
+    this.builtinsTrying = true;
+    try {
+      while (this.builtinsWaiting > 0 && !this.builtinsTaken && !this.stopped) {
+        await this.sendBuiltins(true);
+        if (this.builtinsWaiting === 0 || this.builtinsTaken || this.stopped) break;
+        await new Promise((r) => setTimeout(r, BUILTINS_TRY_MS));
+      }
+    } finally {
+      this.builtinsTrying = false;
+    }
+  }
+
+  /** The core refused a Plugin's own command line because it hasn't the list, though it took one
+   * before (a core host built anew): it's sent again, and calls wait for it until it's taken. */
+  private builtinsLost(reply: PluginReply): void {
+    if (!this.builtinsTaken || !reply.error?.message.includes(NOT_YET)) return;
+    this.builtinsTaken = false;
+    this.builtinsHeld = null;
+    void this.sendBuiltins();
+  }
+
+  private async sendBuiltinsNow(forWaiters = false): Promise<void> {
     const names = [...this.builtinsSeen].sort();
     const list = names.join("\n");
     if (this.stopped || list === this.builtinsHeld) return;
     try {
       await this.backend.pluginBuiltins(names);
       this.builtinsHeld = list;
+      this.builtinsTaken = true;
       this.builtinsFailed = 0;
       if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
       this.builtinsRetry = null;
+      this.builtinsSettled();
     } catch {
+      // The held calls' own tries leave the app's retries as they were (said once, backing off).
+      if (forWaiters && !this.stopped) return;
       if (this.builtinsFailed++ === 0) this.ui.say?.(quiet("Plugins: couldn't tell roster its own commands; trying again"));
       if (this.builtinsRetry || this.stopped) return;
       const wait = Math.min(1000 * 2 ** (this.builtinsFailed - 1), 30_000);

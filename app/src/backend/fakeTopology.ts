@@ -421,7 +421,7 @@ export function topologyPlugin(): FakePlugin {
       version: "1.1.0",
       description: "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
       author: "roster",
-      api: 4,
+      api: 5,
       permissions: TOPOLOGY_PERMISSIONS,
     },
     load(roster: FakeRoster) {
@@ -459,18 +459,38 @@ export function topologyPlugin(): FakePlugin {
         }
       };
       const clean = (why: unknown) => String(why).replace(/^.*?roster\.serve\.request [\w._]+: /, "");
-      const readInventory = () => {
-        [hosts, groups, inventoryError] = [[], {}, undefined];
-        if (!reads || !roster.inventory) return;
+      // The Hosts and groups without waiting (roster.inventory.request), read again only after
+      // inventory_changed; an answer to a read from before a change is read again.
+      let reading = false;
+      let changed = 0;
+      let afterRead: (() => void)[] = [];
+      const withInventory = (done: () => void) => {
+        if (!reads || !roster.inventory) hosts ??= [];
+        if (hosts) return done();
+        afterRead.push(done);
+        if (reading) return;
+        reading = true;
+        const asked = changed;
+        const got = (list: { hosts: Host[]; groups: Record<string, { title?: string }> } | undefined, why?: string) => {
+          reading = false;
+          const waiting = afterRead;
+          afterRead = [];
+          if (asked !== changed) {
+            hosts = null;
+            for (const f of waiting) withInventory(f);
+            return;
+          }
+          if (list) [hosts, groups, inventoryError] = [list.hosts ?? [], list.groups ?? {}, undefined];
+          else [hosts, groups, inventoryError] = [[], {}, String(why ?? "roster serve said nothing").replace(/^roster\.inventory\.request: /, "")];
+          for (const f of waiting) f();
+        };
         try {
-          hosts = roster.inventory.hosts();
-          groups = roster.inventory.groups();
+          (roster.inventory as NonNullable<typeof roster.inventory>).request(got);
         } catch (e) {
-          inventoryError = errorText(e);
+          got(undefined, errorText(e));
         }
       };
       const restructure = () => {
-        if (!hosts) readInventory();
         s = structure(hosts ?? [], groups, mesh);
       };
       const flush = () => {
@@ -519,7 +539,7 @@ export function topologyPlugin(): FakePlugin {
       const cutOver = () => {
         if (cutting?.timer !== undefined) roster.cancel(cutting.timer);
         cutting = null;
-        roster.progress.remove("topology-cut");
+        if (roster.progress.has("topology-cut")) roster.progress.remove("topology-cut");
         refresh();
       };
       const cutPoll = () => {
@@ -615,27 +635,33 @@ export function topologyPlugin(): FakePlugin {
         }
         details();
       };
-      refresh = () => {
-        if (!canMesh) {
-          [mesh, meshError] = [null, undefined];
-          restructure();
-          return draw();
+      const drawn = () => {
+        restructure();
+        draw();
+        if (again) {
+          again = false;
+          refresh();
         }
+      };
+      refresh = () => {
         if (asking) {
           again = true;
           return;
         }
         asking = true;
-        ask("mesh.status", { grouped: true }, (r, why) => {
-          asking = false;
-          if (typeof r === "object" && r !== null) [mesh, meshError] = [r as Obj, undefined];
-          else [mesh, meshError] = [null, clean(why ?? "roster serve said nothing about the Mesh")];
-          restructure();
-          draw();
-          if (again) {
-            again = false;
-            refresh();
+        // The Hosts first (when they changed), then the Mesh: one draw with both.
+        withInventory(() => {
+          if (!canMesh) {
+            asking = false;
+            [mesh, meshError] = [null, undefined];
+            return drawn();
           }
+          ask("mesh.status", { grouped: true }, (r, why) => {
+            asking = false;
+            if (typeof r === "object" && r !== null) [mesh, meshError] = [r as Obj, undefined];
+            else [mesh, meshError] = [null, clean(why ?? "roster serve said nothing about the Mesh")];
+            drawn();
+          });
         });
       };
 
@@ -711,6 +737,7 @@ export function topologyPlugin(): FakePlugin {
         });
         roster.on("inventory_changed", () => {
           hosts = null;
+          changed++;
           refresh();
         });
       }

@@ -12,6 +12,7 @@ pub mod package;
 pub mod platform;
 pub mod plugin;
 pub mod rpc;
+mod screen;
 pub mod session;
 pub mod slot;
 pub mod state;

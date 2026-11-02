@@ -64,6 +64,21 @@ roster.o.terminal.font:prepend("Cascadia Mono")
 if roster.o.vim then roster.o.keys.leader.p = "connect esx-02" end
 ```
 
+### `roster.o.get(name)`
+
+returns `any`
+
+Reads any option by its dotted name: a copy of what init.lua set there, or nil. The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.
+
+| Parameter | Type | |
+|---|---|---|
+| `name` | `roster.config.OptionName` | An option's dotted name: `"terminal.size"`, `"views.get"`. |
+
+```lua
+local views = roster.o.get("views") or {}
+for id in pairs(views) do print(id) end
+```
+
 ### `roster.o.reset(name)`
 
 Puts an option back to its default: what init.lua set there is taken away. Any option: a value, an object, a map or a list. An unknown name is an error at its line.
@@ -131,6 +146,21 @@ The action init.lua bound to keys, or nil. Roster's own bindings aren't in it.
 if not roster.keymap.get("leader", "p") then roster.keymap.set("leader", "p", "close") end
 ```
 
+### `roster.keymap.has(context, keys)`
+
+returns `boolean`
+
+Whether init.lua bound keys in a context. A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.
+
+| Parameter | Type | |
+|---|---|---|
+| `context` | `"leader"\|"list"\|"list_vim"\|"picker"\|"picker_vim"\|"cmdline"\|"terminal"\|"global"` | The keymap's context. |
+| `keys` | `string` | The keys, as set took them. |
+
+```lua
+if not roster.keymap.has("leader", "p") then roster.keymap.set("leader", "p", "close") end
+```
+
 ### `roster.keymap.list(context)`
 
 returns `table<string, roster.config.KeyAction>`
@@ -196,6 +226,20 @@ A copy of init.lua's spec for a Theme, or nil. Nil for a bundled Theme init.lua 
 ```lua
 local paper = roster.themes.get("paper")
 if paper then print(paper.label) end
+```
+
+### `roster.themes.has(id)`
+
+returns `boolean`
+
+Whether there's a Theme by that id: a bundled one or init.lua's. As list names them; get says whether init.lua has a spec of its own for it.
+
+| Parameter | Type | |
+|---|---|---|
+| `id` | `string` | A Theme's id. |
+
+```lua
+if not roster.themes.has("paper") then roster.themes.define("paper", { appearance = "light" }) end
 ```
 
 ### `roster.themes.list()`
@@ -424,7 +468,7 @@ for id in pairs(views) do print(id) end
 
 returns `boolean`
 
-Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.
+Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.get(name) always reads and roster.o.reset(name) always resets.
 
 | Parameter | Type | |
 |---|---|---|
@@ -497,7 +541,7 @@ Puts an item at a position of a list. A position outside the list is an error at
 | `value` | `any` | The item. |
 
 ```lua
-roster.o.modes.standard.sidebar.sections:insert(1, "folders")
+roster.o.terminal.font:insert(2, "Cascadia Mono")
 ```
 
 ### `roster.o.List:remove(...)`
@@ -528,10 +572,10 @@ if not roster.o.terminal.font:has("Hack") then roster.o.terminal.font:append("Ha
 
 ### `roster.o.List:clear()`
 
-Empties a list.
+Empties a list. A list that needs an item (terminal.font) refuses to be empty, at the line.
 
 ```lua
-roster.o.terminal.font:clear()
+roster.o.folders:clear()
 ```
 
 ### `roster.o.List:reset()`
@@ -1687,5 +1731,5 @@ roster.o.packages = { { "someone/recent-alerts", tag = "v1.2.0" }, "someone/pinn
 }
 ```
 
-Then `---@type roster.config.Options` on the table `init.lua` returns checks every name and value in it. The file is the copy this app was built with; run `:config types` again after an update.
+Then `---@type roster.config.Options` on the table `init.lua` returns checks every name and value in it, with one limit: lua-language-server doesn't flag a string outside an option's set (`terminal.cursor_style = "triangle"` passes its check), so the app's own check when it loads the file, at that line, is the one that catches it. The file is the copy this app was built with; run `:config types` again after an update.
 

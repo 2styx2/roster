@@ -21,10 +21,10 @@ roster.keymap.set("leader", "p", "connect esx-02")
 ## Paste with Ctrl+V
 
 ```lua
-roster.keymap.set("terminal", "Ctrl+v", "terminal.paste")
+roster.keymap.set("terminal", "Ctrl+v", "terminal.pasteIfText")
 ```
 
-Ctrl+V belongs to the shell by default (its quoted insert, and Vim's block selection). See [Copy and paste](keyboard.md#copy-and-paste).
+Windows has this by default. On Linux and macOS Ctrl+V belongs to the program (the shell's quoted insert, and Vim's block selection); with this it pastes the clipboard's text, and still goes to the program as ^V when there's no text. `terminal.pasteIfText` works on Ctrl+V only; for another key, use `terminal.paste`. On Windows, `roster.keymap.set("terminal", "Ctrl+v", false)` gives Ctrl+V back to the program. See [Copy and paste](keyboard.md#copy-and-paste).
 
 ## A light Theme by day, a dark one at night
 

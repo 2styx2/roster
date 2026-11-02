@@ -26,6 +26,7 @@ import {
   UNREVIEW_API_VERSION,
   BackendStartError,
   CHECK_API_VERSION,
+  CHECK_JOBS_API_VERSION,
   BOX_CHECK_API_VERSION,
   EDIT_API_VERSION,
   PUBLISH_API_VERSION,
@@ -61,12 +62,12 @@ import { ImportPanel } from "./config/ImportPanel";
 import { foldersSettings } from "./folders/file";
 import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
-import type { InventoryFileError } from "./backend/types";
+import type { BoxSync, InventoryFileError } from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkProgressed, checkStarted } from "./errors/checkProgress";
+import { checkJoined, checkProgressed, checkStarted } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -989,6 +990,7 @@ function Workspace({
       refreshPending();
       bumpTargets();
       if (change.error) setMessage(inventoryBroken(change.error));
+      else if (change.sync && !change.sync.ok) setMessage(`roster.yml changed outside the app and was applied, but ${syncFailed(change.sync)}.`);
     });
     backend.watchInventory(autoReload).catch(() => {});
     return stop;
@@ -1021,7 +1023,8 @@ function Workspace({
         reloadHosts();
         refreshPending();
         bumpTargets();
-        return r.error ? inventoryBroken(r.error) : null;
+        if (r.error) return inventoryBroken(r.error);
+        return r.sync && !r.sync.ok ? `Reloaded roster.yml, but ${syncFailed(r.sync)}.` : null;
       },
     });
   }, [registries, backend, canLive, reloadHosts, refreshPending, setStale]);
@@ -1446,6 +1449,13 @@ function Workspace({
       }
       const run = ++checkRun.current;
       setCheck((prev) => checkStarted(prev, host, Date.now()));
+      // A check already running (serve joins it) sent its progress before now: ask once where it is.
+      if (api >= CHECK_JOBS_API_VERSION) {
+        backend.listJobs().then(
+          (jobs) => run === checkRun.current && setCheck((c) => checkJoined(c, jobs, Date.now())),
+          () => undefined,
+        );
+      }
       // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
       const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
       backend.checkHost(host).then(
@@ -1685,7 +1695,7 @@ function Workspace({
         (r) => {
           reloadHosts();
           refreshPending();
-          setMessage(r.changed ? quiet(`Marked ${host} ${reviewed ? "reviewed" : "unreviewed"}`, done) : already);
+          setMessage(r.changed ? routine(`Marked ${host} ${reviewed ? "reviewed" : "unreviewed"}`, done, afterChange(r)) : already);
         },
         (e: unknown) =>
           setMessage(`Couldn't mark ${host} ${reviewed ? "reviewed" : "unreviewed"}: ${e instanceof Error ? e.message : String(e)}`),
@@ -1778,33 +1788,36 @@ function Workspace({
     switch (op.op) {
       case "remove": {
         const r = await backend.removeHost(op.host);
-        return quiet(`Removed ${r.removed}`, `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`);
+        return routine(`Removed ${r.removed}`, `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`, afterChange(r));
       }
       case "rename": {
         const r = await backend.renameHost(op.host, op.to);
         return r.changed
-          ? quiet(`Renamed ${op.host} to ${op.to}`, `Renamed ${op.host} to ${op.to} ${pendingNote}. Sessions use it after roster sync.`)
+          ? routine(`Renamed ${op.host} to ${op.to}`, `Renamed ${op.host} to ${op.to} ${pendingNote}.`, afterChange(r))
           : `${op.host} already has that name.`;
       }
       case "move": {
         const r = await backend.moveHost(op.host, op.group);
         if (!r.changed) return `${op.host} is already in ${op.group}.`;
         // What it keeps from its old group is worth knowing: said whatever the setting.
-        if (r.pinned.length) return `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.`;
-        return quiet(`Moved ${op.host} to ${op.group}`, `Moved ${op.host} to ${op.group} ${pendingNote}.`);
+        if (r.pinned.length) return `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` + butWarnings(afterChange(r));
+        return routine(`Moved ${op.host} to ${op.group}`, `Moved ${op.host} to ${op.group} ${pendingNote}.`, afterChange(r));
       }
-      case "group-new":
-        await backend.newGroup(op.name);
-        return quiet(`Added group ${op.name}`, `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`);
+      case "group-new": {
+        const r = await backend.newGroup(op.name);
+        return routine(`Added group ${op.name}`, `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`, afterChange(r));
+      }
       case "group-rename": {
         const r = await backend.renameGroup(op.group, op.to);
-        return r.changed ? quiet(`Renamed group ${op.group} to ${op.to}`, `Renamed group ${op.group} to ${op.to} ${pendingNote}.`) : `${op.group} already has that name.`;
+        return r.changed
+          ? routine(`Renamed group ${op.group} to ${op.to}`, `Renamed group ${op.group} to ${op.to} ${pendingNote}.`, afterChange(r))
+          : `${op.group} already has that name.`;
       }
       case "group-delete": {
         const r = await backend.deleteGroup(op.group, op.to);
         return r.moved.length
-          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.`
-          : quiet(`Deleted group ${op.group}`, `Deleted group ${op.group} ${pendingNote}.`);
+          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.` + butWarnings(afterChange(r))
+          : routine(`Deleted group ${op.group}`, `Deleted group ${op.group} ${pendingNote}.`, afterChange(r));
       }
     }
   }
@@ -2320,7 +2333,7 @@ function Workspace({
               refreshPending();
               setMessage(
                 update.changed
-                  ? routine(`Saved ${update.host.name}`, `Saved ${update.host.name} as a Pending change. Sessions use it after roster sync.`, update.warnings)
+                  ? routine(`Saved ${update.host.name}`, `Saved ${update.host.name} as a Pending change.`, afterChange(update))
                   : `Nothing changed on ${update.host.name}.` + butWarnings(update.warnings),
               );
             }}
@@ -2365,9 +2378,9 @@ function Workspace({
                   ? routine(
                       `Added ${where}`,
                       `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
-                      r.warnings,
+                      afterChange(r),
                     )
-                  : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` + butWarnings(r.warnings),
+                  : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` + butWarnings(afterChange(r)),
               );
             }}
             onClose={closeAdd}
@@ -2400,12 +2413,12 @@ function Workspace({
                   ? routine(
                       `Saved ${r.host.name}`,
                       `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
-                      r.warnings,
+                      afterChange(r),
                     )
                   : routine(
                       `Saved ${r.host.name}'s password`,
                       `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`,
-                      r.warnings,
+                      afterChange(r),
                     ),
               );
             }}
@@ -2425,7 +2438,11 @@ function Workspace({
             onDiscard={async () => {
               try {
                 const r = await backend.discardChanges();
-                setMessage(r.discarded ? quiet("Discarded the Pending changes", "Discarded the Pending changes: roster.yml is as the last commit has it.") : "Nothing to discard.");
+                setMessage(
+                  r.discarded
+                    ? routine("Discarded the Pending changes", "Discarded the Pending changes: roster.yml is as the last commit has it.", afterChange(r))
+                    : "Nothing to discard.",
+                );
               } catch (e) {
                 setMessage(`Couldn't discard: ${e instanceof Error ? e.message : String(e)}`);
               }
@@ -2711,6 +2728,18 @@ export function servicesLeftOut(list: HostList): string | null {
 
 /** roster.yml doesn't load (an outside edit): its line, and that the last good Inventory stays. */
 /** " But WARNING; WARNING." after a result, or nothing. */
+/** What roster warned about after a change it wrote, with a `roster sync` that failed after it
+ * (T150): the change stands, but this Box's ssh config didn't follow. */
+function afterChange(r: { warnings?: readonly string[]; sync?: BoxSync }): string[] {
+  const warnings = [...(r.warnings ?? [])];
+  if (r.sync && !r.sync.ok) warnings.push(syncFailed(r.sync));
+  return warnings;
+}
+
+function syncFailed(sync: BoxSync): string {
+  return `this Box's ssh config didn't follow (${sync.error ?? "roster sync failed"}): run roster sync`;
+}
+
 function butWarnings(warnings: readonly string[] | undefined): string {
   return warnings?.length ? ` But ${warnings.join("; ")}.` : "";
 }

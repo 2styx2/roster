@@ -4,6 +4,62 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## v0.4.0
+
+### New
+
+**App**
+
+- **A Plugin can read back what it added** (Plugin API 5, `roster.api_version` 5): every collection has `get`, `has` and `list`, as `init.lua`'s do: `roster.status.get("alerts")` gives a copy of the segment as the Plugin set it, `roster.sidebar.has("pinned")` says whether it has that section, `roster.views.list()` names its views, `roster.keymap.get("leader", "w w")` gives a binding's command line and `roster.details.list("reach")` the Hosts a section is on. See [What the Plugin added](plugin-api.md#errors).
+- `init.lua`'s `roster.keymap.has(context, keys)` and `roster.themes.has(id)` say whether init.lua bound those keys and whether there's a Theme by that id, as every other collection's `has` does. See [`roster.keymap.has`](app/options.md#rosterkeymaphascontext-keys).
+- **Badges are complete too:** `roster.badges.remove(host)` takes the Plugin's badge off a Host, and `get`, `has` and `list` read its badges back by Host. On Plugin API 5, taking off a badge it doesn't have (`remove`, or `set(host, nil)`) is an error at its line, as every other collection's removal is. See [`roster.badges`](plugin-api.md#rosterbadges).
+
+### Changed
+
+**App**
+
+- A Plugin written for Plugin API 5 (`api = 5` in its manifest) gets an error at its line, as `init.lua` does, when it takes away what it never added: `roster.themes.remove` of a Theme it didn't define, `roster.keymap.del` of keys it didn't bind, any collection's `remove` (badges' too), and `roster.views.update`, `open` or `close` of a view it doesn't have. A key context other than `leader`, `list` or `list_vim` is an error there too, where the app refused it with a notice. A Plugin written for API 4 or older keeps the quiet removals. See [Errors](plugin-api.md#errors).
+
+### Security
+
+**App**
+
+- **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the cursor is right after that very prompt, as a terminal draws it (Windows' redraws included), as a nested ssh's fill already needed; a sudo prompt that went by gets nothing and the vault isn't asked, and pressing the key again works once the prompt is back at the cursor. `terminal.read` Plugins no longer get any of a Session's shell-hook token when the output is split at an unlucky point or wraps it with links, colours or charset switches inside; ordinary output reaches them unchanged.
+
+### Fixed
+
+**App**
+
+- **The fill key fills sudo with `pwfeedback`**: a sudo set to draw a `*` per key (`Defaults pwfeedback`) was refused as if its prompt echoed ("the prompt printed what roster typed to check it"). roster now takes sudo's `*` for its check, taken back, as no echo, read as the terminal draws it (Windows' redraws included), only at sudo's own prompt for the Session's own Host; the password goes in as `*`s, as when you type it, and `terminal.read` Plugins don't see those stars. Anything else printed still refuses, and so does a nested ssh's Host's sudo with `pwfeedback`. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
+- **A graph node you placed stays where you put it.** Dragged or moved with `m`, it no longer travels with its cluster when that cluster grows and moves out of its neighbours' way, and it doesn't count in the cluster's size, so a node dragged out over another cluster moves nothing. A graph whose clusters were saved overlapping by an older version is pulled apart the next time it opens. Graphs saved before this keep their places, but don't know which nodes you placed: one you dragged before may still move with its cluster once.
+- **Zoomed out on a graph with many clusters, cluster titles no longer run over each other.** A title that can't be whole is cut to the room that's free, and one with no room at all gives way, as a node's label does, until you zoom in; the selected node's cluster always keeps its title.
+- The Topology Plugin reads your Hosts without waiting for roster serve, so a big Inventory or a busy serve no longer holds up the Plugin (and `:topology`) while it's read. roster's own Plugins (mesh, topology, discover, and the recent-alerts and pinned examples) are written for Plugin API 5 now.
+- **Ctrl+V pastes in a terminal on Windows**, as in Windows Terminal: the clipboard's text, through the terminal's paste (several lines as one bracketed paste), including from a voice-typing tool that pastes by sending Ctrl+V, and on any keyboard layout. With no text on the clipboard (an image, or nothing) Ctrl+V still reaches the program as ^V, so an app's own image paste and Vim's Ctrl+V work. Linux and macOS keep Ctrl+V for the program (paste with Ctrl+Shift+V there); `roster.keymap.set("terminal", "Ctrl+v", "terminal.pasteIfText")` pastes with it there too, and `false` gives it back on Windows. See [Copy and paste](app/keyboard.md#copy-and-paste).
+- `roster.o.get("views")` reads any option by its dotted name, so a map with a key named `get`, `has`, `keys` or `reset` (where `:get()` and `:keys()` read that key) still has a read that always works.
+- `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.
+- Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
+- Dropping a Host on a Folder no longer fails with ":folder can't run yet" when the app couldn't yet tell roster which commands are its own: the drop (and any Plugin action you start meanwhile) waits up to 5 s for that to get through, then runs. If it still hasn't, the drop is refused as before; try again in a moment. See [Errors](app/errors.md).
+- On the docs website, a code block too wide for the page can be focused with Tab and scrolled with the arrow keys; a link whose text is a topic's name (`` [`mesh`](…) ``) is one link, no longer a link inside a link; and a screenshot in a guide shows as a link named after it in `:help` and on the website, where it was a stray "!" and a link with no name.
+- A long option, command or error description shown beside its topic, in `:help`'s topic finder and on the docs website's search page, ends with "…" where it's cut at 80 characters, instead of stopping mid-word.
+- A Plugin's view no longer goes back to an older state on a busy machine: when roster serve's answer to one of a Plugin's requests led it to ask again (the Mesh Plugin's job ending, then its status), the second answer's changes could reach the window first and be drawn over by the first's. The app now gets them in the order the Plugin made them. See [Asking roster serve](plugins.md#asking-roster-serve).
+- **A Host you just added opens straight away:** every change the app makes to `roster.yml` (adding, editing, reviewing, renaming, moving or removing a Host, the group changes, Discover's add, "Save to vault", discarding the Pending changes, a pull) now runs `roster sync` for this Box, as Publish did, so its Session no longer fails with "isn't in this box's ssh config - run `roster sync`". An edit to `roster.yml` made outside the app syncs too once it's applied and loads. If the sync fails, the change stays and the message says so, with `roster sync` to run.
+- [Shell integration](plugins.md#shell-integration) docs: a powerlevel10k recipe (its own `POWERLEVEL9K_TERM_SHELL_INTEGRATION` setting, since its instant and transient prompts can drop the snippet's marks), and where the shell-hook line stays in the history (PowerShell, zsh without `HIST_IGNORE_SPACE`, bash without `ignorespace`). The zsh, fish and PowerShell snippets and hook lines are now run in those shells in CI, as bash's were.
+
+- `:plugins remove NAME` on a Package that `init.lua` still names is remembered, as a cancelled install is: the next start no longer asks to install it again while `init.lua` names it from the same repo and folder. `:packages` shows it as cancelled, and `:packages install NAME` brings it back. See [Packages](plugins.md#packages).
+- `:check HOST` on a check that's already running (started elsewhere, or before the app restarted) shows the step it's on at once, instead of nothing until its next step starts. See [`:check`](app/errors.md).
+
+**`roster serve` API**
+
+- Each method that writes `roster.yml` (`host.add`, `host.update`, `host.review`, `host.remove`, `host.rename`, `host.move`, `group.*`, `discover.add`, `quick.save`, `host.save_login`, `changes.discard`, `inventory.pull`, `mesh.cut`'s `change`) runs `roster sync` after the write and says how it went in `sync: {ok, error?, fix?}`, as `changes.publish` does; so do `inventory.reload` and the `inventory.changed` notification when they apply a changed file that loads. A failed sync never undoes the change. No new API version: the field is new and optional. See [Editing](serve-api.md#editing-pending-changes).
+
+- serve's log no longer says it "refused a token" when another serve starting up checks whether this one is still alive (it connects and hangs up without asking anything): it logs that a connection hung up without a request. A real unknown, used or expired token is still logged as refused, and no log line ever has the token in it.
+
+### Deprecated
+
+**App**
+
+- A Plugin's removal of something it never added doing nothing: it still does for a Plugin whose manifest says `api = 4` or older. See [Deprecated names](deprecated.md).
+
 ## v0.3.0
 
 ### Breaking
