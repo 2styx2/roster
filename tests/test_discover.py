@@ -138,6 +138,40 @@ def test_the_cli_scans_each_family_once_per_address_and_counts_quiet_hosts(fakes
     assert sorted(h["ip"] for h in hosts.values()) == ["10.0.0.9", "fd00::7"]
 
 
+def one_ssh_host(isolated, monkeypatch):
+    root = isolated["home"].parent / "hosts"
+    (root / "db").mkdir(parents=True)
+    (root / "db" / "address").write_text("10.0.0.9")
+    (root / "db" / "ports").write_text("22 ssh OpenSSH 9.6\n")
+    monkeypatch.setenv("FAKE_HOSTS", str(root))
+    cfg = isolated["work"] / "roster.yml"
+    cfg.write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      old-db: 10.0.0.5\n")
+    return cfg
+
+
+def test_discover_write_syncs_this_box_as_roster_sync_does(fakes, isolated, monkeypatch, capsys):
+    """T153: `roster discover --write` syncs this Box after the edit (its ssh config and Claude files), as serve's
+    changes do (T150), so nothing says to run `roster sync` by hand."""
+    from roster.cli import main
+    cfg = one_ssh_host(isolated, monkeypatch)
+    assert main(["-c", str(cfg), "discover", "10.0.0.0/28", "--ports", "22", "--write"]) == 0
+    ssh = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
+    assert "HostName 10.0.0.9" in ssh and "Host old-db" in ssh
+    assert "10.0.0.9" in (isolated["work"] / "ROSTER.md").read_text()
+    assert "roster sync" not in capsys.readouterr().err
+
+
+def test_a_failed_sync_after_discover_write_keeps_the_hosts_and_says_on_stderr(fakes, isolated, monkeypatch, capsys):
+    from roster.cli import main
+    cfg = one_ssh_host(isolated, monkeypatch)
+    (isolated["home"] / ".ssh" / "config.d" / "roster").mkdir(parents=True)     # a folder there: writing it fails
+    assert main(["-c", str(cfg), "discover", "10.0.0.0/28", "--ports", "22", "--write"]) == 0
+    assert sorted(h["ip"] for h in load_config(cfg)["hosts"].values()) == ["10.0.0.5", "10.0.0.9"]
+    err = capsys.readouterr().err
+    assert "warning: this Box's ssh config didn't follow roster.yml (" in err
+    assert err.rstrip().endswith("run `roster sync` on this box")
+
+
 # ---------------------------------------------------------------- roster discover --json (T107)
 
 @pytest.fixture

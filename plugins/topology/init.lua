@@ -252,6 +252,12 @@ local function cut_done(host, r)
   else
     roster.notify("Cut " .. host .. " from " .. build.plural(#(r.confirmed or {}), "Host") .. ".", "info", { quiet = false })
   end
+  -- The `roster sync` serve runs after writing mesh: false (T150): a failure doesn't undo the cut (T153).
+  local sync = (r.change or {}).sync
+  if sync and not sync.ok then
+    roster.notify("mesh: false for " .. host .. " was written, but this Box's ssh config didn't follow ("
+      .. (sync.error or "roster sync failed") .. "): run roster sync", "warn")
+  end
 end
 
 local function cut_over()

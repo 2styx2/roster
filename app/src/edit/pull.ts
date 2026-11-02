@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { problemFromCallError } from "../errors/catalog";
 import type { Problem } from "../errors/classify";
-import type { PullResult } from "../backend/types";
+import type { BoxSync, PullResult } from "../backend/types";
 
 /** What a form's pull came to: no pull needed (the last good one was `ago` ms back), or what the pull did. */
 export type PullOutcome = { fresh: true; ago: number } | { fresh: false; result: PullResult };
@@ -137,8 +137,19 @@ export function pullLine(state: FormPull): string {
     case "pulled": {
       const p = state.result;
       if (!p.upstream) return "No upstream to pull from; this Box's copy is the one.";
-      if (p.updated) return `Pulled ${p.commits} new commit${p.commits === 1 ? "" : "s"} from ${p.upstream}.`;
+      if (p.updated) return `Pulled ${p.commits} new commit${p.commits === 1 ? "" : "s"} from ${p.upstream}${afterPull(p)}.`;
       return `Up to date with ${p.upstream}.`;
     }
   }
+}
+
+/** A `roster sync` that failed after a change roster wrote (T150): the change stands, but this
+ * Box's ssh config didn't follow. */
+export function syncFailed(sync: BoxSync): string {
+  return `this Box's ssh config didn't follow (${sync.error ?? "roster sync failed"}): run roster sync`;
+}
+
+/** ", but SYNC FAILED" after a pull that brought commits and whose sync failed (T153), or nothing. */
+export function afterPull(r: PullResult): string {
+  return r.sync && !r.sync.ok ? `, but ${syncFailed(r.sync)}` : "";
 }

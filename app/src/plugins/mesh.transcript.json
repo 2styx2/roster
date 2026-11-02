@@ -5470,6 +5470,11 @@
             "op": "notify",
             "quiet": false,
             "text": "orion-2: /srv/mesh holds an earlier Mesh key that roster no longer uses (mesh_dir: changed), so delete it by hand"
+          },
+          {
+            "level": "warn",
+            "op": "notify",
+            "text": "mesh: false for orion-2 was written, but this Box's ssh config didn't follow (Permission denied: /home/you/.ssh/config.d/roster): run roster sync"
           }
         ],
         [
@@ -6032,6 +6037,11 @@
             "result": {
               "change": {
                 "backup": "/home/you/.config/roster/backup/roster.yml",
+                "sync": {
+                  "error": "Permission denied: /home/you/.ssh/config.d/roster",
+                  "fix": "run `roster sync` on this box",
+                  "ok": false
+                },
                 "written": true
               },
               "confirmed": [

@@ -8,10 +8,18 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ### Fixed
 
+**CLI**
+
+- **`roster discover --write` and `roster mesh cut` sync this Box** after they change `roster.yml`, as the app's changes do: its ssh config and Claude files follow, so a Host they wrote needs no `roster sync` by hand. If the sync fails, the edit stays, and a `warning:` on stderr says why and to run `roster sync`; the command's exit status is the edit's. See [Commands](cli-reference.md#commands).
+
 **App**
 
 - A Plugin's request through `plugin_proxy` that's redirected to a name this computer is slow to look up now ends at the request's `timeout` ("no answer within N s") instead of waiting on the lookup, and holds up none of the Plugin's other requests. Every redirect is still checked the same way before it's followed. A user or password in a redirect's address is never sent, and on to another site only a Plugin's headers that carry no credential go along (`Accept`, `User-Agent`, …): a token in `X-Api-Key` or any other header stays with the site it was sent to. Each hop of a redirect counts in `:plugins` under its own site. See [The network](plugins.md#the-network).
+- `:options` names the returned table's line for an option it sets over a `roster.o` line (after `:config import-terminal`, it named the import block's line), and an error in that value is reported there too.
+- The editor types' `roster.config.OptionName` (what `roster.o.get` and `roster.o.reset` take) says so, and takes a map's own keys (`"views.files.width"`) as well as the names it lists. Run `:config types` again to update them.
 - **The fill key at sudo with `pwfeedback` doesn't work on Windows yet:** v0.4.0's fill takes sudo's `*` as no echo, but Windows' ConPTY redraws it in a form the check doesn't accept yet, so the fill is refused ("the prompt printed what roster typed to check it"). It fails safe: nothing but roster's check was typed, no Enter, so sudo counts no attempt; type that password yourself for now. Each such refusal now writes one line to the app's log (stderr) saying what the prompt drew, with no text but `*` and space, so the real form can be added. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
+- **A sync that failed after a pull is no longer silent:** when the pull a form (`:edit`, `:host add`, Save to vault) runs before saving brought new commits and this Box's ssh config didn't follow, the form's pull line says so, with `roster sync` to run; `:pull` says it too.
+- **A sync that failed after a Mesh cut says so:** the mesh and Topology Plugins warn "mesh: false for HOST was written, but this Box's ssh config didn't follow (…): run roster sync" after a cut whose sync failed; the cut stands.
 
 ## v0.4.0
 
