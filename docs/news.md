@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Fixed
+
+**App**
+
+- Dropping a Host on a Folder no longer fails with ":folder can't run yet" when the app couldn't yet tell roster which commands are its own: the drop (and any Plugin action you start meanwhile) waits up to 5 s for that to get through, then runs. If it still hasn't, the drop is refused as before; try again in a moment. See [Errors](app/errors.md).
+
 ## v0.3.0
 
 ### Breaking

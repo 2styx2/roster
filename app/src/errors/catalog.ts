@@ -625,6 +625,8 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     fix: () => "Add a sudo: {auth: VAULT-REFERENCE} to the Host in roster.yml for its own sudo password, or type it yourself.",
     actions: [],
   }),
+  // docs/app/errors.md row 157 (issue #241) is a Plugin's error, shown as its notice, not a
+  // Session's: no row here.
   row("other", {
     row: null,
     codes: [3, 22],

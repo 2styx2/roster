@@ -10,7 +10,7 @@ import type { CommandContext } from "../commands/table";
 import { builtinRegistries } from "../registries";
 import type { SidebarContext } from "../sidebar/sections";
 import { quiet, type Message } from "../ui/messages";
-import { PluginManager, STATE_KEY, type PluginUi } from "./manager";
+import { BUILTINS_HELD_MAX, BUILTINS_WAIT_MS, PluginManager, STATE_KEY, type PluginUi } from "./manager";
 
 const hosts = makeHosts(3);
 const [h1, h2] = hosts.hosts.map((h) => h.name) as [string, string];
@@ -154,5 +154,80 @@ describe("a Plugin's data folder", () => {
     expect(backend.pluginFiles("keeper").size).toBe(1);
     expect(await manager.remove("keeper")).toBeNull();
     expect(backend.pluginFiles("keeper").size).toBe(0);
+  });
+});
+
+describe("a Folders drop before the core has roster's own commands (issue #241)", () => {
+  /** Folders with a Folder "Lab", and the core not taking the built-in command list until `up`. */
+  async function down() {
+    const { manager, registries, backend, said, ran } = setup({ import: [{ name: "Lab", hosts: [h1] }], import_from: "folders.yml" }, {}, {}, true);
+    const real = backend.pluginBuiltins.bind(backend);
+    const link = { up: false };
+    vi.spyOn(backend, "pluginBuiltins").mockImplementation((names) => (link.up ? real(names) : Promise.reject(new Error("no such command"))));
+    await manager.start();
+    const drop = section(registries).rows[0]!.drop!(h2)!;
+    const errors = () => manager.snapshot().notices.filter((n) => n.level === "error").map((n) => n.text);
+    return { manager, registries, said, ran, link, drop, errors };
+  }
+
+  it("waits for the list while a send is failing and retrying, then runs", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, registries, said, ran, link, drop, errors } = await down();
+      let done = false;
+      const dropping = call(manager, drop).then(() => void (done = true));
+      await vi.advanceTimersByTimeAsync(500);
+      // Held, not refused: nothing ran yet and nothing went wrong.
+      expect(done).toBe(false);
+      expect(ran).toEqual([]);
+      expect(errors()).toEqual([]);
+      // The next try gets through, and the drop runs as the user's.
+      link.up = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await dropping;
+      expect(errors()).toEqual([]);
+      expect(ran).toEqual([`folder add ${h2} Lab`]);
+      expect(said.at(-1)).toEqual(quiet(`Added ${h2} to Lab`));
+      expect(section(registries).rows.map((r) => r.label)).toEqual(["Lab", h1, h2]);
+      manager.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails clearly, still refused, once the list hasn't come in the time allowed", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ran, drop, errors } = await down();
+      let done = false;
+      const dropping = call(manager, drop).then(() => void (done = true));
+      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS - 100);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      await dropping;
+      expect(ran).toEqual([]);
+      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet: the app hasn't told roster its own commands")]);
+      manager.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds only so many calls at once; the rest are refused at once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ran, drop, errors } = await down();
+      const held = Array.from({ length: BUILTINS_HELD_MAX }, () => call(manager, drop));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(errors()).toEqual([]);
+      await call(manager, drop);
+      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet")]);
+      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS);
+      await Promise.all(held);
+      expect(ran).toEqual([]);
+      manager.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

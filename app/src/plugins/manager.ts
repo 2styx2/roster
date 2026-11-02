@@ -250,6 +250,13 @@ const MAX_USES = 8;
 const MAX_NOTICES = 4;
 /** How often the Sessions' output goes to the Plugins that read it, and how much at once. */
 const OUTPUT_EVERY_MS = 200;
+/** How long a call the user made waits for the core to take roster's own commands, the first time
+ * (issue #241): a Folders drop's `roster.cmd("folder add …")` is refused until then. It tries
+ * again every second meanwhile; past this the call runs and the core refuses the line as ever. */
+export const BUILTINS_WAIT_MS = 5_000;
+const BUILTINS_TRY_MS = 1_000;
+/** At most this many calls wait at once; another runs at once (and is refused the same way). */
+export const BUILTINS_HELD_MAX = 8;
 
 /** The Installed entries in the State (untrusted): anything malformed is dropped. */
 export function parseInstalled(json: unknown): Installed[] {
@@ -345,6 +352,9 @@ export class PluginManager {
   /** Sends that failed in a row, and the retry waiting. */
   private builtinsFailed = 0;
   private builtinsRetry: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the core has taken a list once, and the user's calls waiting until it has (issue #241). */
+  private builtinsTaken = false;
+  private builtinsWaiting = 0;
   private stopBuiltins: (() => void) | null = null;
   /** Stopped for good (`stop`): nothing loads, no event or call reaches the core. */
   private stopped = false;
@@ -758,6 +768,8 @@ export class PluginManager {
    * command its `roster.cmd` ran from the user's call, that call one hop on). */
   async call(plugin: string, handler: number, args: unknown = {}, what: string | null = "ran an action", user: PluginCaller = true): Promise<unknown> {
     if (!this.loaded.has(plugin)) return undefined;
+    if (user !== false) await this.waitForBuiltins();
+    if (!this.loaded.has(plugin)) return undefined;
     if (what !== null) this.used(plugin, what);
     const reply = await this.backend.pluginCall(plugin, handler, args, user).catch((e: unknown) => this.lost(plugin, e));
     this.apply(reply);
@@ -940,11 +952,34 @@ export class PluginManager {
   /** Tells the core every built-in command seen, unless it has that list already. A send that
    * fails is said once (quietly), retried after 1 s, 2 s, … up to 30 s apart, and tried again before
    * each Plugin loads; until one gets through the core refuses every Plugin's own command line too
-   * (runtime.rs), and the app checks every line itself. */
+   * (runtime.rs), and the app checks every line itself. A call the user makes meanwhile waits for it
+   * a moment first (`waitForBuiltins`, issue #241). */
   private sendBuiltins(): Promise<void> {
     for (const c of this.registries.commands.list()) if (c.source === BUILTIN) this.builtinsSeen.add(c.id);
     this.builtinsSending = this.builtinsSending.then(() => this.sendBuiltinsNow());
     return this.builtinsSending;
+  }
+
+  /** Before a call the user made: until the core has taken roster's own commands once, it refuses
+   * every Plugin's own command line (`:NAME can't run yet`, runtime.rs), so a Folders drop would
+   * fail (issue #241). The call waits for the list instead, trying to send it every second, up to
+   * BUILTINS_WAIT_MS and BUILTINS_HELD_MAX calls at once; then it runs as ever and the core still
+   * refuses the line. Nothing is let through: the core's rule doesn't change, only when the call
+   * reaches it. */
+  private async waitForBuiltins(): Promise<void> {
+    if (this.builtinsTaken || this.stopped || this.builtinsWaiting >= BUILTINS_HELD_MAX) return;
+    this.builtinsWaiting++;
+    try {
+      const until = Date.now() + BUILTINS_WAIT_MS;
+      for (;;) {
+        await this.sendBuiltins();
+        const left = until - Date.now();
+        if (this.builtinsTaken || this.stopped || left <= 0) return;
+        await new Promise((r) => setTimeout(r, Math.min(BUILTINS_TRY_MS, left)));
+      }
+    } finally {
+      this.builtinsWaiting--;
+    }
   }
 
   private async sendBuiltinsNow(): Promise<void> {
@@ -954,6 +989,7 @@ export class PluginManager {
     try {
       await this.backend.pluginBuiltins(names);
       this.builtinsHeld = list;
+      this.builtinsTaken = true;
       this.builtinsFailed = 0;
       if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
       this.builtinsRetry = null;
