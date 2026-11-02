@@ -83,6 +83,7 @@ function runPty(argv: string[], lines: string[], ready: (since: string, first: b
     child.stderr.on("data", (d: Buffer) => (out += d.toString()));
     child.stdin.on("error", () => {});
     child.on("close", () => {
+      if (argv[0] === "fish") console.log("[DEBUG-t156]", JSON.stringify(out)); // [DEBUG-t156]
       clearTimeout(timer);
       resolve(out);
     });
@@ -93,9 +94,11 @@ function runPty(argv: string[], lines: string[], ready: (since: string, first: b
  * or at `>> `, the next line of an unfinished command (no question there). */
 const pwshReady = (since: string) =>
   lastLine(since) === ">> " || (promptShell(since) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
-/** fish queues keys typed ahead and asks nothing it loses them to, so once its first prompt is
- * up, that it has taken the Enter (gone to a new line) is enough. */
-const fishReady = (since: string, first: boolean) => promptShell(since) === "fish" || (!first && /[\r\n]/.test(since));
+/** fish once it has drawn its prompt (`… ~> `; it then puts the cursor back with a carriage
+ * return and a move right, so this looks at the text, not the last line). It queues keys typed
+ * ahead and asks nothing it loses them to, so in an unfinished command, that it has taken the
+ * Enter (gone to a new line) is enough. */
+const fishReady = (since: string, first: boolean) => shown(since).endsWith("> ") || (!first && since.includes("\n"));
 
 /** The end of what a shell printed, escaped, for a failed test's message. */
 const tail = (out: string) => JSON.stringify(out.slice(-3000));
