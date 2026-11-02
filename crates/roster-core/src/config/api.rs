@@ -328,7 +328,7 @@ fn write_named(lua: &Lua, list: &'static str, items: Vec<Json>, keep: bool) -> R
     let mut names: Names = Vec::new();
     for (i, item) in value.as_array().into_iter().flatten().enumerate() {
         let name = shown_name(list, i + 1, item).map_err(|m| fail(lua, m))?;
-        let key = name.to_lowercase();
+        let key = key_of(&name);
         if let Some((_, first)) = names.iter().find(|(k, _)| *k == key) {
             return Err(duplicate(lua, list, &name, first.as_ref()));
         }
@@ -376,7 +376,7 @@ fn add_named(lua: &Lua, list: &'static str, new: Vec<Json>) -> R<()> {
     for item in new {
         count += 1;
         let name = check_item(lua, list, count, &item)?;
-        let key = name.to_lowercase();
+        let key = key_of(&name);
         let store = c.store.borrow();
         let before = store
             .named(list)
@@ -460,7 +460,7 @@ fn replace_named(lua: &Lua, list: &'static str, i: usize, item: Json) -> R<()> {
     let path = vec![list.to_string()];
     let at = here(lua);
     let name = check_item(lua, list, i + 1, &item)?;
-    let key = name.to_lowercase();
+    let key = key_of(&name);
     {
         let store = c.store.borrow();
         let other = store
@@ -1372,17 +1372,17 @@ fn collection(lua: &Lua, list: &'static str) -> R<Table> {
                     let c = ctx(lua)?;
                     let at = here(lua);
                     let path = vec![list.to_string()];
-                    let mut store = c.store.borrow_mut();
-                    let folder = store.list_mut(&path)[i]
-                        .as_object_mut()
-                        .ok_or_else(|| fail(lua, "a Folder is a table"))?;
-                    let hosts = folder.entry("hosts").or_insert_with(|| Json::Array(Vec::new()));
-                    if !hosts.is_array() {
-                        *hosts = Json::Array(Vec::new());
-                    }
-                    let hosts = hosts.as_array_mut().expect("just made");
-                    // Checked first, changed after: an error leaves the Folder as it was.
-                    let mut next = hosts.clone();
+                    // Worked out on a copy and checked whole; the Folder changes only when it all holds.
+                    let mut next: Vec<Json> = match c
+                        .store
+                        .borrow()
+                        .get(&path)
+                        .and_then(|l| l.get(i))
+                        .and_then(|f| f.get("hosts"))
+                    {
+                        Some(Json::Array(a)) => a.clone(),
+                        _ => Vec::new(),
+                    };
                     for h in given {
                         let h = Json::String(h);
                         let at = next.iter().position(|x| *x == h);
@@ -1399,7 +1399,11 @@ fn collection(lua: &Lua, list: &'static str) -> R<Table> {
                             }
                         }
                     }
-                    *hosts = next;
+                    let mut store = c.store.borrow_mut();
+                    let folder = store.list_mut(&path)[i]
+                        .as_object_mut()
+                        .ok_or_else(|| fail(lua, "a Folder is a table"))?;
+                    folder.insert("hosts".into(), Json::Array(next));
                     store.touched(&path, at);
                     Ok(())
                 })?,

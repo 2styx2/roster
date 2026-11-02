@@ -740,3 +740,30 @@ fn five_thousand_writes_stay_well_within_the_budget() {
     assert_eq!(c.folders[3].hosts.len(), 100);
     assert!(took < std::time::Duration::from_millis(600), "{took:?}");
 }
+
+#[test]
+fn a_failing_add_hosts_leaves_the_folder_as_it_was() {
+    let c = ok(r#"
+roster.folders.add({ name = "Lab" })
+local ok1 = pcall(roster.folders.add_hosts, "Lab", { "a", "a" })
+local ok2 = pcall(roster.folders.remove_hosts, "Lab", "nope")
+return { theme = tostring(ok1) .. tostring(ok2) .. tostring(roster.folders.get("Lab").hosts) }
+"#);
+    assert_eq!(c.theme, "falsefalsenil");
+}
+
+#[test]
+fn names_match_with_spaces_and_letter_case_aside() {
+    let c = ok(r#"
+roster.folders.add({ name = "  Lab  " })
+roster.packages.add({ "someone/alerts", name = "Alerts" })
+local found = tostring(roster.folders.has(" LAB")) .. tostring(roster.packages.has(" alerts ")) .. tostring(roster.o.packages:has("ALERTS"))
+roster.folders.update(" lab", { hosts = { "a" } })
+roster.packages.remove(" ALERTS ")
+return { theme = found }
+"#);
+    assert_eq!(c.theme, "truetruetrue");
+    assert!(c.packages.is_empty());
+    let e = err("roster.folders.add({ name = \"Lab\" })\nroster.folders.add({ name = \" lab \" })\n");
+    assert!(e.message.contains("init.lua:1"), "{e}");
+}
