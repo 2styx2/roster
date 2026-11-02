@@ -160,9 +160,14 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: Frame) {
         const below = s.y + cr + 4;
         return taken.highestHit(x, below, tw + 4, lh) === null && !overCircle(me, x, below, tw + 4, lh) ? below : undefined;
       };
-      const title = fitTitle((t) => ctx.measureText(t).width, c.title, c.mesh === true, cr * 2, (tw) => freeAt(tw) !== undefined);
+      const fitted = fitTitle((t) => ctx.measureText(t).width, c.title, c.mesh === true, cr * 2, (tw) => freeAt(tw) !== undefined);
+      // The selected node's cluster's title goes first, so it has the most room; where even that's
+      // none (circles packed above and below), it's cut to its circle just above it, as before #237.
+      const title = fitted ?? (c.id === selCluster ? clip(ctx, c.title, Math.max(80, cr * 2)) : null);
+      if (title === null) continue;
       const tw = ctx.measureText(title).width;
-      const top = freeAt(tw) ?? s.y - cr - 4 - lh;
+      const top = freeAt(tw) ?? (c.id === selCluster ? s.y - cr - 4 - lh : undefined);
+      if (top === undefined) continue;
       taken.add(s.x - tw / 2 - 2, top, tw + 4, lh);
       ctx.fillText(title, s.x, top + lh);
     }
@@ -475,13 +480,18 @@ function clipBy(measure: (s: string) => number, text: string, max: number): stri
 /** How wide a cluster's title may be past its circle, in screen pixels. */
 const TITLE_ROOM = 320;
 
+/** The narrowest a cut title gets: shorter, it no longer says which cluster it is. */
+const TITLE_MIN = 80;
+
 /**
  * An open cluster's title (T89): whole, with "· mesh" for a meshed one, when it fits in TITLE_ROOM
  * (or the circle, if that's wider) and `free` says it covers no title already drawn, even over a
- * small circle; else without "· mesh"; else cut to that room; else, where even that would cover
- * another, cut to the circle (at least 80 px), as it was before.
+ * small circle; else without "· mesh"; else cut to that room; else cut to the widest that covers
+ * no other title, down to TITLE_MIN; else null: not drawn, as a node's label that would cover
+ * another isn't. Zoomed out on dense rows a title is far wider than its circle and the row gap is
+ * thinner than a line, so some can't be placed; drawn anyway, they covered each other (#237).
  */
-export function fitTitle(measure: (s: string) => number, title: string, mesh: boolean, circle: number, free: (width: number) => boolean): string {
+export function fitTitle(measure: (s: string) => number, title: string, mesh: boolean, circle: number, free: (width: number) => boolean): string | null {
   const room = Math.max(circle, TITLE_ROOM);
   const tries = mesh ? [`${title} · mesh`, title] : [title];
   for (const t of tries) {
@@ -490,7 +500,22 @@ export function fitTitle(measure: (s: string) => number, title: string, mesh: bo
   }
   const cut = clipBy(measure, title, room);
   if (free(measure(cut))) return cut;
-  return clipBy(measure, title, Math.max(80, circle));
+  // The widest cut that's free: wider covers more, so the first that's free going down is it.
+  const chars = Array.from(title);
+  let lo = 0;
+  let hi = chars.length - 1;
+  let best: string | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const t = `${chars.slice(0, mid).join("")}…`;
+    const w = measure(t);
+    if (w < TITLE_MIN) lo = mid + 1;
+    else if (free(w)) {
+      best = t;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
 }
 
 /** The app's strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)` (`--ease-out`), at `t` in 0..1. */

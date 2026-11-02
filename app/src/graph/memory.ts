@@ -1,5 +1,6 @@
 // A graph's layout in the State (ticket 77): where each node and cluster was placed, and which
-// clusters the user collapsed or opened, per view, so the graph opens the same way next time. The
+// clusters the user collapsed or opened, per view, so the graph opens the same way next time, and
+// which nodes the user placed themselves (`moved`, #237; a State from before it has none). The
 // State is untrusted (another app version may have written it): what can't be read is ignored.
 import { layoutGraph, type Layout, type SavedLayout } from "./layout";
 import type { GraphData } from "./model";
@@ -19,6 +20,7 @@ interface Stored {
   key: string;
   nodes: Record<string, [number, number]>;
   clusters: Record<string, [number, number]>;
+  moved: string[];
   folds: Record<string, boolean>;
 }
 
@@ -32,6 +34,8 @@ function points(v: unknown): Record<string, [number, number]> {
   return out;
 }
 
+const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
 function folds(v: unknown): Record<string, boolean> {
   const out: Record<string, boolean> = {};
   if (isObj(v)) for (const [k, b] of Object.entries(v)) if (typeof b === "boolean") out[k] = b;
@@ -44,7 +48,7 @@ export class GraphMemory {
   private all(): Stored[] {
     const v = this.store.get(GRAPHS_KEY);
     if (!Array.isArray(v)) return [];
-    return v.filter(isObj).flatMap((g) => (typeof g.key === "string" ? [{ key: g.key, nodes: points(g.nodes), clusters: points(g.clusters), folds: folds(g.folds) }] : []));
+    return v.filter(isObj).flatMap((g) => (typeof g.key === "string" ? [{ key: g.key, nodes: points(g.nodes), clusters: points(g.clusters), moved: ids(g.moved), folds: folds(g.folds) }] : []));
   }
 
   /** View `key`'s graph as last saved (`source/id`). */
@@ -52,11 +56,12 @@ export class GraphMemory {
     const g = this.all().find((x) => x.key === key);
     if (!g) return { folds: {} };
     const placed = Object.keys(g.nodes).length > 0 || Object.keys(g.clusters).length > 0;
-    return { ...(placed ? { layout: { nodes: g.nodes, clusters: g.clusters } } : {}), folds: g.folds };
+    const layout: SavedLayout = { nodes: g.nodes, clusters: g.clusters, ...(g.moved.length ? { moved: g.moved } : {}) };
+    return { ...(placed ? { layout } : {}), folds: g.folds };
   }
 
   save(key: string, memo: GraphMemo) {
-    const g: Stored = { key, nodes: memo.layout?.nodes ?? {}, clusters: memo.layout?.clusters ?? {}, folds: memo.folds };
+    const g: Stored = { key, nodes: memo.layout?.nodes ?? {}, clusters: memo.layout?.clusters ?? {}, moved: memo.layout?.moved ?? [], folds: memo.folds };
     this.store.set(GRAPHS_KEY, [g, ...this.all().filter((x) => x.key !== key)].slice(0, KEPT_GRAPHS));
   }
 }
@@ -85,11 +90,19 @@ export class GraphPlaces {
     return l;
   }
 
-  /** Puts node `id` at (x, y), kept from now on. */
-  move(id: string, x: number, y: number) {
+  /** Puts node `id` at (x, y), kept from now on. `mine`: the user placed it, so it stays there
+   * whatever its cluster does; false when it's put back where the layout had it. */
+  move(id: string, x: number, y: number, mine = true) {
     if (!this.saved) return;
-    this.saved = { ...this.saved, nodes: { ...this.saved.nodes, [id]: [Math.round(x), Math.round(y)] } };
+    const moved = (this.saved.moved ?? []).filter((m) => m !== id);
+    if (mine) moved.push(id);
+    this.saved = { nodes: { ...this.saved.nodes, [id]: [Math.round(x), Math.round(y)] }, clusters: this.saved.clusters, ...(moved.length ? { moved } : {}) };
     this.dirty = true;
+  }
+
+  /** Whether the user placed node `id`. */
+  placedByUser(id: string): boolean {
+    return this.saved?.moved?.includes(id) ?? false;
   }
 
   userFolds(): Record<string, boolean> {
