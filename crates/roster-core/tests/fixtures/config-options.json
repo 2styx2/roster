@@ -288,6 +288,39 @@
           "listed": false
         },
         {
+          "tag": "roster.keymap.has",
+          "heading": "roster.keymap.has(context, keys)",
+          "what": "function",
+          "kind": "",
+          "written": "",
+          "ty": "boolean",
+          "default": "",
+          "about": "Whether init.lua bound keys in a context. A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [
+            {
+              "name": "context",
+              "ty": "\"leader\"|\"list\"|\"list_vim\"|\"picker\"|\"picker_vim\"|\"cmdline\"|\"terminal\"|\"global\"",
+              "default": "",
+              "about": "The keymap's context.",
+              "names": []
+            },
+            {
+              "name": "keys",
+              "ty": "string",
+              "default": "",
+              "about": "The keys, as set took them.",
+              "names": []
+            }
+          ],
+          "example": "if not roster.keymap.has(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
+          "methods": [],
+          "listed": false
+        },
+        {
           "tag": "roster.keymap.list",
           "heading": "roster.keymap.list(context)",
           "what": "function",
@@ -428,6 +461,32 @@
             }
           ],
           "example": "local paper = roster.themes.get(\"paper\")\nif paper then print(paper.label) end",
+          "methods": [],
+          "listed": false
+        },
+        {
+          "tag": "roster.themes.has",
+          "heading": "roster.themes.has(id)",
+          "what": "function",
+          "kind": "",
+          "written": "",
+          "ty": "boolean",
+          "default": "",
+          "about": "Whether there's a Theme by that id: a bundled one or init.lua's. As list names them; get says whether init.lua has a spec of its own for it.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [
+            {
+              "name": "id",
+              "ty": "string",
+              "default": "",
+              "about": "A Theme's id.",
+              "names": []
+            }
+          ],
+          "example": "if not roster.themes.has(\"paper\") then roster.themes.define(\"paper\", { appearance = \"light\" }) end",
           "methods": [],
           "listed": false
         },
@@ -3392,6 +3451,7 @@
     "roster.folders.update()": "roster.folders.update",
     "roster.keymap.del()": "roster.keymap.del",
     "roster.keymap.get()": "roster.keymap.get",
+    "roster.keymap.has()": "roster.keymap.has",
     "roster.keymap.list()": "roster.keymap.list",
     "roster.keymap.set()": "roster.keymap.set",
     "roster.o.List:append()": "roster.o.List:append",
@@ -3495,6 +3555,7 @@
     "roster.set()": "roster.set",
     "roster.themes.define()": "roster.themes.define",
     "roster.themes.get()": "roster.themes.get",
+    "roster.themes.has()": "roster.themes.has",
     "roster.themes.list()": "roster.themes.list",
     "roster.themes.remove()": "roster.themes.remove",
     "roster.themes.update()": "roster.themes.update"

@@ -1046,6 +1046,52 @@
     {
       "params": [
         {
+          "name": "host",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.badges.remove",
+      "permission": null,
+      "returns": "",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "host",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.badges.get",
+      "permission": null,
+      "returns": "string?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "host",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.badges.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.badges.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
           "name": "float",
           "optional": false,
           "type": "Float"
@@ -1722,6 +1768,10 @@
     "roster-ViewUpdate": "plugin-api#viewupdate",
     "roster.api_version": "plugin-api#rosterapi_version",
     "roster.badges": "plugin-api#rosterbadges",
+    "roster.badges.get()": "plugin-api#rosterbadgesgethost",
+    "roster.badges.has()": "plugin-api#rosterbadgeshashost",
+    "roster.badges.list()": "plugin-api#rosterbadgeslist",
+    "roster.badges.remove()": "plugin-api#rosterbadgesremovehost",
     "roster.badges.set()": "plugin-api#rosterbadgessethost-text",
     "roster.cancel()": "plugin-api#rostercanceltimer",
     "roster.clipboard": "plugin-api#rosterclipboard",

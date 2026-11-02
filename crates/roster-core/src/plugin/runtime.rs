@@ -924,6 +924,18 @@ fn unbind(lua: &Lua, s: &Shared, what: &str, context: &str, keys: &str) -> mlua:
     own_put(lua, s, &kind, keys, Value::Nil)
 }
 
+/// Takes the Plugin's badge on `host` off its record; one it never put on is [`not_had`].
+fn unbadge(lua: &Lua, s: &Shared, what: &str, host: &str) -> mlua::Result<()> {
+    if own_get(lua, "badge", host)?.is_nil() {
+        not_had(
+            s,
+            what,
+            format!("the Plugin has no badge on {host:?} (roster.badges.list() names its Hosts)"),
+        )?;
+    }
+    own_put(lua, s, "badge", host, Value::Nil)
+}
+
 /// The ids of the Host-details sections the Plugin has on at least one Host, sorted.
 fn details_ids(lua: &Lua) -> mlua::Result<Vec<String>> {
     let own: Table = lua.named_registry_value(OWN)?;
@@ -1574,16 +1586,32 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         });
     }
 
-    // A badge on a Host's rows ("2 alerts"); nil takes it off.
+    // A badge on a Host's rows ("2 alerts"); `remove` (or `set` with nil, its old spelling, checked
+    // as `remove` is) takes it off. Its own badges read back by Host (api 5, #262).
     let badges = lua.create_table()?;
     func!(
         badges,
         "set",
-        |_lua, s, (host, text): (String, Option<mlua::LuaString>)| {
+        |lua, s, (host, text): (String, Option<mlua::LuaString>)| {
             let text = text.map(|t| t.to_string_lossy());
+            match &text {
+                Some(t) => own_put(lua, s, "badge", &host, Value::String(lua.create_string(t)?))?,
+                None => unbadge(lua, s, "roster.badges.set", &host)?,
+            }
             push(s, json!({ "op": "badge", "host": host, "text": text }))
         }
     );
+    func!(badges, "remove", |lua, s, host: String| {
+        unbadge(lua, s, "roster.badges.remove", &host)?;
+        push(s, json!({ "op": "badge", "host": host, "text": null }))
+    });
+    func!(badges, "get", |lua, _s, host: String| { own_get(lua, "badge", &host) });
+    func!(badges, "has", |lua, _s, host: String| {
+        Ok(!own_get(lua, "badge", &host)?.is_nil())
+    });
+    func!(badges, "list", |lua, _s, (): ()| {
+        lua.create_sequence_from(own_ids(lua, "badge")?)
+    });
     roster.raw_set("badges", badges)?;
 
     // A floating window over the terminal: a title and lines of text; `close` hides it.
