@@ -21,6 +21,8 @@ roster-askpass-login = "roster.askpass:logged_in_main"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist==3.8.0",
     "ruff>=0.6",
 ]
 
@@ -39,6 +41,10 @@ packages = ["src/roster"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# pytest-timeout (#234): a test that hangs fails after 2 minutes, with every thread's stack, instead of
+# running on to the CI job's limit. The slowest test takes about 30 s on the Windows runner (a Mesh run
+# against stand-in Hosts under Git for Windows' sh, 2026-11-02) and under 7 s on Linux.
+timeout = 120
 
 [tool.ruff]
 line-length = 120

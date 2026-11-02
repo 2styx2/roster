@@ -79,9 +79,23 @@ jobs:
   # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
   # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
+  # It took 15-19 min, nearly all of it pytest (918-1148 s against Linux's 233-266 s), and 62% of that the Mesh
+  # suite: each stand-in Host command starts Python and Git for Windows' sh, whose every fork is slow, so a Mesh
+  # test there takes about 7 times as long as on Linux (#234). So it's two jobs side by side: the Mesh suite on
+  # the runner's 4 cores (pytest-xdist), and the rest one at a time as before, since many of those time how soon
+  # serve answers or notices a change (within a second) and miss it when 4 workers share the cores.
+  # --durations lists the slowest, to measure again.
   cli-test-windows:
-    name: CLI tests (Windows)
+    name: CLI tests (Windows, ${{ matrix.part }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: Mesh
+            args: tests/test_mesh.py -n 4
+          - part: the rest
+            args: --ignore=tests/test_mesh.py
     env:
       UV_PYTHON: "3.12"
     steps:
@@ -95,11 +109,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen
-      - run: uv run pytest --junitxml=report.xml
+      - run: uv run pytest ${{ matrix.args }} --durations=10 --junitxml=report.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pytest-report-windows
+          name: pytest-report-windows-${{ strategy.job-index }}
           path: report.xml
           retention-days: 7
 
@@ -131,6 +145,15 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+      # The shell-hook tests run each hook line in the real shell when it's installed, and skip it when
+      # it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh; add zsh and tcsh (#242).
+      # Not fish yet: Ubuntu's fish 3.7 is interactive only on a terminal, whatever -i says, and the test
+      # pipes its input in, so the prompt marks never come. Add it once that test runs fish under a pty.
+      - name: Install zsh and tcsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh tcsh
+          zsh --version; tcsh --version; pwsh --version
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

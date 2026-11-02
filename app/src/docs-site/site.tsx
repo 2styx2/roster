@@ -513,6 +513,8 @@ main { min-width: 0; padding: 28px 32px 40px; }
 main .help-doc { max-width: 76ch; }
 a { color: inherit; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+/* A code block too wide for the page takes the focus to scroll by keyboard (client.ts focusableCode). */
+main pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .site-note {
   max-width: 76ch; margin: 0 0 18px; padding: 8px 12px; font-size: var(--text-sm); color: var(--muted);
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);

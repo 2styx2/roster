@@ -89,7 +89,7 @@ The box at the top of every page searches (`/` goes to it from anywhere on the p
 
 Every topic has a web address: `tag.html?t=TOPIC`, such as [2styx2.github.io/roster/tag.html?t=terminal.size](https://2styx2.github.io/roster/tag.html?t=terminal.size). Every page ends with the commit it was made from, a link to edit its Markdown, and "Wrong or unclear? Report it", which opens a new issue naming the page.
 
-To build them yourself, in `app/`: `npm run docs` writes the website to `app/dist-docs/`, and `npm run docs -- --pdf FILE` prints the PDF too, with Chrome or Chromium (`CHROME=PATH` if it's not on `PATH`). The build stops on a link that goes nowhere. The website updates when a Release reaches `main` (ADR 0008).
+To build them yourself, in `app/`: `npm run docs` writes the website to `app/dist-docs/`, and `npm run docs -- --pdf FILE` prints the PDF too, with Chrome or Chromium (`CHROME=PATH` if it's not on `PATH`). The build stops on a link that goes nowhere. `npm run docs:a11y -- dist-docs` runs axe-core over every page, dark and light, and the open search box, and fails on any WCAG 2.x A or AA problem; CI runs it on every pull request. The website updates when a Release reaches `main` (ADR 0008).
 
 ## Writing help
 
