@@ -34,6 +34,11 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
 - Dropping a Host on a Folder no longer fails with ":folder can't run yet" when the app couldn't yet tell roster which commands are its own: the drop (and any Plugin action you start meanwhile) waits up to 5 s for that to get through, then runs. If it still hasn't, the drop is refused as before; try again in a moment. See [Errors](app/errors.md).
 - A Plugin's view no longer goes back to an older state on a busy machine: when roster serve's answer to one of a Plugin's requests led it to ask again (the Mesh Plugin's job ending, then its status), the second answer's changes could reach the window first and be drawn over by the first's. The app now gets them in the order the Plugin made them. See [Asking roster serve](plugins.md#asking-roster-serve).
+- **A Host you just added opens straight away:** every change the app makes to `roster.yml` (adding, editing, reviewing, renaming, moving or removing a Host, the group changes, Discover's add, "Save to vault", discarding the Pending changes, a pull) now runs `roster sync` for this Box, as Publish did, so its Session no longer fails with "isn't in this box's ssh config - run `roster sync`". An edit to `roster.yml` made outside the app syncs too once it's applied and loads. If the sync fails, the change stays and the message says so, with `roster sync` to run.
+
+**`roster serve` API**
+
+- Each method that writes `roster.yml` (`host.add`, `host.update`, `host.review`, `host.remove`, `host.rename`, `host.move`, `group.*`, `discover.add`, `quick.save`, `host.save_login`, `changes.discard`, `inventory.pull`, `mesh.cut`'s `change`) runs `roster sync` after the write and says how it went in `sync: {ok, error?, fix?}`, as `changes.publish` does; so do `inventory.reload` and the `inventory.changed` notification when they apply a changed file that loads. A failed sync never undoes the change. No new API version: the field is new and optional. See [Editing](serve-api.md#editing-pending-changes).
 
 ### Deprecated
 
