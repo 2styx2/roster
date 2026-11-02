@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { makeHosts } from "../backend/fake";
 import type { Tab, TabsSnapshot } from "../session/tabs";
 import { inventorySection, sectionBuilder, sessionsSection, type SidebarContext } from "./sections";
+import { rowName } from "./Sidebar";
 
 const hosts = makeHosts(5);
 const hostByName = new Map(hosts.hosts.map((h) => [h.name, h]));
@@ -75,5 +76,20 @@ describe("a Session row's folder (OSC 7, ticket 121)", () => {
     const row = rowOf(tab(1, first));
     expect(row?.detail).toBeUndefined();
     expect(row?.title).toBeUndefined();
+  });
+});
+
+describe("a Session row's breadcrumb (ticket 120)", () => {
+  const rowOf = (t: Tab) => sectionBuilder()(defs, ctx({ tabs: [t], active: null, previous: null })).find((s) => s.id === "sessions")?.rows[0];
+
+  it("carries the Host a nested ssh took it to, in its name and tooltip", () => {
+    const row = rowOf({ ...tab(1, first, { state: "open" }), auth: "key", hop: { to: "esx-02", known: true } });
+    expect(row).toMatchObject({ hop: { to: "esx-02", known: true }, title: "key login\nnow on esx-02 through ssh" });
+    expect(rowName(row!)).toMatch(/now on esx-02 through ssh/);
+    expect(rowOf({ ...tab(1, first), hop: { to: "10.0.0.99", known: false } })?.title).toMatch(/not a Host roster can resolve/);
+  });
+
+  it("has none on the Session's own Host", () => {
+    expect(rowOf(tab(1, first))?.hop).toBeUndefined();
   });
 });

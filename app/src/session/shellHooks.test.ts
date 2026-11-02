@@ -1,5 +1,9 @@
+/* eslint-disable no-control-regex -- terminal output is made of control characters */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HOLD_MS, IDLE_MS, ShellHooks, WINDOW_MS, hookLine, promptShell, shellHooksOn } from "./shellHooks";
+import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn } from "./shellHooks";
+
+/** The Session's token in roster's own marks (ticket 120, Q131). */
+const NONCE = "0123456789abcdef01234567";
 
 describe("promptShell: which shell an idle prompt is, from what it printed", () => {
   it.each([
@@ -40,6 +44,19 @@ describe("promptShell: which shell an idle prompt is, from what it printed", () 
   });
 });
 
+describe("the Session's token in roster's marks (ticket 120)", () => {
+  it("is in every mark of every hook line, and differs from Session to Session", () => {
+    for (const kind of ["posix", "fish", "pwsh"] as const) {
+      const line = hookLine(kind, NONCE);
+      expect(line).not.toContain("@N@");
+      expect(line).not.toMatch(/133;[ABC](?!;roster=0123456789abcdef01234567)/);
+      expect(line).toContain(`roster=${NONCE}`);
+    }
+    expect(newNonce()).toMatch(/^[0-9a-f]{24}$/);
+    expect(newNonce()).not.toBe(newNonce());
+  });
+});
+
 describe("ShellHooks: when roster sends the hook line, and what the screen shows", () => {
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -59,7 +76,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
       show: (data) => shown.push(dec.decode(data)),
       cwd: (path) => folders.push(path),
       enabled: () => on,
-    });
+    }, NONCE);
     const print = (s: string) => {
       const data = enc.encode(s);
       const now = hooks.output(data, s);
@@ -80,7 +97,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     print(PROMPT);
     expect(sent).toEqual([]);
     vi.advanceTimersByTime(IDLE_MS);
-    expect(sent).toEqual([hookLine("posix") + "\r"]);
+    expect(sent).toEqual([hookLine("posix", NONCE) + "\r"]);
     expect(screen()).toBe(PROMPT);
   });
 
@@ -220,7 +237,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     now.print(PROMPT);
     vi.advanceTimersByTime(IDLE_MS);
     const on = now.hooks.integrate();
-    expect(now.sent).toEqual([hookLine("posix") + "\r"]);
+    expect(now.sent).toEqual([hookLine("posix", NONCE) + "\r"]);
     now.print(now.sent[0]!.slice(0, -1) + "\r\n" + A + "user@web-01:~$ " + B);
     expect(await on).toBe("on");
     expect(await now.hooks.integrate()).toBe("on");
@@ -241,8 +258,15 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     vi.useRealTimers();
 
     const marked = setup({ enabled: false });
-    marked.print(`${A}$ ${B}`);
+    marked.print(`\x1b]133;A;roster=${NONCE}\x07$ \x1b]133;B;roster=${NONCE}\x07`);
     expect(await marked.hooks.integrate()).toBe("marked");
+    vi.useRealTimers();
+
+    // The shell's own integration marks it, not roster: :integrate still sends roster's line.
+    const theirs = setup({ enabled: false });
+    theirs.print(`${A}user@web-01:~$ ${B}`);
+    void theirs.hooks.integrate();
+    expect(theirs.sent).toEqual([hookLine("posix", NONCE) + "\r"]);
     vi.useRealTimers();
 
     const closed = setup({ enabled: false, session: false });
@@ -291,7 +315,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     vi.useFakeTimers();
     const shown: number[] = [];
     const sent: string[] = [];
-    const hooks = new ShellHooks({ write: (l) => (sent.push(l), true), show: (d) => shown.push(...d), cwd: () => {}, enabled: () => true });
+    const hooks = new ShellHooks({ write: (l) => (sent.push(l), true), show: (d) => shown.push(...d), cwd: () => {}, enabled: () => true }, NONCE);
     const decoder = new TextDecoder();
     const feed = (bytes: Uint8Array) => {
       const now = hooks.output(bytes, decoder.decode(bytes, { stream: true }));
@@ -316,5 +340,45 @@ describe("shellHooksOn: init.lua's terminal.shell_hooks and the Host's shell_hoo
     [false, true, false, "init.lua's false turns it off everywhere"],
   ] as [boolean | null, boolean | undefined, boolean, string][])("init.lua %s, Host %s: %s (%s)", (init, host, on) => {
     expect(shellHooksOn(init, host)).toBe(on);
+  });
+});
+
+describe("TokenMask: Plugins never see the Session's token (ticket 120)", () => {
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  const through = (chunks: string[]) => {
+    const mask = new TokenMask(NONCE);
+    return chunks.map((c) => dec.decode(mask.mask(enc.encode(c)))).join("") + dec.decode(mask.flush());
+  };
+  const hidden = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\r|\n/g, "");
+
+  it("hides it however the reads split it", () => {
+    const text = `$ echo $PS1\r\n\\[\\e]133;A;roster=${NONCE}\\a\\]\\u$ \r\n$ `;
+    for (let cut = 0; cut <= text.length; cut += 3) {
+      const out = through([text.slice(0, cut), text.slice(cut)]);
+      expect(hidden(out)).not.toContain(NONCE.slice(0, 8));
+      expect(out.length).toBe(text.length);
+    }
+  });
+
+  it("hides it when ConPTY wraps it at 80 columns, with a line break or cursor moves inside", () => {
+    for (const brk of ["\r\n", "\x1b[K\r\n", "\x1b[?25l\x1b[2;1H", "\x1b[1C"]) {
+      const at = 80 - "history | tail -1: roster=".length;
+      const text = `history | tail -1: roster=${NONCE.slice(0, at % 24)}${brk}${NONCE.slice(at % 24)} done\r\n`;
+      const out = through([text]);
+      expect(hidden(out)).not.toMatch(/[0-9a-f]{6,}/);
+      expect(out).toContain(" done");
+    }
+  });
+
+  it("never lets a held part of it out unmasked, even when the Session ends there", () => {
+    const out = through([`token roster=${NONCE.slice(0, 5)}`]);
+    expect(out).not.toContain(NONCE.slice(0, 5));
+  });
+
+  it("passes everything else as it came, without copying it", () => {
+    const mask = new TokenMask(NONCE);
+    const data = enc.encode("ls\r\nfile-0123 a\r\n$ ");
+    expect(mask.mask(data)).toBe(data);
   });
 });

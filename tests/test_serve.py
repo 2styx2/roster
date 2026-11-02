@@ -25,7 +25,7 @@ def test_inventory_info(serve, isolated):
     assert info["path"] == str(example.resolve())
     assert info["box"] and info["host_count"] == 5
     assert {"bw", "op", "env", "prompt"} <= set(info["providers"])
-    assert info["roster_version"] == __version__ and info["api_version"] == 25
+    assert info["roster_version"] == __version__ and info["api_version"] == 26
     assert s.close() == (0, "", "")
 
 
@@ -149,7 +149,7 @@ def test_an_inventory_that_doesnt_load_is_an_error_not_an_exit(serve, write_conf
     err = s.call("inventory.info")["error"]
     assert err["code"] == 1
     assert err["message"] == "host 'box' has no user (set it on the host, its group, or defaults)"
-    assert err["data"] == {"path": str(path), "roster_version": __version__, "api_version": 25,
+    assert err["data"] == {"path": str(path), "roster_version": __version__, "api_version": 26,
                            "fix": f"fix {path}, or run `roster init` if there's none yet"}
     assert s.call("hosts.list")["error"]["code"] == 1
     assert s.call("host.get", {"name": "box"})["error"]["code"] == 1

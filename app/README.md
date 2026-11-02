@@ -81,7 +81,9 @@ app/src/platform/     State file, clipboard, Windows build: types.ts, tauri.ts, 
 app/src/state/        appState.ts: the State's shape (recent Hosts), parsed leniently
 app/src/session/      Sessions: tabs.ts (store: open/close/select/reconnect/replay/resize, outside React), Sessions.tsx
                       (terminal panes + the basic tab strip for `sessions = "tabs"`), prompt.ts (a password prompt at
-                      the cursor, for the fill key's offer, ticket 119)
+                      the cursor, for the fill key's offer, ticket 119; and the Host a nested ssh is on, ticket 120),
+                      sshTarget.ts (where a nested `ssh` command line goes, by ssh's rules and the Inventory),
+                      HopCrumb.tsx (the breadcrumb: `esx-01 ─ esx-02`)
 app/src/terminal/     TerminalView.tsx (xterm.js, WebGL → DOM; copy/paste, find, zoom), SearchBar.tsx,
                       renderer.ts (WebGL, or DOM when its context can't start or is lost; what `:info` says, ticket 20),
                       options.ts (font, colour overrides, standard ANSI palette as data), fonts.ts (which installed font is

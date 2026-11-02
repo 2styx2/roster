@@ -176,6 +176,7 @@ export const sessionsSection: SidebarSectionDef = {
               dot: dotOf(tab, hostByName.get(tab.host)),
               link: linkOf(tab),
               ...(statusText(tab) ? { note: statusText(tab) } : {}),
+              ...(tab.hop ? { hop: tab.hop } : {}),
               ...(tab.cwd ? { detail: folderName(tab.cwd) } : {}),
               ...(facts ? { title: facts } : {}),
               raised: tab.id === sessions.active,
