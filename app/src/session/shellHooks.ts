@@ -14,17 +14,139 @@
  * nothing in another POSIX shell), one for fish, one for PowerShell. */
 export type ShellKind = "posix" | "fish" | "pwsh";
 
-/** CSI, OSC and other escape sequences, so a coloured prompt reads as its text. */
-const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[^[\]]/g;
+/** CSI, OSC and other escape sequences (charset designators such as `ESC ( B` whole), so
+ * coloured text reads as its text. */
+const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-Z\\^-~]/g;
+/** One step of what a terminal draws: CSI (its parameters and final byte), a string (OSC, DCS,
+ * APC, PM, SOS: drawn as nothing), another escape, or one character. */
+const TOKENS = /\x1b\[([0-?]*)[ -/]*([@-~])|\x1b[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b([ -/]*[0-Z\\^-~])?|[\s\S]/gu;
 
-/** The text of the line the cursor is on: what follows the last line feed or carriage return. */
+/** The line the cursor is on as a terminal draws it (ticket 159, #296): carriage returns,
+ * backspaces, tabs, moves left and right, and erases within the line applied, so a prompt a shell
+ * draws and then moves the cursor back to (fish's `ESC[K \r ESC[<n>C`) reads as its text. `text`
+ * is the line up to the cursor; `rest`, what's on it after the cursor. Only the tail of the output
+ * is known, not the screen around it: after a move up or down, or to a place it can't tell (an
+ * absolute row, a restored cursor), the line's text isn't known and reads as blank but for what is
+ * drawn on it after the move, so no prompt drawn before the move is seen (it fails toward sending
+ * nothing). A line feed starts a new line. The line doesn't wrap. */
+function drawnLine(out: string): { text: string; rest: string } {
+  /** Lines from the first one the output has drawn; `null`: a line whose text isn't known. */
+  let lines: (string[] | null)[] = [[]];
+  let row = 0;
+  let col = 0;
+  const line = (): string[] => {
+    let l = lines[row];
+    if (!l) {
+      l = [];
+      lines[row] = l;
+    }
+    return l;
+  };
+  const lost = () => {
+    lines = [null];
+    row = 0;
+  };
+  const put = (ch: string) => {
+    const l = line();
+    while (l.length < col) l.push(" ");
+    l[col++] = ch;
+  };
+  for (const m of out.matchAll(TOKENS)) {
+    const t = m[0];
+    if (m[2] !== undefined) {
+      const params = m[1] ?? "";
+      const n = Math.max(1, Number.parseInt(params, 10) || 1);
+      const arg = Number.parseInt(params, 10) || 0;
+      // A private sequence (`ESC[?25l`, `ESC[>c`) draws nothing.
+      if (/[<=>?]/.test(params)) continue;
+      const l = line();
+      switch (m[2]) {
+        case "C":
+        case "a":
+          col += n;
+          break;
+        case "D":
+          col = Math.max(0, col - n);
+          break;
+        case "G":
+        case "`":
+          col = n - 1;
+          break;
+        case "K":
+          if (arg === 0) l.splice(col);
+          else if (arg === 1) l.fill(" ", 0, Math.min(l.length, col + 1));
+          else lines[row] = [];
+          break;
+        case "X":
+          l.fill(" ", col, Math.min(l.length, col + n));
+          break;
+        case "P":
+          l.splice(col, n);
+          break;
+        case "@":
+          if (col < l.length) l.splice(col, 0, ...Array<string>(n).fill(" "));
+          break;
+        case "J":
+          if (arg === 0) {
+            l.splice(col);
+            lines.splice(row + 1);
+          } else if (arg === 1) {
+            l.fill(" ", 0, Math.min(l.length, col + 1));
+            for (let r = 0; r < row; r++) lines[r] = [];
+          } else lines = lines.map(() => []);
+          break;
+        case "A":
+        case "B":
+        case "E":
+        case "F":
+        case "H":
+        case "f":
+        case "d":
+        case "u":
+          // Another line, or a place only the whole screen tells: its text isn't known.
+          lost();
+          if (m[2] === "H" || m[2] === "f") col = Math.max(1, Number.parseInt(params.split(";")[1] ?? "", 10) || 1) - 1;
+          else if (m[2] === "E" || m[2] === "F" || m[2] === "u") col = 0;
+          break;
+        default:
+        // Colours, modes, reports and the rest draw nothing.
+      }
+    } else if (t.startsWith("\x1b")) {
+      const esc = m[3] ?? "";
+      // Index and next line go down a line, as a line feed does; reverse index (up) and a restored
+      // cursor go where it can't tell. Charset designators and the rest draw nothing.
+      if (esc === "D" || esc === "E") row++;
+      if (esc === "E") col = 0;
+      if (esc === "M" || esc === "8") {
+        lost();
+        col = 0;
+      }
+    } else if (t === "\r") col = 0;
+    else if (t === "\n" || t === "\x0b" || t === "\x0c") row++;
+    else if (t === "\b") col = Math.max(0, col - 1);
+    else if (t === "\t") col = (Math.floor(col / 8) + 1) * 8;
+    else if (t >= " " && t !== "\x7f") put(t);
+  }
+  const l = lines[row] ?? (row < lines.length ? null : []);
+  if (!l) return { text: " ".repeat(col), rest: "" };
+  const drawn = Array.from({ length: Math.max(col, l.length) }, (_, i) => l[i] ?? " ");
+  return { text: drawn.slice(0, col).join(""), rest: drawn.slice(col).join("") };
+}
+
+/** The line the cursor is on, as a terminal draws it: its text up to the cursor, then whatever is
+ * on it after the cursor (blanks at its end left out). */
 export function lastLine(out: string): string {
-  const plain = out.replace(ESCAPES, "");
-  return plain.slice(Math.max(plain.lastIndexOf("\n"), plain.lastIndexOf("\r")) + 1);
+  const { text, rest } = drawnLine(out);
+  return text + rest.trimEnd();
 }
 
 const PWSH = /^PS \S.*> $/;
-const FISH = /^[^\s@[\]:]+@[^\s@[\]:]+ [~/]\S*(?: \([^)]*\))?[>#] $/;
+/** fish's default prompt: `user@host cwd`, then its version control's ` (branch)` (a detached HEAD
+ * is `((f5c479ed))`, an informative one `(main|REBASE-i 1/3)`), then the last status when it
+ * failed (` [1]`, a pipeline's ` [1|0]`), then `>` or `#` (root). */
+const FISH = /^[^\s@[\]:]+@[^\s@[\]:]+ [~/]\S*(?: \(.*\))?(?: \[\d+(?:\|\d+)*\])?[>#] $/;
+/** A line that asks for a secret: whatever it ends with, it's never a prompt roster sends to. */
+const SECRET = /pass(?:word|phrase|code)|\bPIN\b/i;
 /** `$`, `#` or `%` right after the prompt's text (`user@web-01:~$ `, `web-01% `), or a `$` on
  * its own (a two-line prompt's second line). Not after a space, which is tcsh's (`web-01:~ % `)
  * and a menu's (`Choice # `). */
@@ -89,7 +211,9 @@ export function newNonce(): string {
 
 /** The shell whose idle prompt ends `out`, or null when it isn't a prompt roster knows. */
 export function promptShell(out: string): ShellKind | null {
-  const line = lastLine(out);
+  const { text: line, rest } = drawnLine(out);
+  // Something after the cursor (typed-ahead text, a prompt drawn over another) isn't an idle prompt.
+  if (rest.trim() !== "" || SECRET.test(line + rest)) return null;
   if (PWSH.test(line)) return "pwsh";
   if (FISH.test(line)) return "fish";
   if (POSIX.test(line)) return "posix";
