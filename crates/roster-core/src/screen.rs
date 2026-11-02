@@ -67,6 +67,33 @@ struct MaskWatch {
 const SEEN_MAX: usize = 64;
 /// The most of a CSI's parameters [`Drawn`] shows.
 const SEEN_PARAMS: usize = 16;
+/// The CSI commands [`Drawn`] names (ticket 155); any other shows as `?`, so a Session can't
+/// spell text into the log with sequences' final bytes. They're what a terminal layer (ConPTY)
+/// may redraw sudo's mask with: cursor moves (`A`-`H`, `a`, `d`, `e`, `f`, `` ` ``), erases (`J`,
+/// `K`, `X`), inserts, deletes and scrolls (`@`, `P`, `L`, `M`, `S`, `T`, `r`), colours (`m`),
+/// a status report (`n`), and, under narrower rules in [`csi_shown`], the DEC modes (`h`, `l`,
+/// only after `?` and a number: the cursor's hide and show, the alternate screen) and the cursor's save and
+/// restore (`s`, `u`, only bare). The rest (window ops, device queries, keyboard modes) isn't
+/// how a redraw is done.
+const CSI_SHOWN: &[u8] = b"ABCDEFGHadef`JKX@PLMSTrmnhlsu";
+
+/// Whether [`Drawn`] names a CSI's command `fin`, with `params` as they came.
+fn csi_shown(params: &[u8], fin: u8) -> bool {
+    match fin {
+        b'h' | b'l' => params.len() > 1 && params.first() == Some(&b'?'),
+        b's' | b'u' => params.is_empty(),
+        _ => CSI_SHOWN.contains(&fin),
+    }
+}
+
+/// Whether [`Drawn`] shows a CSI's parameters: numbers and `;`, after an optional `?`.
+fn params_shown(params: &[u8]) -> bool {
+    params
+        .strip_prefix(b"?")
+        .unwrap_or(params)
+        .iter()
+        .all(|&b| b.is_ascii_digit() || b == b';')
+}
 
 /// One thing a fill's probe drew, as the core's screen parsed it (ticket 155): never the text of
 /// a character other than `*` and space, nor an escape string's contents, only how many.
@@ -100,7 +127,9 @@ enum Kind {
 /// watch refused it (ticket 155, #284): each thing the core's screen parsed, in order (at most
 /// [`SEEN_MAX`]), and whether the cursor or its line ended other than they began. Printed text
 /// other than `*` and space shows only as how many characters (`text(3)`), an escape string only
-/// as its length (`OSC(12)`); a sequence's own parameters and command show (`CSI[?25l`). This is
+/// as its length (`OSC(12)`); a CSI shows its parameters only when they're numbers
+/// (else `params(N)`) and its command only when it's one a redraw uses ([`CSI_SHOWN`], else `?`),
+/// as in `CSI[?25l`, so no sequence spells text into it. This is
 /// before any password is typed, but it's kept that narrow anyway.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Drawn {
@@ -160,14 +189,18 @@ impl std::fmt::Display for Drawn {
                 Seen::Csi(params, fin) => {
                     f.write_str("CSI[")?;
                     match params {
-                        Some(p) => f.write_str(&String::from_utf8_lossy(&p[..p.len().min(SEEN_PARAMS)]))?,
+                        Some(p) if params_shown(p) => {
+                            f.write_str(&String::from_utf8_lossy(&p[..p.len().min(SEEN_PARAMS)]))?;
+                            if p.len() > SEEN_PARAMS {
+                                f.write_str("…")?;
+                            }
+                        }
+                        Some(p) => write!(f, "params({})", p.len())?,
                         None => f.write_str("…")?,
                     }
-                    if params.as_ref().is_some_and(|p| p.len() > SEEN_PARAMS) {
-                        f.write_str("…")?;
-                    }
                     match fin {
-                        Some(b) => write!(f, "{}", char::from(*b))?,
+                        Some(b) if csi_shown(params.as_deref().unwrap_or(b"x"), *b) => write!(f, "{}", char::from(*b))?,
+                        Some(_) => f.write_str("?")?,
                         None => f.write_str("(cut)")?,
                     }
                 }
@@ -870,14 +903,103 @@ mod tests {
             "h\u{e9}llo w\u{f6}rld".as_bytes(),
             b"\x1b[\x1bhunter2",
             b"\x1b[1;hunter2",
+            b"\x1b[2025s3cret",
+            b"\x1b[?hunter",
+            b"\x1b[1;2hunter",
         ] {
             let mut s = screen(PROMPT);
             s.watch_mask();
             s.feed(out);
             let said = s.end_mask_watch(1).drawn.to_string();
-            for word in ["hunter", "unter", "llo", "rld", "ello"] {
+            for word in ["hunter", "unter", "llo", "rld", "ello", "2025s", "cret"] {
                 assert!(!said.contains(word), "{:?} -> {said}", String::from_utf8_lossy(out));
             }
+            assert!(only_known(&said), "{:?} -> {said}", String::from_utf8_lossy(out));
         }
+        // A CSI's command shows only when it's one a terminal draws with (and `h`, `l` only as DEC
+        // modes, `s`, `u` only bare); its parameters only when they're numbers.
+        let said = |out: &[u8]| {
+            let mut s = screen(PROMPT);
+            s.watch_mask();
+            s.feed(out);
+            s.end_mask_watch(1).drawn.to_string()
+        };
+        assert_eq!(
+            said(b"\x1b[1;hunter2"),
+            "CSI[1;? text(6); the cursor moved from 1:26 to 1:32; the line changed"
+        );
+        assert_eq!(
+            said(b"\x1b[2025s3cret"),
+            "CSI[2025? text(5); the cursor moved from 1:26 to 1:31; the line changed"
+        );
+        assert_eq!(said(b"\x1b[s\x1b[u\x1b[?25l\x1b[?25h"), "CSI[s CSI[u CSI[?25l CSI[?25h");
+        assert_eq!(said(b"\x1b[2 q\x1b[>1x"), "CSI[params(2)? CSI[params(2)?");
+        assert_eq!(said(b"\x1b[?h\x1b[?1049l"), "CSI[?? CSI[?1049l");
+    }
+
+    /// Whether every word of a [`Drawn`] is one of its own: a thing it names (`'*'`, a control's
+    /// name, `text(N)`, `OSC(N)`, `ESC` with what it may show, a CSI as [`CSI_SHOWN`] allows) or
+    /// its fixed words, so no letter or digit the Session printed can be in it.
+    fn only_known(said: &str) -> bool {
+        let mut parts = said.split("; ");
+        let things = parts.next().unwrap_or("");
+        let counted = |w: &str, name: &str| {
+            w.strip_prefix(name)
+                .and_then(|r| r.strip_prefix('('))
+                .and_then(|r| r.strip_suffix(')'))
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        };
+        let words: Vec<&str> = things.split(' ').collect();
+        let ok_thing = |i: usize, w: &str| {
+            if [
+                "'*'", "nothing", "resize", "NUL", "BEL", "BS", "HT", "LF", "VT", "FF", "CR", "DEL",
+            ]
+            .contains(&w)
+                || ["text", "OSC", "DCS", "APC", "PM", "SOS"].iter().any(|n| counted(w, n))
+            {
+                return true;
+            }
+            // ' ' splits into two empty words.
+            if w == "'" {
+                return true;
+            }
+            if w == "and" || w == "more" || (i > 0 && words[i - 1] == "and" && w.bytes().all(|b| b.is_ascii_digit())) {
+                return true;
+            }
+            if let Some(hex) = w.strip_prefix("0x") {
+                return hex.len() == 2 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+            }
+            if let Some(rest) = w.strip_prefix("ESC") {
+                return rest
+                    .bytes()
+                    .all(|b| b == b'?' || (0x20..=0x2f).contains(&b) || b"78DEHMNOZc=>\\0AB<".contains(&b));
+            }
+            if let Some(rest) = w.strip_prefix("CSI[") {
+                let (params, fin) = match rest.strip_suffix("(cut)") {
+                    Some(p) => (p, None),
+                    None => (&rest[..rest.len().saturating_sub(1)], rest.bytes().last()),
+                };
+                let params_ok = params.is_empty()
+                    || params == "…"
+                    || counted(params, "params")
+                    || params
+                        .trim_end_matches('…')
+                        .trim_start_matches('?')
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || b == b';');
+                return params_ok && fin.is_none_or(|b| b == b'?' || CSI_SHOWN.contains(&b));
+            }
+            false
+        };
+        words.iter().enumerate().all(|(i, w)| ok_thing(i, w))
+            && parts.all(|p| {
+                p == "the line changed"
+                    || p.strip_suffix(" bytes printed before the probe")
+                        .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+                    || p.strip_prefix("the cursor moved from ").is_some_and(|r| {
+                        r.bytes()
+                            .all(|b| b.is_ascii_digit() || b == b':' || b == b' ' || b == b't' || b == b'o')
+                    })
+            })
     }
 }
