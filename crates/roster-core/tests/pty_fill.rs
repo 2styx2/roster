@@ -246,3 +246,96 @@ fn output_while_the_vault_answers_refuses_too() {
     assert!(matches!(err, FillError::Echoes), "{err:?}");
     m.close(id).unwrap();
 }
+
+/// A nested ssh's login prompt, as OpenSSH prints it, with echo off (ticket 120).
+const NESTED: &str =
+    "stty -echo; printf \"ops@esx-02's password: \"; read -r pw; stty echo; echo; echo \"got:[$pw]\"; sleep 5";
+
+#[test]
+fn a_nested_fill_types_only_at_a_prompt_the_session_printed() {
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(NESTED));
+    until(&rx, "password: ");
+    // A prompt the Session never printed (the frontend's word alone) is refused before the vault.
+    let mut asked = false;
+    let hop = FillTarget {
+        host: "esx-02".into(),
+        login: LoginAs {
+            address: "10.0.0.12".into(),
+            port: 22,
+            user: "ops".into(),
+        },
+    };
+    match m.fill_at_prompt(id, WAIT, "ops@esx-03's password:", &hop, |_| {
+        asked = true;
+        secret()
+    }) {
+        Err(FillError::NotPrinted) => {}
+        other => panic!("{other:?}"),
+    }
+    assert!(!asked);
+    m.fill_at_prompt(id, WAIT, "ops@esx-02's password:", &hop, |_| secret())
+        .expect("filled");
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
+    m.close(id).unwrap();
+}
+
+#[test]
+fn a_nested_fill_needs_the_prompt_at_the_end_of_the_output() {
+    // A prompt that went by earlier, with other output after it, isn't the one the cursor is at.
+    let m = SessionManager::new();
+    let script = "printf \"ops@esx-02's password: \\nPermission denied\\nlast login \"; sleep 5";
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, "last login ");
+    assert!(!m.at_prompt(id, "ops@esx-02's password:").unwrap());
+    assert!(m.at_prompt(id, "last login").unwrap());
+    m.close(id).unwrap();
+}
+
+#[test]
+fn a_nested_fill_looks_only_at_recent_output() {
+    // The prompt went by more than 4 KB ago, even if nothing but padding followed.
+    let m = SessionManager::new();
+    let script = "printf \"ops@esx-02's password: \"; head -c 6000 /dev/zero | tr '\\0' ' '; printf '.'; sleep 5";
+    let (id, rx) = open(&m, host_sh(script));
+    std::thread::sleep(Duration::from_millis(300));
+    let _ = quiet_for(&rx, Duration::from_millis(100));
+    assert!(!m.at_prompt(id, "ops@esx-02's password:").unwrap());
+    m.close(id).unwrap();
+}
+
+#[test]
+fn a_nested_fill_reads_the_prompt_through_a_conpty_style_redraw() {
+    // ConPTY repaints: a clear and cursor position, colour changes inside the line, cursor-forward
+    // for a space, the cursor parked after the prompt.
+    let m = SessionManager::new();
+    let script =
+        "printf '\\033[2J\\033[1;1H\\033[1mops\\033[0m@esx-02'\"'\"'s\\033[1Cpassword:\\033[m\\033[1;24H'; sleep 5";
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, "password:");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(m.at_prompt(id, "ops@esx-02's password:").unwrap());
+    assert!(!m.at_prompt(id, "ops@esx-03's password:").unwrap());
+    m.close(id).unwrap();
+}
+
+#[test]
+fn a_nested_fill_says_the_host_whose_password_it_typed() {
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(NESTED));
+    until(&rx, "password: ");
+    let hop = FillTarget {
+        host: "esx-02".into(),
+        login: LoginAs {
+            address: "10.0.0.12".into(),
+            port: 22,
+            user: "ops".into(),
+        },
+    };
+    let host = m
+        .fill_at_prompt(id, WAIT, "ops@esx-02's password:", &hop, |_| secret())
+        .expect("filled");
+    assert_eq!(host, "esx-02");
+    m.close(id).unwrap();
+}

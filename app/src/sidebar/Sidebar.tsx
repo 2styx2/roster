@@ -18,6 +18,8 @@
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
 import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import { hopWords, type Breadcrumb } from "../session/breadcrumb";
+import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
 import { formatCount } from "../ui/format";
 import { HintsShown } from "../ui/hints";
@@ -54,6 +56,8 @@ export interface SidebarRow {
   tail?: string;
   /** Right-aligned and faint: an address. It shows whole or not at all: the name comes first. */
   detail?: string;
+  /** A Session's breadcrumb (ticket 120): the Host a nested ssh took it to, after the name. */
+  hop?: Breadcrumb;
   /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
   count?: number;
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
@@ -156,6 +160,7 @@ export function rowFacts(row: SidebarRow): string[] {
   // An unreviewed Host's badge is what its dot already said.
   if (row.badge && row.dot !== "off") facts.push(row.badge);
   for (const t of row.tags ?? []) facts.push(tagName(t));
+  if (row.hop) facts.push(hopWords(row.hop));
   if (row.detail) facts.push(row.detail);
   if (row.count !== undefined) facts.push(hostsCount(row.count));
   if (row.pending) facts.push("not Published yet");
@@ -349,6 +354,7 @@ const Row = memo(function Row({
                 {t.text}
               </span>
             ))}
+            {row.hop && <HopCrumb hop={row.hop} />}
           </span>
           {row.badge && <span className="sb-badge"> {row.badge}</span>}
           {row.detail && <span className="sb-detail"> {row.detail}</span>}

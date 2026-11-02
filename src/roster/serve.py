@@ -82,7 +82,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
 from .providers import PROVIDERS, setup_providers
 from .sshops import fingerprint, in_ssh_config, record_host_key, recorded_host_keys, write_ssh_config
 
-API_VERSION = 25            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 26            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -336,6 +336,13 @@ def session_fill(state, params):
     Result: `{host, login: "ssh"|"sudo", password}`
     Errors: -32602, 1, 2, 20, 30, 130, 131, 11, 12, 14, 31-35
     Since: API 25
+    Params: `{host, address, port, user, prompt, hop: {host, address, port, user}}` (a nested ssh in the Session:
+        the Inventory Host the app resolved it to, from the command line the shell's marks gave, and the
+        address, port and user it resolved; the Session's own Host is still checked as above)
+    Result: `{host, login, password}` for the `hop` Host: its ssh Login for its own `USER@HOST's password:`, its
+        sudo for sudo's; 130 if that Host isn't reviewed-and-unchanged as the app resolved it
+    Errors: -32602, 2, 20, 30, 130, 131
+    Since: API 26
     """
     name = text_param(params, "host")
     address, user = text_param(params, "address"), text_param(params, "user")
@@ -352,9 +359,32 @@ def session_fill(state, params):
         raise RpcError(NOT_REVIEWED, not_reviewed(h))
     diagnose.check_user(h)
     fill.same_login(h, address, port, user)
-    which, ref = fill.login_for(h, prompt, cfg.get("sudo", {}).get(name))
+    if params.get("hop") is not None:
+        # A nested ssh in the Session (ticket 120, decision Q131): the prompt is that Host's, so its Login answers,
+        # and only while it's still the Host the app resolved the ssh to.
+        h = nested_host(cfg, params["hop"])
+    which, ref = fill.login_for(h, prompt, cfg.get("sudo", {}).get(h["name"]))
     diagnose.check_provider(h, ref, which)
     return {"host": h["name"], "login": which, "password": diagnose.resolve_password(h, ref, which)}
+
+
+def nested_host(cfg, hop):
+    """The Inventory Host a nested ssh went to (session.fill's `hop`), if it's reviewed and still has the address,
+    port and user the app resolved the ssh to."""
+    if not isinstance(hop, dict):
+        raise RpcError(INVALID_PARAMS, "params.hop must be an object")
+    name, address, user = (text_param(hop, k) for k in ("host", "address", "user"))
+    port = hop.get("port")
+    if isinstance(port, bool) or not isinstance(port, int):
+        raise RpcError(INVALID_PARAMS, "params.hop.port must be a number")
+    h = cfg["hosts"].get(name)
+    if h is None:
+        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+    if not h["reviewed"]:
+        raise RpcError(NOT_REVIEWED, not_reviewed(h))
+    diagnose.check_user(h)
+    fill.same_login(h, address, port, user, nested=True)
+    return h
 
 
 def known_key(h):

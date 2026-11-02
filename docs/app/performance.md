@@ -77,7 +77,7 @@ A change that goes over one of these needs a reason in its pull request. Measure
 | Memory per Session | ≈ 2 KB per scrollback line at a wide window + ≤ 1 MB replay | see below |
 | After closing every Session | JS heap within 2 MB of idle; DOM nodes within 100 of idle | +0 MB (13.8 vs 15.5); +11 |
 | App JS, minified | ≤ 2,410 KB raw, ≤ 720 KB gzipped | 2,195 KB; 654 KB (2026-11-01) |
-| App CSS, minified | ≤ 83 KB raw, ≤ 15.5 KB gzipped | 75 KB; 13.8 KB |
+| App CSS, minified | ≤ 85 KB raw, ≤ 15.5 KB gzipped | 75 KB; 13.8 KB; 83.3 KB (2026-11-02) |
 | Docs website's `search.js` (every page loads it), minified | ≤ 12 KB raw | 9.8 KB; 3.8 KB gzipped |
 | Docs website's `search-index.js` (loaded when the search box is first used) | ≤ 275 KB gzipped | 756 KB raw; 221 KB gzipped; 253 KB gzipped (2026-11-02) |
 
@@ -85,7 +85,7 @@ A change that goes over one of these needs a reason in its pull request. Measure
 
 ### Bundle size
 
-The docs website's search has budgets of its own (the last two rows above): `npm run docs` stops when `search.js` is over its budget, and `app/src/docs-site/site.test.ts` fails when the index is. The index is every page's text, so it grows with the docs; a page loads it only when someone uses the search box. It was raised from 250 KB to 275 KB on 2026-11-02, when the docs of shell hooks and the prompt fill took it past 250 KB: it's text the reader asked to search, loaded once, so it follows the docs rather than trimming them.
+The docs website's search has budgets of its own (the last two rows above): `npm run docs` stops when `search.js` is over its budget, and `app/src/docs-site/site.test.ts` fails when the index is. The index is every page's text, so it grows with the docs; a page loads it only when someone uses the search box. It was raised from 250 KB to 275 KB on 2026-11-02, when the docs of shell hooks and the prompt fill took it past 250 KB: it's text the reader asked to search, loaded once, so it follows the docs rather than trimming them. The CSS raw budget went from 83 KB to 85 KB the same day, when a nested ssh's breadcrumb (ticket 120) took it to 83.3 KB: dev's own build was already a few hundred bytes under it, and 2 KB more leaves room for the next small feature without hiding a stylesheet dependency.
 
 The app's JS and CSS are checked on every pull request: CI builds the frontend (`vite build`) and `scripts/check-bundle-size.py` adds up every `.js` and `.css` file in `app/dist/assets`, minified as shipped and gzipped, and fails when a total is over the budget above. Run it yourself after `npx vite build` in `app/`: `python3 scripts/check-bundle-size.py`. It counts every chunk the build writes, the fake Backend's included; fonts and icons aren't counted (they change only when a font does). A KB is 1,000 bytes, as Vite prints them. The webview reads the files from disk, so the raw size is what it parses; gzipped is there to compare with other projects and catches a dependency that's large but repetitive. The budgets sit about 10 % above the build of 2026-10-31 (JS: of 2026-11-01, when the Plugin API reference and its types, both bundled for `:help`, grew by the typed `mesh.*` and `discover.*` results, ticket 100), so a feature of a few KB passes and a new dependency of a hundred doesn't go unnoticed: a change that goes over raises the budget in the script and in the table above, with the reason in its pull request. Most of the JS is the app itself with the guides `:help` bundles (they're text, so they gzip well), React and xterm.js.
 

@@ -50,6 +50,12 @@ def test_a_nested_ssh_to_the_hosts_own_name_or_address_and_user_takes_the_ssh_lo
     assert fill("esx", prompt) == ("ssh", "bw:Network gear")
 
 
+def test_a_nested_ssh_prompt_names_the_host_as_ssh_prints_it_lowercased():
+    """ssh lowercases the host it prints; the Host's name in roster.yml may have capitals (ticket 120)."""
+    cfg = load_config_text(INVENTORY.replace("esx: {", "ESX-Lab: {"), "/tmp/roster.yml")
+    assert login_for(cfg["hosts"]["ESX-Lab"], "ops@esx-lab's password: ") == ("ssh", "bw:Network gear")
+
+
 def test_a_nested_ssh_takes_the_ssh_login_even_with_a_sudo_override():
     assert fill("box", "ops@10.0.0.5's password: ") == ("ssh", "bw:Network gear")
 
@@ -211,3 +217,58 @@ def test_the_apps_list_of_logins_without_a_password_is_roster_s():
     ts = (Path(__file__).parents[1] / "app" / "src" / "backend" / "types.ts").read_text(encoding="utf-8")
     m = re.search(r"export const NO_PASSWORD_AUTHS = \[([^\]]*)\]", ts)
     assert m and tuple(re.findall(r'"([^"]+)"', m[1])) == providers.NO_PASSWORD
+
+
+# ---------------------------------------------------------------- a nested ssh's Host (ticket 120, decision Q131)
+
+def hop(name, **over):
+    """session.fill's `hop`: the Inventory Host a nested ssh in the Session went to, as the app resolved it."""
+    address, port, user = AS[name]
+    return {"host": name, "address": address, "port": port, "user": user, **over}
+
+
+def test_session_fill_answers_a_nested_ssh_with_the_host_it_went_to(serve, write_config, fakes):
+    s = unlocked(serve, write_config)
+    got = s.call("session.fill", params("esx", "ops@box's password: ", hop=hop("box")))["result"]
+    assert got == {"host": "box", "login": "ssh", "password": PASSWORD}
+    got = s.call("session.fill", params("esx", "ops@10.0.0.5's password: ", hop=hop("box")))["result"]
+    assert got["host"] == "box"
+    # That Host's sudo, from its own sudo: reference.
+    assert s.call("session.fill", params("esx", SUDO, hop=hop("box")))["result"] == {
+        "host": "box", "login": "sudo", "password": SUDO_PASSWORD}
+
+
+@pytest.mark.parametrize("prompt, says", [
+    ("ops@esx's password: ", "ops@esx"),               # the Session's own Host, not the one the ssh went to
+    ("root@box's password: ", "root@box"),
+    ("ops@localhost's password: ", "localhost"),
+    ("Password: ", "doesn't say whose"),
+])
+def test_session_fill_refuses_a_nested_prompt_that_isnt_that_hosts_own(serve, write_config, fakes, prompt, says):
+    s = unlocked(serve, write_config)
+    err = s.call("session.fill", params("esx", prompt, hop=hop("box")))["error"]
+    assert err["code"] == FILL_REFUSED and says in err["message"] and PASSWORD not in json.dumps(err)
+
+
+@pytest.mark.parametrize("change, says", [
+    ({"address": "10.0.0.66"}, "10.0.0.66"),
+    ({"port": 2222}, "2222"),
+    ({"user": "root"}, "root"),
+])
+def test_session_fill_refuses_a_nested_host_that_isnt_what_the_app_resolved(serve, write_config, fakes, change, says):
+    """The app resolved the ssh's target from the Inventory it had; one edited since may be another box."""
+    s = unlocked(serve, write_config)
+    err = s.call("session.fill", params("esx", "ops@box's password: ", hop=hop("box", **change)))["error"]
+    assert err["code"] == FILL_REFUSED and "since this ssh started" in err["message"] and says in err["message"]
+
+
+def test_session_fill_checks_the_sessions_own_host_and_the_nested_one(serve, write_config, fakes):
+    s = unlocked(serve, write_config)
+    moved = params("esx", "ops@box's password: ", address="10.0.0.66", hop=hop("box"))
+    assert "since this Session connected" in s.call("session.fill", moved)["error"]["message"]
+    assert s.call("session.fill", params("esx", "ops@keyed's password: ", hop=hop("keyed")))["error"]["code"] == \
+        NOTHING_TO_FILL
+    assert s.call("session.fill", params("esx", SUDO, hop=hop("server-10-0-0-20")))["error"]["code"] == 20
+    assert s.call("session.fill", params("esx", SUDO, hop={**hop("box"), "host": "nope"}))["error"]["code"] == 2
+    for bad in ("box", {"host": "box"}, {**hop("box"), "port": "22"}, {**hop("box"), "user": ""}):
+        assert s.call("session.fill", params("esx", SUDO, hop=bad))["error"]["code"] == -32602, bad

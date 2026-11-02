@@ -82,6 +82,9 @@ pub const CALL_SECS: &[(&str, u64)] = &[
 
 /// The first serve API with `host.check {background: true}` and `host.check_job` (ticket 108).
 pub const CHECK_JOBS_API_VERSION: i64 = 21;
+/// The first serve API whose `session.fill` takes `hop` (ticket 120): an older one ignores it and
+/// answers for the Session's own Host, so the core never sends it a nested fill.
+pub const NESTED_FILL_API_VERSION: i64 = 26;
 /// How often [`Backend::check_host`] asks a check job how it's going.
 pub const CHECK_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -333,9 +336,30 @@ impl Backend {
     /// 25, ticket 119): for [`crate::session::SessionManager::fill`] to type, and nothing else.
     /// The value is moved out of serve's answer into a [`Secret`] and never copied, logged or put
     /// in an error; serve's refusals (130, 131, the vault's) come back as they are.
-    pub fn fill_secret(&self, target: &FillTarget, prompt: &str) -> Result<Secret, CallError> {
+    ///
+    /// `hop` is a nested ssh's Host, as the frontend resolved it (ticket 120, serve API 26): serve
+    /// then answers for that Host, still checking the Session's own.
+    pub fn fill_secret(
+        &self,
+        target: &FillTarget,
+        prompt: &str,
+        hop: Option<&FillTarget>,
+    ) -> Result<Secret, CallError> {
         let LoginAs { address, port, user } = &target.login;
-        let params = json!({ "host": target.host, "address": address, "port": port, "user": user, "prompt": prompt });
+        let mut params =
+            json!({ "host": target.host, "address": address, "port": port, "user": user, "prompt": prompt });
+        if let Some(hop) = hop {
+            let api = self.api_version();
+            if api < NESTED_FILL_API_VERSION {
+                return Err(CallError::Io {
+                    message: format!(
+                        "filling a nested ssh's prompt needs roster serve API {NESTED_FILL_API_VERSION}; this one speaks {api}, so roster didn't fill it"
+                    ),
+                });
+            }
+            let LoginAs { address, port, user } = &hop.login;
+            params["hop"] = json!({ "host": hop.host, "address": address, "port": port, "user": user });
+        }
         let v = self.call("session.fill", params)?;
         let Value::Object(mut answer) = v else {
             return Err(fill_shape_error());
