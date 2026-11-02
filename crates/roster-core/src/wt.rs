@@ -578,8 +578,9 @@ pub struct Preview {
     /// The Theme it defines for the profile's colour scheme, which the app then chooses as
     /// `:theme` does (decision Q69); none without a scheme.
     pub theme: Option<String>,
-    /// Options it sets that init.lua's own returned table also sets (that one wins).
-    pub overridden: Vec<String>,
+    /// Options it sets that init.lua sets again where it wins: in its returned table, or in a
+    /// line after the block (an older block is replaced in place, so a line below it stays later).
+    pub overridden: Vec<Overridden>,
     /// There's no init.lua yet: it would be made from the commented-out example.
     pub created: bool,
     /// What [`apply`] checks init.lua against, so a file changed since isn't overwritten.
@@ -590,6 +591,34 @@ pub struct Preview {
     pub date: String,
     /// The Config error the new file would have, if any.
     pub error: Option<String>,
+}
+
+/// What wins over the import for an option it sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Wins {
+    /// init.lua's returned table sets it: that wins over every `roster.*` line.
+    Returned,
+    /// A line after the block sets it (in init.lua, or a module it requires there): the last
+    /// write wins.
+    Later,
+}
+
+/// An option the import sets that init.lua sets again where it wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Overridden {
+    pub option: String,
+    pub by: Wins,
+    /// The later line; none for the returned table.
+    pub at: Option<config::Location>,
+}
+
+/// The 1-based lines of `text`'s import block, first and last.
+fn block_lines(text: &str) -> Option<(u32, u32)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let begin = lines.iter().position(|l| l.starts_with(BEGIN))?;
+    let end = begin + lines[begin..].iter().position(|l| l.starts_with(END))?;
+    Some((begin as u32 + 1, end as u32 + 1))
 }
 
 /// What the app hands back to [`apply`] from the [`Preview`] the user confirmed.
@@ -659,16 +688,32 @@ pub fn preview(dir: &Path, settings_text: &str, settings_path: &str, date: &str)
     let profile = parse(settings_text)?;
     let new = with_block(&old, &lua_block(&profile, settings_path, date));
     let (overridden, error) = match config::returned_table(dir, &new) {
-        Ok(table) => (
-            settings(&profile)
+        Ok(table) => {
+            let loaded = config::load_source(dir, &new, &config::Env::default());
+            let block = block_lines(&new);
+            let in_block = |at: &config::Location| {
+                at.file == config::FILE_NAME && block.is_some_and(|(b, e)| (b..=e).contains(&at.line))
+            };
+            let overridden = settings(&profile)
                 .into_iter()
-                .map(|(name, _)| name)
-                .filter(|name| has_path(&table, name))
-                .collect(),
-            config::load_source(dir, &new, &config::Env::default())
-                .err()
-                .map(|e| e.to_string()),
-        ),
+                .filter_map(|(option, _)| {
+                    if has_path(&table, &option) {
+                        return Some(Overridden {
+                            option,
+                            by: Wins::Returned,
+                            at: None,
+                        });
+                    }
+                    let at = loaded.as_ref().ok()?.lines.get(&option)?;
+                    (!in_block(at)).then(|| Overridden {
+                        option,
+                        by: Wins::Later,
+                        at: Some(at.clone()),
+                    })
+                })
+                .collect();
+            (overridden, loaded.err().map(|e| e.to_string()))
+        }
         Err(e) => (Vec::new(), Some(e.to_string())),
     };
     let mut summary = vec![format!("Profile: {}", profile.name)];

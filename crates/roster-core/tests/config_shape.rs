@@ -1,5 +1,6 @@
 //! The Config's shape (config/shape, decision Q132) can't drift from what init.lua really takes:
-//! every option's example loads through the real loader and changes the Config, every default is
+//! every option's example loads through the real loader and changes the Config (and every example of
+//! the `roster` table and its methods loads), every default is
 //! `Config::default()`'s, the allowed values are exactly what the checks let through,
 //! config.md's option tables name the same options, the `roster` table declares what the runtime
 //! builds, and the generated reference, stubs and data are up to date.
@@ -87,6 +88,45 @@ fn every_example_loads_and_changes_the_config() {
             assert_ne!(values(c), base, "{}: setting the example {lua} changes nothing", o.path);
         }
     }
+}
+
+/// Every example of the `roster` table and roster.o's methods (`:help roster.o.get`,
+/// `:help roster.o.List:insert`; written out together as examples/config-check/init.lua) loads
+/// through the real loader too. lua-language-server checks them against the stubs, but it lets
+/// through a string outside a `"a"|"b"` type (`cursor_style = "triangle"`); the loader doesn't
+/// (ticket 144). An example that changes or takes away what another adds (`roster.packages.remove`)
+/// runs after the examples that add (`ADDS`), as it would in a Config.
+#[test]
+fn every_example_of_the_roster_table_and_its_methods_loads() {
+    const ADDS: &[&str] = &[
+        "roster.themes.define",
+        "roster.packages.add",
+        "roster.folders.add",
+        "roster.folders.add_hosts",
+        "roster.keymap.set",
+    ];
+    let item = |path: &str| {
+        shape::api()
+            .find(|a| a.path == path)
+            .unwrap_or_else(|| panic!("no {path} in the shape"))
+    };
+    let mut failed = Vec::new();
+    for a in shape::api().chain(shape::methods()) {
+        let adds: String = ADDS
+            .iter()
+            .filter(|p| **p != a.path)
+            .map(|p| format!("{}\n", item(p).example))
+            .collect();
+        if let Err(alone) = load(a.example)
+            && let Err(after) = load(&format!("{adds}{}", a.example))
+        {
+            failed.push(format!(
+                "{}: {alone}\n  after the adds: {after}\n  {}",
+                a.path, a.example
+            ));
+        }
+    }
+    assert!(failed.is_empty(), "examples that don't load:\n{}", failed.join("\n"));
 }
 
 #[test]
@@ -261,6 +301,7 @@ fn the_roster_table_has_what_the_shape_declares() {
           end
         end
         if type(roster.o.reset) == "function" then names[#names + 1] = "roster.o.reset" end
+        if type(roster.o.get) == "function" then names[#names + 1] = "roster.o.get" end
         table.sort(names)
         return { theme = table.concat(names, ",") }
     "#;
