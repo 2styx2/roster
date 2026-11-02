@@ -1278,6 +1278,28 @@ roster.badges = {}
 ---@param text? string The badge: keep it short, a count (`"2"`) or a word (at most 40 characters); `nil` takes it off.
 function roster.badges.set(host, text) end
 
+--- Takes the Plugin's badge off a Host's row.
+--- Permission: none. Since: api 5.
+---@param host string A Host the Plugin put a badge on.
+function roster.badges.remove(host) end
+
+--- The text of the Plugin's badge on a Host.
+--- Permission: none. Since: api 5.
+---@param host string A Host's name.
+---@return string? # `nil` if it has none on that Host.
+function roster.badges.get(host) end
+
+--- Whether the Plugin has a badge on a Host.
+--- Permission: none. Since: api 5.
+---@param host string A Host's name.
+---@return boolean # `true` if it has.
+function roster.badges.has(host) end
+
+--- The Hosts the Plugin has a badge on.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.badges.list() end
+
 --- A floating window over the terminal. 
 roster.float = {}
 

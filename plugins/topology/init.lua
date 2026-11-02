@@ -47,25 +47,48 @@ end
 -- serve's words without the call's name in front.
 local function clean(why) return (tostring(why):gsub("^.-roster%.serve%.request [%w._]+: ", "")) end
 
--- The Hosts and groups, read again only when the app says they changed (inventory_changed): at
--- 2,000 Hosts each read is most of a call's time.
+-- The Hosts and groups, asked of roster serve without waiting (roster.inventory.request), so a big
+-- Inventory or a busy serve never holds up this Plugin or the app, and asked again only when the
+-- app says they changed (inventory_changed): at 2,000 Hosts each read is a large answer.
 local inventory_error -- why the Hosts couldn't be read, if they couldn't
 local hosts, groups -- nil until read
-local function read_inventory()
-  hosts, groups, inventory_error = {}, {}, nil
-  if not reads then return end
-  local ok, h = pcall(roster.inventory.hosts)
-  local ok2, g = pcall(roster.inventory.groups)
-  if ok and ok2 then
-    hosts, groups = h, g
-  else
-    inventory_error = tostring(ok and g or h)
+local reading = false -- a read is out
+local changed = 0 -- bumped by inventory_changed: an answer to an older read is read again
+local after_read = {} -- what waits for the Hosts
+
+-- Runs `done` once the Hosts and groups are read (at once if they are).
+local function with_inventory(done)
+  if not reads then hosts, groups = hosts or {}, groups or {} end
+  if hosts then return done() end
+  after_read[#after_read + 1] = done
+  if reading then return end
+  reading = true
+  local asked = changed
+  local function got(list, why)
+    reading = false
+    if asked ~= changed then -- roster.yml changed while this read was out: read it again
+      hosts = nil
+      local waiting = after_read
+      after_read = {}
+      for _, f in ipairs(waiting) do with_inventory(f) end
+      return
+    end
+    if type(list) == "table" then
+      hosts, groups, inventory_error = list.hosts or {}, list.groups or {}, nil
+    else
+      hosts, groups = {}, {}
+      inventory_error = (tostring(why or "roster serve said nothing"):gsub("^roster%.inventory%.request: ", ""))
+    end
+    local waiting = after_read
+    after_read = {}
+    for _, f in ipairs(waiting) do f() end
   end
+  local sent_ok, err = pcall(roster.inventory.request, got)
+  if not sent_ok then got(nil, err) end
 end
 
 local function restructure()
-  if not hosts then read_inventory() end
-  s = build.structure(hosts, groups, mesh)
+  s = build.structure(hosts or {}, groups or {}, mesh)
 end
 
 -- A reach section's button (api 4): the map, at its Host.
@@ -170,29 +193,38 @@ end
 -- at a time: a refresh while one waits asks again once it's answered.
 local asking, again = false, false
 local function refresh()
-  if not can_mesh then
-    mesh, mesh_error = nil, nil
-    restructure()
-    return draw()
-  end
   if asking then
     again = true
     return
   end
   asking = true
-  ask("mesh.status", { grouped = true }, function(r, why)
-    asking = false
-    if type(r) == "table" then
-      mesh, mesh_error = r, nil
-    else
-      mesh, mesh_error = nil, clean(why or "roster serve said nothing about the Mesh")
+  -- The Hosts first (when they changed), then the Mesh: one draw with both.
+  with_inventory(function()
+    if not can_mesh then
+      asking = false
+      mesh, mesh_error = nil, nil
+      restructure()
+      draw()
+      if again then
+        again = false
+        refresh()
+      end
+      return
     end
-    restructure()
-    draw()
-    if again then
-      again = false
-      refresh()
-    end
+    ask("mesh.status", { grouped = true }, function(r, why)
+      asking = false
+      if type(r) == "table" then
+        mesh, mesh_error = r, nil
+      else
+        mesh, mesh_error = nil, clean(why or "roster serve said nothing about the Mesh")
+      end
+      restructure()
+      draw()
+      if again then
+        again = false
+        refresh()
+      end
+    end)
   end)
 end
 
@@ -225,7 +257,7 @@ end
 local function cut_over()
   if cutting and cutting.timer then roster.cancel(cutting.timer) end
   cutting = nil
-  roster.progress.remove("topology-cut")
+  if roster.progress.has("topology-cut") then roster.progress.remove("topology-cut") end
   refresh()
 end
 
@@ -411,7 +443,7 @@ if reads then
     draw()
   end)
   roster.on("inventory_changed", function()
-    hosts = nil
+    hosts, changed = nil, changed + 1
     refresh()
   end)
 end

@@ -52,11 +52,6 @@
             "items": [],
             "title": "Recent alerts"
           }
-        },
-        {
-          "id": "alerts",
-          "kind": "status",
-          "op": "remove"
         }
       ]
     },
@@ -1139,11 +1134,6 @@
             "items": [],
             "title": "Recent alerts"
           }
-        },
-        {
-          "id": "alerts",
-          "kind": "status",
-          "op": "remove"
         }
       ]
     }

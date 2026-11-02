@@ -621,6 +621,17 @@ function roster.keymap.del(context, keys) end
 ---@return roster.config.KeyAction?
 function roster.keymap.get(context, keys) end
 
+--- Whether init.lua bound keys in a context.
+--- A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.
+---
+--- ```lua
+--- if not roster.keymap.has("leader", "p") then roster.keymap.set("leader", "p", "close") end
+--- ```
+---@param context "leader"|"list"|"list_vim"|"picker"|"picker_vim"|"cmdline"|"terminal"|"global" The keymap's context.
+---@param keys string The keys, as set took them.
+---@return boolean
+function roster.keymap.has(context, keys) end
+
 --- A copy of init.lua's bindings in a context: keys → action.
 --- An empty table when it binds none there.
 ---
@@ -672,6 +683,16 @@ function roster.themes.remove(id) end
 ---@param id string A Theme's id.
 ---@return roster.config.Theme?
 function roster.themes.get(id) end
+
+--- Whether there's a Theme by that id: a bundled one or init.lua's.
+--- As list names them; get says whether init.lua has a spec of its own for it.
+---
+--- ```lua
+--- if not roster.themes.has("paper") then roster.themes.define("paper", { appearance = "light" }) end
+--- ```
+---@param id string A Theme's id.
+---@return boolean
+function roster.themes.has(id) end
 
 --- Every Theme's id: the bundled ones, then init.lua's.
 ---
