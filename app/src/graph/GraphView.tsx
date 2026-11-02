@@ -216,7 +216,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
   const [mode, setMode] = useState<Mode>("graph");
   const [chosen, setChosen] = useState<string | null>(openAt ?? null);
   // Placing a node from the keyboard (`m`, T89): which, and where it was, for Esc.
-  const [moving, setMoving] = useState<{ id: string; from: { x: number; y: number } } | null>(null);
+  const [moving, setMoving] = useState<{ id: string; from: { x: number; y: number }; wasMine: boolean } | null>(null);
   const [moveSays, setMoveSays] = useState("");
   // Why a key did nothing (m on a collapsed cluster, T99): shown under the graph until the next key.
   const [notice, setNotice] = useState("");
@@ -357,9 +357,10 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (n) reveal(n.x, n.y);
   };
 
-  /** Puts the node being placed at (x, y): kept in the State, as a drag is. */
-  const place = (id: string, x: number, y: number) => {
-    places.move(id, x, y);
+  /** Puts the node being placed at (x, y): kept in the State, as a drag is (`mine`: placed by the
+   * user; false when it's put back where the layout had it). */
+  const place = (id: string, x: number, y: number, mine = true) => {
+    places.move(id, x, y, mine);
     setMoved((m) => m + 1);
     reveal(x, y);
   };
@@ -367,13 +368,13 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (current?.count !== undefined) return setNotice(`${current.label} is collapsed: o opens it, then m moves one of its nodes`);
     const n = currentNode && layout.nodes.get(currentNode.id);
     if (!currentNode || !n) return;
-    setMoving({ id: currentNode.id, from: { x: n.x, y: n.y } });
+    setMoving({ id: currentNode.id, from: { x: n.x, y: n.y }, wasMine: places.placedByUser(currentNode.id) });
     setMoveSays(`Moving ${currentNode.label}: h, j, k and l or the arrow keys move it, with Shift further; Enter keeps the place, Esc puts it back`);
   };
   const stopMoving = (keep: boolean) => {
     if (!moving) return;
     const name = ix.nodes.get(moving.id)?.label ?? moving.id;
-    if (!keep) place(moving.id, moving.from.x, moving.from.y);
+    if (!keep) place(moving.id, moving.from.x, moving.from.y, moving.wasMine);
     setMoving(null);
     setMoveSays(keep ? `${name} placed` : `${name} put back`);
   };

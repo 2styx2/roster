@@ -310,6 +310,13 @@ describe("a Plugin's graph", () => {
     // Out of moving, l goes to another node again.
     await user.keyboard("h");
     expect(foot()).not.toMatch(/^esx-01/);
+    // The State says the user placed esx-01 (it then stays put when its cluster moves, #237); a
+    // node moved and put back is still the layout's.
+    const moved = async () => (((await platform.loadState()) as Record<string, unknown>)[GRAPHS_KEY] as { moved?: string[] }[])[0]?.moved;
+    expect(await moved()).toEqual(["esx-01"]);
+    await user.keyboard("ml{Escape}");
+    await said(/put back/);
+    await waitFor(async () => expect(await moved()).toEqual(["esx-01"]));
   });
 
   it("an empty graph says so, and one node counts in the singular", async () => {

@@ -2,8 +2,10 @@
 // cluster's nodes sit on a sunflower spiral (the golden angle), in the order given, so the first
 // node is at its centre and each new one goes on the outside; the clusters are packed in rows, in
 // order, loose nodes first. Positions are kept (`saved`, in the State): a node or cluster placed
-// once stays where it is, and a new one takes a free place without moving the others; only a
-// cluster that got new nodes and grew into another moves, whole, to the nearest free place (T99). No force
+// once stays where it is, and a new one takes a free place without moving the others; a placed
+// cluster that overlaps another (it got new nodes, or an older version saved it so) moves, whole, to
+// the nearest free place (T99, #237). A node the user placed stays where they put it: it never moves
+// with its cluster, nor counts in the cluster's size when clusters are kept apart. No force
 // simulation: it would move everything when one node arrives, and cost seconds at 2,000 nodes.
 import type { GraphData } from "./model";
 
@@ -20,6 +22,8 @@ export interface Circle extends Point {
 export interface SavedLayout {
   nodes: Record<string, [number, number]>;
   clusters: Record<string, [number, number]>;
+  /** Nodes the user placed (a drag, or `m`): they stay where they are, whatever their cluster does. */
+  moved?: string[];
 }
 
 export interface Layout {
@@ -73,6 +77,8 @@ interface Group {
   fixed: boolean;
   /** Got members it didn't have before. */
   grew: boolean;
+  /** Members the user placed: where they are, not relative to the centre. */
+  pinned: string[];
 }
 
 const apart = (a: Circle, b: Circle) => Math.hypot(a.x - b.x, a.y - b.y) >= a.r + b.r + GAP / 2;
@@ -95,14 +101,18 @@ function nearestFree(from: Point, r: number, others: readonly Circle[]): Point |
 
 export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
   const clusterIds = new Set(g.clusters.map((c) => c.id));
-  const group = (id: string): Group => ({ id, members: [], r: 0, centre: { x: 0, y: 0 }, fixed: false, grew: false });
+  const group = (id: string): Group => ({ id, members: [], r: 0, centre: { x: 0, y: 0 }, fixed: false, grew: false, pinned: [] });
+  const user = new Set(saved?.moved ?? []);
   const groups: Group[] = [group(""), ...g.clusters.map((c) => group(c.id))];
   const byId = new Map(groups.map((x) => [x.id, x]));
   for (const n of g.nodes) byId.get(n.cluster !== undefined && clusterIds.has(n.cluster) ? n.cluster : "")?.members.push(n.id);
   const used = groups.filter((x) => x.id !== "" || x.members.length > 0);
 
   // Each group's members, relative to its centre: saved ones where they were, new ones on free slots.
+  // Those the user placed keep their place, not relative to anything, and a group's size (`r`, which
+  // keeps groups apart) leaves them out, so a node dragged far out neither moves its group nor others.
   const rel = new Map<string, Point>();
+  const pinnedAt = new Map<string, Point>();
   for (const grp of used) {
     const keep = saved?.clusters[grp.id];
     if (keep) {
@@ -113,6 +123,14 @@ export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
     const fresh: string[] = [];
     let far = 0;
     for (const id of grp.members) {
+      const mine = user.has(id) ? saved?.nodes[id] : undefined;
+      if (mine) {
+        grp.pinned.push(id);
+        pinnedAt.set(id, { x: mine[0], y: mine[1] });
+        // New nodes don't land on it while the group stays where it was.
+        if (grp.fixed) taken.add({ x: mine[0] - grp.centre.x, y: mine[1] - grp.centre.y });
+        continue;
+      }
       const p = grp.fixed ? saved?.nodes[id] : undefined;
       if (p) {
         const o = { x: p[0] - grp.centre.x, y: p[1] - grp.centre.y };
@@ -130,18 +148,19 @@ export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
       rel.set(id, s);
       far = Math.max(far, Math.hypot(s.x, s.y));
     }
-    grp.r = Math.max(radiusFor(grp.members.length), far + PAD);
+    grp.r = Math.max(radiusFor(grp.members.length - grp.pinned.length), far + PAD);
   }
 
-  // Groups placed before stay where they are, unless one got new nodes and grew into another
-  // (Topology fills its clusters as Hosts' details arrive): then it moves, whole, to the nearest free
-  // place. Only new nodes count: a cluster the user made bigger by dragging a node out of it stays,
-  // and so does everything near it, even overlapping.
+  // Groups placed before stay where they are, unless one overlaps another: then it moves, whole, to
+  // the nearest free place. One overlaps when it got new nodes and grew into its neighbours (Topology
+  // fills its clusters as Hosts' details arrive), or when an older version saved it so. Those that
+  // didn't grow settle first, so a grown one is the one that moves. Nodes the user placed don't count
+  // (they're not in `r`): a node dragged out over a neighbour moves nothing.
   const settled: Circle[] = [];
   const homeless: Group[] = [];
   for (const grp of [...used.filter((x) => x.fixed && !x.grew), ...used.filter((x) => x.grew)]) {
     const c = { ...grp.centre, r: grp.r };
-    if (grp.grew && !settled.every((o) => apart(c, o))) {
+    if (!settled.every((o) => apart(c, o))) {
       const p = nearestFree(grp.centre, grp.r, settled);
       if (!p) {
         grp.fixed = false;
@@ -186,16 +205,25 @@ export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
   const nodes = new Map<string, Point>();
   const clusters = new Map<string, Circle>();
   const out: SavedLayout = { nodes: {}, clusters: {} };
+  const moved: string[] = [];
   for (const grp of used) {
     const c = grp.centre;
     out.clusters[grp.id] = [c.x, c.y];
-    if (grp.id !== "") clusters.set(grp.id, { x: c.x, y: c.y, r: grp.r });
+    // The circle drawn still takes in what the user placed, as a drag always made it.
+    let r = grp.r;
     for (const id of grp.members) {
+      const pin = pinnedAt.get(id);
       const p = rel.get(id) ?? { x: 0, y: 0 };
-      const abs = { x: p.x + c.x, y: p.y + c.y };
+      const abs = pin ?? { x: p.x + c.x, y: p.y + c.y };
+      if (pin) {
+        moved.push(id);
+        r = Math.max(r, Math.hypot(pin.x - c.x, pin.y - c.y) + PAD);
+      }
       nodes.set(id, abs);
       out.nodes[id] = [abs.x, abs.y];
     }
+    if (grp.id !== "") clusters.set(grp.id, { x: c.x, y: c.y, r });
   }
+  if (moved.length) out.moved = moved;
   return { nodes, clusters, saved: out };
 }

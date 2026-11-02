@@ -121,10 +121,53 @@ describe("the graph's layout", () => {
     const dragged = g.nodes.find((n) => n.cluster === "g0")!.id;
     const saved = structuredClone(l.saved);
     saved.nodes[dragged] = [b.x, b.y];
+    saved.moved = [dragged];
     const after = layoutGraph(g, saved);
     for (const c of g.clusters) expect(after.clusters.get(c.id)).toMatchObject({ x: l.clusters.get(c.id)!.x, y: l.clusters.get(c.id)!.y });
     expect(at(after, dragged)).toEqual({ x: b.x, y: b.y });
     expect(after.clusters.get("g0")).toMatchObject({ x: a.x, y: a.y });
+  });
+
+  it("a node the user placed stays where they put it when its cluster grows and moves (#237)", () => {
+    const small = bigGraph(12, 6);
+    const first = layoutGraph(small);
+    // One of g2's nodes dragged well clear of every cluster, below them all.
+    const dragged = small.nodes.find((n) => n.cluster === "g2")!.id;
+    const bottom = Math.round(Math.max(...[...first.clusters.values()].map((c) => c.y + c.r)));
+    const saved = structuredClone(first.saved);
+    saved.nodes[dragged] = [first.clusters.get("g2")!.x, bottom + 2000];
+    saved.moved = [dragged];
+    const grown: GraphData = { ...small, nodes: [...small.nodes, ...Array.from({ length: 80 }, (_, i) => node(`late${i}`, "g2"))] };
+    const second = layoutGraph(grown, saved);
+    expect(second.clusters.get("g2")).not.toMatchObject({ x: first.clusters.get("g2")!.x, y: first.clusters.get("g2")!.y });
+    // g2 moved clear of the others (its circle still takes in the far node, as a drag makes it).
+    for (const n of grown.nodes.filter((n) => n.cluster === "g2" && n.id !== dragged)) {
+      const p = at(second, n.id)!;
+      for (const c of small.clusters.filter((c) => c.id !== "g2")) {
+        const o = second.clusters.get(c.id)!;
+        expect(Math.hypot(p.x - o.x, p.y - o.y)).toBeGreaterThan(o.r);
+      }
+    }
+    expect(at(second, dragged)).toEqual({ x: first.clusters.get("g2")!.x, y: bottom + 2000 });
+    // The flag is kept, for the next time.
+    expect(second.saved.moved).toEqual([dragged]);
+  });
+
+  it("a saved layout whose clusters overlap (saved by an older version) is healed on load (#237)", () => {
+    const g = bigGraph(120, 3);
+    const l = layoutGraph(g);
+    const a = l.clusters.get("g0")!;
+    // An older version let g1 grow over g0 and saved it so: no node of it was moved by the user.
+    const saved = structuredClone(l.saved);
+    const b = l.clusters.get("g1")!;
+    const dx = a.x + 10 - b.x;
+    saved.clusters["g1"] = [a.x + 10, b.y];
+    for (const n of g.nodes.filter((n) => n.cluster === "g1")) saved.nodes[n.id] = [saved.nodes[n.id]![0] + dx, saved.nodes[n.id]![1]];
+    const healed = layoutGraph(g, saved);
+    expect(overlaps(healed)).toEqual([]);
+    // The first one stays; the one on top of it moves, whole.
+    expect(healed.clusters.get("g0")).toMatchObject({ x: a.x, y: a.y });
+    expect(closest(healed)).toBeGreaterThan(SPACING * 0.75);
   });
 
   it("lays out 2,000 nodes in 40 clusters quickly", () => {
