@@ -213,18 +213,27 @@ describe("a Folders drop before the core has roster's own commands (issue #241)"
     }
   });
 
-  it("holds only so many calls at once; the rest are refused at once", async () => {
+  it("holds only so many calls at once; the next is refused at once, and the held ones each run once", async () => {
     vi.useFakeTimers();
     try {
-      const { manager, ran, drop, errors } = await down();
-      const held = Array.from({ length: BUILTINS_HELD_MAX }, () => call(manager, drop));
+      const { manager, ran, link, drop, errors } = await down();
+      const done = Array.from({ length: BUILTINS_HELD_MAX }, () => false);
+      const held = done.map((_, i) => call(manager, drop).then(() => void (done[i] = true)));
       await vi.advanceTimersByTimeAsync(100);
-      expect(errors()).toEqual([]);
-      await call(manager, drop);
-      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet")]);
-      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS);
-      await Promise.all(held);
+      // All held, none refused.
+      expect(done).toEqual(Array.from({ length: BUILTINS_HELD_MAX }, () => false));
       expect(ran).toEqual([]);
+      expect(errors()).toEqual([]);
+      // One more doesn't wait: it's refused there and then.
+      await call(manager, drop);
+      expect(ran).toEqual([]);
+      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet: the app hasn't told roster its own commands")]);
+      expect(done.every((d) => !d)).toBe(true);
+      // The list gets through: each held call runs, once.
+      link.up = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.all(held);
+      expect(ran).toEqual(Array.from({ length: BUILTINS_HELD_MAX }, () => `folder add ${h2} Lab`));
       manager.stop();
     } finally {
       vi.useRealTimers();
