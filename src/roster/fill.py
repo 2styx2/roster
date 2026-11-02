@@ -34,8 +34,8 @@ def login_for(h, prompt, sudo=None):
     user = h["ssh"]["user"]
     if m := SSH.fullmatch(line):
         who, where = m["user"], m["host"]
-        # Not localhost: through a tunnel or a port forward it may be any machine.
-        if who != user or where not in {h["name"], h["ip"]}:
+        # Not localhost: through a tunnel or a port forward it may be any machine. ssh prints the host lowercased.
+        if who != user or where.lower() not in {h["name"].lower(), h["ip"].lower()}:
             raise refused(h, f"the prompt asks for {who}@{where}'s password, not {user}@{h['name']}'s",
                           "ssh", "roster fills only the Session's own Host; type that password yourself")
         return "ssh", saved(h, h["ssh"]["auth"], "ssh")

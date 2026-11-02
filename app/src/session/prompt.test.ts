@@ -131,7 +131,9 @@ describe("sudoOnly", () => {
   );
 });
 
-// Ticket 120 (decision Q131): a nested ssh to an Inventory Host, read at the shell's `C` mark.
+// Ticket 120 (decision Q131): a nested ssh to an Inventory Host, read at the outer shell's `C`
+// mark. The outer shell runs roster's hook line, so its marks carry the Session's token; marks
+// without it are another shell's (the far Host's) or forged.
 const host = (name: string, ip: string, over: Partial<Host> = {}): Host => ({
   name,
   group: "lab",
@@ -149,25 +151,37 @@ const host = (name: string, ip: string, over: Partial<Host> = {}): Host => ({
 const INVENTORY = [host("esx-01", "10.0.0.11"), host("esx-02", "10.0.0.12"), host("keyed", "10.0.0.30", { enroll: true, ssh: { user: "ops", port: 22, auth: "key" } })];
 const TO_ESX_02 = { host: "esx-02", address: "10.0.0.12", port: 22, user: "ops" };
 const SSH_PROMPT = "ops@esx-02's password: ";
+const N = "0123456789abcdef01234567";
+/** The outer shell's own marks: roster's hook line, with this Session's token. */
+const oA = `\x1b]133;A;roster=${N}\x07`;
+const oB = `\x1b]133;B;roster=${N}\x07`;
+const oC = `\x1b]133;C;roster=${N}\x07`;
+const oD = (code: number) => `\x1b]133;D;${code};roster=${N}\x07`;
+/** The far Host's shell (its own integration, or roster's hook line there with no token of ours). */
+const inner = `${A}ops@esx-02:~$ ${B}`;
 
+/** A watch whose Session got roster's hook line before anything was typed, fed `chunks`; Enter
+ * is pressed before each chunk that starts the outer shell's C. */
 async function hopping(chunks: string[], fill = true): Promise<PromptWatch> {
-  const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill });
+  const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill }, N);
   watches.push(w);
+  w.hookSent();
   for (const c of chunks) {
-    // You press Enter on the line the outer shell's C will run (the Host can't type for you).
-    if (c.startsWith(`\r\n${C}`)) w.typed("\r");
+    if (c.startsWith(`\r\n${oC}`)) w.typed("\r");
     await w.write(c);
   }
   return w;
 }
-/** The marked shell on esx-01 runs `command`, which prints `after`. */
-const ran = (command: string, after = "") => [`${A}ops@esx-01:~$ ${B}`, command, `\r\n${C}${after}`];
+/** esx-01's own shell runs `command`, which prints `after`. */
+const ran = (command: string, after = "") => [`${oA}ops@esx-01:~$ ${oB}`, command, `\r\n${oC}${after}`];
+/** That command ends: esx-01's shell says so with its own D and prompt. */
+const back = (code = 0) => `\r\n${oD(code)}${oA}ops@esx-01:~$ ${oB}`;
 
 describe("PromptWatch: the Host a nested ssh is on (the breadcrumb)", () => {
-  it("shows the Host from the ssh's C until its D", async () => {
+  it("shows the Host from the ssh's C until the outer shell's own D", async () => {
     const w = await hopping(ran("ssh esx-02", "Welcome\r\n"));
     expect(w.hop()).toEqual({ to: "esx-02", known: true });
-    await w.write(`logout\r\n${D(0)}${A}ops@esx-01:~$ ${B}`);
+    await w.write(`logout${back()}`);
     expect(w.hop()).toBeNull();
   });
 
@@ -181,21 +195,20 @@ describe("PromptWatch: the Host a nested ssh is on (the breadcrumb)", () => {
     expect((await hopping([`ops@esx-01:~$ ssh esx-02\r\n`])).hop()).toBeNull();
   });
 
-  it("ends with the outer D when the shell on the Host marks its prompts too", async () => {
-    const inner = `${A}ops@esx-02:~$ ${B}`;
-    const w = await hopping([...ran("ssh esx-02", inner), `ls\r\n${C}a b\r\n${D(0)}${inner}`]);
+  it.each([
+    ["a D before its first prompt (roster's hook, kitty, VS Code)", `${D(0)}${inner}`],
+    ["a command ending there", `${inner}ls\r\n${C}a\r\n${D(0)}${inner}`],
+    ["`exec bash` there", `${inner}exec bash\r\n${C}${D(0)}${inner}`],
+    ["`exit` typed into a nested shell there", `${inner}bash\r\n${C}$ exit\r\n${D(0)}${inner}`],
+    ["a forged D with a farewell", `Connection to esx-02 closed.\r\n${D(255)}${A}ops@esx-01:~$ ${B}`],
+  ])("isn't ended by the far Host's marks: %s", async (_, there) => {
+    const w = await hopping([...ran("ssh esx-02", there)]);
     expect(w.hop()).toEqual({ to: "esx-02", known: true });
-    // `exit` there: its shell ends with no D of its own, so the next D is the outer shell's.
-    await w.write(`exit\r\n${C}logout\r\n${D(0)}${A}ops@esx-01:~$ ${B}`);
-    expect(w.hop()).toBeNull();
   });
 
-  it("ends when the shell there is left with Ctrl+D, or ssh says the connection closed", async () => {
-    const inner = `${A}ops@esx-02:~$ ${B}`;
-    const ctrlD = await hopping([...ran("ssh esx-02", inner), `\r\nlogout\r\n${D(0)}`]);
-    expect(ctrlD.hop()).toBeNull();
-    const dropped = await hopping([...ran("ssh esx-02", inner), `top\r\n${C}Connection to esx-02 closed by remote host.\r\n${D(255)}`]);
-    expect(dropped.hop()).toBeNull();
+  it("ends however the ssh ended, once esx-01's own shell says so", async () => {
+    const w = await hopping([...ran("ssh esx-02", `${inner}top\r\n${C}`), `client_loop: send disconnect: Connection reset by peer${back(255)}`]);
+    expect(w.hop()).toBeNull();
   });
 });
 
@@ -245,7 +258,7 @@ describe("PromptWatch: a nested ssh's password prompt", () => {
   });
 
   it("refuses once a shell has started on the Host", async () => {
-    const w = await hopping(ran("ssh esx-02", `${A}ops@esx-02:~$ ${B}`));
+    const w = await hopping(ran("ssh esx-02", inner));
     await w.write(`\r\n${SSH_PROMPT}`);
     expect(w.prompt()?.elsewhere).toMatch(/shell has started/);
   });
@@ -256,8 +269,9 @@ describe("PromptWatch: a nested ssh's password prompt", () => {
   });
 
   it("doesn't take a line the Host drew by itself, with no Enter from you, for an ssh you ran", async () => {
-    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true });
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, N);
     watches.push(w);
+    w.hookSent();
     for (const c of ran("ssh esx-02", SSH_PROMPT)) await w.write(c);
     expect(w.hop()).toEqual({ to: "esx-02", known: false });
     expect(w.prompt()?.elsewhere).toMatch(/press Enter/);
@@ -274,7 +288,6 @@ describe("PromptWatch: a nested ssh's password prompt", () => {
 });
 
 describe("PromptWatch: sudo on the Host a nested ssh is on", () => {
-  const inner = `${A}ops@esx-02:~$ ${B}`;
   const SUDO_THERE = (command: string, user = "ops") => `${command}\r\n${C}[sudo] password for ${user}: `;
 
   it("offers that Host's sudo at the first command its marked shell runs", async () => {
@@ -282,14 +295,21 @@ describe("PromptWatch: sudo on the Host a nested ssh is on", () => {
     expect(w.prompt()).toEqual({ line: "[sudo] password for ops:", elsewhere: null, marked: true, kind: "sudo", hop: TO_ESX_02 });
   });
 
-  it("refuses once a command there has ended (its marks can't be told from esx-01's after)", async () => {
+  it("never takes the far shell for esx-01's when it marks a D before its first prompt (the leak)", async () => {
+    // roster's own hook, kitty and VS Code print D before the first A: it's still esx-02's shell.
+    const w = await hopping([...ran("ssh esx-02", `${D(0)}${inner}`), SUDO_THERE("sudo -v")]);
+    expect(w.hop()).toEqual({ to: "esx-02", known: true });
+    expect(w.prompt()).toMatchObject({ kind: "sudo", hop: TO_ESX_02 });
+  });
+
+  it("refuses once a command there has ended", async () => {
     const w = await hopping([...ran("ssh esx-02", inner), `ls\r\n${C}a\r\n${D(0)}${inner}`, SUDO_THERE("sudo -v")]);
-    expect(w.prompt()?.elsewhere).toMatch(/a command ended/);
+    expect(w.prompt()).toMatchObject({ hop: null, elsewhere: expect.stringMatching(/a command ended/) });
   });
 
   it("refuses when the shell there doesn't mark its commands", async () => {
     const w = await hopping(ran("ssh esx-02", `ops@esx-02:~$ sudo -v\r\n${SUDO}`));
-    expect(w.prompt()?.elsewhere).toMatch(/doesn't mark/);
+    expect(w.prompt()).toMatchObject({ hop: null, elsewhere: expect.stringMatching(/doesn't mark/) });
   });
 
   it.each([
@@ -298,16 +318,49 @@ describe("PromptWatch: sudo on the Host a nested ssh is on", () => {
     ["ssh -J jump esx-02", "sudo -v", "ops", /`ssh -J jump esx-02` is running/],
   ])("refuses after %j, running %j there", async (command, there, user, why) => {
     const w = await hopping([...ran(command, inner), SUDO_THERE(there, user)]);
-    expect(w.prompt()?.elsewhere).toMatch(why);
+    expect(w.prompt()).toMatchObject({ hop: null, elsewhere: expect.stringMatching(why) });
   });
 
   it("offers nothing at the shell's own prompt there", async () => {
     expect((await hopping([...ran("ssh esx-02", inner), "sudo -v"])).prompt()).toBeNull();
   });
 
-  it("keeps esx-01's own sudo unsure for good once a marked shell ran inside the ssh (as before)", async () => {
-    const w = await hopping([...ran("ssh esx-02", inner), `exit\r\n${C}logout\r\n${D(0)}`, ...marked("sudo -v")]);
+  it("offers esx-01's own sudo again once its own D says the ssh ended", async () => {
+    const w = await hopping([...ran("ssh esx-02", `${inner}exit\r\n${C}logout`), back(), "sudo -v", `\r\n${oC}${SUDO}`]);
     expect(w.hop()).toBeNull();
-    expect(w.prompt()).toMatchObject({ kind: "sudo", hop: null, elsewhere: expect.stringMatching(/shell started inside/) });
+    expect(w.prompt()).toEqual({ line: "[sudo] password for ops:", elsewhere: null, marked: true, kind: "sudo", hop: null });
+  });
+
+  it("refuses esx-01's own sudo while a command it runs has started a marked shell", async () => {
+    const w = await hopping([...ran("sudo -i", `${A}root# ${B}`), `\r\n${SUDO}`]);
+    expect(w.prompt()?.elsewhere).toMatch(/shell started inside/);
+  });
+});
+
+describe("PromptWatch: a Session whose marks aren't roster's own (fail closed)", () => {
+  // The shell's own integration (no token): once something that may reach another machine runs,
+  // roster can't tell which shell any later mark is, so it fills nothing more in this Session.
+  it.each(["ssh esx-02", "mosh esx-02", "docker exec -it web sh", "kubectl exec -it pod -- sh", "eval $X", "a $(b)"])(
+    "refuses every fill once %j has run, esx-01's own sudo included, and says how to fix it",
+    async (command) => {
+      const w = await fed(...marked(command), `\r\nlogout\r\n${D(0)}`, ...marked("sudo -v"));
+      expect(w.prompt()?.elsewhere).toMatch(/aren't roster's own.*shell hooks/);
+      expect(w.hop()).toBeNull();
+    },
+  );
+
+  it("still offers sudo before anything that may reach another machine has run", async () => {
+    const w = await fed(...marked("ls"), `\r\n${D(0)}`, ...marked("sudo -v"));
+    expect(w.prompt()?.elsewhere).toBeNull();
+  });
+
+  it("doesn't take roster's token from a hook line sent after you typed for proof", async () => {
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, N);
+    watches.push(w);
+    w.typed("ssh esx-02\r");
+    w.hookSent(); // :integrate, typed after the ssh: it may have gone to esx-02's shell
+    for (const c of ran("ssh esx-02", SSH_PROMPT)) await w.write(c);
+    expect(w.hop()).toBeNull();
+    expect(w.prompt()?.elsewhere).toMatch(/aren't roster's own/);
   });
 });

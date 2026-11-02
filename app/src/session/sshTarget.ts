@@ -14,6 +14,7 @@
 // and the host it really uses (a config's HostName shows), and ssh's host-key check on that Host
 // is what ties the name to a box; roster never answers a host-key question.
 import { NO_PASSWORD_AUTHS, type Host } from "../backend/types";
+import { SHELL_SYNTAX, base, programAt, words as splitWords } from "./commandLine";
 
 export type SshCommand =
   | { ok: true; destination: string; user: string | null; port: number | null; hostName: string | null }
@@ -42,8 +43,6 @@ const HARMLESS_OPTIONS = new Set([
   "forwardx11", "requesttty", "loglevel", "identityfile", "identitiesonly", "preferredauthentications",
   "pubkeyauthentication", "passwordauthentication", "numberofpasswordprompts", "addkeystoagent",
 ]); // prettier-ignore
-const SHELL_SYNTAX = /[;&|`<>(){}]/;
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /** Flags that take a value, the refused ones included: to find the destination of a refused line. */
 const ANY_VALUE = new Set("BbcDEeIiLlmopRwJFSWPOQ");
@@ -69,10 +68,9 @@ function destinationOf(words: readonly string[], from: number): string | null {
 /** `command` read as ssh reads its arguments: null when it isn't an ssh at all (after any
  * `VAR=value`); refused, with why, when roster can't be sure where it connects. */
 export function parseSsh(command: string): SshCommand | null {
-  const words = command.trim().split(/\s+/).filter(Boolean);
-  let i = 0;
-  while (i < words.length && ASSIGNMENT.test(words[i] ?? "")) i++;
-  if ((words[i] ?? "").split("/").pop() !== "ssh") return null;
+  const words = splitWords(command);
+  let i = programAt(words);
+  if (base(words[i] ?? "") !== "ssh") return null;
   i++;
   const first = i;
   const refuse = (why: string, destination: string | null = null): SshCommand => ({
@@ -80,7 +78,7 @@ export function parseSsh(command: string): SshCommand | null {
     why,
     destination: destination ?? destinationOf(words, first),
   });
-  if (SHELL_SYNTAX.test(command) || command.includes("$(")) return refuse("it has shell syntax roster doesn't follow");
+  if (SHELL_SYNTAX.test(command)) return refuse("it has shell syntax roster doesn't follow");
   let destination: string | null = null;
   let user: string | null = null;
   const users = new Set<string>();

@@ -452,7 +452,10 @@ impl SessionManager {
         Ok(target.host)
     }
 
-    /// Whether the Session printed `text` (as bytes, escapes and all) in its last [`TAIL`] bytes.
+    /// Whether the Session printed `text` in its last [`TAIL`] bytes, read as text: escape
+    /// sequences taken out (a cursor-forward, as ConPTY draws spaces, counts as a space), and every
+    /// run of whitespace, carriage returns and line feeds included, as one space, on both sides. So
+    /// a prompt redrawn with colours or cursor moves is still the prompt the screen shows.
     pub fn printed(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
         let running = self.get(id)?;
         let tail = running.tail.lock().unwrap();
@@ -460,23 +463,27 @@ impl SessionManager {
         let mut seen = Vec::with_capacity(a.len() + b.len());
         seen.extend_from_slice(a);
         seen.extend_from_slice(b);
-        let needle = text.as_bytes();
-        Ok(!needle.is_empty() && seen.windows(needle.len()).any(|w| w == needle))
+        let hay = plain_text(&seen);
+        let needle = plain_text(text.as_bytes());
+        let needle = needle.trim_ascii();
+        Ok(!needle.is_empty() && hay.windows(needle.len()).any(|w| w == needle))
     }
 
     /// [`SessionManager::fill`] for a nested ssh's prompt (ticket 120, decision Q131), whose Host
     /// the frontend names: only when the Session printed `prompt` itself, in its last [`TAIL`]
     /// bytes, so the frontend's word alone can't send another Host's password to a Session that
     /// never asked ([`FillError::NotPrinted`], before anything is looked up).
+    /// Returns the name of `hop`, the Host whose password it typed.
     pub fn fill_printed<E>(
         &self,
         id: SessionId,
         wait: Duration,
         prompt: &str,
+        hop: &FillTarget,
         lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
     ) -> Result<String, FillError<E>> {
         match self.printed(id, prompt.trim()) {
-            Ok(true) => self.fill(id, wait, lookup),
+            Ok(true) => self.fill(id, wait, lookup).map(|_| hop.host.clone()),
             Ok(false) => Err(FillError::NotPrinted),
             Err(_) => Err(FillError::NotFound(id)),
         }
@@ -531,6 +538,53 @@ pub const PROBE: &[u8] = b"\x15x\x15";
 
 /// How much of a Session's latest output the core keeps, for [`SessionManager::printed`].
 pub const TAIL: usize = 4096;
+
+/// `bytes` as the text a screen shows, for [`SessionManager::printed`]: CSI, OSC and other escape
+/// sequences out (a cursor-forward, `ESC [ n C`, as one space), control characters as spaces, and
+/// each run of whitespace as one space. A sequence cut off at the start of the tail is dropped.
+fn plain_text(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let space = |out: &mut Vec<u8>| {
+        if out.last() != Some(&b' ') {
+            out.push(b' ');
+        }
+    };
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x1b {
+            match bytes.get(i + 1) {
+                Some(b'[') => {
+                    let mut j = i + 2;
+                    while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                        j += 1;
+                    }
+                    if bytes.get(j) == Some(&b'C') {
+                        space(&mut out);
+                    }
+                    i = j + 1;
+                }
+                Some(b']') | Some(b'P') | Some(b'_') | Some(b'^') => {
+                    let mut j = i + 2;
+                    while j < bytes.len() && bytes[j] != 0x07 && !(bytes[j] == 0x1b && bytes.get(j + 1) == Some(&b'\\'))
+                    {
+                        j += 1;
+                    }
+                    i = if bytes.get(j) == Some(&0x07) { j + 1 } else { j + 2 };
+                }
+                _ => i += 2,
+            }
+            continue;
+        }
+        if c <= b' ' || c == 0x7f {
+            space(&mut out);
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
 
 fn keep_tail(tail: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
     let mut t = tail.lock().unwrap();

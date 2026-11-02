@@ -1060,7 +1060,7 @@ async fn session_fill(
     blocking(move || {
         let filled = match &hop {
             None => sessions.fill(id, FILL_WAIT, |target| backend.fill_secret(target, &prompt, None)),
-            Some(hop) => sessions.fill_printed(id, FILL_WAIT, &prompt, |target| {
+            Some(hop) => sessions.fill_printed(id, FILL_WAIT, &prompt, hop, |target| {
                 backend.fill_secret(target, &prompt, Some(hop))
             }),
         };

@@ -46,37 +46,45 @@ const POSIX = /(?:[^\s$#%][$#%]|^\$) $/;
 // rather than replacing it.
 const BASH =
   "[ -n \"${BASH_VERSION-}\" ] && eval '" +
-  '__roster_d(){ local c=$?; printf "\\e]133;D;%s\\a\\e]7;file://%s%s\\a" "$c" "${HOSTNAME-}" "$PWD"; return $c; }; ' +
-  '__roster_w(){ case $PS1 in *"]133;A"*) ;; *) PS1="\\[\\e]133;A\\a\\]$PS1\\[\\e]133;B\\a\\]";; esac; }; ' +
+  '__roster_d(){ local c=$?; printf "\\e]133;D;%s;roster=@N@\\a\\e]7;file://%s%s\\a" "$c" "${HOSTNAME-}" "$PWD"; return $c; }; ' +
+  '__roster_w(){ case $PS1 in *"roster=@N@"*) ;; *) PS1="\\[\\e]133;A;roster=@N@\\a\\]$PS1\\[\\e]133;B;roster=@N@\\a\\]";; esac; }; ' +
   'case $BASH_VERSION in [1-4].*|5.0.*) PROMPT_COMMAND="__roster_d${PROMPT_COMMAND:+;$PROMPT_COMMAND};__roster_w";; ' +
   '*) PROMPT_COMMAND=(__roster_d ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"} __roster_w);; esac; ' +
-  'case $BASH_VERSION in [1-3].*|4.[0-3].*) ;; *) PS0="\\e]133;C\\a${PS0-}";; esac' +
+  'case $BASH_VERSION in [1-3].*|4.[0-3].*) ;; *) PS0="\\e]133;C;roster=@N@\\a${PS0-}";; esac' +
   "'";
 const ZSH =
   "[ -n \"${ZSH_VERSION-}\" ] && eval '" +
   "typeset -ga precmd_functions preexec_functions; " +
-  '__roster_d(){ printf "\\e]133;D;%s\\a\\e]7;file://%s%s\\a" $? "${HOST-}" "$PWD"; }; ' +
-  '__roster_c(){ printf "\\e]133;C\\a"; }; ' +
-  '__roster_w(){ [[ $PS1 == *"]133;A"* ]] || PS1="%{$(printf "\\e]133;A\\a")%}$PS1%{$(printf "\\e]133;B\\a")%}"; }; ' +
+  '__roster_d(){ printf "\\e]133;D;%s;roster=@N@\\a\\e]7;file://%s%s\\a" $? "${HOST-}" "$PWD"; }; ' +
+  '__roster_c(){ printf "\\e]133;C;roster=@N@\\a"; }; ' +
+  '__roster_w(){ [[ $PS1 == *"roster=@N@"* ]] || PS1="%{$(printf "\\e]133;A;roster=@N@\\a")%}$PS1%{$(printf "\\e]133;B;roster=@N@\\a")%}"; }; ' +
   "precmd_functions=(__roster_d $precmd_functions __roster_w); preexec_functions+=(__roster_c)" +
   "'";
 const FISH_HOOK =
-  "function __roster_a --on-event fish_prompt; printf '\\e]7;file://%s%s\\a\\e]133;A\\a' $hostname $PWD; end; " +
-  "functions -c fish_prompt __roster_p; function fish_prompt; __roster_p; printf '\\e]133;B\\a'; end; " +
-  "function __roster_c --on-event fish_preexec; printf '\\e]133;C\\a'; end; " +
-  "function __roster_d --on-event fish_postexec; printf '\\e]133;D;%s\\a' $status; end";
+  "function __roster_a --on-event fish_prompt; printf '\\e]7;file://%s%s\\a\\e]133;A;roster=@N@\\a' $hostname $PWD; end; " +
+  "functions -c fish_prompt __roster_p; function fish_prompt; __roster_p; printf '\\e]133;B;roster=@N@\\a'; end; " +
+  "function __roster_c --on-event fish_preexec; printf '\\e]133;C;roster=@N@\\a'; end; " +
+  "function __roster_d --on-event fish_postexec; printf '\\e]133;D;%s;roster=@N@\\a' $status; end";
 const PWSH_HOOK =
   "$Global:__roster_p=$function:prompt; function Global:prompt { $c=if($?){0}elseif($LASTEXITCODE){$LASTEXITCODE}else{1}; " +
   "$e=[char]27; $b=[char]7; $d='/'+($PWD.ProviderPath -replace '\\\\','/').TrimStart('/'); " +
-  '"$e]133;D;$c$b$e]7;file://$([Environment]::MachineName)$d$b$e]133;A$b$(& $Global:__roster_p)$e]133;B$b" }; ' +
+  '"$e]133;D;$c;roster=@N@$b$e]7;file://$([Environment]::MachineName)$d$b$e]133;A;roster=@N@$b$(& $Global:__roster_p)$e]133;B;roster=@N@$b" }; ' +
   "try { $h=(Get-PSReadLineOption).AddToHistoryHandler; Set-PSReadLineOption -AddToHistoryHandler ({ param($l) " +
-  '[Console]::Write("$([char]27)]133;C$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}';
+  '[Console]::Write("$([char]27)]133;C;roster=@N@$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}';
 
-/** The one line roster sends (without the Enter) to turn the marks on in a `kind` shell. */
-export function hookLine(kind: ShellKind): string {
-  if (kind === "fish") return ` ${FISH_HOOK}`;
-  if (kind === "pwsh") return ` ${PWSH_HOOK}`;
-  return ` ${BASH}; ${ZSH}`;
+/** The one line roster sends (without the Enter) to turn the marks on in a `kind` shell, every
+ * mark carrying the Session's token `nonce` (`roster=NONCE`, ticket 120, decision Q131): only a
+ * mark with it is the Session's own shell's, since no other machine ever sees it. */
+export function hookLine(kind: ShellKind, nonce: string): string {
+  if (!/^[0-9a-f]{8,64}$/.test(nonce)) throw new Error("a shell hook token is hex");
+  const line = kind === "fish" ? FISH_HOOK : kind === "pwsh" ? PWSH_HOOK : `${BASH}; ${ZSH}`;
+  return ` ${line.replaceAll("@N@", nonce)}`;
+}
+
+/** A new Session token for roster's marks: 96 random bits, in hex. */
+export function newNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** The shell whose idle prompt ends `out`, or null when it isn't a prompt roster knows. */
@@ -170,6 +178,10 @@ function indexOf(bytes: Uint8Array, needle: string, from = 0): number {
  * once, holds the echo back until the new prompt comes, and reads OSC 7. */
 export class ShellHooks {
   private readonly io: ShellHooksIo;
+  /** The Session's token in roster's marks. */
+  private readonly nonce: string;
+  /** The shell prints roster's own marks (with this Session's token). */
+  private ours = false;
   private tail = "";
   private armed = true;
   private typedYet = false;
@@ -187,8 +199,9 @@ export class ShellHooks {
   private holdTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly windowTimer: ReturnType<typeof setTimeout>;
 
-  constructor(io: ShellHooksIo) {
+  constructor(io: ShellHooksIo, nonce: string) {
     this.io = io;
+    this.nonce = nonce;
     this.windowTimer = setTimeout(() => {
       this.armed = false;
       clearTimeout(this.idleTimer);
@@ -207,6 +220,7 @@ export class ShellHooks {
     }
     this.tail = (this.tail + text).slice(-TAIL_MAX);
     if (this.tail.includes(MARK)) this.marked = true;
+    if (this.tail.includes(`roster=${this.nonce}`)) this.ours = true;
     if (this.armed && this.sentLine === null) {
       clearTimeout(this.idleTimer);
       this.idleTimer = setTimeout(() => this.idle(), IDLE_MS);
@@ -228,7 +242,9 @@ export class ShellHooks {
   integrate(): Promise<IntegrateResult> {
     if (this.outcome) return Promise.resolve(this.outcome);
     if (this.sentLine !== null) return new Promise((resolve) => this.waiting.push(resolve));
-    if (this.marked) return Promise.resolve("marked");
+    // Marks that aren't roster's (the shell's own integration) don't stop it: the user asked, and
+    // roster's marks, with the token, go round them.
+    if (this.ours) return Promise.resolve("marked");
     const kind = promptShell(this.tail);
     if (!kind) return Promise.resolve("no-prompt");
     if (!this.send(kind)) return Promise.resolve("not-open");
@@ -250,7 +266,7 @@ export class ShellHooks {
   }
 
   private send(kind: ShellKind): boolean {
-    const line = hookLine(kind);
+    const line = hookLine(kind, this.nonce);
     if (!this.io.write(line + "\r")) return false;
     this.sentLine = line;
     this.sentAt = lastLine(this.tail);
@@ -363,4 +379,50 @@ export class ShellHooks {
 export function shellHooksOn(init: boolean | null, host: boolean | null | undefined): boolean {
   if (init === false) return false;
   return host ?? init ?? false;
+}
+
+/** Takes a Session's token out of its output before Plugins get it (ticket 120, decision Q131):
+ * the echoed hook line and every mark carry it, and only the Session's own shell may know it. Each
+ * occurrence becomes dashes of the same length; output ending in `roster=` and part of the token
+ * waits for the next read (or `flush`), so a token cut across reads is still hidden. */
+export class TokenMask {
+  private readonly token: Uint8Array;
+  private readonly lead: Uint8Array;
+  private carry = new Uint8Array(0);
+
+  constructor(nonce: string) {
+    this.token = encoder.encode(nonce);
+    this.lead = encoder.encode(`roster=${nonce}`);
+  }
+
+  mask(data: Uint8Array): Uint8Array {
+    const buf = this.carry.length ? joined([this.carry, data]) : data.slice();
+    const t = this.token;
+    for (let i = 0; i + t.length <= buf.length; i++) {
+      let j = 0;
+      while (j < t.length && buf[i + j] === t[j]) j++;
+      if (j === t.length) buf.fill(45, i, i + t.length);
+    }
+    const hold = this.partial(buf);
+    this.carry = buf.slice(buf.length - hold);
+    return buf.subarray(0, buf.length - hold);
+  }
+
+  /** What's held back, as it is: the Session ended. */
+  flush(): Uint8Array {
+    const rest = this.carry;
+    this.carry = new Uint8Array(0);
+    return rest;
+  }
+
+  /** How many bytes at the end of `buf` are `roster=` and the start of the token. */
+  private partial(buf: Uint8Array): number {
+    const prefix = "roster=".length;
+    for (let n = Math.min(this.lead.length - 1, buf.length); n >= prefix; n--) {
+      let j = 0;
+      while (j < n && buf[buf.length - n + j] === this.lead[j]) j++;
+      if (j === n) return n;
+    }
+    return 0;
+  }
 }

@@ -18,8 +18,8 @@
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
 import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
-import { HopCrumb, hopWords } from "../session/HopCrumb";
-import type { Breadcrumb } from "../session/prompt";
+import { hopWords, type Breadcrumb } from "../session/breadcrumb";
+import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
 import { formatCount } from "../ui/format";
 import { HintsShown } from "../ui/hints";

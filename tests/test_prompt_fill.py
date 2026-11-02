@@ -50,6 +50,12 @@ def test_a_nested_ssh_to_the_hosts_own_name_or_address_and_user_takes_the_ssh_lo
     assert fill("esx", prompt) == ("ssh", "bw:Network gear")
 
 
+def test_a_nested_ssh_prompt_names_the_host_as_ssh_prints_it_lowercased():
+    """ssh lowercases the host it prints; the Host's name in roster.yml may have capitals (ticket 120)."""
+    cfg = load_config_text(INVENTORY.replace("esx: {", "ESX-Lab: {"), "/tmp/roster.yml")
+    assert login_for(cfg["hosts"]["ESX-Lab"], "ops@esx-lab's password: ") == ("ssh", "bw:Network gear")
+
+
 def test_a_nested_ssh_takes_the_ssh_login_even_with_a_sudo_override():
     assert fill("box", "ops@10.0.0.5's password: ") == ("ssh", "bw:Network gear")
 

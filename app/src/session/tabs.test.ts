@@ -1025,18 +1025,16 @@ describe("filling a password prompt (ticket 119)", () => {
 });
 
 describe("a nested ssh (ticket 120)", () => {
-  const A = "\x1b]133;A\x07";
-  const B = "\x1b]133;B\x07";
-  const C = "\x1b]133;C\x07";
-  const D = "\x1b]133;D;0\x07";
   const to = hosts.hosts.find((h) => h.reviewed && h.ssh.auth.startsWith("bw:"))!;
 
-  /** A tab on another Host whose marked shell the test drives, and whose fill the test answers. */
+  /** A tab on another Host whose shell took roster's hook line (`:integrate` before anything was
+   * typed), so its marks carry the attempt's token; the test drives the shell and answers the fill. */
   async function onHost() {
     const backend = fakeBackend({ ...unlocked, hosts });
     let ev: SessionEvents | null = null;
     const asked: unknown[] = [];
     const typed: string[] = [];
+    let token = "";
     backend.openSession = async (_host, _size, events) => {
       ev = events;
       const done = async () => {};
@@ -1044,42 +1042,60 @@ describe("a nested ssh (ticket 120)", () => {
       return { id: 1, auth: "key", write, resize: done, close: done, fill: async (...args: unknown[]) => (asked.push(args), { host: to.name }) };
     };
     const tabs = new Tabs(backend);
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }) });
+    tabs.setFillPrompts({
+      userOf: () => "admin",
+      watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
+    });
     const id = tabs.open(reviewed.find((n) => n !== to.name) ?? "");
     await settle();
     const print = async (s: string) => {
       (ev as SessionEvents | null)?.output(new TextEncoder().encode(s));
       await settle();
     };
-    await print(`${A}$ ${B}`);
+    await print("user@web-01:~$ ");
+    void tabs.integrate(id);
+    const own = (m: string) => `\x1b]133;${m};roster=${token}\x07`;
+    await print(`${own("D;0")}${own("A")}$ ${own("B")}`);
     // You type the ssh line and press Enter; the Session echoes it and its shell marks C.
     tabs.write(id, "\r");
-    return { tabs, id, asked, print, typed };
+    return { tabs, id, asked, print, typed, own, token: () => token };
   }
 
-  it("puts the Host the ssh went to on the tab until that ssh ends", async () => {
-    const { tabs, print } = await onHost();
-    await print(`ssh ${to.name}\r\n${C}`);
+  it("puts the Host the ssh went to on the tab until the outer shell's own D", async () => {
+    const { tabs, print, own } = await onHost();
+    await print(`ssh ${to.name}\r\n${own("C")}`);
     expect(tabs.snapshot().tabs[0]?.hop).toEqual({ to: to.name, known: true });
-    await print(`logout\r\n${D}${A}$ ${B}`);
+    // The far shell's own D (roster's hook and others print one first) ends nothing.
+    await print("\x1b]133;D;0\x07\x1b]133;A\x07far$ \x1b]133;B\x07");
+    expect(tabs.snapshot().tabs[0]?.hop).toEqual({ to: to.name, known: true });
+    await print(`logout\r\n${own("D;0")}${own("A")}$ ${own("B")}`);
     expect(tabs.snapshot().tabs[0]?.hop).toBeNull();
   });
 
   it("sends the Host it went to with the prompt, and nothing of it comes back but the name", async () => {
-    const { tabs, id, asked, print } = await onHost();
-    await print(`ssh ${to.name}\r\n${C}admin@${to.name}'s password: `);
+    const { tabs, id, asked, print, own } = await onHost();
+    await print(`ssh ${to.name}\r\n${own("C")}admin@${to.name}'s password: `);
     expect(tabs.snapshot().tabs[0]?.prompt).toMatchObject({ kind: "ssh", elsewhere: null });
     await expect(tabs.fill(id)).resolves.toBe(to.name);
     expect(asked).toEqual([[`admin@${to.name}'s password:`, { host: to.name, address: to.ip, port: 22, user: "admin" }]]);
   });
 
   it("takes keys typed into the ssh as a reason not to fill its prompt", async () => {
-    const { tabs, id, print } = await onHost();
-    await print(`ssh ${to.name}\r\n${C}Are you sure you want to continue connecting (yes/no)? `);
+    const { tabs, id, print, own } = await onHost();
+    await print(`ssh ${to.name}\r\n${own("C")}Are you sure you want to continue connecting (yes/no)? `);
     tabs.write(id, "yes\r");
     await print(`yes\r\nadmin@${to.name}'s password: `);
     expect(tabs.snapshot().tabs[0]?.prompt?.elsewhere).toMatch(/typed/);
     await expect(tabs.fill(id)).rejects.toThrow(/typed/);
+  });
+
+  it("never hands Plugins the attempt's token", async () => {
+    const { tabs, print, own, token } = await onHost();
+    const seen: string[] = [];
+    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    await print(`ls\r\n${own("C")}a\r\n${own("D;0")}${own("A")}$ ${own("B")}`);
+    expect(seen.join("")).toContain("a\r\n");
+    expect(seen.join("")).not.toContain(token());
   });
 });
 
@@ -1097,23 +1113,26 @@ describe("shell hooks (ticket 121, #210)", () => {
     const id = tabs.open(reviewed[0]!);
     tabs.attach(id, (d) => seen.push(d));
     await vi.advanceTimersByTimeAsync(0);
-    return { tabs, id, s: session(reviewed[0]!), typed: () => typed.get(reviewed[0]!) ?? "", screen: () => text(seen) };
+    const sent = () => typed.get(reviewed[0]!) ?? "";
+    /** The hook line as sent, with this attempt's token. */
+    const line = () => hookLine("posix", /roster=([0-9a-f]{24})/.exec(sent())?.[1] ?? "000000000000000000000000");
+    return { tabs, id, s: session(reviewed[0]!), typed: sent, line, screen: () => text(seen) };
   }
 
   afterEach(() => vi.useRealTimers());
 
   it("sends the hook line to a Host it's on for, and draws the new prompt in place of the old", async () => {
-    const { s, typed, screen, tabs } = await opened((t) => t.host === reviewed[0]);
+    const { s, typed, line, screen, tabs } = await opened((t) => t.host === reviewed[0]);
     s.print(PROMPT);
     await vi.advanceTimersByTimeAsync(IDLE_MS);
-    expect(typed()).toBe(hookLine("posix") + "\r");
-    s.print(hookLine("posix") + "\r\n\x1b]7;file://web-01/srv/app\x07" + A + "user@web-01:~$ " + B);
+    expect(typed()).toBe(line() + "\r");
+    s.print(line() + "\r\n\x1b]7;file://web-01/srv/app\x07" + A + "user@web-01:~$ " + B);
     expect(screen()).toBe(PROMPT + "\r\x1b[J" + A + "user@web-01:~$ " + B);
     expect(tabs.snapshot().tabs[0]!.cwd).toBe("/srv/app");
   });
 
   it("never sends the line at a password prompt, and a fill isn't the user typing (ticket 119)", async () => {
-    const { s, typed, tabs, id } = await opened(() => true);
+    const { s, typed, line, tabs, id } = await opened(() => true);
     s.print("Last login: today\r\n[sudo] password for user: ");
     await vi.advanceTimersByTimeAsync(IDLE_MS * 3);
     expect(typed()).toBe("");
@@ -1121,7 +1140,7 @@ describe("shell hooks (ticket 121, #210)", () => {
     // The core types the fill (never through Tabs.write), so the hooks still send at the shell's prompt.
     s.print("\r\nuser@web-01:~$ ");
     await vi.advanceTimersByTimeAsync(IDLE_MS);
-    expect(typed()).toBe(hookLine("posix") + "\r");
+    expect(typed()).toBe(line() + "\r");
   });
 
   it("sends nothing to a Host it's off for, or once the user has typed", async () => {
@@ -1138,12 +1157,12 @@ describe("shell hooks (ticket 121, #210)", () => {
   });
 
   it("sends it on :integrate, answers once the marked prompt is back, and says why when it can't", async () => {
-    const { s, typed, tabs, id } = await opened(() => false);
+    const { s, typed, line, tabs, id } = await opened(() => false);
     expect(await tabs.integrate(id)).toBe("no-prompt");
     s.print(PROMPT);
     const on = tabs.integrate(id);
-    expect(typed()).toBe(hookLine("posix") + "\r");
-    s.print(hookLine("posix") + "\r\n" + A + "user@web-01:~$ " + B);
+    expect(typed()).toBe(line() + "\r");
+    s.print(line() + "\r\n" + A + "user@web-01:~$ " + B);
     expect(await on).toBe("on");
     s.exit(0);
     expect(await tabs.integrate(id)).toBe("not-open");

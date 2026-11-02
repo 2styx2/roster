@@ -895,9 +895,15 @@ function fakeSession(
   };
   // Inside a pretend `ssh NAME`: NAME's own prompt (marked with `innerMarks`), until `exit`.
   let nested: string | null = null;
-  const marksHere = () => (nested === null ? extra.marks : extra.innerMarks);
-  const marked = (p: string) => (marksHere() ? `\x1b]133;A\x07${p}\x1b]133;B\x07` : p);
+  // roster's hook line, once the shell has run it (ticket 120): its marks carry this token.
+  let token: string | null = null;
+  const marksHere = () => (nested === null ? extra.marks || token !== null : extra.innerMarks);
+  const mark = (m: string) => `\x1b]133;${m}${nested === null && token !== null ? `;roster=${token}` : ""}\x07`;
+  const marked = (p: string) => (marksHere() ? `${mark("A")}${p}${mark("B")}` : p);
   const promptOf = () => marked(`${nested ?? host}$ `);
+  // A marked shell's first prompt comes after a D with no command before it, as roster's own hook,
+  // kitty's and VS Code's integrations print (the review's leak, ticket 120).
+  const firstPrompt = () => (marksHere() ? `\x1b]133;D;0\x07${promptOf()}` : promptOf());
   const prompt = `${host}$ `;
   // Like ssh, nothing is printed until the Host answers (the login takes `loginMs`).
   let loggedIn = false;
@@ -930,25 +936,34 @@ function fakeSession(
               password = false;
               nested = sshLogin.name;
               sshLogin = null;
-              out(encode(`\r\nConnected to ${nested}\r\n${promptOf()}`));
+              out(encode(`\r\nConnected to ${nested}\r\n${firstPrompt()}`));
               atPrompt = true;
             } else out(encode(`\r\nPermission denied, please try again.\r\n${sshLogin.asks}`));
           } else {
             password = false;
             out(encode(line === FAKE_LOGIN_PASSWORD ? "\r\n[sudo ok]\r\n" : "\r\nSorry, try again.\r\n"));
             line = "";
-            if (marksHere()) out(encode("\x1b]133;D;0\x07"));
+            if (marksHere()) out(encode(mark("D;0")));
             out(encode(promptOf()));
             atPrompt = true;
           }
           continue;
         }
         if (ch === "\r") {
-          if (marksHere()) out(encode("\x1b]133;C\x07"));
+          const hook = nested === null ? /roster=([0-9a-f]{24})/.exec(line) : null;
+          if (hook) {
+            // roster's hook line: from now on this shell marks its prompts with the token.
+            token = hook[1] ?? null;
+            line = "";
+            out(encode(`\r\n${mark("D;0")}${promptOf()}`));
+            atPrompt = true;
+            continue;
+          }
+          if (marksHere()) out(encode(mark("C")));
           out(encode("\r\n"));
           const ssh = nested === null ? /^ssh\s+(?:(\S+)@)?(\S+)$/.exec(line.trim()) : null;
           const reached = ssh ? (extra.reach?.(ssh[2] ?? "") ?? null) : null;
-          if (ssh && (extra.marks || reached)) {
+          if (ssh && (marksHere() || reached)) {
             line = "";
             if (reached?.password) {
               // ssh asks for the Host's password, as OpenSSH does: user@host as typed, lowercased.
@@ -959,13 +974,13 @@ function fakeSession(
               continue;
             }
             nested = reached?.name ?? ssh[2] ?? "";
-            out(encode(`Connected to ${nested}\r\n${promptOf()}`));
+            out(encode(`Connected to ${nested}\r\n${firstPrompt()}`));
             continue;
           }
           if (line.trim() === "exit" && nested !== null) {
             nested = null;
             line = "";
-            out(encode(`logout\r\n${extra.marks ? "\x1b]133;D;0\x07" : ""}${promptOf()}`));
+            out(encode(`logout\r\n${extra.marks || token !== null ? mark("D;0") : ""}${promptOf()}`));
             continue;
           }
           if (line.trim() === "exit") return end(0, false);
@@ -979,7 +994,7 @@ function fakeSession(
             continue;
           }
           line = "";
-          if (marksHere()) out(encode("\x1b]133;D;0\x07"));
+          if (marksHere()) out(encode(mark("D;0")));
           out(encode(promptOf()));
           atPrompt = true;
         } else {
@@ -1697,7 +1712,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         const line = prompt.trim();
         const sudoFor = /^\[sudo\] password for ([^\s:]+):$/.exec(line)?.[1];
         const sshFor = /^([^\s@']+)@([^\s@']+)'s password:$/.exec(line);
-        const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name, now.ip].includes(sshFor[2] ?? ""));
+        const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name.toLowerCase(), now.ip.toLowerCase()].includes((sshFor[2] ?? "").toLowerCase()));
         if (!own) {
           throw new BackendCallError(`won't fill on ${now.name}: '${line}' isn't a prompt roster fills for ${now.ssh.user}@${now.name}`, FillRefusal.refused, {
             fix: "type that password yourself",

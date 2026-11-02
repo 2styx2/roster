@@ -22,8 +22,8 @@ import { formatQuickTarget, type QuickTarget } from "../quick/target";
 // Types only: the watch itself (xterm) comes from setFillPrompts, so this module loads without a
 // terminal (the docs site's generator reads tabs.ts's helpers in Node).
 import type { Breadcrumb, FillHop, PasswordPrompt, PromptWatch } from "./prompt";
-import { ShellHooks, hasTyping, type IntegrateResult } from "./shellHooks";
-import { hopWords } from "./HopCrumb";
+import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult } from "./shellHooks";
+import { hopWords } from "./breadcrumb";
 
 export type TabStatus =
   | { state: "connecting" }
@@ -79,8 +79,9 @@ export type { Breadcrumb, FillHop, PasswordPrompt };
 export interface FillPrompts {
   /** The Host's login user, which sudo's prompt must name; null: don't watch it. */
   userOf(host: string): string | null;
-  /** A watch for a Session of `size` whose login user is `user` (prompt.ts's PromptWatch). */
-  watch(size: TermSize, user: string): PromptWatch;
+  /** A watch for a Session of `size` whose login user is `user`, whose shell hooks carry the token
+   * `nonce` (prompt.ts's PromptWatch). */
+  watch(size: TermSize, user: string, nonce: string): PromptWatch;
 }
 
 /** What a tab's tooltip says about its Session: how it logged in, the Host a nested ssh took it to
@@ -498,12 +499,15 @@ export class Tabs {
     entry.decoder = new TextDecoder();
     entry.saveScan = "";
     entry.watch?.dispose();
+    // The attempt's token in roster's own shell marks (ticket 120): only its own shell ever knows it.
+    const nonce = newNonce();
+    const mask = new TokenMask(nonce);
     const fill = entry.tab.quick ? null : this.fillPrompts;
     const user = fill?.userOf(entry.tab.host) ?? null;
-    const watch = (entry.watch = fill && user !== null ? fill.watch(entry.size, user) : null);
+    const watch = (entry.watch = fill && user !== null ? fill.watch(entry.size, user, nonce) : null);
     if (entry.tab.prompt !== null || entry.tab.hop) entry.tab = { ...entry.tab, prompt: null, hop: null };
     entry.hooks?.stop();
-    const hooks = (entry.hooks = this.hooksFor(entry, current));
+    const hooks = (entry.hooks = this.hooksFor(entry, current, nonce));
     open(entry.size, {
         output: (data) => {
           if (!current()) return;
@@ -515,13 +519,17 @@ export class Tabs {
           const shown = hooks.output(data, text);
           if (shown) this.output(entry, shown);
           // A Quick Connect Session isn't on a Host of the Inventory: no Host to name.
-          this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, data, entry.sentSize);
+          // Plugins never see the attempt's token (the echoed hook line, the marks).
+          const tapped = this.outputTap ? mask.mask(data) : data;
+          if (tapped.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, tapped, entry.sentSize);
           if (!entry.tab.shell && data.length > 0) entry.tab = { ...entry.tab, shell: true };
           if (entry.tab !== before) this.changed();
         },
         exit: (exit) => {
           if (!current()) return;
           entry.session = null;
+          const rest = mask.flush();
+          if (rest.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, rest, entry.sentSize);
           watch?.dispose();
           if (entry.watch === watch) entry.watch = null;
           if (entry.tab.prompt !== null || entry.tab.hop) entry.tab = { ...entry.tab, prompt: null, hop: null };
@@ -584,12 +592,14 @@ export class Tabs {
   }
 
   /** The attempt's shell hooks: they write only to its own Session, show only while it's current. */
-  private hooksFor(entry: Entry, current: () => boolean): ShellHooks {
+  private hooksFor(entry: Entry, current: () => boolean, nonce: string): ShellHooks {
     return new ShellHooks({
       write: (line) => {
         // Never while a password prompt is up or being filled (ticket 119): the hook line would
         // be taken for the password. The hooks try again at their next idle prompt.
         if (!current() || !entry.session || entry.tab.prompt !== null || entry.filling) return false;
+        // Its token proves the Session's own shell only if the line can only have gone there.
+        entry.watch?.hookSent();
         entry.watch?.typed(line);
         void entry.session.write(line).catch(() => {});
         return true;
@@ -603,7 +613,7 @@ export class Tabs {
         this.changed();
       },
       enabled: () => this.shellHooksOn(entry.tab),
-    });
+    }, nonce);
   }
 
   /** The tab's Session couldn't start: roster refused, or a step before it failed. */

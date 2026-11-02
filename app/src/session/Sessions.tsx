@@ -459,7 +459,7 @@ function FillOffer({
         {!prompt.marked && (
           <>
             {" "}
-            <span className="muted">(roster can't tell whether you're still on {host})</span>
+            <span className="muted">(roster can't tell whether you're still on {host}: without the shell's marks a nested shell can't be ruled out)</span>
           </>
         )}
       </span>

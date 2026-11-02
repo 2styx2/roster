@@ -4,12 +4,7 @@
 // --dur-draw as the connect edge does (taste.md: motion confirms), the name fades in; both go at
 // once when the ssh ends. Reduced motion keeps the fade and drops the draw (the tokens do it).
 // No accent: the Session's own row already carries the live bar.
-import type { Breadcrumb } from "./prompt";
-
-/** "now on esx-02 through ssh": what the breadcrumb says, for an accessible name or a tooltip. */
-export function hopWords(hop: Breadcrumb): string {
-  return `now on ${hop.to} through ssh${hop.known ? "" : " (not a Host roster can resolve)"}`;
-}
+import { hopWords, type Breadcrumb } from "./breadcrumb";
 
 /** The breadcrumb; `spoken` adds its words for assistive tech where the container's name comes
  * from its text (a tab), and leaves them out where the name is given (a Sidebar row). */

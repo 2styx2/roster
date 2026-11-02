@@ -923,7 +923,7 @@ function Workspace({
         canFill
           ? {
               userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
-              watch: (size, user) => new PromptWatch(size, user, { hosts: () => inventoryNow.current, fill: canNestedFill }),
+              watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: () => inventoryNow.current, fill: canNestedFill }, nonce),
             }
           : null,
       ),
