@@ -25,6 +25,7 @@ src/roster/
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
   claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
+  boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
                     requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),

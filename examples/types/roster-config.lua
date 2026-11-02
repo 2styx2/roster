@@ -226,7 +226,7 @@
 ---@field dir? string The repo's folder that holds the Plugin, when it isn't the top. Takes a folder inside the repo, relative, / between folders, no ...
 ---@field config? table Settings the Package reads as roster.plugin.config. Takes a table (never a function).
 
---- An option's dotted name, for roster.set.
+--- An option's dotted name, for roster.o.get, roster.o.reset and roster.set: one of these, or a name under a map's key ("views.files.width", "themes.paper.label").
 ---@alias roster.config.OptionName
 ---| "theme"
 ---| "dark_theme"
@@ -358,6 +358,7 @@
 ---| "editor"
 ---| "backend"
 ---| "roster_command"
+---| string
 
 --- What roster.o gives for an object (a table of named options): its table, with these methods.
 ---@class roster.o.Object

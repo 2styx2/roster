@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from . import jsonout
+from . import boxsync, jsonout
 from .common import die, oneline, say, tcp_ok
 from .config import find_config, load_config
 
@@ -394,6 +394,7 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
         say(f"backup       {backup}")
     tmp.replace(path)
     say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
+    boxsync.after_edit(path)                      # T153: this Box follows, as after serve's changes
     say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")
     say("             set the login user, move hosts into the right groups if you like,")
     say(f"             then set `reviewed: true` and run:  roster setup --only {group}")
