@@ -99,10 +99,10 @@ Every file of a Plugin's code (the manifest, `init.lua` and each module it `requ
 A Package is a Plugin from a git repo, named in `init.lua` and pinned to a commit, the way lazy.nvim does it for Neovim ([config.md](app/config.md#packages)):
 
 ```lua
-packages = {
+roster.packages.add(
   { "someone/recent-alerts", tag = "v1.2.0", config = { patterns = { "ERROR", "panic" } } },
-  "https://git.example.com/team/roster-extras.git",
-},
+  "https://git.example.com/team/roster-extras.git"
+)
 ```
 
 - **Nothing installs that isn't named there.** At start, and on `:source` after you change the list, the app clones each new one into its own data folder (next to the State, never the config folder) and asks first, with the same prompt as `:plugins install`: who wrote it, its git URL and commit as the unverified source, and every permission. Cancel removes the clone and installs nothing, and the app remembers it: it doesn't ask again while `init.lua` names that Package from the same repo and folder. `:packages` shows it as cancelled, and **`:packages install NAME`** asks again. Another repo or folder under the same name is other code, so it asks; taking the line out of `init.lua` forgets the cancel.
@@ -120,9 +120,7 @@ The app runs your system's `git` (it must be installed) with no shell, no creden
 Optional Plugins the roster project writes live in roster's repo, one folder each under [`plugins/`](../plugins/README.md), and install as Packages like any other (decisions Q81 and Q94): the same prompt, the same permissions, pinned in `roster.lock`. None is bundled in the app. What sets them apart is that they're reviewed like the core, tested in CI with it, and security-reviewed against [a checklist](../plugins/README.md#security-review). To install one, name it with `dir`:
 
 ```lua
-packages = {
-  { "https://github.com/2styx2/roster", dir = "plugins/NAME" },
-},
+roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/NAME" })
 ```
 
 | Plugin | What it does | Its line in `init.lua` |
@@ -404,7 +402,7 @@ if ($Host.Name -eq 'ConsoleHost') {
 Instead of an rc file, roster can send a Session's shell **one line** after login that turns the marks on, and OSC 7 (the folder the shell is in), in **that shell process only**. Nothing is written on the Host: no rc file, no file at all, so the hook is gone when the shell exits and the next Session starts clean. It's **off** unless you turn it on:
 
 - per Host, in `roster.yml`: `shell_hooks: true` on the Host, its group or `defaults` (`shell_hooks: false` keeps a Host out, say a group of network gear);
-- for every Session in `init.lua`: `terminal = { shell_hooks = true }` (Quick Connect too; a Host's `shell_hooks: false` still wins), or `false` to never send it, whatever a Host says ([`terminal.shell_hooks`](app/config.md#fonts-and-the-terminal));
+- for every Session in `init.lua`: `roster.o.terminal.shell_hooks = true` (Quick Connect too; a Host's `shell_hooks: false` still wins), or `false` to never send it, whatever a Host says ([`terminal.shell_hooks`](app/config.md#fonts-and-the-terminal));
 - for the Session on screen, now: `:integrate`, whatever those say. It answers once it knows: the marks are on; the line went but no marked prompt came back (the shell or its prompt framework doesn't take it); or why it sent nothing (no empty prompt roster knows, the shell marks its prompts already).
 
 **When it's sent.** Once, when the login has gone quiet (0.4 s with nothing printed) at an empty prompt roster knows, within 20 seconds of the Session starting: a POSIX shell's `user@host:~$ `, `host# ` or `host% ` (the `$`, `#` or `%` right after the prompt's text, or a `$ ` on its own line), fish's `user@host ~> `, or PowerShell's `PS …> `. **Nothing is sent** if you've typed anything (keys that only move the cursor, and the terminal's own answers such as cursor, mode and mouse reports, don't count; the prompt is checked again anyway), if the shell already writes marks (`:integrate` still sends it then, and roster's marks go round the shell's own), or if the login shows anything else: a forced command, a menu (`Choice # `), a password prompt, a network appliance's CLI (`switch01#`, `user@router> `, `[admin@appliance] > `), ESXi's busybox shell (`[root@esx-02:~] `), tcsh's own prompt (`host:~ % `).

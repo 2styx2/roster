@@ -19,6 +19,12 @@ Before writing or changing a Plugin (the first-party ones of iteration 8 too), r
 
 Then `docs/plugins.md` for the narrative (manifest, permissions, limits) and `examples/plugins/recent-alerts` as the worked example. A Plugin needing something the API lacks is a change to `crates/roster-core/src/plugin/api.rs` and the runtime together (CONTRIBUTING.md, "Docs").
 
+## Changing roster's Lua surface
+
+Before adding to `init.lua`'s `roster` table or the Plugin API, read CONTRIBUTING.md, "Lua API". The owner's rule: every object or collection exposed in Lua (`init.lua`'s `roster.*` and the Plugin API) ships complete: the functions needed to use it fully (add / get / list / has / update / remove or del, plus natural helpers such as a list's `:append` / `:prepend` / `:remove` and `reset`) and the read-only fields it needs. Bad names error at the caller's line (no silent no-ops); reads return copies; and every function, field and object has a generated `:help` entry (summary, type or signature, what it expects, example) with the same text in the editor types, in the same pull request as the code. Actions that touch the network or disk stay commands, not config functions.
+
+`init.lua` is written the way Neovim's is (`roster.o.terminal.size = "16pt"`, `roster.keymap.set`, modules under `lua/`); docs, examples and tests show that style. The returned table still loads, for older Configs (decision Q132).
+
 ## File structure
 
 ```text

@@ -148,9 +148,7 @@ Appliances that run Dropbear rather than OpenSSH ignore a whole `authorized_keys
 The roster app has no Mesh controls of its own (roster's core stays small): they're the Mesh controls Plugin, which roster's repo ships in [`plugins/mesh`](../plugins/mesh/README.md). Name it in `init.lua`, then `:source`, and allow it when the app asks:
 
 ```lua
-packages = {
-  { "https://github.com/2styx2/roster", dir = "plugins/mesh" },
-},
+roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/mesh" })
 ```
 
 Then `:mesh` shows every Host in the Mesh with what it can reach, the status bar says **Mesh out of date** after a Publish that changed it, `:mesh plan` shows what an apply would change and `a` applies it after a question, and `:mesh cut HOST` cuts a Host once you've typed its name, with a warning for each Host that was down. Each Host's details (`:info HOST`) get a Mesh section with its reach. It runs everything through `roster serve` as background jobs (API 17) and follows them by the `job_progress` event (API 20), so it never polls; one connection at a time as `roster mesh` does, and asks before anything that changes a Host. `:help mesh-controls` once it's installed.

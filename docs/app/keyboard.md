@@ -1,13 +1,13 @@
 # Keyboard
 
-Keyboard first, with vim keys and full mouse support. Every binding lives in one keymap. Your `init.lua` ([docs/app/config.md](config.md)) can change the Leader, rebind any key to an action (`keys = { leader = { t = "next" } }`), and turn vim bindings off.
+Keyboard first, with vim keys and full mouse support. Every binding lives in one keymap. Your `init.lua` ([docs/app/config.md](config.md)) can change the Leader, rebind any key to an action (`roster.keymap.set("leader", "t", "next")`), and turn vim bindings off.
 
 ## Two modes
 
 - **Terminal mode:** every key goes to the shell, including Esc, Ctrl+C and Ctrl+W. Only the **Leader** (Ctrl+Space by default), the keymap's `global` keys (F11) and its `terminal` keys (copy, paste, find, zoom; below) are caught. Ctrl+C is caught only while text is selected, as in Windows Terminal.
 - **App mode:** after the Leader, or whenever the Picker, a panel or the command line has focus. Vim bindings apply. Esc goes back to the terminal you came from.
 
-The same keys on Windows and Linux: Ctrl, never a Windows-only key. While an input method (IBus or Fcitx on Linux, the Windows IME) is composing, its keys are its own: the Enter that commits a word doesn't also choose a Picker row or run a binding. Some input methods take Ctrl+Space to switch languages (Fcitx does by default) and the app never sees it; set another Leader in `init.lua` (`leader = "ctrl+b"`, [config.md](config.md)) or change the input method's switch key.
+The same keys on Windows and Linux: Ctrl, never a Windows-only key. While an input method (IBus or Fcitx on Linux, the Windows IME) is composing, its keys are its own: the Enter that commits a word doesn't also choose a Picker row or run a binding. Some input methods take Ctrl+Space to switch languages (Fcitx does by default) and the app never sees it; set another Leader in `init.lua` (`roster.o.leader = "ctrl+b"`, [config.md](config.md)) or change the input method's switch key.
 
 ## How keys become actions
 
@@ -107,7 +107,7 @@ Every panel and view (ticket 95): `:help`, Host details, Edit, Add, Pending chan
 
 Esc in a panel made full window docks it first. Esc in a text field stays the field's: in a form made full window (Edit, Add, Save to vault) it closes the form, as it does docked.
 
-`␣ z`, `␣ <` and `␣ >` act on the panel that has focus, else the one you used last. What you choose is kept in the State per panel, so help opens full window next time if you left it so. `init.lua` sets the defaults (`panel.width`, and `views = { topology = { place = "panel", width = 60 } }`, [config.md](config.md)); your choice wins over them until `:panel reset`. A Plugin's `place` is only where its view first opens.
+`␣ z`, `␣ <` and `␣ >` act on the panel that has focus, else the one you used last. What you choose is kept in the State per panel, so help opens full window next time if you left it so. `init.lua` sets the defaults (`roster.o.panel.width = 40`, `roster.o.views.topology = { place = "panel", width = 60 }`, [config.md](config.md)); your choice wins over them until `:panel reset`. A Plugin's `place` is only where its view first opens.
 
 Limits keep the terminal usable: a docked panel is never narrower than 280 px, and the terminal keeps about 50 columns (400 px) however many panels are docked beside it: they share one limit, each narrowing in proportion to its width, and a panel widens (`␣ >`, a drag) only into room the terminal and the other panels can spare (#176). When their 280 px each don't fit beside a 400 px terminal, and in Focus and in a window under 1,040 px, panels float over the terminal instead, side by side from their edge in the order they'd dock in, never on top of each other; together they may cover all of it but a 48 px sliver, and floats too wide for that are narrowed in proportion. While you drag, the panel moves over the terminal; the terminal fits its new size once, when you let go (a resized Session prints its screen again, ticket 73). Nothing animates: a key or a click is its own confirmation.
 
@@ -125,7 +125,7 @@ In a terminal, as in Windows Terminal. These are the keymap's `terminal` table (
 | Select with the mouse | (`terminal.copy_on_select`) | Copies the selection, unless `copy_on_select = false` |
 | Right-click | (`terminal.right_click_paste`) | Copies the selection and clears it, or pastes when nothing is selected |
 
-Ctrl+V is the shell's (`quoted-insert`, Vim's block selection). To paste with it anyway: `keys = { terminal = { ["Ctrl+v"] = "terminal.paste" } }`. A paste goes to the shell as xterm.js sends it: each line end as Enter, and the whole paste between bracketed-paste marks when the shell asked for them (bash, zsh, fish and Vim do), so several lines land in the prompt instead of running one by one. What's copied or pasted goes only between the clipboard and the terminal, never into a log or the State ([security.md](security.md)).
+Ctrl+V is the shell's (`quoted-insert`, Vim's block selection). To paste with it anyway: `roster.keymap.set("terminal", "Ctrl+v", "terminal.paste")`. A paste goes to the shell as xterm.js sends it: each line end as Enter, and the whole paste between bracketed-paste marks when the shell asked for them (bash, zsh, fish and Vim do), so several lines land in the prompt instead of running one by one. What's copied or pasted goes only between the clipboard and the terminal, never into a log or the State ([security.md](security.md)).
 
 In every text field (the lock screen, the command line, the Picker and finders, the bindings filter, the add and edit forms) the usual editing keys belong to the field: Ctrl+C / Ctrl+X / Ctrl+V, Ctrl+Insert / Shift+Insert, Ctrl+A, Ctrl+Z / Ctrl+Shift+Z. The keymap never takes them there, and right-click shows the WebView's own Cut / Copy / Paste menu. The release build reads and writes the clipboard through Tauri's clipboard plugin (`clipboard-manager:allow-read-text` and `allow-write-text` in `app/src-tauri/capabilities/default.json`), since WebView2 won't let the page read it.
 
@@ -156,7 +156,7 @@ Standard and Focus (decision Q36) differ only in their layout; every command wor
 |---|---|---|
 | `<leader> e` (`sidebar`) | Show or hide the Sidebar | Show or hide the Sidebar, over the terminal (issue #54) |
 | `<leader> t` (`finder tree`) | The tree finder: Folders and the Inventory, with paths | The same |
-| `<leader> s` (`statusbar`) | Show or hide the status bar | Show or hide the session bar (`[box] 1:esxi-02* 2:orion3-`, off by default; option `focus.sessionbar = "top" \| "bottom" \| false`) |
+| `<leader> s` (`statusbar`) | Show or hide the status bar | Show or hide the session bar (`[box] 1:esxi-02* 2:orion3-`, off by default; option `modes.focus.sessionbar`: `"top"`, `"bottom"` or `false`) |
 | `<leader> ?`, `<leader> K`, `<leader> :`, `:check HOST`, `:check` (help) | Panels beside the terminal | The same panels, over the terminal |
 
 A hint shows for about 2 s on entering Focus. The session bar's numbers are what `<leader> N` takes; `*` is the Session on screen and `-` the one before it, which the Session finder selects first.

@@ -29,7 +29,7 @@ const PREVIEW: ImportPreview = {
   diff: [
     { kind: "same", text: "-- mine" },
     { kind: "add", text: "-- >>> Windows Terminal >>> made by :config import-terminal" },
-    { kind: "add", text: 'roster.set("terminal.size", "16pt")' },
+    { kind: "add", text: 'roster.o.terminal.size = "16pt"' },
     { kind: "add", text: "-- <<< Windows Terminal <<<" },
     { kind: "same", text: "return {" },
     { kind: "same", text: "  terminal = { size = 14 }," },
@@ -130,7 +130,7 @@ describe(":config import-terminal", () => {
     await command(user, "config import-terminal");
     const dialog = await screen.findByRole("dialog", { name: "Import from Windows Terminal" });
     expect(dialog).toHaveTextContent("Font: Iosevka Nerd Font, 16 pt (21.3 px)");
-    expect(within(dialog).getByText('roster.set("terminal.size", "16pt")').closest("[data-kind]")).toHaveAttribute("data-kind", "add");
+    expect(within(dialog).getByText('roster.o.terminal.size = "16pt"').closest("[data-kind]")).toHaveAttribute("data-kind", "add");
     expect(dialog).toHaveTextContent("init.lua's own terminal.size wins over the import");
     expect(platform.imported()).toEqual([]);
     await user.keyboard("{Escape}");

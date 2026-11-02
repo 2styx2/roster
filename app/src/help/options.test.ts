@@ -1,40 +1,26 @@
-// `:help options`: the init.lua options, read from docs/app/config.md's tables (the one copy of
-// what each does), with the value in effect and where it came from.
+// `:help options`: each init.lua option's value in effect and where it came from.
 import { describe, expect, it } from "vitest";
 import { configWith, defaultConfig } from "../config/fixture";
-import { plain } from "./doc";
-import { configMarkdown } from "./guides";
-import { leafPaths, luaValue, optionDocs, optionSource, optionValue } from "./options";
+import { reference } from "../config/reference";
+import { leafPaths, luaValue, optionSource, optionValue } from "./options";
 
-const docs = optionDocs(configMarkdown);
-const doc = (name: string) => docs.find((d) => d.name === name);
+// The frontend's Config and the core's shape table can't drift apart: every value the core sends
+// has its entry in the reference, and every option the reference lists is one the Config has.
+describe("the options, from the core's shape table", () => {
+  const names = reference.sections
+    .flatMap((s) => s.entries)
+    .filter((e) => e.what === "option")
+    .map((e) => e.tag);
 
-describe("the options, from config.md", () => {
-  it("reads each table row as an option with its default and what it does", () => {
-    expect(plain(doc("terminal.size")?.default ?? [])).toBe('"13pt"');
-    expect(plain(doc("terminal.size")?.about ?? [])).toMatch(/^13 pt is 17\.33 px/);
-    expect(doc("terminal.size")?.section).toBe("Fonts and the terminal");
-  });
-
-  it("splits a row naming two options, and their two defaults", () => {
-    expect(plain(doc("dark_theme")?.default ?? [])).toBe('"roster-dark"');
-    expect(plain(doc("light_theme")?.default ?? [])).toBe('"roster-light"');
-  });
-
-  it("reads a mode's pieces for each mode, with that mode's default", () => {
-    expect(plain(doc("modes.standard.titlebar")?.default ?? [])).toBe("true");
-    expect(plain(doc("modes.focus.titlebar")?.default ?? [])).toBe("false");
-  });
-
-  // The docs and the core's schema can't drift apart: every value the core sends is documented,
-  // and every documented option is one the core has.
-  it("documents every option in the core's schema, and nothing it doesn't have", () => {
-    const names = docs.map((d) => d.name);
+  it("documents every value of the frontend's Config, and nothing it doesn't have", () => {
+    expect(names).toContain("terminal.size");
     const covered = (path: string) => names.some((n) => path === n || path.startsWith(`${n}.`));
-    const undocumented = leafPaths(defaultConfig).filter((p) => !covered(p));
-    expect(undocumented).toEqual([]);
-    const unknown = names.filter((n) => optionValue(defaultConfig, n) === undefined);
-    expect(unknown).toEqual([]);
+    expect(leafPaths(defaultConfig).filter((p) => !covered(p))).toEqual([]);
+    // The key bindings reach the frontend as one list (`keys`), not by context (`keys.leader`).
+    const outside = names.filter(
+      (n) => !n.includes("[]") && !n.startsWith("keys.") && optionValue(defaultConfig, n) === undefined,
+    );
+    expect(outside).toEqual([]);
   });
 });
 

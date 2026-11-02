@@ -1,6 +1,6 @@
 //! `:config import-terminal` (ticket 33): Windows Terminal's settings.json (JSON with comments)
 //! → its default profile's font, size, weight, cell height, cursor and colour scheme → a block of
-//! `roster.set` calls and a Theme in init.lua, shown as a diff before anything is written.
+//! `roster.o` lines and a Theme in init.lua, shown as a diff before anything is written.
 
 mod common;
 
@@ -91,7 +91,14 @@ fn the_block_loads_as_the_profile_and_defines_a_theme_for_its_scheme() {
     assert!(c.terminal.bold_is_bright);
     // It defines the Theme but doesn't pin it (decision Q69): the app chooses it as `:theme` does.
     assert_eq!(c.theme, "auto");
-    assert!(!block.contains("roster.set(\"theme\""), "{block}");
+    assert!(!block.contains("roster.o.theme"), "{block}");
+    // Written as init.lua's documented style: one `roster.o` line per option.
+    assert!(block.contains("\nroster.o.terminal.size = \"12.5pt\"\n"), "{block}");
+    assert!(
+        block.contains("\nroster.o.terminal.cursor_style = \"bar\"\n"),
+        "{block}"
+    );
+    assert!(!block.contains("roster.set("), "{block}");
     let theme = &c.themes["wt-my-night"];
     assert_eq!(theme.label.as_deref(), Some("My Night (Windows Terminal)"));
     assert_eq!(theme.appearance, Some(config::Appearance::Dark));
@@ -119,7 +126,7 @@ fn intense_text_maps_to_the_bold_weight_and_bright_colours() {
 
 #[test]
 fn the_block_goes_before_the_return_replaces_an_earlier_import_or_goes_at_the_end() {
-    let block = format!("{}\nroster.set(\"terminal.size\", \"16pt\")\n{}\n", wt::BEGIN, wt::END);
+    let block = format!("{}\nroster.o.terminal.size = \"16pt\"\n{}\n", wt::BEGIN, wt::END);
     let with_return = "-- mine\nlocal x = 1\n\nreturn {\n  vim = false,\n}\n";
     let once = wt::insert_block(with_return, &block);
     assert_eq!(
@@ -148,7 +155,7 @@ fn the_preview_diffs_the_file_names_what_init_lua_overrides_and_writes_only_unch
     assert!(
         pre.diff
             .iter()
-            .any(|l| l.kind == DiffKind::Add && l.text.contains("roster.set(\"terminal.size\", \"16pt\")"))
+            .any(|l| l.kind == DiffKind::Add && l.text == "roster.o.terminal.size = \"16pt\"")
     );
     assert!(pre.diff.iter().all(|l| l.kind != DiffKind::Remove));
     assert!(
@@ -177,6 +184,29 @@ fn the_preview_diffs_the_file_names_what_init_lua_overrides_and_writes_only_unch
     assert!(!c.vim);
 }
 
+/// In an init.lua written with `roster.o` (no returned table) the block goes at the end, so it
+/// wins over the file's own earlier lines, and importing again replaces it in place.
+#[test]
+fn in_a_neovim_style_init_lua_the_block_goes_last_and_importing_again_replaces_it() {
+    let settings = fixture("defaults-font.json");
+    let dir = temp_dir("neovim-style");
+    let init = "roster.o.vim = false\nroster.o.terminal.size = 14\n";
+    std::fs::write(dir.join("init.lua"), init).unwrap();
+    let pre = wt::preview(&dir, &settings, "settings.json", "2026-10-30").unwrap();
+    assert!(pre.overridden.is_empty(), "{:?}", pre.overridden);
+    assert_eq!(pre.error, None);
+    wt::apply(&dir, &settings, "settings.json", &pre.applied()).unwrap();
+    let once = std::fs::read_to_string(dir.join("init.lua")).unwrap();
+    assert!(once.starts_with(init), "{once}");
+    let c = config::load(&dir).unwrap();
+    assert_eq!(c.terminal.size, FontSize::Pt(16.0));
+    assert!(!c.vim);
+    let pre = wt::preview(&dir, &settings, "settings.json", "2026-10-31").unwrap();
+    wt::apply(&dir, &settings, "settings.json", &pre.applied()).unwrap();
+    let twice = std::fs::read_to_string(dir.join("init.lua")).unwrap();
+    assert_eq!(twice, once.replace("2026-10-30", "2026-10-31"));
+}
+
 #[test]
 fn with_no_init_lua_the_preview_starts_from_the_commented_out_example() {
     let dir = temp_dir("none");
@@ -199,7 +229,7 @@ fn with_no_init_lua_the_preview_starts_from_the_commented_out_example() {
 fn the_preview_names_the_theme_the_app_chooses_and_keeps_an_init_lua_theme_as_it_is() {
     let dir = temp_dir("theme");
     let settings = fixture("defaults-font.json");
-    let init = "roster.set(\"theme\", \"nord\")\n";
+    let init = "roster.o.theme = \"nord\"\n";
     std::fs::write(dir.join("init.lua"), init).unwrap();
     let pre = wt::preview(&dir, &settings, "settings.json", "2026-10-30").unwrap();
     assert_eq!(pre.theme.as_deref(), Some("wt-campbell"));
@@ -278,7 +308,7 @@ fn apply_replaces_init_lua_atomically_keeping_its_mode_and_line_endings() {
     let pre = wt::preview(&dir, &settings, "settings.json", "2026-10-30").unwrap();
     wt::apply(&dir, &settings, "settings.json", &pre.applied()).unwrap();
     let written = std::fs::read_to_string(dir.join("init.lua")).unwrap();
-    assert!(written.starts_with("-- mine\r\n") && written.contains("roster.set("));
+    assert!(written.starts_with("-- mine\r\n") && written.contains("roster.o.terminal."));
     assert!(
         !written.replace("\r\n", "").contains('\n'),
         "every line ends in CRLF, like the file did: {written:?}"

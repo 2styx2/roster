@@ -14,11 +14,11 @@ picks, changes or defines one.
 - Like Neovim's `:colorscheme`, a choice always applies. It's kept in the State (key `theme`),
   not the Config. A stored Theme that's no longer registered is ignored.
 - **A choice made over `init.lua`'s `theme` stays until that value changes** (Q69). If `init.lua`
-  names a Theme (`theme = "nord"`), the State also keeps that value (key `themeOver`) with the
+  names a Theme (`roster.o.theme = "nord"`), the State also keeps that value (key `themeOver`) with the
   choice. The choice wins at start-up and on `:source` while `init.lua` still names that same
   Theme; edit `init.lua`'s `theme` to something else and the file wins again. The finder's note
   (`init.lua:12 sets "nord"; Enter overrides it until that line changes`) and a one-time message
-  say which line sets it; delete that line to unpin it. `theme = "auto"` (the default) leaves the choice to the picker; without a
+  say which line sets it; delete that line to unpin it. `roster.o.theme = "auto"` (the default) leaves the choice to the picker; without a
   choice it follows the OS with `dark_theme` / `light_theme`.
 - `:config import-terminal` defines a Theme for Windows Terminal's colour scheme in `init.lua`
   but doesn't set `theme`: it chooses the Theme as `:theme` does, so `:theme` can change it.
@@ -47,7 +47,7 @@ neutral standard ANSI palette (Q37); the others bring their own from the same so
 `light1`, muted `light4` (lifted, see below), faint `dark4`. Accent `bright_yellow` `#fabd2f` with
 `dark0` text, tone `bright_aqua` `#8ec07c`; warn `bright_orange`, error `bright_red` (lifted), danger `neutral_red`. Terminal: `bg0`/`fg1`, ANSI as
 `gruvbox.vim` sets `g:terminal_color_0..15`. For the orange accent, in `init.lua`:
-`colors = { accent = "#fe8019", accent_ink = "#fe8019" }` (`#282828` on it is 5.84:1).
+`roster.o.colors = { accent = "#fe8019", accent_ink = "#fe8019" }` (`#282828` on it is 5.84:1).
 
 **Nord**: bg, chrome and Sidebar `nord0` (as Nord's own editor ports do, with hairlines between),
 panel and hover `nord1`, raised `nord2`, raised line `nord3`, text `nord6`, accent frost `nord8`
@@ -150,7 +150,7 @@ language, and the docs lint fails one that doesn't.
   functions (`blue`) are `cyan`. Nord's keys are `nord4`, since its `nord7` is too near the frost
   accent, and its yellow is `warn`.
 - **A Theme of your own** (`themes.ID.colors`) or `colors` can set any of them
-  (`colors = { syntax_keyword = "#c792ea" }`); one it leaves out comes from its base.
+  (`roster.o.colors.syntax_keyword = "#c792ea"`); one it leaves out comes from its base.
 - **On paper** the PDF uses Roster light's hues taken darker, each at least 7:1 on white, with
   keywords and commands bold and comments the lightest grey, so a greyscale printer keeps them apart
   (`PRINT_SYNTAX`, `app/src/docs-site/site.tsx`).

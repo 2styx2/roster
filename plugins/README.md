@@ -21,9 +21,7 @@ A first-party Plugin is an ordinary Plugin (decisions Q81 and Q94). It uses the 
 Name it in `init.lua` as a Package from roster's repo, with `dir` set to its folder:
 
 ```lua
-packages = {
-  { "https://github.com/2styx2/roster", dir = "plugins/NAME" },
-},
+roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/NAME" })
 ```
 
 Then `:source`. The app clones the repo into its own data folder, loads the Plugin from `plugins/NAME` and asks first, showing the repo, the folder, the commit and every permission. Allow pins the commit in `roster.lock`, next to `init.lua`, like any Package. The Package is named after the folder (`NAME`); `name = "…"` names it something else.

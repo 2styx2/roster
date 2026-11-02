@@ -1,9 +1,9 @@
 //! `:config import-terminal` (ticket 33, decision Q55): make the roster app's terminal look like
 //! the user's Windows Terminal. Reads Windows Terminal's `settings.json` (JSON with comments and
 //! trailing commas), takes its default profile over `profiles.defaults`, and writes the font,
-//! size, weight, cell height and cursor as `roster.set` calls, plus a Theme for the colour scheme,
-//! into init.lua between two marker lines. The Theme is defined there but not pinned with
-//! `roster.set("theme", …)`: the app chooses it as `:theme` does, so `:theme` can still change it
+//! size, weight, cell height and cursor as `roster.o` lines (init.lua's documented style), plus a
+//! Theme for the colour scheme, into init.lua between two marker lines. The Theme is defined there
+//! but not pinned with `roster.o.theme = …`: the app chooses it as `:theme` does, so `:theme` can still change it
 //! (decision Q69). Nothing is written without a preview: [`preview`] gives
 //! the diff, and [`apply`] writes only if init.lua is still what the preview read.
 //!
@@ -417,13 +417,13 @@ fn settings(p: &Profile) -> Vec<(String, String)> {
     out
 }
 
-/// The block for init.lua: a Theme for the profile's colour scheme, and `roster.set` calls.
+/// The block for init.lua: a Theme for the profile's colour scheme, and a `roster.o` line per option.
 pub fn lua_block(p: &Profile, settings_path: &str, date: &str) -> String {
     let one_line = |s: &str| s.replace(['\n', '\r'], " ");
     let mut b = format!(
         "{BEGIN} made by :config import-terminal; run it again to refresh, delete it to undo\n\
          -- From the default profile {} in {}, {}.\n\
-         -- What this file's own returned table sets wins over these lines.\n",
+         -- A later line that sets the same option, or this file's returned table, wins over these.\n",
         lua_str(&one_line(&p.name)),
         one_line(settings_path),
         one_line(date),
@@ -473,7 +473,8 @@ pub fn lua_block(p: &Profile, settings_path: &str, date: &str) -> String {
         ));
     }
     for (name, value) in settings(p) {
-        b.push_str(&format!("roster.set({}, {value})\n", lua_str(&name)));
+        // Every name is a plain dotted path (terminal.size), so it's a valid Lua field chain.
+        b.push_str(&format!("roster.o.{name} = {value}\n"));
     }
     b.push_str(END);
     b.push('\n');

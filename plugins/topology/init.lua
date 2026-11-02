@@ -5,7 +5,7 @@
 -- the public Plugin API, like anyone's.
 --
 -- Settings come from init.lua, where you name it as a Package:
---   packages = { { "https://github.com/2styx2/roster", dir = "plugins/topology", config = { leader = "T" } } }
+--   roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/topology", config = { leader = "T" } })
 local roster = require("roster")
 local build = require("topology.build")
 

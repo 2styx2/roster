@@ -1088,14 +1088,30 @@ fn the_starter_file_is_the_example_commented_out_and_loads_as_the_defaults() {
             "not commented out: {line:?}"
         );
     }
-    // Every option of the example is in it, ready to uncomment.
-    assert!(starter.contains("--   theme = \"auto\","));
-    assert!(starter.contains("--     size = \"13pt\","));
+    // Every option of the example is in it, one line each, ready to uncomment.
+    assert!(starter.contains("\n-- roster.o.theme = \"auto\"\n"));
+    assert!(starter.contains("\n-- roster.o.terminal.size = \"13pt\"\n"));
+    // Saving doesn't apply it (decision Q58): :source does.
+    let header: String = starter
+        .lines()
+        .take_while(|l| l.starts_with("--") && !l.trim().eq("--"))
+        .collect();
+    assert!(header.contains(":source"), "{header}");
+    assert!(!header.contains("at once"), "{header}");
     let dir = with_init("starter", &starter);
     let mut loaded = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
     loaded.lines.clear();
     loaded.set.clear();
     assert_eq!(loaded, Config::default());
+    // One line uncommented is a working Config on its own.
+    let one = starter.replace(
+        "\n-- roster.o.terminal.size = \"13pt\"\n",
+        "\nroster.o.terminal.size = \"16pt\"\n",
+    );
+    let dir = with_init("starter-one-line", &one);
+    let loaded = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(loaded.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(loaded.set, ["terminal.size"]);
 }
 
 #[test]
@@ -1590,4 +1606,86 @@ roster.set("fonts.ui_size", 12)
     assert_eq!(config.terminal.font, "Cascadia Mono");
     assert_eq!((config.fonts.ui.as_str(), config.fonts.ui_size), ("Inter", 12));
     assert_eq!(config.lines["fonts.ui_size"].line, 4);
+}
+
+/// examples/init-split: a Config split as Neovim's is (init.lua requires lua/myconf/…), loading
+/// through the real loader, with every value placed at the module and line that set it.
+#[test]
+fn the_split_example_loads_with_each_value_at_its_modules_line() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/init-split");
+    let c = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(c.terminal.font.0.first().map(String::as_str), Some("Cascadia Mono"));
+    assert!(!c.vim);
+    assert_eq!(c.theme, "roster-ember");
+    assert!(c.themes.contains_key("roster-ember"));
+    assert!(
+        c.keys
+            .0
+            .iter()
+            .any(|b| b.context == config::KeyContext::Leader && b.keys == "t"),
+        "{:?}",
+        c.keys
+    );
+    assert_eq!(c.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Lab"]);
+    assert_eq!(c.folders[0].hosts, ["esx-02", "esx-03", "esx-04"]);
+    let at = |name: &str| c.lines.get(name).map(|l| l.file.as_str()).unwrap_or("none");
+    assert_eq!(at("terminal.size"), "lua/myconf/options.lua");
+    assert_eq!(at("theme"), "lua/myconf/themes.lua");
+    // Each module's lines are right: the line that names terminal.size says so.
+    let line = c.lines["terminal.size"].line as usize;
+    let text = std::fs::read_to_string(dir.join("lua/myconf/options.lua")).unwrap();
+    assert!(
+        text.lines().nth(line - 1).unwrap().contains("roster.o.terminal.size ="),
+        "line {line}"
+    );
+}
+
+/// Every `lua` block in the Config's guides is an init.lua that loads when pasted on its own
+/// (recipes promise it): a block that starts with `-- lua/NAME.lua` is that module, written
+/// beside the init.lua of the blocks around it.
+#[test]
+fn every_init_lua_snippet_in_the_guides_loads() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/app");
+    let mut total = 0;
+    for page in ["config.md", "recipes.md", "keyboard.md"] {
+        let text = std::fs::read_to_string(root.join(page)).unwrap();
+        let mut blocks: Vec<(usize, String)> = Vec::new();
+        let mut current: Option<(usize, String)> = None;
+        for (i, line) in text.lines().enumerate() {
+            match (&mut current, line.trim_end()) {
+                (None, "```lua") => current = Some((i + 1, String::new())),
+                (Some(_), "```") => blocks.push(current.take().unwrap()),
+                (Some((_, b)), l) => {
+                    b.push_str(l);
+                    b.push('\n');
+                }
+                _ => {}
+            }
+        }
+        total += blocks.len();
+        let mut modules: Vec<(String, String)> = Vec::new();
+        for (n, (line, block)) in blocks.iter().enumerate() {
+            let first = block.lines().next().unwrap_or_default();
+            if let Some(module) = first
+                .strip_prefix("-- ")
+                .filter(|m| m.starts_with("lua/") && m.ends_with(".lua"))
+            {
+                modules.push((module.to_string(), block.clone()));
+                continue;
+            }
+            let dir = temp_dir(&format!("snippet-{}-{n}", page.trim_end_matches(".md")));
+            for (path, source) in modules.drain(..) {
+                let path = dir.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, source).unwrap();
+            }
+            std::fs::write(dir.join("init.lua"), block).unwrap();
+            if let Err(e) = config::load(&dir) {
+                panic!("{page}:{line}: this block doesn't load as init.lua: {e}\n{block}");
+            }
+        }
+        assert!(modules.is_empty(), "{page}: a module block with no init.lua after it");
+    }
+    assert!(total > 20, "only {total} lua blocks found");
 }

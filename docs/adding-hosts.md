@@ -52,7 +52,7 @@ providers:
     save_to: { organization: "My Team", collection: "Infra logins" }   # names or ids; default: personal
 ```
 
-A Box can choose otherwise in the app's `init.lua` (`vault = { save_to = "personal" }`), and the form's **Save to** choice wins over both for one Host. It lists your personal vault and the collections of the organizations you're in. A name that doesn't match is an error naming the setting (code `64`). Bitwarden's CLI doesn't say which collections you may only read, so one of those is refused when you save (`65`), nothing is left behind, and it's no longer offered.
+A Box can choose otherwise in the app's `init.lua` (`roster.o.vault.save_to = "personal"`), and the form's **Save to** choice wins over both for one Host. It lists your personal vault and the collections of the organizations you're in. A name that doesn't match is an error naming the setting (code `64`). Bitwarden's CLI doesn't say which collections you may only read, so one of those is refused when you save (`65`), nothing is left behind, and it's no longer offered.
 
 **KeePassXC (local only).** With no team password manager, the same names go into a local `.kdbx` as entry titles: `kp:orion3 ssh` finds the entry titled `orion3 ssh` in any group (outside the recycle bin), and `kp:Lab/orion3 ssh` names its path. Put the address in the entry's URL field and the user in its username field (`#username`, `#url`). Titles must be unique across the whole database, and can't contain `/`. Tell roster where the database is on this box:
 
