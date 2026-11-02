@@ -56,6 +56,8 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 | 32 | 58 | API key not accepted, or an organization key | Sign-in form | "Bitwarden didn't accept that API key (client_id or client_secret)" | Copy the personal key again from the web vault |
 | 33 | 59 | Anything else; bw's own words | Vault | "Bitwarden sign-in failed: …" | See Details; `bw login` in a terminal shows the same |
 
+**An older app's SSO on native Windows.** There Bitwarden opens the sign-in page in the browser itself and roster has no link to hand over (the `sso` step's `url` is `null`, serve API 23). This app says the page opened in the browser. An app from before API 23 doesn't know that case: it shows an empty link and a "Copy link" that does nothing. The sign-in still works: finish it on the page Bitwarden opened, and the app goes on to the master password. Updating the app shows the right message.
+
 ## Signing out
 
 "Use a different account" on the lock screen and `:vault signout` sign the vault CLI out through roster's `vault.logout` (roster's docs/serve-api.md "Signing out"), after asking "Sign out of you@example.com on this Box?". roster forgets every secret it holds first (askpass tokens, typed passwords held for "Save to vault", session keys), then runs `bw logout`, so a failure here never leaves a secret behind. The lock screen shows the message in place of the question; Esc goes back to the unlock form. After `:vault signout` the app locks and shows the message above the unlock form, with "Use a different account" still there to try again.

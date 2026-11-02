@@ -42,6 +42,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - Each method that writes `roster.yml` (`host.add`, `host.update`, `host.review`, `host.remove`, `host.rename`, `host.move`, `group.*`, `discover.add`, `quick.save`, `host.save_login`, `changes.discard`, `inventory.pull`, `mesh.cut`'s `change`) runs `roster sync` after the write and says how it went in `sync: {ok, error?, fix?}`, as `changes.publish` does; so do `inventory.reload` and the `inventory.changed` notification when they apply a changed file that loads. A failed sync never undoes the change. No new API version: the field is new and optional. See [Editing](serve-api.md#editing-pending-changes).
 
+- serve's log no longer says it "refused a token" when another serve starting up checks whether this one is still alive (it connects and hangs up without asking anything): it logs that a connection hung up without a request. A real unknown, used or expired token is still logged as refused, and no log line ever has the token in it.
+
 ### Deprecated
 
 **App**
