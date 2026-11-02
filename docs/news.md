@@ -12,6 +12,14 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the cursor is right after that very prompt, as a terminal draws it (Windows' redraws included), as a nested ssh's fill already needed; a sudo prompt that went by gets nothing and the vault isn't asked, and pressing the key again works once the prompt is back at the cursor. `terminal.read` Plugins no longer get any of a Session's shell-hook token when the output is split at an unlucky point or wraps it with links, colours or charset switches inside; ordinary output reaches them unchanged.
 
+### Fixed
+
+**App**
+
+- `roster.o.get("views")` reads any option by its dotted name, so a map with a key named `get`, `has`, `keys` or `reset` (where `:get()` and `:keys()` read that key) still has a read that always works.
+- `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.
+- Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
+
 ## v0.3.0
 
 ### Breaking

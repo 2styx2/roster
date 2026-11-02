@@ -22,4 +22,26 @@ describe("ImportPanel", () => {
     render(createElement(ImportPanel, { preview, problem: null, writing: false, onWrite() {}, onClose() {} }));
     expect(screen.getByText(/already has this profile/)).toBeInTheDocument();
   });
+
+  it("names what wins over the import: the returned table, or a line after the block, at its line", () => {
+    const preview = {
+      settingsPath: "s.json",
+      summary: [],
+      diff: [{ kind: "add" as const, text: "roster.o.terminal.size = \"16pt\"" }],
+      overridden: [
+        { option: "terminal.font", by: "returned" as const, at: null },
+        { option: "terminal.size", by: "later" as const, at: { file: "init.lua", line: 42 } },
+      ],
+      created: false,
+      base: "b",
+      result: "r",
+      date: "2026-10-30",
+      error: null,
+      theme: null,
+    };
+    render(createElement(ImportPanel, { preview, problem: null, writing: false, onWrite() {}, onClose() {} }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("init.lua's returned table sets terminal.font, and it wins over the import. Delete it there to use Windows Terminal's.");
+    expect(dialog).toHaveTextContent("init.lua:42 sets terminal.size again after the import block, and the later line wins. Delete it there to use Windows Terminal's.");
+  });
 });

@@ -1,7 +1,7 @@
 //! Packages (ticket 24, ADR 0006, decisions Q81 and Q83; docs/plugins.md, "Packages"): Plugins
 //! fetched from git repos, the way lazy.nvim fetches Neovim's.
 //!
-//! `init.lua` names each one (`packages = { { "owner/repo", tag = "v1.0.0" } }`, checked by
+//! `init.lua` names each one (`roster.packages.add({ "owner/repo", tag = "v1.0.0" })`, checked by
 //! [`check_specs`]); [`Packages`] keeps a clone of each in the app's own data folder and pins the
 //! commit in `roster.lock`, next to `init.lua`, so the lock can live in dotfiles. A Package may
 //! load its Plugin from a folder of the repo (`dir = "plugins/topology"`, decision Q94): the clone
