@@ -560,7 +560,7 @@ pub const FUNCTIONS: &[Function] = &[
             ),
             (
                 "roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands",
-                "one of your commands, in the moment before the app has said which are roster's (it tries again)",
+                "one of your commands, when the app couldn't tell roster which commands are its own (a call the user makes waits up to 5 s for that first)",
             ),
             (
                 "roster.cmd: :NAME needs the P permission",
