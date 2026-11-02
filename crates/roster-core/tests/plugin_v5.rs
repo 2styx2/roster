@@ -304,3 +304,59 @@ fn a_plugin_written_for_api_4_keeps_the_quiet_removals() {
         ]
     );
 }
+
+/// `roster.badges` is complete too (#262): `get`, `has`, `list` and `remove`, and taking off a
+/// badge the Plugin never put on is an error, `set(host, nil)` (the old spelling) as `remove`.
+#[test]
+fn badges_read_back_and_removing_a_missing_one_is_an_error_at_its_line() {
+    let (ops, error) = load(
+        "badges",
+        r#"
+        roster.badges.set("esx-03", "2")
+        roster.badges.set("esx-02", "pending")
+        roster.badges.set("db-9", "1")
+        roster.badges.remove("db-9")
+        roster.badges.set("esx-03", nil)
+        roster.status.set("v", { text = table.concat({
+          table.concat(roster.badges.list(), ","), roster.badges.get("esx-02"),
+          tostring(roster.badges.get("esx-03")), tostring(roster.badges.has("esx-02")),
+          tostring(roster.badges.has("db-9")),
+        }, "|") })
+        "#,
+    );
+    assert_eq!(error, None);
+    assert_eq!(said(&ops, "v"), "esx-02|pending|nil|true|false");
+    assert!(ops.contains(&json!({ "op": "badge", "host": "db-9", "text": null })));
+    let (ops, error) = load("badges-missing", "\nroster.badges.remove(\"esx-02\")\n");
+    assert_eq!(
+        error.as_deref(),
+        Some(
+            "init.lua:2: roster.badges.remove: the Plugin has no badge on \"esx-02\" (roster.badges.list() names its Hosts)"
+        )
+    );
+    assert!(ops.is_empty(), "{ops:?}");
+    let (_, error) = load("badges-missing-nil", "roster.badges.set(\"esx-02\", nil)\n");
+    assert_eq!(
+        error.as_deref(),
+        Some(
+            "init.lua:1: roster.badges.set: the Plugin has no badge on \"esx-02\" (roster.badges.list() names its Hosts)"
+        )
+    );
+}
+
+#[test]
+fn a_plugin_written_for_api_4_takes_off_a_missing_badge_quietly() {
+    let (ops, error) = load_api(
+        "badges-older",
+        4,
+        "roster.badges.remove(\"esx-02\")\nroster.badges.set(\"esx-03\", nil)\n",
+    );
+    assert_eq!(error, None);
+    assert_eq!(
+        ops,
+        [
+            json!({ "op": "badge", "host": "esx-02", "text": null }),
+            json!({ "op": "badge", "host": "esx-03", "text": null }),
+        ]
+    );
+}

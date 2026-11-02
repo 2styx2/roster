@@ -199,3 +199,132 @@ describe("a fake Plugin's roster.cmd and roster's own commands (issue #184)", ()
     expect(await said("mine")).toBe("ran");
   });
 });
+
+describe("a fake Plugin's collections on api 5, as the core's (decision Q134, #262)", () => {
+  /** Loads `body` as a Plugin written for `api`; gives its reply. */
+  const load = async (api: number, body: (roster: Parameters<FakePlugin["load"]>[0]) => void) => {
+    const p: FakePlugin = { manifest: { ...manifest([]), name: "t", api }, load: body };
+    return (await fakePluginHost({ t: p }, () => []).pluginLoad("t", [])).reply;
+  };
+
+  it.each([
+    ["commands", "command"],
+    ["sidebar", "Sidebar section"],
+    ["status", "status segment"],
+    ["finders", "finder"],
+    ["help", "help page"],
+    ["health", "`:check` section"],
+    ["tutor", "tutorial"],
+    ["toolbar", "toolbar control"],
+    ["progress", "progress"],
+    ["views", "view"],
+    ["details", "Host-details section"],
+  ] as const)("roster.%s.remove of what it never added is an error", async (module, noun) => {
+    const reply = await load(5, (roster) => (roster[module] as { remove(id: string): void }).remove("x"));
+    expect(reply.error?.message).toBe(`roster.${module}.remove: the Plugin has no ${noun} "x" (roster.${module}.list() names its own)`);
+    expect(reply.ops).toEqual([]);
+  });
+
+  it("errors on a missing Theme, binding, view, badge and key context as the core does", async () => {
+    const cases: [(r: Parameters<FakePlugin["load"]>[0]) => void, string][] = [
+      [(r) => r.themes.remove("dusk"), 'roster.themes.remove: the Plugin has no Theme "dusk" (roster.themes.list() names its own; roster.themes.define adds one)'],
+      [(r) => r.keymap.del("leader", "w w"), 'roster.keymap.del: the Plugin binds no "w w" in leader (a Plugin takes off only its own bindings)'],
+      [(r) => r.keymap.set("leader", "w w", false), 'roster.keymap.set: the Plugin binds no "w w" in leader (a Plugin takes off only its own bindings)'],
+      [(r) => r.keymap.set("leadr", "w w", "alerts"), 'roster.keymap.set: "leadr" isn\'t a key context (a Plugin binds keys in leader, list or list_vim)'],
+      [(r) => r.views.update("x", { title: "X" }), 'roster.views.update: the Plugin has no view "x" (roster.views.list() names its own)'],
+      [(r) => r.views.close("x"), 'roster.views.close: the Plugin has no view "x" (roster.views.list() names its own)'],
+      [(r) => r.badges.remove("esx-02"), 'roster.badges.remove: the Plugin has no badge on "esx-02" (roster.badges.list() names its Hosts)'],
+      [(r) => r.badges.set("esx-02", null), 'roster.badges.set: the Plugin has no badge on "esx-02" (roster.badges.list() names its Hosts)'],
+    ];
+    for (const [body, message] of cases) expect((await load(5, body)).error?.message).toBe(message);
+  });
+
+  it("keeps the quiet removals for a Plugin written for api 4", async () => {
+    const reply = await load(4, (roster) => {
+      roster.themes.remove("dusk");
+      roster.keymap.del("leader", "w w");
+      roster.status.remove("x");
+      roster.views.close("x");
+      roster.badges.remove("esx-02");
+    });
+    expect(reply.error).toBeNull();
+    expect(reply.ops).toEqual([
+      { op: "remove", kind: "theme", id: "dusk" },
+      { op: "key", context: "leader", keys: "w w", action: false },
+      { op: "remove", kind: "status", id: "x" },
+      { op: "view_close", id: "x" },
+      { op: "badge", host: "esx-02", text: null },
+    ]);
+  });
+
+  it("says what the Plugin has, as copies", async () => {
+    let out: unknown[] = [];
+    const reply = await load(5, (roster) => {
+      const spec = { text: "3 alerts" };
+      roster.status.set("alerts", spec);
+      spec.text = "changed after";
+      (roster.status.get("alerts") as { text: string }).text = "changed the copy";
+      roster.sidebar.set("b", { title: "B" });
+      roster.sidebar.set("a", { title: "A" });
+      roster.themes.define("dusk", { appearance: "dark" });
+      roster.keymap.set("leader", "w w", "alerts");
+      const run = () => undefined;
+      roster.commands.add("alerts", { desc: "Alerts", run });
+      roster.views.set("v", { title: "V" });
+      roster.details.set("d", "esx-02", { title: "D" });
+      roster.details.set("d", "esx-03", { title: "E" });
+      roster.badges.set("esx-02", "2");
+      roster.keymap.list("leader")["w w"] = "changed";
+      out = [
+        (roster.status.get("alerts") as { text: string }).text,
+        roster.status.has("alerts"),
+        roster.status.get("nope"),
+        roster.sidebar.list(),
+        roster.themes.list(),
+        roster.themes.has("dusk"),
+        roster.keymap.get("leader", "w w"),
+        roster.keymap.has("leader", "x"),
+        roster.keymap.list("leader"),
+        (roster.commands.get("alerts") as { run: unknown }).run === run,
+        roster.commands.list(),
+        roster.views.list(),
+        roster.views.has("v"),
+        roster.details.list(),
+        roster.details.list("d"),
+        (roster.details.get("d", "esx-03") as { title: string }).title,
+        roster.details.has("d"),
+        roster.details.has("d", "esx-09"),
+        roster.badges.list(),
+        roster.badges.get("esx-02"),
+        roster.badges.has("esx-03"),
+      ];
+    });
+    expect(reply.error).toBeNull();
+    expect(out).toEqual([
+      "3 alerts", true, null, ["a", "b"], ["dusk"], true, "alerts", false, { "w w": "alerts" }, true, ["alerts"], ["v"], true,
+      ["d"], ["esx-02", "esx-03"], "E", true, false, ["esx-02"], "2", false,
+    ]);
+  });
+
+  it("a failed call adds nothing", async () => {
+    const p: FakePlugin = {
+      manifest: { ...manifest([]), name: "t", api: 5 },
+      load(roster) {
+        roster.status.set("kept", { text: "x" });
+        roster.commands.add("boom", {
+          run: () => {
+            roster.status.set("gone", { text: "x" });
+            roster.status.remove("kept");
+            throw new Error("no");
+          },
+        });
+        roster.commands.add("check", { run: () => `${roster.status.has("gone")} ${roster.status.has("kept")}` });
+      },
+    };
+    const host = fakePluginHost({ t: p }, () => []);
+    const { reply } = await host.pluginLoad("t", []);
+    const handler = (name: string) => (reply.ops.find((o) => (o as { name?: string }).name === name) as { run: { handler: number } }).run.handler;
+    expect((await host.pluginCall("t", handler("boom"), {})).error).not.toBeNull();
+    expect((await host.pluginCall("t", handler("check"), {})).result).toBe("false true");
+  });
+});

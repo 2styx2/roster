@@ -146,6 +146,21 @@ The action init.lua bound to keys, or nil. Roster's own bindings aren't in it.
 if not roster.keymap.get("leader", "p") then roster.keymap.set("leader", "p", "close") end
 ```
 
+### `roster.keymap.has(context, keys)`
+
+returns `boolean`
+
+Whether init.lua bound keys in a context. A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.
+
+| Parameter | Type | |
+|---|---|---|
+| `context` | `"leader"\|"list"\|"list_vim"\|"picker"\|"picker_vim"\|"cmdline"\|"terminal"\|"global"` | The keymap's context. |
+| `keys` | `string` | The keys, as set took them. |
+
+```lua
+if not roster.keymap.has("leader", "p") then roster.keymap.set("leader", "p", "close") end
+```
+
 ### `roster.keymap.list(context)`
 
 returns `table<string, roster.config.KeyAction>`
@@ -211,6 +226,20 @@ A copy of init.lua's spec for a Theme, or nil. Nil for a bundled Theme init.lua 
 ```lua
 local paper = roster.themes.get("paper")
 if paper then print(paper.label) end
+```
+
+### `roster.themes.has(id)`
+
+returns `boolean`
+
+Whether there's a Theme by that id: a bundled one or init.lua's. As list names them; get says whether init.lua has a spec of its own for it.
+
+| Parameter | Type | |
+|---|---|---|
+| `id` | `string` | A Theme's id. |
+
+```lua
+if not roster.themes.has("paper") then roster.themes.define("paper", { appearance = "light" }) end
 ```
 
 ### `roster.themes.list()`
