@@ -16,7 +16,7 @@ type Spec = Record<string, unknown>;
 export interface FakeRoster {
   api_version: number;
   plugin: { name: string; version: string; permissions: string[]; config: Record<string, unknown> };
-  commands: { add(name: string, spec: Spec): void; remove(name: string): void };
+  commands: Reads & { add(name: string, spec: Spec): void; remove(name: string): void };
   /** The Plugin's own files (api 3, decision Q93): kept in memory here, per Plugin. */
   storage: {
     read(name: string): string | null;
@@ -29,18 +29,40 @@ export interface FakeRoster {
   /** api 3 (ticket 61): the message line, and the command line opened with text. */
   echo(text: string, opts?: { quiet?: boolean }): void;
   cmdline(text: string): void;
-  keymap: { set(context: string, keys: string, action: string | false): void; del(context: string, keys: string): void };
-  themes: { define(id: string, theme: Spec): void; remove(id: string): void };
-  sidebar: { set(id: string, spec: Spec): void; remove(id: string): void };
-  status: { set(id: string, spec: Spec): void; remove(id: string): void };
-  finders: { set(id: string, spec: Spec): void; remove(id: string): void };
-  help: { set(id: string, spec: Spec): void; remove(id: string): void };
-  health: { set(id: string, spec: Spec): void; remove(id: string): void; answer(check: number, lines: unknown): void };
-  tutor: { set(id: string, spec: Spec): void; remove(id: string): void };
-  badges: { set(host: string, text: string | null): void };
+  /** api 5 (decision Q134): its own bindings, by context. */
+  keymap: {
+    set(context: string, keys: string, action: string | false): void;
+    del(context: string, keys: string): void;
+    get(context: string, keys: string): string | null;
+    has(context: string, keys: string): boolean;
+    list(context: string): Record<string, string>;
+  };
+  themes: Reads & { define(id: string, theme: Spec): void; remove(id: string): void };
+  sidebar: Piece;
+  status: Piece;
+  finders: Piece;
+  help: Piece;
+  health: Piece & { answer(check: number, lines: unknown): void };
+  tutor: Piece;
+  /** `get`, `has`, `list` and `remove` by Host (api 5, #262). */
+  badges: { set(host: string, text: string | null): void; remove(host: string): void; get(host: string): string | null; has(host: string): boolean; list(): string[] };
   float: { open(spec: Spec): void; close(): void };
-  views: { set(id: string, spec: Spec): void; update(id: string, changes: Spec): void; open(id: string, opts?: { select?: string }): void; close(id: string): void; remove(id: string): void };
-  details: { set(id: string, host: string, spec: Spec | null): void; remove(id: string): void };
+  views: {
+    set(id: string, spec: Spec): void;
+    update(id: string, changes: Spec): void;
+    open(id: string, opts?: { select?: string }): void;
+    close(id: string): void;
+    remove(id: string): void;
+    has(id: string): boolean;
+    list(): string[];
+  };
+  details: {
+    set(id: string, host: string, spec: Spec | null): void;
+    remove(id: string): void;
+    get(id: string, host: string): unknown;
+    has(id: string, host?: string): boolean;
+    list(id?: string): string[];
+  };
   clipboard: { copy(text: string): void };
   notify(text: string, level?: "info" | "warn" | "error", opts?: { actions?: { label: string; run: string }[]; quiet?: boolean }): void;
   on(event: PluginEventName, f: Fn): void;
@@ -52,8 +74,8 @@ export interface FakeRoster {
   /** Ticket 78: a question the app draws, a command line, progress and toolbar controls. */
   confirm(spec: Spec): void;
   cmd(line: string): void;
-  progress: { set(id: string, spec: Spec): void; remove(id: string): void };
-  toolbar: { set(id: string, spec: Spec): void; remove(id: string): void };
+  progress: Piece;
+  toolbar: Piece;
   inventory?: {
     hosts(): Host[];
     host(name: string): Host | undefined;
@@ -71,6 +93,27 @@ export interface FakeRoster {
     request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string) => void): void;
   };
 }
+
+/** A collection's reads (api 5, decision Q134): what the Plugin itself set, as copies. */
+interface Reads {
+  get(id: string): unknown;
+  has(id: string): boolean;
+  list(): string[];
+}
+/** A UI piece the app draws: set, remove and the reads. */
+type Piece = Reads & { set(id: string, spec: Spec): void; remove(id: string): void };
+
+/** As runtime.rs's COMPLETE_API: from this api a removal of what the Plugin never added is an error. */
+const COMPLETE_API = 5;
+const KEY_CONTEXTS = ["leader", "list", "list_vim"];
+
+/** A copy of a Plugin's value, as runtime.rs's copy: plain tables copied all the way down,
+ * functions the same functions. */
+const copy = (v: unknown): unknown => {
+  if (Array.isArray(v)) return v.map(copy);
+  if (typeof v === "object" && v !== null) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, copy(x)]));
+  return v;
+};
 
 /** How a fake Plugin's `roster.serve.call` reaches the fake Backend: the result, or a thrown
  * BackendCallError (its code ends the Plugin's error, as the core's does). */
@@ -410,6 +453,9 @@ interface Running {
   disabled: string | null;
   /** Its `roster.serve.request` calls not yet answered and run. */
   requests: number;
+  /** What it has added, by kind ("status", "key:leader", "details:reach", "badge"), as
+   * runtime.rs's OWN: put back as it was when a call fails. */
+  own: Map<string, Map<string, unknown>>;
 }
 
 /** How many `roster.serve.request` calls a Plugin may have waiting, as runtime.rs's. */
@@ -497,16 +543,59 @@ export function fakePluginHost(
 
   const module = (r: Running, config: Record<string, unknown> = {}): FakeRoster => {
     const push = (op: Record<string, unknown>) => ops.push(data(r, op));
-    const piece = (kind: string) => ({
+    // What the Plugin has (runtime.rs's own_kind / own_put / own_get / own_ids).
+    const kindOf = (kind: string) => {
+      let m = r.own.get(kind);
+      if (!m) r.own.set(kind, (m = new Map()));
+      return m;
+    };
+    const ownPut = (kind: string, id: string, v: unknown) => (v === undefined ? kindOf(kind).delete(id) : kindOf(kind).set(id, v));
+    const ownHas = (kind: string, id: string) => kindOf(kind).has(id);
+    const ownIds = (kind: string) => [...kindOf(kind).keys()].sort();
+    /** As runtime.rs's not_had: an error from api 5, nothing for an older Plugin. */
+    const notHad = (what: string, why: string) => {
+      if (r.manifest.api >= COMPLETE_API) throw new Error(`${what}: ${why}`);
+    };
+    const mustHave = (what: string, module: string, noun: string, kind: string, id: string) => {
+      if (!ownHas(kind, id)) notHad(what, `the Plugin has no ${noun} ${JSON.stringify(id)} (roster.${module}.list() names its own)`);
+    };
+    const reads = (kind: string): Reads => ({
+      get: (id) => copy(kindOf(kind).get(id)) ?? null,
+      has: (id) => ownHas(kind, id),
+      list: () => ownIds(kind),
+    });
+    /** As runtime.rs's key_context: always checked by the reads, by set and del from api 5. */
+    const keyContext = (what: string, context: string, always: boolean) => {
+      if (KEY_CONTEXTS.includes(context)) return true;
+      if (always || r.manifest.api >= COMPLETE_API) throw new Error(`${what}: ${JSON.stringify(context)} isn't a key context (a Plugin binds keys in leader, list or list_vim)`);
+      return false;
+    };
+    const unbind = (what: string, context: string, keys: string) => {
+      if (!ownHas(`key:${context}`, keys)) notHad(what, `the Plugin binds no ${JSON.stringify(keys)} in ${context} (a Plugin takes off only its own bindings)`);
+      ownPut(`key:${context}`, keys, undefined);
+    };
+    const unbadge = (what: string, host: string) => {
+      if (!ownHas("badge", host)) notHad(what, `the Plugin has no badge on ${JSON.stringify(host)} (roster.badges.list() names its Hosts)`);
+      ownPut("badge", host, undefined);
+    };
+    const piece = (kind: string, module: string, noun: string): Piece => ({
       set: (id: string, spec: Spec) => {
         const op = data(r, { op: kind, id, spec }) as { spec: Record<string, { handler?: number } | undefined> };
         // As runtime.rs: what the app runs on its own is never the user's call.
         const unasked = kind === "finder" ? op.spec.items : kind === "health" ? op.spec.check : undefined;
         if (unasked?.handler !== undefined) quiet.add(unasked.handler);
+        ownPut(kind, id, copy(spec));
         ops.push(op);
       },
-      remove: (id: string) => push({ op: "remove", kind, id }),
+      remove: (id: string) => {
+        mustHave(`roster.${module}.remove`, module, noun, kind, id);
+        ownPut(kind, id, undefined);
+        push({ op: "remove", kind, id });
+      },
+      ...reads(kind),
     });
+    const detailsIds = () =>
+      [...r.own].filter(([k, m]) => k.startsWith("details:") && m.size > 0).map(([k]) => k.slice("details:".length)).sort();
     const m: FakeRoster = {
       api_version: 5,
       plugin: { name: r.manifest.name, version: r.manifest.version, permissions: [...r.grants], config },
@@ -516,39 +605,116 @@ export function fakePluginHost(
           const op = data(r, { op: "command", name, desc: spec.desc ?? "", run: spec.run, ...(spec.complete ? { complete: spec.complete } : {}) }) as Record<string, unknown>;
           const c = op.complete as { handler?: number } | undefined;
           if (c?.handler !== undefined) quiet.add(c.handler);
+          ownPut("command", name, copy(spec));
           ops.push(op);
         },
         remove: (name) => {
+          mustHave("roster.commands.remove", "commands", "command", "command", name);
           r.commands.delete(name);
+          ownPut("command", name, undefined);
           push({ op: "remove", kind: "command", id: name });
         },
+        ...reads("command"),
       },
       keymap: {
-        set: (context, keys, action) => push({ op: "key", context, keys, action }),
-        del: (context, keys) => push({ op: "key", context, keys, action: false }),
+        set: (context, keys, action) => {
+          const known = keyContext("roster.keymap.set", context, false);
+          // `false` is `del`'s old spelling (api 3), and checked as `del` is.
+          if (known && action === false) unbind("roster.keymap.set", context, keys);
+          else if (known) ownPut(`key:${context}`, keys, action);
+          push({ op: "key", context, keys, action });
+        },
+        del: (context, keys) => {
+          if (keyContext("roster.keymap.del", context, false)) unbind("roster.keymap.del", context, keys);
+          push({ op: "key", context, keys, action: false });
+        },
+        get: (context, keys) => {
+          keyContext("roster.keymap.get", context, true);
+          return (kindOf(`key:${context}`).get(keys) as string | undefined) ?? null;
+        },
+        has: (context, keys) => {
+          keyContext("roster.keymap.has", context, true);
+          return ownHas(`key:${context}`, keys);
+        },
+        list: (context) => {
+          keyContext("roster.keymap.list", context, true);
+          return Object.fromEntries(kindOf(`key:${context}`)) as Record<string, string>;
+        },
       },
-      themes: { define: (id, theme) => push({ op: "theme", id, theme }), remove: (id) => push({ op: "remove", kind: "theme", id }) },
-      sidebar: piece("section"),
-      status: piece("status"),
-      finders: piece("finder"),
-      help: piece("help"),
-      health: { ...piece("health"), answer: (check, lines) => push({ op: "health_answer", check, checks: lines }) },
-      tutor: piece("tutor"),
-      badges: { set: (host, text) => push({ op: "badge", host, text }) },
+      themes: {
+        define: (id, theme) => {
+          ownPut("theme", id, copy(theme));
+          push({ op: "theme", id, theme });
+        },
+        remove: (id) => {
+          if (!ownHas("theme", id)) notHad("roster.themes.remove", `the Plugin has no Theme ${JSON.stringify(id)} (roster.themes.list() names its own; roster.themes.define adds one)`);
+          ownPut("theme", id, undefined);
+          push({ op: "remove", kind: "theme", id });
+        },
+        ...reads("theme"),
+      },
+      sidebar: piece("section", "sidebar", "Sidebar section"),
+      status: piece("status", "status", "status segment"),
+      finders: piece("finder", "finders", "finder"),
+      help: piece("help", "help", "help page"),
+      health: { ...piece("health", "health", "`:check` section"), answer: (check, lines) => push({ op: "health_answer", check, checks: lines }) },
+      tutor: piece("tutor", "tutor", "tutorial"),
+      badges: {
+        set: (host, text) => {
+          if (text === null) unbadge("roster.badges.set", host);
+          else ownPut("badge", host, text);
+          push({ op: "badge", host, text });
+        },
+        remove: (host) => {
+          unbadge("roster.badges.remove", host);
+          push({ op: "badge", host, text: null });
+        },
+        get: (host) => (kindOf("badge").get(host) as string | undefined) ?? null,
+        has: (host) => ownHas("badge", host),
+        list: () => ownIds("badge"),
+      },
       float: { open: (spec) => push({ op: "float", spec }), close: () => push({ op: "float", spec: null }) },
       views: {
-        set: (id, spec) => push({ op: "view", id, spec }),
-        update: (id, changes) => push({ op: "view_update", id, changes }),
+        set: (id, spec) => {
+          ownPut("view", id, true);
+          push({ op: "view", id, spec });
+        },
+        update: (id, changes) => {
+          mustHave("roster.views.update", "views", "view", "view", id);
+          push({ op: "view_update", id, changes });
+        },
         open: (id, opts) => {
+          mustHave("roster.views.open", "views", "view", "view", id);
           if (!userCall) throw new Error("roster.views.open: only while the user runs one of your actions, commands or finder items");
           push({ op: "view_open", id, ...(opts?.select !== undefined ? { select: opts.select } : {}) });
         },
-        close: (id) => push({ op: "view_close", id }),
-        remove: (id) => push({ op: "remove", kind: "view", id }),
+        close: (id) => {
+          mustHave("roster.views.close", "views", "view", "view", id);
+          push({ op: "view_close", id });
+        },
+        remove: (id) => {
+          mustHave("roster.views.remove", "views", "view", "view", id);
+          ownPut("view", id, undefined);
+          push({ op: "remove", kind: "view", id });
+        },
+        has: (id) => ownHas("view", id),
+        list: () => ownIds("view"),
       },
       details: {
-        set: (id, host, spec) => push({ op: "details", id, host, spec }),
-        remove: (id) => push({ op: "remove", kind: "details", id }),
+        set: (id, host, spec) => {
+          ownPut(`details:${id}`, host, spec === null ? undefined : copy(spec));
+          push({ op: "details", id, host, spec });
+        },
+        remove: (id) => {
+          if (ownIds(`details:${id}`).length === 0) {
+            notHad("roster.details.remove", `the Plugin has no Host-details section ${JSON.stringify(id)} (roster.details.list() names its own)`);
+          }
+          r.own.delete(`details:${id}`);
+          push({ op: "remove", kind: "details", id });
+        },
+        get: (id, host) => copy(kindOf(`details:${id}`).get(host)) ?? null,
+        has: (id, host) => (host === undefined ? ownIds(`details:${id}`).length > 0 : ownHas(`details:${id}`, host)),
+        list: (id) => (id === undefined ? detailsIds() : ownIds(`details:${id}`)),
       },
       clipboard: {
         copy: (text) => {
@@ -612,8 +778,8 @@ export function fakePluginHost(
         }
         push(carried ? { op: "cmd", line: line.trim(), user: false } : { op: "cmd", line: line.trim() });
       },
-      progress: piece("progress"),
-      toolbar: piece("toolbar"),
+      progress: piece("progress", "progress", "progress"),
+      toolbar: piece("toolbar", "toolbar", "toolbar control"),
       sessions: {
         show: (session, line) => {
           userOnly("roster.sessions.show");
@@ -730,10 +896,12 @@ export function fakePluginHost(
   /** Runs `body` as a call into the Plugin: its ops, or its error (and a strike). */
   const run = (name: string, r: Running, body: () => unknown, loading = false): PluginReply => {
     ops = [];
+    const before = new Map([...r.own].map(([k, m]) => [k, new Map(m)]));
     try {
       const result = body();
       return { plugin: name, result: data(r, result) ?? null, ops, error: null, disabled: null };
     } catch (e) {
+      r.own = before;
       const message = e instanceof Error ? e.message : String(e);
       r.errors += loading ? 3 : 1;
       if (r.errors >= 3) r.disabled = loading ? `it failed to load: ${name}: init.lua: ${message}` : `it failed ${r.errors} times`;
@@ -763,6 +931,7 @@ export function fakePluginHost(
         errors: 0,
         disabled: null,
         requests: 0,
+        own: new Map(),
       };
       running.set(manifest.name, r);
       const config = path.startsWith("builtin:") && settings ? settings : configs.get(path);
