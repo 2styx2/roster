@@ -232,6 +232,30 @@ describe("taking a Package out", () => {
     expect(packages.clones).toEqual({});
   });
 
+  it(":plugins remove on a Package init.lua still names is remembered like a cancelled install", async () => {
+    const first = await installed();
+    expect(await first.manager.remove("recent-alerts")).toMatch(/:packages install recent-alerts/);
+    const again = setup(first.packages, first.state);
+    await again.manager.syncPackages();
+    expect(again.manager.snapshot().prompts).toEqual([]);
+    expect(again.packages.clones).toEqual({});
+    expect(again.manager.snapshot().declined).toEqual(["recent-alerts"]);
+    // `:packages install NAME` asks again, and the State forgets the removal.
+    expect(await again.manager.installPackage("recent-alerts")).toBeNull();
+    expect(again.manager.snapshot().prompts).toHaveLength(1);
+    expect(again.manager.snapshot().declined).toEqual([]);
+  });
+
+  it("a removed Package asks again once init.lua names another repo or folder for it", async () => {
+    const first = await installed();
+    await first.manager.remove("recent-alerts");
+    const [p] = first.packages.named;
+    if (p) p.dir = "plugins/recent-alerts";
+    const again = setup(first.packages, first.state);
+    await again.manager.syncPackages();
+    expect(again.manager.snapshot().prompts).toHaveLength(1);
+  });
+
   it(":packages clean removes what init.lua no longer names, and what it added", async () => {
     const { manager, registries, state, packages } = await installed();
     packages.named = [];

@@ -341,6 +341,14 @@ async fn box_check(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, 
     call(&state, "box.check", json!({})).await
 }
 
+/// Each kind's latest job and each Host's latest check (`jobs.list`, API 20), in the shape of
+/// `job.progress`, which already reaches the frontend: `:check` asks once when it joins a check
+/// that's already running, so the step under way shows before the next one starts (issue #221).
+#[tauri::command]
+async fn jobs_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
+    call(&state, "jobs.list", json!({})).await
+}
+
 /// Fast-forward the infra repo before an edit (`inventory.pull`, api 4, ticket 10). A fetch can take
 /// a while on a slow link: serve holds it to its deadline, and the app waits longer (`timeout_for`).
 #[tauri::command]
@@ -1268,6 +1276,7 @@ pub fn run() {
             host_get,
             host_check,
             box_check,
+            jobs_list,
             inventory_pull,
             host_verify_login,
             host_update,
