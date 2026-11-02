@@ -574,3 +574,136 @@ end })
     settled(&host);
     assert_eq!(*seen.0.lock().unwrap(), ["first", "second"]);
 }
+
+/// A host whose calls may take a minute: a request stuck behind another answer would sit until
+/// then, so a test that finishes in seconds shows nothing waited for the limit.
+fn patient(serve: &Arc<SerialServe>) -> (PluginHost, Receiver<Reply>) {
+    let host = PluginHost::new(
+        Arc::clone(serve) as Arc<dyn Serve>,
+        Limits {
+            call: Duration::from_secs(60),
+            grace: Duration::from_secs(60),
+            ..Limits::default()
+        },
+    );
+    let (tx, rx) = channel();
+    let tx = Mutex::new(tx);
+    host.set_listener(Arc::new(move |r: Reply| {
+        let _ = tx.lock().unwrap().send(r);
+    }));
+    (host, rx)
+}
+
+/// Replies are handed to the app one answer at a time (the test above), and that must never hold
+/// up an answer an answer asked for: requests asked from inside answers, three deep, each come
+/// back long before the call limit, in the order they were made.
+#[test]
+fn a_request_asked_from_inside_an_answer_comes_back_without_waiting_for_the_limit() {
+    let serve = Arc::new(SerialServe::default());
+    let (host, rx) = patient(&serve);
+    let (loaded, _folder) = load(
+        &host,
+        "nested",
+        &["serve:hosts.list", "serve:discover.status"],
+        r#"
+roster.commands.add("ask", { run = function()
+  roster.serve.request("hosts.list", {}, function()
+    roster.notify("one")
+    roster.serve.request("discover.status", {}, function()
+      roster.notify("two")
+      roster.serve.request("hosts.list", {}, function() roster.notify("three") end)
+    end)
+  end)
+end })
+"#,
+    );
+    let started = Instant::now();
+    ok(&host.call(
+        "waiter",
+        command(&loaded.ops, "ask"),
+        json!({ "args": "", "words": [] }),
+    ));
+    let said = notices_within(&rx, 3, Duration::from_secs(20));
+    assert_eq!(said, ["one", "two", "three"]);
+    assert!(started.elapsed() < Duration::from_secs(20), "{:?}", started.elapsed());
+    settled(&host);
+}
+
+/// An answer that asks again and then calls serve and reads the Inventory without waiting (the
+/// calls that block the Plugin until serve answers) gets all of it: those go straight to serve,
+/// never through the answers' turn, so nothing nested can wait on it.
+#[test]
+fn an_answer_that_asks_again_and_calls_serve_itself_isnt_held_up() {
+    let serve = Arc::new(SerialServe::default());
+    let (host, rx) = patient(&serve);
+    let (loaded, _folder) = load(
+        &host,
+        "nested-call",
+        &["serve:hosts.list", "serve:discover.status", "inventory.read"],
+        r#"
+roster.commands.add("ask", { run = function()
+  roster.serve.request("discover.status", {}, function()
+    roster.serve.request("hosts.list", {}, function(r) roster.notify("asked: " .. #r.hosts) end)
+    local s = roster.serve.call("discover.status")
+    roster.notify("called: " .. s.state .. ", " .. #roster.inventory.hosts() .. " Host")
+  end)
+end })
+"#,
+    );
+    ok(&host.call(
+        "waiter",
+        command(&loaded.ops, "ask"),
+        json!({ "args": "", "words": [] }),
+    ));
+    let said = notices_within(&rx, 2, Duration::from_secs(20));
+    assert_eq!(said, ["called: running, 1 Host", "asked: 1"]);
+    settled(&host);
+}
+
+/// Requests made side by side all come back (in whatever order serve answers them), however
+/// many wait for their turn to reach the app.
+#[test]
+fn requests_made_side_by_side_all_come_back() {
+    let serve = Arc::new(SerialServe::default());
+    let (host, rx) = patient(&serve);
+    let (loaded, _folder) = load(
+        &host,
+        "side-by-side",
+        &["serve:hosts.list"],
+        r#"
+roster.commands.add("ask", { run = function()
+  for i = 1, 6 do
+    roster.serve.request("hosts.list", {}, function() roster.notify("answer " .. i) end)
+  end
+end })
+"#,
+    );
+    ok(&host.call(
+        "waiter",
+        command(&loaded.ops, "ask"),
+        json!({ "args": "", "words": [] }),
+    ));
+    let mut said = notices_within(&rx, 6, Duration::from_secs(20));
+    said.sort();
+    assert_eq!(said, (1..=6).map(|i| format!("answer {i}")).collect::<Vec<_>>());
+    settled(&host);
+}
+
+/// The notices in the next replies, until `want` of them or `limit`.
+fn notices_within(rx: &Receiver<Reply>, want: usize, limit: Duration) -> Vec<String> {
+    let mut out = Vec::new();
+    let deadline = Instant::now() + limit;
+    while out.len() < want {
+        let Ok(r) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) else {
+            break;
+        };
+        ok(&r);
+        out.extend(
+            r.ops
+                .iter()
+                .filter(|op| op["op"] == "notify")
+                .map(|op| op["text"].as_str().unwrap().to_string()),
+        );
+    }
+    out
+}
