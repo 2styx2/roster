@@ -3,7 +3,7 @@
 # printed from them by headless Chromium.
 #
 #   pull_request     build both; upload them as an artifact only (download it to look). A dead link
-#                    fails the build.
+#                    or an axe accessibility problem (WCAG 2.x A/AA) fails the build.
 #   push to main     build both and deploy them to GitHub Pages: https://2styx2.github.io/roster/
 #                    (needs Settings → Pages → Source: GitHub Actions).
 #   workflow_dispatch  build, and deploy only when run on main.
@@ -41,6 +41,11 @@ jobs:
       - name: Build
         working-directory: app
         run: npm run docs -- --out ../site --pdf ../site/roster-docs.pdf
+      # axe-core over every page, dark and light, and the search box open (app/scripts/check-docs-a11y.ts):
+      # any WCAG 2.x A or AA problem fails the build. The runner's Chrome again, driven by playwright-core.
+      - name: Accessibility (axe)
+        working-directory: app
+        run: npm run docs:a11y -- ../site
       - name: Summary
         run: |
           { echo "Built $(ls site/*.html | wc -l) pages and roster-docs.pdf ($(du -h site/roster-docs.pdf | cut -f1)) from ${GITHUB_SHA::7}."
