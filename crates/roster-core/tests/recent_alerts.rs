@@ -295,11 +295,8 @@ fn allowed_it_adds_its_section_command_key_finder_and_help_page_and_pins_the_com
             .unwrap()
             .contains("lists the lines with ERROR or panic")
     );
-    // No alerts yet: no status segment and no badges.
-    assert_eq!(
-        one(ops, "remove"),
-        &json!({ "op": "remove", "kind": "status", "id": "alerts" })
-    );
+    // No alerts yet: no status segment (none to take off, api 5) and no badges.
+    assert!(find(ops, "status").is_empty() && find(ops, "remove").is_empty());
     assert!(find(ops, "badge").is_empty());
     // It reached roster serve for nothing.
     assert!(w.serve.calls.lock().unwrap().is_empty());

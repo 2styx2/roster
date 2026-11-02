@@ -69,7 +69,7 @@ A setting it can't use is named in a notice, and the default is used instead.
 
 ```text
 discover/
-  roster-plugin.lua          the manifest: name, version, api 3, the five serve methods
+  roster-plugin.lua          the manifest: name, version, api 5, the five serve methods
   init.lua                   the view, the questions, the commands, the toolbar control, :check, help
   lua/discover/model.lua     the pure part: settings, rows, ports and details as text
 ```
