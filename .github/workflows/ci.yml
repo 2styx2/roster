@@ -5,7 +5,8 @@
 #        cargo test on Linux (with the WebKitGTK/D-Bus dev packages, so clippy covers the Tauri
 #        crate too); roster-core's cargo test on Windows; the JS and CSS size budget; release
 #        builds of the Windows and Linux apps; lua-language-server over the example and first-party
-#        Plugins, against the Plugin API's generated stubs. The first-party Plugins' own tests
+#        Plugins, against the Plugin API's generated stubs, and over init.lua's option reference
+#        examples, against init.lua's. The first-party Plugins' own tests
 #        (plugins/README.md) run in cargo test and npm run check.
 name: CI
 
@@ -161,6 +162,9 @@ jobs:
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/plugins --checklevel=Hint'
       # The first-party Plugins (plugins/, decision Q94), against the same stubs (plugins/.luarc.json).
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
+      # Every example in init.lua's option reference (docs/app/options.md, decision Q132), against
+      # init.lua's generated stubs (examples/types/roster-config.lua): what :help shows type-checks.
+      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/config-check --checklevel=Hint'
 
   app-rust:
     name: App Rust (fmt, clippy, cargo test)

@@ -17,8 +17,8 @@ mod render;
 mod table;
 
 pub use render::{
-    COMMAND, DOC_PATH, Entry, JSON_PATH, Reference, Row, STUBS_PATH, Section, json_text, markdown, reference, stubs,
-    write_types,
+    CHECK_PATH, COMMAND, DOC_PATH, Entry, JSON_PATH, Reference, Row, STUBS_PATH, Section, check_lua, json_text,
+    markdown, reference, stubs, write_types,
 };
 
 use std::sync::LazyLock;
@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 /// `roster.folders.add`) are in this version's runtime. Their declarations are below already;
 /// while this is false, the reference, the topics and the stubs leave them out and show
 /// `roster.set` in examples instead of `roster.o`. Flip it with the runtime and regenerate.
-pub const NEOVIM_STYLE: bool = false;
+pub const NEOVIM_STYLE: bool = true;
 
 /// What sits at a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,15 +43,24 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// What `roster.o` lets init.lua do with a value of this kind, besides assigning it: a map's
-    /// keys, a list's items, any value's reset to its default. The reference lists them once the
-    /// Neovim-style names are in.
+    /// The methods a `roster.o` table of this kind has (`roster.o.terminal.font:append(…)`),
+    /// besides assigning and reading it. A leaf is a plain value: `roster.o.reset(name)` resets it.
     pub fn methods(self) -> &'static [&'static str] {
         match self {
-            Kind::Object => &["get", "set", "reset"],
-            Kind::Map => &["get", "set", "remove", "has", "keys", "reset"],
-            Kind::List => &["append", "prepend", "insert", "remove", "has", "clear", "reset"],
-            Kind::Leaf => &["get", "set", "reset"],
+            Kind::Object => &["get", "reset"],
+            Kind::Map => &["get", "has", "keys", "reset"],
+            Kind::List => &["get", "append", "prepend", "insert", "remove", "has", "clear", "reset"],
+            Kind::Leaf => &[],
+        }
+    }
+
+    /// The LuaCATS class of a `roster.o` table of this kind, whose methods its help lists.
+    pub fn class(self) -> Option<&'static str> {
+        match self {
+            Kind::Object => Some("roster.o.Object"),
+            Kind::Map => Some("roster.o.Map"),
+            Kind::List => Some("roster.o.List"),
+            Kind::Leaf => None,
         }
     }
 
@@ -133,6 +142,9 @@ pub struct Opt {
     /// One of many names of the same kind (a colour token): listed in its parent's entry instead
     /// of having one of its own.
     pub brief: bool,
+    /// A list that takes each item once (`terminal.font`, `folders[].hosts`): a repeat is an
+    /// error at its line. `folders` and `packages` take each name once.
+    pub unique: bool,
 }
 
 impl Opt {
@@ -206,19 +218,26 @@ pub fn options() -> &'static [Opt] {
     &OPTIONS
 }
 
+/// Each option's segments, in [`options`]' order, worked out once.
+fn all_segments() -> &'static [Vec<&'static str>] {
+    static SEGMENTS: LazyLock<Vec<Vec<&'static str>>> =
+        LazyLock::new(|| options().iter().map(|o| segments(&o.path)).collect());
+    &SEGMENTS
+}
+
 /// The option at a concrete path (`["themes", "paper", "label"]`, `["folders", "1", "name"]`):
 /// a map's key matches its `*`, a list's index (from 1) its `[]`. None for a name the Config
 /// doesn't have.
 pub fn lookup(path: &[&str]) -> Option<&'static Opt> {
-    options().iter().find(|o| {
-        let segs = o.segments();
+    let i = all_segments().iter().position(|segs| {
         segs.len() == path.len()
             && segs.iter().zip(path).all(|(pattern, name)| match *pattern {
                 "*" => !name.is_empty(),
                 "[]" => name.parse::<u32>().is_ok_and(|i| i >= 1),
                 fixed => fixed == *name,
             })
-    })
+    })?;
+    options().get(i)
 }
 
 /// The option at a dotted pattern exactly as declared (`themes.*.label`).
@@ -228,12 +247,12 @@ pub fn get(pattern: &str) -> Option<&'static Opt> {
 
 /// The options one level under `opt`: an object's fields, a map's `*`, a list's `[]`.
 pub fn children(opt: &Opt) -> impl Iterator<Item = &'static Opt> + '_ {
-    let depth = opt.segments().len();
-    let prefix = opt.segments();
-    options().iter().filter(move |o| {
-        let s = o.segments();
-        s.len() == depth + 1 && s[..depth] == prefix[..]
-    })
+    let prefix = segments(&opt.path);
+    let depth = prefix.len();
+    options()
+        .iter()
+        .zip(all_segments())
+        .filter_map(move |(o, s)| (s.len() == depth + 1 && s[..depth] == prefix[..]).then_some(o))
 }
 
 /// For a name that isn't there, the one meant: `suggest(&["terminal"], "szie")` is
@@ -270,6 +289,17 @@ fn distance(a: &str, b: &str) -> usize {
     }
     row[b.len()]
 }
+
+/// The Themes the app comes with, by id (app/src/theme/themes.ts `bundledThemes`, which a test
+/// there checks against this): `roster.themes.update` can change them, and `list` names them.
+pub const BUNDLED_THEMES: &[&str] = &[
+    "roster-dark",
+    "roster-light",
+    "gruvbox",
+    "nord",
+    "catppuccin-mocha",
+    "tokyo-night",
+];
 
 // ---------------------------------------------------------------- the `roster` table
 
@@ -325,6 +355,11 @@ pub fn api() -> impl Iterator<Item = &'static ApiItem> {
 /// Every name, with the Neovim-style ones this version may not have yet.
 pub fn api_all() -> &'static [ApiItem] {
     table::API
+}
+
+/// The methods of `roster.o`'s tables (`roster.o.List:append`), by [`Kind::class`].
+pub fn methods() -> impl Iterator<Item = &'static ApiItem> {
+    table::METHODS.iter().filter(|a| NEOVIM_STYLE || !a.neovim_style)
 }
 
 #[cfg(test)]

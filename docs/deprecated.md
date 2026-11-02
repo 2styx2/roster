@@ -12,6 +12,7 @@ An old name stays for at least one minor Release after the one that deprecates i
 |---|---|---|
 | `folders.yml` | The Folders Plugin's own data (`plugin-data/folders/folders.json`); hand-written Folders in `init.lua`'s `folders` | Its Folders move in once, at the first start; after that the app doesn't read, write or watch it, and `:check` says it's still there. `:source` and `auto_reload` no longer reload it. Delete it once your Folders look right ([config.md](app/config.md#foldersyml)) |
 | `folder:NAME` (a Folder's id for `:fold`) | `folders:NAME` | A Folder's row is the Folders Plugin's now. `:fold folder:NAME` still folds it, and a Folder folded before stays folded (the app moves its id) |
+| `roster.themes.define(id, …)` a second time for one id (the later call won) | `roster.themes.update(id, fields)` | In `init.lua` a Theme is defined once: a second `define` of its id, or one of a bundled Theme's id, is an error naming both lines and saying to use `update`, which changes yours or a bundled one ([config.md](app/config.md#the-roster-table)). A Config that defined a Theme in a base module and again in an override module changes the second to `update` |
 
 ### Plugin API
 

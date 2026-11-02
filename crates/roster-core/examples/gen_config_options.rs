@@ -19,6 +19,7 @@ fn main() -> ExitCode {
         (shape::DOC_PATH, shape::markdown()),
         (shape::STUBS_PATH, shape::stubs()),
         (shape::JSON_PATH, shape::json_text()),
+        (shape::CHECK_PATH, shape::check_lua()),
     ] {
         let file = root.join(path);
         if std::fs::read_to_string(&file).ok().as_deref() == Some(text.as_str()) {

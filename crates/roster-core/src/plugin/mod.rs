@@ -30,7 +30,7 @@ pub mod fair;
 pub mod folder;
 pub mod network;
 pub mod permission;
-mod runtime;
+pub(crate) mod runtime;
 
 use crate::config::lua;
 pub use demo::DemoHost;

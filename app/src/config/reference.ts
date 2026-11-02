@@ -50,6 +50,8 @@ export interface Reference {
   sections: RefSection[];
   /** Other names → an entry's tag (`roster.keymap.set()` → `roster.keymap.set`). */
   aliases: Record<string, string>;
+  /** The bundled Themes' ids, as init.lua's `roster.themes.list()` names them. */
+  bundledThemes: string[];
 }
 
 export const reference = data as Reference;

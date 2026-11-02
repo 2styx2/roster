@@ -107,7 +107,8 @@ describe(":tutor", () => {
     expect(await screen.findByRole("group", { name: `Session ${REAL}` })).toBeInTheDocument();
     expect(pane("demo-01")).toBeNull();
     expect(document.documentElement.dataset.theme).not.toBe("nord");
-  });
+    // It opens :help terminal.size, on the long :help options page (see below).
+  }, 15_000);
 
   it("comes back where you left off, and reset starts it over", async () => {
     const { user } = await ready({ tutor: { roster: ["picker", "session"] } });
@@ -130,7 +131,9 @@ describe(":tutor", () => {
     await user.keyboard("{Escape}");
     await user.keyboard("{Control>}o{/Control}");
     await isDone("option");
-  });
+    // :help options is a long page (every option, the roster table and roster.o's methods), and
+    // jsdom searches it once per key typed: slow on a shared CI runner.
+  }, 15_000);
 
   it("outside the demo, :tutor quit says nothing runs, and :help tutor is a page you can read", async () => {
     const { user } = await ready();

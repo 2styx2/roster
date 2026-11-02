@@ -8,12 +8,14 @@
 //! Config, so a typo while editing never takes the app's keys or colours away. [`watch`] calls
 //! back when a `.lua` file in the dir changes, for live reload.
 
+mod api;
 pub(crate) mod editor;
 pub mod folders;
 mod locate;
 pub(crate) mod lua;
 pub mod schema;
 pub mod shape;
+pub(crate) mod store;
 mod watch;
 
 pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};
@@ -208,7 +210,7 @@ pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Rena
 
     let returned = out.value;
     let mut value = returned.clone();
-    under_calls(&mut value, &out.api);
+    under_calls(&mut value, &out.calls, &out.api);
     // A deprecated option moves to its new name (which wins when both are set), before the schema
     // check would call it unknown.
     let used = rename_deprecated(&mut value, renamed);
@@ -250,7 +252,7 @@ pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Rena
         ));
     }
     config.set = set_paths(&value);
-    config.lines = lines(&config, &sources, &api_lines);
+    config.lines = lines(&config, &sources, &api_lines, &out.folders);
     for r in used {
         let path: Vec<String> = r.old.split('.').map(str::to_string).collect();
         if let Some(at) = sources.find(&path) {
@@ -317,6 +319,30 @@ fn set_paths(value: &serde_json::Value) -> Vec<String> {
     walk(value, &mut Vec::new(), &mut out);
     out.sort();
     out
+}
+
+/// Whether `value` at `path` is something the schema takes there, on its own (a name it has, a
+/// value of the right type): what a `roster.*` write checks at its line. Ranges and what depends
+/// on other options are checked once the whole Config is in ([`validate`]).
+pub(crate) fn check_value(path: &[String], value: &serde_json::Value) -> Result<(), String> {
+    let mut whole = value.clone();
+    for key in path.iter().rev() {
+        let mut map = serde_json::Map::new();
+        map.insert(key.clone(), whole);
+        whole = serde_json::Value::Object(map);
+    }
+    serde_path_to_error::deserialize::<_, Config>(&whole)
+        .map(drop)
+        .map_err(|e| {
+            let mut at: Vec<String> = e.path().iter().filter_map(segment).collect();
+            let inner = e.inner().to_string();
+            if let Some(name) = inner.strip_prefix("unknown field `").and_then(|r| r.split('`').next())
+                && at.last().map(String::as_str) != Some(name)
+            {
+                at.push(name.to_string());
+            }
+            located_message(&at, &shorten(&inner))
+        })
 }
 
 /// `terminal.size: message`, or just the message when there's no path.
@@ -409,10 +435,9 @@ fn place(mut e: ConfigError, sources: &Sources, api: &[(Vec<String>, Location)])
     e
 }
 
-/// The calls whose value is in the Config, with their lines: the last call at its path (no
-/// later call replaced it or a table above it), at a path the returned table doesn't set.
-fn winning_calls(returned: &serde_json::Value, api: &[lua::ApiEntry]) -> Vec<(Vec<String>, Location)> {
-    let replaced = |i: usize| api[i + 1..].iter().any(|later| api[i].path.starts_with(&later.path));
+/// The calls whose value is in the Config, with their lines: the last write at its path (no
+/// later write replaced it or a table above it), at a path the returned table doesn't set.
+fn winning_calls(returned: &serde_json::Value, api: &[store::Write]) -> Vec<(Vec<String>, Location)> {
     let reached = |path: &[String]| {
         let mut node = returned;
         for key in path {
@@ -426,52 +451,42 @@ fn winning_calls(returned: &serde_json::Value, api: &[lua::ApiEntry]) -> Vec<(Ve
         }
         false
     };
-    api.iter()
-        .enumerate()
-        .filter(|&(i, e)| !replaced(i) && reached(&e.path))
-        .filter_map(|(_, e)| e.at.clone().map(|at| (e.path.clone(), at)))
-        .collect()
+    // From the last write back: one is replaced when a later one is at its path or above it.
+    let mut later: std::collections::HashSet<&[String]> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for w in api.iter().rev() {
+        let replaced = (1..=w.path.len()).any(|n| later.contains(&w.path[..n]));
+        later.insert(&w.path);
+        if !replaced
+            && !w.removed
+            && reached(&w.path)
+            && let Some(at) = &w.at
+        {
+            out.push((w.path.clone(), at.clone()));
+        }
+    }
+    out.reverse();
+    out
 }
 
-/// Lays the API's registrations under what the returned table sets itself. Among the calls the
-/// last one wins (ticket 139: a base module, then an override): each replaces what earlier calls
-/// put at its path. The returned table wins over every call, value by value.
-fn under_calls(value: &mut serde_json::Value, api: &[lua::ApiEntry]) {
-    let mut calls = serde_json::Value::Object(Default::default());
-    for entry in api {
-        set_replacing(&mut calls, &entry.path, entry.value.clone());
-    }
-    for entry in api {
-        let pointer: String = entry.path.iter().map(|k| format!("/{}", pointer_escape(k))).collect();
+/// Lays what the calls wrote (`calls`, where the last write at a path won, ticket 139) under what
+/// the returned table sets itself, path by written path: the returned table wins over every call,
+/// value by value.
+fn under_calls(value: &mut serde_json::Value, calls: &serde_json::Value, api: &[store::Write]) {
+    let mut done = std::collections::HashSet::new();
+    for w in api.iter().filter(|w| !w.removed) {
+        if !done.insert(&w.path) {
+            continue;
+        }
+        let pointer: String = w.path.iter().map(|k| format!("/{}", pointer_escape(k))).collect();
         if let Some(v) = calls.pointer(&pointer) {
-            set_if_absent(value, &entry.path, v.clone());
+            set_if_absent(value, &w.path, v.clone());
         }
     }
 }
 
 fn pointer_escape(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
-}
-
-/// Sets `path` to `value`, replacing what's there (and anything in the way that isn't a table).
-fn set_replacing(root: &mut serde_json::Value, path: &[String], value: serde_json::Value) {
-    let Some((last, parents)) = path.split_last() else {
-        return;
-    };
-    let mut node = root;
-    for key in parents {
-        let serde_json::Value::Object(map) = node else { return };
-        let child = map
-            .entry(key.clone())
-            .or_insert_with(|| serde_json::Value::Object(Default::default()));
-        if !child.is_object() {
-            *child = serde_json::Value::Object(Default::default());
-        }
-        node = child;
-    }
-    if let serde_json::Value::Object(map) = node {
-        map.insert(last.clone(), value);
-    }
 }
 
 fn set_if_absent(root: &mut serde_json::Value, path: &[String], value: serde_json::Value) {
@@ -643,26 +658,30 @@ fn lines(
     c: &Config,
     sources: &Sources,
     api: &[(Vec<String>, Location)],
+    folder_lines: &[(String, Location)],
 ) -> std::collections::BTreeMap<String, Location> {
     let mut out = std::collections::BTreeMap::new();
-    let mut put = |path: Vec<String>, found: Option<Location>| {
+    let by_path: std::collections::HashMap<&[String], &Location> =
+        api.iter().map(|(p, at)| (p.as_slice(), at)).collect();
+    // `found` looks in the sources only when no call set it.
+    let mut put = |path: Vec<String>, found: &dyn Fn(&[String]) -> Option<Location>| {
         let key = path.join(".");
-        // The last call at a path is the one that won (ticket 139).
-        if let Some((_, at)) = api.iter().rfind(|(p, _)| *p == path) {
-            out.insert(key, at.clone());
-        } else if let Some(at) = found {
+        // The call that set it: at its path, or a table above it (`roster.o.fonts = { ui = … }`
+        // gives fonts.ui its line). Only calls that won are here (ticket 139).
+        if let Some(at) = (1..=path.len()).rev().find_map(|n| by_path.get(&path[..n])) {
+            out.insert(key, (*at).clone());
+        } else if let Some(at) = found(&path) {
             out.insert(key, at);
         }
     };
+    let find = |path: &[String]| sources.find(path);
     for b in &c.keys.0 {
         let path = vec!["keys".to_string(), b.context.lua_name().to_string(), b.keys.clone()];
-        let found = sources.find(&path);
-        put(path, found);
+        put(path, &find);
     }
     for id in c.themes.keys() {
         let path = vec!["themes".to_string(), id.clone()];
-        let found = sources.find(&path);
-        put(path, found);
+        put(path, &find);
     }
     // Every other value the file set (`:help options` names its line, ticket 37).
     for p in &c.set {
@@ -671,14 +690,25 @@ fn lines(
             continue;
         }
         let path: Vec<String> = p.split('.').map(str::to_string).collect();
-        let found = sources.find(&path);
-        put(path, found);
+        put(path, &find);
     }
+    // A Folder the calls made: the line that added it (roster.folders.add, or the list's
+    // assignment), when the Config's Folders are the calls'.
+    let from_calls = api.iter().any(|(p, _)| p.len() == 1 && p[0] == "folders");
     for f in &c.folders {
-        let found = sources
-            .find_text(&format!("\"{}\"", f.name))
-            .or_else(|| sources.find_text(&format!("'{}'", f.name)));
-        put(vec!["folders".to_string(), f.name.clone()], found);
+        let added = folder_lines
+            .iter()
+            .find(|(key, _)| from_calls && *key == f.name.trim().to_lowercase())
+            .map(|(_, at)| at.clone());
+        let found = added.or_else(|| {
+            sources
+                .find_text(&format!("\"{}\"", f.name))
+                .or_else(|| sources.find_text(&format!("'{}'", f.name)))
+        });
+        let key = format!("folders.{}", f.name);
+        if let Some(at) = found {
+            out.insert(key, at);
+        }
     }
     out
 }

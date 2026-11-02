@@ -3,7 +3,7 @@
 //! (`:config types`). `cargo run -p roster-core --example gen_config_options` writes the committed
 //! copies; tests/config_shape.rs fails when one is stale.
 
-use super::{Allowed, ApiItem, Kind, NEOVIM_STYLE, Opt, api, children, options};
+use super::{Allowed, ApiItem, Kind, NEOVIM_STYLE, Opt, api, children, methods, options};
 use crate::plugin::api::slug;
 use serde::Serialize;
 use std::fmt::Write as _;
@@ -12,6 +12,9 @@ pub const DOC_PATH: &str = "docs/app/options.md";
 pub const STUBS_PATH: &str = "examples/types/roster-config.lua";
 pub const JSON_PATH: &str = "crates/roster-core/tests/fixtures/config-options.json";
 pub const COMMAND: &str = "cargo run -p roster-core --example gen_config_options";
+/// Every example of the reference as one init.lua, which CI type-checks against the stubs with
+/// lua-language-server (examples/config-check/.luarc.json).
+pub const CHECK_PATH: &str = "examples/config-check/init.lua";
 /// The root class of the stubs: every option.
 const ROOT: &str = "roster.config.Options";
 
@@ -26,6 +29,9 @@ pub struct Reference {
     pub sections: Vec<Section>,
     /// Other names for an entry (`roster.keymap.set()`, `roster.o.terminal.size`) → its tag.
     pub aliases: std::collections::BTreeMap<String, String>,
+    /// The bundled Themes' ids ([`super::BUNDLED_THEMES`]); the app's own list is checked
+    /// against it.
+    pub bundled_themes: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,9 +75,10 @@ pub struct Entry {
     pub rows: Vec<Row>,
     /// Lua that uses it.
     pub example: String,
-    /// What `roster.o` lets init.lua do with it (see [`Kind::methods`]); empty until the
-    /// Neovim-style names are in.
-    pub methods: Vec<&'static str>,
+    /// How `roster.o` sets, reads, resets and changes it, by its kind ([`usage`]): the methods
+    /// its table has ([`Kind::methods`]) and the assignments. Empty for what roster.o doesn't
+    /// reach (a list's item: its list's functions change it).
+    pub methods: Vec<String>,
     /// An option `:options` lists: it holds a value (not an object made only of other entries).
     pub listed: bool,
 }
@@ -114,9 +121,14 @@ fn example_line(path: &str, value: &str) -> String {
 
 /// The values beyond its type, when its type doesn't already list them.
 fn takes(o: &Opt) -> String {
-    match o.allowed {
+    let t = match o.allowed {
         Allowed::OneOf(_) if o.ty.contains('"') => String::new(),
         _ => o.allowed.text(),
+    };
+    match (o.unique, t.is_empty()) {
+        (false, _) => t,
+        (true, true) => "each item once".into(),
+        (true, false) => format!("{t}; each item once"),
     }
 }
 
@@ -139,6 +151,38 @@ fn item_of(o: &Opt) -> Option<&'static Opt> {
 /// its own for `:options` to list.
 fn only_entries(o: &Opt) -> bool {
     o.kind == Kind::Object && o.default == "{}" && children(o).next().is_some() && children(o).all(|c| c.is_entry())
+}
+
+/// Everything roster.o does with an option of its kind, as init.lua writes it: the assignment
+/// first, then reads, removal and the methods of its table ([`Kind::methods`]). Empty for a list's
+/// item (roster.o doesn't reach inside a list) and before the Neovim-style names are in.
+pub fn usage(o: &Opt) -> Vec<String> {
+    if !NEOVIM_STYLE || o.path.contains("[]") {
+        return Vec::new();
+    }
+    let name = format!("roster.o.{}", shown(&o.path));
+    let calls = |kind: Kind| {
+        kind.methods().iter().map(move |m| match *m {
+            "has" if kind == Kind::Map => ":has(key)".to_string(),
+            "has" | "remove" => format!(":{m}(value)"),
+            "append" | "prepend" => format!(":{m}(value, …)"),
+            "insert" => ":insert(i, value)".to_string(),
+            m => format!(":{m}()"),
+        })
+    };
+    let mut out = match o.kind {
+        Kind::Leaf if o.is_item() => vec![format!("{name} = value"), name.clone(), format!("{name} = nil")],
+        Kind::Leaf => vec![
+            format!("{name} = value"),
+            name.clone(),
+            format!("roster.o.reset(\"{}\")", o.path),
+        ],
+        Kind::Object => vec![format!("{name} = {{ … }}"), format!("{name}.NAME")],
+        Kind::Map => vec![format!("{name}.KEY = value"), ".KEY".into(), ".KEY = nil".into()],
+        Kind::List => vec![format!("{name} = {{ … }}")],
+    };
+    out.extend(calls(o.kind));
+    out
 }
 
 fn option_entry(o: &Opt) -> Entry {
@@ -191,11 +235,7 @@ fn option_entry(o: &Opt) -> Entry {
         fields: children(o).filter(|c| c.is_entry() && !c.is_item()).map(tag).collect(),
         rows,
         example,
-        methods: if NEOVIM_STYLE && !o.is_item() {
-            o.kind.methods().to_vec()
-        } else {
-            Vec::new()
-        },
+        methods: usage(o),
         listed: !o.is_item() && !only_entries(o),
     }
 }
@@ -244,6 +284,13 @@ pub fn reference() -> Reference {
         intro: "A global in init.lua and its modules, and also require(\"roster\"). A Plugin gets a bigger one: the Plugin API.".into(),
         entries: api().map(api_entry).collect(),
     }];
+    if methods().next().is_some() {
+        sections.push(Section {
+            title: "The tables of roster.o".into(),
+            intro: "Reading an object, a map or a list from roster.o gives its table, with these methods (call them with a colon: roster.o.terminal.font:append(\"Hack\")). Each option's entry lists what its kind takes; a value is read and assigned as it is.".into(),
+            entries: methods().map(api_entry).collect(),
+        });
+    }
     for o in options().iter().filter(|o| o.is_entry() && !o.is_item()) {
         if sections.last().map(|s| s.title.as_str()) != Some(o.section) {
             sections.push(Section {
@@ -266,7 +313,7 @@ pub fn reference() -> Reference {
             .collect(),
     });
     let mut aliases = std::collections::BTreeMap::new();
-    for a in api().filter(|a| a.is_function()) {
+    for a in api().chain(methods()).filter(|a| a.is_function()) {
         aliases.insert(format!("{}()", a.path), a.path.to_string());
     }
     if NEOVIM_STYLE {
@@ -279,6 +326,7 @@ pub fn reference() -> Reference {
         neovim_style: NEOVIM_STYLE,
         sections,
         aliases,
+        bundled_themes: super::BUNDLED_THEMES.to_vec(),
     }
 }
 
@@ -339,17 +387,22 @@ pub fn markdown() -> String {
         "Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) writes them: `string[]` is a list of strings, `table<string, X>` a table of X by name, `\"webgl\"|\"dom\"` one of those strings, `roster.config.Theme` a table described under [Types](#types). An object (a table of named options, such as `terminal`) needs no setup: give only the options you change. A default of unset means nothing is set and the app, or a choice it keeps, decides; required is a field a spec can't leave out.\n\n",
     );
     for section in &r.sections {
-        let title = if section.title == "The roster table" {
-            "The `roster` table".to_string()
-        } else {
-            section.title.clone()
+        let title = match section.title.as_str() {
+            "The roster table" => "The `roster` table".to_string(),
+            "The tables of roster.o" => "The tables of `roster.o`".to_string(),
+            t => t.to_string(),
         };
         let _ = writeln!(s, "## {title}\n");
         if !section.intro.is_empty() {
             let intro = prose(&section.intro)
                 .replace("the Plugin API", "[the Plugin API](../plugin-api.md)")
                 .replace("init.lua", "`init.lua`")
-                .replace(":config types", "`:config types`");
+                .replace(":config types", "`:config types`")
+                .replace(
+                    "roster.o.terminal.font:append(`\"Hack\"`)",
+                    "`roster.o.terminal.font:append(\"Hack\")`",
+                )
+                .replace("from roster.o", "from `roster.o`");
             let _ = writeln!(s, "{intro}\n");
         }
         for e in &section.entries {
@@ -360,6 +413,9 @@ pub fn markdown() -> String {
             }
             if !e.ty.is_empty() && e.what != "function" {
                 line.push(format!("`{}`", e.ty));
+            }
+            if !e.ty.is_empty() && e.what == "function" {
+                line.push(format!("returns `{}`", e.ty));
             }
             if !e.default.is_empty() {
                 line.push(format!("default {}", default_md(&e.default)));
@@ -389,7 +445,7 @@ pub fn markdown() -> String {
             }
             if !e.methods.is_empty() {
                 let methods: Vec<String> = e.methods.iter().map(|m| format!("`{m}`")).collect();
-                let _ = writeln!(s, "Methods: {}.\n", methods.join(", "));
+                let _ = writeln!(s, "Methods: {}.\n", methods.join(" · "));
             }
             if !e.rows.is_empty() {
                 if e.what == "function" {
@@ -463,13 +519,56 @@ fn hover(o: &Opt) -> String {
     if !allowed.is_empty() && !matches!(o.allowed, super::Allowed::OneOf(_)) {
         let _ = write!(out, " Takes {allowed}.");
     }
+    if o.unique {
+        out.push_str(" Each item once.");
+    }
     out.replace('\n', " ")
 }
 
 fn field(o: &Opt) -> String {
     let name = o.segments().last().copied().unwrap_or_default().to_string();
     let optional = if o.default == "required" { "" } else { "?" };
-    format!("---@field {name}{optional} {} {}\n", o.ty, hover(o))
+    // What roster.o gives for a map or a list: its table, with the methods of its kind.
+    let ty = match o.kind.class() {
+        Some(class) if NEOVIM_STYLE && matches!(o.kind, Kind::Map | Kind::List) && !o.path.contains("[]") => {
+            format!("{}|{class}", o.ty)
+        }
+        _ => o.ty.clone(),
+    };
+    // A Package spec's source may be its first item instead (`{ "owner/repo", tag = … }`).
+    if o.path == "packages[].source" {
+        return format!(
+            "---@field [1]? string The source, as the spec's first item.\n---@field {name}? {ty} {}\n",
+            hover(o)
+        );
+    }
+    format!("---@field {name}{optional} {ty} {}\n", hover(o))
+}
+
+/// A function's doc comment: its summary, what it expects, an example, its parameters and what
+/// it gives back; the same text as its `:help` entry.
+fn doc_comment(s: &mut String, a: &ApiItem) {
+    let _ = writeln!(s, "--- {}", a.about);
+    if !a.more.is_empty() {
+        let _ = writeln!(s, "--- {}", a.more);
+    }
+    s.push_str("---\n--- ```lua\n");
+    for line in a.example.lines() {
+        let _ = writeln!(s, "--- {line}");
+    }
+    s.push_str("--- ```\n");
+    // A method's table is read through a field whose type also names what may be assigned to it
+    // (`string|string[]|roster.o.List`): lua-language-server has no separate type for reading,
+    // so the table the method is called on is taken as any.
+    if a.path.contains(':') {
+        s.push_str("---@param self any\n");
+    }
+    for p in a.params.unwrap_or_default() {
+        let _ = writeln!(s, "---@param {} {} {}", p.name, p.ty, p.about);
+    }
+    if a.is_function() && !a.ty.is_empty() {
+        let _ = writeln!(s, "---@return {}", a.ty);
+    }
 }
 
 /// examples/types/roster-config.lua: init.lua's options and `roster` table, for lua-language-server.
@@ -503,7 +602,14 @@ pub fn stubs() -> String {
             let _ = writeln!(s, "---@alias {class} {}\n", o.ty);
             continue;
         }
-        let _ = writeln!(s, "---@class {class}");
+        match o.kind.class() {
+            Some(methods) if NEOVIM_STYLE && o.kind == Kind::Object && !o.path.contains("[]") => {
+                let _ = writeln!(s, "---@class {class} : {methods}");
+            }
+            _ => {
+                let _ = writeln!(s, "---@class {class}");
+            }
+        }
         for c in children(o).filter(|c| !c.is_item()) {
             s.push_str(&field(c));
         }
@@ -516,9 +622,32 @@ pub fn stubs() -> String {
     }
     s.push('\n');
 
+    // roster.o's tables: a class per kind, with its methods.
+    let mut classes: Vec<&str> = Vec::new();
+    for m in methods() {
+        let Some((class, name)) = m.path.split_once(':') else {
+            continue;
+        };
+        let local = class.replace('.', "_");
+        if !classes.contains(&class) {
+            let kind = match class {
+                "roster.o.Map" => "a map (a table keyed by names you pick)",
+                "roster.o.List" => "a list",
+                _ => "an object (a table of named options)",
+            };
+            let _ = writeln!(s, "--- What roster.o gives for {kind}: its table, with these methods.");
+            let _ = writeln!(s, "---@class {class}\nlocal {local} = {{}}\n");
+            classes.push(class);
+        }
+        doc_comment(&mut s, m);
+        let names: Vec<&str> = m.params.unwrap_or_default().iter().map(|p| p.name).collect();
+        let _ = writeln!(s, "function {local}:{name}({}) end\n", names.join(", "));
+    }
+
     s.push_str("--- init.lua's `roster` table. A Plugin's is another one (types/roster.lua).\nroster = {}\n\n");
     let mut tables: Vec<String> = Vec::new();
-    for a in api() {
+    let all: Vec<&ApiItem> = api().collect();
+    for a in &all {
         let parts: Vec<&str> = a.path.split('.').collect();
         for depth in 2..parts.len() {
             let t = parts[..depth].join(".");
@@ -527,29 +656,48 @@ pub fn stubs() -> String {
                 tables.push(t);
             }
         }
-        let _ = writeln!(s, "--- {}", a.about);
-        if !a.more.is_empty() {
-            let _ = writeln!(s, "--- {}", a.more);
-        }
-        s.push_str("---\n--- ```lua\n");
-        for line in a.example.lines() {
-            let _ = writeln!(s, "--- {line}");
-        }
-        s.push_str("--- ```\n");
+        doc_comment(&mut s, a);
         match a.params {
             Some(params) => {
-                for p in params {
-                    let _ = writeln!(s, "---@param {} {} {}", p.name, p.ty, p.about);
-                }
                 let names: Vec<&str> = params.iter().map(|p| p.name).collect();
                 let _ = writeln!(s, "function {}({}) end\n", a.path, names.join(", "));
             }
             None => {
-                let _ = writeln!(s, "---@type {}\n{} = nil\n", a.ty, a.path);
+                // A value with functions of its own (roster.o) is a table here.
+                let holds = all.iter().any(|b| b.path.starts_with(&format!("{}.", a.path)));
+                // A value with functions of its own (roster.o) is a class of its own, so they can be
+                // declared on it.
+                if holds {
+                    let _ = writeln!(s, "---@class {} : {}\n{} = {{}}\n", a.path, a.ty, a.path);
+                    tables.push(a.path.to_string());
+                } else {
+                    let _ = writeln!(s, "---@type {}\n{} = nil\n", a.ty, a.path);
+                }
             }
         }
     }
     s.push_str("return roster\n");
+    s
+}
+
+/// examples/config-check/init.lua: every example in the reference (the `roster` table's, the
+/// methods', each option's), each in a block of its own, for lua-language-server to check
+/// against the stubs: what `:help` shows type-checks as written.
+pub fn check_lua() -> String {
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "-- Generated from crates/roster-core/src/config/shape by `{COMMAND}`: every example in\n-- the option reference, for lua-language-server to check against {STUBS_PATH}\n-- (CI runs `lua-language-server --check examples/config-check --checklevel=Hint`).\n"
+    );
+    for section in reference().sections {
+        for e in section.entries.iter().filter(|e| !e.example.is_empty()) {
+            let _ = writeln!(s, "-- {}\ndo", e.tag);
+            for line in e.example.lines() {
+                let _ = writeln!(s, "  {line}");
+            }
+            s.push_str("end\n\n");
+        }
+    }
     s
 }
 

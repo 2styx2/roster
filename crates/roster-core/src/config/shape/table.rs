@@ -38,8 +38,16 @@ impl B {
             section: self.section,
             class: None,
             brief: false,
+            unique: false,
         });
         self.out.last_mut().expect("just pushed")
+    }
+
+    /// The last option declared takes each item once.
+    fn unique(&mut self) {
+        if let Some(o) = self.out.last_mut() {
+            o.unique = true;
+        }
     }
 
     fn leaf(&mut self, path: impl Into<String>, ty: &str, default: &str, allowed: Allowed, about: &str, example: &str) {
@@ -219,6 +227,7 @@ pub(super) fn options() -> Vec<Opt> {
         "Font families, most wanted first: the first one installed is used.",
         "{ \"Fira Code\", \"Iosevka\" }",
     );
+    b.unique();
     b.leaf(
         "terminal.size",
         "number|string",
@@ -461,6 +470,7 @@ pub(super) fn options() -> Vec<Opt> {
             "Its sections, in order; all of them when left out.",
             "{ \"sessions\", \"inventory\" }",
         );
+        b.unique();
         b.leaf(
             p("sessionbar"),
             "false|\"bottom\"|\"top\"",
@@ -469,7 +479,8 @@ pub(super) fn options() -> Vec<Opt> {
             "The thin tmux-style bar of open Sessions, and its edge.",
             "\"top\"",
         );
-        b.leaf(p("statusbar"), "boolean|string[]", yes_no(standard), Allowed::Form("true, false, or segments in order: \"backend\", \"box\", \"hosts\", \"path\", \"changes\", \"hints\", \"mode\""), "The status bar, and its segments.", "{ \"backend\", \"hosts\" }");
+        b.add(p("statusbar"), Kind::List, "boolean|string[]", yes_no(standard), Allowed::Form("true, false, or segments in order: \"backend\", \"box\", \"hosts\", \"path\", \"changes\", \"hints\", \"mode\""), "The status bar, and its segments.", "{ \"backend\", \"hosts\" }");
+        b.unique();
         b.leaf(
             p("fullscreen"),
             "boolean",
@@ -478,7 +489,8 @@ pub(super) fn options() -> Vec<Opt> {
             "OS fullscreen.",
             yes_no(standard),
         );
-        b.leaf(p("toolbar"), "boolean|string[]", yes_no(standard), Allowed::Form("true, false, or controls in order: \"sidebar\", \"find\", \"quick\", \"add\", \"changes\", \"publish\", \"details\", \"cmdline\", \"keys\", \"help\", \"lock\", \"mode\", or a Plugin control's id"), "The controls for common commands, in the title bar (or a bar of their own without one).", "{ \"add\", \"find\" }");
+        b.add(p("toolbar"), Kind::List, "boolean|string[]", yes_no(standard), Allowed::Form("true, false, or controls in order: \"sidebar\", \"find\", \"quick\", \"add\", \"changes\", \"publish\", \"details\", \"cmdline\", \"keys\", \"help\", \"lock\", \"mode\", or a Plugin control's id"), "The controls for common commands, in the title bar (or a bar of their own without one).", "{ \"add\", \"find\" }");
+        b.unique();
     }
     b.object(
         "panel",
@@ -567,6 +579,7 @@ pub(super) fn options() -> Vec<Opt> {
         "The Hosts in it, in order.",
         "{ \"esx-02\", \"esx-03\" }",
     );
+    b.unique();
 
     b.section = "The vault";
     b.object(
@@ -774,123 +787,480 @@ fn context_about(context: KeyContext) -> &'static str {
 
 const CONTEXTS: &str = "\"leader\"|\"list\"|\"list_vim\"|\"picker\"|\"picker_vim\"|\"cmdline\"|\"terminal\"|\"global\"";
 
+/// One function's or value's declaration, in the order the reference lists them.
+const fn item(
+    path: &'static str,
+    params: Option<&'static [Param]>,
+    ty: &'static str,
+    about: &'static str,
+    more: &'static str,
+    example: &'static str,
+) -> ApiItem {
+    ApiItem {
+        path,
+        params,
+        ty,
+        about,
+        more,
+        example,
+        neovim_style: true,
+    }
+}
+
+const fn param(name: &'static str, ty: &'static str, about: &'static str) -> Param {
+    Param { name, ty, about }
+}
+
+const NAME: Param = param("name", "string", "Its name (letter case aside).");
+
 pub(super) const API: &[ApiItem] = &[
     ApiItem {
-        path: "roster.os",
-        params: None,
-        ty: "\"windows\"|\"linux\"|\"macos\"",
-        about: "The OS the app runs on.",
-        more: "",
-        example: "if roster.os == \"windows\" then\n  roster.set(\"backend\", \"wsl\")\nend",
         neovim_style: false,
+        ..item(
+            "roster.os",
+            None,
+            "\"windows\"|\"linux\"|\"macos\"",
+            "The OS the app runs on.",
+            "Read-only.",
+            "if roster.os == \"windows\" then\n  roster.o.backend = \"wsl\"\nend",
+        )
     },
     ApiItem {
-        path: "roster.api_version",
-        params: None,
-        ty: "integer",
-        about: "The version of this table, raised when it changes.",
-        more: "",
-        example: "if roster.api_version >= 4 then … end",
         neovim_style: false,
+        ..item(
+            "roster.api_version",
+            None,
+            "integer",
+            "The version of this table, raised when it changes.",
+            "Read-only. The Plugin API's version too: it rises with that.",
+            "if roster.api_version >= 4 then roster.o.vim = false end",
+        )
+    },
+    item(
+        "roster.version",
+        None,
+        "string",
+        "The app's version.",
+        "Read-only.",
+        "if roster.version:match(\"^0%.2\") then roster.o.auto_reload = true end",
+    ),
+    item(
+        "roster.config_dir",
+        None,
+        "string",
+        "The config folder: where init.lua is, as this machine writes the path.",
+        "Read-only. For messages and comparisons; require already looks there.",
+        "print(\"Config in \" .. roster.config_dir)",
+    ),
+    item(
+        "roster.o",
+        None,
+        "roster.config.Options",
+        "Every option, as a table you assign to and read: roster.o.terminal.size = \"16pt\".",
+        "Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch; assigning one roster.o table to another option copies what it holds (what init.lua set, else its default), and one that holds neither is an error. The table init.lua returns, if any, wins over what roster.o sets.",
+        "roster.o.terminal.size = \"16pt\"\nroster.o.terminal.font:prepend(\"Cascadia Mono\")\nif roster.o.vim then roster.o.keys.leader.p = \"connect esx-02\" end",
+    ),
+    item(
+        "roster.o.reset",
+        Some(&[param(
+            "name",
+            "roster.config.OptionName",
+            "An option's dotted name: \"terminal.size\".",
+        )]),
+        "",
+        "Puts an option back to its default: what init.lua set there is taken away.",
+        "Any option: a value, an object, a map or a list. An unknown name is an error at its line.",
+        "roster.o.reset(\"terminal.size\")",
+    ),
+    ApiItem {
+        neovim_style: false,
+        ..item(
+            "roster.set",
+            Some(&[
+                param(
+                    "name",
+                    "roster.config.OptionName",
+                    "An option's dotted name: \"terminal.size\".",
+                ),
+                param("value", "any", "Its value, as the option takes it; nil resets it."),
+            ]),
+            "",
+            "Sets any option by its dotted name, as roster.o does.",
+            "The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option.",
+            "roster.set(\"terminal.size\", \"16pt\")",
+        )
     },
     ApiItem {
-        path: "roster.set",
-        params: Some(&[
-            Param {
-                name: "name",
-                ty: "roster.config.OptionName",
-                about: "An option's dotted name: \"terminal.size\".",
-            },
-            Param {
-                name: "value",
-                ty: "any",
-                about: "Its value, as the option takes it.",
-            },
+        neovim_style: false,
+        ..item(
+            "roster.keymap.set",
+            Some(&[
+                param("context", CONTEXTS, "The keymap's context."),
+                param(
+                    "keys",
+                    "string",
+                    "A chord or a sequence of chords separated by spaces: \"Ctrl+n\", \"d d\".",
+                ),
+                param(
+                    "action",
+                    "roster.config.KeyAction",
+                    "A command line, or false to unbind a default.",
+                ),
+            ]),
+            "",
+            "Binds a key, as keys.<context> does.",
+            "A later set of the same keys replaces it. An unknown context is an error at its line.",
+            "roster.keymap.set(\"leader\", \"p\", \"connect esx-02\")",
+        )
+    },
+    item(
+        "roster.keymap.del",
+        Some(&[
+            param("context", CONTEXTS, "The keymap's context."),
+            param("keys", "string", "The keys, as set took them."),
         ]),
-        ty: "",
-        about: "Sets any option by its dotted name.",
-        more: "The name and the value are checked like the returned table's; an error points at the call's line. The returned table wins over a call that sets the same option.",
-        example: "roster.set(\"terminal.size\", \"16pt\")",
-        neovim_style: false,
-    },
-    ApiItem {
-        path: "roster.keymap.set",
-        params: Some(&[
-            Param {
-                name: "context",
-                ty: CONTEXTS,
-                about: "The keymap's context.",
-            },
-            Param {
-                name: "keys",
-                ty: "string",
-                about: "A chord or a sequence of chords separated by spaces: \"Ctrl+n\", \"d d\".",
-            },
-            Param {
-                name: "action",
-                ty: "roster.config.KeyAction",
-                about: "A command line, or false to unbind a default.",
-            },
+        "",
+        "Takes off a key binding init.lua made.",
+        "Keys init.lua didn't bind are an error at the line; to unbind one of roster's own, set it to false.",
+        "roster.keymap.del(\"leader\", \"p\")",
+    ),
+    item(
+        "roster.keymap.get",
+        Some(&[
+            param("context", CONTEXTS, "The keymap's context."),
+            param("keys", "string", "The keys, as set took them."),
         ]),
-        ty: "",
-        about: "Binds a key, as `keys.<context>` does.",
-        more: "",
-        example: "roster.keymap.set(\"leader\", \"p\", \"connect esx-02\")",
-        neovim_style: false,
-    },
+        "roster.config.KeyAction?",
+        "The action init.lua bound to keys, or nil.",
+        "Roster's own bindings aren't in it.",
+        "if not roster.keymap.get(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
+    ),
+    item(
+        "roster.keymap.list",
+        Some(&[param("context", CONTEXTS, "The keymap's context.")]),
+        "table<string, roster.config.KeyAction>",
+        "A copy of init.lua's bindings in a context: keys → action.",
+        "An empty table when it binds none there.",
+        "for keys, action in pairs(roster.keymap.list(\"leader\")) do print(keys, action) end",
+    ),
     ApiItem {
-        path: "roster.themes.define",
-        params: Some(&[
-            Param {
-                name: "id",
-                ty: "string",
-                about: "The Theme's id (not \"auto\").",
-            },
-            Param {
-                name: "theme",
-                ty: "roster.config.Theme",
-                about: "A Theme spec.",
-            },
+        neovim_style: false,
+        ..item(
+            "roster.themes.define",
+            Some(&[
+                param("id", "string", "The Theme's id: not \"auto\", not a bundled Theme's."),
+                param("theme", "roster.config.Theme", "A Theme spec."),
+            ]),
+            "",
+            "Defines a Theme, as themes.<id> does.",
+            "An id already defined is an error naming both lines (change it with update); a bundled Theme's id too.",
+            "roster.themes.define(\"paper\", { appearance = \"light\", colors = { accent = \"#b85c00\" } })",
+        )
+    },
+    item(
+        "roster.themes.update",
+        Some(&[
+            param("id", "string", "A Theme init.lua defined, or a bundled one."),
+            param(
+                "fields",
+                "roster.config.Theme",
+                "What to change: tables (colors, terminal, ansi) merge token by token.",
+            ),
         ]),
-        ty: "",
-        about: "Defines a Theme, as `themes.<id>` does.",
-        more: "",
-        example: "roster.themes.define(\"paper\", { appearance = \"light\", colors = { accent = \"#b85c00\" } })",
-        neovim_style: false,
-    },
-    ApiItem {
-        path: "roster.o",
-        params: None,
-        ty: "roster.config.Options",
-        about: "Every option, as a table you assign to: roster.o.terminal.size = \"16pt\".",
-        more: "Nested objects need no setup. An unknown name is an error at its line, with the name meant; reading gives the value set so far, or nil.",
-        example: "roster.o.terminal.size = \"16pt\"\nif roster.o.vim then roster.o.keys.leader = { p = \"connect esx-02\" } end",
-        neovim_style: true,
-    },
-    ApiItem {
-        path: "roster.packages.add",
-        params: Some(&[Param {
-            name: "...",
-            ty: "string|roster.config.Package",
-            about: "Package specs.",
-        }]),
-        ty: "",
-        about: "Adds Packages, from any file of the Config.",
-        more: "Two Packages with the same name are an error naming both lines.",
-        example: "roster.packages.add({ \"someone/recent-alerts\", tag = \"v1.2.0\" }, \"someone/pinned\")",
-        neovim_style: true,
-    },
-    ApiItem {
-        path: "roster.folders.add",
-        params: Some(&[Param {
-            name: "...",
-            ty: "roster.config.Folder",
-            about: "Folder specs.",
-        }]),
-        ty: "",
-        about: "Adds Folders, from any file of the Config.",
-        more: "Two Folders with the same name are an error naming both lines.",
-        example: "roster.folders.add({ name = \"Lab\", hosts = { \"esx-02\", \"esx-03\" } })",
-        neovim_style: true,
-    },
+        "",
+        "Changes a Theme: one init.lua defined, or a bundled one (which becomes a changed copy of itself).",
+        "An id that is neither is an error at its line.",
+        "roster.themes.update(\"nord\", { colors = { accent = \"#88c0d0\" } })",
+    ),
+    item(
+        "roster.themes.remove",
+        Some(&[param("id", "string", "A Theme init.lua defined.")]),
+        "",
+        "Removes a Theme init.lua defined (or its changes to a bundled one).",
+        "A bundled Theme init.lua didn't change, or an id it doesn't have, is an error at its line.",
+        "roster.themes.remove(\"paper\")",
+    ),
+    item(
+        "roster.themes.get",
+        Some(&[param("id", "string", "A Theme's id.")]),
+        "roster.config.Theme?",
+        "A copy of init.lua's spec for a Theme, or nil.",
+        "Nil for a bundled Theme init.lua didn't change.",
+        "local paper = roster.themes.get(\"paper\")\nif paper then print(paper.label) end",
+    ),
+    item(
+        "roster.themes.list",
+        Some(&[]),
+        "string[]",
+        "Every Theme's id: the bundled ones, then init.lua's.",
+        "",
+        "for _, id in ipairs(roster.themes.list()) do print(id) end",
+    ),
+    item(
+        "roster.packages.add",
+        Some(&[param(
+            "...",
+            "string|roster.config.Package",
+            "Package specs: { SOURCE, tag = … } or just SOURCE.",
+        )]),
+        "",
+        "Adds Packages, from any file of the Config.",
+        "Two Packages with the same name are an error naming both lines. Fetching is a command: :packages update.",
+        "roster.packages.add({ \"someone/recent-alerts\", tag = \"v1.2.0\" }, \"someone/pinned\")",
+    ),
+    item(
+        "roster.packages.remove",
+        Some(&[NAME]),
+        "",
+        "Takes a Package out of the Config.",
+        "A name it doesn't have is an error at its line. Its folder stays until :packages clean.",
+        "roster.packages.remove(\"recent-alerts\")",
+    ),
+    item(
+        "roster.packages.update",
+        Some(&[
+            NAME,
+            param(
+                "fields",
+                "roster.config.Package",
+                "Fields to set over the spec's; a tag, branch or commit replaces the other two.",
+            ),
+        ]),
+        "",
+        "Changes a Package's spec: pin a tag, change its config.",
+        "A name it doesn't have, or a field a Package spec doesn't have, is an error at its line.",
+        "roster.packages.update(\"recent-alerts\", { tag = \"v1.3.0\" })",
+    ),
+    item(
+        "roster.packages.get",
+        Some(&[NAME]),
+        "roster.config.Package?",
+        "A copy of a Package's spec, or nil.",
+        "Its source is in source.",
+        "local alerts = roster.packages.get(\"recent-alerts\")\nif alerts then print(alerts.tag) end",
+    ),
+    item(
+        "roster.packages.list",
+        Some(&[]),
+        "roster.config.Package[]",
+        "Copies of every Package's spec, in order.",
+        "",
+        "for _, p in ipairs(roster.packages.list()) do print(p.source) end",
+    ),
+    item(
+        "roster.packages.has",
+        Some(&[NAME]),
+        "boolean",
+        "Whether the Config has a Package by that name.",
+        "",
+        "if not roster.packages.has(\"pinned\") then roster.packages.add(\"someone/pinned\") end",
+    ),
+    item(
+        "roster.folders.add",
+        Some(&[param(
+            "...",
+            "roster.config.Folder",
+            "Folder specs: { name = …, hosts = { … } }.",
+        )]),
+        "",
+        "Adds Folders, from any file of the Config.",
+        "Two Folders with the same name (letter case aside) are an error naming both lines.",
+        "roster.folders.add({ name = \"Lab\", hosts = { \"esx-02\", \"esx-03\" } })",
+    ),
+    item(
+        "roster.folders.remove",
+        Some(&[NAME]),
+        "",
+        "Takes a Folder out of the Config.",
+        "A name it doesn't have is an error at its line.",
+        "roster.folders.remove(\"Lab\")",
+    ),
+    item(
+        "roster.folders.update",
+        Some(&[
+            NAME,
+            param(
+                "fields",
+                "roster.config.Folder",
+                "Fields to set over the Folder's: name, hosts.",
+            ),
+        ]),
+        "",
+        "Changes a Folder: rename it, or give it other Hosts.",
+        "A name it doesn't have is an error at its line; a new name another Folder has names both lines.",
+        "roster.folders.update(\"Lab\", { name = \"Lab boxes\" })",
+    ),
+    item(
+        "roster.folders.get",
+        Some(&[NAME]),
+        "roster.config.Folder?",
+        "A copy of a Folder's spec, or nil.",
+        "",
+        "local lab = roster.folders.get(\"Lab\")\nif lab then print(#lab.hosts) end",
+    ),
+    item(
+        "roster.folders.list",
+        Some(&[]),
+        "roster.config.Folder[]",
+        "Copies of every Folder's spec, in order.",
+        "",
+        "for _, f in ipairs(roster.folders.list()) do print(f.name) end",
+    ),
+    item(
+        "roster.folders.has",
+        Some(&[NAME]),
+        "boolean",
+        "Whether the Config has a Folder by that name.",
+        "",
+        "if roster.folders.has(\"Lab\") then roster.folders.add_hosts(\"Lab\", \"esx-04\") end",
+    ),
+    item(
+        "roster.folders.add_hosts",
+        Some(&[
+            NAME,
+            param("hosts", "string|string[]", "A Host's name, or a list of them."),
+        ]),
+        "",
+        "Adds Hosts to the end of a Folder.",
+        "A Host it has already, or a Folder it doesn't have, is an error at its line.",
+        "roster.folders.add_hosts(\"Lab\", { \"esx-04\", \"esx-05\" })",
+    ),
+    item(
+        "roster.folders.remove_hosts",
+        Some(&[
+            NAME,
+            param("hosts", "string|string[]", "A Host's name, or a list of them."),
+        ]),
+        "",
+        "Takes Hosts out of a Folder.",
+        "A Host it doesn't have, or a Folder it doesn't have, is an error at its line.",
+        "roster.folders.remove_hosts(\"Lab\", \"esx-05\")",
+    ),
+];
+
+/// The methods of roster.o's tables, by the class each kind's table is (see [`Kind::class`]).
+pub(super) const METHODS: &[ApiItem] = &[
+    item(
+        "roster.o.Object:get",
+        Some(&[]),
+        "table?",
+        "A copy of what init.lua set in an object (a table of named options), or nil.",
+        "Defaults aren't in it: only what was set.",
+        "local t = roster.o.terminal:get()\nif t then print(t.size) end",
+    ),
+    item(
+        "roster.o.Object:reset",
+        Some(&[]),
+        "",
+        "Puts every option in an object back to its default.",
+        "",
+        "roster.o.terminal:reset()",
+    ),
+    item(
+        "roster.o.Map:get",
+        Some(&[]),
+        "table?",
+        "A copy of a map (a table keyed by names you pick): key → value, or nil when nothing is set.",
+        "Read one key with map.KEY; set one with map.KEY = value, remove it with map.KEY = nil.",
+        "local views = roster.o.views:get() or {}\nfor id in pairs(views) do print(id) end",
+    ),
+    item(
+        "roster.o.Map:has",
+        Some(&[param("key", "string", "A key.")]),
+        "boolean",
+        "Whether init.lua set this key of a map.",
+        "A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.",
+        "if not roster.o.views:has(\"topology\") then roster.o.views.topology = { place = \"panel\" } end",
+    ),
+    item(
+        "roster.o.Map:keys",
+        Some(&[]),
+        "string[]",
+        "The keys init.lua set in a map.",
+        "",
+        "for _, id in ipairs(roster.o.themes:keys()) do print(id) end",
+    ),
+    item(
+        "roster.o.Map:reset",
+        Some(&[]),
+        "",
+        "Takes away every key init.lua set in a map: it's back to its default.",
+        "",
+        "roster.o.views:reset()",
+    ),
+    item(
+        "roster.o.List:get",
+        Some(&[]),
+        "any[]?",
+        "A copy of a list, or nil when init.lua didn't set it.",
+        "",
+        "local fonts = roster.o.terminal.font:get()\nif fonts then print(#fonts) end",
+    ),
+    item(
+        "roster.o.List:append",
+        Some(&[param("...", "any", "Items to add.")]),
+        "",
+        "Adds items to the end of a list.",
+        "An unset list starts from its default. A list that takes each item once refuses one it has, at the line.",
+        "roster.o.terminal.font:append(\"Fira Code\")",
+    ),
+    item(
+        "roster.o.List:prepend",
+        Some(&[param("...", "any", "Items to add.")]),
+        "",
+        "Adds items to the start of a list, in the order given.",
+        "As append.",
+        "roster.o.terminal.font:prepend(\"Cascadia Mono\")",
+    ),
+    item(
+        "roster.o.List:insert",
+        Some(&[
+            param("i", "integer", "The position, from 1 to the list's length + 1."),
+            param("value", "any", "The item."),
+        ]),
+        "",
+        "Puts an item at a position of a list.",
+        "A position outside the list is an error at the line.",
+        "roster.o.modes.standard.sidebar.sections:insert(1, \"folders\")",
+    ),
+    item(
+        "roster.o.List:remove",
+        Some(&[param(
+            "...",
+            "any",
+            "Items to take out (for folders and packages, a name will do).",
+        )]),
+        "",
+        "Takes items out of a list.",
+        "An item it doesn't have is an error at the line.",
+        "roster.o.terminal.font:remove(\"Iosevka Term\")",
+    ),
+    item(
+        "roster.o.List:has",
+        Some(&[param(
+            "value",
+            "any",
+            "An item (for folders and packages, a name will do).",
+        )]),
+        "boolean",
+        "Whether a list has an item, its default counted while it's unset.",
+        "",
+        "if not roster.o.terminal.font:has(\"Hack\") then roster.o.terminal.font:append(\"Hack\") end",
+    ),
+    item(
+        "roster.o.List:clear",
+        Some(&[]),
+        "",
+        "Empties a list.",
+        "",
+        "roster.o.terminal.font:clear()",
+    ),
+    item(
+        "roster.o.List:reset",
+        Some(&[]),
+        "",
+        "Puts a list back to its default.",
+        "",
+        "roster.o.terminal.font:reset()",
+    ),
 ];
