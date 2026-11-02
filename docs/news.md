@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Fixed
+
+**App**
+
+- **The fill key at sudo with `pwfeedback` doesn't work on Windows yet:** v0.4.0's fill takes sudo's `*` as no echo, but Windows' ConPTY redraws it in a form the check doesn't accept yet, so the fill is refused ("the prompt printed what roster typed to check it"). It fails safe: nothing but roster's check was typed, no Enter, so sudo counts no attempt; type that password yourself for now. Each such refusal now writes one line to the app's log (stderr) saying what the prompt drew, with no text but `*` and space, so the real form can be added. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
+
 ## v0.4.0
 
 ### New
