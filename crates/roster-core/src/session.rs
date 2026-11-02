@@ -10,9 +10,10 @@
 //! readable by other processes and logged by process auditing for its whole life).
 
 use crate::detect::Target;
+use crate::screen::Screen;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -250,9 +251,9 @@ struct Running {
     /// while it checked the prompt.
     output: Arc<AtomicU64>,
     writes: AtomicU64,
-    /// Its last [`TAIL`] bytes of output, as the PTY gave them: a nested fill's prompt must end
-    /// them ([`SessionManager::at_prompt`]).
-    tail: Arc<Mutex<VecDeque<u8>>>,
+    /// Its output as a terminal draws it, the cursor's line for a fill's prompt check
+    /// ([`SessionManager::fill`], tickets 120 and 137).
+    screen: Arc<Mutex<Screen>>,
 }
 
 impl Running {
@@ -334,7 +335,7 @@ impl SessionManager {
             fill_as: cmd.fill_as.clone(),
             output: Arc::new(AtomicU64::new(0)),
             writes: AtomicU64::new(0),
-            tail: Arc::new(Mutex::new(VecDeque::with_capacity(TAIL))),
+            screen: Arc::new(Mutex::new(Screen::new(size.rows, size.cols))),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(id, Arc::clone(&running));
@@ -347,13 +348,13 @@ impl SessionManager {
         let (drained_tx, drained) = mpsc::channel::<()>();
         let out = Arc::clone(&gate);
         let read = Arc::clone(&running.output);
-        let tail = Arc::clone(&running.tail);
+        let screen = Arc::clone(&running.screen);
         let reader_stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name(format!("session-{id}-read"))
             .spawn(move || {
                 reader.pump(&reader_stop, |chunk| {
-                    keep_tail(&tail, &chunk);
+                    screen.lock().unwrap().feed(&chunk);
                     read.fetch_add(1, Ordering::SeqCst);
                     out.output(chunk)
                 });
@@ -407,8 +408,9 @@ impl SessionManager {
     /// frontend read off the screen; `hop` is a nested ssh's Host, as the frontend resolved it
     /// (none for the Session's own Host). In order: the Session must be to an Inventory Host (else
     /// [`FillError::NoHost`], and nothing is asked); what it has printed and been sent so far is
-    /// noted; its output must end with `prompt`, the cursor right after it
-    /// ([`SessionManager::at_prompt`]), else [`FillError::NotPrinted`] and nothing is asked or
+    /// noted; the cursor must sit right after `prompt` on its line, as a terminal draws the
+    /// Session's output (through ConPTY's redraws), with nothing after it there, else
+    /// [`FillError::NotPrinted`] and nothing is asked or
     /// typed, so the frontend's word alone never sends a password to a Session that isn't asking
     /// for it, on its own Host or another; `lookup` gets the Host the Session was opened to and
     /// what it connected to, and returns the secret (serve's `session.fill`, which judges `prompt`
@@ -438,7 +440,7 @@ impl SessionManager {
             running.output.load(Ordering::SeqCst),
             running.writes.load(Ordering::SeqCst),
         );
-        if !ends_with_prompt(&running, prompt) {
+        if !running.screen.lock().unwrap().cursor_after(prompt) {
             return Err(FillError::NotPrinted);
         }
         let secret = lookup(&target).map_err(FillError::Lookup)?;
@@ -464,18 +466,9 @@ impl SessionManager {
         Ok(hop.map_or(target.host, |h| h.host.clone()))
     }
 
-    /// Whether the Session's output, read as text, ends with `text`: the cursor sits right after
-    /// it, as at a prompt (tickets 120 and 137). Its last [`TAIL`] bytes are read with escape
-    /// sequences taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every
-    /// run of whitespace as one space, on both sides; trailing whitespace doesn't count. So a
-    /// prompt redrawn with colours or cursor moves still counts, and one with other output after
-    /// it doesn't. An empty `text` never does.
-    pub fn at_prompt(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
-        Ok(ends_with_prompt(&*self.get(id)?, text))
-    }
-
     pub fn resize(&self, id: SessionId, size: Size) -> Result<(), SessionError> {
         let running = self.get(id)?;
+        running.screen.lock().unwrap().resize(size.rows, size.cols);
         let m = running.master.lock().unwrap();
         m.as_ref()
             .ok_or(SessionError::NotFound(id))?
@@ -520,77 +513,6 @@ impl SessionManager {
 /// last Ctrl+U silently takes it back: nothing is printed and the line is empty. At a prompt that
 /// echoes, the letter is printed, which is how roster tells.
 pub const PROBE: &[u8] = b"\x15x\x15";
-
-/// How much of a Session's latest output the core keeps, for [`SessionManager::at_prompt`].
-pub const TAIL: usize = 4096;
-
-/// `bytes` as the text a screen shows, for [`SessionManager::at_prompt`]: CSI, OSC and other escape
-/// sequences out (a cursor-forward, `ESC [ n C`, as one space), control characters as spaces, and
-/// each run of whitespace as one space. A sequence cut off at the start of the tail is dropped.
-fn plain_text(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    let space = |out: &mut Vec<u8>| {
-        if out.last() != Some(&b' ') {
-            out.push(b' ');
-        }
-    };
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == 0x1b {
-            match bytes.get(i + 1) {
-                Some(b'[') => {
-                    let mut j = i + 2;
-                    while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
-                        j += 1;
-                    }
-                    if bytes.get(j) == Some(&b'C') {
-                        space(&mut out);
-                    }
-                    i = j + 1;
-                }
-                Some(b']') | Some(b'P') | Some(b'_') | Some(b'^') => {
-                    let mut j = i + 2;
-                    while j < bytes.len() && bytes[j] != 0x07 && !(bytes[j] == 0x1b && bytes.get(j + 1) == Some(&b'\\'))
-                    {
-                        j += 1;
-                    }
-                    i = if bytes.get(j) == Some(&0x07) { j + 1 } else { j + 2 };
-                }
-                _ => i += 2,
-            }
-            continue;
-        }
-        if c <= b' ' || c == 0x7f {
-            space(&mut out);
-        } else {
-            out.push(c);
-        }
-        i += 1;
-    }
-    out
-}
-
-/// [`SessionManager::at_prompt`] for a Session in hand.
-fn ends_with_prompt(running: &Running, text: &str) -> bool {
-    let tail = running.tail.lock().unwrap();
-    let (a, b) = tail.as_slices();
-    let mut seen = Vec::with_capacity(a.len() + b.len());
-    seen.extend_from_slice(a);
-    seen.extend_from_slice(b);
-    let hay = plain_text(&seen);
-    let needle = plain_text(text.as_bytes());
-    let needle = needle.trim_ascii();
-    !needle.is_empty() && hay.trim_ascii_end().ends_with(needle)
-}
-
-fn keep_tail(tail: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
-    let mut t = tail.lock().unwrap();
-    let chunk = &chunk[chunk.len().saturating_sub(TAIL)..];
-    let over = (t.len() + chunk.len()).saturating_sub(TAIL);
-    t.drain(..over);
-    t.extend(chunk);
-}
 
 /// A secret on its way from serve to a PTY: no Debug value, no Display, no Clone, no Serialize,
 /// and its bytes are overwritten when it's dropped (best effort: copies serve's answer passed

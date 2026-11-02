@@ -2,13 +2,13 @@
 //! calls, Sessions).
 //! All logic lives in roster-core so it can be tested without Tauri (docs/app/dev/testing.md).
 
-use roster_core::backend::{Backend, BackendInfo, QuickTarget};
+use roster_core::backend::{Backend, BackendInfo, QuickTarget, fill_refusal};
 use roster_core::config::{self, Config, Loader, Report};
 use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
 use roster_core::package::{self, Packages};
 use roster_core::plugin::{self, Permission, PluginHost};
 use roster_core::rpc::{CallError, Notify};
-use roster_core::session::{FillError, FillTarget, SessionError, SessionEvent, SessionId, SessionManager, Size};
+use roster_core::session::{FillTarget, SessionError, SessionEvent, SessionId, SessionManager, Size};
 use roster_core::slot::Slot;
 use roster_core::state::StateFile;
 use serde_json::{Value, json};
@@ -1075,12 +1075,7 @@ async fn session_fill(
         let filled = sessions.fill(id, FILL_WAIT, &prompt, hop.as_ref(), |target| {
             backend.fill_secret(target, &prompt, hop.as_ref())
         });
-        filled.map(|host| json!({ "host": host })).map_err(|e| match e {
-            FillError::Lookup(e) => e,
-            other => CallError::Io {
-                message: other.to_string(),
-            },
-        })
+        filled.map(|host| json!({ "host": host })).map_err(fill_refusal)
     })
     .await
 }

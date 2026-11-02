@@ -4,7 +4,7 @@
 use crate::detect::{Candidate, OVERRIDE_VAR, Target};
 use crate::error::{BackendError, ErrorKind};
 use crate::rpc::{CallError, Notify, RpcClient};
-use crate::session::{FillTarget, LoginAs, Prepared, Secret, SessionCommand, session_command};
+use crate::session::{FillError, FillTarget, LoginAs, Prepared, Secret, SessionCommand, session_command};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::process::Command;
@@ -85,6 +85,9 @@ pub const CHECK_JOBS_API_VERSION: i64 = 21;
 /// The first serve API whose `session.fill` takes `hop` (ticket 120): an older one ignores it and
 /// answers for the Session's own Host, so the core never sends it a nested fill.
 pub const NESTED_FILL_API_VERSION: i64 = 26;
+/// serve's "won't fill this prompt" code (errors.md row 143), which the core also gives a fill it
+/// refused before typing anything (ticket 137, row 163): the app then offers the prompt again.
+pub const FILL_REFUSED: i64 = 130;
 /// How often [`Backend::check_host`] asks a check job how it's going.
 pub const CHECK_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -467,5 +470,24 @@ fn classify(e: CallError, shown: &str) -> BackendError {
             "Run the command below in a terminal to see what's wrong.",
         )
         .with_detail(shown),
+    }
+}
+
+/// A fill's refusal as the app hears it (tickets 119, 120, 137). One that typed nothing at all
+/// (the Session's output doesn't end with the prompt) carries [`FILL_REFUSED`], as serve's own
+/// refusals do, so the app offers the prompt again; serve's come back as they are; one that typed
+/// the probe (an echo, a key sent meanwhile) has no code, so the prompt stays spent. None of them
+/// holds the secret.
+pub fn fill_refusal(e: FillError<CallError>) -> CallError {
+    match e {
+        FillError::Lookup(e) => e,
+        FillError::NotPrinted => CallError::Rpc {
+            code: FILL_REFUSED,
+            message: FillError::<CallError>::NotPrinted.to_string(),
+            data: Some(json!({ "fix": "press the key again while the prompt is at the cursor" })),
+        },
+        other => CallError::Io {
+            message: other.to_string(),
+        },
     }
 }

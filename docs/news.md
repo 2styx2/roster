@@ -10,7 +10,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
-- **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the Session's output ends with that very prompt, the cursor right after it, as a nested ssh's fill already did; a sudo prompt that went by, with other output after it, gets nothing, and the vault isn't asked. `terminal.read` Plugins can no longer get a few characters of a Session's shell-hook token when its output pauses part-way into the token: whatever is held then goes out dashed, and the rest of the token after the pause is dashed too.
+- **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the cursor is right after that very prompt, as a terminal draws it (Windows' redraws included), as a nested ssh's fill already needed; a sudo prompt that went by gets nothing and the vault isn't asked, and pressing the key again works once the prompt is back at the cursor. `terminal.read` Plugins no longer get any of a Session's shell-hook token when the output is split at an unlucky point or wraps it with links, colours or charset switches inside; ordinary output reaches them unchanged.
 
 ## v0.3.0
 

@@ -266,3 +266,41 @@ describe("a nested ssh to another Host (ticket 120)", () => {
     expect(note).toHaveTextContent(/newer roster \(API 26\)/);
   });
 });
+
+// Ticket 137 (review #2, #7): the fake checks the prompt as the core does, before serve is asked:
+// the Session's output must end with the prompt line it's given, or nothing is asked or typed and
+// the refusal carries 130, so the app offers the prompt again.
+describe("the fake's printed-prompt check, as the core's", () => {
+  const td = new TextDecoder();
+  async function session() {
+    const backend = fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, vault: { status: "unlocked" } });
+    let seen = "";
+    const handle = await backend.openSession(vaultHost, { cols: 80, rows: 24 }, {
+      output: (d) => void (seen += td.decode(d)),
+      exit: () => {},
+    });
+    const until = (text: RegExp) => waitFor(() => expect(seen).toMatch(text));
+    await until(/\$ $/);
+    const fill = handle.fill;
+    if (!fill) throw new Error("no fill");
+    return { handle, fill, until, seen: () => seen };
+  }
+
+  it("refuses a prompt the output doesn't end with, with 130 and nothing typed", async () => {
+    const { handle, fill, until, seen } = await session();
+    for (const c of "sudo -v\r") await handle.write(c);
+    await until(/password for admin: $/);
+    await expect(fill("[sudo] password for root:")).rejects.toMatchObject({ code: FillRefusal.refused, message: expect.stringMatching(/isn't at that prompt/) });
+    expect(seen()).not.toMatch(/sudo ok|Sorry/);
+    // At the very prompt it fills.
+    await expect(fill("[sudo] password for admin:")).resolves.toEqual({ host: vaultHost });
+    await until(/\[sudo ok\]/);
+  });
+
+  it("refuses with the probe's echo when the line ends with the prompt's text but echoes", async () => {
+    const { handle, fill, until } = await session();
+    for (const c of "[sudo] password for admin:") await handle.write(c);
+    await until(/admin:$/);
+    await expect(fill("[sudo] password for admin:")).rejects.toThrow(/printed what roster typed/);
+  });
+});
