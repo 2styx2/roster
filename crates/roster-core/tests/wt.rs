@@ -164,7 +164,14 @@ fn the_preview_diffs_the_file_names_what_init_lua_overrides_and_writes_only_unch
             .any(|l| l.kind == DiffKind::Same && l.text == "return {")
     );
     // init.lua's own size wins over the import: the preview says so.
-    assert_eq!(pre.overridden, ["terminal.size"]);
+    assert_eq!(
+        pre.overridden,
+        [wt::Overridden {
+            option: "terminal.size".into(),
+            by: wt::Wins::Returned,
+            at: None,
+        }]
+    );
     assert!(pre.summary.iter().any(|s| s.contains("Iosevka Nerd Font")));
 
     // Nothing is written by the preview.
@@ -205,6 +212,38 @@ fn in_a_neovim_style_init_lua_the_block_goes_last_and_importing_again_replaces_i
     wt::apply(&dir, &settings, "settings.json", &pre.applied()).unwrap();
     let twice = std::fs::read_to_string(dir.join("init.lua")).unwrap();
     assert_eq!(twice, once.replace("2026-10-30", "2026-10-31"));
+}
+
+/// Importing again replaces the older block in place, so a `roster.o` line the user wrote after
+/// it still comes later and wins: the preview says so, at that line (ticket 144).
+#[test]
+fn a_roster_o_line_after_an_older_import_block_wins_and_the_preview_says_so() {
+    let settings = fixture("defaults-font.json");
+    let dir = temp_dir("later-line");
+    std::fs::write(dir.join("init.lua"), "roster.o.vim = false\n").unwrap();
+    let pre = wt::preview(&dir, &settings, "settings.json", "2026-10-30").unwrap();
+    wt::apply(&dir, &settings, "settings.json", &pre.applied()).unwrap();
+    let mut init = std::fs::read_to_string(dir.join("init.lua")).unwrap();
+    init.push_str("roster.o.terminal.size = 14\n");
+    let line = init.lines().count() as u32;
+    std::fs::write(dir.join("init.lua"), &init).unwrap();
+
+    let pre = wt::preview(&dir, &settings, "settings.json", "2026-10-31").unwrap();
+    assert_eq!(pre.error, None);
+    assert_eq!(
+        pre.overridden,
+        [wt::Overridden {
+            option: "terminal.size".into(),
+            by: wt::Wins::Later,
+            at: Some(config::Location {
+                file: "init.lua".into(),
+                line
+            }),
+        }]
+    );
+    // And it does win, once written.
+    wt::apply(&dir, &settings, "settings.json", &pre.applied()).unwrap();
+    assert_eq!(config::load(&dir).unwrap().terminal.size, FontSize::Px(14.0));
 }
 
 #[test]
