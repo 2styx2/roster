@@ -2,6 +2,7 @@
 // command registry like any other command.
 import { matching, type CommandDef } from "../commands/table";
 import { BUILTIN } from "../registry";
+import { quiet } from "../ui/messages";
 import { DEFAULT_TUTORIAL, type TutorialDef, type TutorRegistry } from "./tutor";
 
 export interface TutorActions {
@@ -45,7 +46,7 @@ export function tutorCommand(tutorials: TutorRegistry, act: TutorActions): Comma
       if (typeof def === "string") return ctx.say(def);
       if (word === "reset") {
         act.reset(def);
-        return ctx.say(`${def.title}: started over.`);
+        return ctx.say(quiet(`${def.title}: started over.`));
       }
       act.start(def);
     },

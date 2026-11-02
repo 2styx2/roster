@@ -12,9 +12,9 @@
 use crate::detect::Target;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -35,6 +35,28 @@ pub struct Prepared {
     pub host: String,
     /// "key" or "password".
     pub auth: String,
+    /// What the Session connects to (serve API 25): sent back with a prompt fill, so a Host edited
+    /// since isn't filled into this Session. Absent from an older serve (then nothing is filled).
+    #[serde(default)]
+    pub login: Option<LoginAs>,
+}
+
+/// The address, port and user a Session connected to, as `session.prepare` said.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LoginAs {
+    pub address: String,
+    pub port: u16,
+    pub user: String,
+}
+
+/// The Inventory Host a Session is to, and what it connected to: all a prompt fill may ask serve
+/// about ([`SessionManager::fill`]). Also a nested ssh's Host, as the frontend resolved it
+/// (ticket 120), read from `{host, address, port, user}`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FillTarget {
+    pub host: String,
+    #[serde(flatten)]
+    pub login: LoginAs,
 }
 
 impl std::fmt::Debug for Prepared {
@@ -44,6 +66,7 @@ impl std::fmt::Debug for Prepared {
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .field("host", &self.host)
             .field("auth", &self.auth)
+            .field("login", &self.login)
             .finish()
     }
 }
@@ -57,15 +80,20 @@ pub struct SessionCommand {
     pub env: Vec<(String, String)>,
     /// How the Session logs in, as `session.prepare` said: "key" or "password" (shown on the tab).
     pub auth: String,
+    /// The Inventory Host the Session is to and what it connected to, as `session.prepare` said:
+    /// the only Host a prompt fill may ask serve about ([`SessionManager::fill`]). None for a
+    /// Quick Connect, a stub, or a serve too old to say what it connected to.
+    pub fill_as: Option<FillTarget>,
 }
 
 impl SessionCommand {
-    /// A key-login command (tests, stub commands).
+    /// A key-login command with no Host (tests, stub commands).
     pub fn new(argv: Vec<String>, env: Vec<(String, String)>) -> Self {
         SessionCommand {
             argv,
             env,
             auth: "key".into(),
+            fill_as: None,
         }
     }
 
@@ -92,6 +120,7 @@ impl std::fmt::Debug for SessionCommand {
             .field("argv", &self.argv)
             .field("env", &env)
             .field("auth", &self.auth)
+            .field("fill_as", &self.fill_as)
             .finish()
     }
 }
@@ -132,6 +161,10 @@ pub fn session_command(target: &Target, prepared: &Prepared) -> SessionCommand {
         argv,
         env,
         auth: prepared.auth.clone(),
+        fill_as: prepared.login.clone().map(|login| FillTarget {
+            host: prepared.host.clone(),
+            login,
+        }),
     }
 }
 
@@ -211,6 +244,15 @@ struct Running {
     writer: Mutex<Option<Box<dyn Write + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     closed: AtomicBool,
+    /// The Inventory Host it's to ([`SessionCommand::fill_as`]).
+    fill_as: Option<FillTarget>,
+    /// Output chunks read so far, and writes sent: a fill types its secret only if neither moved
+    /// while it checked the prompt.
+    output: Arc<AtomicU64>,
+    writes: AtomicU64,
+    /// Its last [`TAIL`] bytes of output, as the PTY gave them: a nested fill's prompt must end
+    /// them ([`SessionManager::at_prompt`]).
+    tail: Arc<Mutex<VecDeque<u8>>>,
 }
 
 impl Running {
@@ -289,6 +331,10 @@ impl SessionManager {
             master: Mutex::new(Some(pair.master)),
             writer: Mutex::new(Some(writer)),
             closed: AtomicBool::new(false),
+            fill_as: cmd.fill_as.clone(),
+            output: Arc::new(AtomicU64::new(0)),
+            writes: AtomicU64::new(0),
+            tail: Arc::new(Mutex::new(VecDeque::with_capacity(TAIL))),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(id, Arc::clone(&running));
@@ -300,11 +346,17 @@ impl SessionManager {
         let stop = Arc::new(AtomicBool::new(false));
         let (drained_tx, drained) = mpsc::channel::<()>();
         let out = Arc::clone(&gate);
+        let read = Arc::clone(&running.output);
+        let tail = Arc::clone(&running.tail);
         let reader_stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name(format!("session-{id}-read"))
             .spawn(move || {
-                reader.pump(&reader_stop, |chunk| out.output(chunk));
+                reader.pump(&reader_stop, |chunk| {
+                    keep_tail(&tail, &chunk);
+                    read.fetch_add(1, Ordering::SeqCst);
+                    out.output(chunk)
+                });
                 let _ = drained_tx.send(());
             })
             .map_err(io)?;
@@ -344,9 +396,99 @@ impl SessionManager {
     /// Sends keystrokes (or pasted text) to the Session.
     pub fn write(&self, id: SessionId, data: &[u8]) -> Result<(), SessionError> {
         let running = self.get(id)?;
+        running.writes.fetch_add(1, Ordering::SeqCst);
         let mut w = running.writer.lock().unwrap();
         let w = w.as_mut().ok_or(SessionError::NotFound(id))?;
         w.write_all(data).and_then(|_| w.flush()).map_err(io)
+    }
+
+    /// Fills the password prompt the Session shows (ticket 119, decision Q129), when the user
+    /// pressed the fill key at one. In order: the Session must be to an Inventory Host (else
+    /// [`FillError::NoHost`], and nothing is asked); what it has printed and been sent so far is
+    /// noted; `lookup` gets that Host and what the Session connected to, and returns the secret
+    /// (serve's `session.fill`), and a refusal there types nothing; then the probe,
+    /// [`PROBE`], goes to the prompt: Ctrl+U (the line-kill key, which empties whatever was typed
+    /// there already) around a letter. A prompt that doesn't echo, as sudo's, su's and ssh's
+    /// don't, prints nothing for it; one that echoes prints the letter (and takes it back). So if
+    /// anything was printed since the lookup started (through `wait` after the probe), or a key was
+    /// sent meanwhile, the secret isn't typed
+    /// ([`FillError::Echoes`], [`FillError::Typed`]). Otherwise the secret and Enter go to the PTY
+    /// in one write, and the secret is wiped as it's dropped. Returns the Host's name.
+    ///
+    /// The secret never leaves this call: not in a return value, an error, a log or an event.
+    pub fn fill<E>(
+        &self,
+        id: SessionId,
+        wait: Duration,
+        lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
+    ) -> Result<String, FillError<E>> {
+        let running = self.get(id).map_err(|_| FillError::NotFound(id))?;
+        let target = running.fill_as.clone().ok_or(FillError::NoHost)?;
+        // Before the lookup, which may wait on the vault: what's printed or typed meanwhile counts.
+        let (output, writes) = (
+            running.output.load(Ordering::SeqCst),
+            running.writes.load(Ordering::SeqCst),
+        );
+        let secret = lookup(&target).map_err(FillError::Lookup)?;
+        {
+            let mut w = running.writer.lock().unwrap();
+            let w = w.as_mut().ok_or(FillError::NotFound(id))?;
+            w.write_all(PROBE).and_then(|_| w.flush()).map_err(fill_io)?;
+        }
+        std::thread::sleep(wait);
+        let mut w = running.writer.lock().unwrap();
+        let w = w.as_mut().ok_or(FillError::NotFound(id))?;
+        if running.output.load(Ordering::SeqCst) != output {
+            return Err(FillError::Echoes);
+        }
+        if running.writes.load(Ordering::SeqCst) != writes {
+            return Err(FillError::Typed);
+        }
+        let mut line = Secret(Vec::with_capacity(secret.0.len() + 1));
+        line.0.extend_from_slice(&secret.0);
+        line.0.push(b'\r');
+        drop(secret);
+        w.write_all(&line.0).and_then(|_| w.flush()).map_err(fill_io)?;
+        Ok(target.host)
+    }
+
+    /// Whether the Session's output, read as text, ends with `text`: the cursor sits right after
+    /// it, as at a prompt (ticket 120). Its last [`TAIL`] bytes are read with escape sequences
+    /// taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every run of
+    /// whitespace as one space, on both sides; trailing whitespace doesn't count. So a prompt
+    /// redrawn with colours or cursor moves still counts, and one with other output after it doesn't.
+    pub fn at_prompt(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
+        let running = self.get(id)?;
+        let tail = running.tail.lock().unwrap();
+        let (a, b) = tail.as_slices();
+        let mut seen = Vec::with_capacity(a.len() + b.len());
+        seen.extend_from_slice(a);
+        seen.extend_from_slice(b);
+        let hay = plain_text(&seen);
+        let needle = plain_text(text.as_bytes());
+        let needle = needle.trim_ascii();
+        Ok(!needle.is_empty() && hay.trim_ascii_end().ends_with(needle))
+    }
+
+    /// [`SessionManager::fill`] for a nested ssh's prompt (ticket 120, decision Q131), whose Host
+    /// the frontend names: only when the Session's output ends with `prompt` itself
+    /// ([`SessionManager::at_prompt`]), so the frontend's word alone can't send another Host's
+    /// password to a Session that isn't asking for it ([`FillError::NotPrinted`], before anything
+    /// is looked up).
+    /// Returns the name of `hop`, the Host whose password it typed.
+    pub fn fill_at_prompt<E>(
+        &self,
+        id: SessionId,
+        wait: Duration,
+        prompt: &str,
+        hop: &FillTarget,
+        lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
+    ) -> Result<String, FillError<E>> {
+        match self.at_prompt(id, prompt.trim()) {
+            Ok(true) => self.fill(id, wait, lookup).map(|_| hop.host.clone()),
+            Ok(false) => Err(FillError::NotPrinted),
+            Err(_) => Err(FillError::NotFound(id)),
+        }
     }
 
     pub fn resize(&self, id: SessionId, size: Size) -> Result<(), SessionError> {
@@ -387,6 +529,141 @@ impl SessionManager {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// What a fill types at the prompt before the secret: Ctrl+U, a letter, Ctrl+U. At a prompt that
+/// doesn't echo (the terminal's line discipline with echo off, as sudo sets it) the
+/// first Ctrl+U silently empties what was typed there, the letter is silently taken, and the
+/// last Ctrl+U silently takes it back: nothing is printed and the line is empty. At a prompt that
+/// echoes, the letter is printed, which is how roster tells.
+pub const PROBE: &[u8] = b"\x15x\x15";
+
+/// How much of a Session's latest output the core keeps, for [`SessionManager::at_prompt`].
+pub const TAIL: usize = 4096;
+
+/// `bytes` as the text a screen shows, for [`SessionManager::at_prompt`]: CSI, OSC and other escape
+/// sequences out (a cursor-forward, `ESC [ n C`, as one space), control characters as spaces, and
+/// each run of whitespace as one space. A sequence cut off at the start of the tail is dropped.
+fn plain_text(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let space = |out: &mut Vec<u8>| {
+        if out.last() != Some(&b' ') {
+            out.push(b' ');
+        }
+    };
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x1b {
+            match bytes.get(i + 1) {
+                Some(b'[') => {
+                    let mut j = i + 2;
+                    while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                        j += 1;
+                    }
+                    if bytes.get(j) == Some(&b'C') {
+                        space(&mut out);
+                    }
+                    i = j + 1;
+                }
+                Some(b']') | Some(b'P') | Some(b'_') | Some(b'^') => {
+                    let mut j = i + 2;
+                    while j < bytes.len() && bytes[j] != 0x07 && !(bytes[j] == 0x1b && bytes.get(j + 1) == Some(&b'\\'))
+                    {
+                        j += 1;
+                    }
+                    i = if bytes.get(j) == Some(&0x07) { j + 1 } else { j + 2 };
+                }
+                _ => i += 2,
+            }
+            continue;
+        }
+        if c <= b' ' || c == 0x7f {
+            space(&mut out);
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
+fn keep_tail(tail: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
+    let mut t = tail.lock().unwrap();
+    let chunk = &chunk[chunk.len().saturating_sub(TAIL)..];
+    let over = (t.len() + chunk.len()).saturating_sub(TAIL);
+    t.drain(..over);
+    t.extend(chunk);
+}
+
+/// A secret on its way from serve to a PTY: no Debug value, no Display, no Clone, no Serialize,
+/// and its bytes are overwritten when it's dropped (best effort: copies serve's answer passed
+/// through on the way here, such as the JSON line it came in, aren't).
+pub struct Secret(Vec<u8>);
+
+impl Secret {
+    pub fn new(value: String) -> Self {
+        Secret(value.into_bytes())
+    }
+}
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        for b in self.0.iter_mut() {
+            // SAFETY: a valid, aligned, exclusive pointer into our own buffer.
+            unsafe { std::ptr::write_volatile(b, 0) };
+        }
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(…)")
+    }
+}
+
+/// Why a fill typed no secret ([`SessionManager::fill`]). None of them holds it.
+#[derive(Debug)]
+pub enum FillError<E> {
+    /// No open Session has this id.
+    NotFound(SessionId),
+    /// The Session isn't to an Inventory Host (a Quick Connect): there's no Login to fill.
+    NoHost,
+    /// The lookup refused (serve's error: the prompt, the Login, the vault). Nothing was typed.
+    Lookup(E),
+    /// The Session printed something while roster checked the prompt: it echoes what's typed, or
+    /// it isn't waiting quietly at a prompt. Only the probe was typed, and it left the line empty.
+    Echoes,
+    /// A key was sent to the Session while roster checked the prompt.
+    Typed,
+    /// The Session's output doesn't end with the nested fill's prompt (ticket 120). Nothing was
+    /// looked up or typed.
+    NotPrinted,
+    /// Writing to the PTY failed.
+    Io(String),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FillError::NotFound(id) => write!(f, "session {id} isn't open"),
+            FillError::NoHost => f.write_str("this Session isn't to a Host of the Inventory, so roster has no Login to fill"),
+            FillError::Lookup(e) => write!(f, "{e}"),
+            FillError::Echoes => f.write_str(
+                "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it",
+            ),
+            FillError::Typed => f.write_str("a key was typed while roster checked the prompt, so roster didn't fill it"),
+            FillError::NotPrinted => f.write_str(
+                "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
+            ),
+            FillError::Io(m) => f.write_str(m),
+        }
+    }
+}
+
+fn fill_io<E>(e: std::io::Error) -> FillError<E> {
+    FillError::Io(e.to_string())
 }
 
 /// A Session's output side of the PTY.

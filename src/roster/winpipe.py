@@ -4,7 +4,8 @@ serve's end is a pipe only this user can open: its security descriptor names thi
 one entry in a protected DACL (nothing inherited, no Administrators, no SYSTEM), every instance refuses remote
 clients, and the first instance is created with FILE_FLAG_FIRST_PIPE_INSTANCE, so serve fails rather than share a name
 someone else made first. The name has 128 random bits. The helper's end opens it with SECURITY_IDENTIFICATION, so the
-pipe's server can't act as the helper's user (a squatter learns nothing it could use).
+pipe's server can't act as the helper's user (a squatter learns nothing it could use). serve also checks each client's
+process: its token's user must be serve's own (client_sid), on top of the DACL (ticket 63).
 
 One exchange per connection, in byte mode, as on the Unix socket: the client writes a line, serve answers and
 disconnects, and the client reads to the end. Reads and writes can time out: a timeout cancels the blocked call
@@ -14,6 +15,7 @@ Stdlib only (ctypes), like askpass.py: ssh runs the helper for every prompt.
 """
 
 import ctypes
+import functools
 import threading
 from ctypes import wintypes
 
@@ -29,6 +31,7 @@ GENERIC_READ, GENERIC_WRITE = 0x80000000, 0x40000000
 OPEN_EXISTING = 3
 SECURITY_SQOS_PRESENT, SECURITY_IDENTIFICATION = 0x00100000, 0x00010000
 TOKEN_QUERY, TOKEN_USER_CLASS = 0x0008, 1
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 THREAD_TERMINATE = 0x0001
 SDDL_REVISION_1 = 1
 ERROR_BROKEN_PIPE, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED = 109, 231, 535
@@ -60,6 +63,8 @@ WriteFile = _api(kernel32, "WriteFile", B, H, P, D, ctypes.POINTER(D), P)
 FlushFileBuffers = _api(kernel32, "FlushFileBuffers", B, H)
 CloseHandle = _api(kernel32, "CloseHandle", B, H)
 GetCurrentProcess = _api(kernel32, "GetCurrentProcess", H)
+OpenProcess = _api(kernel32, "OpenProcess", H, D, B, D)
+GetNamedPipeClientProcessId = _api(kernel32, "GetNamedPipeClientProcessId", B, H, ctypes.POINTER(wintypes.ULONG))
 GetCurrentThreadId = _api(kernel32, "GetCurrentThreadId", D)
 OpenThread = _api(kernel32, "OpenThread", H, D, B, D)
 CancelSynchronousIo = _api(kernel32, "CancelSynchronousIo", B, H)
@@ -76,14 +81,23 @@ def _fail(err=None):
     raise ctypes.WinError(ctypes.get_last_error() if err is None else err)
 
 
+@functools.lru_cache(maxsize=1)
 def user_sid():
-    """This process's user, as a string SID (S-1-5-21-...)."""
+    """This process's user, as a string SID (S-1-5-21-...); read once (it can't change), so checking each askpass
+    client costs one token read, the client's."""
+    return process_sid(GetCurrentProcess())
+
+
+def process_sid(process):
+    """The user of the process whose handle is PROCESS, as a string SID; OSError if it can't be read."""
     token = H()
-    if not OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)):
+    if not OpenProcessToken(process, TOKEN_QUERY, ctypes.byref(token)):
         _fail()
     try:
         size = D()
         GetTokenInformation(token, TOKEN_USER_CLASS, None, 0, ctypes.byref(size))
+        if not size.value:
+            _fail()
         buf = ctypes.create_string_buffer(size.value)
         if not GetTokenInformation(token, TOKEN_USER_CLASS, buf, size, ctypes.byref(size)):
             _fail()
@@ -97,6 +111,21 @@ def user_sid():
             LocalFree(text)
     finally:
         CloseHandle(token)
+
+
+def client_sid(conn):
+    """The user of the process at the other end of serve's connected pipe CONN (GetNamedPipeClientProcessId, then
+    that process's token), as a string SID; OSError if it can't be told (the client has gone, say)."""
+    pid = wintypes.ULONG()
+    if not GetNamedPipeClientProcessId(conn.handle, ctypes.byref(pid)):
+        _fail()
+    process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not process:
+        _fail()
+    try:
+        return process_sid(process)
+    finally:
+        CloseHandle(process)
 
 
 def only_user_sddl(sid):

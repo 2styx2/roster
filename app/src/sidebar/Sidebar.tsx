@@ -18,6 +18,8 @@
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
 import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import { hopWords, type Breadcrumb } from "../session/breadcrumb";
+import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
 import { formatCount } from "../ui/format";
 import { HintsShown } from "../ui/hints";
@@ -30,7 +32,7 @@ export type { Dot } from "../ui/StateDot";
 export interface RowAction {
   /** The accessible name, e.g. "Close esxi-02". */
   label: string;
-  icon: "close" | "edit" | "add" | "addGroup" | "review" | "unreview" | "info" | "copy";
+  icon: "close" | "edit" | "add" | "addGroup" | "review" | "unreview" | "info" | "copy" | "plan" | "apply" | "cut" | "map";
   command: CommandLine;
   /** Always shown, not only on the selected row (the Inventory's "Add a Host"). */
   pinned?: boolean;
@@ -54,6 +56,8 @@ export interface SidebarRow {
   tail?: string;
   /** Right-aligned and faint: an address. It shows whole or not at all: the name comes first. */
   detail?: string;
+  /** A Session's breadcrumb (ticket 120): the Host a nested ssh took it to, after the name. */
+  hop?: Breadcrumb;
   /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
   count?: number;
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
@@ -156,6 +160,7 @@ export function rowFacts(row: SidebarRow): string[] {
   // An unreviewed Host's badge is what its dot already said.
   if (row.badge && row.dot !== "off") facts.push(row.badge);
   for (const t of row.tags ?? []) facts.push(tagName(t));
+  if (row.hop) facts.push(hopWords(row.hop));
   if (row.detail) facts.push(row.detail);
   if (row.count !== undefined) facts.push(hostsCount(row.count));
   if (row.pending) facts.push("not Published yet");
@@ -221,7 +226,7 @@ function Actions({ actions, run, leader = "" }: { actions: readonly RowAction[];
         run(a.command);
       }}
     >
-      <Icon name={a.icon} />
+      <RowActionGlyph name={a.icon} />
     </button>
   ));
 }
@@ -239,9 +244,18 @@ const ICONS: Record<RowAction["icon"], string> = {
   info: "M8 2.25a5.75 5.75 0 110 11.5 5.75 5.75 0 010-11.5zM8 7.25v3.5M8 5.25v.01",
   // Two sheets, one over the other: copy (a Plugin's row, ticket 56).
   copy: "M5.5 5.5h7v7h-7zM3.5 10.5v-7h7",
+  // A dashed arrow: what would change, not changed yet (a Mesh plan, ticket 91).
+  plan: "M2 8h2.5M6.5 8H9M11 8h2.5M10.5 5l3 3-3 3",
+  // A solid arrow into a bar: carry it out (a Mesh apply).
+  apply: "M2 8h9M8 5l3 3-3 3M13.5 3.5v9",
+  // An edge broken by a cross, as a cut edge is drawn in a graph (a Mesh cut).
+  cut: "M1.5 8h3.5M11 8h3.5M6.5 5.5l3 5M9.5 5.5l-3 5",
+  // Three nodes joined, as the toolbar's map: show it on a graph (Topology's section, T99).
+  map: "M3.75 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM12.25 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM8 2.25a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM5.5 11.5h5M4.7 10L7.1 5.6M11.3 10L8.9 5.6",
 };
 
-const Icon = ({ name }: { name: RowAction["icon"] }) => (
+/** A row action's icon (a Sidebar row's, a table's action). */
+export const RowActionGlyph = ({ name }: { name: RowAction["icon"] }) => (
   <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
     <path d={ICONS[name]} />
   </svg>
@@ -340,6 +354,7 @@ const Row = memo(function Row({
                 {t.text}
               </span>
             ))}
+            {row.hop && <HopCrumb hop={row.hop} />}
           </span>
           {row.badge && <span className="sb-badge"> {row.badge}</span>}
           {row.detail && <span className="sb-detail"> {row.detail}</span>}

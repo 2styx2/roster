@@ -1,6 +1,8 @@
 //! A JSON-RPC 2.0 client over a child process's stdin/stdout, one JSON object per line: the
 //! `roster serve` protocol. Calls may be made from several threads; responses are matched to
-//! callers by id, so the order the child answers in doesn't matter. Whatever the child writes to
+//! callers by id, so the order the child answers in doesn't matter (serve answers several at
+//! once since API 20, decision Q112). A call given up on is cancelled in serve (`$/cancel`, API
+//! 21). Whatever the child writes to
 //! stderr is kept (the tail of it) so a failed start can be explained.
 
 use serde::Serialize;
@@ -18,6 +20,10 @@ use std::time::Duration;
 const STDERR_TAIL: usize = 4096;
 /// How long one call may take before it's given up on.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long closing the client waits for serve to exit on its own before killing it: serve stops
+/// every running job then and records what it didn't finish (decisions Q101, Q112), up to 0.8 s,
+/// and gives the requests still running up to 1 s more to answer: 1.8 s at most.
+pub const EXIT_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -164,8 +170,20 @@ impl RpcClient {
             Ok(reply) => reply,
             Err(_) => {
                 self.shared.lock().unwrap().pending.remove(&id);
+                self.cancel(id);
                 Err(CallError::Timeout)
             }
+        }
+    }
+
+    /// Tells serve the call `id` was given up on: the notification `$/cancel {id}` (serve API 21,
+    /// ticket 108). A request still queued or waiting for a lock never runs, a running check or
+    /// Mesh run stops its job, anything else that runs finishes (serve-api.md, "Cancelling"). An
+    /// older serve ignores it (a notification gets no answer). Best effort: a closed pipe is fine.
+    fn cancel(&self, id: u64) {
+        let line = json!({"jsonrpc": "2.0", "method": "$/cancel", "params": {"id": id}}).to_string() + "\n";
+        if let Some(w) = self.stdin.lock().unwrap().as_mut() {
+            let _ = w.write_all(line.as_bytes()).and_then(|_| w.flush());
         }
     }
 
@@ -181,13 +199,11 @@ impl RpcClient {
 }
 
 impl Drop for RpcClient {
-    /// Closing stdin is how serve is told to exit. Give it a moment, then make sure.
+    /// Closing stdin is how serve is told to exit. Give it [`EXIT_GRACE`], then make sure.
     fn drop(&mut self) {
         self.stdin.lock().unwrap().take();
-        for _ in 0..40 {
-            if self.is_dead() {
-                break;
-            }
+        let deadline = std::time::Instant::now() + EXIT_GRACE;
+        while !self.is_dead() && std::time::Instant::now() < deadline {
             thread::sleep(Duration::from_millis(25));
         }
         if !self.is_dead() {

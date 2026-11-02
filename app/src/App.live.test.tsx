@@ -2,7 +2,8 @@
 // removed, renamed and moved from the Sidebar (row buttons, `+`, drag between groups), by key and
 // by `:` command, each a Pending change; removing asks first and names the Host. Outside edits to
 // roster.yml update the Sidebar in place with auto_reload, else wait for `:source` behind a quiet
-// hint; a broken one keeps the last good Inventory and says the line. Folders live in folders.yml.
+// hint; a broken one keeps the last good Inventory and says the line. folders.yml's Folders move into
+// the Folders Plugin once.
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,7 +11,6 @@ import { App, servicesLeftOut } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
 import { configWith, defaultConfig } from "./config/fixture";
 import type { Config, ConfigReport } from "./config/types";
-import { parseFoldersYml } from "./folders/file";
 import { memoryPlatform } from "./platform/memory";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
@@ -50,6 +50,8 @@ describe("removing a Host", () => {
 
   it("removes it on Enter, as a Pending change", async () => {
     const { user } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:host remove linux-1-000{Enter}`);
     await screen.findByRole("alertdialog", { name: "Remove linux-1-000?" });
     await user.keyboard("{Enter}");
@@ -72,6 +74,8 @@ describe("removing a Host", () => {
 describe("renaming and moving Hosts", () => {
   it("renames by command, and asks for the new name when it's left out", async () => {
     const { user } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:host rename linux-1-000 web-1{Enter}`);
     await said(/Renamed linux-1-000 to web-1 as a Pending change/);
     expect(item("web-1")).not.toBeNull();
@@ -89,6 +93,8 @@ describe("renaming and moving Hosts", () => {
 
   it("moves a Host dragged onto another group's heading, and by :host move", async () => {
     const { user } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     const target = within(inventory()).getByRole("treeitem", { name: /^subnet-3/ });
     fireEvent.dragStart(rowOf(item("linux-1-000") as HTMLElement));
     fireEvent.dragOver(rowOf(target));
@@ -103,6 +109,8 @@ describe("renaming and moving Hosts", () => {
 describe("groups", () => {
   it("adds a group from the heading's button, shown dimmed with a dot until it's Published", async () => {
     const { user } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.click(within(inventory()).getByRole("button", { name: "New group" }));
     expect(screen.getByRole("combobox", { name: "Command" })).toHaveValue("group new ");
     await user.keyboard("dmz{Enter}");
@@ -206,19 +214,41 @@ describe("services roster left out", () => {
   });
 });
 
+// Ticket 61 (decision Q93): Folders is a built-in Plugin with its own data folder. folders.yml's
+// Folders move in once, without losing any; after that the app never writes or watches it.
 describe("folders.yml", () => {
-  it("the app writes Folders to folders.yml, and :source picks up an outside edit", async () => {
-    const { user, platform } = await ready({ folders: null });
-    await user.keyboard(`${LEADER}:folder new Lab{Enter}`);
-    await waitFor(() => expect(parseFoldersYml(platform.foldersFile() ?? "")).toEqual({ folders: [{ name: "Lab", hosts: [] }] }));
-    act(() => platform.editFolders("Lab:\n  - esxi-2-001\nNights: []\n"));
-    await waitFor(() => expect(statusbar()).toHaveTextContent(/folders\.yml changed/));
-    await user.keyboard(`${LEADER}:source{Enter}`);
-    const folders = screen.getByRole("group", { name: "Folders" });
-    await waitFor(() => expect(within(folders).getByRole("treeitem", { name: /^Nights/ })).toBeInTheDocument());
+  it("its Folders move into the Folders Plugin once, and it's never written or read again", async () => {
+    const yml = "# mine\nLab:\n  - esxi-2-001\n  - gone-01\nNights: []\n";
+    const { user, platform, backend } = await ready({ folders: yml });
+    const folders = () => screen.getByRole("group", { name: "Folders" });
+    expect(await within(folders()).findByRole("treeitem", { name: /^Lab/ })).toBeInTheDocument();
+    expect(within(folders()).getByRole("treeitem", { name: /^Nights/ })).toBeInTheDocument();
+    // A Host that isn't in the Inventory is kept, and says so.
+    expect(within(folders()).getByRole("treeitem", { name: /^gone-01/ })).toHaveTextContent(/not in the Inventory/);
+    await waitFor(() => expect(JSON.parse(backend.pluginFiles("folders").get("folders.json") ?? "null")).toEqual([
+      { name: "Lab", hosts: ["esxi-2-001", "gone-01"] },
+      { name: "Nights", hosts: [] },
+    ]));
+    await user.keyboard(`${LEADER}:folder new Days{Enter}`);
+    expect(await within(folders()).findByRole("treeitem", { name: /^Days/ })).toBeInTheDocument();
+    expect(platform.foldersFile()).toBe(yml);
+    // Edited later, it isn't read: loaded again, the Plugin keeps its own.
+    act(() => platform.editFolders("Other: []\n"));
+    await user.keyboard(`${LEADER}:plugins reload folders{Enter}`);
+    await waitFor(() => expect(within(folders()).getByRole("treeitem", { name: /^Days/ })).toBeInTheDocument());
+    expect(within(folders()).queryByRole("treeitem", { name: /^Other/ })).toBeNull();
   });
 
-  it("init.lua's Folders stay read-only beside folders.yml's", async () => {
+  it("a folders.yml that doesn't parse moves nothing, so nothing is lost", async () => {
+    const { user, backend } = await ready({ folders: "Lab:\n  - a\nNight: x: y\n" });
+    const folders = () => screen.getByRole("group", { name: "Folders" });
+    expect(await within(folders()).findByText(/folders\.yml:3 has an error/)).toBeInTheDocument();
+    await user.keyboard(`${LEADER}:folder new Days{Enter}`);
+    await said(/Folders can't be changed until they can be read/);
+    expect(backend.pluginFiles("folders").has("folders.json")).toBe(false);
+  });
+
+  it("init.lua's Folders stay read-only beside your own", async () => {
     const config = configWith({ folders: [{ name: "Core", hosts: ["esxi-2-001"] }] });
     const { user } = await ready({ config, folders: "Lab: []\n" });
     const folders = screen.getByRole("group", { name: "Folders" });

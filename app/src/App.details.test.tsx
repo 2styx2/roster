@@ -72,6 +72,8 @@ describe("Host details", () => {
 
   it(":open SERVICE opens the details' Host's web service, :open HOST SERVICE any Host's, and :open HOST still opens the Host", async () => {
     const { user, platform } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:info nas-4-007{Enter}`);
     await user.keyboard(`${LEADER}:open web{Enter}`);
     await user.keyboard(`${LEADER}:open printer-3-006 web{Enter}`);

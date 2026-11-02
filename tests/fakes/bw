@@ -65,6 +65,38 @@ def ask(msg):
     return line.rstrip("\r\n")
 
 
+def down_arrows():
+    """The list prompt's answer: how many times the arrow went down before Enter. On a PTY the keys come as VT
+    (ESC [ B) on stdin; on Windows' console (a pseudoconsole) as keys, read like inquirer's raw mode."""
+    if os.name != "nt":
+        return sys.stdin.readline().count("\x1b[B")
+    import msvcrt
+    n = 0
+    while (k := msvcrt.getwch()) != "\r":
+        if k in ("\x00", "\xe0") and msvcrt.getwch() == "P":     # an arrow key's two parts: P is Down
+            n += 1
+    return n
+
+
+def sso_launch(url):
+    """bw opens the SSO page once its callback server listens on localhost:8065-8070: xdg-open on Linux (roster's
+    shim), PowerShell's Start on Windows (which nothing stands in for: the fake only listens there, opening nothing)."""
+    if os.name != "nt":
+        subprocess.run(["xdg-open", url])
+        return None
+    import socket
+    for port in range(8065, 8071):
+        s = socket.socket()
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            s.close()
+            continue
+        s.listen()
+        return s
+    fail("Something went wrong. Try again.")
+
+
 def mailed(what):
     os.environ.get("FAKE_BW_MAIL") and open(os.environ["FAKE_BW_MAIL"], "a").write(what + "\n")
 
@@ -95,11 +127,12 @@ if a[0] == "login":
         logged_in(account.get("email")); print('You are logged in!\n$ export BW_SESSION="throwaway-key"'); sys.exit()
     if "--sso" in a:
         if nointeraction: fail("Email address is required.")              # bw ignores --sso without a prompt
-        subprocess.run(["xdg-open", "https://vault.bitwarden.com/#/sso?clientId=cli&redirectUri=http%3A%2F%2F"
-                        "localhost%3A8065&state=fake-state&codeChallenge=fake-challenge"])
+        callback = sso_launch("https://vault.bitwarden.com/#/sso?clientId=cli&redirectUri=http%3A%2F%2F"
+                              "localhost%3A8065&state=fake-state&codeChallenge=fake-challenge")
         how = account.get("sso", "ok")
         if how == "hang": time.sleep(3600)
-        time.sleep(float(os.environ.get("FAKE_SSO_DELAY", "0.3")))
+        # the person in the browser; longer on Windows, where roster sees bw open the page by polling its port
+        time.sleep(float(os.environ.get("FAKE_SSO_DELAY", "1.5" if os.name == "nt" else "0.3")))
         if how == "fail": fail("Something went wrong. Try again.")
         if how == "tde": fail("The CLI does not support SSO login for accounts using trusted device encryption. "
                               "Log in through the web vault, desktop app, or browser extension.")
@@ -127,8 +160,7 @@ if a[0] == "login":
             sys.stderr.write("\x1b[32m?\x1b[39m \x1b[1mTwo-step login method:\x1b[22m \x1b[2m(Use arrow keys)\x1b[22m\n"
                              + "".join(f"{'❯' if i == 0 else ' '} {names[m]}\n" for i, m in enumerate(usable))
                              + "  ──────────────\n  Cancel\n"); sys.stderr.flush()
-            line = sys.stdin.readline()
-            i = line.count("\x1b[B")
+            i = down_arrows()
             if i >= len(usable): fail("Login failed.")
             pick = usable[i]
         if pick == "email": mailed("two-step code")

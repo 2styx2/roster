@@ -1,16 +1,15 @@
 //! The one-time copy from roster-desk's places (Config dir `roster-desk/`, app-data dir
 //! `dev.roster.desk/`) to roster's, made at start-up only when the new place is empty.
 
+mod common;
+
 use roster_core::migrate;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// A fresh, empty directory for one test.
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roster-core-migrate-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_dir(name: &str) -> common::Temp {
+    common::temp(&format!("migrate-{name}"))
 }
 
 fn write(path: &Path, text: &str) {

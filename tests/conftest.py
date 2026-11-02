@@ -1,8 +1,10 @@
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,26 @@ REAL_PATH = os.environ.get("PATH", "")       # before any test put the stand-ins
 # For tests that run a POSIX shell script on this machine (the remote half of a command, a stand-in written in sh):
 # native Windows has no sh to run them with.
 posix_shell = pytest.mark.skipif(WINDOWS, reason="runs a POSIX shell script; native Windows has no sh")
+
+
+def find_posix_sh():
+    """A POSIX sh for the stand-in Hosts (tests/fakes/ssh, FAKE_HOSTS): /bin/sh, or on native Windows Git for Windows'
+    MSYS sh (Git/usr/bin/sh.exe, which has the awk, sed, mktemp and ssh-keygen a Host's side of `roster mesh` uses
+    beside it; not Git/bin/sh.exe, which puts Git's own commands before the PATH it was given). None if there's none."""
+    if not WINDOWS:
+        return "/bin/sh"
+    git = shutil.which("git")
+    for sh in ([Path(git).resolve().parent.parent / "usr" / "bin" / "sh.exe"] if git else []) + \
+              [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "sh.exe"]:
+        if sh.is_file():
+            return str(sh)
+    return None
+
+
+POSIX_SH = find_posix_sh()
+# For the Mesh's stand-in Hosts: they run their side with POSIX_SH, so on Windows they need Git for Windows' sh
+stand_in_hosts = pytest.mark.skipif(POSIX_SH is None, reason="the stand-in Hosts need a POSIX sh (Git for Windows')")
+
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
@@ -33,6 +55,13 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
     monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    # What a test makes with tempfile, and a program it runs in $TMPDIR (%TEMP% on Windows), such as serve's askpass
+    # folder when there's no $XDG_RUNTIME_DIR or a stand-in Host's mktemp, goes into a folder of the test's own, deleted
+    # when the test ends (ticket 109). Short, under the real temp dir, so a Unix socket's path still fits in it.
+    temp = tempfile.mkdtemp(prefix="roster-test-")
+    monkeypatch.setattr(tempfile, "tempdir", temp)
+    for var in ("TMPDIR", "TMP", "TEMP"):
+        monkeypatch.setenv(var, temp)
     for var in ("BW_SESSION", "BW_PASSWORD", "BW_CLIENTID", "BW_CLIENTSECRET", "OP_SERVICE_ACCOUNT_TOKEN",
                 "OP_SESSION_test", "ROSTER_CONFIG", "OLD_OP"):
         monkeypatch.delenv(var, raising=False)
@@ -52,6 +81,18 @@ def isolated(tmp_path, monkeypatch):
     providers.PROVIDERS.update(saved_providers)
     os.environ.clear()
     os.environ.update(saved_env)
+    shutil.rmtree(temp, ignore_errors=True)
+
+
+@pytest.fixture
+def runtime_dir(monkeypatch):
+    """$XDG_RUNTIME_DIR as systemd/WSL make it (0700), at a path short enough for a Unix socket in a folder in it
+    whatever $TMPDIR is (a socket's path is at most ~107 bytes): straight under /tmp, removed when the test ends."""
+    run = Path(tempfile.mkdtemp(prefix="roster-run-", dir=None if WINDOWS else "/tmp"))
+    run.chmod(0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(run))
+    yield run
+    shutil.rmtree(run, ignore_errors=True)
 
 
 @pytest.fixture
@@ -91,6 +132,8 @@ class Serve:
         self.next_id = 0
         self.responses = []             # every line serve wrote to stdout, as read
         self.notes = []                 # the notifications (no id) serve sent before a response, in order
+        self.answered = {}              # id -> its response, as read
+        self.order = []                 # the ids in the order serve answered them
 
     def send(self, line):
         self.p.stdin.write(line + "\n")
@@ -103,12 +146,33 @@ class Serve:
             self.notes.append(msg)
 
     def call(self, method, params=None):
+        return self.answer(self.request(method, params))
+
+    def request(self, method, params=None):
+        """Send a request without waiting for its answer (serve answers concurrently, API 20): its id."""
         self.next_id += 1
         msg = {"jsonrpc": "2.0", "id": self.next_id, "method": method}
         if params is not None:
             msg["params"] = params
-        r = self.send(json.dumps(msg))
-        assert r["jsonrpc"] == "2.0" and r["id"] == self.next_id
+        self.p.stdin.write(json.dumps(msg) + "\n")
+        self.p.stdin.flush()
+        return self.next_id
+
+    def answer(self, rid):
+        """The answer to request RID, reading (and keeping, in self.answered and its order in self.order) whatever
+        answers come before it: serve may answer in another order than it was asked."""
+        while rid not in self.answered:
+            self.responses.append(self.p.stdout.readline())
+            if not self.responses[-1]:
+                raise EOFError(f"serve closed stdout before answering {rid}")
+            msg = json.loads(self.responses[-1])
+            if "id" not in msg and "method" in msg:
+                self.notes.append(msg)
+                continue
+            self.answered[msg["id"]] = msg
+            self.order.append(msg["id"])
+        r = self.answered[rid]
+        assert r["jsonrpc"] == "2.0" and r["id"] == rid
         return r
 
     def close(self):

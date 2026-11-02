@@ -129,7 +129,7 @@ We build it in iterations. Each one is tested by hand before the next starts:
 
 ### Inventory writes and Publish
 
-56. As the user, I want the app to pull the infra repo before letting me edit, so that I never edit a stale Inventory.
+56. As the user, I want the app to pull the infra repo before letting me edit, so that I never edit a stale Inventory. (Decision Q88: the form opens at once and pulls in the background when the last pull is older than `pull_fresh_minutes`; the save waits for that pull.)
 57. As the user, I want to add a Host by filling in name, address, group, type, user, Login and enroll, so that I don't have to hand-edit YAML.
 58. As the user, I want to edit a Host's fields, so that I can fix titles, descriptions and Logins in place.
 59. As the user, I want to mark a Host as reviewed, so that I can bring discovered Hosts into use from the app.

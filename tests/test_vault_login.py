@@ -1,15 +1,11 @@
 """vault.login: signing the vault CLI in from the app, a step at a time (ticket 31). Driven as the app drives it,
-through `roster serve`, against the fake bw (tests/fakes/bw), which prompts on its PTY the way bw does.
-Every test checks that no secret reached a command line, serve's stdout or its stderr."""
+through `roster serve`, against the fake bw (tests/fakes/bw), which prompts on its PTY the way bw does (a ConPTY on
+native Windows, ticket 63). Every test checks that no secret reached a command line, serve's stdout or its stderr."""
 
 import json
 
 import pytest
 from conftest import WINDOWS
-
-# Signing in with a password or SSO drives bw on a PTY, which native Windows roster doesn't have yet: there it refuses
-# (test_windows.py), and the API key sign-in is the way.
-pytestmark = pytest.mark.skipif(WINDOWS, reason="vault.login drives bw on a PTY: not on native Windows yet")
 
 INVENTORY = """\
 groups:
@@ -87,6 +83,8 @@ def test_password_only_signs_in_and_unlocks(signin):
     r = login(s, email=EMAIL, password=PASSWORD)["result"]
     assert r == {"step": "done", "provider": "bw", "status": "unlocked", "login": r["login"]}
     assert s.call("vault.status")["result"]["status"] == "unlocked"
+    calls = [json.loads(line) for line in files["argv"].read_text().splitlines()]
+    assert not any(c[0] == "unlock" for c in calls)            # the key `bw login --raw` printed, on Windows too
     no_secrets(s, files)
 
 
@@ -238,7 +236,10 @@ def test_api_key_rejected(signin, client_id, words):
 def test_sso_hands_over_the_link_then_unlocks(signin):
     s, files = signin(sso="ok")
     step = login(s, method="sso", identifier="yourorg")["result"]
-    assert step["step"] == "sso" and step["url"].startswith("https://vault.bitwarden.com/#/sso?")
+    if WINDOWS:     # bw opens the page itself (PowerShell's Start, which no PATH can stand in for): there's no link
+        assert step["step"] == "sso" and step["url"] is None
+    else:
+        assert step["step"] == "sso" and step["url"].startswith("https://vault.bitwarden.com/#/sso?")
     assert 0 < step["expires_in"] <= 300
     step = answer(s, step)["result"]
     assert step["step"] == "master_password"

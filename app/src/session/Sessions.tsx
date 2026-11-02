@@ -9,7 +9,8 @@ import { ErrorPanel, type ProblemActions } from "../errors/ErrorPanel";
 import type { CommandLine } from "../keymap";
 import type { TerminalEnv, TerminalViewComponent } from "../terminal/TerminalView";
 import { Keys } from "../ui/Keys";
-import type { Tab, Tabs, TabsSnapshot } from "./tabs";
+import { tabFacts, type PasswordPrompt, type Tab, type Tabs, type TabsSnapshot } from "./tabs";
+import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
 
@@ -90,7 +91,7 @@ export function TabStrip({ snapshot, run }: TabStripProps) {
               role="tab"
               aria-selected={selected}
               tabIndex={-1}
-              title={tab.auth ? `${tab.label}\n${tab.auth} login` : tab.label}
+              title={[tab.label, tabFacts(tab)].filter(Boolean).join("\n")}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => run(`session ${i + 1}`)}
             >
@@ -99,6 +100,7 @@ export function TabStrip({ snapshot, run }: TabStripProps) {
                 <span className="tab-name">{tab.label === tab.host ? tab.label : tab.label.slice(0, tab.host.length)}</span>
                 {tab.label !== tab.host && <span className="tab-tail">{tab.label.slice(tab.host.length)}</span>}
               </span>
+              {tab.hop && <HopCrumb hop={tab.hop} spoken />}
               {status && <span className="tab-status"> {status}</span>}
             </button>
             <button
@@ -419,6 +421,60 @@ function SaveOffer({
   );
 }
 
+/** The fill key's offer (ticket 119, decision Q129): the Session waits at a password prompt, and
+ * the key types the Host's password from the vault. Without the shell's marks it says roster can't
+ * tell whether the Session is still on the Host. A quiet note in the pane's corner, as "Save to
+ * vault": it never takes the terminal's focus (its button keeps it there), and it goes as soon as
+ * the prompt does. When the shell's marks say the prompt may be another Host's, it says so and
+ * offers nothing. A nested ssh's prompt (ticket 120) names the Host that ssh went to. */
+function FillOffer({
+  host,
+  prompt,
+  fillKeys,
+  leader,
+  run,
+}: {
+  /** The Session's own Host. */
+  host: string;
+  prompt: PasswordPrompt;
+  fillKeys: string | null;
+  leader: string;
+  run(line: CommandLine): void;
+}) {
+  const whose = prompt.kind === "ssh" ? "ssh's" : "sudo's";
+  if (prompt.elsewhere !== null) {
+    return (
+      <div className="session-note fill-offer elsewhere" role="status" aria-label="Password prompt">
+        <span>
+          {whose} password prompt: {prompt.elsewhere}. roster won't fill it.
+        </span>
+      </div>
+    );
+  }
+  const to = prompt.hop?.host ?? host;
+  return (
+    <div className="session-note save-offer fill-offer" role="status" aria-label="Password prompt">
+      <span>
+        {whose} password prompt · fill <span className="connect-name">{to}</span>'s from the vault
+        {!prompt.marked && (
+          <>
+            {" "}
+            <span className="muted">(roster can't tell whether you're still on {host}: without the shell's marks a nested shell can't be ruled out)</span>
+          </>
+        )}
+      </span>
+      {fillKeys && (
+        <span className="muted key-hint">
+          <Keys keys={fillKeys} leader={leader} />
+        </span>
+      )}
+      <button type="button" className="reconnect primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fill")}>
+        Fill
+      </button>
+    </div>
+  );
+}
+
 /** address:port as ssh would write it ([address]:port for IPv6). */
 function endpoint({ address, port }: QuickTarget): string {
   return `${address.includes(":") ? `[${address}]` : address}:${port}`;
@@ -448,6 +504,12 @@ export interface SessionPanesProps {
   canSave?: boolean;
   /** The keys that open the save form (`:save`), if the keymap has them. */
   saveKeys?: string | null;
+  /** A line to find in one Session's scrollback (`roster.sessions.show`, ticket 78). */
+  reveal?: { session: number; text: string; nonce: number } | null;
+  /** roster can fill a password prompt from the vault (API 25, ticket 119): offer it. */
+  canFill?: boolean;
+  /** The keys that fill it (`:fill`), if the keymap has them. */
+  fillKeys?: string | null;
 }
 
 export function SessionPanes({
@@ -463,6 +525,9 @@ export function SessionPanes({
   addressOf,
   canSave = false,
   saveKeys = null,
+  reveal = null,
+  canFill = false,
+  fillKeys = null,
 }: SessionPanesProps) {
   const actions: ProblemActions = { run, copy };
   return (
@@ -478,7 +543,15 @@ export function SessionPanes({
                 <ErrorPanel title="Couldn't open a Session" problem={s.problem} rows={errorRows} actions={actions} />
               </div>
             ) : (
-              wiring && <TerminalView active={active} leader={leader} {...wiring} env={terminalEnv} />
+              wiring && (
+                <TerminalView
+                  active={active}
+                  leader={leader}
+                  {...wiring}
+                  env={terminalEnv}
+                  reveal={reveal?.session === tab.id ? { text: reveal.text, nonce: reveal.nonce } : null}
+                />
+              )
             )}
             {s.state !== "failed" && s.state !== "ended" && (
               <ConnectCard
@@ -503,6 +576,13 @@ export function SessionPanes({
             {tab.save?.loggedIn && tab.save.saved === null && s.state === "open" && (
               <SaveOffer host={tab.host} saveKeys={saveKeys} leader={leader} run={run} dismiss={() => tabs.dismissSave(tab.id)} />
             )}
+            {canFill && tab.prompt && !tab.quick && s.state === "open" && (
+              <FillOffer host={tab.host} prompt={tab.prompt} fillKeys={fillKeys} leader={leader} run={run} />
+            )}
+            {/* Where a nested ssh took the Session (ticket 120), said once when it changes. */}
+            <span className="visually-hidden" role="status" aria-label="Where this Session is">
+              {tab.hop ? `Now on ${tab.hop.to}${tab.hop.known ? "" : ", not a Host roster can resolve"}` : ""}
+            </span>
             {s.state === "ended" && s.problem && (
               <div className="session-error overlay">
                 <ErrorPanel title="Session ended" problem={s.problem} rows={errorRows} actions={actions} />

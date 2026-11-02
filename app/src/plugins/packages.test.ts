@@ -1,5 +1,6 @@
 // Packages (ticket 24) through the Plugin manager and the fake Backend: what init.lua names is
-// cloned and asks first (its git URL shown as the unverified source); Cancel leaves nothing; an
+// cloned and asks first (its git URL shown as the unverified source); Cancel leaves nothing and is
+// remembered in the State (`:packages install NAME` asks again); an
 // update shows its diff and asks again for a new permission, and declining keeps the old version;
 // `:plugins remove` and `:packages clean` leave the app as it was.
 import { describe, expect, it } from "vitest";
@@ -35,7 +36,7 @@ function setup(packages: FakePackages, state: Record<string, unknown> = {}) {
   const registries = builtinRegistries();
   const store = { get: (k: string) => state[k], set: (k: string, v: unknown) => void (state[k] = v) };
   const manager = new PluginManager(backend, registries, store, { run: () => undefined, send: () => undefined, copy: async () => undefined });
-  return { manager, registries, state, packages };
+  return { manager, registries, state, packages, backend };
 }
 
 /** What a Plugin could have added, to compare before and after. */
@@ -71,6 +72,58 @@ describe("installing a Package", () => {
     // Not asked again this run.
     await manager.syncPackages();
     expect(manager.snapshot().prompts).toEqual([]);
+  });
+
+  async function cancelled() {
+    const s = setup({ named: [repo()], lock: {} });
+    await s.manager.syncPackages();
+    const [prompt] = s.manager.snapshot().prompts;
+    if (prompt) await s.manager.answer(prompt, false);
+    return s;
+  }
+
+  it("a cancelled install isn't asked again at the next start", async () => {
+    const first = await cancelled();
+    const again = setup(first.packages, first.state);
+    await again.manager.syncPackages();
+    expect(again.manager.snapshot().prompts).toEqual([]);
+    expect(again.packages.clones).toEqual({});
+    expect(again.manager.snapshot().declined).toEqual(["recent-alerts"]);
+  });
+
+  it("a cancelled install asks again once init.lua names another repo or folder for it", async () => {
+    const first = await cancelled();
+    const [p] = first.packages.named;
+    if (p) p.dir = "plugins/recent-alerts";
+    const again = setup(first.packages, first.state);
+    await again.manager.syncPackages();
+    expect(again.manager.snapshot().prompts).toHaveLength(1);
+  });
+
+  it("init.lua no longer naming a cancelled Package forgets it was cancelled", async () => {
+    const first = await cancelled();
+    const named = first.packages.named;
+    first.packages.named = [];
+    await first.manager.syncPackages();
+    first.packages.named = named;
+    await first.manager.syncPackages();
+    expect(first.manager.snapshot().prompts).toHaveLength(1);
+  });
+
+  it(":packages install NAME asks again for a cancelled Package", async () => {
+    const { manager, registries } = await cancelled();
+    expect(await manager.installPackage("recent-alerts")).toBeNull();
+    const [prompt] = manager.snapshot().prompts;
+    expect(prompt).toMatchObject({ kind: "install", path: "package:recent-alerts" });
+    if (prompt) await manager.answer(prompt, true);
+    expect(registries.commands.get("alerts")?.source).toBe("recent-alerts");
+    expect(manager.snapshot().declined).toEqual([]);
+  });
+
+  it(":packages install NAME says why when there's nothing to ask", async () => {
+    const { manager } = await installed();
+    expect(await manager.installPackage("recent-alerts")).toMatch(/installed already/);
+    expect(await manager.installPackage("nope")).toMatch(/init.lua names no Package nope/);
   });
 
   it("allowed, it's pinned in roster.lock and runs with init.lua's settings", async () => {
@@ -122,6 +175,36 @@ describe(":packages update", () => {
     expect(state[STATE_KEY]).toEqual([{ path: "package:recent-alerts", name: "recent-alerts", granted: ["terminal.read"], asked: ["terminal.read"] }]);
   });
 
+  it(":packages update NAME checks that one only", async () => {
+    const plugin = alerts("1.0.0", []);
+    const other: FakePackage = {
+      name: "other",
+      source: "/srv/git/other.git",
+      versions: [{ commit: fakeCommit(3), subject: "First", plugin: { ...plugin, manifest: { ...plugin.manifest, name: "other" }, load: () => undefined }, diff: "+first" }],
+    };
+    const s = setup({ named: [repo(), other], lock: {} });
+    await s.manager.syncPackages();
+    for (const prompt of s.manager.snapshot().prompts) await s.manager.answer(prompt, true);
+    newVersion(s.packages, ["terminal.read"]);
+    const asked: (string | undefined)[] = [];
+    const check = s.backend.packagesCheck.bind(s.backend);
+    s.backend.packagesCheck = (name?: string) => {
+      asked.push(name);
+      return check(name);
+    };
+    expect(await s.manager.checkPackages("other")).toBe("other is up to date");
+    expect(s.manager.snapshot().prompts).toEqual([]);
+    expect(await s.manager.checkPackages("recent-alerts")).toBe("An update: recent-alerts");
+    expect(asked).toEqual(["other", "recent-alerts"]);
+  });
+
+  it(":packages update NAME says when there's no such Package, or it isn't installed", async () => {
+    const { manager } = setup({ named: [repo()], lock: {} });
+    await manager.syncPackages();
+    expect(await manager.checkPackages("nope")).toBe("init.lua names no Package nope");
+    expect(await manager.checkPackages("recent-alerts")).toBe("recent-alerts isn't installed: :packages install recent-alerts asks to install it");
+  });
+
   it("allowed, it moves to the new commit with the new permission", async () => {
     const { manager, registries, packages, state } = await installed();
     newVersion(packages, ["terminal.read", "terminal.write"]);
@@ -158,7 +241,7 @@ describe("taking a Package out", () => {
     expect(await manager.cleanPackages()).toBe("Removed recent-alerts");
     expect(state[STATE_KEY]).toEqual([]);
     expect(packages.lock).toEqual({});
-    expect(manager.snapshot().plugins.map((p) => p.name)).toEqual(["hosts"]);
+    expect(manager.snapshot().plugins.map((p) => p.name)).toEqual(["folders", "hosts"]);
     expect(await manager.cleanPackages()).toMatch(/Nothing to clean/);
   });
 

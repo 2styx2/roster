@@ -5,6 +5,7 @@ import { link, p, h } from "../help/doc";
 import { topics } from "../help/pages";
 import { BUILTIN } from "../registry";
 import { contrast } from "../theme/contrast";
+import { searchDocs, type SearchIndex } from "./search";
 import { buildSite, PRINT_SYNTAX, siteContext, type SiteOptions } from "./site";
 
 const OPTS: SiteOptions = { sha: "0123456789abcdef0123456789abcdef01234567", repo: "example/roster", version: "9.8.7", fileExists: () => true };
@@ -102,6 +103,60 @@ describe("the docs website", () => {
     expect(css).toContain("--syntax-keyword: #6b3fb8;");
     expect(css).toContain(".hl-keyword { color: var(--syntax-keyword); }");
     expect(file(site.files, "config.html")).toMatch(/<pre data-lang="lua"><code>.*<span class="hl-key">/s);
+  });
+
+  const searchIndex = (): SearchIndex => {
+    const js = file(site.files, "search-index.js");
+    const m = /^window\.rosterSearchIndex = (.*);\n$/s.exec(js);
+    expect(m, "search-index.js sets window.rosterSearchIndex").not.toBeNull();
+    return JSON.parse((m as RegExpExecArray)[1] as string) as SearchIndex;
+  };
+
+  it("writes a search index of every topic, at the address tags.json gives it (ticket 65)", () => {
+    const tags = JSON.parse(file(site.files, "tags.json")) as Record<string, string>;
+    const index = searchIndex();
+    expect(Object.fromEntries(index.topics.map(([tag, , , href]) => [tag, href]))).toEqual(tags);
+    expect(searchDocs(index, "terminal.size").topics[0]?.href).toBe("options.html#terminal.size");
+  });
+
+  it("indexes every page's text as :helpgrep searches it, each place linked to its spot", () => {
+    const index = searchIndex();
+    const hit = searchDocs(index, "string.dump").texts.find((t) => t.where === "Your init.lua › The sandbox");
+    expect(hit?.href).toBe("config.html?hl=string.dump#the-sandbox");
+    // A heading is a topic, listed once as one.
+    expect(index.texts.some(([, text]) => text === "The sandbox")).toBe(false);
+    // The index and `all` only repeat other pages' titles; helpgrep skips them too.
+    expect(index.places.some(([href]) => href.startsWith("index.html") || href.startsWith("all.html"))).toBe(false);
+    for (const [href] of index.places) {
+      const [page = "", anchor] = href.split("#", 2);
+      if (anchor) expect(idsOf(file(site.files, page)), href).toContain(decodeURIComponent(anchor));
+    }
+  });
+
+  it("keeps the search index inside its budget (docs/app/performance.md)", async () => {
+    const js = file(site.files, "search-index.js");
+    const gzip = new Response(new Response(js).body?.pipeThrough(new CompressionStream("gzip")));
+    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(275_000);
+  });
+
+  it("puts the search box on every page, and loads the index only when it's used", () => {
+    for (const path of ["index.html", "config.html", "options.html", "search.html"]) {
+      const html = file(site.files, path);
+      expect(html, path).toContain('<script src="search.js" defer></script>');
+      expect(html, path).toContain('id="site-topic"');
+      expect(html, path).not.toContain("search-index.js");
+    }
+  });
+
+  it("has a page of every result, search.html?q=…, in the site's frame", () => {
+    const html = file(site.files, "search.html");
+    expect(html).toContain('id="site-results"');
+    expect(html).toContain('class="site-nav"');
+    expect(html).toContain("<noscript>");
+  });
+
+  it("offers to search the text when a topic address names no topic", () => {
+    expect(file(site.files, "tag.html")).toContain("search.html?q=");
   });
 
   it("never repeats an id on a page", () => {

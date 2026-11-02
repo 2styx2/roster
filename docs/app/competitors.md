@@ -2,7 +2,7 @@
 
 Checked **2026-10-29** against primary sources: official docs, pricing pages, GitHub/GitLab repos, release notes and changelogs. Every claim links its source. **UNVERIFIED** marks anything a primary source didn't confirm. Prices are list prices on that date, excluding tax.
 
-The roster app is early (iteration 1, see [roadmap.md](roadmap.md)). Where this doc compares, "roster" means **the roster CLI + the roster app as decided** in [decisions.md](decisions.md). Anything not built yet is tagged *(planned, it. N)*. roster's CLI already ships the Inventory, providers, `discover`, `setup`, `run`, `web` and `serve`.
+The roster app is at v0.2.0, with iterations 8 and 9 on `dev` (see [roadmap.md](roadmap.md)). Where this doc compares, "roster" means **the roster CLI + the roster app as built**; anything not built yet is tagged *(planned)*. roster's CLI already ships the Inventory, providers, `discover`, `setup`, `run`, `web`, `mesh` and `serve`, with `--json` on its read commands.
 
 ## Contents
 
@@ -66,18 +66,19 @@ The values every "vs roster" cell below is compared against.
 
 | Dimension | roster CLI + app |
 |---|---|
-| Inventory and sharing | One `roster.yml` in the team's git repo (`~/infra`). Edits become Pending changes, then Publish (commit and push to `main`) *(planned, it. 3)*. Every Box pulls. Personal Folders stay in local State (Q34). |
-| Secrets | **No vault of our own (Q40).** Logins are references (`bw:esxi-02 ssh+web`, `op:…`) to the user's Bitwarden, 1Password or `pass`, or to an env var or any command. KeePassXC (`keepassxc-cli`) is the local-only option *(planned, Q41, ticket 25)*. A secret goes from the vault to `roster serve` to askpass to `ssh`, and never reaches the UI ([security.md](security.md)). |
+| Inventory and sharing | One `roster.yml` in the team's git repo (`~/infra`). Edits become Pending changes, then Publish (commit and push to `main`). Every Box pulls. Personal Folders stay on this Box (the Folders Plugin's data folder, Q93). |
+| Secrets | **No vault of our own (Q40).** Logins are references (`bw:esxi-02 ssh+web`, `op:…`) to the user's Bitwarden, 1Password or `pass`, or to an env var or any command. KeePassXC (`keepassxc-cli`) is the local-only option (Q41). A secret goes from the vault to `roster serve` to askpass to `ssh`, and never reaches the UI ([security.md](security.md)). |
 | What a Host describes | Address, type, product and description; how it is reached (port, user, key or password only); web UIs and API services; **per-service Logins** (SSH vs web vs API). `roster web` makes authenticated API calls. |
-| Discovery | `roster discover` (nmap) writes Hosts with `reviewed: false`, which can't be connected to until reviewed. Quick Connect plus "Save to vault" turns a first login into a Vault item and a Host *(planned, it. 4)*. |
+| Discovery | `roster discover` (nmap) writes Hosts with `reviewed: false`, which can't be connected to until reviewed. Quick Connect plus "Save to vault" turns a first login into a Vault item and a Host. `roster discover` runs from the CLI, or from the app through the Discover Plugin (Q100). |
+| Network | The Mesh: Hosts reach each other with their own keys, per group or Link, through jump Hosts; Topology draws it (first-party Plugins). |
 | Keys | `roster setup` gives each Box its own key, tagged with the Box's name, and installs it with the vault password once. You can revoke one Box. Host keys are recorded, and enrolled Hosts use `BatchMode=yes`. |
-| Automation and AI | roster CLI; `roster serve` JSON-RPC; `ROSTER.md` tells Claude which Hosts exist. Claude uses `ssh`, `roster run` and `roster web` and sees only the output. |
-| Customizability | `init.lua` (Lua 5.4 through mlua), reloaded on save, with **no Settings screen** (ADR 0004). Themes are sets of tokens. Keymap, leader, vim keys, fonts, and a layout table per view mode (Q33, Q36, Q39) *(planned, it. 2)*. |
-| Extensibility | Lua Plugins on the app's own registries, and Packages from git pinned in `roster.lock`. Plugins never see secrets, and their writes become Pending changes only. No plugin HTML/JS in v1 (ADR 0006) *(planned, it. 7)*. |
+| Automation and AI | roster CLI, with `--json` on its read commands for scripts and other tools (never a secret, Q110); `ROSTER.md` tells Claude which Hosts exist and to read them with `--json`. Claude uses `ssh`, `roster run` and `roster web` and sees only the output. `roster serve` is the app's internal backend, not an API for other tools. |
+| Customizability | `init.lua` (Lua 5.4 through mlua), applied with `:source` (or on every save with `auto_reload = true`, Q58), with **no Settings screen** (ADR 0004). Themes are sets of tokens. Keymap, leader, vim keys, fonts, and a layout table per view mode (Q33, Q36, Q39). |
+| Extensibility | Lua Plugins on the app's own registries, and Packages from git pinned in `roster.lock`. Plugins never see secrets, and their writes become Pending changes only. No plugin HTML/JS in v1 (ADR 0006). |
 | Setup sync | Plain files synced through git dotfiles; no vendor cloud (Q42). |
-| Platforms | Windows (native, or with roster in WSL) and Linux (X11, Wayland, WSLg). macOS later. |
-| Licence and price | Private, personal tool. Might be open-sourced or get a small subscription later. |
-| Not in scope yet | SFTP, split panes, port forwarding, broadcast input, RDP/VNC, mobile, macOS. |
+| Platforms | Windows (native, or with roster in WSL) and Linux (X11, Wayland, WSLg); a macOS build ships but isn't tested day to day. |
+| Licence and price | GPL-3.0-or-later, public on GitHub; a personal tool first. Might get a small subscription later. |
+| Not in scope yet | SFTP, split panes, port forwarding, broadcast input, RDP/VNC, mobile, macOS as a tested platform. |
 
 ## Overview matrix
 
@@ -85,7 +86,7 @@ The values every "vs roster" cell below is compared against.
 
 | | Team inventory in git | PM references (no own vault) | `pass` / KeePassXC | Per-service logins (SSH / web / API) | Discovery → review gate | Per-device keys + revoke | AI without secrets | Text config file | Plugin API | Open source | Cross-platform desktop |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| **roster** | ✓ (readable YAML) | ✓ | ✓ / ✓ *(planned)* | ✓ | ✓ / ✓ | ✓ | ✓ (CLI) | ✓ Lua | ✓ Lua *(planned)* | not yet | Win, Linux |
+| **roster** | ✓ (readable YAML) | ✓ | ✓ / ✓ | ✓ | ✓ / ✓ | ✓ | ✓ (CLI) | ✓ Lua | ✓ Lua | ✓ GPL-3.0 | Win, Linux (macOS untested) |
 | XPipe | ◐ encrypted vault in git; team = Pro | ◐ PM or own vault | ✗ / ✓ | ✗ | ◐ scan, no gate | ✗ | ◐ MCP, secrets not stated | ✗ | ✗ | ◐ open core | ✓ |
 | Termix | ✓ hosts file (server-side) | ◐ refs or server store | ✗ / ✗ | ✗ | ✗ import only | ✗ | ✓ | ◐ YAML hosts file | ✓ TS | ✓ | ✓ + web, mobile |
 | Termius | ✗ own cloud | ✗ own vault | ✗ / ✗ | ✗ | ✗ import only | ◐ SSH ID | ? | ✗ | ✗ | ✗ | ✓ + mobile |
@@ -272,7 +273,7 @@ The values every "vs roster" cell below is compared against.
 | Secrets | None. `run_child_process` can call any CLI ([docs](https://wezterm.org/config/lua/wezterm/run_child_process.html)). | — |
 | What a host describes | Local, SSH, SSH multiplexer domains, unix and TLS domains ([multiplexing](https://wezterm.org/multiplexing.html)). | Persistent remote mux is something we don't have. |
 | Discovery and keys | Parses ssh config, including Include and most options ([ssh](https://wezterm.org/ssh.html)). No key management. | — |
-| Automation | `wezterm.on` events ([on](https://wezterm.org/config/lua/wezterm/on.html)); `wezterm cli` (spawn, split-pane, send-text, get-text, list…) ([cli](https://wezterm.org/cli/cli/index.html)). No AI. | Its CLI is richer than our planned app-side API. |
+| Automation | `wezterm.on` events ([on](https://wezterm.org/config/lua/wezterm/on.html)); `wezterm cli` (spawn, split-pane, send-text, get-text, list…) ([cli](https://wezterm.org/cli/cli/index.html)). No AI. | Its CLI drives the terminal itself; ours reads the Inventory (`--json`) and reaches Hosts, and the app has no outside API by design (Q110). |
 | Customizability | `wezterm.lua`; `config_builder()` warns on unknown keys; automatic reload on save; leader key, modal `key_tables`, vim-like copy mode, workspaces, splits; **no settings GUI** ([files](https://wezterm.org/config/files.html), [builder](https://wezterm.org/config/lua/config/config_builder.html), [reload](https://wezterm.org/config/lua/config/automatically_reload_config.html), [key tables](https://wezterm.org/config/lua/config/key_tables.html)). | Same model as ADR 0004. |
 | Extensibility | `wezterm.plugin.require('https://…')` clones the repo and **checks out the default branch**; "not automatically updated"; `update_all()` pulls everything; **no version pinning, no lock file, no sandbox** ([plugins](https://wezterm.org/config/plugins.html), [require](https://wezterm.org/config/lua/wezterm.plugin/require.html)). Index: [awesome-wezterm](https://github.com/michaelbrusegard/awesome-wezterm). | Our lock file and update diff (ADR 0006) fix exactly this gap. |
 | Platforms, licence, price | Linux, macOS, Windows, FreeBSD, NetBSD; MIT; free. | — |
@@ -390,7 +391,7 @@ The values every "vs roster" cell below is compared against.
 | Platforms, licence, price | Linux (minimal macOS build in 1.4.43); GPLv2+; free. | — |
 
 **Better than us:** graphical remote desktop on Linux.
-**What we do that it doesn't:** almost everything else. Remmina is a different category: graphical sessions, not a terminal.
+**What we do that it doesn't:** almost everything else. Remmina is a different category: graphical sessions (RDP, VNC), where roster is SSH access to a team's Hosts.
 
 ## Adjacent tools
 
@@ -430,7 +431,7 @@ Not direct rivals, but each overlaps one differentiator.
 
 | Tool | Language | What a plugin can do | Distribution | Pinning | Sandbox / secret boundary |
 |---|---|---|---|---|---|
-| **roster** (ADR 0006) | Lua, same runtime as the Config | Commands, keys, themes, Sidebar sections, finder sources, status segments, event hooks | git repos listed in `init.lua` | ✓ `roster.lock`, update shows a diff | Runs in the core, which has no secrets; writes become Pending changes only; no HTML/JS in v1 |
+| **roster** (ADR 0006) | Lua, same runtime as the Config | Commands, keys, themes, Sidebar sections, finders, status segments, views (tables, graphs), Host-details and `:check` sections, its own data folder, HTTP to listed sites, event hooks | git repos listed in `init.lua` | ✓ `roster.lock`, update shows a diff | Runs in the core, which has no secrets; writes become Pending changes only; no HTML/JS in v1 |
 | WezTerm | Lua | Anything the config can do | `plugin.require(git URL)` | ✗ default branch, `update_all()` | ✗ |
 | Tabby | TypeScript/Angular | Providers for profiles, tabs, settings, themes, hotkeys | npm `tabby-plugin` (~186), in-app manager | npm semver | ✗ full Electron/Node |
 | Termix | TypeScript | Hosts config, secret sources, AI, certificates (~50) | built-in plugin catalogue | UNVERIFIED | Server-side; permission-gated |
@@ -466,7 +467,7 @@ Consistent with ADR 0004 and ADR 0006. Items marked *proposal* are new and not d
 |---|---|---|
 | **Own vault only** | Termius, Tabby (vault or keychain), Wave, Electerm, SecureCRT, MobaXterm, Remmina (file or keyring), Nexterm | The app owns encryption, recovery and sync. Q40 rejects this. |
 | **Own vault plus password-manager integration** | Devolutions RDM (31 managers, Team only), XPipe (15, via CLI), Royal TS (scripts), mRemoteNG (1Password, Delinea, Passwordstate, OpenBao), Termix (op, bw, bws, vault, infisical; server-side), Ásbrú (KeePassXC) | The common pattern today. Most of these still keep a vault as the default. |
-| **References only, no vault at all** | **roster** (bw, op, pass, env, command; KeePassXC planned) | Only roster. XPipe comes closest: it can run vault-less, but always has its own encrypted store. |
+| **References only, no vault at all** | **roster** (bw, op, pass, KeePassXC, env, command) | Only roster. XPipe comes closest: it can run vault-less, but always has its own encrypted store. |
 | **No stored secrets (certificates or identity)** | Teleport, Tailscale SSH, Pomerium | No password manager needed, but you have to run their infrastructure. Doesn't cover password-only network gear, which is a core roster case. |
 | **None** | WezTerm, Warp (env vars from 1Password or LastPass only) | — |
 

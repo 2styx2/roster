@@ -56,6 +56,8 @@ describe("the Sidebar toggle", () => {
     const modes = structuredClone(defaultConfig.modes);
     modes.standard.set = ["sidebar"];
     const { user } = await ready(platform, configWith({ modes }));
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     expect(sidebar()).not.toBeNull();
     await user.click(toggle());
     expect(sidebar()).toBeNull();

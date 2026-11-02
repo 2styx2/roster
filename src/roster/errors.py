@@ -11,6 +11,10 @@ from . import providers
 INVENTORY_ERROR = 1         # roster.yml wasn't found or doesn't load (catalog row 1)
 UNKNOWN_HOST = 2            # no Host by that name
 ROSTER_ERROR = 3            # any other refusal roster gives on the command line ("error: ...")
+BUSY = 4                    # serve: another request held what this one needs (roster.yml, the vault) past its wait;
+                            #   nothing was done. data.busy: what, data.method: the request holding it (API 20)
+CANCELLED = 5               # serve: $/cancel stopped the request before it did anything (queued, or waiting for a
+                            #   lock): nothing was done (API 21)
 
 WRONG_PASSWORD = 10         # vault.*: the master password didn't unlock the vault
 NOT_LOGGED_IN = 11          # the vault CLI isn't logged in on this box (row 6)
@@ -49,6 +53,7 @@ PASSWORD_REFUSED = 45       # the Host refused the Login's password (row 11)
 KEY_REFUSED = 46            # the Host refused this box's key (row 12)
 TOO_MANY_AUTH = 47          # the Host cut the connection after too many key attempts (row 19)
 AUTH_FAILED = 48            # the login failed some other way; details has ssh's own message
+NO_CHECK = 49               # host.check_job: no check by that id in this serve (API 21)
 
 # vault.login: signing the vault CLI in on this box (ticket 31; docs/app/dev/vault-auth.md).
 # A wrong email or master password is 10, a provider with no sign-in here 13, no CLI 12.
@@ -106,6 +111,21 @@ WOULD_CHANGE = 103          # host.move / group.delete: the Host would come out 
 # The Mesh (ticket 39, decision Q63). roster.yml's mesh:/links: that don't load are 1, an unknown Host 2.
 NOT_A_SOURCE = 110          # mesh.plan / mesh.apply: rotate names a Host that isn't a Mesh source (has no Mesh key);
                             #   data.hosts
+MESH_BUSY = 111             # mesh.plan / mesh.apply / mesh.cut while a Mesh job (background: true) still runs;
+                            #   data.job, data.action
+
+# Discover in roster serve (ticket 44): a scan of a network, run in the background. A bad target is -32602.
+SCAN_RUNNING = 120          # discover.start: a scan is going already (one at a time); data.scan
+TOO_MANY_ADDRESSES = 121    # discover.plan / discover.start: more addresses than allowed; data.addresses, limit, max
+NO_SCAN = 122               # discover.status / stop / add: no scan by that id in this serve (or none yet)
+CANT_ADD = 123              # discover.add: an address the scan didn't find, or one already in the Inventory or added;
+                            #   data.addresses
+
+# Filling a password prompt in a Session (ticket 119, decision Q129): session.fill
+FILL_REFUSED = 130          # the prompt isn't provably this Host's own Login's (another Host or account, su's bare
+                            #   Password:), or the Host changed since the Session connected; data.prompt: what roster
+                            #   read it as (sudo, su, ssh), when it is one
+NOTHING_TO_FILL = 131       # the Login that would answer has no saved password (auth: agent, key, none, prompt)
 
 
 class Problem(Exception):

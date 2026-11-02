@@ -28,6 +28,10 @@ pub struct Config {
     pub fonts: Fonts,
     /// The rest of the UI's look.
     pub ui: Ui,
+    /// Every panel's default width (ticket 95, decision Q106): `panel.width`.
+    pub panel: Panel,
+    /// Per panel or view id (`help`, `details`, a Plugin view's id): its default place and width.
+    pub views: BTreeMap<String, ViewLayout>,
     pub terminal: Terminal,
     /// The chord that takes the keyboard back from a terminal.
     pub leader: String,
@@ -57,6 +61,9 @@ pub struct Config {
     /// Reload on every save of a `.lua` file. Off by default: `:source` reloads, as in Neovim
     /// (decision Q58).
     pub auto_reload: bool,
+    /// The proxy Plugins' requests to public names go through (decision Q116): `http://HOST:PORT`,
+    /// never with credentials. None: they go direct.
+    pub plugin_proxy: Option<String>,
     /// This Box's own vault settings, sent to roster serve (`vault.configure`, tickets 35 and 41).
     pub vault: Vault,
     /// Packages: Plugins from git repos, pinned in `roster.lock` (ticket 24, decision Q83). In
@@ -112,6 +119,8 @@ impl Default for Config {
             colors: ThemeColors::default(),
             fonts: Fonts::default(),
             ui: Ui::default(),
+            panel: Panel::default(),
+            views: BTreeMap::new(),
             terminal: Terminal::default(),
             leader: "Ctrl+Space".into(),
             vim: true,
@@ -126,6 +135,7 @@ impl Default for Config {
             backend: BackendChoice::Auto,
             editor: Editor::Os,
             auto_reload: false,
+            plugin_proxy: None,
             vault: Vault::default(),
             packages: Vec::new(),
             lines: BTreeMap::new(),
@@ -142,6 +152,44 @@ pub struct Ui {
     /// Show the keycap hints (status bar, empty states, panels, Picker footers, menus). Unset:
     /// `:hints` decides and the State keeps its choice; set, it wins.
     pub hints: Option<bool>,
+    /// What the message line shows (ticket 111): `"quiet"`, errors, warnings and answers only, as
+    /// Neovim; `"all"`, routine confirmations and tips too. Unset: `:messages` decides and the
+    /// State keeps its choice (quiet until it makes one); set, it wins.
+    pub messages: Option<MessagesLevel>,
+}
+
+/// `ui.messages`: which messages the message line shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessagesLevel {
+    Quiet,
+    All,
+}
+
+/// `panel`: what every panel and view starts with (ticket 95). The user's own choice, kept in the
+/// State, wins over these: they're defaults (decision Q106).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+pub struct Panel {
+    /// A docked panel's width in percent of the window (10 to 95). Unset: each panel's own.
+    pub width: Option<u32>,
+}
+
+/// `views.ID`: one panel's or view's default place and width.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+pub struct ViewLayout {
+    /// Docked beside the terminal (`"panel"`) or over the whole window (`"full"`).
+    pub place: Option<PanelPlace>,
+    /// Docked width in percent of the window (10 to 95).
+    pub width: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelPlace {
+    Panel,
+    Full,
 }
 
 /// What init.lua says about the vault: this Box's own settings, which win over roster.yml's
@@ -327,6 +375,10 @@ pub struct Terminal {
     pub bold_is_bright: bool,
     /// Terminal colours over the Theme's: background, cursor, the 16 ANSI colours…
     pub colors: TerminalColors,
+    /// Send each Session's shell the one-line hook that turns on OSC 133 marks and OSC 7 (ticket
+    /// 121, decision Q130). Unset: a Host's `shell_hooks: true` in roster.yml decides; `true`: every
+    /// Session but a Host's `shell_hooks: false`; `false`: none.
+    pub shell_hooks: Option<bool>,
 }
 
 impl Default for Terminal {
@@ -349,6 +401,7 @@ impl Default for Terminal {
             cursor_style: CursorStyle::Block,
             bold_is_bright: true,
             colors: TerminalColors::default(),
+            shell_hooks: None,
         }
     }
 }
@@ -1132,6 +1185,10 @@ pub struct PackageSpec {
     pub branch: Option<String>,
     #[serde(default)]
     pub commit: Option<String>,
+    /// The folder in the repo that holds the Plugin (`plugins/topology`), when it isn't the repo's
+    /// top (decision Q94). Relative, inside the repo, `/` between folders.
+    #[serde(default)]
+    pub dir: Option<String>,
     /// Settings handed to the Package as `roster.plugin.config` (a table; never a function).
     #[serde(default)]
     pub config: serde_json::Map<String, serde_json::Value>,

@@ -19,6 +19,11 @@ import { classifyDrop, classifyExit, terminalTail, type Problem } from "../error
 import { problemFromCallError } from "../errors/catalog";
 import { hostnameIn } from "../quick/hostname";
 import { formatQuickTarget, type QuickTarget } from "../quick/target";
+// Types only: the watch itself (xterm) comes from setFillPrompts, so this module loads without a
+// terminal (the docs site's generator reads tabs.ts's helpers in Node).
+import type { Breadcrumb, PasswordPrompt, PromptWatch } from "./prompt";
+import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult } from "./shellHooks";
+import { hopWords } from "./breadcrumb";
 
 export type TabStatus =
   | { state: "connecting" }
@@ -57,6 +62,32 @@ export interface Tab {
    * `held`. `loggedIn` once the Session logged in with it (serve says so), `hostname` what the
    * box's shell calls it, `saved` the Host it was saved as. Null when nothing is held. */
   save: SaveOffer | null;
+  /** sudo's password prompt at the Session's cursor (ticket 119), while it's there: the line as
+   * the Host printed it, why roster won't fill it when the shell's marks leave it unsure, and
+   * whether there were marks at all. Null otherwise. Never a password. */
+  prompt: PasswordPrompt | null;
+  /** The folder the shell last said it's in (OSC 7, ticket 121); absent or null until it says. */
+  cwd?: string | null;
+  /** Where a nested ssh took the Session (ticket 120): the Inventory Host it's on now, or a target
+   * roster can't resolve, until that ssh ends. Absent or null on the Session's own Host. */
+  hop?: Breadcrumb | null;
+}
+
+export type { Breadcrumb, PasswordPrompt };
+
+/** How Tabs watches Host Sessions for sudo's prompt (ticket 119): `setFillPrompts`. */
+export interface FillPrompts {
+  /** The Host's login user, which sudo's prompt must name; null: don't watch it. */
+  userOf(host: string): string | null;
+  /** A watch for a Session of `size` whose login user is `user`, whose shell hooks carry the token
+   * `nonce` (prompt.ts's PromptWatch). */
+  watch(size: TermSize, user: string, nonce: string): PromptWatch;
+}
+
+/** What a tab's tooltip says about its Session: how it logged in, the Host a nested ssh took it to
+ * (ticket 120), and the folder its shell is in (OSC 7), a line each; empty when it knows none yet. */
+export function tabFacts(tab: Tab): string {
+  return [tab.auth ? `${tab.auth} login` : "", tab.hop ? hopWords(tab.hop) : "", tab.cwd ? `in ${tab.cwd}` : ""].filter(Boolean).join("\n");
 }
 
 export interface SaveOffer {
@@ -94,10 +125,9 @@ const LATE_LIMIT = 4 * 1024;
 type Sink = (data: Uint8Array) => void;
 
 /** What a tab's terminal is wired to; the same object for the tab's whole life. */
-/** Where Plugins hear the Sessions (setOutputTap): their output, and each resize sent to one. */
+/** Where Plugins hear the Sessions (setOutputTap): their output, with the size its PTY has. */
 export interface OutputTap {
-  output(id: number, host: string | null, data: Uint8Array): void;
-  resized(id: number): void;
+  output(id: number, host: string | null, data: Uint8Array, size: TermSize): void;
 }
 
 export interface TerminalWiring {
@@ -140,6 +170,17 @@ interface Entry {
   pending: string[];
   /** The attempt's last output while a save may be offered: where the box's name is read from. */
   saveScan: string;
+  /** Watches the attempt's output for sudo's password prompt (ticket 119); new each attempt, and
+   * only for a Host's Session on a roster that can fill one. */
+  watch: PromptWatch | null;
+  /** A fill is under way: a second press waits for it. */
+  filling: boolean;
+  /** The attempt's shell hooks (ticket 121): the hook line, its echo held back, OSC 7. */
+  hooks: ShellHooks | null;
+  /** From roster's hook line going out until its first own prompt (or the hooks giving up), what
+   * the Session prints is kept from Plugins: it's the echo of a line with the attempt's token.
+   * `tail` is the window's last bytes, to find that prompt's mark across reads. */
+  echoWindow: { tail: Uint8Array } | null;
 }
 
 /** How much of the output after the login is searched for the box's name. */
@@ -158,6 +199,9 @@ export class Tabs {
   /** Sees every Session's output as it arrives (Plugins with terminal.read, ticket 23). */
   private outputTap: OutputTap | null = null;
   private asksAboutKeys = true;
+  private fillPrompts: FillPrompts | null = null;
+  /** Whether roster sends the shell hook line to a tab's Session by itself (ticket 121). */
+  private shellHooksOn: (tab: Tab) => boolean = () => false;
   private readonly now: () => number;
 
   /** Held ids serve said logged in before their tab knew it held them. */
@@ -243,6 +287,30 @@ export class Tabs {
    * host key recorded" (44) is a refusal like any other. */
   setAsksAboutKeys(asks: boolean) {
     this.asksAboutKeys = asks;
+  }
+
+  /** Whether roster may send the shell hook line to a tab's Session by itself (`shell_hooks`,
+   * ticket 121): asked when the login goes quiet at a prompt, so a Config reload counts. */
+  setShellHooks(on: (tab: Tab) => boolean) {
+    this.shellHooksOn = on;
+  }
+
+  /** Whether roster can fill a password prompt (`session.fill`, ticket 119): `userOf` gives a
+   * Host's login user, which sudo's prompt must name, and `watch` makes the watch (prompt.ts);
+   * null (an older roster) watches nothing. Each
+   * Session started after it's set is watched, never a Quick Connect. */
+  setFillPrompts(fill: FillPrompts | null) {
+    this.fillPrompts = fill;
+  }
+
+  /** `:integrate`: sends the shell hook line to the tab's Session now; answers once a marked
+   * prompt came back or didn't, or at once with why nothing was sent. */
+  integrate(id: number): Promise<IntegrateResult> {
+    const entry = this.find(id);
+    if (!entry?.hooks || !entry.session) return Promise.resolve("not-open");
+    // Never at a password prompt (ticket 119): the line would be taken for the password.
+    if (entry.tab.prompt !== null || entry.filling) return Promise.resolve("no-prompt");
+    return entry.hooks.integrate();
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -349,7 +417,7 @@ export class Tabs {
     const id = this.nextId++;
     const size = { ...this.lastSize };
     const entry: Entry = {
-      tab: { id, host, label: this.label(host, null), status: { state: "connecting" }, auth: null, shell: false, attempt: 1, quick, save: null },
+      tab: { id, host, label: this.label(host, null), status: { state: "connecting" }, auth: null, shell: false, attempt: 1, quick, save: null, prompt: null, cwd: null },
       session: null,
       closing: false,
       attempt: 0,
@@ -367,6 +435,10 @@ export class Tabs {
       keyAsked: false,
       pending: [],
       saveScan: "",
+      watch: null,
+      filling: false,
+      hooks: null,
+      echoWindow: null,
       wiring: {
         attach: (sink) => this.attach(id, sink),
         onData: (data) => this.write(id, data),
@@ -405,7 +477,7 @@ export class Tabs {
     entry.keyAsked = false;
     // A Quick Connect asks again, key and password (it keeps neither); to a Host, it's a Host's tab.
     const quick = host === undefined && entry.tab.quick ? { to: entry.tab.quick.to, id: null } : null;
-    entry.tab = { ...entry.tab, host: to, label, status: { state: "connecting" }, shell: false, attempt: entry.tab.attempt + 1, quick };
+    entry.tab = { ...entry.tab, host: to, label, status: { state: "connecting" }, shell: false, attempt: entry.tab.attempt + 1, quick, cwd: null };
     entry.pending = [];
     this.output(entry, encoder.encode(`\r\n\x1b[2m[reconnecting to ${to}…]\x1b[0m\r\n`));
     this.changed();
@@ -431,21 +503,44 @@ export class Tabs {
     entry.late = "";
     entry.decoder = new TextDecoder();
     entry.saveScan = "";
+    entry.watch?.dispose();
+    // The attempt's token in roster's own shell marks (ticket 120): only its own shell ever knows it.
+    const nonce = newNonce();
+    const mask = new TokenMask(nonce);
+    const fill = entry.tab.quick ? null : this.fillPrompts;
+    const user = fill?.userOf(entry.tab.host) ?? null;
+    const watch = (entry.watch = fill && user !== null ? fill.watch(entry.size, user, nonce) : null);
+    if (entry.tab.prompt !== null || entry.tab.hop) entry.tab = { ...entry.tab, prompt: null, hop: null };
+    entry.hooks?.stop();
+    const hooks = (entry.hooks = this.hooksFor(entry, current, nonce));
     open(entry.size, {
         output: (data) => {
           if (!current()) return;
           const before = entry.tab;
           const text = this.keepTail(entry, data);
           this.scanForName(entry, text);
-          this.output(entry, data);
+          if (watch) void watch.write(data).then(() => this.promptChanged(entry, watch));
+          // The screen gets it unless the shell hooks hold it back; Plugins always get it as it came.
+          const shown = hooks.output(data, text);
+          if (shown) this.output(entry, shown);
           // A Quick Connect Session isn't on a Host of the Inventory: no Host to name.
-          this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, data);
+          // Plugins never see the attempt's token: not the echoed hook line (its whole window stays
+          // out), nor anything after that prints it.
+          const plugins = this.outputTap ? this.pastEchoWindow(entry, nonce, data) : null;
+          if (plugins && plugins.length > 0) this.tapOut(entry, id, mask, mask.mask(plugins));
           if (!entry.tab.shell && data.length > 0) entry.tab = { ...entry.tab, shell: true };
           if (entry.tab !== before) this.changed();
         },
         exit: (exit) => {
           if (!current()) return;
           entry.session = null;
+          entry.echoWindow = null;
+          const rest = mask.flush();
+          if (rest.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, rest, entry.sentSize);
+          watch?.dispose();
+          if (entry.watch === watch) entry.watch = null;
+          if (entry.tab.prompt !== null || entry.tab.hop) entry.tab = { ...entry.tab, prompt: null, hop: null };
+          hooks.stop();
           // A Session that ends without saving: serve forgets the password it held for it.
           this.dropSave(entry);
           if (this.find(id)) this.setStatus(entry, { state: "ended", exit, problem: this.classify(entry, exit) });
@@ -501,6 +596,37 @@ export class Tabs {
           this.refused(entry, e);
         },
       );
+  }
+
+  /** The attempt's shell hooks: they write only to its own Session, show only while it's current. */
+  private hooksFor(entry: Entry, current: () => boolean, nonce: string): ShellHooks {
+    return new ShellHooks({
+      write: (line) => {
+        // Never while a password prompt is up or being filled (ticket 119): the hook line would
+        // be taken for the password. The hooks try again at their next idle prompt.
+        if (!current() || !entry.session || entry.tab.prompt !== null || entry.filling) return false;
+        // Its token proves the Session's own shell only if the line can only have gone there.
+        entry.watch?.hookSent();
+        entry.watch?.typed(line);
+        entry.echoWindow = { tail: new Uint8Array(0) };
+        void entry.session.write(line).catch(() => {});
+        return true;
+      },
+      show: (data) => {
+        if (current()) this.output(entry, data);
+      },
+      cwd: (path) => {
+        if (!current() || entry.tab.cwd === path) return;
+        entry.tab = { ...entry.tab, cwd: path };
+        this.changed();
+      },
+      enabled: () => this.shellHooksOn(entry.tab),
+      // No marked prompt came: what was printed meanwhile stays out of Plugins' sight (it held the
+      // echo); what comes next goes to them.
+      settled: () => {
+        if (current()) entry.echoWindow = null;
+      },
+    }, nonce);
   }
 
   /** The tab's Session couldn't start: roster refused, or a step before it failed. */
@@ -643,6 +769,9 @@ export class Tabs {
     const entry = this.entries[i];
     if (!entry) return;
     entry.closing = true;
+    entry.hooks?.stop();
+    entry.watch?.dispose();
+    entry.watch = null;
     this.dropSave(entry);
     entry.sink = null;
     void entry.session?.close().catch(() => {});
@@ -703,10 +832,67 @@ export class Tabs {
     };
   }
 
+  /**
+   * Fills the password prompt the tab's Session shows from the vault (ticket 119, decision Q129):
+   * the user pressed the fill key. Only the prompt line goes to the Backend; the core asks serve
+   * for the Host's password and types it into the PTY if the prompt doesn't echo, so nothing of it
+   * reaches the frontend. Resolves with the Host's name; rejects with why it didn't fill: no prompt,
+   * the marks say it may be another Host's, a Quick Connect, or the Backend's refusal (a locked
+   * vault also shows the lock screen first, the existing unlock flow; press the key again after).
+   */
+  async fill(id: number): Promise<string> {
+    const entry = this.find(id);
+    if (!entry) throw new Error("No Session to fill");
+    const { session } = entry;
+    // What the watch says now, not what the tab last showed: a key typed since may have changed it.
+    if (entry.watch) this.promptChanged(entry, entry.watch);
+    const prompt = entry.watch ? entry.tab.prompt : null;
+    if (!session || entry.tab.status.state !== "open" || prompt === null) {
+      throw new Error(`No password prompt in ${entry.tab.label}'s Session right now`);
+    }
+    if (!session.fill) throw new Error(`${entry.tab.label} is a Quick Connect: roster has no Login of it to fill`);
+    const { elsewhere } = prompt;
+    if (elsewhere !== null) {
+      throw new Error(`Won't fill: ${elsewhere}. Type that password yourself.`);
+    }
+    if (entry.filling) throw new Error("Already filling this prompt");
+    entry.filling = true;
+    // Spent while it's tried: no offer, and no second press, until a new prompt shows. A refusal
+    // from roster serve (a code: the vault, the prompt, the Host) typed nothing, so the prompt is
+    // offered again; the core's own refusals (no code) typed its probe, so it stays spent.
+    const watch = entry.watch;
+    watch?.spent();
+    entry.tab = { ...entry.tab, prompt: null };
+    this.changed();
+    try {
+      // A nested ssh's prompt names the Host roster resolved it to (ticket 120); the core checks the
+      // Session printed it, and serve that the Host is still what it was resolved to.
+      return (await session.fill(prompt.line, prompt.hop ?? undefined)).host;
+    } catch (e) {
+      if (watch && e instanceof BackendCallError && typeof e.code === "number") {
+        watch.unspent();
+        this.promptChanged(entry, watch);
+      }
+      if (e instanceof BackendCallError && e.code === SessionRefusal.vaultLocked) {
+        this.onVaultLocked();
+        throw new BackendCallError("The vault is locked. Unlock it, then press the fill key again.", e.code, e.data);
+      }
+      throw e;
+    } finally {
+      entry.filling = false;
+    }
+  }
+
   /** Keystrokes for the tab's Session; held until it's open, dropped once it has ended. */
   write(id: number, data: string) {
     const entry = this.find(id);
     if (!entry) return;
+    entry.hooks?.typed(data);
+    // A nested ssh's prompt after you've typed into it may not be its login's (ticket 120).
+    if (hasTyping(data) && entry.watch) {
+      entry.watch.typed(data);
+      this.promptChanged(entry, entry.watch);
+    }
     if (entry.session) void entry.session.write(data).catch(() => {});
     else if (entry.tab.status.state === "connecting") entry.pending.push(data);
   }
@@ -724,7 +910,67 @@ export class Tabs {
     const { size, sentSize, session } = entry;
     if (!session || (size.cols === sentSize.cols && size.rows === sentSize.rows)) return;
     entry.sentSize = { ...size };
-    this.outputTap?.resized(entry.tab.id);
+    entry.watch?.resize(size);
     void session.resize(size).catch(() => {});
   }
+
+  /** What of `data` Plugins may get while roster's hook line may be echoing: nothing until the
+   * attempt's first own prompt mark (`133;A;roster=TOKEN`), then from that mark on. */
+  private pastEchoWindow(entry: Entry, nonce: string, data: Uint8Array): Uint8Array | null {
+    const window = entry.echoWindow;
+    if (!window) return data;
+    const seen = new Uint8Array(window.tail.length + data.length);
+    seen.set(window.tail);
+    seen.set(data, window.tail.length);
+    const at = indexOfBytes(seen, `\x1b]133;A;roster=${nonce}`);
+    if (at < 0) {
+      window.tail = seen.slice(-64);
+      return null;
+    }
+    entry.echoWindow = null;
+    return seen.subarray(at);
+  }
+
+  /** Hands Plugins `data`; output the mask holds back goes after 50 ms if nothing follows it. */
+  private tapOut(entry: Entry, id: number, mask: TokenMask, data: Uint8Array) {
+    const host = entry.tab.quick ? null : entry.tab.host;
+    if (data.length > 0) this.outputTap?.output(id, host, data, entry.sentSize);
+    if (!mask.holding()) return;
+    setTimeout(() => {
+      if (!mask.holding() || !this.find(id)) return;
+      const rest = mask.flush();
+      if (rest.length > 0) this.outputTap?.output(id, host, rest, entry.sentSize);
+    }, 50);
+  }
+
+  /** What `watch` says of the prompt now, onto the tab, if it's still the tab's watch. */
+  private promptChanged(entry: Entry, watch: PromptWatch) {
+    if (entry.watch !== watch || !this.find(entry.tab.id)) return;
+    const prompt = watch.prompt();
+    const hop = watch.hop();
+    const was = entry.tab.prompt;
+    const wasHop = entry.tab.hop ?? null;
+    const samePrompt =
+      prompt?.line === was?.line &&
+      prompt?.elsewhere === was?.elsewhere &&
+      prompt?.marked === was?.marked &&
+      prompt?.kind === was?.kind &&
+      prompt?.hop?.host === was?.hop?.host;
+    const sameHop = hop?.to === wasHop?.to && hop?.known === wasHop?.known;
+    if (samePrompt && sameHop) return;
+    entry.tab = { ...entry.tab, prompt, hop };
+    this.changed();
+  }
+}
+
+/** Where the ASCII `needle` first starts in `bytes`, or -1. */
+function indexOfBytes(bytes: Uint8Array, needle: string): number {
+  const n = new TextEncoder().encode(needle);
+  const first = n[0] ?? 0;
+  for (let i = bytes.indexOf(first); i >= 0 && i + n.length <= bytes.length; i = bytes.indexOf(first, i + 1)) {
+    let j = 1;
+    while (j < n.length && bytes[i + j] === n[j]) j++;
+    if (j === n.length) return i;
+  }
+  return -1;
 }

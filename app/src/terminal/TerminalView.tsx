@@ -53,6 +53,9 @@ export interface TerminalViewProps {
   onData(data: string): void;
   onResize(size: TermSize): void;
   env: TerminalEnv;
+  /** Find this text up the scrollback, from the bottom, with the search bar open on it
+   * (`roster.sessions.show` with a line, ticket 78). A new `nonce` finds again. */
+  reveal?: { text: string; nonce: number } | null;
 }
 
 export type TerminalViewComponent = (props: TerminalViewProps) => React.ReactNode;
@@ -87,7 +90,7 @@ function xtermTheme(t: TerminalTheme): ITheme {
   return theme;
 }
 
-export function TerminalView({ active, leader, attach, onData, onResize, env }: TerminalViewProps) {
+export function TerminalView({ active, leader, attach, onData, onResize, env, reveal = null }: TerminalViewProps) {
   const el = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
@@ -356,6 +359,19 @@ export function TerminalView({ active, leader, attach, onData, onResize, env }: 
     t.focus();
   }, [active]);
 
+  // A Plugin's "go to the line" (ticket 78): from the bottom, the latest line with the text, in the
+  // search bar the user knows, so Enter goes on up and Esc closes it.
+  const [seed, setSeed] = useState({ text: "", n: 0 });
+  const revealed = useRef<number | null>(null);
+  useEffect(() => {
+    if (!active || !reveal || revealed.current === reveal.nonce) return;
+    revealed.current = reveal.nonce;
+    term.current?.scrollToBottom();
+    term.current?.clearSelection();
+    setSeed((x) => ({ text: reveal.text, n: x.n + 1 }));
+    setSearching(true);
+  }, [active, reveal]);
+
   function find(query: string, direction: "next" | "previous", incremental: boolean) {
     const s = search.current;
     if (!s) return;
@@ -385,13 +401,14 @@ export function TerminalView({ active, leader, attach, onData, onResize, env }: 
     term.current?.clearSelection();
     setSearching(false);
     setResults(null);
+    setSeed((x) => ({ text: "", n: x.n }));
     term.current?.focus();
   }
 
   return (
     <div className="term-wrap">
       <div className="term-host" ref={el} />
-      {searching && active && <SearchBar results={results} onFind={find} onClose={closeSearch} />}
+      {searching && active && <SearchBar key={seed.n} initial={seed.text} results={results} onFind={find} onClose={closeSearch} />}
     </div>
   );
 }

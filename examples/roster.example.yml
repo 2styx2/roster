@@ -15,6 +15,10 @@
 #   product      which product it belongs to
 #   (type and product cascade from the group; a group's own title/description describe the group)
 #
+# shell_hooks: true on a host (or group, or defaults) lets the roster app send its shell one line
+#   after login that marks its prompts and says its folder, in that shell only; false keeps a host
+#   out. Off unless set. The app's `:help shell-hooks` shows exactly what's sent.
+#
 # auth = how setup gets the password the FIRST time, to install this box's SSH key.
 #        After that the key is used and the password is never needed again
 #        (except for hosts with enroll: false, which always log in by password).
@@ -42,6 +46,8 @@
 #   self-signed certificates, and login: basic|bearer|none for `roster web HOST [SERVICE] GET /path`
 #   (also vsphere, unifi, openvpnas, hub; see docs/cli-reference.md).
 #   ssh: and services: work in defaults and groups too.
+#   sudo: { auth: "bw:orion3 sudo" } is the Host's own sudo password, for the app's fill key
+#   (Leader then p at sudo's prompt in a Session); without it the key fills the ssh Login's.
 #
 # Bitwarden: run `bw login` once on the box (or set BW_CLIENTID / BW_CLIENTSECRET). A locked
 #   vault is unlocked once per run (master password prompt, BW_PASSWORD, or existing BW_SESSION).
@@ -138,8 +144,15 @@ groups:
 #   mesh: true on a group (or defaults, or a host) lets its hosts ssh to each other with keys made on them;
 #   mesh: false opts out. links: add one-way reach across groups (both: true for two-way).
 #   Start small: try `roster mesh --dry-run` on two or three hosts first.
+#   via: HOST sends a link through a jump host (ProxyJump); the source needs its own link to that host.
+#   mesh_dir: /vmfs/volumes/DATASTORE/roster-mesh on a host (or group) says where a source keeps its Mesh files,
+#   for an ESXi host with no datastore roster would pick.
+#   seen_as: 10.0.9.1 on a host lists its other addresses (one or a list), which its peers' from= also accept:
+#   for a jump host with a leg on each network, or a host behind NAT.
 # links:
 #   - { from: orion, to: net-sw-core-01 }
+#   - { from: orion, to: bastion }
+#   - { from: orion, to: far-db, via: bastion }
 
 # Things with a secret but no address to connect to. Each type has a fixed set of fields:
 #   every type   title, description, group (one of the groups above), user, auth

@@ -6,13 +6,12 @@ local roster = require("roster")
 ---@type string[]
 local pins = {}
 
--- The Host's address, or nil when no Host has that name: roster.inventory.host raises an error
--- for an unknown name (code 2), so a name the user typed goes through pcall.
+-- The Host's address, or nil when no Host has that name (roster.inventory.host gives nil).
 ---@param name string
 ---@return string?
 local function address(name)
-  local ok, host = pcall(roster.inventory.host, name)
-  return ok and host.ip or nil
+  local host = roster.inventory.host(name)
+  return host and host.ip
 end
 
 local function show()

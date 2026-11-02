@@ -1,6 +1,6 @@
 # Architecture
 
-Decisions: ADR 0001 (`roster serve`), ADR 0002 (system ssh and askpass), ADR 0003 (Tauri).
+Decisions: ADR 0001 (`roster serve`), ADR 0002 (system ssh and askpass), ADR 0003 (Tauri), ADR 0006 (Plugins).
 
 ## Processes
 
@@ -11,7 +11,8 @@ Decisions: ADR 0001 (`roster serve`), ADR 0002 (system ssh and askpass), ADR 000
 │  Rust core                                           │
 │   ├─ backend runner ── stdin/stdout JSON-RPC ──┐     │
 │   ├─ session manager ── PTY per Session ──┐    │     │
-│   └─ idle-lock timer, Config (init.lua)   │    │     │
+│   ├─ idle-lock timer, Config (init.lua)   │    │     │
+│   └─ Plugin host (a thread per Plugin)    │    │     │
 └───────────────────────────────────────────┼────┼─────┘
               (on the WSL backend, both run through wsl.exe)
                                             │    │
@@ -22,25 +23,16 @@ Decisions: ADR 0001 (`roster serve`), ADR 0002 (system ssh and askpass), ADR 000
                Host
 ```
 
-- **roster serve** is the only thing that reads the Inventory or touches secrets. There is one per app launch, and it exits when stdin closes.
+- **roster serve** is the only thing that reads the Inventory or touches secrets. There is one per app launch, and it exits when stdin closes. It answers several requests at once (8 workers, 2 more for quick reads, and a lane of its own for the unlock); writes to `roster.yml` and the vault take turns through locks; Mesh runs, scans and Host checks are jobs ([Ordering, locks and jobs](../serve-api.md#ordering-locks-and-jobs)).
 - **The Rust core** manages processes and PTYs. It never holds a password.
+- **Plugins** (ADR 0006, [plugins.md](../plugins.md)) run in the core, each on a thread of its own, with only the permissions the user granted.
 - **The frontend** draws everything. It holds no secrets: the master password field clears once the unlock call returns.
 
 ## The `roster serve` API
 
 JSON-RPC 2.0, one JSON object per line on stdin/stdout. Logging goes to stderr. Results are roster's existing Host, group and resource objects. Logins come back as references (`bw:esxi-02 ssh+web`), never as values. The API has a version number, and the app refuses a roster that's too old.
 
-| Method | Iteration | Purpose |
-|---|---|---|
-| `inventory.info` | 1 | Path, Box, host count, providers, versions |
-| `hosts.list`, `host.get` | 1 | Read Hosts and groups |
-| `vault.status`, `vault.unlock`, `vault.lock` | 1 | Lock screen and Lock |
-| `session.prepare` | 1 | ssh command and environment for a Host (plus an askpass token for password Logins) |
-| `inventory.pull`, `host.update`, `host.add`, `host.review` | 3 | Inventory writes, keeping comments |
-| `changes.diff`, `changes.discard`, `changes.publish` | 3 | Pending changes and Publish |
-| `vault.create_item` | 4 | Bitwarden only |
-| `quick.prepare`, `quick.save` | 4 | Quick Connect (ticket 14, API 12: `quick.prepare`) and "Save to vault" (ticket 15) |
-| `host.scan_key {host}`, `host.trust_key` | 4 | Ask before trusting a Host's new host key (ticket 36, API 11) |
+Every method, its parameters, errors and the API version that brought it: [serve-api.md](../serve-api.md).
 
 ## How a Session connects
 
@@ -73,12 +65,12 @@ The askpass socket (on native Windows, a named pipe only the user can open) is t
 ## Config (`init.lua`)
 
 This follows WezTerm's model (ADR 0004):
-- `~/.config/roster/init.lua` (`%APPDATA%\roster\init.lua` on Windows) returns a table, and the Rust core runs it with mlua (Lua 5.4 built in).
+- `~/.config/roster/init.lua` (`%APPDATA%\roster\init.lua` on Windows) is written the way Neovim's is: `roster.o.terminal.size = "16pt"`, `roster.keymap.set(…)`, modules under `lua/`. It may also return a table (older Configs), which wins over the calls. The Rust core runs it with mlua (Lua 5.4 built in).
 - It's layered: built-in defaults, then `init.lua`. There's no Settings screen.
-- Saving the file reloads it. An error shows a toast with the file and line, and the last good Config stays active.
+- `:source` reloads it (or every save, with `auto_reload = true`). An error shows a toast with the file and line, and the last good Config stays active.
 - The core checks the result against a schema and sends a plain typed object to the frontend, which never runs Lua.
 - **v1 covers values only:** fonts, colors and theme tokens, Themes, leader key, keymap (key → action name), vim on/off, per-mode layout, Folders, idle timeout, backend, roster command. Every option, the sandbox and the small `roster` table are in [config.md](config.md); the code is `crates/roster-core/src/config/` and `app/src/config/`.
-- **Later:** event hooks (`on_session_open`), custom `:` commands, and extra Picker sources.
+- **Plugins** add event hooks, `:` commands, finders, views and more, on the same registries ([plugins.md](../plugins.md)).
 - **State** (window size, recent Hosts, open panels) is saved separately by the app and never put in `init.lua`.
 
 ## Inventory writes

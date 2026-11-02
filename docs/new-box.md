@@ -91,12 +91,14 @@ On this box, setup does the following:
 3. Installs the key on every `enroll: true` host that doesn't accept it yet. It logs in once with the vault password to do this.
 4. Writes `~/.ssh/config.d/roster`, so `ssh <name>` works.
 5. Writes `ROSTER.md`, `CLAUDE.md` and `.claude/settings.json` in the folder you ran it from.
+6. Applies the Mesh when `roster.yml` has one ([The Mesh](mesh.md)).
 
 Hosts with `reviewed: false` are skipped. If a host fails (no answer, wrong password), the rest carry on. Fix it, then run `roster setup` again: hosts that already work are skipped.
 
 ## 7. Test
 
 ```bash
+roster check --box                        # this Box's health, nothing connected
 roster hosts                              # what you can reach: name, IP, user, logins
 roster check                              # SSH, web UIs and service ports on every host
 ssh <key-host> hostname                   # key login
@@ -118,7 +120,7 @@ roster web <esxi-host> api POST /sdk -d @/tmp/ct.xml      # HTTP 200 with <retur
 cd ~/infra && claude
 ```
 
-`CLAUDE.md` imports `ROSTER.md`, so Claude knows the hosts and reaches them through `ssh`, `roster run` and `roster web` without seeing passwords. After editing `roster.yml`, run `roster sync` to refresh `ROSTER.md` and the SSH config.
+`CLAUDE.md` imports `ROSTER.md`, so Claude knows the hosts and reaches them through `ssh`, `roster run` and `roster web` without seeing passwords, and reads roster's data with `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). After editing `roster.yml`, run `roster sync` to refresh `ROSTER.md` and the SSH config.
 
 ## Keeping it up to date
 

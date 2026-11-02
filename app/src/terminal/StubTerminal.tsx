@@ -48,6 +48,7 @@ function Stub({
   onData,
   onResize,
   env,
+  reveal = null,
   load,
 }: TerminalViewProps & { load: (onLoss: () => void) => { dispose(): void } }) {
   // Like TerminalView: the renderer while on screen, told to the app.
@@ -93,6 +94,7 @@ function Stub({
       data-size={env.fontSize}
       data-background={env.theme.background}
       data-renderer={renderer}
+      data-find={reveal?.text}
     >
       <pre aria-label="terminal output">{text}</pre>
       <input

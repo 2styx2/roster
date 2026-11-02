@@ -1,9 +1,12 @@
 // The fake Backend: same interface as the real one, answering from fixtures. Used by the UI tests
 // and by `npm run dev` in a plain browser, where `?fixture=<name>` picks a scenario.
+import { demoScanPlugin, VIEWS_PATH } from "./fakeViews";
+import { demoMapPlugin, GRAPH_PATH } from "./fakeGraph";
 import {
   AddError,
   type AddHostParams,
   BackendCallError,
+  notOnDemo,
   BackendStartError,
   type Backend,
   type BackendInfo,
@@ -17,15 +20,18 @@ import {
   type Host,
   type HostChange,
   type HostChanges,
+  type CheckStepName,
   type HostCheck,
   type HostFields,
   type HostList,
   type GroupChange,
   type InventoryChanged,
+  type JobProgress,
   type InventoryFileError,
   LiveError,
   LOGIN_FIELDS,
   type PendingChanges,
+  type PluginReply,
   type ScannedKey,
   VERIFY_STEPS,
   type ProviderStatus,
@@ -49,6 +55,10 @@ import {
   type SessionHandle,
   type TermSize,
   SessionRefusal,
+  FILL_API_VERSION,
+  FillRefusal,
+  NO_PASSWORD_AUTHS,
+  type NestedHost,
   HostKeyError,
   type QuickConnect,
   type QuickSave,
@@ -60,10 +70,15 @@ import {
   SaveLoginError,
   SIGN_OUT_API_VERSION,
   type SignedOut,
+  SiteRequests,
 } from "./types";
 import type { KeymapOverrides } from "../keymap";
-import { fakePackageHost, type FakePackages } from "./fakePackages";
-import { described, fakePluginHost, type FakePlugin } from "./fakePlugins";
+import { fakeCommit, fakePackageHost, type FakePackages } from "./fakePackages";
+import { discoverPlugin, fakeDiscoverServe, hugeNet, smallNet, type FakeNet } from "./fakeDiscover";
+import { recentAlerts } from "./fakeRecentAlerts";
+import { MESH_OTHERS, MESH_PERMISSIONS, meshLab, meshPlugin, meshServe, type MeshWorld } from "./fakeMesh";
+import { TOPOLOGY_PERMISSIONS, topologyPlugin, topologyServe, type TopologyWorld } from "./fakeTopology";
+import { described, fakePluginHost, type FakePlugin, type FakeServe } from "./fakePlugins";
 import { formatQuickTarget } from "../quick/target";
 import {
   HOST_KEY_CHANGED_OUTPUT,
@@ -102,10 +117,25 @@ export interface FakeScenario {
   passwordRefusal?: Refusal;
   /** Per Host: `session.prepare` refuses with this (a Login's codes 30-35, roster.yml's 1). */
   refusals?: Record<string, Refusal>;
+  /** The fake shells print OSC 133 marks (Q121), and `ssh NAME` stays in NAME until `exit`. */
+  shellMarks?: boolean;
+  /** With `shellMarks`, the shell a nested `ssh NAME` reaches marks its prompts too (ticket 120). */
+  innerMarks?: boolean;
+  /** Per Host: its `sudo: {auth}` in roster.yml (ticket 119), which a prompt fill uses first. */
+  sudoRefs?: Record<string, string>;
+  /** Per Host: `session.fill` refuses with this (ticket 119: 130, 131, the vault's codes). */
+  fillRefusals?: Record<string, Refusal>;
   /** Per Host: ssh prints this into the PTY and exits 255 (a refused port, a changed key…). */
   sshFailures?: Record<string, string>;
   /** Per Host: what `host.check` answers (default: every step ok). */
   checks?: Record<string, HostCheck>;
+  /** `host.check` runs as serve's job (API 21, ticket 110): `job.progress` as each step starts,
+   * `stepMs` apart, up to the step it fails or stops at, then the answer. `hangAt`: that step never
+   * ends (a step that hangs to its timeout), so the check never answers. Without it, no progress. */
+  checkSteps?: { stepMs: number; hangAt?: string };
+  /** Hosts whose `host.check` waits until the test answers it (`answerCheck`), so it can push the
+   * check's `job.progress` (`jobProgress`) in between. */
+  heldChecks?: string[];
   /** `box.check`'s checks (default: HEALTHY_BOX, every one ok). */
   boxChecks?: HealthCheck[];
   /** `inventory.info`'s api_version (default 2; editing needs 5). */
@@ -115,8 +145,8 @@ export interface FakeScenario {
   /** Decision Q88: how long `inventory.pull` takes, in ms (else `delay`). */
   pullDelay?: number;
   /** Decision Q88: someone published meanwhile. The next pull brings `commits` commits that
-   * change these Hosts' fields, once. */
-  pullBrings?: { commits: number; changes: Record<string, HostChanges> };
+   * change these Hosts' fields and add the Hosts in `adds` (T72), once. */
+  pullBrings?: { commits: number; changes: Record<string, HostChanges>; adds?: readonly Host[] };
   /** Per Host: what `host.verify_login` answers (default: every step ok). */
   verifyResults?: Record<string, HostCheck>;
   /** Ticket 36: Hosts whose host key roster hasn't recorded: `session.prepare` refuses with 44 until
@@ -152,7 +182,7 @@ export interface FakeScenario {
   relockAfterMs?: number;
   /** `vault.unlock` with the right password takes `completesAfterMs`, but the call gives up
    * after `failAfterMs` (roster-core's timeout) while serve carries on and unlocks anyway. Like
-   * serve, the fake then answers vault calls in order, so later ones wait for that unlock. */
+   * serve, the fake then holds the vault's lock until it's done, so later vault calls wait for it. */
   slowUnlock?: { failAfterMs: number; completesAfterMs: number };
   /** The account `vault.login` signs in to, when the vault is `not-logged-in` (ticket 31). Without
    * it, `vault.status` has no `sign_in` (a roster older than api 3). */
@@ -170,10 +200,22 @@ export interface FakeScenario {
   /** Each Session repaints its screen when resized, as ConPTY does on Windows (ticket 73): home,
    * its last rows again, each cleared to its end. */
   repaints?: boolean;
+  /** What each Host's Session prints right after it logs in, line by line, by Host name. */
+  logs?: Record<string, string[]>;
   /** Plugin folders by path (ticket 23): `:plugins install PATH` finds them here. */
   plugins?: Record<string, FakePlugin>;
+  /** What the core counted of each Plugin's network requests, by its name (decision Q116). The
+   * fake runs no HTTP, so the counts are the scenario's. */
+  pluginRequests?: Record<string, SiteRequests[]>;
+  /** Ticket 44 (API 18): what a scan from roster serve finds (`discover.*`, for the discover Plugin).
+   * Without it, roster serve has no discover methods, as a roster older than API 18. */
+  discover?: FakeNet;
   /** Packages (ticket 24): what init.lua names, the repos' versions and roster.lock. */
   packages?: FakePackages;
+  /** Ticket 50: roster serve's Mesh methods (API 17), for the Mesh controls Plugin. */
+  mesh?: MeshWorld;
+  /** Ticket 40: roster serve's Mesh for the Topology Plugin (`?fixture=topology`). */
+  topology?: TopologyWorld;
   /** What the app shows at start beyond the Backend (the dev page reads these; tests pass them
    * as props): the State file's contents, and Hosts to open Sessions to once connected. */
   app?: {
@@ -194,6 +236,8 @@ export interface FakeAccount {
   /** How SSO ends in the browser, after `ssoMs` (default ok, 300 ms). */
   sso?: "ok" | "fail";
   ssoMs?: number;
+  /** false: SSO as on native Windows, where bw opens the page itself and the step's `url` is null (API 23). */
+  ssoLink?: boolean;
   /** Every start is refused with this (52 rate limited, 53 unreachable…). */
   refuse?: Refusal;
   /** What `bw config server` says (null: bitwarden.com). */
@@ -216,7 +260,19 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 const refuse = (r: Refusal) => new BackendCallError(r.message, r.code, r.data ?? null);
 
 /** A `host.check` answer with every step ok (a key Host's provider and vault-item skipped). */
-export function passingCheck(host: Host): HostCheck {
+export /** A check a lock stopped as `at` was to start: the steps before it ok, the rest skipped. */
+function stoppedCheck(host: string, at: CheckStepName): HostCheck {
+  const stop = CHECK_STEPS.indexOf(at);
+  return {
+    host,
+    ok: false,
+    steps: CHECK_STEPS.map((step, i) =>
+      i < stop ? { step, status: "ok" as const, message: `${step} fine` } : { step, status: "skipped" as const, message: "the check was stopped" },
+    ),
+  };
+}
+
+function passingCheck(host: Host): HostCheck {
   const password = authOf(host) === "password";
   return {
     host: host.name,
@@ -290,7 +346,7 @@ const KP_WORDS = {
 
 /** Like roster: a Host that doesn't enroll a key and whose ssh Login is a vault reference. */
 export function authOf(h: Host): SessionAuth {
-  return !h.enroll && !["agent", "key", "none"].includes(h.ssh.auth) ? "password" : "key";
+  return !h.enroll && !(NO_PASSWORD_AUTHS as readonly string[]).includes(h.ssh.auth) ? "password" : "key";
 }
 
 /** `list` with its first reviewed Host's Login turned into `auth: prompt` (ticket 16). */
@@ -383,8 +439,21 @@ const signingIn = (signIn: FakeAccount): FakeScenario => ({
   signIn,
 });
 
+/** A Plugin installed already (its State entry), so it loads at start. */
+const installedPlugin = (path: string, name: string) => ({ plugins: [{ path, name, granted: [], asked: [] }] });
+
 export const fixtures: Record<string, FakeScenario> = {
   "many-hosts": { hosts: makeHosts(300) },
+  /** Ticket 76: a Plugin with a full view of 600 rows (`␣ y v`, `:view demo-scan`), an empty
+   * view (`:view demo-empty`) and a Mesh section in three Hosts' details (`:info linux-1-000`). */
+  "plugin-views": { hosts: makeHosts(12), plugins: { [VIEWS_PATH]: demoScanPlugin() }, app: { state: installedPlugin(VIEWS_PATH, "demo-scan") } },
+  /** The same with worst-case cells (long, unbreakable, non-Latin, emoji, huge, missing). */
+  "plugin-views-worst": { hosts: makeHosts(12), plugins: { [VIEWS_PATH]: demoScanPlugin(true, 2000) }, app: { state: installedPlugin(VIEWS_PATH, "demo-scan") } },
+  /** Ticket 77: a Plugin with a graph of this Box and 640 Hosts in 16 clusters (`␣ y m`,
+   * `:view demo-map`): live, down, marked and unreviewed nodes, Links, password peers and cuts. */
+  "plugin-graph": { hosts: makeHosts(12), plugins: { [GRAPH_PATH]: demoMapPlugin() }, app: { state: installedPlugin(GRAPH_PATH, "demo-map") } },
+  /** The same at 2,000 Hosts in 40 clusters, with worst-case names. */
+  "plugin-graph-worst": { hosts: makeHosts(12), plugins: { [GRAPH_PATH]: demoMapPlugin(2000, 40, true) }, app: { state: installedPlugin(GRAPH_PATH, "demo-map") } },
   "few-hosts": { hosts: makeHosts(12) },
   /** Ticket 10: a roster that can edit and publish (api 7), no Pending changes yet. */
   edit: { hosts: makeHosts(12), apiVersion: 7 },
@@ -514,6 +583,17 @@ export const fixtures: Record<string, FakeScenario> = {
   "sign-out": { hosts: makeHosts(12), apiVersion: SIGN_OUT_API_VERSION },
   /** Ticket 49 (API 16): `:check` with no Host shows this Box's health, with an error and two warnings. */
   health: { hosts: makeHosts(12), apiVersion: BOX_CHECK_API_VERSION, boxChecks: [...UNHEALTHY_BOX] },
+  /** Ticket 110: `:check HOST` as serve's job (API 21): each step starts 0.7 s after the last. */
+  "check-live": { hosts: makeHosts(12), apiVersion: 22, checkSteps: { stepMs: 700 } },
+  /** Ticket 110: the TCP step never ends (a Host that doesn't answer, up to its timeout). */
+  "check-hang": { hosts: makeHosts(12), apiVersion: 22, checkSteps: { stepMs: 300, hangAt: "tcp" } },
+  /** Ticket 110: every Host's check is stopped at its Host key step (a lock stopped it). */
+  "check-stopped": {
+    hosts: makeHosts(12),
+    apiVersion: 22,
+    checkSteps: { stepMs: 300 },
+    checks: Object.fromEntries(makeHosts(12).hosts.map((h) => [h.name, stoppedCheck(h.name, "host-key")])),
+  },
   "sign-in-rate-limited": signingIn({
     refuse: {
       code: SignInError.rateLimited,
@@ -521,6 +601,26 @@ export const fixtures: Record<string, FakeScenario> = {
     },
   }),
   "worst-case": worstCase(),
+  /** The example Plugin, recent-alerts, running with alerts to show (ticket 79). */
+  "recent-alerts": recentAlertsCase(),
+  /** The first-party discover Plugin installed, granted, with a small network to scan (ticket 44):
+   * `:discover 10.0.0.0/24`, or the toolbar's Scan. */
+  discover: discoverCase(smallNet("host-03"), 64),
+  /** discover's worst case: a /16 where 12,000 answer (`:discover 10.0.0.0/16`), long names and titles. */
+  "discover-worst": discoverCase(hugeNet(), 22000),
+  /** Ticket 50: the Mesh controls (plugins/mesh) installed as a Package with every permission, on a
+   * meshed group of 4 Hosts that's out of date, with a no-via Link. `:mesh`, `:mesh plan`, `:info esx-02`. */
+  mesh: meshCase({ lab: 4, ticks: 3 }),
+  /** Ticket 40: the Topology view (plugins/topology) installed as a Package with every permission,
+   * on 40 Hosts in four subnets, two meshed, with Links, a no-via hop, a cut pending and two live
+   * Sessions. `:topology`, `␣ T`, `:topology subnet-1`. */
+  topology: topologyCase(40),
+  /** The same at 600 Hosts: clusters start collapsed. */
+  "topology-600": topologyCase(600),
+  /** The same at 2,000 Hosts, with long and non-Latin names (break-ui). */
+  "topology-worst": topologyCase(2000, true),
+  /** The same, worst case: 500 Hosts in the meshed group (249,501 Links), the long names among them. */
+  "mesh-worst": meshCase({ lab: 500, ticks: 3, name: (i) => (i % 97 === 5 ? `${LONG_NAME_OPEN}-${i}` : i % 89 === 7 ? `خادم-الإنتاج-${i}` : `lab-${String(i).padStart(3, "0")}`) }),
   /** Measuring (docs/app/performance.md): the worst case's 1,284 Hosts, no vault, and `&sessions=N`
    * Sessions (default 12) whose shells print `&rate=R` log lines a second (default 100). */
   perf: perfCase(),
@@ -540,6 +640,128 @@ export const fixtures: Record<string, FakeScenario> = {
     startProblem: problem("no-wsl", "No WSL distro was found.", "Install WSL and a Linux distro with roster in it."),
   },
 };
+
+/** `?fixture=recent-alerts` (ticket 79): the example Plugin installed as a Package, granted
+ * terminal.read, with two Sessions open whose logs have alerts in them, so its section, badges,
+ * status segment, finder and float can be looked at (and tested) in a plain browser. */
+function recentAlertsCase(): FakeScenario {
+  const hosts = makeHosts(12);
+  const open = hosts.hosts.filter((h) => h.reviewed && authOf(h) === "key").slice(0, 2).map((h) => h.name);
+  const [a = "", b = ""] = open;
+  const commit = fakeCommit(1);
+  return {
+    hosts,
+    vault: { status: "unsupported" },
+    logs: {
+      [a]: ["mounting /data", "ERROR: disk full on /data", "retrying in 5 s", "panic: runtime error: index out of range"],
+      [b]: ["backup started", "ERROR: connection refused (backup target)"],
+    },
+    packages: {
+      named: [{ name: "recent-alerts", source: "https://git.example.com/someone/recent-alerts.git", config: { leader: "w a" }, versions: [{ commit, subject: "v1.0.0", plugin: recentAlerts(), diff: "" }] }],
+      lock: { "recent-alerts": commit },
+      clones: { "recent-alerts": commit },
+    },
+    app: {
+      state: { plugins: [{ path: "package:recent-alerts", name: "recent-alerts", granted: ["terminal.read"], asked: ["terminal.read"] }] },
+      openAtStart: open,
+    },
+  };
+}
+
+/** `?fixture=topology` (ticket 40): plugins/topology installed from roster's repo with `dir`,
+ * granted everything it asks for, with a stand-in serve for its Mesh and two Sessions open. */
+function topologyCase(n: number, worst = false): FakeScenario {
+  const commit = fakeCommit(6);
+  const base = makeHosts(n);
+  const list: HostList = worst
+    ? {
+        hosts: base.hosts.map((h, i) => ({ ...h, name: i % 97 === 5 ? `${LONG_NAME_OPEN}-${i}` : i % 89 === 7 ? `خادم-الإنتاج-${i}` : h.name })),
+        groups: { ...base.groups, "subnet-3": { title: "The storage network in the far building, with a title that keeps on going", description: "" } },
+      }
+    : base;
+  const open = list.hosts.filter((h) => h.reviewed && authOf(h) === "key").slice(0, 2).map((h) => h.name);
+  return {
+    hosts: list,
+    vault: { status: "unsupported" },
+    topology: { list },
+    packages: {
+      named: [{ name: "topology", source: "https://github.com/2styx2/roster", dir: "plugins/topology", versions: [{ commit, subject: "v0.3.0", plugin: topologyPlugin(), diff: "" }] }],
+      lock: { topology: commit },
+      clones: { topology: commit },
+    },
+    app: { state: { plugins: [{ path: "package:topology", name: "topology", granted: TOPOLOGY_PERMISSIONS, asked: TOPOLOGY_PERMISSIONS }] }, openAtStart: open },
+  };
+}
+
+/** roster serve's answers to Plugins (`roster.serve.call`): the Mesh's (or Topology's) and Discover's stand-ins,
+ * each only when the scenario has one, as an older roster has neither. */
+function pluginServe(scenario: FakeScenario): FakeServe | undefined {
+  const mesh = scenario.mesh ? meshServe(scenario.mesh) : scenario.topology ? topologyServe(scenario.topology) : undefined;
+  const discover = scenario.discover ? fakeDiscoverServe(scenario.discover) : undefined;
+  if (!mesh && !discover) return undefined;
+  return (method, params) => {
+    const serve = method.startsWith("mesh.") ? mesh : method.startsWith("discover.") ? discover : undefined;
+    if (!serve) throw new BackendCallError(`unknown method '${method}'`, -32601);
+    return serve(method, params);
+  };
+}
+
+/** roster serve as `:tutor`'s demo has it (plugin/demo.rs in the core): its Hosts, and a refusal
+ * for every other method. */
+function demoServe(demo: HostList): FakeServe {
+  return (method, params) => {
+    if (method === "hosts.list") return demo;
+    if (method === "host.get") {
+      const host = demo.hosts.find((h) => h.name === params.name);
+      if (!host) throw new BackendCallError(`No Host named '${String(params.name)}' on the demo Inventory`, 2);
+      return host;
+    }
+    throw new BackendCallError(notOnDemo(method), 3);
+  };
+}
+
+/** `?fixture=discover` (ticket 44): plugins/discover installed as a Package from roster's repo
+ * and granted, with roster serve answering discover.* from `found`, `step` addresses a poll. */
+function discoverCase(found: FakeNet["found"], step: number): FakeScenario {
+  const commit = fakeCommit(2);
+  const permissions = discoverPlugin().manifest.permissions;
+  return {
+    hosts: makeHosts(12),
+    apiVersion: 18,
+    vault: { status: "unsupported" },
+    discover: { found, step },
+    packages: {
+      named: [{ name: "discover", source: "https://github.com/2styx2/roster", dir: "plugins/discover", config: { ranges: ["10.0.0.0/24"] }, versions: [{ commit, subject: "discover 1.0.0", plugin: discoverPlugin(), diff: "" }] }],
+      lock: { discover: commit },
+      clones: { discover: commit },
+    },
+    app: { state: { plugins: [{ path: "package:discover", name: "discover", granted: permissions, asked: permissions }] } },
+  };
+}
+
+/** `?fixture=mesh` (ticket 50): plugins/mesh installed from roster's repo with `dir`, granted
+ * everything it asks for, and a stand-in serve whose Mesh `world` describes. */
+function meshCase(world: MeshWorld): FakeScenario {
+  const commit = fakeCommit(5);
+  const lab = meshLab(world);
+  const names = [...lab, ...MESH_OTHERS];
+  const base = makeHosts(names.length);
+  const hosts: HostList = {
+    hosts: base.hosts.map((h, i) => ({ ...h, name: names[i] ?? h.name, group: i < lab.length ? "lab" : "far", reviewed: true })),
+    groups: { lab: { title: "Meshed: every Host reaches every other", description: "" }, far: { title: "Another network", description: "" } },
+  };
+  return {
+    hosts,
+    vault: { status: "unsupported" },
+    mesh: world,
+    packages: {
+      named: [{ name: "mesh", source: "https://github.com/2styx2/roster", dir: "plugins/mesh", versions: [{ commit, subject: "v0.3.0", plugin: meshPlugin(), diff: "" }] }],
+      lock: { mesh: commit },
+      clones: { mesh: commit },
+    },
+    app: { state: { plugins: [{ path: "package:mesh", name: "mesh", granted: MESH_PERMISSIONS, asked: MESH_PERMISSIONS }] } },
+  };
+}
 
 /** The worst case (ticket 27): every long, short, odd, missing and huge value at once. */
 function worstCase(): FakeScenario {
@@ -615,8 +837,25 @@ function fakeSession(
   size: TermSize,
   events: SessionEvents,
   loginMs = 0,
-  extra: { onLogin?: () => void; title?: string; stream?: number | undefined; printers?: Printers; repaints?: boolean | undefined } = {},
-): SessionHandle {
+  extra: {
+    onLogin?: () => void;
+    title?: string;
+    stream?: number | undefined;
+    printers?: Printers;
+    repaints?: boolean | undefined;
+    log?: readonly string[] | undefined;
+    /** The Host's ssh user: `sudo …` asks for its password, without echo, and takes FAKE_LOGIN_PASSWORD. */
+    user?: string;
+    /** A shell with integration (Q121): OSC 133 marks around its prompt and each command, and
+     * `ssh NAME` stays "in" NAME (a shell without marks) until `exit`. */
+    marks?: boolean | undefined;
+    /** The shell `ssh NAME` reaches marks its prompts and commands too (ticket 120). */
+    innerMarks?: boolean | undefined;
+    /** The Inventory Host `ssh TARGET` reaches (by name or address), and whether it asks for its
+     * Login's password (ticket 120): then `ssh` asks, without echo, and takes FAKE_LOGIN_PASSWORD. */
+    reach?: (target: string) => { name: string; user: string; password: boolean } | null;
+  } = {},
+): SessionHandle & { atPasswordPrompt(): boolean } {
   // What it printed, without escapes, for a ConPTY-style repaint.
   let screen = "";
   const out = (bytes: Uint8Array) => {
@@ -629,6 +868,11 @@ function fakeSession(
     events.output(encode(`\x1b[?25l\x1b[H${rows.map((r) => `${r}\x1b[K`).join("\r\n")}\x1b[?25h`));
   };
   let line = "";
+  // `sudo …` (ticket 119): a password prompt that doesn't echo what's typed, as sudo's.
+  let password = false;
+  // A nested `ssh` asking for its Host's password (ticket 120): the Host it logs in to, and the
+  // prompt it asks with.
+  let sshLogin: { name: string; asks: string } | null = null;
   let ended = false;
   let streaming: ReturnType<typeof setInterval> | undefined;
   // Whether the cursor sits right after the prompt: what the box prints then (a log, `wall`)
@@ -649,6 +893,17 @@ function fakeSession(
     clearInterval(streaming);
     setTimeout(() => events.exit({ code, closed }), 0);
   };
+  // Inside a pretend `ssh NAME`: NAME's own prompt (marked with `innerMarks`), until `exit`.
+  let nested: string | null = null;
+  // roster's hook line, once the shell has run it (ticket 120): its marks carry this token.
+  let token: string | null = null;
+  const marksHere = () => (nested === null ? extra.marks || token !== null : extra.innerMarks);
+  const mark = (m: string) => `\x1b]133;${m}${nested === null && token !== null ? `;roster=${token}` : ""}\x07`;
+  const marked = (p: string) => (marksHere() ? `${mark("A")}${p}${mark("B")}` : p);
+  const promptOf = () => marked(`${nested ?? host}$ `);
+  // A marked shell's first prompt comes after a D with no command before it, as roster's own hook,
+  // kitty's and VS Code's integrations print (the review's leak, ticket 120).
+  const firstPrompt = () => (marksHere() ? `\x1b]133;D;0\x07${promptOf()}` : promptOf());
   const prompt = `${host}$ `;
   // Like ssh, nothing is printed until the Host answers (the login takes `loginMs`).
   let loggedIn = false;
@@ -659,7 +914,7 @@ function fakeSession(
     extra.onLogin?.();
     // A shell that names its box in the window title, as most Linux prompts do (OSC 0).
     if (extra.title) out(encode(`\x1b]0;${extra.title}\x07`));
-    out(encode(`Connected to ${host} (fake, ${size.cols}x${size.rows})\r\n${prompt}`));
+    out(encode(`Connected to ${host} (fake, ${size.cols}x${size.rows})\r\n${(extra.log ?? []).map((l) => `${l}\r\n`).join("")}${promptOf()}`));
     atPrompt = true;
     if (resized && !ended) sayResized(resized);
     if (extra.stream && !ended) streaming = streamLog(extra.stream, (text) => out(encode(text)));
@@ -671,11 +926,76 @@ function fakeSession(
     async write(data) {
       if (ended) throw new BackendCallError(`session ${id} isn't open`);
       for (const ch of data) {
+        if (password) {
+          if (ch === "\x15") line = "";
+          else if (ch !== "\r") line += ch;
+          else if (sshLogin) {
+            const right = line === FAKE_LOGIN_PASSWORD;
+            line = "";
+            if (right) {
+              password = false;
+              nested = sshLogin.name;
+              sshLogin = null;
+              out(encode(`\r\nConnected to ${nested}\r\n${firstPrompt()}`));
+              atPrompt = true;
+            } else out(encode(`\r\nPermission denied, please try again.\r\n${sshLogin.asks}`));
+          } else {
+            password = false;
+            out(encode(line === FAKE_LOGIN_PASSWORD ? "\r\n[sudo ok]\r\n" : "\r\nSorry, try again.\r\n"));
+            line = "";
+            if (marksHere()) out(encode(mark("D;0")));
+            out(encode(promptOf()));
+            atPrompt = true;
+          }
+          continue;
+        }
         if (ch === "\r") {
+          const hook = nested === null ? /roster=([0-9a-f]{24})/.exec(line) : null;
+          if (hook) {
+            // roster's hook line: from now on this shell marks its prompts with the token.
+            token = hook[1] ?? null;
+            line = "";
+            out(encode(`\r\n${mark("D;0")}${promptOf()}`));
+            atPrompt = true;
+            continue;
+          }
+          if (marksHere()) out(encode(mark("C")));
           out(encode("\r\n"));
+          const ssh = nested === null ? /^ssh\s+(?:(\S+)@)?(\S+)$/.exec(line.trim()) : null;
+          const reached = ssh ? (extra.reach?.(ssh[2] ?? "") ?? null) : null;
+          if (ssh && (marksHere() || reached)) {
+            line = "";
+            if (reached?.password) {
+              // ssh asks for the Host's password, as OpenSSH does: user@host as typed, lowercased.
+              sshLogin = { name: reached.name, asks: `${ssh[1] ?? reached.user}@${(ssh[2] ?? "").toLowerCase()}'s password: ` };
+              password = true;
+              out(encode(sshLogin.asks));
+              atPrompt = false;
+              continue;
+            }
+            nested = reached?.name ?? ssh[2] ?? "";
+            out(encode(`Connected to ${nested}\r\n${firstPrompt()}`));
+            continue;
+          }
+          if (line.trim() === "exit" && nested !== null) {
+            nested = null;
+            line = "";
+            out(encode(`logout\r\n${extra.marks || token !== null ? mark("D;0") : ""}${promptOf()}`));
+            continue;
+          }
           if (line.trim() === "exit") return end(0, false);
+          if (extra.user && /^(sudo\s|su$)/.test(line.trim())) {
+            // su asks for root's password, and doesn't say whose: roster never fills it.
+            const asks = line.trim() === "su" ? "Password: " : `[sudo] password for ${extra.user}: `;
+            line = "";
+            password = true;
+            out(encode(asks));
+            atPrompt = false;
+            continue;
+          }
           line = "";
-          out(encode(prompt));
+          if (marksHere()) out(encode(mark("D;0")));
+          out(encode(promptOf()));
           atPrompt = true;
         } else {
           line += ch;
@@ -693,8 +1013,13 @@ function fakeSession(
     async close() {
       end(null, true);
     },
+    atPasswordPrompt: () => password && !ended,
   };
 }
+
+/** The password the fake vault holds for every Host Login a prompt fill types (ticket 119). Never
+ * shown: tests check it reaches neither the terminal nor the page. */
+export const FAKE_LOGIN_PASSWORD = "fake-login-pw-7q";
 
 const BACKUP = "~/infra/.git/roster/roster.yml.bak";
 
@@ -794,6 +1119,13 @@ export interface FakeBackend extends Backend {
   /** roster.yml saved outside the app: new Hosts and groups, or a file that doesn't load. serve's
    * watcher then applies it (auto) or only reports it, as `inventory.changed`. */
   outsideEdit(next: HostList | { error: InventoryFileError }): void;
+  /** serve pushes a job's progress (`job.progress`, API 20). */
+  jobProgress(job: JobProgress): void;
+  /** Answers a held `host.check` (`heldChecks`) with its result, or fails it with an error (the
+   * core giving up after 90 s, serve going away). */
+  answerCheck(host: string, outcome: HostCheck | Error): void;
+  /** Every `host.get` asked with `settled` so far: the Host's name. */
+  settledGets(): string[];
   /** Whether `inventory.watch` asked to apply outside edits (null: not watching). */
   watching(): boolean | null;
   /** What `vault.configure` was last sent (null: never). */
@@ -811,6 +1143,11 @@ export interface FakeBackend extends Backend {
   /** Every logged-in Session to `host` prints `text`, as its server would (ticket 56: scripted
    * output for the Plugins that read the terminal). Gives how many printed it. */
   print(host: string, text: string): number;
+  /** A reply the core sends on its own (an HTTP request's answer, decision Q97), to whoever
+   * listens through `onPluginReply`. */
+  pluginReplied(reply: PluginReply): void;
+  /** What a Plugin keeps in its data folder (`roster.storage`, decision Q93), by file name. */
+  pluginFiles(plugin: string): Map<string, string>;
 }
 
 const NAME = /^[A-Za-z0-9._-]+$/;
@@ -833,6 +1170,30 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   let onDisk: HostList | { error: InventoryFileError } | null = null;
   let broken: InventoryFileError | null = null;
   const changeWatchers = new Set<(c: InventoryChanged) => void>();
+  const jobWatchers = new Set<(j: JobProgress) => void>();
+  const pushJob = (job: JobProgress) => {
+    for (const w of jobWatchers) w(job);
+  };
+  const heldChecks = new Map<string, { resolve(c: HostCheck): void; reject(e: Error): void }>();
+  let checkJobs = 0;
+  /** serve's check job (ticket 108): progress as each step starts, up to where `result` failed or
+   * stopped. Never a step's message. */
+  const runCheckJob = async (result: HostCheck, { stepMs, hangAt }: { stepMs: number; hangAt?: string }) => {
+    const job = `check-${++checkJobs}`;
+    const base = { kind: "check", job, action: "check", total: CHECK_STEPS.length, host: result.host };
+    pushJob({ ...base, state: "running", done: 0, at: null });
+    const last = result.steps.findIndex((s) => s.status === "fail" || s.message === "the check was stopped");
+    const end = last < 0 ? result.steps.length - 1 : last;
+    for (const [i, s] of result.steps.entries()) {
+      if (i > end) break;
+      pushJob({ ...base, state: "running", done: i, at: s.step });
+      if (s.step === hangAt) await new Promise(() => {});
+      await new Promise((r) => setTimeout(r, stepMs));
+    }
+    const stopped = !result.ok && !result.steps.some((s) => s.status === "fail");
+    pushJob({ ...base, state: stopped ? "stopped" : "done", done: CHECK_STEPS.length, at: result.steps[end]?.step ?? null });
+  };
+  const settled: string[] = [];
   const applyDisk = () => {
     if (!onDisk) return;
     if ("error" in onDisk) broken = onDisk.error;
@@ -976,7 +1337,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     });
   const wait = () => new Promise((r) => setTimeout(r, scenario.delay ?? 0));
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  /** serve answers one request at a time: vault calls queue behind a slow unlock. */
+  /** The vault's lock (serve API 20): vault calls wait behind a slow unlock, which holds it alone. */
   let serveBusy: Promise<unknown> = Promise.resolve();
   const inOrder = <T>(job: () => Promise<T>): Promise<T> => {
     const run = serveBusy.then(job, job);
@@ -1078,7 +1439,10 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     }
     return stepOf(id, {
       step: "sso",
-      url: "https://vault.bitwarden.com/#/sso?clientId=cli&redirectUri=http%3A%2F%2Flocalhost%3A8065&state=fake",
+      url:
+        scenario.signIn?.ssoLink === false
+          ? null
+          : "https://vault.bitwarden.com/#/sso?clientId=cli&redirectUri=http%3A%2F%2Flocalhost%3A8065&state=fake",
       expires_in: 300,
     });
   };
@@ -1147,7 +1511,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       await wait();
       return { hosts, groups, error: broken };
     },
-    async getHost(name: string) {
+    async getHost(name: string, options?: { settled?: boolean }) {
+      if (options?.settled) settled.push(name);
       await wait();
       const h = hosts.find((x) => x.name === name);
       if (!h) throw new BackendCallError(`unknown host '${name}'`, 2);
@@ -1306,7 +1671,70 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       }
       const failure = scenario.sshFailures?.[host];
       if (failure !== undefined) return failingSession(++sessions, auth, failure, events);
-      return fakeSession(++sessions, host, auth, size, events, scenario.loginMs, { stream: scenario.stream, printers, repaints: scenario.repaints });
+      const session = fakeSession(++sessions, host, auth, size, events, scenario.loginMs, {
+        stream: scenario.stream,
+        printers,
+        repaints: scenario.repaints,
+        log: scenario.logs?.[host],
+        user: h.ssh.user,
+        marks: scenario.shellMarks,
+        innerMarks: scenario.innerMarks,
+        reach: (target) => {
+          const to = hosts.find((x) => x.name.toLowerCase() === target.toLowerCase() || x.ip === target);
+          return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
+        },
+      });
+      const { atPasswordPrompt, ...handle } = session;
+      // The core's prompt fill (ticket 119), as the Tauri build's: serve's refusals first (the Host
+      // changed since the Session connected, a prompt that isn't sudo's or ssh's for this Host's own
+      // Login, no saved password, the vault), then the probe (an echoing prompt, or no prompt,
+      // refuses), then the password typed into the Session.
+      const connected = { ip: h.ip, port: h.ssh.port, user: h.ssh.user };
+      // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
+      const fill = async (prompt: string, hop?: NestedHost) => {
+        await wait();
+        const self = hosts.find((x) => x.name === host);
+        if (!self) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
+        if (self.ip !== connected.ip || self.ssh.port !== connected.port || self.ssh.user !== connected.user) {
+          throw new BackendCallError(`won't fill on ${host}: ${host} changed since this Session connected`, FillRefusal.refused, {
+            fix: "reconnect the Session, then fill",
+          });
+        }
+        const now = hop ? hosts.find((x) => x.name === hop.host) : self;
+        if (!now) throw new BackendCallError(`unknown host '${hop?.host}'`, SessionRefusal.unknownHost);
+        if (hop && (now.ip !== hop.address || now.ssh.port !== hop.port || now.ssh.user !== hop.user)) {
+          throw new BackendCallError(`won't fill on ${now.name}: ${now.name} changed since this ssh started`, FillRefusal.refused, {
+            fix: "run the ssh again, then fill",
+          });
+        }
+        const refusal = scenario.fillRefusals?.[now.name];
+        if (refusal) throw refuse(refusal);
+        const line = prompt.trim();
+        const sudoFor = /^\[sudo\] password for ([^\s:]+):$/.exec(line)?.[1];
+        const sshFor = /^([^\s@']+)@([^\s@']+)'s password:$/.exec(line);
+        const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name.toLowerCase(), now.ip.toLowerCase()].includes((sshFor[2] ?? "").toLowerCase()));
+        if (!own) {
+          throw new BackendCallError(`won't fill on ${now.name}: '${line}' isn't a prompt roster fills for ${now.ssh.user}@${now.name}`, FillRefusal.refused, {
+            fix: "type that password yourself",
+          });
+        }
+        const sudoRef = sudoFor !== undefined ? scenario.sudoRefs?.[now.name] : undefined;
+        const ref = sudoRef ?? now.ssh.auth;
+        if (ref === "prompt" || (NO_PASSWORD_AUTHS as readonly string[]).includes(ref)) {
+          throw new BackendCallError(`${now.name}'s ssh Login has no saved password to fill (auth: ${ref})`, FillRefusal.nothingToFill, {
+            fix: `add a sudo: {auth: VAULT-REFERENCE} to ${now.name} in roster.yml for its own sudo password, or type it yourself`,
+          });
+        }
+        if (vaultNow() === "locked") throw new BackendCallError(VAULT_LOCKED, SessionRefusal.vaultLocked);
+        if (!atPasswordPrompt()) {
+          throw new BackendCallError(
+            "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it",
+          );
+        }
+        await handle.write(`\x15x\x15${FAKE_LOGIN_PASSWORD}\r`);
+        return { host: now.name };
+      };
+      return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...handle, fill } : handle;
     },
     async openQuickSession(to, password, size, events, options = {}) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));
@@ -1458,19 +1886,33 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       return { checks, ok: !checks.some((c) => c.level === "error"), roster_version: "0.1.0", api_version: scenario.apiVersion ?? 2 };
     },
     async checkHost(host) {
-      await wait();
-      const given = scenario.checks?.[host];
-      if (given) return given;
-      const h = hosts.find((x) => x.name === host);
-      if (!h) {
-        const steps = CHECK_STEPS.map((step, i) =>
-          i === 0
-            ? { step, status: "fail" as const, code: 2, message: `unknown host '${host}'`, fix: "check the name" }
-            : { step, status: "skipped" as const, message: "an earlier step failed" },
-        );
-        return { host, ok: false, steps };
+      if (scenario.heldChecks?.includes(host)) {
+        return new Promise<HostCheck>((resolve, reject) => heldChecks.set(host, { resolve, reject }));
       }
-      return passingCheck(h);
+      await wait();
+      const result = ((): HostCheck => {
+        const given = scenario.checks?.[host];
+        if (given) return given;
+        const h = hosts.find((x) => x.name === host);
+        if (!h) {
+          const steps = CHECK_STEPS.map((step, i) =>
+            i === 0
+              ? { step, status: "fail" as const, code: 2, message: `unknown host '${host}'`, fix: "check the name" }
+              : { step, status: "skipped" as const, message: "an earlier step failed" },
+          );
+          return { host, ok: false, steps };
+        }
+        return passingCheck(h);
+      })();
+      if (scenario.checkSteps) await runCheckJob(result, scenario.checkSteps);
+      return result;
+    },
+    answerCheck(host, outcome) {
+      const held = heldChecks.get(host);
+      if (!held) throw new Error(`no held check of ${host}`);
+      heldChecks.delete(host);
+      if (outcome instanceof Error) held.reject(outcome);
+      else held.resolve(outcome);
     },
     async pullInventory() {
       await new Promise((r) => setTimeout(r, scenario.pullDelay ?? scenario.delay ?? 0));
@@ -1485,8 +1927,9 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (brings && !pulledIn) {
         pulledIn = true;
         const change = (h: Host) => (brings.changes[h.name] ? withFields(h, brings.changes[h.name] ?? {}) : h);
-        committed = committed.map(change);
-        hosts = hosts.map(change);
+        const adds = brings.adds ?? [];
+        committed = [...committed.map(change), ...adds];
+        hosts = [...hosts.map(change), ...adds];
         return { updated: true, upstream: "origin/main", commits: brings.commits, ahead: 0 };
       }
       return { updated: false, upstream: "origin/main", commits: 0, ahead: 0 };
@@ -1758,6 +2201,12 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       changeWatchers.add(onChange);
       return () => changeWatchers.delete(onChange);
     },
+    onJobProgress(onProgress) {
+      jobWatchers.add(onProgress);
+      return () => jobWatchers.delete(onProgress);
+    },
+    jobProgress: pushJob,
+    settledGets: () => [...settled],
     outsideEdit(next) {
       onDisk = next;
       if (watchAuto === null) return;
@@ -1765,7 +2214,15 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const change: InventoryChanged = watchAuto ? { applied: true, error: broken } : { applied: false, error: null };
       for (const w of changeWatchers) w(change);
     },
-    ...fakePluginHost(scenario.plugins ?? {}, () => hosts, packagePlugin),
+    ...fakePluginHost(scenario.plugins ?? {}, () => hosts, packagePlugin, pluginServe(scenario)),
+    // `:tutor`'s demo (ticket 66, decision Q123): a host of its own over the demo's Hosts, with
+    // the same Plugin folders and Packages, files of its own (empty), and serve's stand-in.
+    async demoPlugins(demo) {
+      return { ...fakePluginHost(scenario.plugins ?? {}, () => demo.hosts, packagePlugin, demoServe(demo)), close: async () => {} };
+    },
+    async pluginRequests() {
+      return structuredClone(scenario.pluginRequests ?? {});
+    },
     ...packageHost,
     watching: () => watchAuto,
     vaultSettings: () => settings,

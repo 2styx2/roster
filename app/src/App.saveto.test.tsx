@@ -50,6 +50,8 @@ async function ready({ setting, saveTo = null, api = 10 }: { setting?: SaveTo; s
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} config={config} />);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i });
+  // The confirmations' whole text shows with every message on (ticket 111).
+  await user.keyboard(`${LEADER}:messages all{Enter}`);
   await user.keyboard(`${LEADER}:host add{Enter}`);
   const panel = await screen.findByRole("region", { name: "Add a Host" });
   await within(panel).findByLabelText("Name");

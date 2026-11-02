@@ -82,3 +82,47 @@ describe("changes.publish that timed out", () => {
     await expect(publishChecked(b, "msg")).rejects.toThrow(/couldn't check whether it was published/);
   });
 });
+
+// serve answers several requests at once (API 20, decision Q112): answers come back in any order,
+// and a quick read doesn't wait for a write under way. A stand-in that does the same: `host.add`
+// holds roster.yml for its whole request, a plain `host.get` answers at once, a `settled` one waits.
+describe("a serve that answers concurrently", () => {
+  function concurrent() {
+    const hosts = new Set<string>();
+    let writing: Promise<void> = Promise.resolve();
+    let finish = () => {};
+    const b = backend({
+      addHost: async (p) => {
+        writing = new Promise((done) => (finish = done));
+        await writing;
+        hosts.add(p.name);
+        return { added: true as const, host: host(p.name), backup: "b", verify: null, item: null, warnings: [] };
+      },
+      getHost: async (n, options) => {
+        if (options?.settled) await writing; // the add awaited it first, so it has written by now
+        if (!hosts.has(n)) throw new BackendCallError(`unknown host '${n}'`, 2);
+        return host(n);
+      },
+    });
+    return { b, finish: () => finish() };
+  }
+
+  it("answers each call, whatever order they come back in", async () => {
+    const { b, finish } = concurrent();
+    const add = b.addHost({ name: "nas", group: "lab", address: "10.0.0.5" });
+    const read = b.getHost("esx").catch((e: BackendCallError) => e.code);
+    expect(await read).toBe(2); // answered first, while the add still runs
+    finish();
+    expect((await add).host.name).toBe("nas");
+  });
+
+  it("checks a timed-out add only once the add is done (settled)", async () => {
+    const { b, finish } = concurrent();
+    const slow: Backend = { ...b, addHost: async (p) => (void b.addHost(p), Promise.reject(timeout())) };
+    const checked = addHostChecked(slow, { name: "nas", group: "lab", address: "10.0.0.5" });
+    setTimeout(finish, 20);
+    const r = await checked;
+    expect(r.host.name).toBe("nas");
+    expect(r.warnings?.[0]).toMatch(/it's in the Inventory/);
+  });
+});

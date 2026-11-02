@@ -4,6 +4,7 @@
 // and the Config (ticket 21) or a Plugin (ticket 23) can place others. A mode changes only how
 // roster is shown: every command works in every mode (commands/table.ts).
 import type { Options } from "../keymap";
+import { quiet, type Quiet } from "../ui/messages";
 
 export type ViewMode = "standard" | "focus";
 export const VIEW_MODES: readonly ViewMode[] = ["standard", "focus"];
@@ -139,11 +140,13 @@ const PIECE_NAMES: Record<string, string> = {
 };
 
 /** What to say after `␣ e` / `␣ s` showed or hid a piece: it lasts until the Config changes the
- * modes (or the app restarts), so name the option that keeps it (ticket 32). */
-export function pieceToggled(mode: ViewMode, layout: ModeLayout, id: string): string {
+ * modes (or the app restarts), so name the option that keeps it (ticket 32). Quiet: shown with
+ * every message on (ticket 111). */
+export function pieceToggled(mode: ViewMode, layout: ModeLayout, id: string): Quiet {
   const piece = layout.pieces.find((p) => p.id === id);
   const shown = piece?.shown ?? false;
   const value = !shown ? "false" : id === "sessionbar" ? `"${piece?.at === "top" ? "top" : "bottom"}"` : "true";
   const name = PIECE_NAMES[id] ?? id;
-  return `${name} ${shown ? "shown" : "hidden"}. To keep it that way: modes.${mode}.${id} = ${value} in init.lua`;
+  const said = `${name} ${shown ? "shown" : "hidden"}`;
+  return quiet(said, `${said}. To keep it that way: modes.${mode}.${id} = ${value} in init.lua`);
 }

@@ -7,8 +7,10 @@ ssh (tests/fakes/ssh), which logs each run and asks SSH_ASKPASS for the password
 
 import json
 import logging
+import os
 import socket
 import threading
+import time
 
 import paramiko
 import pytest
@@ -306,3 +308,116 @@ def test_roster_check_without_a_host_is_still_the_fleet_check(box, capsys, monke
 
 def test_the_result_is_json_safe(check):
     json.dumps(check("esx"))
+
+
+# ---------------------------------------------------------------- host.check as a job (ticket 108, Q112 (q))
+
+def test_a_background_check_answers_at_once_and_reports_each_step(serve, box):
+    s = serve()
+    assert s.call("vault.unlock", {"password": "hunter2"})["result"]["status"] == "unlocked"
+    started = s.call("host.check", {"host": "esx", "background": True})["result"]
+    assert started["kind"] == "check" and started["host"] == "esx" and started["total"] == len(STEPS)
+    job = started["job"]
+    end = time.monotonic() + 30
+    while True:                                             # the job's own answer, polled as the app's core does
+        r = s.call("host.check_job", {"job": job})["result"]
+        if r["state"] not in ("running", "stopping") or time.monotonic() > end:
+            break
+        time.sleep(0.05)
+    assert r["state"] == "done" and r["done"] == len(STEPS)
+    assert r["result"]["ok"] is True and statuses(r["result"]) == [(step, "ok", None) for step in STEPS]
+    progress = [n["params"] for n in s.notes if n["method"] == "job.progress" and n["params"]["job"] == job]
+    assert progress[0]["state"] == "running" and progress[-1]["state"] == "done"
+    assert {p["kind"] for p in progress} == {"check"} and {p["host"] for p in progress} == {"esx"}
+    assert all("result" not in p and "steps" not in p for p in progress)    # never the steps' messages
+    assert s.call("host.check_job", {"job": "check-99"})["error"]["code"] == 49
+    assert box.sshd.accepts == 1 and len(box.ssh_runs()) == 1               # one check, one connection
+    _, out, err = s.close()
+    assert not [x for x in ALL_SECRETS if x in "".join(s.responses) + out + err]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a .cmd shim there: ending it leaves its Python")
+def test_locking_mid_login_ends_the_checks_ssh_rather_than_wait_for_it(serve, box, monkeypatch, tmp_path):
+    # #198 (b): vault.lock waited behind the auth step's ssh (up to ~35 s) while the lock screen hung
+    hung = tmp_path / "ssh.pid"
+    monkeypatch.setenv("FAKE_SSH_HANG", str(hung))
+    s = serve()
+    assert s.call("vault.unlock", {"password": "hunter2"})["result"]["status"] == "unlocked"
+    job = s.call("host.check", {"host": "esx", "background": True})["result"]["job"]
+    end = time.monotonic() + 15
+    while not (hung.exists() and hung.read_text()):
+        assert time.monotonic() < end, "the check never got to its login"
+        time.sleep(0.02)
+    pid = int(hung.read_text())
+    t = time.monotonic()
+    assert s.call("vault.lock")["result"]
+    assert time.monotonic() - t < 5                                 # not the ssh's minute
+    r = s.call("host.check_job", {"job": job})["result"]
+    while r["state"] in ("running", "stopping"):
+        time.sleep(0.02)
+        r = s.call("host.check_job", {"job": job})["result"]
+    assert r["state"] == "stopped" and r["result"]["ok"] is False
+    assert statuses(r["result"])[-1] == ("auth", "skipped", None)
+    assert r["result"]["steps"][-1]["message"] == "the check was stopped"
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)                                             # its ssh is gone, not left running
+    s.close()
+
+
+def test_a_login_isnt_started_once_the_check_is_stopped(tmp_path):
+    # review of #216, 6: the ssh started even when the stop came before it
+    import sys
+    import threading
+
+    from roster import diagnose
+    halted = threading.Event()
+    halted.set()
+    ran = tmp_path / "ran"
+    with pytest.raises(diagnose.Stopped):
+        diagnose.login_attempt([sys.executable, "-c", f"open({str(ran)!r}, 'w')"], dict(os.environ), 30, halted)
+    assert not ran.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a process group: POSIX")
+def test_a_stopped_login_ends_what_its_ssh_started_and_reaps_it(tmp_path):
+    # review of #216, 6: a ProxyJump child kept the pipes open, so the killed ssh was never waited for (a zombie)
+    # and the child ran on
+    import threading
+
+    from roster import diagnose
+    child = tmp_path / "child"
+    halted = threading.Event()
+    argv = ["/bin/sh", "-c", f"sleep 60 & echo $! > {child}; wait"]       # ssh and the ProxyJump it started
+    timer = threading.Timer(0.5, halted.set)
+    timer.start()
+    started = time.monotonic()
+    procs = []
+    real = diagnose.subprocess.Popen
+
+    def popen(*a, **k):
+        procs.append(real(*a, **k))
+        return procs[-1]
+    try:
+        diagnose.subprocess.Popen = popen
+        with pytest.raises(diagnose.Stopped):
+            diagnose.login_attempt(argv, dict(os.environ), 30, halted)
+    finally:
+        diagnose.subprocess.Popen = real
+        timer.cancel()
+    assert time.monotonic() - started < 5
+    assert procs[0].returncode is not None                          # reaped
+    pid = int(child.read_text())
+    end = time.monotonic() + 2
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        assert time.monotonic() < end, "the child outlived the stopped login"
+        time.sleep(0.02)
+
+
+def test_the_waiting_form_answers_as_it_always_did(check):
+    result = check("typo")["result"]
+    assert result["host"] == "typo" and result["ok"] is False
+    assert statuses(result)[3] == ("vault-item", "fail", 32)

@@ -8,6 +8,7 @@
 // bindings themselves (`binding-keys`), so `ui.hints = false` never hides them.
 import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
 import "./doc.css";
 import { Announce } from "../ui/Announce";
 import { Keys } from "../ui/Keys";
@@ -209,6 +210,7 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
           <button type="button" className="help-find" title="Find a topic (?)" onClick={onFind}>
             Topics
           </button>
+          <PanelButton />
           <button type="button" className="icon-button" aria-label="Close help" onClick={() => view.close()}>
             <CloseGlyph />
           </button>

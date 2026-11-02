@@ -1,4 +1,4 @@
-# Connection errors: the catalog
+# Errors: the catalog
 
 Every way opening a Session can fail must end in a **clean error**, never a hang or a raw stack trace. A clean error:
 - names the Host;
@@ -8,6 +8,10 @@ Every way opening a Session can fail must end in a **clean error**, never a hang
 - keeps the raw message (ssh's stderr, or roster's message) one click away under "Details".
 
 Edits made by hand to `roster.yml` or the vault get the same treatment as anything made in the app. `roster check HOST` and `:check HOST` run the same diagnostics on demand. `:check` with no Host (or `roster check --box`) checks this Box instead (see [This Box's health](#this-boxs-health)).
+
+`:check HOST` shows each step as it runs (serve API 21: a check is a job that says which step it is on; ticket 110): every step is listed from the start, and the one under way is the accent, an open node with an edge drawn above it. The steps before it are done (passed, or skipped by design, as a key Login's vault steps are), and the rest are still to come. A step that takes a while says how long it has taken, so a Host that doesn't answer is seen waiting out its timeout rather than frozen. Once the check answers, each row shows how it came out: "All checks passed", "Failed at TCP port" with the failure opened up, or "Stopped at Host key" with a square on that step when locking the vault stopped the check. If the app stops waiting for the check, the rows stay as they were, with the square on the step it was on. A screen reader hears the step under way once it has run a moment (not each one that flies by), then the outcome. Checking the same Host again while it runs keeps its place, since roster joins the check that's running. An older roster sends no steps, so the panel waits for the whole answer as before.
+
+The # is a row's id, given in the order rows were added and cited by the code (`app/src/errors/catalog.ts`), so a section added to later can hold higher numbers; new rows take the next number (133).
 
 | # | What happened | Typical cause | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
@@ -50,7 +54,7 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 | 30 | 56 | SSO failed in the browser or wasn't finished within 5 minutes | Vault | "the SSO sign-in failed in the browser - try again" | Start SSO again |
 | 31 | 57 | The self-hosted address isn't one | Sign-in form | "'vault example com' isn't a server address - …" | Pick cloud or EU, or type an https:// address |
 | 32 | 58 | API key not accepted, or an organization key | Sign-in form | "Bitwarden didn't accept that API key (client_id or client_secret)" | Copy the personal key again from the web vault |
-| 33 | 59 | Anything else; bw's own words. On Windows without WSL, also a password or SSO sign-in, which roster can't drive there yet | Vault | "Bitwarden sign-in failed: …" | See Details; `bw login` in a terminal shows the same. On Windows: `roster bw login` in a terminal, or the API key, then unlock |
+| 33 | 59 | Anything else; bw's own words | Vault | "Bitwarden sign-in failed: …" | See Details; `bw login` in a terminal shows the same |
 
 ## Signing out
 
@@ -87,6 +91,9 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 | 41 | 73 | The fetch or the fast-forward failed: network, access, a file in the way | Network, infra repo | "couldn't fetch origin/main for the infra repo" | Check the network and access; git's words under Details |
 | 42 | 74 | The edit's result wouldn't load, would load differently, or would change another entry (a YAML alias) | `roster.yml` | "can't make that edit: the result wouldn't load - nothing was written" | Make the edit by hand; nothing was written |
 | 43 | 75 | An address, user or Login change without a test login that just succeeded | roster | "esx's new address, user or Login hasn't passed a test login" | Test the login, then save again |
+| 113 | 4 | roster serve answers several requests at once, but two writes to `roster.yml` (or a write and a Publish), or unlocking and a lookup in the vault, never overlap: this one waited for the other past its time | roster | "roster.yml is busy: changes.publish is still running - nothing was done" | Try again once it has finished; nothing was done |
+| 114 | 5 | The app stopped waiting for a request and cancelled it (`$/cancel`) while it was still queued or waiting for a lock, so it never ran. The app has already said it didn't answer in time; this is what serve answers once it gets to it | roster | "host.add was cancelled before it did anything" | Nothing was done: do it again if you still want it |
+| 115 | 49 | `host.check_job` asked about a check this serve doesn't have (a newer check of the Host replaced it, or serve restarted) | roster | "no check check-3 in this roster serve" | Check the Host again |
 
 ## Adding a Host
 
@@ -114,7 +121,7 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 
 ## The Live Inventory
 
-Removing, renaming and moving Hosts and groups in the Sidebar (decision Q45) goes through roster's `host.remove`, `host.rename`, `host.move` and `group.new|rename|delete`, each a Pending change. A bad name is row 44 (code 80), an unknown Host code 2, a result that wouldn't load row 42 (74). An outside edit of `roster.yml` that doesn't load is row 1: the last good Inventory stays on screen, and the message names the line (`roster.yml:12 has an error (…): the last good Inventory is still in use`); it recovers once the file loads. `folders.yml` does the same with the last good Folders.
+Removing, renaming and moving Hosts and groups in the Sidebar (decision Q45) goes through roster's `host.remove`, `host.rename`, `host.move` and `group.new|rename|delete`, each a Pending change. A bad name is row 44 (code 80), an unknown Host code 2, a result that wouldn't load row 42 (74). An outside edit of `roster.yml` that doesn't load is row 1: the last good Inventory stays on screen, and the message names the line (`roster.yml:12 has an error (…): the last good Inventory is still in use`); it recovers once the file loads. A `folders.yml` that doesn't parse moves nothing into the Folders Plugin (row 106).
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
@@ -162,7 +169,7 @@ Cases 8–10 and 18 used to show only `roster askpass: …` followed by `Permiss
 
 ## The Mesh
 
-`roster mesh`, `roster check` and the `mesh.*` methods (see [The Mesh](../mesh.md)). Most of what can go wrong is one Link or one Host, not the whole run: the rest is applied, and the result says what wasn't. A `links:` or `mesh:` entry that doesn't load is row 1, an unknown Host code 2.
+`roster mesh`, `roster check` and the `mesh.*` methods (see [The Mesh](../mesh.md)). Most of what can go wrong is one Link or one Host, not the whole run: the rest is applied, and the result says what wasn't. A `links:` entry (its `via:` included), a `mesh:`, a `mesh_dir:` or a `seen_as:` that doesn't load is row 1, an unknown Host code 2.
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
@@ -173,6 +180,82 @@ Cases 8–10 and 18 used to show only `roster askpass: …` followed by `Permiss
 | 77 | none (a warning) | A Host that was cut didn't confirm: down or not answering | Host / network | "CUT PENDING ON 1 HOST: nas-1" | `roster mesh cut HOST` again, or `roster mesh`, once it answers; until then that Host may still let the cut one in |
 | 78 | none (a warning) | A source has a `~/ROSTER.md` roster didn't write | Host | "orion-3: ~/ROSTER.md isn't roster's, so roster left it alone" | Move the file away and apply again |
 | 79 | none (drift) | `roster check` found a Host that doesn't hold what roster wrote: a key removed by hand, a file edited, an ESXi reboot that dropped `~/.ssh/config`'s `Include` | Host | "mesh drift: esx-02: write Include in ~/.ssh/config" | `roster mesh` puts it back |
+| 84 | none (a Link's status) | A Link has `via: HOST`, but its source has no Link to that Host (`no-via`) | `roster.yml` | "orion-3 has no Link to jump-1, its hop to db-9 (add { from: orion-3, to: jump-1 })" | Add the Link it names, or take `via:` off; the Link is left out until then |
+| 85 | none (a Link's status) | A hop doesn't answer: the source can't reach its `via` Host's port, or the `via` Host can't reach the peer's | Network | "jump-1 can't reach 10.0.9.9:22 (orion-3's hop to db-9)" | Check routing and firewalls between the two it names, then apply again |
+| 86 | none (a Host's status) | A source's `mesh_dir:` can't be used there: on ESXi not on a datastore, its parent missing, not writable, or it holds files that aren't roster's | `roster.yml` / Host | "mesh_dir /opt/mesh isn't on a datastore (/vmfs/volumes/...)" | Point `mesh_dir:` at a directory of the Mesh's own (on ESXi, on a datastore); the Host stays pending until then |
+| 93 | 111 | A Mesh plan, apply or cut while a Mesh job still runs (from the Mesh controls, say): two at once would fight over the Hosts | roster | "a Mesh apply is still running (job 4): wait for it, or stop it" | Wait for the job (its progress is in the status bar), or stop it with `:cancel mesh`; then run it again |
+
+## Packages
+
+A Package's line in `init.lua` and its clone (see [Packages](../plugins.md#packages)). A line that doesn't load is init.lua's error, at its line (`packages.1.dir`), and nothing is fetched; a clone that can't be used is shown in `:packages`, and that Package doesn't load while the others do.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 80 | none (init.lua) | `dir` is a full path (`/etc`, `C:/…`, `\plugins`), uses `\` between folders, or is empty | init.lua | "dir = \"/etc\": a folder inside the repo, like \"plugins/topology\", not a full path" | Write the folder as the repo has it, `plugins/NAME`, with `/` |
+| 81 | none (init.lua) | `dir` has `..` or goes into `.git` | init.lua | "dir = \"../x\": \"..\" would leave the repo; name a folder inside it" | Name a folder inside the repo |
+| 82 | none (a Package's error) | The repo has no such folder at the commit it's at: a typo, or a version from before the Plugin was added | init.lua / the repo | "https://git.example.com/team/roster-extras.git at 1a2b3c4 has no folder plugins/alrets: check dir in init.lua" | Fix `dir`, or ask for a version that has it (`tag`, `branch`), then `:source` |
+| 83 | none (a Package's error) | `dir`, or a folder on the way to it, is a symlink that leads outside the clone | The repo | "dir = \"plugins/escape\" leads outside the Package's clone (through a symlink): roster won't load it" | Nothing in roster: a Plugin is only ever loaded from inside its repo. Tell the repo's author; an update that does this is refused and the Package stays where it was |
+| 116 | none (a Package's error) | The repo can't be fetched: the URL is wrong, the network or the git server is down, or it's a private repo your own git setup (an ssh agent, say) doesn't get into. roster hands git no credentials and git may not ask for any. On a new Box, roster.lock can also pin a commit the repo no longer has (force-pushed away) | The network / the repo | "can't fetch https://git.example.com/team/roster-extras.git: fatal: could not read Username …"; "roster.lock pins 1a2b3c4, which https://git.example.com/team/roster-extras.git doesn't have" | `:packages` shows it as "can't fetch" with git's words, and the other Packages load. Check the URL in init.lua, or that `git clone URL` works in a terminal, then `:source`. For a lost commit, take its line out of roster.lock to install the version init.lua asks for (it asks first) |
+| 117 | none (a Package's error) | `git` isn't installed on this Box, or isn't on the app's PATH | This Box | "git isn't installed (or isn't on the PATH): Packages need it" | Install git and restart the app. Nothing else in the app needs it: Plugins from a folder (`:plugins install PATH`) work without it |
+| 118 | none (a Package's error, or `:packages update`'s answer) | git didn't finish within 120 s: a big repo on a slow link, or a server that stopped answering. git is stopped and a half-done clone is removed | The network | "can't fetch https://git.example.com/team/roster-extras.git: git clone took longer than 120 s" | Try again later (`:source`, or `:packages update NAME`) |
+| 119 | none (`:packages update`'s answer) | A new commit can't be checked: the fetch failed (as 116 to 118), or the new version has no manifest or one that doesn't load | The network / the repo | "Couldn't check recent-alerts: …"; "recent-alerts: its new version can't be used: the new version has no roster-plugin.lua" | Nothing changes: the Package stays on the commit it's at and keeps running. Try again, or tell the repo's author |
+
+## A Plugin stops
+
+A Plugin that fails to load, or fails again and again, stops ([plugins.md](../plugins.md#limits)). Everything it added goes away, the rest of the app carries on, and `:plugins` (or `:packages`, for a Package) says why. Each is a notice naming the Plugin, with its file and line when it has them.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 120 | none (a Plugin's error) | The Plugin can't load: its manifest is missing or wrong, `init.lua` has a syntax error or raises one, it takes more than 1 s or 32 MB to load, or it needs a newer `roster.api_version` than this app has | The Plugin | "recent-alerts: init.lua:12: attempt to index a nil value" | It isn't running (`:plugins` says "stopped" and why). Fix the code and `:plugins reload NAME`; for a Package, tell its author or `:packages update NAME` for a fixed version |
+| 121 | none (a Plugin's error) | The Plugin is turned off: a third error after it loaded, or a call that didn't answer within two seconds past its quarter-second budget (a long pattern match, say; waiting for roster serve doesn't count) | The Plugin | "recent-alerts: init.lua:40: attempt to call a nil value. It's disabled."; in `:plugins`, "it failed 3 times" or "it didn't answer within 2250 ms" | `:plugins reload NAME` runs it again, with the count started over. If it keeps stopping, `:plugins remove NAME` and tell its author |
+
+## Plugin interactions
+
+What a Plugin's buttons, questions and command lines can run into ([plugins.md](../plugins.md#asking-progress-the-toolbar-and-going-places)). Each is a notice naming the Plugin, or the Plugin's own error with its file and line; nothing else changes.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 87 | none (a Plugin's notice) | A button, row, finder item, toolbar control or key binding runs a command line the Plugin may not run: `:plugins`, `:publish`, another Plugin's command, or `:open` without `sessions.open` | The Plugin | "mesh: :plugins isn't one a Plugin may run" | Nothing ran. If you trust it with more, grant the permission in `:plugins`; tell the Plugin's author otherwise |
+| 88 | none (a Plugin's error) | `roster.cmd`, `roster.confirm` or `roster.sessions.show` called at load, in an event listener or a timer | The Plugin | "mesh: init.lua:12: roster.cmd: only while the user runs one of your actions, commands or finder items" | The Plugin's to fix: call it from an action or command |
+| 89 | none (a Plugin's notice) | `roster.sessions.show` names a Session that has ended (or never was) | The Plugin / the Session | "recent-alerts: there's no Session 3 now: it has ended" | Open the Host again; the line isn't there any more |
+| 90 | none (a Plugin's notice) | Two Plugins use one progress id | The Plugins | "discover: there's a progress named scan already, from mesh" | The second is ignored until the first is removed; tell an author |
+
+## Plugin graphs
+
+What a Plugin's graph in a view can run into ([plugins.md](../plugins.md#graphs)). Each is a notice naming the Plugin; the view stays as it was.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 91 | none (a Plugin's notice) | `roster.views.set` with a graph that can't be drawn: a field of the wrong kind (a `reach` other than `"all"` or `"direct"`, a `filter` state other than live, down, warn or error), a node or cluster id used twice, an edge id used twice, an action key the graph uses itself, more than 5,000 nodes, 10,000 edges or 500 clusters, or a table and a graph in one view | The Plugin | "topology: roster.views.set map graph action 1: the graph uses h itself (h j k l …)" | The whole view is dropped. The Plugin's to fix; tell its author |
+| 92 | none (a Plugin's notice) | `roster.views.update` with nodes or edges for a view that has no graph, or that would leave it over the limits | The Plugin | "topology: roster.views.update map: more than 5,000 nodes" | Nothing changed; the graph stays as it was. The Plugin's to fix |
+
+## Discover
+
+Scanning a network from the app with the first-party [discover](../../plugins/discover/README.md) Plugin, through `roster serve`'s `discover.*` ([serve-api.md](../serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd)). Each is a notice from the Plugin (`discover: …`) or a line of its view; nothing is written to `roster.yml` until an add succeeds.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 94 | -32602 | A range that isn't an IP address or network (`:discover esx-02`, `10.0.0.0/33`) | What you typed | "'esx-02' isn't an IP address or network (e.g. 10.0.0.0/24)" | Name a network or an address |
+| 95 | 121 | More than 65,536 addresses (over 4,096, the question asks you to type the range first) | What you typed | "that's 131,070 addresses; a scan visits at most 65,536" | Scan a smaller range, a /16 at most |
+| 96 | 120 | A scan is going already (one at a time, per `roster serve`) | This Box | "a scan of 10.0.0.0/24 is going already" | Wait for it, or `:discover stop` |
+| 97 | none (the scan's `error`) | nmap failed: not allowed, a bad option, killed | This Box | "The scan of 10.0.0.0/24 failed: nmap failed: …" | See nmap's words; `roster discover` in a terminal shows the same |
+| 98 | 122 | `roster serve` restarted during a scan (its scans don't outlive it) | This Box | "The scan of 10.0.0.0/24 failed: no scan 'scan-1' here" | Scan again |
+| 99 | 123 | An address can't be added: the scan didn't find it, or it's in the Inventory or added already | The Inventory | "Nothing was added: 10.0.0.5: in the Inventory already" | Keep only the new ones |
+| 100 | 70, 74, 100 | Adding: `roster.yml` isn't in a git repo, the result wouldn't load, or the `group` setting names a group that's there | `roster.yml` / init.lua | "Nothing was added: … isn't in a git repo, so it can't have Pending changes" | As for any Pending change; name a new group in the `group` setting |
+| 101 | -32601 | The Box's roster is older than serve API 18: it has no `discover.*` | This Box | "Not scanned: the roster on this Box is too old to scan from the app" | Update roster on the Box; `roster discover` works meanwhile |
+
+## A Plugin's files
+
+A Plugin's code and data stay inside its own folders ([plugins.md](../plugins.md#a-plugins-own-files)). Loading refuses code that leads out; `roster.storage` raises a Lua error the Plugin can catch with `pcall`, and nothing is read or written.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 102 | none (the Plugin doesn't load) | `roster-plugin.lua`, `init.lua` or a module it `require`s is a symlink (or a junction, or in a folder that is one) whose real path is outside the Plugin's folder: a local Plugin or a Package | The Plugin's folder | "recent-alerts: init.lua: init.lua leads outside the Plugin's folder (through a symlink or ..): roster won't read it"; for a module, "require \"x.util\": lua/x/util.lua leads outside the Plugin's folder" | Copy the file into the folder instead of linking it; a link that stays inside is fine |
+| 103 | none (a Lua error) | `roster.storage` was given a path or a name it won't take: `a/b`, `../x`, `C:\x`, a name starting with `.`, a device name such as `con`, over 100 characters | The Plugin | "roster.storage.write: \"../x\" isn't a file name: letters, digits, - _ and . only, not starting with . (no folders, no paths)" | The author uses a plain file name |
+| 104 | none (a Lua error) | A file in the Plugin's data folder, or the folder itself, is a link (a symlink or a junction someone made there): it's never followed | The data folder (`plugin-data/NAME`) | "roster.storage.read: notes.txt is a link: roster won't follow it"; "the Plugin's data folder is a link (…): roster won't follow it" | Remove the link; `:plugins remove` removes only the link, never what it leads to |
+| 105 | none (a Lua error) | A write would make a file over 1 MB, the folder over 10 MB, or a 1,001st file | The Plugin | "roster.storage.write: big.json would be 1126400 bytes: a file holds at most 1 MB (1048576 bytes)"; "the Plugin's data folder holds at most 10 MB …" | The author keeps less (the old file is as it was); `:plugins remove` and installing again start it empty |
+| 106 | none (Folders' section and `:check`) | `folders.yml` doesn't parse, so its Folders couldn't move into the Folders Plugin: nothing moves, and Folders can't be changed until it's fixed, so nothing is written over them | `folders.yml` | "Folders can't be read: folders.yml:3 has an error (…): fix it and they move in at the next start"; "Folders can't be changed until they can be read: …" | Fix the line and restart the app (or `:plugins reload folders`) |
+| 107 | none (`:plugins types`) | The Plugin folder's `types` folder, or `types/roster.lua`, is a link: the stubs aren't written through it | The Plugin's folder | "…/types is a link: roster won't write through it" | Remove the link, or point lua-language-server at a copy |
 
 ## This Box's health
 
@@ -184,8 +267,80 @@ Cases 8–10 and 18 used to show only `roster askpass: …` followed by `Permiss
 | roster, Inventory, ssh, Vault, askpass, Infra repo | What `roster check --box` checks: `roster.yml` loads (its path, or the error and its line), Hosts waiting for review, `ssh` and roster's ssh config, this Box's key and known hosts, each vault CLI installed and logged in, the askpass channel, Pending changes and other uncommitted files | `roster serve` (`box.check`) |
 | init.lua | It loads (its path, or the error and its line), and each warning | the app |
 | Terminal font | One of `terminal.font`'s families is installed | the app |
+| A Plugin's own, headed with its name | What the Plugin checks, each time `:check` runs (`roster.health.set`); one that fails, or doesn't answer within three seconds (30 seconds for one that returns `"later"` and answers with `roster.health.answer`), is an `ERROR` line of its section | the Plugin, with its permissions ([Health sections](../plugins.md#health-sections)) |
 
-Every check is local: files, the `PATH`, each vault CLI's own status and the infra repo as this Box last fetched it. None logs in to a Host, scans one or fetches, so `:check` is safe to run any time, even where SSH is rate-limited. `:check HOST` is the one that connects. With a roster older than the app, the app's own sections still run and say roster's need a newer one.
+Every check is local: files, the `PATH`, each vault CLI's own status and the infra repo as this Box last fetched it. None logs in to a Host, scans one or fetches, so `:check` is safe to run any time, even where SSH is rate-limited. `:check HOST` is the one that connects, and `:check %` checks the Host of the Session on screen. With a roster older than the app, the app's own sections still run and say roster's need a newer one.
+
+## A Plugin's network requests
+
+What a Plugin with a `network:SITE` permission gets back from `roster.http` (see [The network](../plugins.md#the-network)). A request that can't be sent is a Lua error at once, which the Plugin can catch with `pcall`; one that was sent and got no answer calls the Plugin's function with `nil` and the reason. A response with any status, a 404 or a 500 too, is an answer, not an error. The Plugin decides what to show you; these are the words it gets.
+
+| What the Plugin gets | When | Where it lives | Fix |
+|---|---|---|---|
+| "https://elsewhere.example isn't a site this Plugin may reach (it may reach api.example.com)" (at once) | The URL's scheme, name or port isn't one the Plugin was granted: `http` for an https site, another port, another name | The Plugin | The author lists the site in the manifest; you're asked again when the update comes. If you turned the site off in `:plugins`, turn it on |
+| "the Host header is roster's to set", "… isn't a method", "the body is over 262144 bytes", "4 requests are going already" (at once) | A header that steers the connection, an unknown method, a body over 256 KB, a fifth request while four are going | The Plugin | The author's to fix |
+| "redirected to https://elsewhere.example, which the Plugin may not reach" | The site sent the request on to a site the Plugin wasn't granted | The site | Nothing is sent there. The author lists that site too, if it's meant |
+| "api.example.com is at 10.0.0.5, an address on this computer or a private network: …" | The name resolves to an address inside: loopback, private, link-local, shared (CGNAT), multicast. Refused so a site can't be pointed inside your network; with `plugin_proxy` set too, since roster looks the name up before handing it to the proxy | DNS | If it's meant (a service on your network), the manifest lists the address itself (`network:10.0.0.5`) or the name as a private site (`network:private:nas.lan`) |
+| "couldn't look up api.example.com: …" | DNS has no answer | Network | Check the name and this Box's DNS |
+| "couldn't connect to https://api.example.com: … Connection refused", "… certificate …" | Nothing listens there, or its certificate isn't one this Box's trust store accepts (expired, self-signed, another name). Without `plugin_proxy`, roster uses no proxy, so a network that only lets a proxy out fails here too | The site / network | Check the service. A self-signed certificate is accepted only when the manifest pins it (`#sha256:…`, row 130); behind a proxy-only network, set `plugin_proxy` ([config.md](config.md#other)) |
+| "redirected to https://appliance.lan:8443: a redirect never leads to or from a site with a pinned certificate" | A site redirected to a pinned site, or a pinned site to anywhere but itself | The site | Nothing is sent there. The author requests the pinned site's URL directly |
+| "no answer within 30 s" | The whole answer took longer than the request's `timeout` (at most 30 s; 10 s to connect) | The site / network | Retry later; the author can ask for less |
+| "the response is over 1048576 bytes" | The body is bigger than 1 MB | The site | The author asks for less (a page of results) |
+
+## A Plugin's private sites, pins and proxy
+
+What a name on your private network (`network:private:nas.lan`), a pinned certificate (`#sha256:…`) and your proxy (`plugin_proxy`) can refuse ([The network](../plugins.md#the-network)). A request's failure reaches the Plugin's function as its reason, like the rows above; a manifest's or init.lua's is shown as theirs always are.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 129 | none (a request's reason) | A private site's name resolves to an address that isn't on a private network: a public one, this computer (loopback), link-local or multicast. Any one such address refuses the request, so the name can't be pointed outside, or at this computer, later | DNS | "nas.lan is at 45.10.20.30, which isn't on your private network: a private: site reaches only private addresses, never this computer or the internet" | Check what your network's DNS answers for the name. A public service is a site without `private:`; this computer is `network:127.0.0.1` |
+| 130 | none (a request's reason) | A pinned site showed another certificate than the pin, or one it can't sign with (a copy of the certificate without its key). The appliance made itself a new certificate (a reset, a renewal), or something between you and it answered instead | The site / network | "couldn't connect to https://appliance.lan:8443: the certificate isn't the one pinned: its SHA-256 is 9f3c…, not the 2a62… the manifest pins" | Compare the new fingerprint with the one the appliance's own console or page shows. Only if they match, the Plugin's author (or you, for your own Plugin) changes the pin; the update asks again, as for any new permission |
+| 131 | none (a Config error) | `plugin_proxy` isn't `http://HOST:PORT`: it has a user or password, another scheme (`https://`, `socks5://`), a path, or no port. The message never repeats what was written, since it may hold a password | init.lua | "init.lua:3: plugin_proxy: a proxy carries no user or password: roster never sends credentials to one (a proxy is http://HOST:PORT, such as http://10.0.0.5:3128)" | Write the proxy as `http://HOST:PORT`. A proxy that asks for a login isn't supported |
+| 132 | none (a Plugin's error) | A manifest names one name both as a private site and a public one, or one site with two pins (or with a pin and without) | The Plugin | "roster-plugin.lua: permissions: \"network:nas.example.com\" and \"network:private:http://nas.example.com:8080\": nas.example.com is either a name on your private network (private:nas.example.com) or a public one, not both" | It doesn't install. The author's to fix |
+
+## A Plugin's roster serve requests
+
+What a Plugin's `roster.serve.request` can run into ([Asking roster serve](../plugins.md#asking-roster-serve)). roster serve answers several requests at once, but a request can still wait: for its turn (a Plugin has 2 calls into serve at a time, all Plugins 4), or for `roster.yml` behind the app's own Publish, for a minute or two; that's never the Plugin's fault, and nothing is disabled for it. A method's own failure comes to `done` as `nil` and `roster.serve.request METHOD: MESSAGE (code N)`, with the codes in [serve-api.md](../serve-api.md).
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 108 | none (a Lua error) | A ninth request (`roster.serve.request` or `roster.inventory.request`) while 8 are still waiting for roster serve | The Plugin | "mesh: init.lua:57: roster.serve.request mesh.job: 8 requests are waiting for roster serve already: wait for one to answer" | The Plugin's to fix: one question out at a time (a poll skips its turn while the last is out) |
+| 109 | none (a Lua error) | A method that acts on the network or the Inventory (every one the install prompt flags: `mesh.apply`, `mesh.cut`, `host.check`, `discover.start`, `discover.add`, …, and `roster.inventory.update`/`.rename`/`.move`/`.review`) called or requested at load, on an event, from a timer, in a finder's `items` or a `:check` section's `check`, or in the answer to a request that wasn't itself made in the user's call | The Plugin | "discover: init.lua:12: roster.serve.request discover.start: only while the user runs one of your actions, commands or finder items" | The Plugin's to fix: request it from an action, a command or a question's answer |
+| 110 | none (a Plugin's notice) | A Mesh plan, apply or cut asked for again before roster serve answered the last (serve busy with a Publish, say) | The Mesh controls | "A Mesh plan is starting: wait for roster serve to answer." | Wait: the progress shows once serve answers |
+| 111 | none (a Plugin's notice) | `:discover RANGE` again before roster serve said how big the last range is | Discover | "Still waiting for roster serve to size the last range: a moment" | Wait: the question comes once serve answers |
+| 112 | none (a Lua error) | One call (an action, a load, an event, an answer) asked roster serve with `roster.serve.call` or `roster.inventory` a 101st time, or after waiting 300 s for it in all | The Plugin | "mesh: init.lua:40: roster.serve.call mesh.status: more than 100 calls into roster serve in one go (roster.serve.request doesn't wait)" | The Plugin's to fix: ask once and keep the answer, or use `roster.serve.request` and a timer |
+
+## A Plugin on the demo Inventory
+
+What a Plugin running in `:tutor`'s demo gets instead of the real thing ([the tutor](help.md#the-tutor)). Nothing is wrong with the Plugin: the demo has no roster serve and no network, on purpose.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 135 | none (a Lua error, or `done`'s reason) | On the demo, the Plugin asked roster serve for a method other than `hosts.list` and `host.get` (`roster.serve.call`, `roster.serve.request`, or `roster.inventory`'s writes) | The demo | "coach: init.lua:12: roster.serve.call mesh.status: mesh.status isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get (code 3)" | None needed: `:tutor quit` and use it on your own Inventory. A tutorial's author teaches what works on the demo's Hosts |
+| 136 | none (`done`'s reason) | On the demo, the Plugin made a `roster.http` request to a site it may reach (one it may not, or a bad header, body or timeout, is refused at once as on your Inventory: [A Plugin's network requests](#a-plugins-network-requests)) | The demo | "https://api.example.com/status wasn't sent: the tutorial's demo reaches no network (:tutor quit, then try it for real)" | None needed: `:tutor quit` and use it on your own Inventory |
+
+## Filling a password prompt
+
+`␣ p` (`fill`) types the Host's password at sudo's prompt for its login user, or a nested ssh's Host's at its login or sudo prompt ([security.md](security.md#filling-a-password-prompt)). Each refusal goes on the message line; nothing was typed but, for row 145, the probe, which leaves the prompt's line empty. A locked vault shows the lock screen (row 7); press the key again once it's unlocked.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 143 | 130 | The prompt asks for another Host or account (`root@10.0.0.9's password:`, `[sudo] password for root:` on a Host whose Login is `ops`), doesn't say whose (su's bare `Password:`), isn't a password prompt at all, or the Host was edited since the Session connected (a new address, port or user) | the Host / `roster.yml` | "won't fill on esx-02: the prompt asks for root@10.0.0.9's password, not ops@esx-02's" | Type that password yourself: roster fills only sudo's prompt for the Session's own Host; after an edit, reconnect |
+| 144 | 131 | The Login that would answer has no saved password (`auth: agent`, `key`, `none` or `prompt`) | `roster.yml` | "esx-02's ssh Login has no saved password to fill (auth: agent)" | Add `sudo: {auth: "bw:esx-02 sudo"}` to the Host for its own sudo password, or type it |
+| 145 | none (the core's, or the app's) | The prompt echoed the probe, the Session printed something or a key was typed between the start of the fill and 800 ms after the probe, there's no sudo prompt for the login user on screen (or it was just tried), the shell's marks say the running command isn't sudo alone (an `ssh`, `docker exec`, `env`, a pipeline), it printed more than sudo's own lines, or a shell started inside a command, so it may be another machine's; a Quick Connect (no Login) | the Host / roster | "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it" | Type it yourself; for `ssh` running, once it has ended the key works again |
+| 148 | none (the app's) | A prompt roster won't fill because it can't tell which shell asks (ticket 120): the shell's marks aren't roster's own and something that may reach another machine has run in the Session (every fill stops then, the Session's own sudo included); or, for a nested ssh's prompt or its Host's sudo: no marks of roster's, so it can't tell where the ssh went; the ssh line has something roster can't follow (`-J`, `-o ProxyCommand`, a quote, a wildcard), goes to no Inventory Host or to two, or wasn't a line you pressed Enter on; the prompt names another user or host; that Host logs in with a key or isn't reviewed; you typed into the ssh (a host-key `yes`), a shell has started there, ssh printed more than its login's lines, or roster already tried once; for sudo there, a command there has ended, its shell doesn't mark its commands, or the command isn't sudo alone; a roster serve before API 26 | the Session / roster | "ssh's password prompt: you typed into this ssh, so roster can't tell this prompt is still esx-02's login. roster won't fill it." | Type it yourself; turn on roster's shell hooks (`shell_hooks`, or `:integrate` before you ssh) and reconnect; or run the ssh again and press the key at its first prompt |
+| 149 | none (the core's) | A nested fill the core won't type (ticket 120): the Session's output doesn't end with that prompt (the window named a prompt the Session isn't at), or roster serve is older than API 26 and would answer for the wrong Host | roster | "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it" | Press the key again while the prompt is at the cursor; update roster on the Box for API 26 |
+
+## init.lua's `roster` table
+
+What `roster.o`, `roster.set` and the collections (`roster.packages`, `roster.folders`, `roster.keymap`, `roster.themes`) refuse, at the line that asked ([the option reference](options.md)). Like every Config error, the message names the file and line, nothing after it runs, and the last good Config stays in use.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 153 | none (a Config error) | A name the Config doesn't have: a misspelled option at any depth (`roster.o.terminal.szie`, a field in a table assigned whole, `roster.set("terminal.szie", …)`, `roster.o.reset("…")`), a key context, a method a table doesn't have | init.lua or a module | "lua/opts.lua:3: terminal.szie isn't an option (did you mean terminal.size?)" | Use the name meant; `:help options` lists them all |
+| 154 | none (a Config error) | A name or item that's there already: a second Package or Folder with the same name (letter case aside), a second `roster.themes.define` of an id or one of a bundled Theme, an item a list takes once (`terminal.font`, sidebar sections, a Folder's Hosts) | init.lua or a module | "lua/more.lua:2: there's already a Package named \"alerts\" (from init.lua:1)" | Remove one, give one a `name`, or change it with `update` |
+| 155 | none (a Config error) | Removing or changing what isn't there: `roster.packages.remove`/`update`, `roster.folders.remove`/`update`/`add_hosts`/`remove_hosts`, `roster.keymap.del` of keys init.lua didn't bind, `roster.themes.update`/`remove` of an id it doesn't have (or a bundled Theme it didn't change), a list's `:remove` of an item it hasn't, `:insert` past the end | init.lua or a module | "init.lua:7: there's no Folder named \"Edge\" in the Config (it has lab)" | Check the name (`roster.folders.list()`); to unbind one of roster's keys, `roster.keymap.set(context, keys, false)` |
+| 156 | none (a Config error) | A list method on an option that isn't a list yet (`statusbar` is `true`, sidebar sections are unset: all of them), assigning to a read-only field (`roster.version`, `roster.o`), or a method called with a dot | init.lua or a module | "init.lua:4: roster.o.modes.standard.statusbar is true (not a list yet): assign a list first, such as roster.o.modes.standard.statusbar = { \"backend\", \"hosts\" }" | Assign the list first, then append; read-only fields are for reading |
 
 ## See also
 

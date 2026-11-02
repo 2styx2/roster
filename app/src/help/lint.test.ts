@@ -14,11 +14,11 @@ import { findTopic, linkKind, pageBody, topicIndex, type HelpContext, helpContex
 /** The files a guide may link to, from the repo's root, and the Markdown among them. */
 const UP = "../../../";
 const FILES = new Set([
-  ...Object.keys(import.meta.glob(["../../../docs/**/*", "../../../examples/**/*", "../../../*.md"])).map((k) => k.slice(UP.length)),
+  ...Object.keys(import.meta.glob(["../../../docs/**/*", "../../../examples/**/*", "../../../plugins/**/*", "../../../*.md"])).map((k) => k.slice(UP.length)),
   // app/ itself comes back as ../../, not ../../../app/.
   ...Object.keys(import.meta.glob("../../*.md")).map((k) => `app/${k.slice("../../".length)}`),
 ]);
-const MARKDOWN = import.meta.glob<string>(["../../../docs/**/*.md"], { query: "?raw", import: "default", eager: true });
+const MARKDOWN = import.meta.glob<string>(["../../../docs/**/*.md", "../../../plugins/**/*.md"], { query: "?raw", import: "default", eager: true });
 const exists = (path: string) => FILES.has(path) || [...FILES].some((f) => f.startsWith(`${path}/`));
 
 function ctxOf(): HelpContext {

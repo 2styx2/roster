@@ -592,20 +592,43 @@ function SsoWait({
   }, [login]);
   return (
     <div>
-      <p aria-live="polite">Finish signing in with your browser. roster opened the page on this Box; if it didn't, open this link:</p>
-      <p className="signin-link">
-        <code>{step.url}</code>
-      </p>
-      {copy && (
-        <button type="button" data-autofocus onClick={() => void copy(step.url).then(() => setCopied(true), () => {})}>
-          {copied ? "Copied" : "Copy link"}
-        </button>
+      {step.url === null ? (
+        // Native Windows: bw opened the page itself, and only it knows the link
+        <p aria-live="polite">Finish signing in with your browser: Bitwarden opened the sign-in page in your browser on this Box.</p>
+      ) : (
+        <SsoLink url={step.url} copied={copied} setCopied={setCopied} copy={copy} />
       )}
       <p className="muted signin-waiting">
         <span className="signin-waiting-node" aria-hidden="true" />
         Waiting for the browser… (up to {Math.round(step.expires_in / 60)} minutes)
       </p>
     </div>
+  );
+}
+
+function SsoLink({
+  url,
+  copied,
+  setCopied,
+  copy,
+}: {
+  url: string;
+  copied: boolean;
+  setCopied(copied: boolean): void;
+  copy?: ((text: string) => Promise<void>) | undefined;
+}) {
+  return (
+    <>
+      <p aria-live="polite">Finish signing in with your browser. roster opened the page on this Box; if it didn't, open this link:</p>
+      <p className="signin-link">
+        <code>{url}</code>
+      </p>
+      {copy && (
+        <button type="button" data-autofocus onClick={() => void copy(url).then(() => setCopied(true), () => {})}>
+          {copied ? "Copied" : "Copy link"}
+        </button>
+      )}
+    </>
   );
 }
 

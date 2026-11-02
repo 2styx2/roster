@@ -22,13 +22,17 @@ export interface MemoryPlatform extends Platform {
   opened(): string[];
   /** Makes the next `:config` fail with `message`. */
   failOpen(message: string): void;
+  /** How many times `:config types` wrote the types. */
+  typesWritten(): number;
+  /** The next `:config types` fails with this. */
+  failTypes(message: string): void;
   /** The `base` of each import written, in order. */
   imported(): Previewed[];
   /** Makes the next import preview fail with `message`. */
   failImport(message: string): void;
   /** folders.yml's text (null: no file), when the platform has one. */
   foldersFile(): string | null;
-  /** Saves folders.yml as an editor would: the watcher hears of it. */
+  /** Saves folders.yml as an editor would (nothing watches it now: it's only read at start). */
   editFolders(text: string): void;
   /** The URLs handed to the default browser, in order. */
   urlsOpened(): string[];
@@ -65,10 +69,11 @@ export function memoryPlatform(
   const opened: string[] = [];
   const urls: string[] = [];
   let openError: string | null = null;
+  let typesError: string | null = null;
+  let typesWritten = 0;
   let importError: string | null = null;
   const imported: Previewed[] = [];
   let foldersText = start.folders ?? null;
-  const foldersWatchers = new Set<() => void>();
   const path = () => config?.path ?? "/home/you/.config/roster/init.lua";
   const emit = (report: ConfigReport) => {
     applied = report;
@@ -121,6 +126,15 @@ export function memoryPlatform(
         if (!start.importPreview) throw new Error("no Windows Terminal settings.json found");
         return start.importPreview;
       },
+      async writeTypes() {
+        if (typesError !== null) {
+          const message = typesError;
+          typesError = null;
+          throw new Error(message);
+        }
+        typesWritten += 1;
+        return path().replace(/init\.lua$/, "types/roster-config.lua");
+      },
       async importApply(previewed) {
         imported.push(previewed);
       },
@@ -142,27 +156,15 @@ export function memoryPlatform(
       config = report;
     },
     ...(start.folders !== undefined
-      ? {
-          folders: {
-            read: async () => ({ path: "/home/you/.config/roster/folders.yml", text: foldersText }),
-            async write(text: string) {
-              foldersText = text;
-              for (const w of foldersWatchers) w();
-            },
-            watch(onSaved: () => void) {
-              foldersWatchers.add(onSaved);
-              return () => foldersWatchers.delete(onSaved);
-            },
-          },
-        }
+      ? { folders: { read: async () => ({ path: "/home/you/.config/roster/folders.yml", text: foldersText }) } }
       : {}),
     foldersFile: () => foldersText,
     editFolders(text) {
       foldersText = text;
-      for (const w of foldersWatchers) w();
     },
     configFile: () => file,
     opened: () => [...opened],
+    typesWritten: () => typesWritten,
     async openUrl(url) {
       urls.push(url);
     },
@@ -170,6 +172,9 @@ export function memoryPlatform(
     imported: () => [...imported],
     failImport(message) {
       importError = message;
+    },
+    failTypes(message) {
+      typesError = message;
     },
     failOpen(message) {
       openError = message;

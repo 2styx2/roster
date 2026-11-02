@@ -408,7 +408,7 @@ def configure_box(settings):
         before = {n: dict(v) for n, v in BOX_SETTINGS.items()}
         BOX_SETTINGS.clear()
         BOX_SETTINGS.update({n: dict(v) for n, v in settings.items() if v})
-        for name, p in PROVIDERS.items():
+        for name, p in list(PROVIDERS.items()):     # a reload may register a provider meanwhile (setup_providers)
             keys = p.get("box_paths", ())
             if all(before.get(name, {}).get(k) == BOX_SETTINGS.get(name, {}).get(k) for k in keys):
                 continue

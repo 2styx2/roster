@@ -2,7 +2,6 @@
 act on, paths, the ssh config Windows' OpenSSH reads, and the askpass channel as a named pipe only this user can open.
 The first tests pretend to be on Windows (they run everywhere); the rest need Windows itself."""
 
-import json
 import os
 import subprocess
 import sys
@@ -27,6 +26,35 @@ def test_a_tool_is_found_by_its_extension_and_an_exe_takes_any_argument(as_windo
     monkeypatch.setattr(common.shutil, "which", lambda name: rf"C:\tools\{name}.exe")
     assert common.program_argv(["git", "commit", "-m", 'say "hi" & 100%']) == \
         [r"C:\tools\git.exe", "commit", "-m", 'say "hi" & 100%']
+
+
+def test_the_console_sign_in_stops_reading_once_bw_has_exited_even_if_the_console_never_closes():
+    """Ticket 63 review: after bw exits, what the pseudoconsole still shows is read for a bounded time, then roster
+    moves on, never spinning on a console whose output doesn't end."""
+    import threading
+
+    from roster.providers.bw_login import ConsolePty
+
+    class StuckConsole:                         # bw exited, but the console's output never reaches its end
+        reads = 0
+
+        def exitcode(self):
+            return 0
+
+        def finish(self, timeout=3):
+            pass
+
+        def read(self, timeout):
+            StuckConsole.reads += 1
+            return "" if StuckConsole.reads > 1 else "You are logged in!\r\n"
+
+    term = ConsolePty.__new__(ConsolePty)
+    term.con, term.text, term.out, term.answered, term.code = StuckConsole(), "", b"", set(), None
+    got = []
+    t = threading.Thread(target=lambda: got.append(term.ended()), daemon=True)
+    t.start()
+    t.join(5)
+    assert got == [0] and "logged in" in term.text and StuckConsole.reads < 100
 
 
 @pytest.mark.parametrize("arg", ['a"b', "50%", "a^b", "a&b", "a|b", "a<b", "a>b", "a!b", "a\nb"])
@@ -79,6 +107,50 @@ def test_the_askpass_pipe_is_the_users_alone_and_goes_away(serve, write_config, 
 
 
 @windows_only
+def test_serve_checks_the_pipe_clients_process_is_this_users():
+    # T63 (#110) item 3: the client's process token, on top of the DACL
+    import threading
+
+    from roster import askpass, winpipe
+    name = f"\\\\.\\pipe\\roster-test-client-{os.getpid()}"
+    server = winpipe.Server(name)
+    seen = []
+
+    def answer():
+        with server.accept() as conn:
+            seen.append((winpipe.client_sid(conn), askpass.same_user(conn)))
+            conn.sendall(b"ok\n")
+
+    t = threading.Thread(target=answer)
+    t.start()
+    askpass.exchange(name, "hello", 5)
+    t.join(5)
+    server.close()
+    assert seen == [(winpipe.user_sid(), True)]
+
+
+@windows_only
+def test_a_pipe_client_that_cant_be_identified_is_refused(monkeypatch):
+    from roster import askpass, winpipe
+    monkeypatch.setattr(winpipe, "GetNamedPipeClientProcessId", lambda handle, pid: 0)
+    assert askpass.same_user(winpipe.Conn(None)) is False
+    monkeypatch.setattr(winpipe, "client_sid", lambda conn: "S-1-5-21-1-2-3-1001")      # another user
+    assert askpass.same_user(winpipe.Conn(None)) is False
+
+
+@windows_only
+def test_serves_own_sid_is_read_once(monkeypatch):
+    # review of #216, 9: each askpass connection read serve's own token again
+    from roster import winpipe
+    calls = []
+    real = winpipe.process_sid
+    monkeypatch.setattr(winpipe, "process_sid", lambda process: calls.append(process) or real(process))
+    winpipe.user_sid.cache_clear()
+    assert winpipe.user_sid() == winpipe.user_sid() == winpipe.user_sid()
+    assert len(calls) == 1
+
+
+@windows_only
 def test_the_pipes_security_names_this_user_and_nobody_else():
     from roster import winpipe
     sid = winpipe.user_sid()
@@ -118,17 +190,6 @@ def test_the_pipe_answers_one_exchange_and_times_out_a_silent_client():
 
 
 @windows_only
-def test_signing_in_with_a_password_says_how_to_on_windows(serve, write_config, fakes, monkeypatch, tmp_path):
-    state = tmp_path / "bw-state.json"
-    state.write_text(json.dumps({"logged_in": False, "server": None, "email": None}))
-    monkeypatch.setenv("FAKE_BW_STATE", str(state))
-    write_config(INVENTORY)
-    s = serve()
-    err = s.call("vault.login", {"email": "you@example.com", "password": "pw"})["error"]
-    assert err["code"] == 59 and "roster bw login" in err["message"] and "API key" in err["message"]
-
-
-@windows_only
 def test_roster_run_hands_over_to_ssh_and_passes_on_its_code(write_config, fakes, monkeypatch):
     write_config("groups:\n  lab:\n    user: ops\n    hosts:\n      box: {ip: 10.0.0.5, enroll: true}\n")
     monkeypatch.setenv("FAKE_SSH_EXIT", "7")
@@ -140,7 +201,7 @@ def test_roster_run_hands_over_to_ssh_and_passes_on_its_code(write_config, fakes
 # ---------------------------------------------------------------- what a remote sh reads from a Windows Box
 
 def sent_on_windows(kw):
-    """The bytes a child reads on stdin from subprocess.run(**KW) on Windows, where text mode turns "\n" into "\r\n"
+    """The bytes a child reads on stdin from subprocess.run(**KW) (or Popen's communicate) on Windows, where text mode turns "\n" into "\r\n"
     (a remote sh then sees CRLF: a heredoc's end marker never matches, sudo's password ends in "\r")."""
     data = kw.get("input")
     if isinstance(data, str):
@@ -156,10 +217,28 @@ def fake_run_answering(seen, stdout):
     return run
 
 
+def fake_popen_answering(seen, stdout):
+    """A stand-in subprocess.Popen whose communicate() answers STDOUT (as text, or bytes, as it was opened)."""
+    class Popen:
+        returncode = 0
+
+        def __init__(self, argv, **kw):
+            seen.update(argv=argv, **kw)
+            self.text = kw.get("text") or kw.get("universal_newlines")
+
+        def communicate(self, input=None, timeout=None):
+            seen["input"] = input
+            return (stdout, "") if self.text else (stdout.encode(), b"")
+
+        def kill(self):
+            pass
+    return Popen
+
+
 def test_the_meshs_script_reaches_the_remote_sh_with_unix_newlines(as_windows, monkeypatch):
     from roster import mesh
     seen = {}
-    monkeypatch.setattr(mesh.subprocess, "run", fake_run_answering(seen, "SAME include\nROSTER_DONE\n"))
+    monkeypatch.setattr(mesh.subprocess, "Popen", fake_popen_answering(seen, "SAME include\nROSTER_DONE\n"))
     h = {"name": "esx-02", "ip": "10.0.0.12", "ssh": {"user": "root", "port": 22}, "enroll": True}
     lines, err = mesh.on_host(h, mesh.write_script(h, "apply", None, [], set()))
     assert err is None and lines == ["SAME include", "ROSTER_DONE"]
@@ -247,3 +326,35 @@ def test_a_pipe_call_that_blocks_past_its_timeout_is_cancelled_and_times_out(win
     with pytest.raises(TimeoutError):
         conn._limited(blocked_read)
     assert log == [("cancel", 7), ("close", 7)]
+
+
+@windows_only
+def test_bws_sso_listener_is_seen_without_touching_its_port_and_without_ipv6(monkeypatch):
+    """Ticket 63 review: roster sees bw's SSO callback server listen by asking Windows' TCP table which process
+    listens on 8065-8070 (one in bw's job), never by binding the port itself, which could take it from bw; and a box
+    without IPv6 is just that, not every port taken."""
+    from roster import conpty
+    table = conpty._listen_table
+    monkeypatch.setattr(conpty, "_listen_table", lambda family: None if family == conpty.AF_INET6 else table(family))
+    import socket
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    con = conpty.ConPty([sys.executable, "-c", f"import socket,time; s=socket.socket(); s.bind(('127.0.0.1', {port})); "
+                         "s.listen(); print('up', flush=True); time.sleep(30)"], dict(os.environ))
+    try:
+        outsider = socket.socket()                                      # this process isn't in bw's job
+        outsider.bind(("127.0.0.1", 0))
+        outsider.listen()
+        other = outsider.getsockname()[1]
+        seen = set()
+        for _ in range(100):
+            seen = con.listening({port, other})
+            if seen:
+                break
+            con.read(0.1)
+        assert seen == {port}
+        outsider.close()
+    finally:
+        con.close()

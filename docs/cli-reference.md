@@ -5,8 +5,8 @@ Everything the `roster` command reads and does: the `roster.yml` format, resourc
 ## Why it exists
 
 - **One source of truth for the team.** The host list lives in git and the logins live in the shared vault. Adding a host takes one change to `roster.yml`, and rotating a password takes one vault edit. Every box picks the change up.
-- **No passwords on disk.** Passwords are fetched from Bitwarden, 1Password, `pass`, an environment variable or any command. They are kept in memory for one run and never written or printed. Each box gets its own SSH key, so you can revoke one box without touching the others.
-- **Claude works on the network without seeing secrets.** `roster setup` writes `ROSTER.md`, which tells Claude which hosts exist and how to reach them. Claude uses `ssh`, `roster run` and `roster web`: roster supplies the credentials and Claude sees only the output.
+- **No passwords on disk.** Passwords are fetched from Bitwarden, 1Password, `pass`, KeePassXC, an environment variable or any command. They are kept in memory for one run and never written or printed. Each box gets its own SSH key, so you can revoke one box without touching the others.
+- **Claude works on the network without seeing secrets.** `roster setup` writes `ROSTER.md`, which tells Claude which hosts exist and how to reach them. Claude uses `ssh`, `roster run` and `roster web`, and reads roster's data with `--json`: roster supplies the credentials and Claude sees only the output.
 - **Scans become inventory safely.** `roster discover` turns an nmap sweep into `roster.yml` entries marked `reviewed: false`. Nothing logs in to them until a person has reviewed them.
 
 ## What `roster setup` does on a box
@@ -16,6 +16,7 @@ Everything the `roster` command reads and does: the `roster.yml` format, resourc
 3. Installs the key on each host that accepts keys, using the password from your password manager once.
 4. Writes SSH config entries, so `ssh orion-dev-01` just works.
 5. Writes `ROSTER.md`, so Claude knows which hosts exist and how to reach them.
+6. Applies the Mesh when `roster.yml` has one (not with `--only`; see [The Mesh](mesh.md)).
 
 ## roster.yml
 
@@ -62,8 +63,10 @@ groups:
 | `enroll` | `true` installs a key (default); `false` for gear that only takes passwords |
 | `reviewed` | `false` on scanned hosts; `setup` skips them until you flip it |
 | `mesh` | `true` lets a group's Hosts reach each other (the [Mesh](mesh.md)); `false` keeps a group or Host out of it and out of every Link. Cascades like the rest |
+| `mesh_dir` | Where a Mesh source keeps its key, known hosts, ssh config (and, on ESXi, `ROSTER.md`), in place of `~/.ssh/roster-mesh` or ESXi's datastore pick: an absolute path, on ESXi on a datastore. Cascades like the rest. See [`mesh_dir:`](mesh.md#esxi) |
+| `seen_as` | The Host's other addresses (one or a list, addresses or networks) that a Mesh peer's `from=` takes beside its `ip`: for a jump Host on several networks or a Host behind NAT. On the Host only. See [`seen_as:`](mesh.md#other-addresses) |
 
-Top-level `links:` add one-way Host-to-Host reach across groups: `- { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true }` (`both` makes it two-way). See [The Mesh](mesh.md).
+Top-level `links:` add one-way Host-to-Host reach across groups: `- { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true, via: HOST }` (`both` makes it two-way; `via` sends it through a jump Host with `ProxyJump`, and the peer's `from=` names that Host's address). See [The Mesh](mesh.md) and [Through a jump Host](mesh.md#through-a-jump-host).
 
 ### One login per box, overrides per service
 
@@ -212,10 +215,10 @@ A local database is this Box's own, so the app's `init.lua` can name it instead:
 ## Discover
 
 ```bash
-roster discover 10.0.1.0/24 [more networks] [--write] [--top-ports 1000] [--no-ping] [--os]
+roster discover 10.0.1.0/24 [more networks] [--write | --json] [--top-ports 1000] [--no-ping] [--os]
 ```
 
-With nmap installed, discover collects open ports, service versions, web page titles, and hardware vendor. It uses these to guess each host's type: `server`, `db`, `network`, `bmc`, `windows`, or `appliance`. It then fills in a name, title, SSH port, web URL, services, and a description. Without nmap, it falls back to a built-in TCP scanner.
+With nmap installed, discover collects open ports, service versions, web page titles, and hardware vendor. It uses these to guess each host's type: `server`, `db`, `network`, `bmc`, `windows`, or `appliance`. It then fills in a name, title, SSH port, web URL, services, and a description. Without nmap, it falls back to a built-in TCP scanner. Networks may be IPv4 or IPv6 (nmap scans the IPv6 ones in a run of their own, with `-6`), and an address two of them hold is scanned once. With nmap, it also counts the hosts that answered with none of the ports open (not with `--no-ping`, where nmap takes every address as up).
 
 `--write` adds new hosts to a `discovered-YYYYMMDD` group with `reviewed: false`:
 - It keeps your comments.
@@ -224,6 +227,8 @@ With nmap installed, discover collects open ports, service versions, web page ti
 - It never overwrites hosts that are already in the file.
 
 Let your security team know before scanning big ranges.
+
+From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan through `roster serve` (`discover.*`, [serve-api.md](serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd)): it asks first, shows what answers as it comes in, and adds the Hosts you keep as Pending changes, unreviewed (`:help discover` once it's installed).
 
 ## Commands
 
@@ -244,16 +249,18 @@ Let your security team know before scanning big ranges.
 | `providers` | Available providers, whether their tools are installed, unknown ones in use |
 | `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
 | `revoke` | Remove this box's key from every host |
-| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change. See [The Mesh](mesh.md) |
+| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change; `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`.
 
+`--json` on `hosts`, `info`, `resources`, `check`, `discover` (its preview), `mesh status`, `mesh --dry-run`, `providers` and `auth-check` prints the same data as JSON for scripts and tools, never a secret: see [Machine-readable output](#machine-readable-output).
+
 Config lookup order: `-c PATH`, then `$ROSTER_CONFIG`, then `./roster.yml`, then `~/.config/roster/roster.yml`.
 
-The man page (`man roster`) is generated from this section, the next four and roster's own argument parser, so it never drifts from them: after changing either, run `uv run python -m roster.manpage` and commit `src/roster/roster.1`. A test fails until you do.
+The man page (`man roster`) is generated from this section, Machine-readable output, Files, Environment, Exit status, Examples and roster's own argument parser, so it never drifts from them: after changing either, run `uv run python -m roster.manpage` and commit `src/roster/roster.1`. A test fails until you do.
 
 ### `roster check HOST`
 
@@ -308,6 +315,45 @@ Vault
 1 warning, no errors
 ```
 
+## Machine-readable output
+
+The read commands take `--json`, for scripts, other tools and Claude: `hosts` (with `--only`, `--find`, `--all`), `info NAME`, `resources`, `check`, `check HOST`, `check --box`, `discover` (its preview, without `--write`), `mesh status`, `mesh --dry-run` (the plan), `providers` and `auth-check`. The CLI is roster's interface for other apps; `roster serve` is the desktop app's own backend, not a public API. With `--json`, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+
+- **Never a secret.** Logins are references: the provider and the item (`bw:esx-02 ssh`, `op:Lab/esx-02`, `prompt`, `agent`). A `cmd:` or `env:` reference says how a secret is fetched, and a password pasted into a `cmd:` line would show, so each one is cut to its kind (`cmd:`, `env:`) everywhere in the output, error messages and check messages included, the way Plugins get them: a `cmd:` one to the end of its line, an `env:` one its variable's name, wherever one starts a text or follows a space, a quote or one of `=:,({[`. An error message keeps a trailing `(code N)`. The cases both implementations are tested against are in `tests/vectors/redaction.json`. `auth-check --json` fetches every secret it tests and says only whether it was found. `reveal` has no `--json`: it's for a person.
+- **One shape.** A Host, a group and a resource are the objects `roster serve` answers with (`hosts.list`, `host.get`; [the serve API](serve-api.md) lists their fields): every field `roster.yml` resolves to, with `ssh: {user, port, auth}`, `login: {user, auth}`, `services` by name, and `problems`, the service entries left out (the warnings the table prints on stderr).
+- **A version.** `version` is the first field of every document, errors included. It is `1` now.
+- **Errors** go to stderr as `{"version": 1, "error": {"code", "message", "fix"}}`, with nothing on stdout. The codes are `roster serve`'s: `1` `roster.yml` wasn't found or doesn't load (`fix` says where), `2` no Host or resource by that name, `3` any other refusal. Wrong arguments are code `3` too, with exit status 2. A refusal serve has its own code for keeps it: `121` too many addresses for `discover`, `110` a `--rotate` Host that isn't a Mesh source.
+- **What's a breaking change:** removing or renaming a field, changing its type or what it means, or changing an exit status. Those come with a new `version` and a line under **Breaking** in [What's new](news.md). A new field or a new command with `--json` isn't one, so read the fields you need and ignore the rest.
+
+| Command | stdout |
+|---|---|
+| `hosts --json` | `{version, hosts: [Host], resources: [resource], groups: {name: {title, description}}, hidden}`. Hosts and resources in `roster.yml` order, filtered as the table is; `hidden` counts the unreviewed Hosts left out (`--all` shows them). Exit 1 when `--find` matches nothing |
+| `info NAME --json` | `{version, host: Host, group}` or `{version, resource: resource, group}`; `group` is `{name, title, description}`, or `null` for a resource with none |
+| `resources --json` | `{version, resources: [resource]}`. Exit 1 when `--only` or `--find` matches nothing |
+| `check --json` | `{version, hosts: [{name, ok, ssh, checks}], mesh, ok}`: `checks` is `{ssh: bool, SERVICE: bool, ...}`, `ssh` says what was tested (`login` with this Box's key, `port` for a password-only Host). `mesh` is the drift (the plan `roster mesh --dry-run` would show), or `null` with no Mesh or with `--only`. Exit 1 unless `ok` |
+| `check HOST --json` | `{version, host, ok, steps: [{step, status, message, code?, fix?, details?, data?}]}`, as `host.check`: `status` is `ok`, `fail` or `skipped`. An unknown Host is a failed `inventory` step (code 2), not an error. Exit 1 unless `ok` |
+| `check --box --json` | `{version, checks: [{section, level, message, fix?, topic?}], ok}`, as `box.check`: `level` is `ok`, `warn` or `error`. Exit 1 if one is an `error` |
+| `discover CIDR... --json` | `{version, targets, addresses, ports, scanner, count, quiet, found: [Found], group}`: the preview, after the scan. `targets`, `addresses` (how many it visits), `ports` (how many) and `scanner` (`nmap` or `built-in`) as `discover.plan`; `count`, `quiet` and `found` as `discover.status` (a Found is `{address, name, type, hostname, title, web, known, added, vendor, os, mac, ports}`: `name` the name `--write` would give it, `null` when `known` names the Host already at that address; `added` is always `null` here). `group` is the group `--write` would add the new ones to. Not with `--write` (exit 2). Over 4,096 addresses without `--force`: error `121`. A `roster.yml` that's there but doesn't load (named by `-c`, `ROSTER_CONFIG` or found in the usual places): error `1` with its fix; with none at all (or `ROSTER_CONFIG` naming no file) it scans anyway |
+| `mesh status --json` | `{version, links, excluded, reach, members, pending, cut_pending, out_of_date}`, as `mesh.status` |
+| `mesh --dry-run --json` | `{version, applied: false, links, hosts: [{host, changes, status, error?}], excluded, reach, pending, already, warnings}`, as `mesh.plan`: it connects to the Hosts, one at a time, and changes nothing. Exit 1 if a Host is `pending` (didn't answer). `--json` goes with `status` and `--dry-run` only, never with an apply or `cut` |
+| `providers --json` | `{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok}`: `tool` is the CLI it runs (`null` for none, and `installed` `null` with it), `used_by` the groups whose Logins use it, `unknown` the providers `roster.yml` names that aren't set up. Exit 1 if there's one |
+| `auth-check --json` | `{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}`: one row per Login reference and group; `status` is `ok` (a value was found; it isn't tested against a Host), `fail` (with `error`) or `ask` (`prompt`). Exit 1 if one failed |
+
+Wrapped and cut short here (`...`); roster prints each document on one line:
+
+```text
+$ roster hosts --only esx-02 --json
+{"version": 1, "hosts": [{"name": "esx-02", "group": "lab", "ip": "10.0.0.5", "user": "root", "port": 22,
+  "enroll": false, "reviewed": true, "title": "Lab ESXi", "ssh": {"port": 22, "user": "root",
+  "auth": "bw:esx-02 ssh"}, "services": {}, "problems": [], ...}], "resources": [],
+  "groups": {"lab": {"title": "The lab", "description": ""}}, "hidden": 0}
+$ roster check esx-02 --json
+{"version": 1, "host": "esx-02", "ok": false, "steps": [{"step": "inventory", "status": "ok", "message": "root@10.0.0.5:22 (password login)"},
+  ..., {"step": "tcp", "status": "fail", "code": 42, "message": "...", "fix": "..."}, ...]}
+$ roster info nope --json
+{"version": 1, "error": {"code": 2, "message": "unknown host or resource 'nope'", "fix": null}}   (on stderr, exit 1)
+```
+
 ## Files
 
 | File | What it is |
@@ -320,7 +366,7 @@ Vault
 | `~/.ssh/config.d/roster` | The SSH config entries `roster setup` and `roster sync` write |
 | `ROSTER.md`, `CLAUDE.md`, `.claude/settings.json` | What Claude reads, written next to `roster.yml` by `setup` and `sync` |
 | `~/.config/roster/mesh.json` | What `roster mesh` couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box |
-| `~/.ssh/roster-mesh/`, `~/ROSTER.md` (on Hosts) | A Mesh source's key, known hosts, ssh config and its peers for Claude, written by `roster mesh` ([The Mesh](mesh.md)) |
+| `~/.ssh/roster-mesh/` (or the Host's `mesh_dir:`; on ESXi, `.roster-mesh` on a datastore), `~/ROSTER.md` (on Hosts) | A Mesh source's key, known hosts, ssh config and its peers for Claude, written by `roster mesh` ([The Mesh](mesh.md)) |
 | `$XDG_RUNTIME_DIR/roster/` | Short-lived private state: kept web logins and the askpass socket (on Windows, the askpass channel is a named pipe and its folder is in `%TEMP%`) |
 
 ## Environment
@@ -342,7 +388,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 - roster's own folder is `%APPDATA%\roster` (where the app's `init.lua` is too), so `roster.yml` can live there, as can `providers/` and `bw-session`.
 - `roster run` waits for ssh and exits with its status (Windows has no `exec`).
 - A vault CLI installed as a batch file (npm installs `bw` as `bw.cmd`) runs through `cmd.exe`, so roster won't pass it an argument with `"`, `%`, `^`, `&`, `|`, `<`, `>` or `!` in it: rename the item, or install the tool as an `.exe`.
-- Signing the vault in from the app with a password or SSO isn't there yet on Windows (it drives `bw login` on a terminal roster can't open there): run `roster bw login` in a terminal, or sign in with an API key, then unlock in the app.
+- Signing the vault in from the app with a password or SSO drives `bw login` on a pseudoconsole (ConPTY, Windows 10 1809 or later), as Linux does on a PTY. For SSO, bw opens the sign-in page in your default browser itself, so the app has no link to show or copy.
 - Commands that run a shell script on this machine (a `cmd:` provider, a provider's `command:`) run it with `cmd.exe`.
 
 ## Exit status
@@ -354,7 +400,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 | `2` | Wrong arguments |
 | `130` | Interrupted with Ctrl+C |
 
-`roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` exit 1 while a Host is pending.
+With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` exit 1 while a Host is pending.
 
 ## Examples
 
@@ -379,7 +425,10 @@ roster reveal lab-guest --wifi | qrencode -t ansiutf8
   - never read keys or fetch passwords,
   - ask before changing state on a host,
   - ask you to unlock a locked password manager rather than trying itself,
-  - leave unreviewed hosts alone.
+  - leave unreviewed hosts alone,
+  - run `roster check NAME --json` when a host doesn't respond, and report which step fails.
+
+  It also tells Claude to use `--json` (`roster hosts --json`, `roster info NAME --json`, `roster check HOST --json`) when it needs to read roster's data rather than show it.
 - **`CLAUDE.md`** gets an `@ROSTER.md` line added, and its existing content is kept.
 - **`.claude/settings.json`** gets deny rules for reading and editing `~/.ssh`. These are a guardrail, not a wall.
 
@@ -395,6 +444,7 @@ Web UIs: Claude won't type passwords into login pages. Sign in once in the brows
 - **The key has no passphrase,** so automation can use it. Anyone with access to the box can reach the fleet, so treat these boxes accordingly.
 - **Host fingerprints are recorded on first contact** in `~/.ssh/roster_known_hosts`.
 - **Passwords exist only in memory,** for one run.
+- **`--json` output holds no secret:** Logins are references, and `cmd:` and `env:` ones are cut to their kind ([Machine-readable output](#machine-readable-output)).
 - **Scanned hosts are never touched until you mark them reviewed.**
 - **At larger scale,** consider an SSH certificate authority, so new boxes only need their key signed instead of installed everywhere.
 

@@ -71,8 +71,13 @@ export interface Config {
   themes: Record<string, ThemeDef>;
   colors: Partial<ThemeColors>;
   fonts: { ui: string; mono: string; uiSize: number };
-  /** `ui.hints`: null when init.lua leaves it to `:hints` (and the State). */
-  ui: { hints: boolean | null };
+  /** `ui.hints`: null when init.lua leaves it to `:hints` (and the State). `ui.messages`: null
+   * when init.lua leaves it to `:messages` (and the State), quiet until it decides. */
+  ui: { hints: boolean | null; messages: "quiet" | "all" | null };
+  /** `panel.width` (ticket 95): every docked panel's default width, percent of the window. */
+  panel: { width: number | null };
+  /** `views.ID`: a panel's or view's default place and width (decision Q106). */
+  views: Record<string, { place: "panel" | "full" | null; width: number | null }>;
   terminal: {
     /** Families, most wanted first (ticket 33). */
     font: string[];
@@ -91,6 +96,8 @@ export interface Config {
     copyOnSelect: boolean;
     rightClickPaste: boolean;
     colors: Partial<TerminalTheme>;
+    /** `terminal.shell_hooks` (ticket 121): null leaves it to each Host's `shell_hooks`. */
+    shellHooks: boolean | null;
   };
   leader: string;
   vim: boolean;
@@ -108,6 +115,9 @@ export interface Config {
   editor: "os" | "wsl";
   /** Reload on every save (decision Q58); off: `:source` reloads. */
   autoReload: boolean;
+  /** `plugin_proxy` (decision Q116): the http proxy Plugins' requests to public names go through,
+   * or null. The core uses it; the frontend only shows it in `:help options`. */
+  pluginProxy: string | null;
   /** This Box's own vault settings, sent to roster (`vault.configure`) at start and on every
    * `:source`; they win over roster.yml's. Paths on the Backend's Box, never a secret. */
   vault: VaultConfig;
@@ -139,6 +149,8 @@ export interface PackageSpec {
   tag: string | null;
   branch: string | null;
   commit: string | null;
+  /** The folder in the repo that holds the Plugin (`plugins/topology`); null for the repo's top (Q94). */
+  dir: string | null;
   /** Handed to the Package as `roster.plugin.config`. */
   config: Record<string, unknown>;
 }
@@ -208,6 +220,9 @@ export interface ConfigSource {
   /** Writes exactly what the preview showed: refused (nothing written) if init.lua or Windows
    * Terminal's settings changed since, with a message to run the import again. */
   importApply(previewed: Previewed): Promise<void>;
+  /** `:config types`: writes the option types (LuaCATS, for lua-language-server) as
+   * `types/roster-config.lua` in the config folder; resolves to the file's path. */
+  writeTypes(): Promise<string>;
   /** `:source`: reads init.lua again now (watchers get it too). */
   reload(): Promise<ConfigReport | null>;
 }

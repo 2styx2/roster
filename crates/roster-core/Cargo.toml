@@ -1,6 +1,6 @@
 [package]
 name = "roster-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "The roster app's Tauri-free core: backend detection, the roster serve JSON-RPC client, the session manager"
@@ -15,7 +15,20 @@ mlua = { version = "0.12", features = ["lua54", "vendored"] }
 serde_path_to_error = "0.1"
 # Live reload of init.lua: watch the config dir (editors save by rename).
 notify = "8"
+# The `network` permission (plugin/network.rs, decision Q97): an HTTP client in the core only.
+# No default features: no system proxy, no cookies, no decompression, no HTTP/2; TLS is rustls
+# with ring as its crypto (no aws-lc build) and the OS's trust store (rustls-platform-verifier).
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+url = "2"
+# A pinned certificate's SHA-256 (decision Q116); rustls already builds ring, so no new crate.
+ring = "0.17"
 
 # Polling the PTY master so a Session's reader can stop (session.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# A test's temp folder is deleted when the test ends, even when it panics (tests/common/mod.rs).
+tempfile = "3"

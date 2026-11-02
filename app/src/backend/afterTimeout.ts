@@ -1,7 +1,8 @@
 // A call the app stopped waiting for. roster serve holds its long methods to a deadline shorter than
 // the app's wait (roster-core's CALL_SECS), so this should be rare; when it happens, serve may still be
-// finishing the call. It answers requests in order, so asking it about the outcome straight after gets
-// the answer as of the end of that call. These wrappers ask, and report what actually happened:
+// finishing the call. serve answers several requests at once (API 20), so the check waits for it: a
+// write holds roster.yml for its whole request, `changes.diff` takes roster.yml too, and `host.get`
+// with `settled` waits for it (an older serve answers in order, which waits anyway). These wrappers ask, and report what actually happened:
 // never "it failed" for something that was done, never silence.
 import { BackendCallError, type AddHostParams, type Backend, type HostAdd, type PublishResult } from "./types";
 
@@ -20,7 +21,7 @@ export async function addHostChecked(backend: Backend, params: AddHostParams): P
     if (!timedOut(e)) throw e;
     let host;
     try {
-      host = await backend.getHost(params.name);
+      host = await backend.getHost(params.name, { settled: true });
     } catch (check) {
       if (check instanceof BackendCallError && check.code === 2) {
         throw new BackendCallError(

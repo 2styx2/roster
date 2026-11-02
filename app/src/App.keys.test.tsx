@@ -231,6 +231,7 @@ describe("The command line", () => {
       "close",
       "cmdline",
       "connect ",
+      "cancel",
       "config",
       "choose",
     ]);

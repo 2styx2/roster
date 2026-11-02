@@ -23,6 +23,12 @@ describe("the error catalog", () => {
     }
   });
 
+  it("gives a cancelled request and a check serve doesn't have their rows (rows 114-115, ticket 108)", () => {
+    expect(rowFor(rows, 5).row).toBe(114);
+    expect(rowFor(rows, 49).row).toBe(115);
+    expect(rowFor(rows, 5).fix(p(5))).toContain("Nothing was done");
+  });
+
   it("gives the host key question's own refusal its row (docs/app/errors.md row 62, ticket 36)", () => {
     const row = rowFor(rows, 23);
     expect(row.row).toBe(62);
@@ -94,6 +100,13 @@ describe("the error catalog", () => {
   it("gives the Mesh's code its row (docs/app/errors.md row 73, ticket 39)", () => {
     expect(rowFor(rows, 110)).toMatchObject({ row: 73, id: "mesh-not-a-source" });
     expect(rowFor(rows, 110).where).toContain("roster.yml");
+    expect(rowFor(rows, 111)).toMatchObject({ row: 93, id: "mesh-busy" });
+  });
+
+  it("gives the prompt fill's codes their rows (docs/app/errors.md rows 143-144, ticket 119)", () => {
+    expect(rowFor(rows, 130)).toMatchObject({ row: 143, id: "fill-refused" });
+    expect(rowFor(rows, 131)).toMatchObject({ row: 144, id: "fill-nothing-saved" });
+    expect(rowFor(rows, 131).fix(p(131))).toMatch(/sudo: \{auth/);
   });
 
   it("puts git's own words from roster's data.details under Details", () => {

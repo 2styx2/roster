@@ -40,3 +40,16 @@ def test_invalid_settings_json_is_left_alone(isolated, write_config, capsys):
     write_claude_files(load_config(write_config(EXAMPLE_CONFIG)))
     assert settings.read_text() == "{ not json"
     assert "isn't valid JSON" in capsys.readouterr().out
+
+
+def test_roster_md_tells_claude_to_read_roster_as_json(isolated, write_config):
+    write_claude_files(load_config(write_config(EXAMPLE_CONFIG)))
+    roster_md = (isolated["work"] / "ROSTER.md").read_text()
+    assert "hosts --json" in roster_md and "info <name> --json" in roster_md and "check <name> --json" in roster_md
+
+
+def test_roster_md_says_to_diagnose_a_host_with_check_json(isolated, write_config):
+    write_claude_files(load_config(write_config(EXAMPLE_CONFIG)))
+    roster_md = (isolated["work"] / "ROSTER.md").read_text()
+    rule = next(line for line in roster_md.splitlines() if "doesn't respond" in line)
+    assert "check <name> --json" in rule

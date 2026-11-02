@@ -14,6 +14,8 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
+import { build, type Rolldown } from "vite";
 import { buildSite, FONTS, siteContext, type SiteFile } from "../src/docs-site/site";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -72,6 +74,28 @@ function write(out: string, files: SiteFile[]): void {
   for (const f of FONTS) copyFileSync(join(APP, "node_modules", "@fontsource", f.pkg, "files", f.file), join(out, "fonts", f.file));
 }
 
+/** search.js's budget, minified (docs/app/performance.md): the one script every page loads. */
+const SEARCH_JS_BUDGET = 12_000;
+
+/** search.js: the search box (src/docs-site/entry.ts and what it imports), bundled and minified
+ * by Vite, the build the app uses, into one classic script (no modules, so file:// works too). */
+async function searchScript(): Promise<string> {
+  const out = (await build({
+    configFile: false,
+    root: APP,
+    logLevel: "warn",
+    build: {
+      write: false,
+      minify: true,
+      target: "es2022",
+      lib: { entry: join(APP, "src/docs-site/entry.ts"), formats: ["iife"], name: "rosterSearch", fileName: () => "search.js" },
+    },
+  })) as Rolldown.RolldownOutput | Rolldown.RolldownOutput[];
+  const chunk = (Array.isArray(out) ? out : [out]).flatMap((o) => o.output).find((c) => c.type === "chunk");
+  if (!chunk || chunk.type !== "chunk") throw new Error("Vite wrote no search.js");
+  return chunk.code;
+}
+
 export async function main(argv: string[]): Promise<number> {
   const args = parse(argv);
   const version = (JSON.parse(readFileSync(join(APP, "package.json"), "utf8")) as { version: string }).version;
@@ -85,7 +109,13 @@ export async function main(argv: string[]): Promise<number> {
     for (const p of problems) console.error(`  ${p}`);
     return 1;
   }
-  write(args.out, [...site.files, ...(print?.files ?? [])]);
+  const search = await searchScript();
+  if (search.length > SEARCH_JS_BUDGET) {
+    console.error(`search.js is ${search.length} bytes, over its budget of ${SEARCH_JS_BUDGET} (docs/app/performance.md).`);
+    return 1;
+  }
+  write(args.out, [...site.files, { path: "search.js", body: search }, ...(print?.files ?? [])]);
+  console.log(`search.js ${(search.length / 1000).toFixed(1)} KB (${(gzipSync(search).length / 1000).toFixed(1)} KB gzipped)`);
   console.log(`Wrote ${site.files.length} files to ${args.out} (roster ${version}, ${args.sha.slice(0, 7)})`);
   if (args.pdf) {
     const html = join(args.out, "print.html");

@@ -8,7 +8,7 @@ use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detec
 use roster_core::package::{self, Packages};
 use roster_core::plugin::{self, Permission, PluginHost};
 use roster_core::rpc::{CallError, Notify};
-use roster_core::session::{SessionError, SessionEvent, SessionId, SessionManager, Size};
+use roster_core::session::{FillError, FillTarget, SessionError, SessionEvent, SessionId, SessionManager, Size};
 use roster_core::slot::Slot;
 use roster_core::state::StateFile;
 use serde_json::{Value, json};
@@ -71,7 +71,8 @@ async fn backend_connect(
 ) -> Result<BackendInfo, BackendError> {
     let s = Arc::clone(&state);
     let loader = config.0.clone();
-    // serve's notifications (`inventory.changed`, ticket 28) go to the frontend as one event.
+    // serve's notifications (`inventory.changed`, ticket 28; `job.progress`, API 20) go to the
+    // frontend as one event.
     let notify: Notify = Arc::new(move |method: &str, params: Value| {
         use tauri::Emitter;
         let _ = app.emit("roster-notification", json!({ "method": method, "params": params }));
@@ -149,12 +150,11 @@ async fn config_open(
 /// `:source` (and `:config reload`): reads init.lua again now, and tells every listener.
 #[tauri::command]
 async fn config_reload(app: tauri::AppHandle, config: tauri::State<'_, ConfigState>) -> Result<Option<Report>, ()> {
-    use tauri::Emitter;
     let Some(loader) = config.0.clone() else {
         return Ok(None);
     };
     let report = blocking(move || Ok::<_, ()>(loader.reload())).await?;
-    let _ = app.emit("config-changed", &report);
+    config_changed(&app, &report);
     Ok(Some(report))
 }
 
@@ -221,27 +221,18 @@ fn start_config(app: &tauri::App, loader: &Arc<Loader>) -> Option<config::Watche
         if let Some(e) = &report.error {
             eprintln!("roster: {e}");
         }
-        let _ = handle.emit("config-changed", report);
+        config_changed(&handle, &report);
     });
     let handle = app.handle().clone();
     let l = Arc::clone(loader);
     // A save reloads only with `auto_reload = true` (decision Q58); otherwise the frontend
     // hears that the file changed, and `:source` applies it.
-    // folders.yml (ticket 28, decision Q46) is the frontend's to read: it hears that it changed.
-    match config::watch_files(loader.dir(), move |changed| {
-        if changed.folders {
-            let _ = handle.emit("folders-changed", ());
-        }
-        if !changed.lua {
-            return;
-        }
-        match l.on_save() {
-            Some(report) => {
-                let _ = handle.emit("config-changed", report);
-            }
-            None => {
-                let _ = handle.emit("config-stale", ());
-            }
+    // folders.yml (decision Q46) is only read once now, to move its Folders into the Folders
+    // Plugin (ticket 61, decision Q93), and isn't watched.
+    match config::watch(loader.dir(), move || match l.on_save() {
+        Some(report) => config_changed(&handle, &report),
+        None => {
+            let _ = handle.emit("config-stale", ());
         }
     }) {
         Ok(w) => Some(w),
@@ -264,9 +255,20 @@ async fn hosts_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value,
     call(&state, "hosts.list", json!({})).await
 }
 
+/// `host.get`; `settled` (serve API 20) waits for a write to roster.yml under way, for the check
+/// after a timed-out `host.add`. Sent only when true, so an older serve gets what it always did.
 #[tauri::command]
-async fn host_get(state: tauri::State<'_, Arc<BackendState>>, name: String) -> Result<Value, CallError> {
-    call(&state, "host.get", json!({ "name": name })).await
+async fn host_get(
+    state: tauri::State<'_, Arc<BackendState>>,
+    name: String,
+    settled: Option<bool>,
+) -> Result<Value, CallError> {
+    let params = if settled == Some(true) {
+        json!({ "name": name, "settled": true })
+    } else {
+        json!({ "name": name })
+    };
+    call(&state, "host.get", params).await
 }
 
 #[tauri::command]
@@ -324,9 +326,12 @@ async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Val
 
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
 /// first failure. roster makes at most one connection and one login, so this is safe on 10.19.
+/// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
+/// worker of serve waits for it.
 #[tauri::command]
 async fn host_check(state: tauri::State<'_, Arc<BackendState>>, host: String) -> Result<Value, CallError> {
-    call(&state, "host.check", json!({ "host": host })).await
+    let backend = state.get()?;
+    blocking(move || backend.check_host(&host)).await
 }
 
 /// This Box's health (`box.check`, api 16, ticket 49): roster.yml, ssh, the vault CLIs, askpass and the
@@ -469,7 +474,8 @@ async fn save_call(
     call(&state, method, Value::Object(params)).await
 }
 
-/// `folders.yml`'s path and text (null: no file yet), next to init.lua (decision Q46).
+/// `folders.yml`'s path and text (null: no file yet), next to init.lua (decision Q46): read at
+/// start, for the Folders Plugin to move its Folders in once (ticket 61). Never written now.
 #[tauri::command]
 async fn folders_read(config: tauri::State<'_, ConfigState>) -> Result<Value, String> {
     let dir = config_dir(&config)?;
@@ -478,13 +484,6 @@ async fn folders_read(config: tauri::State<'_, ConfigState>) -> Result<Value, St
         Ok(json!({ "path": config::folders::path(&dir).display().to_string(), "text": text }))
     })
     .await
-}
-
-/// Replaces `folders.yml` (atomically) with the text the frontend made.
-#[tauri::command]
-async fn folders_write(config: tauri::State<'_, ConfigState>, text: String) -> Result<(), String> {
-    let dir = config_dir(&config)?;
-    blocking(move || config::folders::write(&dir, &text).map_err(|e| e.to_string())).await
 }
 
 /// Mark a Host reviewed (`host.review`): only that flag changes, as a Pending change. With
@@ -513,6 +512,78 @@ impl plugin::Serve for PluginServe {
         let backend = self.0.get().map_err(|e| e.to_string())?;
         backend.call(method, params).map_err(|e| e.to_string())
     }
+}
+
+/// `:tutor`'s demo (ticket 66, decision Q123): a Plugin host of its own while a tutorial runs,
+/// over the demo Inventory's Hosts, offline, with throwaway data folders ([`plugin::DemoHost`]).
+/// Each demo has a number; every demo command and reply names it ([`plugin::demo::DemoSlot`]).
+#[derive(Default)]
+struct DemoPlugins(plugin::demo::DemoSlot);
+
+/// The host a Plugin command means: demo `demo`'s (only while it's the one running), or the app's.
+fn plugin_host(plugins: &Arc<PluginHost>, demo: &DemoPlugins, on_demo: Option<u64>) -> Result<PluginTarget, String> {
+    match on_demo {
+        Some(id) => demo.0.get(id).map(PluginTarget::Demo),
+        None => Ok(PluginTarget::App(Arc::clone(plugins))),
+    }
+}
+
+enum PluginTarget {
+    App(Arc<PluginHost>),
+    Demo(Arc<plugin::DemoHost>),
+}
+
+impl std::ops::Deref for PluginTarget {
+    type Target = PluginHost;
+    fn deref(&self) -> &PluginHost {
+        match self {
+            PluginTarget::App(h) => h,
+            PluginTarget::Demo(h) => h,
+        }
+    }
+}
+
+/// A demo's reply nobody asked for, with the demo's number so an old demo's never reaches a new one.
+#[derive(serde::Serialize, Clone)]
+struct DemoReply {
+    demo: u64,
+    reply: plugin::Reply,
+}
+
+/// A tutorial starts: a fresh demo Plugin host over `hosts` (`hosts.list`'s answer for the demo
+/// Inventory), in place of any older one. Its number is taken before the host is made, so a start
+/// that finishes after a newer one is turned away. Its replies nobody asked for go to the
+/// frontend as `plugin-demo-reply`, with the number. Gives the number.
+#[tauri::command]
+async fn plugin_demo_start(
+    app: tauri::AppHandle,
+    demo: tauri::State<'_, DemoPlugins>,
+    hosts: Value,
+) -> Result<u64, String> {
+    let id = demo.0.reserve();
+    let host = blocking(move || plugin::DemoHost::new(hosts, plugin::Limits::default(), &std::env::temp_dir())).await?;
+    host.set_listener(Arc::new(move |reply: plugin::Reply| {
+        use tauri::Emitter;
+        let _ = app.emit("plugin-demo-reply", DemoReply { demo: id, reply });
+    }));
+    let old = demo.0.install(id, host)?;
+    blocking(move || {
+        drop(old);
+        Ok(id)
+    })
+    .await
+}
+
+/// The tutorial ends: demo `id`'s Plugins stop and their throwaway files go (nothing, if it isn't
+/// the one running).
+#[tauri::command]
+async fn plugin_demo_stop(demo: tauri::State<'_, DemoPlugins>, id: u64) -> Result<(), String> {
+    let old = demo.0.stop(id);
+    blocking(move || {
+        drop(old);
+        Ok(())
+    })
+    .await
 }
 
 /// The folder a Plugin path means (decision Q82): `~/…`, absolute, or under the config dir.
@@ -560,21 +631,63 @@ async fn plugin_manifest(
     .await
 }
 
-/// Loads (or reloads) a Plugin with the permissions the user granted.
+/// `:config types` (ticket 141): writes init.lua's option types (LuaCATS, generated from the
+/// core's shape table) as `types/roster-config.lua` in the config folder; gives the file's path.
 #[tauri::command]
+async fn config_types(config: tauri::State<'_, ConfigState>) -> Result<String, String> {
+    let dir = config_dir(&config)?;
+    blocking(move || {
+        // A first `:config types` before there's an init.lua makes the folder, as `:config` does.
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        roster_core::config::shape::write_types(&dir).map(|f| f.display().to_string())
+    })
+    .await
+}
+
+/// `:plugins types PATH` (ticket 74): writes the Plugin API's stubs for this app's version as
+/// `types/roster.lua` in the Plugin folder PATH; gives the file's path.
+#[tauri::command]
+async fn plugin_types(config: tauri::State<'_, ConfigState>, path: String) -> Result<String, String> {
+    let config = config.inner().clone();
+    blocking(move || {
+        let dir = plugin_dir(&config, &path)?;
+        plugin::api::write_stubs(&dir).map(|f| f.display().to_string())
+    })
+    .await
+}
+
+/// Loads (or reloads) a Plugin with the permissions the user granted (on demo `onDemo`'s host,
+/// ticket 66).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri fills each argument from the call or its state
 async fn plugin_load(
     config: tauri::State<'_, ConfigState>,
     packages: tauri::State<'_, PackagesState>,
     plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
     path: String,
     grants: Vec<String>,
+    settings: Option<Value>,
+    on_demo: Option<u64>,
 ) -> Result<Value, String> {
     let grants: Vec<Permission> = grants.iter().filter_map(|g| Permission::parse(g).ok()).collect();
-    let host = Arc::clone(&plugins);
+    let host = plugin_host(&plugins, &demo, on_demo)?;
     let (config, packages) = (config.inner().clone(), packages.inner().clone());
     blocking(move || {
-        let (source, settings, shown) = plugin_source(&config, &packages, &path)?;
-        let (manifest, reply) = host.load_with(&source, &grants, &settings).map_err(|e| e.to_string())?;
+        // The user's proxy for its requests to public names, from the Config in effect (decision
+        // Q116), handed to this load; a reload that changes it reaches it later (set_proxy).
+        let proxy = config.0.as_ref().and_then(|l| plugin_proxy(&l.settled()));
+        let (source, mut handed, shown) = plugin_source(&config, &packages, &path)?;
+        // A built-in Plugin's settings come from the app (Folders: init.lua's Folders, and
+        // folders.yml's to move in once); a Package's from init.lua, and a folder has none.
+        if matches!(source, plugin::Source::Bundled(_))
+            && let Some(given) = settings
+        {
+            handed = given;
+        }
+        let (manifest, reply) = host
+            .load_with_proxy(&source, &grants, &handed, proxy)
+            .map_err(|e| e.to_string())?;
         Ok(json!({ "manifest": manifest, "dir": shown, "reply": reply }))
     })
     .await
@@ -636,14 +749,23 @@ async fn packages_remove(packages: tauri::State<'_, PackagesState>, name: String
     blocking(move || packages.remove(&name)).await
 }
 
-/// `:packages update`, step 1: fetches, and describes each new commit. Changes nothing.
+/// `:packages update [NAME]`, step 1: fetches (every Package, or the one named), and describes
+/// each new commit. Changes nothing.
 #[tauri::command]
 async fn packages_check(
     config: tauri::State<'_, ConfigState>,
     packages: tauri::State<'_, PackagesState>,
+    name: Option<String>,
 ) -> Result<Vec<package::Checked>, String> {
     let (config, packages) = (config.inner().clone(), packages_of(&packages)?);
-    blocking(move || Ok(packages.check(&package_specs(&config)))).await
+    blocking(move || {
+        let specs = package_specs(&config);
+        match name {
+            Some(name) => packages.check_named(&specs, &name).map(|c| vec![c]),
+            None => Ok(packages.check(&specs)),
+        }
+    })
+    .await
 }
 
 /// `:packages update`, step 2: moves a Package to the commit the user saw and allowed.
@@ -669,29 +791,143 @@ async fn packages_clean(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri fills each argument from the call or its state
 async fn plugin_call(
     plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
     plugin: String,
     handler: u64,
     args: Value,
-) -> Result<plugin::Reply, ()> {
-    let host = Arc::clone(&plugins);
-    blocking(move || Ok(host.call(&plugin, handler, args))).await
+    user: Option<bool>,
+    carried: Option<bool>,
+    on_demo: Option<u64>,
+) -> Result<plugin::Reply, String> {
+    let host = plugin_host(&plugins, &demo, on_demo)?;
+    // `user: false`: the app runs it on its own (a finder's items, a `:check`, a timer, a
+    // question's cancel because another took its place, a command a carried run's `roster.cmd`
+    // named), never the user's call. `carried`: the Plugin's own command its `roster.cmd` ran from
+    // the user's call, that call carried one hop (issue #183).
+    blocking(move || {
+        Ok(if user == Some(false) {
+            host.call_by_app(&plugin, handler, args)
+        } else if carried == Some(true) {
+            host.call_carried(&plugin, handler, args)
+        } else {
+            host.call(&plugin, handler, args)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 async fn plugin_event(
     plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
     name: String,
     payload: Value,
-) -> Result<Vec<plugin::Reply>, ()> {
-    let host = Arc::clone(&plugins);
+    on_demo: Option<u64>,
+) -> Result<Vec<plugin::Reply>, String> {
+    let host = plugin_host(&plugins, &demo, on_demo)?;
     blocking(move || Ok(host.event(plugin::Event { name, payload }))).await
 }
 
+/// The Sessions open now, `[id, host]` in the order the app saw them open (a Quick Connect
+/// Session's host is null): the whole list, replacing the last (`roster.sessions.list()`,
+/// decision Q127).
 #[tauri::command]
-fn plugin_unload(plugins: tauri::State<'_, Arc<PluginHost>>, plugin: String) -> bool {
-    plugins.unload(&plugin)
+fn plugin_sessions(
+    plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
+    open: Vec<(u64, Option<String>)>,
+    on_demo: Option<u64>,
+) -> Result<(), String> {
+    plugin_host(&plugins, &demo, on_demo)?.set_sessions(open);
+    Ok(())
+}
+
+#[tauri::command]
+fn plugin_unload(
+    plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
+    plugin: String,
+    on_demo: Option<u64>,
+) -> bool {
+    plugin_host(&plugins, &demo, on_demo).is_ok_and(|h| h.unload(&plugin))
+}
+
+/// The app's built-in commands (issue #184): none is a Plugin's own to run with `roster.cmd`. The
+/// app sends them when its Plugin host starts and again when one registers later.
+#[tauri::command]
+fn plugin_builtins(
+    plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
+    names: Vec<String>,
+    on_demo: Option<u64>,
+) -> Result<(), String> {
+    plugin_host(&plugins, &demo, on_demo)?.set_builtins(names);
+    Ok(())
+}
+
+/// `plugin_proxy` from a Config (decision Q116); the Config's check refused a bad one, so a
+/// value here parses.
+fn plugin_proxy(config: &roster_core::config::Config) -> Option<plugin::network::Proxy> {
+    config
+        .plugin_proxy
+        .as_deref()
+        .and_then(|p| plugin::network::Proxy::parse(p).ok())
+}
+
+/// A reload's Config reaches the running Plugins' proxy setting, then the frontend hears of it.
+fn config_changed(handle: &tauri::AppHandle, report: &Report) {
+    use tauri::{Emitter, Manager};
+    if let Some(plugins) = handle.try_state::<Arc<PluginHost>>() {
+        plugins.set_proxy(plugin_proxy(&report.config));
+    }
+    let _ = handle.emit("config-changed", report);
+}
+
+/// Each loaded Plugin's network requests by site since the app started, by its name, for
+/// `:plugins` (decision Q116): counts and a time, never a path, a query or a body.
+#[tauri::command]
+fn plugin_requests(
+    plugins: tauri::State<'_, Arc<PluginHost>>,
+) -> std::collections::BTreeMap<String, Vec<plugin::network::SiteCount>> {
+    plugins
+        .list()
+        .into_iter()
+        .map(|s| (s.manifest.name, s.requests))
+        .collect()
+}
+
+/// How full each named Plugin's data folder is, for `:plugins` (ticket 98): files and bytes as
+/// the caps count them, never what they hold. Loaded or not, so a stopped Plugin's shows too.
+#[tauri::command]
+async fn plugin_data(
+    plugins: tauri::State<'_, Arc<PluginHost>>,
+    names: Vec<String>,
+) -> Result<std::collections::BTreeMap<String, plugin::folder::DataUse>, String> {
+    let host = Arc::clone(&plugins);
+    blocking(move || {
+        let used = names.into_iter().map(|n| {
+            let u = host.data_use(&n);
+            (n, u)
+        });
+        Ok(used.collect())
+    })
+    .await
+}
+
+/// Removes a Plugin's data folder with everything in it (decision Q93): `:plugins remove` and
+/// `:packages clean` call it once the Plugin is gone. A reload or a revoke never does.
+#[tauri::command]
+async fn plugin_forget(
+    plugins: tauri::State<'_, Arc<PluginHost>>,
+    demo: tauri::State<'_, DemoPlugins>,
+    plugin: String,
+    on_demo: Option<u64>,
+) -> Result<bool, String> {
+    let host = plugin_host(&plugins, &demo, on_demo)?;
+    blocking(move || host.forget(&plugin)).await
 }
 
 fn session_error(e: SessionError) -> CallError {
@@ -807,6 +1043,48 @@ fn session_write(
     data: String,
 ) -> Result<(), CallError> {
     sessions.write(id, data.as_bytes()).map_err(session_error)
+}
+
+/// How long a prompt fill waits for an echo of its probe before it types the secret (ticket 119,
+/// decision Q129). Longer than an ssh round trip to a far Host; a link slower than that could echo
+/// after it, which is why the docs say so.
+const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// Fills the password prompt Session `id` shows, when the user pressed the fill key at one
+/// (ticket 119, decision Q129). The core asks serve (`session.fill`) for the password of the
+/// Host the Session was opened to (its own record, never a name from the frontend), with the
+/// prompt line the frontend read off the screen, then types it only if the prompt doesn't echo
+/// (`SessionManager::fill`). Only the Host's name comes back; the password never reaches the
+/// frontend, a log or an error.
+///
+/// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
+/// decision Q131): serve answers for that Host (still checking the Session's own), and the core
+/// types it only if the Session printed that prompt itself (`SessionManager::fill_at_prompt`).
+#[tauri::command]
+async fn session_fill(
+    state: tauri::State<'_, Arc<BackendState>>,
+    sessions: tauri::State<'_, Arc<SessionManager>>,
+    id: SessionId,
+    prompt: String,
+    hop: Option<FillTarget>,
+) -> Result<Value, CallError> {
+    let backend = state.get()?;
+    let sessions = Arc::clone(&sessions);
+    blocking(move || {
+        let filled = match &hop {
+            None => sessions.fill(id, FILL_WAIT, |target| backend.fill_secret(target, &prompt, None)),
+            Some(hop) => sessions.fill_at_prompt(id, FILL_WAIT, &prompt, hop, |target| {
+                backend.fill_secret(target, &prompt, Some(hop))
+            }),
+        };
+        filled.map(|host| json!({ "host": host })).map_err(|e| match e {
+            FillError::Lookup(e) => e,
+            other => CallError::Io {
+                message: other.to_string(),
+            },
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -949,17 +1227,31 @@ pub fn run() {
         Arc::new(PluginServe(Arc::clone(&backend))),
         plugin::Limits::default(),
     ));
+    let setup_plugins = Arc::clone(&plugins);
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(backend)
         .manage(plugins)
+        .manage(DemoPlugins::default())
         .manage(Arc::clone(&sessions))
         .manage(ConfigState(loader))
         .setup(move |app| {
             migrate_state(app.handle());
+            // What a Plugin did when one of its requests answered (`roster.http`, the
+            // `network` permission, or `roster.serve.request`): nobody asked, so it goes to the
+            // frontend as an event.
+            let handle = app.handle().clone();
+            setup_plugins.set_listener(Arc::new(move |reply: plugin::Reply| {
+                use tauri::Emitter;
+                let _ = handle.emit("plugin-reply", reply);
+            }));
             // Packages' clones go in the app's own data dir (next to the State), the lock next
             // to init.lua.
             let data = roster_core::env::state_dir().or_else(|| tauri::Manager::path(app).app_local_data_dir().ok());
+            // Each Plugin's own data folder goes there too, as plugin-data/NAME (decision Q93).
+            if let Some(data) = &data {
+                setup_plugins.set_data(data);
+            }
             let packages = match (data, setup_loader.as_ref()) {
                 (Some(data), Some(loader)) => Some(Arc::new(Packages::new(&data, loader.dir()))),
                 _ => None,
@@ -994,13 +1286,13 @@ pub fn run() {
             inventory_call,
             save_call,
             folders_read,
-            folders_write,
             changes_diff,
             changes_discard,
             changes_publish,
             session_open,
             quick_session_open,
             session_write,
+            session_fill,
             session_resize,
             session_close,
             state_load,
@@ -1018,11 +1310,20 @@ pub fn run() {
             config_reload,
             config_import_preview,
             config_import_apply,
+            config_types,
             plugin_manifest,
+            plugin_types,
             plugin_load,
             plugin_call,
             plugin_event,
+            plugin_sessions,
             plugin_unload,
+            plugin_forget,
+            plugin_builtins,
+            plugin_demo_start,
+            plugin_demo_stop,
+            plugin_requests,
+            plugin_data,
             packages_sync,
             packages_pin,
             packages_discard,
@@ -1033,9 +1334,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(move |_app, event| {
+        .run(move |app, event| {
             if let tauri::RunEvent::Exit = event {
                 sessions.close_all();
+                // A tutorial still running: its Plugins stop and their throwaway files go.
+                drop(tauri::Manager::state::<DemoPlugins>(app).0.stop_any());
             }
         });
 }

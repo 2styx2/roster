@@ -16,6 +16,7 @@ Everything about roster, the CLI and the app, in one place. The pages marked **:
 | Page | What it's for | :help |
 |---|---|---|
 | [app/config.md](app/config.md) | Your `init.lua`: where it lives, `:config` and `:source`, every option, the sandbox | `config` |
+| [app/options.md](app/options.md) | The option reference: every `init.lua` option and `roster` function, its type, default, values and an example, generated from the core | `options` |
 | [app/recipes.md](app/recipes.md) | Short `init.lua` snippets to paste: the Leader, keys, Themes, fonts, layout, modules | `recipes` |
 | [app/keyboard.md](app/keyboard.md) | The Leader, the two modes, every default binding, copy and paste, completion | `keyboard` |
 | [app/themes.md](app/themes.md) | The bundled Themes, their colour tokens, making your own | `themes-guide` |
@@ -24,8 +25,8 @@ Everything about roster, the CLI and the app, in one place. The pages marked **:
 
 | Page | What it's for | :help |
 |---|---|---|
-| [cli-reference.md](cli-reference.md) | `roster.yml`, resources, password providers, `discover`, every `roster` command | `cli` |
-| [app/errors.md](app/errors.md) | Every way a Session can fail: what happened, where it lives, the fix | `errors-guide` |
+| [cli-reference.md](cli-reference.md) | `roster.yml`, resources, password providers, `discover`, every `roster` command, and `--json` output for scripts | `cli` |
+| [app/errors.md](app/errors.md) | Every error: what happened, where it lives, the fix (Sessions, the vault, edits and Publish, the Mesh, Discover, Plugins) | `errors-guide` |
 | [mesh.md](mesh.md) | The Mesh: Hosts that reach each other, `roster mesh`, cut, drift, ESXi | `mesh` |
 | [serve-api.md](serve-api.md) | `roster serve`: the JSON-RPC API the app uses, and its error codes | `serve-api` |
 | (generated in the app) | The quick reference, every command, key, option, Theme, finder and error, with what's in effect now | `quickref`, `commands`, `keys`, `options`, `themes`, `finders`, `errors`, `all` |
@@ -37,6 +38,8 @@ Everything about roster, the CLI and the app, in one place. The pages marked **:
 | [app/extending.md](app/extending.md) | How far roster bends: the registries `init.lua` and Plugins add to | `extending` |
 | [plugins.md](plugins.md) | Writing a Plugin: installing and trusting one, permissions, the `roster` Lua module, events, limits | `plugins` |
 | [plugin-api.md](plugin-api.md) | The Plugin API: every `roster.*` function and type, generated from the core, and the lua-language-server stubs | `plugin-api` |
+| [../plugins/README.md](../plugins/README.md) | roster's own optional Plugins: the Mesh controls, Topology, Discover, and how to install one | |
+| [../examples/plugins/recent-alerts/README.md](../examples/plugins/recent-alerts/README.md) | A worked example Plugin, and the template for yours | |
 | [adr/0006-lua-plugins-and-packages.md](adr/0006-lua-plugins-and-packages.md) | Plugins and Packages, as decided | |
 
 ## What's new

@@ -2,18 +2,16 @@
 //! sandboxed Lua 5.4, checked against a schema, layered over the defaults. These tests drive the
 //! public loader the Tauri shell uses, with real files in a temp dir.
 
+mod common;
+
 use roster_core::config::{self, Config, Loader};
-use std::path::PathBuf;
 
 /// A fresh, empty config dir for one test.
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roster-core-config-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_dir(name: &str) -> common::Temp {
+    common::temp(&format!("config-{name}"))
 }
 
-fn with_init(name: &str, lua: &str) -> PathBuf {
+fn with_init(name: &str, lua: &str) -> common::Temp {
     let dir = temp_dir(name);
     std::fs::write(dir.join("init.lua"), lua).unwrap();
     dir
@@ -130,6 +128,76 @@ fn ui_hints_is_unset_by_default_and_takes_a_boolean() {
 }
 
 #[test]
+fn terminal_shell_hooks_is_unset_by_default_and_takes_a_boolean() {
+    // Ticket 121: unset leaves it to each Host's `shell_hooks` in roster.yml.
+    assert_eq!(Config::default().terminal.shell_hooks, None);
+    let dir = with_init("shell-hooks", "return { terminal = { shell_hooks = true } }\n");
+    assert_eq!(config::load(&dir).unwrap().terminal.shell_hooks, Some(true));
+    let dir = with_init(
+        "shell-hooks-bad",
+        "return {\n  terminal = { shell_hooks = \"yes\" },\n}\n",
+    );
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(e.message.contains("terminal.shell_hooks"), "{e}");
+}
+
+#[test]
+fn ui_messages_is_unset_by_default_and_takes_quiet_or_all() {
+    // Ticket 111: unset leaves it to `:messages`, whose choice the State keeps (quiet until it
+    // makes one).
+    use roster_core::config::MessagesLevel;
+    assert_eq!(Config::default().ui.messages, None);
+    let dir = with_init("messages", "return { ui = { messages = \"all\" } }\n");
+    assert_eq!(config::load(&dir).unwrap().ui.messages, Some(MessagesLevel::All));
+    let dir = with_init("messages-bad", "return {\n  ui = { messages = \"loud\" },\n}\n");
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(e.message.contains("ui.messages"), "{e}");
+}
+
+#[test]
+fn panel_width_and_views_set_each_panels_defaults() {
+    // Ticket 95: unset, each panel keeps its own; set, they're defaults the State's choice wins over.
+    assert_eq!(Config::default().panel.width, None);
+    assert!(Config::default().views.is_empty());
+    let dir = with_init(
+        "panels",
+        "return {\n  panel = { width = 35 },\n  views = { topology = { place = \"panel\", width = 60 }, help = { place = \"full\" } },\n}\n",
+    );
+    let c = config::load(&dir).unwrap();
+    assert_eq!(c.panel.width, Some(35));
+    let topology = &c.views["topology"];
+    assert_eq!(
+        (topology.place, topology.width),
+        (Some(config::PanelPlace::Panel), Some(60))
+    );
+    assert_eq!(c.views["help"].place, Some(config::PanelPlace::Full));
+    let json = serde_json::to_value(&c).unwrap();
+    assert_eq!(
+        json["views"]["topology"],
+        serde_json::json!({ "place": "panel", "width": 60 })
+    );
+
+    let dir = with_init(
+        "panels-wide",
+        "return {\n  views = { topology = { width = 120 } },\n}\n",
+    );
+    let e = config::load(&dir).unwrap_err();
+    assert!(
+        e.message.contains("views.topology.width") && e.message.contains("10 to 95"),
+        "{e}"
+    );
+    let dir = with_init(
+        "panels-place",
+        "return {\n  views = { help = { place = \"left\" } },\n}\n",
+    );
+    assert!(config::load(&dir).unwrap_err().message.contains("views.help.place"));
+    let dir = with_init("panels-narrow", "return { panel = { width = 5 } }\n");
+    assert!(config::load(&dir).unwrap_err().message.contains("panel.width"));
+}
+
+#[test]
 fn the_ui_text_size_is_read_and_kept_in_range() {
     let dir = with_init("uisize", "return { fonts = { ui_size = 16 } }\n");
     assert_eq!(config::load(&dir).unwrap().fonts.ui_size, 16);
@@ -149,6 +217,28 @@ fn pull_fresh_minutes_defaults_to_five_and_takes_zero_to_a_day() {
     let e = config::load(&dir).unwrap_err();
     assert_eq!(e.line, Some(2), "{e}");
     assert!(e.message.contains("pull_fresh_minutes"), "{e}");
+}
+
+#[test]
+fn plugin_proxy_is_unset_by_default_and_never_carries_credentials() {
+    // Decision Q116: the user's proxy for Plugins' requests, an http://HOST:PORT and nothing more.
+    assert_eq!(Config::default().plugin_proxy, None);
+    let dir = with_init("proxy", "return { plugin_proxy = \"http://10.0.0.5:3128\" }\n");
+    assert_eq!(
+        config::load(&dir).unwrap().plugin_proxy.as_deref(),
+        Some("http://10.0.0.5:3128")
+    );
+    let dir = with_init(
+        "proxy-creds",
+        "return {\n  plugin_proxy = \"http://someone:hunter2@10.0.0.5:3128\",\n}\n",
+    );
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(
+        e.message.contains("plugin_proxy") && e.message.contains("no user or password"),
+        "{e}"
+    );
+    assert!(!e.message.contains("hunter2"), "{e}");
 }
 
 #[test]
@@ -812,8 +902,9 @@ fn the_backend_plan_refuses_a_roster_command_that_isnt_roster_but_the_env_var_ma
 
 /// A loader for an init.lua that keeps Lua busy for at least `ms` of wall-clock time (os.time
 /// counts seconds and os.clock is the whole process's CPU, so it counts its own iterations,
-/// calibrated first), then sets the leader. Its limits are generous so it isn't cut off.
-fn slow_loader(name: &str, ms: u32) -> Loader {
+/// calibrated first), then sets the leader. Its limits are generous so it isn't cut off. Returns its
+/// folder too, deleted when the test drops it.
+fn slow_loader(name: &str, ms: u32) -> (Loader, common::Temp) {
     let dir = with_init(
         name,
         &format!(
@@ -821,7 +912,7 @@ fn slow_loader(name: &str, ms: u32) -> Loader {
             iterations_for(ms)
         ),
     );
-    Loader::with_env(&dir, generous())
+    (Loader::with_env(&dir, generous()), dir)
 }
 
 fn generous() -> config::Env {
@@ -854,7 +945,8 @@ fn iterations_for(ms: u32) -> u64 {
 fn reading_the_config_never_waits_for_a_reload_in_progress() {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    let loader = Arc::new(slow_loader("loader-busy", 600));
+    let (loader, _dir) = slow_loader("loader-busy", 600);
+    let loader = Arc::new(loader);
     let l = Arc::clone(&loader);
     let reload = std::thread::spawn(move || l.reload());
     std::thread::sleep(Duration::from_millis(100));
@@ -880,7 +972,8 @@ fn reading_the_config_never_waits_for_a_reload_in_progress() {
 fn a_startup_reload_waits_only_so_long_then_reports_when_done() {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    let loader = Arc::new(slow_loader("loader-startup", 600));
+    let (loader, _dir) = slow_loader("loader-startup", 600);
+    let loader = Arc::new(loader);
     let (tx, rx) = std::sync::mpsc::channel();
     let started = Instant::now();
     let now = loader.reload_within(Duration::from_millis(100), move |report| {
@@ -963,7 +1056,7 @@ fn a_continuous_stream_of_saves_still_reloads_within_half_a_second() {
     std::thread::sleep(Duration::from_millis(100));
     let started = Instant::now();
     let writer = std::thread::spawn({
-        let dir = dir.clone();
+        let dir = dir.to_path_buf();
         move || {
             while started.elapsed() < Duration::from_secs(2) {
                 std::fs::write(dir.join("init.lua"), "return {}").unwrap();
@@ -995,19 +1088,36 @@ fn the_starter_file_is_the_example_commented_out_and_loads_as_the_defaults() {
             "not commented out: {line:?}"
         );
     }
-    // Every option of the example is in it, ready to uncomment.
-    assert!(starter.contains("--   theme = \"auto\","));
-    assert!(starter.contains("--     size = \"13pt\","));
+    // Every option of the example is in it, one line each, ready to uncomment.
+    assert!(starter.contains("\n-- roster.o.theme = \"auto\"\n"));
+    assert!(starter.contains("\n-- roster.o.terminal.size = \"13pt\"\n"));
+    // Saving doesn't apply it (decision Q58): :source does.
+    let header: String = starter
+        .lines()
+        .take_while(|l| l.starts_with("--") && !l.trim().eq("--"))
+        .collect();
+    assert!(header.contains(":source"), "{header}");
+    assert!(!header.contains("at once"), "{header}");
     let dir = with_init("starter", &starter);
     let mut loaded = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
     loaded.lines.clear();
     loaded.set.clear();
     assert_eq!(loaded, Config::default());
+    // One line uncommented is a working Config on its own.
+    let one = starter.replace(
+        "\n-- roster.o.terminal.size = \"13pt\"\n",
+        "\nroster.o.terminal.size = \"16pt\"\n",
+    );
+    let dir = with_init("starter-one-line", &one);
+    let loaded = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(loaded.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(loaded.set, ["terminal.size"]);
 }
 
 #[test]
 fn ensuring_the_file_creates_it_once_and_never_overwrites_it() {
-    let dir = temp_dir("ensure").join("nested").join("roster");
+    let tmp = temp_dir("ensure");
+    let dir = tmp.join("nested").join("roster");
     let first = config::ensure_file(&dir).unwrap();
     assert!(first.created);
     assert_eq!(first.path, dir.join("init.lua"));
@@ -1114,41 +1224,24 @@ fn sourcing_a_broken_file_keeps_the_last_good_config() {
 }
 
 #[test]
-fn folders_yml_is_read_written_and_watched_apart_from_init_lua() {
-    use roster_core::config::{Changed, folders};
+fn folders_yml_is_only_read_and_a_save_of_it_is_no_config_change() {
+    use roster_core::config::folders;
     use std::sync::mpsc;
     use std::time::Duration;
     let dir = temp_dir("folders");
     assert_eq!(folders::read(&dir).unwrap(), None);
     let (tx, rx) = mpsc::channel();
-    let _w = config::watch_files(&dir, move |c| {
-        let _ = tx.send(c);
+    let _w = config::watch(&dir, move || {
+        let _ = tx.send(());
     })
     .unwrap();
-    folders::write(&dir, "Lab:\n  - esx\n").unwrap();
+    // Read once, to move its Folders into the Folders Plugin (decision Q93): saving it reloads nothing.
+    std::fs::write(folders::path(&dir), "Lab:\n  - esx\n").unwrap();
     assert_eq!(folders::read(&dir).unwrap().as_deref(), Some("Lab:\n  - esx\n"));
-    let c = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("a write of folders.yml is seen");
-    assert_eq!(
-        c,
-        Changed {
-            lua: false,
-            folders: true
-        }
-    );
-    std::fs::write(dir.join("init.lua"), "return {}").unwrap();
-    assert_eq!(
-        rx.recv_timeout(Duration::from_secs(3)).unwrap(),
-        Changed {
-            lua: true,
-            folders: false
-        }
-    );
-    // folders.yml in a subfolder isn't the Folders file.
-    std::fs::create_dir_all(dir.join("lua")).unwrap();
-    std::fs::write(dir.join("lua").join("folders.yml"), "x").unwrap();
     assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
+    std::fs::write(dir.join("init.lua"), "return {}").unwrap();
+    rx.recv_timeout(Duration::from_secs(3))
+        .expect("a save of init.lua is seen");
 }
 
 #[test]
@@ -1352,4 +1445,247 @@ fn a_deprecated_option_applies_under_its_new_name_and_is_named() {
 
     // Without the rename, the old name is just unknown.
     assert!(config::load_source(&dir, lua, &config::Env::default()).is_err());
+}
+
+/// Ticket 138: init.lua runs as a block, so a one-line `require` of a module that returns
+/// nothing (the Neovim layout: `init.lua` → `lua/<name>/init.lua`) loads, with or without a
+/// leading comment.
+#[test]
+fn a_one_line_require_of_a_module_that_returns_nothing_loads() {
+    for (name, init) in [
+        ("plain", "require(\"me\")"),
+        ("comment", "-- my config\nrequire(\"me\")\n"),
+    ] {
+        let dir = with_init(&format!("block-{name}"), init);
+        std::fs::create_dir_all(dir.join("lua/me")).unwrap();
+        std::fs::write(dir.join("lua/me/init.lua"), "roster.set(\"terminal.size\", \"16pt\")\n").unwrap();
+        let config = config::load(&dir).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(config.terminal.size, config::FontSize::Pt(16.0), "{name}");
+    }
+}
+
+/// Ticket 138: `return require(...)` of a module that returns nothing returns `true`; the error
+/// says why.
+#[test]
+fn returning_true_from_require_gets_a_hint() {
+    let dir = with_init("block-return", "return require(\"me\")\n");
+    std::fs::write(dir.join("me.lua"), "roster.set(\"vim\", false)\n").unwrap();
+    let e = config::load(&dir).unwrap_err();
+    assert!(e.message.contains("returned true"), "{e}");
+    assert!(e.message.contains("leave out the `return`"), "{e}");
+}
+
+/// Ticket 138: a bare table with no `return` isn't a Config; it's a syntax error at its line.
+#[test]
+fn a_bare_table_without_return_is_a_syntax_error_at_its_line() {
+    let dir = with_init("block-bare", "-- config\n{ vim = false }\n");
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!((e.file.as_str(), e.line), ("init.lua", Some(2)), "{e}");
+}
+
+/// Ticket 139: among `roster.*` calls the last one wins (a base module, then an override), and
+/// the returned table still wins over every call. A Theme is defined once and then updated
+/// (ticket 142: a second define is an error naming both lines).
+#[test]
+fn the_last_roster_call_wins() {
+    let dir = with_init(
+        "last-wins",
+        r##"roster.set("terminal.size", "13pt")
+roster.keymap.set("leader", "p", "close")
+roster.themes.define("mine", { base = "nord", colors = { accent = "#111111" } })
+roster.set("terminal.size", "16pt")
+roster.keymap.set("leader", "p", "next")
+roster.themes.update("mine", { colors = { accent = "#222222" } })
+roster.set("vim", false)
+roster.set("vim", true)
+return { vim = false }
+"##,
+    );
+    let config = config::load(&dir).unwrap();
+    assert_eq!(config.terminal.size, config::FontSize::Pt(16.0));
+    let p: Vec<_> = config
+        .keys
+        .0
+        .iter()
+        .filter(|b| b.context == config::KeyContext::Leader && b.keys == "p")
+        .map(|b| b.action.clone())
+        .collect();
+    assert_eq!(p, [config::KeyAction::Run("next".into())]);
+    assert_eq!(config.themes["mine"].colors.accent.as_deref(), Some("#222222"));
+    assert!(!config.vim, "the returned table wins over calls");
+    // The lines point at the calls that won.
+    assert_eq!(config.lines["terminal.size"].line, 4);
+    assert_eq!(config.lines["keys.leader.p"].line, 5);
+    assert_eq!(config.lines["themes.mine"].line, 6);
+}
+
+/// Ticket 139: a base module, then an override module (Neovim's habit): the override wins.
+#[test]
+fn an_override_module_required_later_wins() {
+    let dir = with_init("override", "require(\"base\")\nrequire(\"override\")\n");
+    std::fs::write(dir.join("base.lua"), "roster.set(\"terminal.size\", \"13pt\")\n").unwrap();
+    std::fs::write(dir.join("override.lua"), "\nroster.set(\"terminal.size\", \"16pt\")\n").unwrap();
+    let config = config::load(&dir).unwrap();
+    assert_eq!(config.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(
+        (
+            config.lines["terminal.size"].file.as_str(),
+            config.lines["terminal.size"].line
+        ),
+        ("override.lua", 2)
+    );
+}
+
+/// Ticket 140: when the returned table wins over a call, an error in its value points at the
+/// table, not at the call whose value was discarded.
+#[test]
+fn a_bad_table_value_is_not_blamed_on_a_discarded_call() {
+    let dir = with_init(
+        "line-table-wins",
+        "roster.set(\"terminal.size\", \"14pt\")\nreturn {\n  terminal = {\n    size = \"900pt\",\n  },\n}\n",
+    );
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!((e.file.as_str(), e.line), ("init.lua", Some(4)), "{e}");
+}
+
+/// Ticket 140: a bad value in a table that a required module returns is reported at the
+/// module's line.
+#[test]
+fn a_bad_value_from_a_required_module_names_the_module_and_line() {
+    let dir = with_init("line-module", "-- config\nreturn require(\"opts\")\n");
+    std::fs::create_dir_all(dir.join("lua")).unwrap();
+    std::fs::write(
+        dir.join("lua/opts.lua"),
+        "return {\n  vim = false,\n  terminal = {\n    size = \"900pt\",\n  },\n}\n",
+    )
+    .unwrap();
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!((e.file.as_str(), e.line), ("lua/opts.lua", Some(4)), "{e}");
+    // `:help options` finds the module's lines too.
+    let dir = with_init("line-module-ok", "return require(\"opts\")\n");
+    std::fs::write(dir.join("opts.lua"), "return {\n  terminal = { size = \"16pt\" },\n}\n").unwrap();
+    let config = config::load(&dir).unwrap();
+    let at = &config.lines["terminal.size"];
+    assert_eq!((at.file.as_str(), at.line), ("opts.lua", 2));
+}
+
+/// Ticket 140: when roster can't tell where a value was set, it says so instead of naming the
+/// line of a parent key.
+#[test]
+fn a_value_roster_cannot_place_says_line_unknown() {
+    let dir = with_init("line-unknown", "return {\n  terminal = require(\"term\"),\n}\n");
+    std::fs::write(
+        dir.join("term.lua"),
+        "local t = {}\nt[\"si\" .. \"ze\"] = \"900pt\"\nreturn t\n",
+    )
+    .unwrap();
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!(e.line, None, "{e}");
+    assert!(e.message.contains("line unknown"), "{e}");
+    assert!(e.message.starts_with("terminal.size:"), "{e}");
+}
+
+/// Ticket 139: a later call replaces what's at its path, a whole table included; a later call
+/// below an earlier table changes just that value.
+#[test]
+fn a_later_call_replaces_what_is_at_its_path() {
+    let dir = with_init(
+        "last-wins-tables",
+        r#"roster.set("terminal.size", "20pt")
+roster.set("terminal", { font = "Cascadia Mono" })
+roster.set("fonts", { ui = "Inter", ui_size = 16 })
+roster.set("fonts.ui_size", 12)
+"#,
+    );
+    let config = config::load(&dir).unwrap();
+    assert_eq!(
+        config.terminal.size,
+        config::FontSize::Pt(13.0),
+        "replaced with the table"
+    );
+    assert_eq!(config.terminal.font, "Cascadia Mono");
+    assert_eq!((config.fonts.ui.as_str(), config.fonts.ui_size), ("Inter", 12));
+    assert_eq!(config.lines["fonts.ui_size"].line, 4);
+}
+
+/// examples/init-split: a Config split as Neovim's is (init.lua requires lua/myconf/…), loading
+/// through the real loader, with every value placed at the module and line that set it.
+#[test]
+fn the_split_example_loads_with_each_value_at_its_modules_line() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/init-split");
+    let c = config::load(&dir).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.terminal.size, config::FontSize::Pt(16.0));
+    assert_eq!(c.terminal.font.0.first().map(String::as_str), Some("Cascadia Mono"));
+    assert!(!c.vim);
+    assert_eq!(c.theme, "roster-ember");
+    assert!(c.themes.contains_key("roster-ember"));
+    assert!(
+        c.keys
+            .0
+            .iter()
+            .any(|b| b.context == config::KeyContext::Leader && b.keys == "t"),
+        "{:?}",
+        c.keys
+    );
+    assert_eq!(c.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Lab"]);
+    assert_eq!(c.folders[0].hosts, ["esx-02", "esx-03", "esx-04"]);
+    let at = |name: &str| c.lines.get(name).map(|l| l.file.as_str()).unwrap_or("none");
+    assert_eq!(at("terminal.size"), "lua/myconf/options.lua");
+    assert_eq!(at("theme"), "lua/myconf/themes.lua");
+    // Each module's lines are right: the line that names terminal.size says so.
+    let line = c.lines["terminal.size"].line as usize;
+    let text = std::fs::read_to_string(dir.join("lua/myconf/options.lua")).unwrap();
+    assert!(
+        text.lines().nth(line - 1).unwrap().contains("roster.o.terminal.size ="),
+        "line {line}"
+    );
+}
+
+/// Every `lua` block in the Config's guides is an init.lua that loads when pasted on its own
+/// (recipes promise it): a block that starts with `-- lua/NAME.lua` is that module, written
+/// beside the init.lua of the blocks around it.
+#[test]
+fn every_init_lua_snippet_in_the_guides_loads() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/app");
+    let mut total = 0;
+    for page in ["config.md", "recipes.md", "keyboard.md"] {
+        let text = std::fs::read_to_string(root.join(page)).unwrap();
+        let mut blocks: Vec<(usize, String)> = Vec::new();
+        let mut current: Option<(usize, String)> = None;
+        for (i, line) in text.lines().enumerate() {
+            match (&mut current, line.trim_end()) {
+                (None, "```lua") => current = Some((i + 1, String::new())),
+                (Some(_), "```") => blocks.push(current.take().unwrap()),
+                (Some((_, b)), l) => {
+                    b.push_str(l);
+                    b.push('\n');
+                }
+                _ => {}
+            }
+        }
+        total += blocks.len();
+        let mut modules: Vec<(String, String)> = Vec::new();
+        for (n, (line, block)) in blocks.iter().enumerate() {
+            let first = block.lines().next().unwrap_or_default();
+            if let Some(module) = first
+                .strip_prefix("-- ")
+                .filter(|m| m.starts_with("lua/") && m.ends_with(".lua"))
+            {
+                modules.push((module.to_string(), block.clone()));
+                continue;
+            }
+            let dir = temp_dir(&format!("snippet-{}-{n}", page.trim_end_matches(".md")));
+            for (path, source) in modules.drain(..) {
+                let path = dir.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, source).unwrap();
+            }
+            std::fs::write(dir.join("init.lua"), block).unwrap();
+            if let Err(e) = config::load(&dir) {
+                panic!("{page}:{line}: this block doesn't load as init.lua: {e}\n{block}");
+            }
+        }
+        assert!(modules.is_empty(), "{page}: a module block with no init.lua after it");
+    }
+    assert!(total > 20, "only {total} lua blocks found");
 }

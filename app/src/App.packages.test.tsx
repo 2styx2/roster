@@ -2,7 +2,7 @@
 // unverified source; `:packages` lists it; `:packages update` shows the new commit and its diff,
 // and Escape keeps the version it has.
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
@@ -74,5 +74,47 @@ describe("Packages", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(pk.lock["recent-alerts"]).toBe(fakeCommit(1));
     expect(screen.getByText("⚠ 1.0.0")).toBeInTheDocument();
+  });
+
+  it("a cancelled install shows in `:packages` and isn't asked again; `:packages install NAME` asks", async () => {
+    const pk = packages();
+    const user = await ready(pk);
+    await screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+    await user.keyboard(`${LEADER}:packages{Enter}`);
+    const panel = await screen.findByRole("region", { name: "Packages" });
+    expect(within(panel).getByLabelText("recent-alerts, cancelled")).toHaveTextContent(":packages install recent-alerts asks again");
+    await user.keyboard("{Escape}");
+
+    await user.keyboard(`${LEADER}:packages install recent-alerts{Enter}`);
+    await user.click(within(await screen.findByRole("alertdialog", { name: "Install recent-alerts?" })).getByRole("button", { name: "Install" }));
+    expect(await screen.findByText("⚠ 1.0.0")).toBeInTheDocument();
+  });
+
+  it("`:packages update NAME` checks that Package", async () => {
+    const pk = packages();
+    pk.lock["recent-alerts"] = fakeCommit(1);
+    const user = await ready(pk);
+    await user.click(within(await screen.findByRole("alertdialog", { name: "Install recent-alerts?" })).getByRole("button", { name: "Install" }));
+    await screen.findByText("⚠ 1.0.0");
+    pk.named[0]?.versions.push({ commit: fakeCommit(2), subject: "Faster", plugin: alerts("2.0.0", ["terminal.read"]), diff: "+fast" });
+    await user.keyboard(`${LEADER}:packages update recent-alerts{Enter}`);
+    expect(await screen.findByRole("alertdialog", { name: "Update recent-alerts?" })).toHaveTextContent("Faster");
+  });
+
+  it("from a folder of a repo, the prompt and `:packages` show the folder (Q94)", async () => {
+    const pk = packages();
+    pk.named = [{ name: "recent-alerts", source: "someone/roster", dir: "plugins/recent-alerts", versions: pk.named[0]!.versions }];
+    const user = await ready(pk);
+    const prompt = await screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
+    expect(prompt).toHaveTextContent("Unverified: from https://github.com/someone/roster.git, folder plugins/recent-alerts, at 1111111.");
+    await user.click(within(prompt).getByRole("button", { name: "Install" }));
+    await screen.findByText("⚠ 1.0.0");
+
+    await user.keyboard(`${LEADER}:packages{Enter}`);
+    const panel = await screen.findByRole("region", { name: "Packages" });
+    expect(within(panel).getByLabelText("recent-alerts, running")).toHaveTextContent("https://github.com/someone/roster.git, folder plugins/recent-alerts");
   });
 });

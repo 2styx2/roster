@@ -189,3 +189,26 @@ describe("Sessions", () => {
     expect(output().textContent).not.toMatch(/typed-while-locked/);
   });
 });
+
+describe("the tab strip's breadcrumb (ticket 120)", () => {
+  it("names the Host a nested ssh took the Session to, for the eye and for a screen reader", async () => {
+    const { TabStrip } = await import("./Sessions");
+    const tab = (hop: { to: string; known: boolean } | null) => ({
+      id: 1,
+      host: "esx-01",
+      label: "esx-01",
+      status: { state: "open" as const },
+      auth: "key" as const,
+      shell: true,
+      attempt: 1,
+      quick: null,
+      save: null,
+      prompt: null,
+      hop,
+    });
+    const { rerender } = render(<TabStrip snapshot={{ tabs: [tab({ to: "esx-02", known: true })], active: 1, previous: null }} run={() => {}} />);
+    expect(screen.getByRole("tab")).toHaveAccessibleName("esx-01, now on esx-02 through ssh");
+    rerender(<TabStrip snapshot={{ tabs: [tab(null)], active: 1, previous: null }} run={() => {}} />);
+    expect(screen.getByRole("tab")).toHaveAccessibleName("esx-01");
+  });
+});

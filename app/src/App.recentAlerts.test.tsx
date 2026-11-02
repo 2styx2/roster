@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
-import { FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
+import { FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeBackend } from "./backend/fake";
+import { fixtureProps } from "./backend/fixtureProps";
 import { fakeCommit, type FakePackages } from "./backend/fakePackages";
 import { recentAlerts, type RecentAlertsOptions } from "./backend/fakeRecentAlerts";
 import { SAVE_TO_VAULT_API_VERSION } from "./backend/types";
@@ -283,17 +284,20 @@ describe("trust", () => {
     expect(screen.getByText("No alerts. Lines with ERROR or panic show here.")).toBeInTheDocument();
   });
 
-  it("an update that asks for network can't be used yet, and the version it has keeps running", async () => {
+  it("an update that asks for network shows each site, flagged; Esc keeps the version it has", async () => {
     const r = await installed();
     r.pk.named[0]?.versions.push({
       commit: fakeCommit(2),
       subject: "Post alerts to a webhook",
-      plugin: recentAlerts({ version: "2.0.0", permissions: ["terminal.read", "network"] }),
-      diff: "",
+      plugin: recentAlerts({ version: "2.0.0", permissions: ["terminal.read", "network:hooks.example.com"] }),
+      diff: '+  permissions = { "terminal.read", "network:hooks.example.com" },',
     });
     await r.user.keyboard(`${LEADER}:packages update{Enter}`);
-    expect(await screen.findByText(/recent-alerts: its new version can't be used: .*"network" isn't available yet/)).toBeInTheDocument();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const p = await screen.findByRole("alertdialog", { name: "Update recent-alerts?" });
+    expect(p).toHaveTextContent("Its new version also asks to:");
+    expect(p).toHaveTextContent("network:hooks.example.com");
+    expect(p).toHaveTextContent("Can send data to hooks.example.com and fetch from it");
+    await r.user.keyboard("{Escape}");
     expect(r.pk.lock["recent-alerts"]).toBe(fakeCommit(1));
     await connect(r);
     r.backend.print(HOST, "ERROR still watched\r\n");
@@ -356,5 +360,19 @@ describe("trust", () => {
     expect(sent).toContain("ERROR after login");
     expect(sent).not.toContain(FAKE_HOST_PASSWORD);
     expect(document.body.innerHTML).not.toContain(FAKE_HOST_PASSWORD);
+  });
+});
+
+// Ticket 79 (#137): `?fixture=recent-alerts` shows the Plugin running with alerts, headless.
+describe("the recent-alerts fixture", () => {
+  it("starts with the Plugin installed and its alerts in the Sidebar", async () => {
+    const scenario = fixtures["recent-alerts"]!;
+    const props = fixtureProps(scenario.app, memoryPlatform());
+    render(<App backend={fakeBackend(scenario)} terminalView={StubTerminal} {...props} />);
+    const alerts = await screen.findByRole("group", { name: "Recent alerts" }, { timeout: 5000 });
+    await within(alerts).findByText("ERROR: disk full on /data", undefined, { timeout: 5000 });
+    expect(within(alerts).getByText("panic: runtime error: index out of range")).toBeInTheDocument();
+    expect(within(alerts).getByText("ERROR: connection refused (backup target)")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Install recent-alerts?" })).toBeNull();
   });
 });

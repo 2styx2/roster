@@ -3,8 +3,8 @@
 //! The first time, the file is created from `examples/init.lua` with every line commented out,
 //! so creating it changes nothing until the user uncomments something. An existing file is never
 //! touched. It opens with the OS's app for the file, or (`editor = "wsl"`) with `$EDITOR` inside
-//! the Backend's WSL distro, in a console window of its own. Saving it reloads the Config as any
-//! save does (watch.rs).
+//! the Backend's WSL distro, in a console window of its own. `:source` applies it, as any change
+//! (or a save, with `auto_reload`).
 //!
 //! On Windows "the OS's app" is the one registered for `.lua`'s **edit** verb, else Notepad.
 //! Never the "open" verb: with Lua installed, `.lua` usually opens with the interpreter, which
@@ -14,13 +14,13 @@ use super::{FILE_NAME, Os};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// examples/init.lua: every option with its default and a comment.
+/// examples/init.lua: every option with its default and a comment, one `roster.o` line each.
 const EXAMPLE: &str = include_str!("../../../../examples/init.lua");
 
 const HEADER: &str = "\
 -- Made by the roster app's :config from its example (examples/init.lua in the roster repo).
--- Every line is commented out, so this file changes nothing yet: uncomment what you want to
--- change (keep the `return {` and its closing `}`) and save. The app applies it at once.
+-- Every line is commented out, so this file changes nothing yet: uncomment a `roster.o` line
+-- (each one stands alone), change its value, save, and run :source (Leader S) to apply it.
 --
 ";
 

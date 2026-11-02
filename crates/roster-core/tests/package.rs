@@ -1,6 +1,8 @@
 //! Packages (ticket 24, decision Q83): Plugins from git repos, pinned in `roster.lock`. The
 //! sources here are local bare repos in a temp dir, so nothing touches the network.
 
+mod common;
+
 use roster_core::config::{self, PackageSpec};
 use roster_core::package::{Packages, check_specs, name_of, url_of};
 use roster_core::plugin::{Limits, PluginHost, Serve, Source};
@@ -9,11 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-fn temp(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roster-core-package-{}-{test}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp(test: &str) -> common::Temp {
+    common::temp(&format!("package-{test}"))
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -99,6 +98,7 @@ fn spec(source: &str) -> PackageSpec {
         tag: None,
         branch: None,
         commit: None,
+        dir: None,
         config: Default::default(),
     }
 }
@@ -377,4 +377,274 @@ fn a_package_loads_as_a_plugin_with_its_settings_from_init_lua() {
     assert_eq!(manifest.name, "recent-alerts");
     assert_eq!(reply.error, None);
     assert_eq!(reply.ops[0]["spec"]["text"], "⚠ 0");
+}
+
+// ------------------------------------------------- Packages from a repo subfolder (T81, Q94)
+
+/// A repo that holds several Plugins under `plugins/`, the way roster's own repo does.
+struct Mono {
+    bare: PathBuf,
+    work: PathBuf,
+}
+
+fn plugin_manifest(name: &str, version: &str) -> String {
+    format!("return {{ name = {name:?}, version = {version:?}, description = \"\", api = 2, permissions = {{}} }}\n")
+}
+
+impl Mono {
+    fn new(root: &Path) -> Mono {
+        let bare = root.join("remote").join("roster.git");
+        let work = root.join("mono");
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        git(&bare, &["init", "--quiet", "--bare", "--initial-branch=main"]);
+        git(&work, &["init", "--quiet", "--initial-branch=main"]);
+        git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        let mono = Mono { bare, work };
+        std::fs::write(mono.work.join("README.md"), "the app\n").unwrap();
+        mono.write("alpha", "1.0.0", "-- alpha\n");
+        mono.write("beta", "1.0.0", "-- beta\n");
+        mono.push("first");
+        mono
+    }
+
+    fn write(&self, plugin: &str, version: &str, init: &str) {
+        let dir = self.work.join("plugins").join(plugin);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("roster-plugin.lua"), plugin_manifest(plugin, version)).unwrap();
+        std::fs::write(dir.join("init.lua"), init).unwrap();
+    }
+
+    fn push(&self, message: &str) -> String {
+        git(&self.work, &["add", "-A"]);
+        git(&self.work, &["commit", "--quiet", "-m", message]);
+        git(&self.work, &["push", "--quiet", "origin", "main"]);
+        git(&self.work, &["rev-parse", "HEAD"])
+    }
+
+    fn url(&self) -> String {
+        self.bare.to_str().unwrap().to_string()
+    }
+}
+
+fn in_dir(source: &str, dir: &str) -> PackageSpec {
+    let mut s = spec(source);
+    s.dir = Some(dir.into());
+    s
+}
+
+#[test]
+fn a_package_from_a_subfolder_loads_the_plugin_in_it_and_the_lock_keeps_the_folder() {
+    let root = temp("subfolder");
+    let mono = Mono::new(&root);
+    let (data, config) = (root.join("data"), root.join("config"));
+    let packages = Packages::new(&data, &config);
+    let specs = vec![in_dir(&mono.url(), "plugins/alpha")];
+
+    let status = packages.sync(&specs);
+    assert_eq!(status[0].error, None);
+    // Named after the folder, not the repo.
+    assert_eq!(status[0].name, "alpha");
+    assert_eq!(status[0].dir.as_deref(), Some("plugins/alpha"));
+
+    let (dir, _) = packages.loadable(&specs, "alpha").unwrap();
+    assert!(dir.ends_with("plugins/alpha"), "{}", dir.display());
+    let host = PluginHost::new(Arc::new(NoServe), Limits::default());
+    let (manifest, _) = host.load_with(&Source::Dir(dir), &[], &Value::Null).unwrap();
+    assert_eq!(manifest.name, "alpha");
+
+    packages.pin(&specs, "alpha").unwrap();
+    let head = git(&mono.work, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        lock_json(&config),
+        json!({ "alpha": { "source": mono.url(), "dir": "plugins/alpha", "commit": head } })
+    );
+    assert!(packages.sync(&specs)[0].pinned);
+
+    // Another folder in init.lua is other code: it isn't installed until it's allowed again.
+    let moved = vec![{
+        let mut s = in_dir(&mono.url(), "plugins/beta");
+        s.name = Some("alpha".into());
+        s
+    }];
+    assert!(!packages.sync(&moved)[0].pinned);
+}
+
+#[test]
+fn two_packages_from_one_repo_each_have_their_own_clone_and_pin() {
+    let root = temp("two");
+    let mono = Mono::new(&root);
+    let (data, config) = (root.join("data"), root.join("config"));
+    let packages = Packages::new(&data, &config);
+    let first = git(&mono.work, &["rev-parse", "HEAD"]);
+    let mut beta = in_dir(&mono.url(), "plugins/beta");
+    beta.commit = Some(first.clone());
+    let specs = vec![in_dir(&mono.url(), "plugins/alpha"), beta];
+    let status = packages.sync(&specs);
+    assert_eq!((status[0].error.as_deref(), status[1].error.as_deref()), (None, None));
+    assert_eq!((status[0].name.as_str(), status[1].name.as_str()), ("alpha", "beta"));
+    packages.pin(&specs, "alpha").unwrap();
+    packages.pin(&specs, "beta").unwrap();
+
+    // One moves on; the other stays where it's pinned.
+    mono.write("alpha", "2.0.0", "-- alpha two\n");
+    let second = mono.push("alpha two");
+    let checked = packages.check(&specs);
+    let alpha = checked.iter().find(|c| c.name == "alpha").unwrap();
+    assert_eq!(alpha.update.as_ref().map(|u| u.to.as_str()), Some(second.as_str()));
+    let beta = checked.iter().find(|c| c.name == "beta").unwrap();
+    assert!(beta.update.is_none());
+    packages.apply(&specs, "alpha", &second).unwrap();
+    let lock = lock_json(&config);
+    assert_eq!(lock["alpha"]["commit"], second.as_str());
+    assert_eq!(lock["beta"]["commit"], first.as_str());
+
+    // Removing one leaves the other's clone alone.
+    assert_eq!(packages.clean(&specs[1..]).unwrap(), vec!["alpha".to_string()]);
+    assert!(packages.loadable(&specs[1..], "beta").is_ok());
+}
+
+#[test]
+fn an_update_shows_only_what_changed_in_the_packages_folder() {
+    let root = temp("subupdate");
+    let mono = Mono::new(&root);
+    let packages = Packages::new(&root.join("data"), &root.join("config"));
+    let specs = vec![in_dir(&mono.url(), "plugins/alpha")];
+    packages.sync(&specs);
+    packages.pin(&specs, "alpha").unwrap();
+
+    // Commits elsewhere in the repo aren't an update to this Package.
+    std::fs::write(mono.work.join("README.md"), "the app, changed\n").unwrap();
+    mono.write("beta", "1.1.0", "-- beta changed\n");
+    mono.push("elsewhere");
+    assert!(packages.check(&specs)[0].update.is_none());
+
+    mono.write("alpha", "1.2.0", "-- alpha changed\n");
+    std::fs::write(mono.work.join("README.md"), "the app, changed again\n").unwrap();
+    mono.push("alpha changed");
+    let checked = packages.check(&specs);
+    let update = checked[0].update.as_ref().expect("an update");
+    assert_eq!(update.log.len(), 1, "{:?}", update.log);
+    assert!(update.log[0].ends_with("alpha changed"));
+    assert!(update.diff.contains("+-- alpha changed"));
+    assert!(!update.diff.contains("README"), "{}", update.diff);
+    assert!(!update.stat.contains("README"), "{}", update.stat);
+    assert_eq!(update.manifest.as_ref().unwrap().version, "1.2.0");
+}
+
+#[test]
+fn a_subfolder_must_stay_inside_the_repo() {
+    for (dir, says) in [
+        ("/etc", "inside the repo"),
+        ("C:/plugins", "inside the repo"),
+        ("\\plugins", "inside the repo"),
+        ("../other", "\"..\""),
+        ("plugins/../../x", "\"..\""),
+        ("plugins\\alpha", "use /"),
+        ("", "which folder"),
+        (".git/hooks", ".git"),
+    ] {
+        let err = check_specs(&[in_dir("a/b", dir)]).unwrap_err();
+        assert_eq!(err.0, vec!["packages", "1", "dir"], "{dir}");
+        assert!(err.1.contains(says), "{dir}: {}", err.1);
+    }
+    assert!(check_specs(&[in_dir("a/b", "plugins/alpha/")]).is_ok());
+    // Two folders of one repo are named apart; the same folder twice isn't.
+    assert!(check_specs(&[in_dir("a/b", "plugins/alpha"), in_dir("a/b", "plugins/beta")]).is_ok());
+    assert!(check_specs(&[in_dir("a/b", "plugins/alpha"), in_dir("c/d", "x/alpha")]).is_err());
+}
+
+#[test]
+fn a_subfolder_that_isnt_there_or_leads_out_of_the_clone_is_refused() {
+    let root = temp("subbad");
+    let mono = Mono::new(&root);
+    std::fs::create_dir_all(mono.work.join("plugins")).unwrap();
+    std::fs::write(mono.work.join("plugins/file"), "not a folder\n").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/", mono.work.join("plugins/escape")).unwrap();
+        std::os::unix::fs::symlink("alpha", mono.work.join("plugins/inside")).unwrap();
+    }
+    mono.push("odd entries");
+    let packages = Packages::new(&root.join("data"), &root.join("config"));
+
+    let missing = vec![in_dir(&mono.url(), "plugins/gamma")];
+    let err = packages.sync(&missing)[0].error.clone().unwrap();
+    assert!(err.contains("has no folder plugins/gamma"), "{err}");
+    assert!(packages.loadable(&missing, "gamma").is_err());
+
+    let file = vec![in_dir(&mono.url(), "plugins/file")];
+    let err = packages.sync(&file)[0].error.clone().unwrap();
+    assert!(err.contains("has no folder plugins/file"), "{err}");
+
+    #[cfg(unix)]
+    {
+        let escape = vec![in_dir(&mono.url(), "plugins/escape")];
+        let err = packages.sync(&escape)[0].error.clone().unwrap();
+        assert!(err.contains("leads outside"), "{err}");
+        let err = packages.loadable(&escape, "escape").unwrap_err();
+        assert!(err.contains("leads outside"), "{err}");
+        // A link that stays inside the clone is fine.
+        let inside = vec![in_dir(&mono.url(), "plugins/inside")];
+        assert_eq!(packages.sync(&inside)[0].error, None);
+        assert!(packages.loadable(&inside, "inside").is_ok());
+    }
+}
+
+#[test]
+fn init_lua_takes_a_packages_dir() {
+    let dir = temp("dirconfig");
+    let source = r#"return { packages = { { "https://git.example.com/team/roster.git", dir = "plugins/alpha" } } }"#;
+    let c = config::load_source(&dir, source, &config::Env::default()).unwrap();
+    assert_eq!(c.packages[0].dir.as_deref(), Some("plugins/alpha"));
+    let e = config::load_source(
+        &dir,
+        r#"return { packages = { { "a/b", dir = "../x" } } }"#,
+        &config::Env::default(),
+    )
+    .unwrap_err();
+    assert!(e.message.contains("packages.1.dir"), "{}", e.message);
+}
+
+#[test]
+fn update_of_one_package_fetches_only_that_one() {
+    let root = temp("update-one");
+    let mono = Mono::new(&root);
+    let (data, config) = (root.join("data"), root.join("config"));
+    let packages = Packages::new(&data, &config);
+    let specs = vec![
+        in_dir(&mono.url(), "plugins/alpha"),
+        in_dir(&mono.url(), "plugins/beta"),
+    ];
+    packages.sync(&specs);
+    packages.pin(&specs, "alpha").unwrap();
+    packages.pin(&specs, "beta").unwrap();
+    // beta's remote is gone: fetching it fails, so a check that touched it would say so.
+    let gone = root.join("gone.git");
+    git(
+        &data.join("packages/beta"),
+        &["remote", "set-url", "origin", gone.to_str().unwrap()],
+    );
+    mono.write("alpha", "2.0.0", "-- alpha two\n");
+    let second = mono.push("alpha two");
+
+    let alpha = packages.check_named(&specs, "alpha").unwrap();
+    assert_eq!(alpha.name, "alpha");
+    assert_eq!(alpha.error, None);
+    assert_eq!(alpha.update.map(|u| u.to), Some(second));
+    assert!(
+        packages
+            .check(&specs)
+            .iter()
+            .any(|c| c.name == "beta" && c.error.is_some())
+    );
+    assert!(packages.check_named(&specs, "beta").unwrap().error.is_some());
+
+    let none = packages.check_named(&specs, "nope").unwrap_err();
+    assert_eq!(none, "init.lua names no Package nope");
+    let uncloned = vec![in_dir(&mono.url(), "plugins/gamma")];
+    assert_eq!(
+        packages.check_named(&uncloned, "gamma").unwrap_err(),
+        "gamma isn't installed: :packages install gamma asks to install it"
+    );
 }

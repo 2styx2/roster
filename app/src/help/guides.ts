@@ -1,9 +1,7 @@
 // The hand-written guides, bundled from docs/ at build time. The Markdown in docs/ is the one
 // copy: Vite reads it as text (`?raw`) when the app is built, so a guide in the app is always the
-// docs of the commit it was built from, and there's nothing to copy by hand. options.ts reads
-// config.md's option tables the same way, and options.test.ts fails CI when an option in the
-// core's schema isn't in them (or one in them isn't in the schema). lint.test.ts fails CI on a
-// link in any of them that goes nowhere.
+// docs of the commit it was built from, and there's nothing to copy by hand. lint.test.ts fails
+// CI on a link in any of them that goes nowhere.
 import config from "../../../docs/app/config.md?raw";
 import errors from "../../../docs/app/errors.md?raw";
 import extending from "../../../docs/app/extending.md?raw";
@@ -91,7 +89,7 @@ export const guides: readonly Guide[] = [
     id: "config",
     path: "docs/app/config.md",
     title: "Your init.lua",
-    summary: "Where the Config lives, :config and :source, errors, the sandbox, the roster table, folders.yml",
+    summary: "Writing it, in one file or in modules; :config and :source, errors, the sandbox, the roster table, folders.yml",
     part: "Make it yours",
     order: 20,
     aliases: { "init.lua": "config", "folders.yml": "config#foldersyml", sandbox: "config#the-sandbox", layout: "config#layout" },
@@ -147,6 +145,7 @@ export const guides: readonly Guide[] = [
       providers: "cli#password-providers",
       discover: "cli#discover",
       resources: "cli#resources-secrets-with-no-address",
+      json: "cli#machine-readable-output",
     },
     markdown: cli,
   },
@@ -154,10 +153,17 @@ export const guides: readonly Guide[] = [
     id: "mesh",
     path: "docs/mesh.md",
     title: "The Mesh: Hosts that reach each other",
-    summary: "mesh: and links: in roster.yml, roster mesh, cut, drift in roster check, ESXi and appliances",
+    summary: "mesh: and links: in roster.yml, via: jump Hosts, seen_as: addresses, roster mesh, cut, drift in roster check, ESXi and mesh_dir:, appliances",
     part: "Reference",
     order: 72,
-    aliases: { "mesh links": "mesh#saying-who-reaches-whom", "roster mesh": "mesh#roster-mesh", "mesh cut": "mesh#cut" },
+    aliases: {
+      "mesh links": "mesh#saying-who-reaches-whom",
+      "roster mesh": "mesh#roster-mesh",
+      "mesh cut": "mesh#cut",
+      "mesh via": "mesh#through-a-jump-host",
+      mesh_dir: "mesh#esxi",
+      seen_as: "mesh#other-addresses",
+    },
     markdown: meshGuide,
   },
   {
@@ -192,6 +198,11 @@ export const guides: readonly Guide[] = [
       "plugin-events": "plugin-api#events",
       ":plugins": "plugins#installing-and-trusting",
       ":packages": "plugins#packages",
+      "shell-integration": "plugins#shell-integration",
+      "osc-133": "plugins#shell-integration",
+      "shell-hooks": "plugins#shell-hooks-roster-sets-it-up",
+      "shell_hooks": "plugins#shell-hooks-roster-sets-it-up",
+      "osc-7": "plugins#shell-hooks-roster-sets-it-up",
     },
     markdown: plugins,
   },
@@ -215,7 +226,7 @@ export const guides: readonly Guide[] = [
     part: "Extending",
     order: 83,
     aliases: { "roster.lua": "plugin-types", luals: "plugin-types", "lua-language-server": "plugin-types" },
-    markdown: `# roster.lua: the Plugin API's types\n\nThe whole [Plugin API](../../../docs/plugin-api.md) as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations. Save it as \`types/roster.lua\` next to your Plugin's \`init.lua\` and point lua-language-server at it: [Editor support](../../../docs/plugin-api.md#editor-support). It's the copy this app was built with, so it matches this app's API.\n\n\`\`\`lua\n${pluginStubs}\n\`\`\`\n`,
+    markdown: `# roster.lua: the Plugin API's types\n\nThe whole [Plugin API](../../../docs/plugin-api.md) as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations. \`:plugins types PATH\` writes it as \`types/roster.lua\` in your Plugin's folder (or save it there yourself); point lua-language-server at it: [Editor support](../../../docs/plugin-api.md#editor-support). It's the copy this app was built with, so it matches this app's API.\n\n\`\`\`lua\n${pluginStubs}\n\`\`\`\n`,
   },
   {
     id: "news",
@@ -245,8 +256,6 @@ export const guides: readonly Guide[] = [
   },
 ];
 
-export const configMarkdown = config;
-
 /** A path from the repo's root, `.` and `..` resolved: `docs/app/../serve-api.md` → `docs/serve-api.md`. */
 export function repoPath(from: string, href: string): string {
   const out = from.split("/").slice(0, -1);
@@ -268,6 +277,8 @@ export function guideLink(from: Guide, href: string): string {
   const [file = "", anchor] = href.split("#", 2) as [string, string | undefined];
   if (!file.includes("/") && !FILE.test(file)) return href;
   const path = repoPath(from.path, file);
+  // The option reference's Markdown is the `options` page, made from the same data.
+  if (path === "docs/app/options.md") return "options";
   const guide = guides.find((g) => g.path === path);
   if (!guide) return `file:${path}${anchor ? `#${anchor}` : ""}`;
   return anchor ? `${guide.id}#${anchor}` : guide.id;

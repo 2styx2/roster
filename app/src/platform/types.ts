@@ -33,14 +33,12 @@ export interface WindowControls {
   watchGeometry(onSettle: (geometry: WindowGeometry) => void): () => void;
 }
 
-/** folders.yml next to init.lua (decision Q46): its text, written whole, and when it changed. */
+/** folders.yml next to init.lua (decision Q46, retired by Q93): read at start, its Folders moved
+ * into the Folders Plugin once (ticket 61). */
 export interface FoldersSource {
-  /** Its full path, and its text (null while there's no file). */
+  /** Its full path, and its text (null while there's no file). Only read: its Folders move into
+   * the Folders Plugin once (ticket 61, decision Q93). */
   read(): Promise<{ path: string; text: string | null }>;
-  /** Replaces it with `text`, atomically. */
-  write(text: string): Promise<void>;
-  /** Calls `onSaved` after each save of it (the app's own writes too); returns stop. */
-  watch(onSaved: () => void): () => void;
 }
 
 export interface Platform {
@@ -59,7 +57,7 @@ export interface Platform {
   fontInstalled?: FontProbe;
   /** The Config (init.lua, ticket 21) and its live changes; absent in a plain browser. */
   config?: ConfigSource;
-  /** folders.yml (ticket 28); absent where there's no config folder: Folders then stay in the State. */
+  /** folders.yml (ticket 28), to move its Folders in once; absent where there's no config folder. */
   folders?: FoldersSource;
   /** Opens an http or https URL in the default browser (a Host's web service, ticket 18). The
    * caller checks it first (details/details.ts webUrl), and the Tauri shell checks it again. */

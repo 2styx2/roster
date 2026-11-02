@@ -40,10 +40,10 @@ roster keeps it in one file, `roster.yml`, in your team's own private git repo:
 
 It comes in two parts that share that file:
 
-- **The CLI, `roster`** (Python). It sets up each box with its own SSH key, runs commands on password-only gear, calls web APIs with the stored login, scans networks into the inventory, and tells Claude which hosts exist without ever showing it a secret.
-- **The roster app** (Tauri, for Windows and Linux). A fast, keyboard-first terminal: find a Host in a few keystrokes and you're in a shell, with the password fetched from the vault and never shown. It talks to the CLI through `roster serve`, so the file and the vault stay roster's.
+- **The CLI, `roster`** (Python). It sets up each box with its own SSH key, runs commands on password-only gear, calls web APIs with the stored login, scans networks into the inventory, tells Claude which hosts exist without ever showing it a secret, links your Hosts to each other with their own keys (the Mesh), and prints its data as JSON (`--json`) for scripts and other tools, never a secret.
+- **The roster app** (Tauri, for Windows and Linux). Fast, keyboard-first access to every Host: find one in a few keystrokes and you're in a shell over your own ssh, with the password fetched from the vault and never shown. It talks to the CLI through `roster serve`, so the file and the vault stay roster's.
 
-> **Status:** pre-release. Everything builds up on `dev`; the first Release, `v0.1.0`, comes after iteration 4 ([roadmap](docs/app/roadmap.md)).
+> **Status:** pre-release. The latest Release is [v0.3.0](https://github.com/2styx2/roster/releases): first-party Plugins, a concurrent `roster serve` and `--json`, password-prompt fill and nested ssh logins, shell integration, and a Neovim-style `init.lua` with an option reference. See [what's new](docs/news.md#v030) and the [roadmap](docs/app/roadmap.md).
 
 ## Features
 
@@ -54,6 +54,8 @@ It comes in two parts that share that file:
 - `roster web HOST api …`: web API calls made with the service's stored login.
 - `roster discover 10.0.1.0/24 --write`: an nmap sweep becomes inventory, marked unreviewed until a person looks.
 - `roster check`: SSH, web UI and service ports on every host; `roster check HOST` says which step fails and what to do.
+- `roster mesh`: Hosts in a group, or joined by a Link, reach each other with their own keys, through a jump Host if needed (`via:`); `roster mesh cut HOST` takes one out at once.
+- `--json` on the read commands (`hosts`, `info`, `resources`, `check`, `mesh status`, `providers`, `auth-check`) and on `discover` and `mesh --dry-run`: one JSON document for scripts and other tools, never a secret.
 - Password providers: Bitwarden, 1Password, `pass`, KeePassXC, an environment variable, or any command.
 - `ROSTER.md` for Claude: which hosts exist and how to reach them, with rules. Claude uses `ssh`, `roster run` and `roster web`; roster supplies the credentials and Claude sees only the output.
 
@@ -66,6 +68,8 @@ It comes in two parts that share that file:
 - **Keyboard first:** the Leader (Ctrl+Space) takes the keys back from the terminal; vim keys; keycaps next to everything.
 - **Configured in code:** one `init.lua`, like Neovim or WezTerm, applied with `:source`, six bundled Themes, and `:help` for every option.
 - **Plain errors:** each connection failure says where it lives (the vault, the network, the Host) and the one thing to do next.
+- **`:check`:** this Box's health, or one Host's (`:check HOST`), each failing step with its fix.
+- **Plugins, in Lua like Neovim's:** Packages from git, pinned in `roster.lock`, sandboxed, with the permissions they ask for and never a secret. roster's own optional ones: the Mesh controls, the Topology map of your network, and Discover ([plugins/](plugins/README.md)).
 
 <table>
   <tr>
@@ -162,12 +166,15 @@ Start at **[docs/README.md](docs/README.md)**, the index of every doc. In the ap
 | [docs/README.md](docs/README.md) | Every doc, grouped: getting started, making it yours, reference, extending, working on roster |
 | [docs/app/start.md](docs/app/start.md) | New to the app: open a Host, find any command, make it yours |
 | [docs/app/recipes.md](docs/app/recipes.md), [docs/app/extending.md](docs/app/extending.md) | `init.lua` snippets to paste, and how far roster bends (the registries) |
-| [docs/cli-reference.md](docs/cli-reference.md) | `roster.yml`, resources, password providers, `discover`, every command, how Claude uses it |
+| [docs/cli-reference.md](docs/cli-reference.md) | `roster.yml`, resources, password providers, `discover`, every command, machine-readable output (`--json`), how Claude uses it |
 | [docs/new-box.md](docs/new-box.md) | Setting up roster on another box (a teammate's machine, a jump host, a Claude box) |
 | [docs/adding-hosts.md](docs/adding-hosts.md) | Adding a network or host, wiring it to vault items, testing the logins |
+| [docs/mesh.md](docs/mesh.md) | The Mesh: Hosts that reach each other with their own keys |
+| [docs/plugins.md](docs/plugins.md), [plugins/](plugins/README.md) | Writing a Plugin, and roster's own optional ones (Mesh controls, Topology, Discover) |
+| [docs/news.md](docs/news.md) | What's new in each Release, and on `dev` |
 | [docs/serve-api.md](docs/serve-api.md) | `roster serve`: the JSON-RPC API the app uses, and its error codes |
 | [app/README.md](app/README.md) | The app: module map, the two builds, fixtures, the Windows build loop |
-| [docs/app/](docs/app/) | The app's design: [keyboard](docs/app/keyboard.md), [Config](docs/app/config.md), [Themes](docs/app/themes.md), [errors](docs/app/errors.md), [architecture](docs/app/architecture.md), [decisions](docs/app/decisions.md) |
+| [docs/app/](docs/app/) | The app's design: [keyboard](docs/app/keyboard.md), [Config](docs/app/config.md), [Themes](docs/app/themes.md), [errors](docs/app/errors.md), [security](docs/app/security.md), [architecture](docs/app/architecture.md), [decisions](docs/app/decisions.md) |
 | [docs/adr/](docs/adr/) | Architecture decisions for the CLI and the app |
 | [docs/development.md](docs/development.md) | Working on the CLI: checks, the module map, trying it safely |
 | [docs/releasing.md](docs/releasing.md) | Cutting a Release |

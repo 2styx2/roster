@@ -25,8 +25,20 @@ export interface HealthSection extends Entry {
   title: string;
   /** Lower comes first. The built-ins use 0–100. */
   order: number;
-  checks(ctx: HealthContext): HealthCheck[];
+  /** A Plugin's section with a `check` function (ticket 60) answers later: it's called in the
+   * Plugin, which has the time budget of any call. */
+  checks(ctx: HealthContext): HealthCheck[] | Promise<HealthCheck[]>;
+  /** How long `:check` waits for it, when not SECTION_WAIT_MS: a Plugin's check may answer later,
+   * from a request's answer (`roster.health.answer`, HEALTH_LATER_MS). */
+  wait?: number;
 }
+
+/** How long `:check` waits for a section that answers later: a Plugin's call has a quarter of a
+ * second, and the core gives up on one two seconds after that (plugin::Limits). */
+export const SECTION_WAIT_MS = 3000;
+/** How long a Plugin's check that returned "later" has to answer (`roster.health.answer`):
+ * roster serve's answer may wait behind a Publish (decision Q112h). */
+export const HEALTH_LATER_MS = 30_000;
 
 export type HealthRegistry = Registry<HealthSection>;
 
@@ -140,18 +152,33 @@ export function builtinHealthRegistry(): HealthRegistry {
   return registry;
 }
 
-/** Runs every section, in order. A section a newer roster sends that no entry claims comes after
- * roster's own, under its id; a section that throws is an error of its own, never the whole run's. */
-export function runHealth(sections: readonly HealthSection[], ctx: HealthContext): HealthResult[] {
+/** Runs every section, all at once, and gives them in order. A section a newer roster sends that
+ * no entry claims comes after roster's own, under its id; a section that throws, or doesn't answer
+ * within `waitMs`, is an error of its own, never the whole run's. */
+export async function runHealth(sections: readonly HealthSection[], ctx: HealthContext, waitMs = SECTION_WAIT_MS): Promise<HealthResult[]> {
   const sorted = [...sections].sort((a, b) => a.order - b.order);
-  const out: HealthResult[] = sorted.map((s) => {
-    try {
-      return { id: s.id, title: s.title, source: s.source, checks: s.checks(ctx) };
-    } catch (e) {
-      const message = `this section failed: ${e instanceof Error ? e.message : String(e)}`;
-      return { id: s.id, title: s.title, source: s.source, checks: [{ section: s.id, level: "error" as const, message }] };
-    }
+  const failed = (s: HealthSection, message: string): HealthResult => ({
+    id: s.id,
+    title: s.title,
+    source: s.source,
+    checks: [{ section: s.id, level: "error", message }],
   });
+  const out: HealthResult[] = await Promise.all(
+    sorted.map(async (s): Promise<HealthResult> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const limit = s.wait ?? waitMs;
+      const late = new Promise<"late">((resolve) => (timer = setTimeout(() => resolve("late"), limit)));
+      try {
+        const checks = await Promise.race([Promise.resolve().then(() => s.checks(ctx)), late]);
+        if (checks === "late") return failed(s, `this section didn't answer within ${limit / 1000} seconds`);
+        return { id: s.id, title: s.title, source: s.source, checks };
+      } catch (e) {
+        return failed(s, `this section failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
   const known = new Set(sections.map((s) => s.id));
   const extra = [...new Set((ctx.box?.checks ?? []).map((c) => c.section).filter((id) => !known.has(id)))];
   const at = out.findIndex((r) => r.id === "repo") + 1 || out.length;

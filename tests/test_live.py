@@ -130,6 +130,24 @@ def test_moving_a_host_out_of_a_meshed_group_keeps_its_mesh_setting(write_config
     assert pinned == ["mesh"] and h["mesh"] is False
 
 
+def test_moving_a_host_keeps_the_mesh_dir_it_inherited(write_config):
+    from roster.config import load_config_text
+    path = write_config(MESHED.replace("    mesh: true\n", "    mesh: true\n    mesh_dir: /srv/mesh\n"))
+    _, new, _, pinned = edit.moved(path, "h1", "plain")
+    assert pinned == ["mesh", "mesh_dir"] and "        mesh_dir: /srv/mesh\n" in new
+    assert load_config_text(new, path)["mesh_dirs"]["h1"] == "/srv/mesh"
+    _, new, moved = edit.group_deleted(path, "lab", "plain")
+    assert moved == ["h1", "h2"] and load_config_text(new, path)["mesh_dirs"] == {"h1": "/srv/mesh", "h2": "/srv/mesh"}
+
+
+def test_a_move_that_would_change_the_mesh_dir_is_caught(write_config):
+    path = write_config(MESHED.replace("  plain:\n    user: u\n", "  plain:\n    user: u\n    mesh_dir: /opt/m\n"))
+    _, new, _, pinned = edit.moved(path, "h1", "plain")       # h1 has none: it takes plain's, as any new member would
+    assert pinned == ["mesh"]
+    _, new, _, pinned = edit.moved(path, "p1", "lab")         # p1 had plain's: it keeps it
+    assert pinned == ["mesh_dir"] and "        mesh_dir: /opt/m\n" in new
+
+
 def test_a_host_with_no_mesh_setting_joins_the_mesh_of_the_group_it_moves_to(write_config):
     path = write_config(MESHED)
     _, _, h, pinned = edit.moved(path, "p1", "lab")

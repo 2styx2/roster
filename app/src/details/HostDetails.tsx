@@ -7,9 +7,13 @@
 // animate (taste.md: motion confirms, and a key is its own confirmation).
 import type { Host, HostList } from "../backend/types";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
+import { HeadActions, runHeadKey } from "../view/ViewContent";
 import { Keys } from "../ui/Keys";
 import { countOf } from "../ui/format";
 import { hostFacts, serviceRows } from "./details";
+import { ViewContent } from "../view/ViewContent";
+import type { DetailsSectionDef } from "../view/views";
 
 export interface HostDetailsProps {
   host: Host;
@@ -20,6 +24,8 @@ export interface HostDetailsProps {
   /** `:open`'s keys hint: the command line's keys, or null when hints are off. */
   cmdlineKeys: string | null;
   leader: string;
+  /** Sections Plugins add for this Host (ticket 76), in order. */
+  sections?: readonly DetailsSectionDef[];
 }
 
 /** An arrow out of a box: it leaves the app, for the default browser. */
@@ -31,7 +37,7 @@ const OutGlyph = () => (
 
 const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
-export function HostDetails({ host, groups, onOpen, onClose, cmdlineKeys, leader }: HostDetailsProps) {
+export function HostDetails({ host, groups, onOpen, onClose, cmdlineKeys, leader, sections = [] }: HostDetailsProps) {
   const facts = hostFacts(host, groups);
   const services = serviceRows(host);
   const problems = host.problems ?? [];
@@ -45,9 +51,12 @@ export function HostDetails({ host, groups, onOpen, onClose, cmdlineKeys, leader
             {host.name}
           </span>
         </h2>
-        <button type="button" className="icon-button close" aria-label="Close the Host details" onMouseDown={keepFocus} onClick={onClose}>
-          <CloseGlyph />
-        </button>
+        <span className="panel-head-buttons">
+          <PanelButton />
+          <button type="button" className="icon-button close" aria-label="Close the Host details" onMouseDown={keepFocus} onClick={onClose}>
+            <CloseGlyph />
+          </button>
+        </span>
       </header>
       <dl className="details-facts">
         {facts.map((f) => (
@@ -104,6 +113,19 @@ export function HostDetails({ host, groups, onOpen, onClose, cmdlineKeys, leader
           </ul>
         </>
       )}
+      {sections.map((s) => (
+        <section key={s.id} className="details-section" aria-label={`${s.title} (from ${s.source})`} onKeyDown={(e) => runHeadKey(e, s.content.actions)}>
+          <h3 className="details-heading">
+            {s.title} <span className="details-count">{s.source}</span>
+            {s.content.actions?.length ? (
+              <span className="details-head-actions">
+                <HeadActions actions={s.content.actions} />
+              </span>
+            ) : null}
+          </h3>
+          <ViewContent content={s.content} label={`${s.title} of ${host.name}`} leader={leader} />
+        </section>
+      ))}
       {anyWeb && (
         <p className="details-foot muted key-hint">
           {cmdlineKeys ? (

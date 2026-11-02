@@ -7,7 +7,7 @@ export interface AppState {
   /** Host names, most recently opened first (the Picker breaks ties with it). */
   recentHosts: string[];
   /** Ids of the folded Sidebar rows and section headings ("section:inventory", "group:subnet-1",
-   * "folder:Lab ESXi"). */
+   * "folders:Lab ESXi"). */
   folded: string[];
   [other: string]: unknown;
 }
@@ -19,11 +19,16 @@ export const emptyState: AppState = { version: 1, recentHosts: [], folded: [] };
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((n) => typeof n === "string") : []);
 
+/** A folded row's id as it is now: a Folder's was `folder:NAME` before Folders became the
+ * `folders` Plugin (its section's rows are `folders:NAME`). */
+export const currentFoldId = (id: string): string => (id.startsWith("folder:") ? `folders:${id.slice("folder:".length)}` : id);
+
 /** The State from the file's contents; whatever is missing or malformed starts empty. */
 export function parseState(json: unknown): AppState {
   if (typeof json !== "object" || json === null || Array.isArray(json)) return emptyState;
   const raw = json as Record<string, unknown>;
-  return { ...raw, version: 1, recentHosts: strings(raw.recentHosts).slice(0, RECENT_LIMIT), folded: strings(raw.folded) };
+  const folded = [...new Set(strings(raw.folded).map(currentFoldId))];
+  return { ...raw, version: 1, recentHosts: strings(raw.recentHosts).slice(0, RECENT_LIMIT), folded };
 }
 
 /** The State after opening a Session to `host`. */

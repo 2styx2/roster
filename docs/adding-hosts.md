@@ -8,6 +8,7 @@ The usual flow for bringing a new network or box into roster: scan it, review it
 cd ~/infra
 roster discover 10.19.77.0/24             # preview, nothing written
 roster discover 10.19.77.0/24 --write     # adds a discovered-YYYYMMDD group
+roster discover 10.19.77.0/24 --json      # the preview as JSON, for a script
 ```
 
 `--write` does the following:
@@ -18,6 +19,8 @@ roster discover 10.19.77.0/24 --write     # adds a discovered-YYYYMMDD group
 - Refuses to write a file that wouldn't load.
 
 Each host gets a guessed `type`, a `title` from its web page, its services, and a description of every open port.
+
+From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.19.77.0/24`, keep the Hosts you want, and they're added unreviewed as Pending changes for you to Publish.
 
 Tell your security team before scanning big ranges.
 
@@ -49,7 +52,7 @@ providers:
     save_to: { organization: "My Team", collection: "Infra logins" }   # names or ids; default: personal
 ```
 
-A Box can choose otherwise in the app's `init.lua` (`vault = { save_to = "personal" }`), and the form's **Save to** choice wins over both for one Host. It lists your personal vault and the collections of the organizations you're in. A name that doesn't match is an error naming the setting (code `64`). Bitwarden's CLI doesn't say which collections you may only read, so one of those is refused when you save (`65`), nothing is left behind, and it's no longer offered.
+A Box can choose otherwise in the app's `init.lua` (`roster.o.vault.save_to = "personal"`), and the form's **Save to** choice wins over both for one Host. It lists your personal vault and the collections of the organizations you're in. A name that doesn't match is an error naming the setting (code `64`). Bitwarden's CLI doesn't say which collections you may only read, so one of those is refused when you save (`65`), nothing is left behind, and it's no longer offered.
 
 **KeePassXC (local only).** With no team password manager, the same names go into a local `.kdbx` as entry titles: `kp:orion3 ssh` finds the entry titled `orion3 ssh` in any group (outside the recycle bin), and `kp:Lab/orion3 ssh` names its path. Put the address in the entry's URL field and the user in its username field (`#username`, `#url`). Titles must be unique across the whole database, and can't contain `/`. Tell roster where the database is on this box:
 
@@ -113,6 +116,7 @@ For each host you're bringing in, set its login and mark it reviewed:
 ```
 
 - If your team has its own word for one of roster's `login:` types, map it once at the top of `roster.yml` and keep using it: `web_login_names: { appliance: hub }` makes `login: appliance` work exactly like `login: hub`. roster shows the type it resolved to (`hub`). Details in [cli-reference.md](cli-reference.md#web-apis-with-stored-logins-roster-web).
+- **`shell_hooks: true`** (on a host, its group or `defaults`) lets the roster app send the host's shell one line after login that marks its prompts and says its folder, in that shell only: nothing is written on the host. Off unless set; `shell_hooks: false` keeps a host out, say network gear. It must be `true` or `false`. What's sent, and when not: [Shell hooks](plugins.md#shell-hooks-roster-sets-it-up).
 - A typo in a service entry (a port, a url, a `login:` type) doesn't break the file for everyone: that one service is left out, and `roster hosts`, `check` and `auth-check` warn about it with the fix. `roster info HOST` lists it under `problems`.
 
 - Rename hosts to something people will search for, ideally the box's real hostname (`lab-hub3`, `esxi-02`). Set a real `title` and fix the guessed `type`. Don't shorten names: `hub2` and `lab-hub2` are different machines. Hosts you're not bringing in can stay `reviewed: false`. roster leaves them alone.
@@ -158,6 +162,19 @@ Commit and push the updated `roster.yml` to [yourteam/infra](https://example.com
 3. Set `auth: "bw:<item>"` on the host, on its `ssh:` block, or on one service. A scanned host also gets its real name and `reviewed: true` (step 4).
 4. `roster auth-check --only HOST`, then `roster run HOST -- hostname` (step 5).
 5. Commit and push (step 6).
+
+## A separate sudo password
+
+The app's fill key (`␣ p`, [keyboard](app/keyboard.md)) types a Host's password at sudo's prompt in its Session. It uses the Host's ssh Login. When the Host's sudo password is a different one, or the Host logs in with a key and has no password in the vault, point `sudo:` at its own vault item, a reference like any `auth:`:
+
+```yaml
+      esx-02:
+        ip: 10.0.0.5
+        auth: agent
+        sudo: { auth: "bw:esx-02 sudo" }
+```
+
+`sudo:` cascades from `defaults:` and groups like `ssh:`, and takes only `auth`. It must be a vault reference: `prompt`, `agent`, `key` and `none` have no password to fill. `su` is never filled: its `Password:` doesn't say whose password it wants. How the password travels, and when roster won't fill: [security.md](app/security.md#filling-a-password-prompt).
 
 ## Things that aren't hosts
 

@@ -1,0 +1,1451 @@
+{
+  "about": "What plugins/topology does in a scripted run, recorded by crates/roster-core/tests/plugin_topology.rs (ROSTER_UPDATE_TRANSCRIPT=1 cargo test -p roster-core --test plugin_topology rewrites it), with the roster serve answers it was given. The fake Backend's stand-in replays it (topology.test.ts).",
+  "serve": {
+    "host.check_job": {
+      "action": "check",
+      "done": 8,
+      "host": "nas-01",
+      "job": "check-3",
+      "kind": "check",
+      "result": {
+        "host": "nas-01",
+        "ok": false,
+        "steps": [
+          {
+            "message": "resolves",
+            "status": "ok",
+            "step": "dns"
+          },
+          {
+            "message": "port 22",
+            "status": "fail",
+            "step": "tcp"
+          },
+          {
+            "message": "",
+            "status": "skipped",
+            "step": "auth"
+          }
+        ]
+      },
+      "state": "done",
+      "total": 8
+    },
+    "hosts.list": {
+      "error": null,
+      "groups": {
+        "lab": {
+          "description": "",
+          "title": ""
+        },
+        "new": {
+          "description": "",
+          "title": ""
+        },
+        "storage": {
+          "description": "",
+          "title": ""
+        },
+        "web": {
+          "description": "",
+          "title": ""
+        }
+      },
+      "hosts": [
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "lab",
+          "ip": "10.0.0.5",
+          "login": {},
+          "mac": "",
+          "mesh": true,
+          "name": "esx-01",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "esxi",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "lab",
+          "ip": "10.0.0.6",
+          "login": {},
+          "mac": "",
+          "mesh": true,
+          "name": "esx-02",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "esxi",
+          "user": "root"
+        },
+        {
+          "auth": "bw:appliance ssh",
+          "description": "",
+          "enroll": false,
+          "group": "lab",
+          "ip": "10.0.0.7",
+          "login": {},
+          "mac": "",
+          "mesh": true,
+          "name": "appliance",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "bw:appliance ssh",
+            "port": 22,
+            "user": "admin"
+          },
+          "title": "",
+          "type": "appliance",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "lab",
+          "ip": "10.0.0.8",
+          "login": {},
+          "mac": "",
+          "mesh": false,
+          "name": "lab-old",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "linux",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "storage",
+          "ip": "10.0.1.5",
+          "login": {},
+          "mac": "",
+          "name": "nas-01",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "nas",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "storage",
+          "ip": "10.0.1.6",
+          "login": {},
+          "mac": "",
+          "name": "nas-02",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "nas",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "web",
+          "ip": "10.0.2.5",
+          "login": {},
+          "mac": "",
+          "name": "web-1",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "linux",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "web",
+          "ip": "10.0.2.9",
+          "login": {},
+          "mac": "",
+          "name": "jump-1",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": true,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "linux",
+          "user": "root"
+        },
+        {
+          "auth": "agent",
+          "description": "",
+          "enroll": true,
+          "group": "new",
+          "ip": "10.0.3.5",
+          "login": {},
+          "mac": "",
+          "name": "new-01",
+          "notes": "",
+          "port": 22,
+          "problems": [],
+          "product": "",
+          "reviewed": false,
+          "services": {},
+          "ssh": {
+            "auth": "agent",
+            "port": 22,
+            "user": "root"
+          },
+          "title": "",
+          "type": "linux",
+          "user": "root"
+        }
+      ]
+    },
+    "mesh.cut": {
+      "action": "cut",
+      "host": "esx-01",
+      "job": 7,
+      "total": 3
+    },
+    "mesh.job": {
+      "action": "cut",
+      "at": null,
+      "done": 3,
+      "host": "esx-01",
+      "job": 7,
+      "result": {
+        "change": {
+          "backup": "x",
+          "written": true
+        },
+        "confirmed": [
+          "esx-02",
+          "nas-01"
+        ],
+        "host": "esx-01",
+        "pending": {
+          "nas-02": "timed out"
+        }
+      },
+      "state": "done",
+      "stopped": false,
+      "total": 3
+    },
+    "mesh.status": {
+      "cut_pending": {
+        "lab-old": [
+          "esx-01"
+        ]
+      },
+      "excluded": {
+        "lab-old": "mesh: false"
+      },
+      "links": [
+        {
+          "from": "esx-01",
+          "kind": "key",
+          "to": "nas-01"
+        },
+        {
+          "from": "esx-01",
+          "kind": "key",
+          "to": "nas-02"
+        },
+        {
+          "from": "esx-01",
+          "kind": "key",
+          "to": "web-1",
+          "via": "jump-1"
+        },
+        {
+          "from": "esx-02",
+          "kind": "key",
+          "to": "nas-01"
+        },
+        {
+          "from": "esx-02",
+          "kind": "key",
+          "to": "nas-02"
+        },
+        {
+          "from": "nas-01",
+          "kind": "key",
+          "to": "web-1"
+        },
+        {
+          "from": "nas-02",
+          "kind": "key",
+          "to": "jump-1"
+        },
+        {
+          "from": "nas-02",
+          "kind": "key",
+          "to": "web-1",
+          "via": "jump-1"
+        },
+        {
+          "from": "web-1",
+          "kind": "key",
+          "to": "nas-01"
+        }
+      ],
+      "members": [
+        "appliance",
+        "esx-01",
+        "esx-02",
+        "jump-1",
+        "nas-01",
+        "nas-02",
+        "web-1"
+      ],
+      "meshed": {
+        "lab": [
+          "esx-01",
+          "esx-02",
+          "appliance"
+        ]
+      },
+      "out_of_date": true,
+      "pending": {
+        "nas-02": "timed out"
+      },
+      "reach": {
+        "esx-01": 5,
+        "esx-02": 4,
+        "nas-01": 1,
+        "nas-02": 2,
+        "web-1": 1
+      }
+    }
+  },
+  "steps": [
+    {
+      "do": "sessions",
+      "open": [
+        [
+          9,
+          "nas-02"
+        ]
+      ],
+      "ops": []
+    },
+    {
+      "do": "load",
+      "grants": [
+        "inventory.read",
+        "serve:mesh.status",
+        "serve:host.check",
+        "serve:mesh.cut",
+        "serve:mesh.job",
+        "serve:host.check_job"
+      ],
+      "ops": [
+        {
+          "desc": "The Topology view: this Box, your Hosts by group and the Mesh; :topology GROUP shows one group",
+          "name": "topology",
+          "op": "command",
+          "run": "fn"
+        },
+        {
+          "action": "topology",
+          "context": "leader",
+          "keys": "T",
+          "op": "key"
+        },
+        {
+          "id": "topology",
+          "op": "help",
+          "spec": {
+            "markdown": "# Topology\n\nA map of this Box and every Host, grouped as the Inventory groups them, with the Mesh's reach and Links. `:topology` opens it (`:topology GROUP` shows one group), and so does `␣ T`; Esc goes back.\n\n- **Nodes:** this Box is the square; a filled node takes a key, a ring a password, a dashed ring isn't reviewed, a hollow one's Session ended. A live Session is in the accent, with its edge from this Box; a Host that's down (its Session couldn't connect, or a check of it failed) is crossed out.\n- **Edges:** grey from this Box to each group; solid for a Mesh key, dashed for a password peer, an arrow one way. A cluster drawn as a mesh reaches itself both ways. A broken, dotted edge is a cut not finished.\n- **Marks:** warn for a Host that didn't answer the last apply or has no Link to its hop, error for a cut not finished. The text above the map says when the Mesh is out of date.\n- **A group the Mesh touches** shows as up to three clusters: its Hosts that reach each other, its password peers (reached, never reaching), and the ones not in the Mesh.\n\nSelect a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.\n\nKeys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).\n\nIt needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
+            "summary": "The map: this Box, your Hosts by group, the Mesh, and who can reach whom",
+            "title": "Topology"
+          }
+        },
+        {
+          "id": "topology",
+          "op": "health",
+          "spec": {
+            "check": "fn",
+            "title": "Topology"
+          }
+        },
+        {
+          "every": true,
+          "id": "N",
+          "ms": 60000,
+          "op": "timer",
+          "run": "fn"
+        },
+        {
+          "every": false,
+          "id": "N",
+          "ms": 50,
+          "op": "timer",
+          "run": "fn"
+        },
+        {
+          "id": "topology",
+          "op": "view",
+          "spec": {
+            "graph": {
+              "actions": [
+                {
+                  "icon": "info",
+                  "key": "i",
+                  "label": "Details",
+                  "run": "fn"
+                },
+                {
+                  "icon": "review",
+                  "key": "c",
+                  "label": "Check",
+                  "run": "fn"
+                },
+                {
+                  "icon": "close",
+                  "key": "x",
+                  "label": "Cut",
+                  "run": "fn"
+                }
+              ],
+              "clusters": [
+                {
+                  "id": ":group:lab",
+                  "mesh": true,
+                  "title": "lab"
+                },
+                {
+                  "id": ":group:lab/peers",
+                  "title": "lab · password peers"
+                },
+                {
+                  "id": ":group:lab/out",
+                  "title": "lab · not in the Mesh"
+                },
+                {
+                  "id": ":group:storage",
+                  "title": "storage"
+                },
+                {
+                  "id": ":group:web",
+                  "title": "web"
+                },
+                {
+                  "id": ":group:new",
+                  "title": "new"
+                }
+              ],
+              "edges": [
+                {
+                  "from": ":box",
+                  "id": "box>:group:lab",
+                  "to": ":group:lab",
+                  "tone": "muted"
+                },
+                {
+                  "from": ":box",
+                  "id": "box>:group:lab/peers",
+                  "to": ":group:lab/peers",
+                  "tone": "muted"
+                },
+                {
+                  "from": ":box",
+                  "id": "box>:group:lab/out",
+                  "to": ":group:lab/out",
+                  "tone": "muted"
+                },
+                {
+                  "from": ":box",
+                  "id": "box>:group:storage",
+                  "to": ":group:storage",
+                  "tone": "muted"
+                },
+                {
+                  "from": ":box",
+                  "id": "box>:group:web",
+                  "to": ":group:web",
+                  "tone": "muted"
+                },
+                {
+                  "from": ":box",
+                  "id": "box>:group:new",
+                  "to": ":group:new",
+                  "tone": "muted"
+                },
+                {
+                  "from": ":group:lab",
+                  "id": "mesh::group:lab>:group:lab/peers",
+                  "style": "dashed",
+                  "to": ":group:lab/peers"
+                },
+                {
+                  "from": ":group:lab",
+                  "id": "mesh::group:lab>:group:storage",
+                  "style": "solid",
+                  "to": ":group:storage"
+                },
+                {
+                  "from": "esx-01",
+                  "id": "mesh:esx-01>web-1",
+                  "label": "via jump-1, but esx-01 has no Link to it",
+                  "style": "solid",
+                  "to": "web-1",
+                  "tone": "error"
+                },
+                {
+                  "dir": "both",
+                  "from": "nas-01",
+                  "id": "mesh:nas-01>web-1",
+                  "style": "solid",
+                  "to": "web-1"
+                },
+                {
+                  "from": "nas-02",
+                  "id": "mesh:nas-02>jump-1",
+                  "style": "solid",
+                  "to": "jump-1"
+                },
+                {
+                  "from": "nas-02",
+                  "id": "mesh:nas-02>web-1",
+                  "label": "via jump-1",
+                  "style": "solid",
+                  "to": "web-1"
+                },
+                {
+                  "cut": true,
+                  "dir": "both",
+                  "from": "lab-old",
+                  "id": "cut:lab-old>esx-01",
+                  "label": "cut pending",
+                  "style": "dotted",
+                  "to": "esx-01",
+                  "tone": "error"
+                },
+                {
+                  "from": ":box",
+                  "id": "live:nas-02",
+                  "to": "nas-02",
+                  "tone": "live"
+                }
+              ],
+              "nodes": [
+                {
+                  "id": ":box",
+                  "kind": "box",
+                  "label": "This Box",
+                  "shape": "square"
+                },
+                {
+                  "cluster": ":group:lab",
+                  "detail": "10.0.0.5",
+                  "host": "esx-01",
+                  "id": "esx-01",
+                  "kind": "esxi",
+                  "label": "esx-01",
+                  "mark": "warn",
+                  "note": "no Link to its hop jump-1",
+                  "shape": "dot"
+                },
+                {
+                  "cluster": ":group:lab",
+                  "detail": "10.0.0.6",
+                  "host": "esx-02",
+                  "id": "esx-02",
+                  "kind": "esxi",
+                  "label": "esx-02",
+                  "shape": "dot"
+                },
+                {
+                  "cluster": ":group:lab/peers",
+                  "detail": "10.0.0.7",
+                  "host": "appliance",
+                  "id": "appliance",
+                  "kind": "appliance",
+                  "label": "appliance",
+                  "shape": "ring"
+                },
+                {
+                  "cluster": ":group:lab/out",
+                  "detail": "10.0.0.8",
+                  "host": "lab-old",
+                  "id": "lab-old",
+                  "kind": "linux",
+                  "label": "lab-old",
+                  "mark": "error",
+                  "note": "cut pending on 1 Host",
+                  "shape": "dot"
+                },
+                {
+                  "cluster": ":group:storage",
+                  "detail": "10.0.1.5",
+                  "host": "nas-01",
+                  "id": "nas-01",
+                  "kind": "nas",
+                  "label": "nas-01",
+                  "shape": "dot"
+                },
+                {
+                  "cluster": ":group:storage",
+                  "detail": "10.0.1.6",
+                  "host": "nas-02",
+                  "id": "nas-02",
+                  "kind": "nas",
+                  "label": "nas-02",
+                  "mark": "warn",
+                  "note": "Mesh pending",
+                  "shape": "dot",
+                  "state": "live"
+                },
+                {
+                  "cluster": ":group:web",
+                  "detail": "10.0.2.5",
+                  "host": "web-1",
+                  "id": "web-1",
+                  "kind": "linux",
+                  "label": "web-1",
+                  "shape": "dot"
+                },
+                {
+                  "cluster": ":group:web",
+                  "detail": "10.0.2.9",
+                  "host": "jump-1",
+                  "id": "jump-1",
+                  "kind": "linux",
+                  "label": "jump-1",
+                  "shape": "dot"
+                },
+                {
+                  "cluster": ":group:new",
+                  "detail": "10.0.3.5",
+                  "host": "new-01",
+                  "id": "new-01",
+                  "kind": "linux",
+                  "label": "new-01",
+                  "shape": "dashed"
+                }
+              ],
+              "reach": "all"
+            },
+            "place": "full",
+            "text": "9 Hosts in 4 groups.\n\nThe Mesh: 7 Hosts, 13 Links.\n\nThe Mesh is out of date: roster.yml changed it since the last apply on this Box (roster mesh).\n\nCut pending on 1 Host: a peer didn't answer, so its key may still be there.\n\n1 Host didn't answer the last apply (Mesh pending).",
+            "title": "Topology"
+          }
+        },
+        {
+          "host": "appliance",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show appliance on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes, as a password peer: it's reached, and reaches no one"
+              },
+              {
+                "label": "Reaches",
+                "value": "0 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "2 Hosts directly"
+              },
+              {
+                "label": "Not written",
+                "value": "2 Links from it: roster doesn't write on a password Host"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "esx-01",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show esx-01 on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes"
+              },
+              {
+                "label": "Reaches",
+                "value": "5 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "1 Host directly"
+              },
+              {
+                "label": "Hop",
+                "value": "no Link to jump-1"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "esx-02",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show esx-02 on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes"
+              },
+              {
+                "label": "Reaches",
+                "value": "4 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "1 Host directly"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "jump-1",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show jump-1 on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes"
+              },
+              {
+                "label": "Reaches",
+                "value": "0 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "1 Host directly"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "lab-old",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show lab-old on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "no: mesh: false"
+              },
+              {
+                "label": "Reaches",
+                "value": "0 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "0 Hosts directly"
+              },
+              {
+                "data": true,
+                "label": "Cut pending on",
+                "value": "esx-01"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "nas-01",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show nas-01 on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes"
+              },
+              {
+                "label": "Reaches",
+                "value": "1 Host directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "3 Hosts directly"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "nas-02",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show nas-02 on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes"
+              },
+              {
+                "label": "Reaches",
+                "value": "2 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "2 Hosts directly"
+              },
+              {
+                "label": "Pending",
+                "value": "timed out"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        },
+        {
+          "host": "web-1",
+          "id": "topology",
+          "op": "details",
+          "spec": {
+            "actions": [
+              {
+                "icon": "map",
+                "label": "Show web-1 on the map",
+                "run": "fn"
+              }
+            ],
+            "facts": [
+              {
+                "label": "In the Mesh",
+                "value": "yes"
+              },
+              {
+                "label": "Reaches",
+                "value": "1 Host directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "3 Hosts directly"
+              }
+            ],
+            "text": "Directly is its own Mesh keys. Selected in :topology, it counts every hop: what those Hosts' own keys reach too.",
+            "title": "Reach"
+          }
+        }
+      ]
+    },
+    {
+      "do": "event",
+      "name": "session_open",
+      "ops": [
+        {
+          "changes": {
+            "edges": [
+              {
+                "from": ":box",
+                "id": "live:esx-02",
+                "to": "esx-02",
+                "tone": "live"
+              }
+            ],
+            "nodes": [
+              {
+                "cluster": ":group:lab",
+                "detail": "10.0.0.6",
+                "host": "esx-02",
+                "id": "esx-02",
+                "kind": "esxi",
+                "label": "esx-02",
+                "shape": "dot",
+                "state": "live"
+              }
+            ]
+          },
+          "id": "topology",
+          "op": "view_update"
+        }
+      ],
+      "payload": {
+        "host": "esx-02",
+        "session": 1
+      }
+    },
+    {
+      "do": "event",
+      "name": "session_open",
+      "ops": [
+        {
+          "changes": {
+            "edges": [
+              {
+                "from": ":box",
+                "id": "live:web-1",
+                "to": "web-1",
+                "tone": "live"
+              }
+            ],
+            "nodes": [
+              {
+                "cluster": ":group:web",
+                "detail": "10.0.2.5",
+                "host": "web-1",
+                "id": "web-1",
+                "kind": "linux",
+                "label": "web-1",
+                "shape": "dot",
+                "state": "live"
+              }
+            ]
+          },
+          "id": "topology",
+          "op": "view_update"
+        }
+      ],
+      "payload": {
+        "host": "web-1",
+        "session": 2
+      }
+    },
+    {
+      "do": "event",
+      "name": "session_exit",
+      "ops": [
+        {
+          "changes": {
+            "nodes": [
+              {
+                "cluster": ":group:web",
+                "detail": "10.0.2.5",
+                "host": "web-1",
+                "id": "web-1",
+                "kind": "linux",
+                "label": "web-1",
+                "note": "ssh failed",
+                "shape": "hollow",
+                "state": "down"
+              }
+            ],
+            "remove_edges": [
+              "live:web-1"
+            ]
+          },
+          "id": "topology",
+          "op": "view_update"
+        }
+      ],
+      "payload": {
+        "code": 255,
+        "host": "web-1",
+        "session": 2
+      }
+    },
+    {
+      "do": "action",
+      "label": "Check",
+      "node": "nas-01",
+      "ops": [
+        {
+          "line": "check nas-01",
+          "op": "cmd"
+        }
+      ]
+    },
+    {
+      "do": "event",
+      "name": "job_progress",
+      "ops": [],
+      "payload": {
+        "action": "check",
+        "at": "tcp",
+        "done": 5,
+        "host": "nas-01",
+        "job": "check-3",
+        "kind": "check",
+        "state": "running",
+        "total": 8
+      }
+    },
+    {
+      "do": "event",
+      "name": "job_progress",
+      "ops": [
+        {
+          "changes": {
+            "nodes": [
+              {
+                "cluster": ":group:storage",
+                "detail": "10.0.1.5",
+                "host": "nas-01",
+                "id": "nas-01",
+                "kind": "nas",
+                "label": "nas-01",
+                "note": "check failed at tcp",
+                "shape": "dot",
+                "state": "down"
+              }
+            ]
+          },
+          "id": "topology",
+          "op": "view_update"
+        }
+      ],
+      "payload": {
+        "action": "check",
+        "done": 8,
+        "host": "nas-01",
+        "job": "check-3",
+        "kind": "check",
+        "state": "done",
+        "total": 8
+      }
+    },
+    {
+      "do": "action",
+      "label": "Cut",
+      "node": "esx-01",
+      "ops": [
+        {
+          "op": "confirm",
+          "spec": {
+            "action": "Cut",
+            "danger": true,
+            "facts": [
+              {
+                "label": "Reaches now",
+                "value": "5 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "1 Host directly"
+              }
+            ],
+            "run": "fn",
+            "text": "Its key comes off every Host it reaches, and every peer's key comes off it, at once. This Box keeps its own access, so you can look into it.\n\nroster writes `mesh: false` for esx-01 as a Pending change, so the cut lasts after the next Publish.",
+            "title": "Cut esx-01 from the Mesh?",
+            "typed": "esx-01"
+          }
+        }
+      ]
+    },
+    {
+      "do": "confirm",
+      "ops": [
+        {
+          "id": "topology-cut",
+          "op": "progress",
+          "spec": {
+            "done": 0,
+            "title": "Cutting esx-01 from the Mesh",
+            "total": 3
+          }
+        },
+        {
+          "every": true,
+          "id": "N",
+          "ms": 1000,
+          "op": "timer",
+          "run": "fn"
+        }
+      ]
+    },
+    {
+      "do": "cut-timer",
+      "ops": [
+        {
+          "level": "warn",
+          "op": "notify",
+          "text": "Cut esx-01: cut pending on 1 Host that didn't answer."
+        },
+        {
+          "id": "N",
+          "kind": "timer",
+          "op": "remove"
+        },
+        {
+          "id": "topology-cut",
+          "kind": "progress",
+          "op": "remove"
+        }
+      ]
+    },
+    {
+      "do": "action",
+      "label": "Cut",
+      "node": "esx-01",
+      "ops": [
+        {
+          "op": "confirm",
+          "spec": {
+            "action": "Cut",
+            "danger": true,
+            "facts": [
+              {
+                "label": "Reaches now",
+                "value": "5 Hosts directly"
+              },
+              {
+                "label": "Reached by",
+                "value": "1 Host directly"
+              }
+            ],
+            "run": "fn",
+            "text": "Its key comes off every Host it reaches, and every peer's key comes off it, at once. This Box keeps its own access, so you can look into it.\n\nroster writes `mesh: false` for esx-01 as a Pending change, so the cut lasts after the next Publish.",
+            "title": "Cut esx-01 from the Mesh?",
+            "typed": "esx-01"
+          }
+        }
+      ]
+    },
+    {
+      "do": "confirm",
+      "ops": [
+        {
+          "id": "topology-cut",
+          "op": "progress",
+          "spec": {
+            "done": 0,
+            "title": "Cutting esx-01 from the Mesh",
+            "total": 3
+          }
+        },
+        {
+          "every": true,
+          "id": "N",
+          "ms": 1000,
+          "op": "timer",
+          "run": "fn"
+        }
+      ]
+    },
+    {
+      "do": "event",
+      "name": "job_progress",
+      "ops": [
+        {
+          "id": "N",
+          "kind": "timer",
+          "op": "remove"
+        },
+        {
+          "id": "topology-cut",
+          "op": "progress",
+          "spec": {
+            "done": 1,
+            "title": "Cutting esx-01 from the Mesh",
+            "total": 3
+          }
+        }
+      ],
+      "payload": {
+        "action": "cut",
+        "at": "nas-01",
+        "done": 1,
+        "host": "esx-01",
+        "job": 7,
+        "kind": "mesh",
+        "state": "running",
+        "total": 3
+      }
+    },
+    {
+      "do": "event",
+      "name": "job_progress",
+      "ops": [
+        {
+          "level": "warn",
+          "op": "notify",
+          "text": "Cut esx-01: cut pending on 1 Host that didn't answer."
+        },
+        {
+          "id": "topology-cut",
+          "kind": "progress",
+          "op": "remove"
+        }
+      ],
+      "payload": {
+        "action": "cut",
+        "at": null,
+        "done": 3,
+        "host": "esx-01",
+        "job": 7,
+        "kind": "mesh",
+        "state": "done",
+        "total": 3
+      }
+    },
+    {
+      "do": "action",
+      "label": "Details",
+      "node": "esx-01",
+      "ops": [
+        {
+          "line": "info esx-01",
+          "op": "cmd"
+        }
+      ]
+    },
+    {
+      "args": "lab",
+      "do": "command",
+      "name": "topology",
+      "ops": [
+        {
+          "changes": {
+            "filter": {
+              "clusters": [
+                ":group:lab",
+                ":group:lab/peers",
+                ":group:lab/out"
+              ]
+            }
+          },
+          "id": "topology",
+          "op": "view_update"
+        },
+        {
+          "id": "topology",
+          "op": "view_open"
+        }
+      ]
+    },
+    {
+      "args": "",
+      "do": "command",
+      "name": "topology",
+      "ops": [
+        {
+          "changes": {
+            "filter": []
+          },
+          "id": "topology",
+          "op": "view_update"
+        },
+        {
+          "id": "topology",
+          "op": "view_open"
+        }
+      ]
+    },
+    {
+      "do": "health",
+      "ops": [],
+      "result": [
+        {
+          "level": "ok",
+          "message": "Mesh status available: 7 Hosts roster visits"
+        },
+        {
+          "fix": "apply it: roster mesh",
+          "level": "warn",
+          "message": "The Mesh is out of date"
+        }
+      ]
+    },
+    {
+      "do": "timer",
+      "ops": []
+    },
+    {
+      "do": "load",
+      "grants": [],
+      "ops": [
+        {
+          "desc": "The Topology view: this Box, your Hosts by group and the Mesh; :topology GROUP shows one group",
+          "name": "topology",
+          "op": "command",
+          "run": "fn"
+        },
+        {
+          "action": "topology",
+          "context": "leader",
+          "keys": "T",
+          "op": "key"
+        },
+        {
+          "id": "topology",
+          "op": "help",
+          "spec": {
+            "markdown": "# Topology\n\nA map of this Box and every Host, grouped as the Inventory groups them, with the Mesh's reach and Links. `:topology` opens it (`:topology GROUP` shows one group), and so does `␣ T`; Esc goes back.\n\n- **Nodes:** this Box is the square; a filled node takes a key, a ring a password, a dashed ring isn't reviewed, a hollow one's Session ended. A live Session is in the accent, with its edge from this Box; a Host that's down (its Session couldn't connect, or a check of it failed) is crossed out.\n- **Edges:** grey from this Box to each group; solid for a Mesh key, dashed for a password peer, an arrow one way. A cluster drawn as a mesh reaches itself both ways. A broken, dotted edge is a cut not finished.\n- **Marks:** warn for a Host that didn't answer the last apply or has no Link to its hop, error for a cut not finished. The text above the map says when the Mesh is out of date.\n- **A group the Mesh touches** shows as up to three clusters: its Hosts that reach each other, its password peers (reached, never reaching), and the ones not in the Mesh.\n\nSelect a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.\n\nKeys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).\n\nIt needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
+            "summary": "The map: this Box, your Hosts by group, the Mesh, and who can reach whom",
+            "title": "Topology"
+          }
+        },
+        {
+          "id": "topology",
+          "op": "health",
+          "spec": {
+            "check": "fn",
+            "title": "Topology"
+          }
+        },
+        {
+          "every": false,
+          "id": "N",
+          "ms": 50,
+          "op": "timer",
+          "run": "fn"
+        },
+        {
+          "id": "topology",
+          "op": "view",
+          "spec": {
+            "graph": {
+              "actions": [
+                {
+                  "icon": "info",
+                  "key": "i",
+                  "label": "Details",
+                  "run": "fn"
+                }
+              ],
+              "clusters": [],
+              "edges": [],
+              "nodes": [
+                {
+                  "id": ":box",
+                  "kind": "box",
+                  "label": "This Box",
+                  "shape": "square"
+                }
+              ],
+              "reach": "all"
+            },
+            "place": "full",
+            "text": "Allow inventory.read in :plugins to see your Hosts: only this Box is on the map.\n\nAllow serve:mesh.status in :plugins to see the Mesh.",
+            "title": "Topology"
+          }
+        }
+      ]
+    }
+  ]
+}

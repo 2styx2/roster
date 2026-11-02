@@ -27,6 +27,7 @@ import {
   type TypedPassword,
   type HostUpdate,
   type InventoryChanged,
+  type JobProgress,
   type InventoryReload,
   type PendingChanges,
   type PackageChecked,
@@ -44,6 +45,8 @@ import {
   type SessionEvents,
   type SessionExit,
   type SessionHandle,
+  type SiteRequests,
+  type PluginData,
   type TermSize,
 } from "./types";
 
@@ -116,6 +119,8 @@ async function openSession(host: string, size: TermSize, events: SessionEvents, 
     write: (data) => call("session_write", { id, data }),
     resize: ({ cols, rows }) => call("session_resize", { id, cols, rows }),
     close: () => call("session_close", { id }),
+    // Only the prompt line goes; the password stays in the core (ticket 119).
+    fill: (prompt, hop) => call<{ host: string }>("session_fill", { id, prompt, hop: hop ?? null }),
   };
 }
 
@@ -161,7 +166,7 @@ export function tauriBackend(): Backend {
       }
     },
     listHosts: () => call<HostList>("hosts_list"),
-    getHost: (name) => call<Host>("host_get", { name }),
+    getHost: (name, options) => call<Host>("host_get", { name, settled: options?.settled ?? false }),
     vaultStatus: () => call<VaultStatus>("vault_status"),
     unlockVault: (password) => call<ProviderStatus>("vault_unlock", { password }),
     lockVault: () => call<{ locked: string[] }>("vault_lock"),
@@ -206,22 +211,62 @@ export function tauriBackend(): Backend {
     forgetTyped: (held) => call<{ forgotten: boolean }>("save_call", { method: "vault.forget_typed", params: { held } }),
     // Plugins (ticket 23): they run in the core; only data comes back.
     pluginManifest: (path) => call("plugin_manifest", { path }),
-    pluginLoad: (path, grants) => call("plugin_load", { path, grants }),
-    pluginCall: (plugin, handler, args) => call<PluginReply>("plugin_call", { plugin, handler, args }),
+    pluginTypes: (path) => call<string>("plugin_types", { path }),
+    pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null }),
+    pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried" }),
     pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload }),
+    pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map((o) => [o.session, o.host]) }).then(() => undefined),
     pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin }),
+    pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin }),
+    pluginBuiltins: (names) => call<null>("plugin_builtins", { names }).then(() => undefined),
+    pluginRequests: () => call<Record<string, SiteRequests[]>>("plugin_requests"),
+    pluginData: (names) => call<Record<string, PluginData>>("plugin_data", { names }),
+    onPluginReply(onReply) {
+      const stop = listen<PluginReply>("plugin-reply", (e) => onReply(e.payload));
+      return () => void stop.then((f) => f());
+    },
+    // `:tutor`'s demo (ticket 66, decision Q123): the same commands, on the demo's own host.
+    async demoPlugins(hosts) {
+      const id = await call<number>("plugin_demo_start", { hosts });
+      // Every call names its demo: one for an earlier demo reaches nothing (decision Q123).
+      const onDemo = id;
+      return {
+        pluginManifest: (path) => call("plugin_manifest", { path }),
+        pluginTypes: (path) => call<string>("plugin_types", { path }),
+        pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null, onDemo }),
+        pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", onDemo }),
+        pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload, onDemo }),
+        pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map((o) => [o.session, o.host]), onDemo }).then(() => undefined),
+        pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),
+        pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin, onDemo }),
+        pluginBuiltins: (names) => call<null>("plugin_builtins", { names, onDemo }).then(() => undefined),
+        onPluginReply(onReply) {
+          const stop = listen<{ demo: number; reply: PluginReply }>("plugin-demo-reply", (e) => {
+            if (e.payload.demo === id) onReply(e.payload.reply);
+          });
+          return () => void stop.then((f) => f());
+        },
+        close: () => call<unknown>("plugin_demo_stop", { id }).then(() => undefined),
+      };
+    },
     // Packages (ticket 24): git runs in the core; init.lua says what may be fetched.
     packagesSync: () => call<PackageStatus[]>("packages_sync"),
     packagesPin: (name) => call<PackageStatus>("packages_pin", { name }),
     packagesDiscard: (name) => call<unknown>("packages_discard", { name }).then(() => undefined),
     packagesRemove: (name) => call<unknown>("packages_remove", { name }).then(() => undefined),
-    packagesCheck: () => call<PackageChecked[]>("packages_check"),
+    packagesCheck: (name) => call<PackageChecked[]>("packages_check", name === undefined ? {} : { name }),
     packagesApply: (name, commit) => call<PackageStatus>("packages_apply", { name, commit }),
     packagesClean: () => call<string[]>("packages_clean"),
     onLoggedIn(onLogin) {
       const stop = listen<{ method: string; params: { held?: unknown } }>("roster-notification", (e) => {
         const held = e.payload.params?.held;
         if (e.payload.method === "session.logged_in" && typeof held === "string") onLogin(held);
+      });
+      return () => void stop.then((f) => f());
+    },
+    onJobProgress(onProgress) {
+      const stop = listen<{ method: string; params: unknown }>("roster-notification", (e) => {
+        if (e.payload.method === "job.progress") onProgress(e.payload.params as JobProgress);
       });
       return () => void stop.then((f) => f());
     },

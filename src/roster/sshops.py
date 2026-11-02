@@ -6,6 +6,7 @@ import hashlib
 import os
 import shlex
 import subprocess
+import threading
 
 from .common import WINDOWS, die, known_hosts_file, program_argv, say, ssh_config_file, ssh_dir, ssh_path
 from .providers import NO_PASSWORD, get_secret
@@ -59,15 +60,19 @@ def recorded_host_keys(h):
     return dict(found) if found else {}
 
 
+RECORDING = threading.Lock()    # serve records keys from several requests at once (decision Q112): one at a time
+
+
 def record_host_key(h, key_type, base64_key):
     """Add one confirmed host key for H's address to roster's known_hosts (host.add, after the user compared it)."""
-    ssh_dir().mkdir(mode=0o700, exist_ok=True)
-    known_hosts_file().touch(mode=0o600, exist_ok=True)
-    line = f"{hk_name(h)} {key_type} {base64_key}"
-    text = known_hosts_file().read_text()
-    if line not in text.splitlines():
-        with known_hosts_file().open("a") as f:
-            f.write(("" if not text or text.endswith("\n") else "\n") + line + "\n")
+    with RECORDING:                 # read, then append: two at once could both miss the other's line
+        ssh_dir().mkdir(mode=0o700, exist_ok=True)
+        known_hosts_file().touch(mode=0o600, exist_ok=True)
+        line = f"{hk_name(h)} {key_type} {base64_key}"
+        text = known_hosts_file().read_text()
+        if line not in text.splitlines():
+            with known_hosts_file().open("a") as f:
+                f.write(("" if not text or text.endswith("\n") else "\n") + line + "\n")
 
 
 def offered_host_key(sock, key_types, timeout=10):

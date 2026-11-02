@@ -2,7 +2,7 @@
 // installed Plugin's section, status segment, command, key, finder and help page look like the
 // app's own, `:plugins` revokes at once, and a broken Plugin is named in a toast.
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
@@ -142,5 +142,75 @@ describe("the Host count", () => {
     await backend.watchInventory(true);
     backend.outsideEdit(makeHosts(13));
     expect(await screen.findByText("13 Hosts")).toBeInTheDocument();
+  });
+});
+
+// Ticket 74: a tab closed while its Session ran still names its Host in session_exit.
+describe("session_exit", () => {
+  it("names the Host of a tab closed while its Session ran", async () => {
+    const heard: unknown[] = [];
+    const watcher: FakePlugin = {
+      manifest: { name: "watcher", version: "1.0.0", description: "", author: null, api: 3, permissions: ["inventory.read"] },
+      load(roster) {
+        roster.on("session_open", (e) => void heard.push({ open: e.host }));
+        roster.on("session_exit", (e) => void heard.push({ host: e.host, code: e.code }));
+      },
+    };
+    const user = userEvent.setup();
+    const backend = fakeBackend({ hosts: makeHosts(12), plugins: { "~/plugins/watcher": watcher } });
+    render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform()} />);
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    await install(user, "~/plugins/watcher");
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Install" }));
+    const host = makeHosts(12).hosts[0]!.name;
+    await user.keyboard(`${LEADER}:connect ${host}{Enter}`);
+    await waitFor(() => expect(heard).toEqual([{ open: host }]));
+    await user.keyboard(`${LEADER}:close{Enter}`);
+    await waitFor(() => expect(heard).toEqual([{ open: host }, { host, code: null }]));
+  });
+});
+
+// Ticket 101 (decision Q112): serve's jobs push their progress (API 20), and the app hands each
+// to the Plugins as `job_progress`, a Mesh job only to one that may ask `mesh.job`.
+describe("job_progress", () => {
+  async function watching(apiVersion: number) {
+    const heard: unknown[] = [];
+    const follower: FakePlugin = {
+      manifest: { name: "follower", version: "1.0.0", description: "", author: null, api: 3, permissions: ["serve:mesh.job"] },
+      load(roster) {
+        roster.on("job_progress", (e) => void heard.push({ kind: e.kind, job: e.job, state: e.state, done: e.done }));
+      },
+    };
+    const user = userEvent.setup();
+    const backend = fakeBackend({ hosts: makeHosts(3), apiVersion, plugins: { "~/plugins/follower": follower } });
+    render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform()} />);
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    await install(user, "~/plugins/follower");
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Install" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    return { heard, backend };
+  }
+  const job = { action: "apply", total: 4, at: null } as const;
+
+  it("reaches a Plugin that may ask about that kind of job, and only that kind", async () => {
+    const { heard, backend } = await watching(20);
+    backend.jobProgress({ kind: "discover", job: "scan-1", state: "running", done: 0, ...job, action: "scan" });
+    backend.jobProgress({ kind: "mesh", job: 3, state: "running", done: 1, ...job });
+    backend.jobProgress({ kind: "mesh", job: 3, state: "done", done: 4, ...job });
+    await waitFor(() =>
+      expect(heard).toEqual([
+        { kind: "mesh", job: 3, state: "running", done: 1 },
+        { kind: "mesh", job: 3, state: "done", done: 4 },
+      ]),
+    );
+  });
+
+  it("isn't listened for from a serve before API 20", async () => {
+    const { heard, backend } = await watching(19);
+    backend.jobProgress({ kind: "mesh", job: 3, state: "running", done: 1, ...job });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(heard).toEqual([]);
   });
 });

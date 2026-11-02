@@ -20,14 +20,15 @@ export interface ToolbarContext {
   detailsShown?: boolean;
 }
 
-export type ToolbarIcon = "find" | "quick" | "add" | "changes" | "publish" | "cmdline" | "keys" | "help" | "lock" | "mode" | "sidebar" | "details";
+export type ToolbarIcon = "find" | "quick" | "add" | "changes" | "publish" | "cmdline" | "keys" | "help" | "lock" | "mode" | "sidebar" | "details" | "map";
 
 export interface ToolbarControlDef extends Entry {
   /** The accessible name and the tooltip ("Add a Host"). */
   label(ctx: ToolbarContext): string;
   /** A visible word beside the icon; left out, the control is the icon alone. */
   text?: string;
-  icon: ToolbarIcon;
+  /** Its icon; left out (a Plugin's control may), the control is its text alone. */
+  icon?: ToolbarIcon;
   command: CommandLine;
   /** Where in the bar: right after the mark ("start"), or by the window's buttons ("end"). */
   side: "start" | "end";
@@ -176,6 +177,15 @@ const PATHS: Record<ToolbarIcon, React.ReactNode> = {
       <path d="M10 3v10M11.5 6h1M11.5 8.5h1" />
     </>
   ),
+  // Three nodes joined: a network (a Plugin's Topology or scan, ticket 78).
+  map: (
+    <>
+      <circle cx="3.75" cy="11.5" r="1.75" />
+      <circle cx="12.25" cy="11.5" r="1.75" />
+      <circle cx="8" cy="4" r="1.75" />
+      <path d="M5.5 11.5h5M4.7 10L7.1 5.6M11.3 10L8.9 5.6" />
+    </>
+  ),
   // A window with its left pane: the Sidebar.
   sidebar: (
     <>
@@ -230,7 +240,7 @@ export function Toolbar({ controls, ctx, keysFor, leader, run, side }: ToolbarPr
             onMouseDown={keepFocus}
             onClick={() => run(c.command)}
           >
-            <ToolbarIconSvg name={c.icon} />
+            {c.icon && <ToolbarIconSvg name={c.icon} />}
             {c.text && <span className="toolbar-text">{c.text}</span>}
             {count !== null && <span className="toolbar-count">{count}</span>}
           </button>

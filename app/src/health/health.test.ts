@@ -20,30 +20,38 @@ const ctx = (more: Partial<HealthContext> = {}): HealthContext => ({
 });
 
 describe("runHealth", () => {
-  it("runs the sections in order, and puts one roster sends that nothing claims after roster's own", () => {
-    const ids = runHealth(builtinHealthSections, ctx()).map((r) => r.id);
+  it("runs the sections in order, and puts one roster sends that nothing claims after roster's own", async () => {
+    const ids = (await runHealth(builtinHealthSections, ctx())).map((r) => r.id);
     expect(ids).toEqual(["app", "roster", "inventory", "ssh", "vault", "askpass", "repo", "mesh", "config", "font"]);
   });
 
-  it("says the WSL distro answers when serve runs in one", () => {
-    const app = runHealth(builtinHealthSections, ctx())[0]!;
+  it("says the WSL distro answers when serve runs in one", async () => {
+    const app = (await runHealth(builtinHealthSections, ctx()))[0]!;
     expect(app.checks.map((c) => c.message)).toContain("the WSL distro answers (FedoraLinux-44)");
   });
 
-  it("a section that throws is an error in that section only", () => {
+  it("a section that throws is an error in that section only", async () => {
     const broken: HealthSection = { id: "x", source: "plug", title: "X", order: 1, checks: () => { throw new Error("boom"); } };
-    const out = runHealth([broken, ...builtinHealthSections], ctx());
+    const out = await runHealth([broken, ...builtinHealthSections], ctx());
     expect(out[0]!.checks).toEqual([{ section: "x", level: "error", message: "this section failed: boom" }]);
     expect(out.length).toBe(builtinHealthSections.length + 2);
   });
 
-  it("warns when no terminal.font family is installed", () => {
-    const font = runHealth(builtinHealthSections, ctx({ font: { families: ["Nope Mono"], inUse: null } })).at(-1)!;
+  it("warns when no terminal.font family is installed", async () => {
+    const font = (await runHealth(builtinHealthSections, ctx({ font: { families: ["Nope Mono"], inUse: null } }))).at(-1)!;
     expect(font.checks[0]).toMatchObject({ level: "warn", topic: "terminal.font" });
   });
 
-  it("sums up like Neovim's report", () => {
-    const results = runHealth(builtinHealthSections, ctx());
+  it("a section that answers later is waited for, and one that doesn't answer in time is an error of its own", async () => {
+    const later: HealthSection = { id: "later", source: "plug", title: "Later", order: 1, checks: async () => [{ section: "later", level: "ok", message: "fine" }] };
+    const never: HealthSection = { id: "never", source: "plug", title: "Never", order: 2, checks: () => new Promise(() => undefined) };
+    const out = await runHealth([later, never], ctx(), 20);
+    expect(out[0]!.checks).toEqual([{ section: "later", level: "ok", message: "fine" }]);
+    expect(out[1]!.checks).toEqual([{ section: "never", level: "error", message: "this section didn't answer within 0.02 seconds" }]);
+  });
+
+  it("sums up like Neovim's report", async () => {
+    const results = await runHealth(builtinHealthSections, ctx());
     expect(healthSummary(results)).toBe("1 warning, no errors");
   });
 });

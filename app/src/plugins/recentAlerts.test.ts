@@ -24,7 +24,9 @@ function normal(v: unknown): Json {
     const keys = Object.keys(o);
     if (keys.length === 1 && typeof o.handler === "number") return "fn";
     if (keys.length === 0) return [];
-    return Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, normal(o[k])]));
+    // A timer's id is a handler's number, which the two sides count their own ways.
+    const timer = o.op === "timer" || (o.op === "remove" && o.kind === "timer");
+    return Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, timer && k === "id" ? "N" : normal(o[k])]));
   }
   if (typeof v === "string") return v.replace(/\d{4}-\d{2}-\d{2}/g, "YYYY-MM-DD").replace(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
   return v as Json;
@@ -40,6 +42,7 @@ describe("the recent-alerts stand-in", () => {
     let section: Op | undefined;
     const commands = new Map<string, number>();
     const finders = new Map<string, Op>();
+    let timer = -1;
     for (const step of steps) {
       let replies: PluginReply[];
       switch (step.do) {
@@ -66,6 +69,9 @@ describe("the recent-alerts stand-in", () => {
           replies = [await host.pluginCall("recent-alerts", handlerOf(items.find((i) => i.label === step.label)?.run), {})];
           break;
         }
+        case "timer":
+          replies = [await host.pluginCall("recent-alerts", timer, {})];
+          break;
         default:
           throw new Error(`no step ${step.do}`);
       }
@@ -76,6 +82,7 @@ describe("the recent-alerts stand-in", () => {
           if (op.op === "section") section = op;
           if (op.op === "command") commands.set(op.name as string, handlerOf(op.run));
           if (op.op === "finder") finders.set(op.id as string, op);
+          if (op.op === "timer") timer = handlerOf(op.run);
           ops.push(op);
         }
       }

@@ -40,6 +40,8 @@ describe("the edit form", () => {
 
   it("saves a text edit with Enter, without a test login, and counts it in the status bar", async () => {
     const { user, backend } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     expect(statusbar()).not.toHaveTextContent(/Pending change/);
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
     const panel = await form();
@@ -82,6 +84,8 @@ describe("the edit form", () => {
 
   it("saves a new address once the test login passed", async () => {
     const { user, backend } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
     const panel = await form();
     const ip = await within(panel).findByLabelText("Address");

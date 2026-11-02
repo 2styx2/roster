@@ -356,7 +356,7 @@ def inherited(text, group):
     layers = [{}, {k: v for k, v in g.items() if k not in GROUP_ONLY}, raw.get("defaults") or {}]
     ssh = resolve_ssh("new", layers)
     out = {k: ssh[k] for k in SSH_KEYS} | {k: bool(first(layers, k, True)) for k in FLAGS}
-    return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {"mesh": first(layers, "mesh")}
+    return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")}
 
 
 def last_value(node):
@@ -705,20 +705,22 @@ def own_keys(text, group, name):
     return set(map(str, h)) | set(map(str, h.get("ssh") or {}) if isinstance(h.get("ssh"), dict) else ())
 
 
-# What a move writes on the Host to keep it. A Host with no mesh: anywhere has nothing to keep: it takes the Mesh
-# setting of the group it moves to, as any new member would (decision Q77).
-PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", *TEXT)
+# What a move writes on the Host to keep it. A Host with no mesh: (or mesh_dir:) anywhere has nothing to keep: it
+# takes the Mesh setting of the group it moves to, as any new member would (decision Q77).
+PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", *TEXT)
+UNSET_JOINS = ("mesh", "mesh_dir")
 
 
-def pinned_move(text, was_host, name, group):
-    """move_text, then whatever Host NAME (WAS_HOST, as loaded before) would now inherit differently (its user,
-    Login, flags, text) written on the Host itself, so it comes out the same but for its group. Text only: nothing
-    is loaded (check_moved checks the result). Returns (new text, the fields pinned)."""
-    old = current(was_host)
+def pinned_move(text, was_host, name, group, mesh_dir=None):
+    """move_text, then whatever Host NAME (WAS_HOST, as loaded before, and its MESH_DIR, which the loaded config
+    keeps beside its Hosts) would now inherit differently (its user, Login, flags, text, Mesh settings) written on
+    the Host itself, so it comes out the same but for its group. Text only: nothing is loaded (check_moved checks
+    the result). Returns (new text, the fields pinned)."""
+    old = current(was_host) | {"mesh_dir": mesh_dir}
     was, will = inherited(text, was_host["group"]), inherited(text, group)
     own = own_keys(text, was_host["group"], name)
     pin = {k: old[k] for k in PINNED if was[k] != will[k] and old[k] != will[k] and k not in own
-           and not (k == "mesh" and old[k] is None)}
+           and not (k in UNSET_JOINS and old[k] is None)}
     new_text = move_text(text, name, group)
     if pin:
         new_text = edit_text(new_text, name, pin, drop_empty=False)
@@ -730,8 +732,10 @@ def check_moved(before, after, names, group):
     for name in names:
         h = after["hosts"].get(name)
         was = before["hosts"][name]
-        differs = sorted(k for k in was if k != "group" and (h or {}).get(k) != was[k]
-                         and not (k == "mesh" and was[k] is None))
+        dirs = before["mesh_dirs"].get(name), after["mesh_dirs"].get(name)
+        differs = sorted([k for k in was if k != "group" and (h or {}).get(k) != was[k]
+                          and not (k == "mesh" and was[k] is None)]
+                         + (["mesh_dir"] if dirs[0] is not None and dirs[0] != dirs[1] else []))
         if h is None or h["group"] != group or differs:
             raise Problem(WOULD_CHANGE, f"{name} would come out different in group {group} ({', '.join(differs)} it "
                                         "inherits there) - nothing was written", {"host": name, "fields": differs},
@@ -750,7 +754,7 @@ def moved(path, name, group):
     group_entry(groups_node(text), group)
     if h["group"] == group:
         return text, text, h, []
-    new_text, pinned = pinned_move(text, h, name, group)
+    new_text, pinned = pinned_move(text, h, name, group, before["mesh_dirs"].get(name))
     after = load_text(path, new_text)
     check_moved(before, after, [name], group)
     if without(after["hosts"], name) != without(before["hosts"], name) or not others_same(before, after, hosts=False):
@@ -825,7 +829,7 @@ def group_deleted(path, group, to=None):
         group_entry(groups_node(text), to)
     new_text = text
     for name in members:                                # as text only; the result is loaded once, below
-        new_text, _ = pinned_move(new_text, before["hosts"][name], name, to)
+        new_text, _ = pinned_move(new_text, before["hosts"][name], name, to, before["mesh_dirs"].get(name))
     groups = groups_node(new_text)
     gk, g = group_entry(groups, group)
     t = Text(new_text)

@@ -122,7 +122,7 @@ describe("The command line completes like a shell", () => {
     expect(await typed("finder ")).toEqual(expect.arrayContaining(["finder sessions", "finder hosts", "finder tree"]));
     expect(await typed("mode ")).toEqual(["mode standard", "mode focus"]);
     expect(await typed("pu")).toEqual(["publish", "pull"]);
-    expect(await typed("config ")).toEqual(["config reload", "config path", "config import-terminal"]);
+    expect(await typed("config ")).toEqual(["config reload", "config path", "config import-terminal", "config types"]);
     expect(await typed("fold group:")).toEqual(
       expect.arrayContaining(["fold group:subnet-1", "fold group:subnet-2", "fold group:subnet-3", "fold group:subnet-4"]),
     );

@@ -23,4 +23,11 @@ describe("The State store", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(platform.saved()).toMatchObject({ newer: 1, folders: [] });
   });
+
+  it("moves a Folder folded before Folders became a Plugin (folder:NAME) to its new id (folders:NAME)", async () => {
+    const platform = memoryPlatform({ state: { version: 1, folded: ["folder:Lab ESXi", "group:lab", "folders:Night", "folder:Night"] } });
+    const store = new StateStore(platform);
+    await store.load();
+    expect(store.snapshot().folded).toEqual(["folders:Lab ESXi", "group:lab", "folders:Night"]);
+  });
 });

@@ -16,6 +16,7 @@ import { builtinThemeRegistry } from "./theme/themes";
 import { Registry } from "./registry";
 import { builtinTutorRegistry, syncTutorPages, type TutorRegistry } from "./tutor/tutor";
 import type { BadgeEntry, BadgeRegistry, StatusRegistry, StatusSegmentDef } from "./view/status";
+import type { DetailsRegistry, DetailsSectionDef, ViewDef, ViewRegistry } from "./view/views";
 
 export interface Registries {
   commands: CommandRegistry;
@@ -30,7 +31,7 @@ export interface Registries {
   /** Folders defined in init.lua (ticket 21) or by Plugins: read-only in the app. The Folders
    * made in the app live in the State. */
   folders: FolderRegistry;
-  /** What `:source` reloads (decision Q58): init.lua; ticket 28 adds folders.yml and roster.yml. */
+  /** What `:source` reloads (decision Q58): init.lua; ticket 28 adds roster.yml. */
   reloaders: ReloaderRegistry;
   /** The toolbar's controls (decision Q65): the built-ins, and what Plugins add. */
   toolbar: ToolbarRegistry;
@@ -44,6 +45,10 @@ export interface Registries {
   health: HealthRegistry;
   /** `:tutor`'s tutorials (ticket 55): roster's own, and what Plugins add. Each is a help page. */
   tutorials: TutorRegistry;
+  /** Views (ticket 76): side panels and full views, which Plugins add (`:view ID`). */
+  views: ViewRegistry;
+  /** Sections of a Host's details that Plugins add (ticket 76), one entry per section and Host. */
+  details: DetailsRegistry;
 }
 
 export function builtinRegistries(): Registries {
@@ -71,5 +76,7 @@ export function builtinRegistries(): Registries {
     badges: new Registry<BadgeEntry>(),
     health: builtinHealthRegistry(),
     tutorials,
+    views: new Registry<ViewDef>(),
+    details: new Registry<DetailsSectionDef>(),
   };
 }

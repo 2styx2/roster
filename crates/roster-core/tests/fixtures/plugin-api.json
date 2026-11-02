@@ -1,5 +1,55 @@
 {
-  "api_version": 2,
+  "api_version": 4,
+  "commands": [
+    {
+      "name": "finder",
+      "permission": null
+    },
+    {
+      "name": "view",
+      "permission": null
+    },
+    {
+      "name": "help",
+      "permission": null
+    },
+    {
+      "name": "find",
+      "permission": null
+    },
+    {
+      "name": "info",
+      "permission": null
+    },
+    {
+      "name": "changes",
+      "permission": null
+    },
+    {
+      "name": "session",
+      "permission": null
+    },
+    {
+      "name": "next",
+      "permission": null
+    },
+    {
+      "name": "prev",
+      "permission": null
+    },
+    {
+      "name": "check",
+      "permission": "serve:host.check"
+    },
+    {
+      "name": "open",
+      "permission": "sessions.open"
+    },
+    {
+      "name": "connect",
+      "permission": "sessions.open"
+    }
+  ],
   "events": [
     {
       "name": "lock",
@@ -48,6 +98,22 @@
         "terminal.read"
       ],
       "payload": "TerminalOutputEvent"
+    },
+    {
+      "name": "command_done",
+      "needs": [
+        "terminal.read"
+      ],
+      "payload": "CommandDoneEvent"
+    },
+    {
+      "name": "job_progress",
+      "needs": [
+        "serve:mesh.job",
+        "serve:discover.status",
+        "serve:host.check_job"
+      ],
+      "payload": "JobProgressEvent"
     }
   ],
   "functions": [
@@ -62,6 +128,11 @@
           "name": "level",
           "optional": true,
           "type": "Level"
+        },
+        {
+          "name": "opts",
+          "optional": true,
+          "type": "NoticeOptions"
         }
       ],
       "path": "roster.notify",
@@ -86,6 +157,125 @@
       "permission": null,
       "returns": "",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "question",
+          "optional": false,
+          "type": "Confirm"
+        }
+      ],
+      "path": "roster.confirm",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "line",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.cmd",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "text",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "opts",
+          "optional": true,
+          "type": "EchoOptions"
+        }
+      ],
+      "path": "roster.echo",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "text",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.cmdline",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "permission",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "ms",
+          "optional": false,
+          "type": "number"
+        },
+        {
+          "name": "fn",
+          "optional": false,
+          "type": "fun()"
+        }
+      ],
+      "path": "roster.defer",
+      "permission": null,
+      "returns": "Timer",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "ms",
+          "optional": false,
+          "type": "number"
+        },
+        {
+          "name": "fn",
+          "optional": false,
+          "type": "fun()"
+        }
+      ],
+      "path": "roster.every",
+      "permission": null,
+      "returns": "Timer",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "timer",
+          "optional": false,
+          "type": "Timer"
+        }
+      ],
+      "path": "roster.cancel",
+      "permission": null,
+      "returns": "",
+      "since": 3
     },
     {
       "params": [
@@ -144,6 +334,24 @@
     {
       "params": [
         {
+          "name": "context",
+          "optional": false,
+          "type": "KeyContext"
+        },
+        {
+          "name": "keys",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.keymap.del",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
           "name": "id",
           "optional": false,
           "type": "string"
@@ -158,6 +366,19 @@
       "permission": null,
       "returns": "",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.themes.remove",
+      "permission": null,
+      "returns": "",
+      "since": 3
     },
     {
       "params": [
@@ -304,6 +525,24 @@
     {
       "params": [
         {
+          "name": "check",
+          "optional": false,
+          "type": "integer"
+        },
+        {
+          "name": "lines",
+          "optional": false,
+          "type": "HealthCheck[]"
+        }
+      ],
+      "path": "roster.health.answer",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
           "name": "id",
           "optional": false,
           "type": "string"
@@ -348,6 +587,68 @@
     {
       "params": [
         {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "control",
+          "optional": false,
+          "type": "ToolbarControl"
+        }
+      ],
+      "path": "roster.toolbar.set",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.toolbar.remove",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "progress",
+          "optional": false,
+          "type": "Progress"
+        }
+      ],
+      "path": "roster.progress.set",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.progress.remove",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
           "name": "host",
           "optional": false,
           "type": "string"
@@ -386,6 +687,122 @@
     {
       "params": [
         {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "optional": false,
+          "type": "View"
+        }
+      ],
+      "path": "roster.views.set",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "changes",
+          "optional": false,
+          "type": "ViewUpdate"
+        }
+      ],
+      "path": "roster.views.update",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "opts",
+          "optional": true,
+          "type": "ViewOpenOptions"
+        }
+      ],
+      "path": "roster.views.open",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.views.close",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.views.remove",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "section",
+          "optional": true,
+          "type": "DetailsSection"
+        }
+      ],
+      "path": "roster.details.set",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.details.remove",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
           "name": "text",
           "optional": false,
           "type": "string"
@@ -395,6 +812,88 @@
       "permission": null,
       "returns": "",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "name",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.storage.read",
+      "permission": null,
+      "returns": "string?",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "name",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "text",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.storage.write",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [],
+      "path": "roster.storage.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "name",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.storage.remove",
+      "permission": null,
+      "returns": "boolean",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "name",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.storage.read_json",
+      "permission": null,
+      "returns": "any",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "name",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "optional": false,
+          "type": "any"
+        }
+      ],
+      "path": "roster.storage.write_json",
+      "permission": null,
+      "returns": "",
+      "since": 3
     },
     {
       "params": [],
@@ -413,8 +912,28 @@
       ],
       "path": "roster.inventory.host",
       "permission": "inventory.read",
-      "returns": "Host",
+      "returns": "Host?",
       "since": 2
+    },
+    {
+      "params": [],
+      "path": "roster.inventory.groups",
+      "permission": "inventory.read",
+      "returns": "table<string, Group>",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "done",
+          "optional": false,
+          "type": "fun(list: HostList?, err: string?)"
+        }
+      ],
+      "path": "roster.inventory.request",
+      "permission": "inventory.read",
+      "returns": "",
+      "since": 4
     },
     {
       "params": [
@@ -491,6 +1010,34 @@
     {
       "params": [
         {
+          "name": "session",
+          "optional": false,
+          "type": "integer"
+        },
+        {
+          "name": "line",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "path": "roster.sessions.show",
+      "permission": null,
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [],
+      "path": "roster.sessions.list",
+      "permission": [
+        "inventory.read",
+        "terminal.read"
+      ],
+      "returns": "Session[]",
+      "since": 4
+    },
+    {
+      "params": [
+        {
           "name": "host",
           "optional": false,
           "type": "string"
@@ -536,21 +1083,116 @@
       "permission": "serve:*",
       "returns": "any",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "method",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "optional": true,
+          "type": "table"
+        },
+        {
+          "name": "done",
+          "optional": false,
+          "type": "fun(result: any, err: string?)"
+        }
+      ],
+      "path": "roster.serve.request",
+      "permission": "serve:*",
+      "returns": "",
+      "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "request",
+          "optional": false,
+          "type": "HttpRequest"
+        },
+        {
+          "name": "done",
+          "optional": false,
+          "type": "fun(response: HttpResponse?, err: string?)"
+        }
+      ],
+      "path": "roster.http.request",
+      "permission": "network:*",
+      "returns": "",
+      "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "url",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "done",
+          "optional": false,
+          "type": "fun(response: HttpResponse?, err: string?)"
+        }
+      ],
+      "path": "roster.http.get",
+      "permission": "network:*",
+      "returns": "",
+      "since": 2
     }
+  ],
+  "roster_only": [
+    "plugins",
+    "packages",
+    "publish",
+    "source",
+    "config",
+    "vault"
   ],
   "tags": {
     "roster-Change": "plugin-api#change",
     "roster-ChangesDiff": "plugin-api#changesdiff",
+    "roster-CheckJob": "plugin-api#checkjob",
     "roster-CheckStep": "plugin-api#checkstep",
+    "roster-Column": "plugin-api#column",
+    "roster-ColumnKind": "plugin-api#columnkind",
     "roster-CommandArgs": "plugin-api#commandargs",
+    "roster-CommandDoneEvent": "plugin-api#commanddoneevent",
     "roster-CommandSpec": "plugin-api#commandspec",
+    "roster-Confirm": "plugin-api#confirm",
+    "roster-DetailsSection": "plugin-api#detailssection",
+    "roster-DiscoverAdd": "plugin-api#discoveradd",
+    "roster-DiscoverAdded": "plugin-api#discoveradded",
+    "roster-DiscoverFound": "plugin-api#discoverfound",
+    "roster-DiscoverPlan": "plugin-api#discoverplan",
+    "roster-DiscoverPort": "plugin-api#discoverport",
+    "roster-DiscoverStatus": "plugin-api#discoverstatus",
+    "roster-DiscoverStop": "plugin-api#discoverstop",
+    "roster-EchoOptions": "plugin-api#echooptions",
+    "roster-EdgeDir": "plugin-api#edgedir",
+    "roster-EdgeStyle": "plugin-api#edgestyle",
+    "roster-EdgeTone": "plugin-api#edgetone",
     "roster-EmptyEvent": "plugin-api#emptyevent",
     "roster-EventName": "plugin-api#eventname",
+    "roster-Fact": "plugin-api#fact",
+    "roster-FilterState": "plugin-api#filterstate",
     "roster-Finder": "plugin-api#finder",
     "roster-FinderItem": "plugin-api#finderitem",
     "roster-Float": "plugin-api#float",
+    "roster-FloatAction": "plugin-api#floataction",
+    "roster-Graph": "plugin-api#graph",
+    "roster-GraphCluster": "plugin-api#graphcluster",
+    "roster-GraphEdge": "plugin-api#graphedge",
+    "roster-GraphFilter": "plugin-api#graphfilter",
+    "roster-GraphNode": "plugin-api#graphnode",
+    "roster-GraphReach": "plugin-api#graphreach",
     "roster-Group": "plugin-api#group",
     "roster-GroupChange": "plugin-api#groupchange",
+    "roster-HandlerContext": "plugin-api#handlercontext",
+    "roster-HeadAction": "plugin-api#headaction",
     "roster-HealthCheck": "plugin-api#healthcheck",
     "roster-HealthSection": "plugin-api#healthsection",
     "roster-HelpPage": "plugin-api#helppage",
@@ -559,89 +1201,168 @@
     "roster-HostCheck": "plugin-api#hostcheck",
     "roster-HostList": "plugin-api#hostlist",
     "roster-HostSelectedEvent": "plugin-api#hostselectedevent",
+    "roster-HttpRequest": "plugin-api#httprequest",
+    "roster-HttpResponse": "plugin-api#httpresponse",
     "roster-InventoryError": "plugin-api#inventoryerror",
     "roster-InventoryInfo": "plugin-api#inventoryinfo",
+    "roster-JobProgressEvent": "plugin-api#jobprogressevent",
     "roster-KeyContext": "plugin-api#keycontext",
     "roster-LastCommit": "plugin-api#lastcommit",
     "roster-Lesson": "plugin-api#lesson",
     "roster-Level": "plugin-api#level",
+    "roster-Link": "plugin-api#link",
     "roster-Login": "plugin-api#login",
     "roster-LoginRef": "plugin-api#loginref",
     "roster-Manifest": "plugin-api#manifest",
+    "roster-MeshCut": "plugin-api#meshcut",
+    "roster-MeshCutChange": "plugin-api#meshcutchange",
+    "roster-MeshHost": "plugin-api#meshhost",
+    "roster-MeshJob": "plugin-api#meshjob",
+    "roster-MeshLink": "plugin-api#meshlink",
+    "roster-MeshResult": "plugin-api#meshresult",
+    "roster-MeshStarted": "plugin-api#meshstarted",
+    "roster-MeshStatus": "plugin-api#meshstatus",
+    "roster-MeshStop": "plugin-api#meshstop",
     "roster-MoveResult": "plugin-api#moveresult",
+    "roster-NodeAction": "plugin-api#nodeaction",
+    "roster-NodeEvent": "plugin-api#nodeevent",
+    "roster-NodeMark": "plugin-api#nodemark",
+    "roster-NodeRun": "plugin-api#noderun",
+    "roster-NodeShape": "plugin-api#nodeshape",
+    "roster-NodeState": "plugin-api#nodestate",
+    "roster-NoticeAction": "plugin-api#noticeaction",
+    "roster-NoticeOptions": "plugin-api#noticeoptions",
     "roster-Os": "plugin-api#os",
     "roster-Permission": "plugin-api#permission",
     "roster-Plugin": "plugin-api#plugin",
+    "roster-Progress": "plugin-api#progress",
     "roster-RenameResult": "plugin-api#renameresult",
     "roster-ReviewResult": "plugin-api#reviewresult",
     "roster-Row": "plugin-api#row",
     "roster-RowAction": "plugin-api#rowaction",
+    "roster-RowGlyph": "plugin-api#rowglyph",
     "roster-RowIcon": "plugin-api#rowicon",
+    "roster-RowTone": "plugin-api#rowtone",
     "roster-Run": "plugin-api#run",
     "roster-Section": "plugin-api#section",
+    "roster-ServeError": "plugin-api#serveerror",
     "roster-Service": "plugin-api#service",
     "roster-ServiceProblem": "plugin-api#serviceproblem",
+    "roster-Session": "plugin-api#session",
     "roster-SessionExitEvent": "plugin-api#sessionexitevent",
     "roster-SessionOpenEvent": "plugin-api#sessionopenevent",
     "roster-SshLogin": "plugin-api#sshlogin",
     "roster-StatusSegment": "plugin-api#statussegment",
     "roster-Step": "plugin-api#step",
     "roster-StepMatch": "plugin-api#stepmatch",
+    "roster-Table": "plugin-api#table",
+    "roster-TableAction": "plugin-api#tableaction",
+    "roster-TableEvent": "plugin-api#tableevent",
+    "roster-TableRow": "plugin-api#tablerow",
+    "roster-TableRun": "plugin-api#tablerun",
     "roster-TerminalOutputEvent": "plugin-api#terminaloutputevent",
     "roster-Theme": "plugin-api#theme",
+    "roster-Timer": "plugin-api#timer",
+    "roster-ToolbarControl": "plugin-api#toolbarcontrol",
+    "roster-ToolbarIcon": "plugin-api#toolbaricon",
     "roster-TutorEvent": "plugin-api#tutorevent",
     "roster-Tutorial": "plugin-api#tutorial",
     "roster-UpdateResult": "plugin-api#updateresult",
+    "roster-View": "plugin-api#view",
+    "roster-ViewOpenOptions": "plugin-api#viewopenoptions",
+    "roster-ViewPlace": "plugin-api#viewplace",
+    "roster-ViewUpdate": "plugin-api#viewupdate",
     "roster.api_version": "plugin-api#rosterapi_version",
     "roster.badges": "plugin-api#rosterbadges",
     "roster.badges.set()": "plugin-api#rosterbadgessethost-text",
+    "roster.cancel()": "plugin-api#rostercanceltimer",
     "roster.clipboard": "plugin-api#rosterclipboard",
     "roster.clipboard.copy()": "plugin-api#rosterclipboardcopytext",
+    "roster.cmd()": "plugin-api#rostercmdline",
+    "roster.cmdline()": "plugin-api#rostercmdlinetext",
     "roster.commands": "plugin-api#rostercommands",
     "roster.commands.add()": "plugin-api#rostercommandsaddname-spec",
     "roster.commands.remove()": "plugin-api#rostercommandsremovename",
+    "roster.confirm()": "plugin-api#rosterconfirmquestion",
+    "roster.defer()": "plugin-api#rosterdeferms-fn",
+    "roster.details": "plugin-api#rosterdetails",
+    "roster.details.remove()": "plugin-api#rosterdetailsremoveid",
+    "roster.details.set()": "plugin-api#rosterdetailssetid-host-section",
+    "roster.echo()": "plugin-api#rosterechotext-opts",
+    "roster.every()": "plugin-api#rostereveryms-fn",
     "roster.finders": "plugin-api#rosterfinders",
     "roster.finders.remove()": "plugin-api#rosterfindersremoveid",
     "roster.finders.set()": "plugin-api#rosterfinderssetid-finder",
     "roster.float": "plugin-api#rosterfloat",
     "roster.float.close()": "plugin-api#rosterfloatclose",
     "roster.float.open()": "plugin-api#rosterfloatopenfloat",
+    "roster.has()": "plugin-api#rosterhaspermission",
     "roster.health": "plugin-api#rosterhealth",
+    "roster.health.answer()": "plugin-api#rosterhealthanswercheck-lines",
     "roster.health.remove()": "plugin-api#rosterhealthremoveid",
     "roster.health.set()": "plugin-api#rosterhealthsetid-section",
     "roster.help": "plugin-api#rosterhelp",
     "roster.help.remove()": "plugin-api#rosterhelpremovetopic",
     "roster.help.set()": "plugin-api#rosterhelpsettopic-page",
+    "roster.http": "plugin-api#rosterhttp",
+    "roster.http.get()": "plugin-api#rosterhttpgeturl-done",
+    "roster.http.request()": "plugin-api#rosterhttprequestrequest-done",
     "roster.inventory": "plugin-api#rosterinventory",
+    "roster.inventory.groups()": "plugin-api#rosterinventorygroups",
     "roster.inventory.host()": "plugin-api#rosterinventoryhostname",
     "roster.inventory.hosts()": "plugin-api#rosterinventoryhosts",
     "roster.inventory.move()": "plugin-api#rosterinventorymovehost-group",
     "roster.inventory.rename()": "plugin-api#rosterinventoryrenamehost-to",
+    "roster.inventory.request()": "plugin-api#rosterinventoryrequestdone",
     "roster.inventory.review()": "plugin-api#rosterinventoryreviewhost-reviewed",
     "roster.inventory.update()": "plugin-api#rosterinventoryupdatehost-changes",
     "roster.keymap": "plugin-api#rosterkeymap",
+    "roster.keymap.del()": "plugin-api#rosterkeymapdelcontext-keys",
     "roster.keymap.set()": "plugin-api#rosterkeymapsetcontext-keys-action",
-    "roster.notify()": "plugin-api#rosternotifytext-level",
+    "roster.notify()": "plugin-api#rosternotifytext-level-opts",
     "roster.on()": "plugin-api#rosteronevent-listener",
     "roster.os": "plugin-api#rosteros",
     "roster.plugin": "plugin-api#rosterplugin",
+    "roster.progress": "plugin-api#rosterprogress",
+    "roster.progress.remove()": "plugin-api#rosterprogressremoveid",
+    "roster.progress.set()": "plugin-api#rosterprogresssetid-progress",
     "roster.serve": "plugin-api#rosterserve",
     "roster.serve.call()": "plugin-api#rosterservecallmethod-params",
+    "roster.serve.request()": "plugin-api#rosterserverequestmethod-params-done",
     "roster.sessions": "plugin-api#rostersessions",
+    "roster.sessions.list()": "plugin-api#rostersessionslist",
     "roster.sessions.open()": "plugin-api#rostersessionsopenhost",
+    "roster.sessions.show()": "plugin-api#rostersessionsshowsession-line",
     "roster.sidebar": "plugin-api#rostersidebar",
     "roster.sidebar.remove()": "plugin-api#rostersidebarremoveid",
     "roster.sidebar.set()": "plugin-api#rostersidebarsetid-section",
     "roster.status": "plugin-api#rosterstatus",
     "roster.status.remove()": "plugin-api#rosterstatusremoveid",
     "roster.status.set()": "plugin-api#rosterstatussetid-segment",
+    "roster.storage": "plugin-api#rosterstorage",
+    "roster.storage.list()": "plugin-api#rosterstoragelist",
+    "roster.storage.read()": "plugin-api#rosterstoragereadname",
+    "roster.storage.read_json()": "plugin-api#rosterstorageread_jsonname",
+    "roster.storage.remove()": "plugin-api#rosterstorageremovename",
+    "roster.storage.write()": "plugin-api#rosterstoragewritename-text",
+    "roster.storage.write_json()": "plugin-api#rosterstoragewrite_jsonname-value",
     "roster.terminal": "plugin-api#rosterterminal",
     "roster.terminal.send()": "plugin-api#rosterterminalsendsession-text",
     "roster.themes": "plugin-api#rosterthemes",
     "roster.themes.define()": "plugin-api#rosterthemesdefineid-theme",
+    "roster.themes.remove()": "plugin-api#rosterthemesremoveid",
+    "roster.toolbar": "plugin-api#rostertoolbar",
+    "roster.toolbar.remove()": "plugin-api#rostertoolbarremoveid",
+    "roster.toolbar.set()": "plugin-api#rostertoolbarsetid-control",
     "roster.tutor": "plugin-api#rostertutor",
     "roster.tutor.remove()": "plugin-api#rostertutorremoveid",
-    "roster.tutor.set()": "plugin-api#rostertutorsetid-tutorial"
+    "roster.tutor.set()": "plugin-api#rostertutorsetid-tutorial",
+    "roster.views": "plugin-api#rosterviews",
+    "roster.views.close()": "plugin-api#rosterviewscloseid",
+    "roster.views.open()": "plugin-api#rosterviewsopenid-opts",
+    "roster.views.remove()": "plugin-api#rosterviewsremoveid",
+    "roster.views.set()": "plugin-api#rosterviewssetid-view",
+    "roster.views.update()": "plugin-api#rosterviewsupdateid-changes"
   },
   "types": {
     "Change": {
@@ -729,6 +1450,61 @@
       ],
       "open": false
     },
+    "CheckJob": {
+      "fields": [
+        {
+          "name": "kind",
+          "required": true,
+          "type": "\"check\""
+        },
+        {
+          "name": "job",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "action",
+          "required": true,
+          "type": "\"check\""
+        },
+        {
+          "name": "state",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "done",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "total",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "at",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "result",
+          "required": false,
+          "type": "HostCheck"
+        },
+        {
+          "name": "error",
+          "required": false,
+          "type": "ServeError"
+        }
+      ],
+      "open": false
+    },
     "CheckStep": {
       "fields": [
         {
@@ -769,6 +1545,34 @@
       ],
       "open": false
     },
+    "Column": {
+      "fields": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "required": false,
+          "type": "ColumnKind"
+        },
+        {
+          "name": "width",
+          "required": false,
+          "type": "number"
+        }
+      ],
+      "open": false
+    },
+    "ColumnKind": {
+      "alias": "\"text\"|\"data\"|\"number\""
+    },
     "CommandArgs": {
       "fields": [
         {
@@ -780,6 +1584,61 @@
           "name": "words",
           "required": true,
           "type": "string[]"
+        },
+        {
+          "name": "session",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "session_host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "section",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "row",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "CommandDoneEvent": {
+      "fields": [
+        {
+          "name": "session",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "command",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "output",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "code",
+          "required": false,
+          "type": "integer"
         }
       ],
       "open": false
@@ -795,16 +1654,373 @@
           "name": "run",
           "required": true,
           "type": "string|fun(args: CommandArgs): any"
+        },
+        {
+          "name": "complete",
+          "required": false,
+          "type": "fun(arg: string): string[]"
         }
       ],
       "open": false
+    },
+    "Confirm": {
+      "fields": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "facts",
+          "required": false,
+          "type": "Fact[]"
+        },
+        {
+          "name": "action",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "danger",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "typed",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "fun(e: table): any"
+        },
+        {
+          "name": "cancel",
+          "required": false,
+          "type": "fun(e: table): any"
+        }
+      ],
+      "open": false
+    },
+    "DetailsSection": {
+      "fields": [
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "order",
+          "required": false,
+          "type": "number"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "HeadAction[]"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "facts",
+          "required": false,
+          "type": "Fact[]"
+        },
+        {
+          "name": "table",
+          "required": false,
+          "type": "Table"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverAdd": {
+      "fields": [
+        {
+          "name": "group",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "added",
+          "required": true,
+          "type": "DiscoverAdded[]"
+        },
+        {
+          "name": "backup",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverAdded": {
+      "fields": [
+        {
+          "name": "address",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverFound": {
+      "fields": [
+        {
+          "name": "address",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "hostname",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "web",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "known",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "added",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "vendor",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "os",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "mac",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "ports",
+          "required": true,
+          "type": "DiscoverPort[]"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverPlan": {
+      "fields": [
+        {
+          "name": "targets",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "addresses",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "ports",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "scanner",
+          "required": true,
+          "type": "\"nmap\"|\"built-in\""
+        },
+        {
+          "name": "limit",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "max",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverPort": {
+      "fields": [
+        {
+          "name": "port",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "product",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverStatus": {
+      "fields": [
+        {
+          "name": "scan",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "state",
+          "required": true,
+          "type": "\"running\"|\"stopping\"|\"done\"|\"stopped\"|\"failed\""
+        },
+        {
+          "name": "targets",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "scanner",
+          "required": true,
+          "type": "\"nmap\"|\"built-in\""
+        },
+        {
+          "name": "done",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "total",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "count",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "quiet",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "found",
+          "required": true,
+          "type": "DiscoverFound[]"
+        },
+        {
+          "name": "error",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "DiscoverStop": {
+      "fields": [
+        {
+          "name": "scan",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "stopping",
+          "required": true,
+          "type": "boolean"
+        }
+      ],
+      "open": false
+    },
+    "EchoOptions": {
+      "fields": [
+        {
+          "name": "quiet",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "open": false
+    },
+    "EdgeDir": {
+      "alias": "\"one\"|\"both\""
+    },
+    "EdgeStyle": {
+      "alias": "\"solid\"|\"dashed\"|\"dotted\""
+    },
+    "EdgeTone": {
+      "alias": "\"live\"|\"muted\"|\"warn\"|\"error\""
     },
     "EmptyEvent": {
       "fields": [],
       "open": false
     },
     "EventName": {
-      "alias": "\"lock\"|\"unlock\"|\"host_selected\"|\"session_open\"|\"session_exit\"|\"inventory_changed\"|\"terminal_output\""
+      "alias": "\"lock\"|\"unlock\"|\"host_selected\"|\"session_open\"|\"session_exit\"|\"inventory_changed\"|\"terminal_output\"|\"command_done\"|\"job_progress\""
+    },
+    "Fact": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "open": false
+    },
+    "FilterState": {
+      "alias": "\"live\"|\"down\"|\"warn\"|\"error\""
     },
     "Finder": {
       "fields": [
@@ -814,9 +2030,19 @@
           "type": "string"
         },
         {
+          "name": "prompt",
+          "required": false,
+          "type": "string"
+        },
+        {
           "name": "items",
           "required": false,
-          "type": "FinderItem[]"
+          "type": "FinderItem[]|fun(): FinderItem[]"
+        },
+        {
+          "name": "section",
+          "required": false,
+          "type": "string"
         }
       ],
       "open": false
@@ -862,9 +2088,227 @@
           "name": "lines",
           "required": false,
           "type": "string[]"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "FloatAction[]"
+        },
+        {
+          "name": "links",
+          "required": false,
+          "type": "Link[]"
         }
       ],
       "open": false
+    },
+    "FloatAction": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "key",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "Run"
+        }
+      ],
+      "open": false
+    },
+    "Graph": {
+      "fields": [
+        {
+          "name": "nodes",
+          "required": false,
+          "type": "GraphNode[]"
+        },
+        {
+          "name": "edges",
+          "required": false,
+          "type": "GraphEdge[]"
+        },
+        {
+          "name": "clusters",
+          "required": false,
+          "type": "GraphCluster[]"
+        },
+        {
+          "name": "reach",
+          "required": false,
+          "type": "GraphReach"
+        },
+        {
+          "name": "filter",
+          "required": false,
+          "type": "GraphFilter"
+        },
+        {
+          "name": "open",
+          "required": false,
+          "type": "NodeRun"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "NodeAction[]"
+        }
+      ],
+      "open": false
+    },
+    "GraphCluster": {
+      "fields": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "mesh",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "collapsed",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "open": false
+    },
+    "GraphEdge": {
+      "fields": [
+        {
+          "name": "id",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "from",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "type": "EdgeDir"
+        },
+        {
+          "name": "style",
+          "required": false,
+          "type": "EdgeStyle"
+        },
+        {
+          "name": "tone",
+          "required": false,
+          "type": "EdgeTone"
+        },
+        {
+          "name": "cut",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "label",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "GraphFilter": {
+      "fields": [
+        {
+          "name": "clusters",
+          "required": false,
+          "type": "string[]"
+        },
+        {
+          "name": "kinds",
+          "required": false,
+          "type": "string[]"
+        },
+        {
+          "name": "states",
+          "required": false,
+          "type": "FilterState[]"
+        }
+      ],
+      "open": false
+    },
+    "GraphNode": {
+      "fields": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "label",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "shape",
+          "required": false,
+          "type": "NodeShape"
+        },
+        {
+          "name": "state",
+          "required": false,
+          "type": "NodeState"
+        },
+        {
+          "name": "mark",
+          "required": false,
+          "type": "NodeMark"
+        },
+        {
+          "name": "note",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "cluster",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "detail",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "GraphReach": {
+      "alias": "\"all\"|\"direct\""
     },
     "Group": {
       "fields": [
@@ -892,6 +2336,106 @@
           "name": "change",
           "required": true,
           "type": "\"changed\"|\"added\"|\"removed\""
+        }
+      ],
+      "open": false
+    },
+    "HandlerContext": {
+      "fields": [
+        {
+          "name": "section",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "row",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "action",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "dropped",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "finder",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "item",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "segment",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "health",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "check",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "toolbar",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "progress",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "confirm",
+          "required": false,
+          "type": "\"yes\"|\"no\""
+        },
+        {
+          "name": "session",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "session_host",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "HeadAction": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "icon",
+          "required": false,
+          "type": "RowIcon"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "Run"
+        },
+        {
+          "name": "key",
+          "required": false,
+          "type": "string"
         }
       ],
       "open": false
@@ -927,6 +2471,11 @@
           "name": "checks",
           "required": false,
           "type": "HealthCheck[]"
+        },
+        {
+          "name": "check",
+          "required": false,
+          "type": "fun(ctx: HandlerContext): HealthCheck[]|\"later\""
         }
       ],
       "open": false
@@ -1126,6 +2675,61 @@
       ],
       "open": false
     },
+    "HttpRequest": {
+      "fields": [
+        {
+          "name": "url",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "method",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "headers",
+          "required": false,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "body",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "required": false,
+          "type": "number"
+        }
+      ],
+      "open": false
+    },
+    "HttpResponse": {
+      "fields": [
+        {
+          "name": "status",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "url",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "headers",
+          "required": true,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "body",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
     "InventoryError": {
       "fields": [
         {
@@ -1186,6 +2790,56 @@
       ],
       "open": false
     },
+    "JobProgressEvent": {
+      "fields": [
+        {
+          "name": "kind",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "job",
+          "required": true,
+          "type": "integer|string"
+        },
+        {
+          "name": "action",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "state",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "done",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "total",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "at",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "error",
+          "required": false,
+          "type": "table"
+        }
+      ],
+      "open": false
+    },
     "KeyContext": {
       "alias": "\"leader\"|\"list\"|\"list_vim\""
     },
@@ -1236,6 +2890,21 @@
     },
     "Level": {
       "alias": "\"info\"|\"warn\"|\"error\""
+    },
+    "Link": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "url",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "open": false
     },
     "Login": {
       "fields": [
@@ -1290,6 +2959,366 @@
       ],
       "open": false
     },
+    "MeshCut": {
+      "fields": [
+        {
+          "name": "host",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "confirmed",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "pending",
+          "required": true,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "warnings",
+          "required": false,
+          "type": "string[]"
+        },
+        {
+          "name": "change",
+          "required": true,
+          "type": "MeshCutChange"
+        }
+      ],
+      "open": false
+    },
+    "MeshCutChange": {
+      "fields": [
+        {
+          "name": "written",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "backup",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "note",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "error",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "fix",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "MeshHost": {
+      "fields": [
+        {
+          "name": "host",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "status",
+          "required": true,
+          "type": "\"same\"|\"would-change\"|\"changed\"|\"pending\""
+        },
+        {
+          "name": "changes",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "error",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "more",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "open": false
+    },
+    "MeshJob": {
+      "fields": [
+        {
+          "name": "job",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "action",
+          "required": true,
+          "type": "\"plan\"|\"apply\"|\"cut\""
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "state",
+          "required": true,
+          "type": "\"running\"|\"done\"|\"failed\""
+        },
+        {
+          "name": "done",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "total",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "at",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "stopped",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "result",
+          "required": false,
+          "type": "MeshResult|MeshCut"
+        },
+        {
+          "name": "error",
+          "required": false,
+          "type": "ServeError"
+        }
+      ],
+      "open": false
+    },
+    "MeshLink": {
+      "fields": [
+        {
+          "name": "from",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "to",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "required": true,
+          "type": "\"key\"|\"password\""
+        },
+        {
+          "name": "status",
+          "required": false,
+          "type": "\"ok\"|\"untested\"|\"unreachable\"|\"no-host-key\"|\"no-via\"|\"pending\"|\"skipped\""
+        },
+        {
+          "name": "why",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "via",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "skip",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "MeshResult": {
+      "fields": [
+        {
+          "name": "applied",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "links",
+          "required": true,
+          "type": "MeshLink[]"
+        },
+        {
+          "name": "hosts",
+          "required": true,
+          "type": "MeshHost[]"
+        },
+        {
+          "name": "excluded",
+          "required": true,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "reach",
+          "required": true,
+          "type": "table<string, integer>"
+        },
+        {
+          "name": "pending",
+          "required": true,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "already",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "warnings",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "cut_pending",
+          "required": true,
+          "type": "table<string, string[]>"
+        },
+        {
+          "name": "link_count",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "link_statuses",
+          "required": false,
+          "type": "table<string, integer>"
+        },
+        {
+          "name": "reached",
+          "required": false,
+          "type": "table<string, integer>"
+        },
+        {
+          "name": "links_more",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "open": false
+    },
+    "MeshStarted": {
+      "fields": [
+        {
+          "name": "job",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "action",
+          "required": true,
+          "type": "\"plan\"|\"apply\"|\"cut\""
+        },
+        {
+          "name": "total",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "MeshStatus": {
+      "fields": [
+        {
+          "name": "links",
+          "required": true,
+          "type": "MeshLink[]"
+        },
+        {
+          "name": "excluded",
+          "required": true,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "reach",
+          "required": true,
+          "type": "table<string, integer>"
+        },
+        {
+          "name": "members",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "pending",
+          "required": true,
+          "type": "table<string, string>"
+        },
+        {
+          "name": "cut_pending",
+          "required": true,
+          "type": "table<string, string[]>"
+        },
+        {
+          "name": "out_of_date",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "meshed",
+          "required": false,
+          "type": "table<string, string[]>"
+        },
+        {
+          "name": "link_count",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "link_statuses",
+          "required": false,
+          "type": "table<string, integer>"
+        },
+        {
+          "name": "reached",
+          "required": false,
+          "type": "table<string, integer>"
+        },
+        {
+          "name": "links_more",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "open": false
+    },
+    "MeshStop": {
+      "fields": [
+        {
+          "name": "job",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "stopping",
+          "required": true,
+          "type": "boolean"
+        }
+      ],
+      "open": false
+    },
     "MoveResult": {
       "fields": [
         {
@@ -1311,6 +3340,108 @@
           "name": "backup",
           "required": false,
           "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "NodeAction": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "key",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "icon",
+          "required": false,
+          "type": "RowIcon"
+        },
+        {
+          "name": "when",
+          "required": false,
+          "type": "table<string, string|number|(string|number)[]>"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "NodeRun"
+        }
+      ],
+      "open": false
+    },
+    "NodeEvent": {
+      "fields": [
+        {
+          "name": "node",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "session",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "session_host",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "NodeMark": {
+      "alias": "\"warn\"|\"error\""
+    },
+    "NodeRun": {
+      "alias": "string|fun(e: NodeEvent): any"
+    },
+    "NodeShape": {
+      "alias": "\"dot\"|\"ring\"|\"dashed\"|\"hollow\"|\"square\""
+    },
+    "NodeState": {
+      "alias": "\"live\"|\"down\""
+    },
+    "NoticeAction": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "NoticeOptions": {
+      "fields": [
+        {
+          "name": "actions",
+          "required": false,
+          "type": "NoticeAction[]"
+        },
+        {
+          "name": "quiet",
+          "required": false,
+          "type": "boolean"
         }
       ],
       "open": false
@@ -1342,6 +3473,36 @@
           "name": "config",
           "required": true,
           "type": "table"
+        }
+      ],
+      "open": false
+    },
+    "Progress": {
+      "fields": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "done",
+          "required": false,
+          "type": "number"
+        },
+        {
+          "name": "total",
+          "required": false,
+          "type": "number"
+        },
+        {
+          "name": "cancel",
+          "required": false,
+          "type": "Run"
         }
       ],
       "open": false
@@ -1442,6 +3603,31 @@
           "name": "actions",
           "required": false,
           "type": "RowAction[]"
+        },
+        {
+          "name": "icon",
+          "required": false,
+          "type": "RowGlyph"
+        },
+        {
+          "name": "fold",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "kind",
+          "required": false,
+          "type": "\"host\""
+        },
+        {
+          "name": "drop",
+          "required": false,
+          "type": "Run"
+        },
+        {
+          "name": "drag_out",
+          "required": false,
+          "type": "Run"
         }
       ],
       "open": false
@@ -1466,11 +3652,17 @@
       ],
       "open": false
     },
+    "RowGlyph": {
+      "alias": "\"folder\"|\"group\""
+    },
     "RowIcon": {
-      "alias": "\"close\"|\"edit\"|\"add\"|\"addGroup\"|\"review\"|\"unreview\"|\"info\"|\"copy\""
+      "alias": "\"close\"|\"edit\"|\"add\"|\"addGroup\"|\"review\"|\"unreview\"|\"info\"|\"copy\"|\"plan\"|\"apply\"|\"cut\"|\"map\""
+    },
+    "RowTone": {
+      "alias": "\"muted\"|\"warn\"|\"error\""
     },
     "Run": {
-      "alias": "string|fun(args: table): any"
+      "alias": "string|fun(ctx: HandlerContext): any"
     },
     "Section": {
       "fields": [
@@ -1493,6 +3685,41 @@
           "name": "rows",
           "required": false,
           "type": "Row[]"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "RowAction[]"
+        },
+        {
+          "name": "count",
+          "required": false,
+          "type": "number"
+        },
+        {
+          "name": "drop",
+          "required": false,
+          "type": "Run"
+        }
+      ],
+      "open": false
+    },
+    "ServeError": {
+      "fields": [
+        {
+          "name": "code",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "message",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": false,
+          "type": "table"
         }
       ],
       "open": false
@@ -1557,6 +3784,21 @@
         {
           "name": "fix",
           "required": true,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "Session": {
+      "fields": [
+        {
+          "name": "session",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "name": "host",
+          "required": false,
           "type": "string"
         }
       ],
@@ -1672,6 +3914,129 @@
       ],
       "open": false
     },
+    "Table": {
+      "fields": [
+        {
+          "name": "columns",
+          "required": true,
+          "type": "Column[]"
+        },
+        {
+          "name": "rows",
+          "required": false,
+          "type": "TableRow[]"
+        },
+        {
+          "name": "sort",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "desc",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "empty",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "open",
+          "required": false,
+          "type": "TableRun"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "TableAction[]"
+        }
+      ],
+      "open": false
+    },
+    "TableAction": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "key",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "icon",
+          "required": false,
+          "type": "RowIcon"
+        },
+        {
+          "name": "when",
+          "required": false,
+          "type": "table<string, string|number|(string|number)[]>"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "TableRun"
+        }
+      ],
+      "open": false
+    },
+    "TableEvent": {
+      "fields": [
+        {
+          "name": "row",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "view",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "section",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "TableRow": {
+      "fields": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "cells",
+          "required": false,
+          "type": "table<string, string|number>"
+        },
+        {
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "tone",
+          "required": false,
+          "type": "RowTone"
+        }
+      ],
+      "open": false
+    },
+    "TableRun": {
+      "alias": "string|fun(e: TableEvent): any"
+    },
     "TerminalOutputEvent": {
       "fields": [
         {
@@ -1687,6 +4052,11 @@
         {
           "name": "text",
           "required": true,
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "required": false,
           "type": "string"
         }
       ],
@@ -1726,6 +4096,37 @@
         }
       ],
       "open": false
+    },
+    "Timer": {
+      "alias": "integer"
+    },
+    "ToolbarControl": {
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "icon",
+          "required": false,
+          "type": "ToolbarIcon"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "type": "Run"
+        }
+      ],
+      "open": false
+    },
+    "ToolbarIcon": {
+      "alias": "\"find\"|\"add\"|\"details\"|\"help\"|\"map\""
     },
     "TutorEvent": {
       "alias": "\"command\"|\"session_open\"|\"session_exit\"|\"host_selected\"|\"help_open\"|\"help_back\"|\"help_forward\"|\"help_search\""
@@ -1781,6 +4182,139 @@
           "name": "warnings",
           "required": false,
           "type": "string[]"
+        }
+      ],
+      "open": false
+    },
+    "View": {
+      "fields": [
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "place",
+          "required": false,
+          "type": "ViewPlace"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "HeadAction[]"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "facts",
+          "required": false,
+          "type": "Fact[]"
+        },
+        {
+          "name": "table",
+          "required": false,
+          "type": "Table"
+        },
+        {
+          "name": "graph",
+          "required": false,
+          "type": "Graph"
+        }
+      ],
+      "open": false
+    },
+    "ViewOpenOptions": {
+      "fields": [
+        {
+          "name": "select",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false
+    },
+    "ViewPlace": {
+      "alias": "\"panel\"|\"full\""
+    },
+    "ViewUpdate": {
+      "fields": [
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "facts",
+          "required": false,
+          "type": "Fact[]"
+        },
+        {
+          "name": "rows",
+          "required": false,
+          "type": "TableRow[]"
+        },
+        {
+          "name": "remove",
+          "required": false,
+          "type": "string[]"
+        },
+        {
+          "name": "clear",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "nodes",
+          "required": false,
+          "type": "GraphNode[]"
+        },
+        {
+          "name": "edges",
+          "required": false,
+          "type": "GraphEdge[]"
+        },
+        {
+          "name": "clusters",
+          "required": false,
+          "type": "GraphCluster[]"
+        },
+        {
+          "name": "remove_edges",
+          "required": false,
+          "type": "string[]"
+        },
+        {
+          "name": "filter",
+          "required": false,
+          "type": "GraphFilter"
+        },
+        {
+          "name": "columns",
+          "required": false,
+          "type": "Column[]"
+        },
+        {
+          "name": "sort",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "desc",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "actions",
+          "required": false,
+          "type": "TableAction[]"
         }
       ],
       "open": false

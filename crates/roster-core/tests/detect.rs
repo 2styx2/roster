@@ -1,6 +1,8 @@
 //! Finding the Backend: which WSL distro (or the local machine) has roster and an Inventory, and
 //! the exact argv that starts `roster serve` there. Driven through a scripted command runner.
 
+mod common;
+
 use roster_core::detect::{
     Candidate, Choice, ErrorKind, Output, Platform, Runner, Target, detect, detect_choice, roster_command,
 };
@@ -445,7 +447,8 @@ impl Runner for WithHome {
 #[test]
 fn the_real_probe_expands_a_tilde_in_the_program_and_its_arguments() {
     use std::os::unix::fs::PermissionsExt;
-    let home = std::env::temp_dir().join(format!("desk-detect-home-{}", std::process::id()));
+    let tmp = common::temp("detect-home");
+    let home = tmp.to_path_buf();
     std::fs::create_dir_all(home.join("bin")).unwrap();
     std::fs::create_dir_all(home.join("infra")).unwrap();
     let program = home.join("bin/roster");
@@ -456,7 +459,6 @@ fn the_real_probe_expands_a_tilde_in_the_program_and_its_arguments() {
     let cmd = roster_command(Some("~/bin/roster --dir ~/x"));
     let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None);
     let h = home.to_str().unwrap().to_string();
-    std::fs::remove_dir_all(&home).unwrap();
     let c = c.unwrap();
     assert_eq!(
         &c.serve_argv[2..],

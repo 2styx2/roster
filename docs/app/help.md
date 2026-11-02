@@ -72,7 +72,7 @@ The `options` page says, for each option, one of:
 
 - `default`: init.lua doesn't set it.
 - `init.lua:12`: the file sets it, on that line (or just `init.lua` when the line can't be found, for a value built in a loop or a `require`d module). The core lists every value the file set, so an option set to its default value still says `init.lua`.
-- `State (:theme)` or `State (:hints)`: init.lua leaves it to the app, and `:theme` or `:hints` made a choice the State keeps.
+- `State (:theme)`, `State (:hints)` or `State (:messages)`: init.lua leaves it to the app, and `:theme`, `:hints` or `:messages` made a choice the State keeps.
 - `State (:theme, over init.lua:12)`: init.lua sets `theme` on that line, and a `:theme` choice made over that same value is in effect.
 
 ## How the docs stay in sync
@@ -85,6 +85,8 @@ CI also checks the docs themselves, the way Neovim's `make lintdoc` does: every 
 
 The same pages are a website, [2styx2.github.io/roster/](https://2styx2.github.io/roster/), and one PDF, `roster-docs.pdf` there and `roster-docs-X.Y.Z.pdf` on each Release. Both are made from the same Markdown, the same generated pages and the same renderer as help in the app, the way Neovim's website is made from its `:help`, so they can't say something different. The generated pages show roster's defaults there (no `init.lua`, no Plugins) and say so; in the app they show what's in effect.
 
+The box at the top of every page searches (`/` goes to it from anywhere on the page): the topics, ranked as `:help`'s topic finder ranks them, then the text, found the way `:helpgrep` finds it. ↑ and ↓ (or `Ctrl+N` and `Ctrl+P`) choose, Enter opens, Esc closes the list, and the last row, "All N results", opens `search.html?q=WORDS` with every match. A match in the text opens the page at its place with the first word marked. It runs in the page, on an index the website is built with; nothing is sent anywhere.
+
 Every topic has a web address: `tag.html?t=TOPIC`, such as [2styx2.github.io/roster/tag.html?t=terminal.size](https://2styx2.github.io/roster/tag.html?t=terminal.size). Every page ends with the commit it was made from, a link to edit its Markdown, and "Wrong or unclear? Report it", which opens a new issue naming the page.
 
 To build them yourself, in `app/`: `npm run docs` writes the website to `app/dist-docs/`, and `npm run docs -- --pdf FILE` prints the PDF too, with Chrome or Chromium (`CHROME=PATH` if it's not on `PATH`). The build stops on a link that goes nowhere. The website updates when a Release reaches `main` (ADR 0008).
@@ -96,7 +98,7 @@ What a guide in `docs/` needs so it reads well in `:help`, on GitHub, and stays 
 - **Headings are names**, not sentences: each `##` and `###` becomes a topic, `page#slug` (`config#the-sandbox`). Renaming one breaks links to it, and CI says which; add the old name to the guide's `aliases` in `guides.ts` if people may have it in their fingers.
 - **Link by topic or by file.** Another guide by its file (`[Keyboard](keyboard.md#two-modes)`), so the link works on GitHub too. A generated page, command, option or error by its topic: `[Options](options)`, `` `:connect` ``, `` `terminal.size` `` (a code span that names a topic is already a link), `[E13](E13)`.
 - **Code is anything you could type**: commands, options, values, file names. Keys are written in keymap notation, `␣ f`, `Ctrl+Shift+c`.
-- **An option is a row** in config.md's Options tables (Option, Default, What it does), and nowhere else.
+- **An option is declared once**, in the Config's shape table, which writes [the option reference](options.md) (`:help options`) and the editor types; config.md's Options tables say more about what each does, without its default. Snippets are `init.lua` lines as people write them (`roster.o.terminal.size = "16pt"`), and each `lua` block in config.md, recipes.md and keyboard.md must load on its own (a test loads them).
 - **One word means one thing**, the one in `GLOSSARY.md`.
 - **Present tense, active voice**, and say exactly what happens.
 - **Notes for developers** stay out of the way: help leaves out a parenthetical that only names a ticket, a decision, an ADR or an issue, such as `(decision QNN)`, so they can stay in the Markdown for whoever reads it on GitHub. Anywhere else in a sentence, write it in words or leave it to `docs/app/decisions.md`; a test fails on one that would show in help.
@@ -110,7 +112,9 @@ The page starts with the lessons and how far along each is. Each lesson says wha
 
 What's done is kept in the State, so `:tutor` comes back at the first lesson you haven't finished, and `:tutor reset` starts over. Nothing else from the demo is kept: a Theme picked there, its Sessions and its recent Hosts go when you leave. `:config` there opens your real `init.lua`, since that's what the lesson is about.
 
-Tutorials are a registry too (`registries.tutorials`), so a Plugin can ship one (`roster.tutor.set`, [plugins.md](../plugins.md)); `:tutor NAME` runs it and `:help tutor-NAME` shows its page.
+Tutorials are a registry too (`registries.tutorials`), so a Plugin can ship one (`roster.tutor.set`, [plugins.md](../plugins.md#a-plugins-tutorial)); `:tutor NAME` runs it and `:help tutor-NAME` shows its page.
+
+Your Plugins come along. The ones running in your workspace load in the demo too, with the permissions you granted them, so a Plugin's tutorial can have you run the Plugin itself. There they see the demo's Hosts, not yours: roster serve answers only the demo's Host list, a request to the network is never sent, and what a Plugin keeps in its files starts empty and is thrown away when you leave. Your workspace's copy of each keeps running behind, untouched. One that fails to load in the demo says so in a notice, and the tutorial goes on without it ([errors](errors.md#a-plugin-on-the-demo-inventory)).
 
 ## Plugins add pages
 

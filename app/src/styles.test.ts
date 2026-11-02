@@ -168,6 +168,15 @@ describe("the Sidebar's row buttons (decision Q88)", () => {
   });
 });
 
+describe("the Picker's ⓘ (decision Q88, T72)", () => {
+  it("shows on the selected row only: no hover rule reveals it", () => {
+    const all = rules(stylesCss);
+    const hover = all.filter(([sel]) => sel.includes(":hover") && /\.picker-row/.test(sel));
+    for (const [sel] of hover) expect(sel, sel).not.toMatch(/\.picker-info/);
+    expect(all.some(([sel, body]) => sel.includes(".picker-row.selected .picker-info") && /visibility:\s*visible/.test(body))).toBe(true);
+  });
+});
+
 describe("Plugins' UI (ticket 73)", () => {
   const body = (selector: string) =>
     rules(stylesCss)

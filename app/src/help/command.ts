@@ -5,7 +5,9 @@ import { matching, type CommandDef } from "../commands/table";
 import type { FinderItem, FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
+import { optionRows, optionTag } from "../config/reference";
 import { plain } from "./doc";
+import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
 import { findTopic, headingTag, pageBody, pageTexts, topics, type HelpContext, type Topic } from "./pages";
 
@@ -178,41 +180,17 @@ export function helpgrepCommand(): CommandDef {
   };
 }
 
-/** Up to `width` characters of `text` around its first match of `term`. */
-function snippet(text: string, term: string, width = 80): string {
-  if (text.length <= width) return text;
-  const at = Math.max(0, text.toLowerCase().indexOf(term.toLowerCase()));
-  let from = Math.max(0, Math.min(at - 30, text.length - width));
-  // Start at a word, not in one.
-  if (from > 0) from = text.indexOf(" ", from) + 1 || from;
-  return `${from > 0 ? "…" : ""}${text.slice(from, from + width).trim()}${from + width < text.length ? "…" : ""}`;
-}
-
 /** The `helpgrep` finder: every paragraph, list item, table row and entry of every page that
  * has all the words typed, as typed (not fuzzy: this is text). Enter opens the page there and
  * searches it for the first word, so n and N go on from there. */
 export function helpgrepFinder(view: HelpView): FinderSourceDef {
   const search = (query: string): FinderItem[] => {
     const ctx = view.context();
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!ctx || terms.length === 0) return [];
-    const out: FinderItem[] = [];
-    const seen = new Set<string>();
-    const headings = new Set<string>();
-    pageTexts(ctx).forEach((hit, k) => {
-      // The index and `all` only repeat other pages' titles and summaries.
-      if (hit.page === "index" || hit.page === "all") return;
-      const lower = hit.text.toLowerCase();
-      if (!terms.every((t) => lower.includes(t))) return;
-      const label = snippet(hit.text, terms[0] as string);
-      const key = `${hit.tag}\n${label}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push({ id: `${k}`, label, path: hit.where, command: `help ${hit.tag} /${query.trim().split(/\s+/)[0]}` });
-      if (hit.heading) headings.add(`${k}`);
-    });
-    // A heading that has the words comes first: it's what the text is about.
-    return [...out.filter((i) => headings.has(i.id)), ...out.filter((i) => !headings.has(i.id))];
+    if (!ctx) return [];
+    const first = query.trim().split(/\s+/)[0];
+    // The index and `all` only repeat other pages' titles and summaries.
+    const texts = pageTexts(ctx).filter((hit) => hit.page !== "index" && hit.page !== "all");
+    return grepTexts(texts, query).map(({ hit, label }, k) => ({ id: `${k}`, label, path: hit.where, command: `help ${hit.tag} /${first}` }));
   };
   return {
     id: "helpgrep",
@@ -259,6 +237,42 @@ export function outlineFinder(view: HelpView): FinderSourceDef {
   };
 }
 
+/** `:options [TEXT]`: the `options` finder, Neovim's `:options` window as a finder. */
+export function optionsCommand(): CommandDef {
+  return {
+    id: "options",
+    source: BUILTIN,
+    area: "App",
+    arg: "text",
+    optionalArg: true,
+    label: (text) => (text ? `Find the option ${text}` : "Find an option: its value now, its default and where it was set"),
+    doc: "Every init.lua option, with the value it has now and where that was set: a file and line of the Config, `default`, or the State. Read-only: Enter opens the option's entry in [`:help options`](options); [`:config`](:config) opens init.lua to change it.",
+    run: (ctx, text) => ctx.openFinder("options", text),
+  };
+}
+
+/** The `options` finder: each option that holds a value, its value now on the left after the
+ * name, where it was set on the right, and its default and type in the footer. Enter opens its help. */
+export function optionsFinder(view: HelpView): FinderSourceDef {
+  const rows = () => {
+    const ctx = view.context();
+    return ctx ? optionRows(ctx.config, ctx.state) : [];
+  };
+  return {
+    id: "options",
+    source: BUILTIN,
+    title: "Find an option",
+    prompt: "Options",
+    items: (): FinderItem[] =>
+      rows().map((r) => ({ id: r.name, label: r.name, path: r.value, detail: r.where, command: `help ${optionTag(r.name)}` })),
+    note: (item) => {
+      const r = item && rows().find((x) => x.name === item.id);
+      return r ? `Default ${r.default} · ${r.entry.ty}` : undefined;
+    },
+    help: (item) => optionTag(item.id),
+  };
+}
+
 /** Registers `:help`, `:helpgrep` and their finders; returns what removes them. */
 export function registerHelp(registries: Registries, view: HelpView): () => void {
   const disposers = [
@@ -268,6 +282,8 @@ export function registerHelp(registries: Registries, view: HelpView): () => void
     registries.finders.register(helpFinder(view)),
     registries.finders.register(helpgrepFinder(view)),
     registries.finders.register(outlineFinder(view)),
+    registries.commands.register(optionsCommand()),
+    registries.finders.register(optionsFinder(view)),
   ];
   return () => disposers.forEach((d) => d());
 }

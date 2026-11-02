@@ -48,7 +48,8 @@ describe("Hiding the key hints", () => {
     const { user, platform } = await ready();
     await user.keyboard(`${LEADER}:hints off{Enter}`);
     expect(hintsAttr()).toBe("off");
-    expect(message()).toHaveTextContent("Key hints hidden");
+    // Quiet by default (ticket 111): only a screen reader hears it.
+    expect(screen.getAllByRole("status").map((el) => el.textContent)).toContain("Key hints hidden");
     await new Promise((r) => setTimeout(r, 0));
     expect(platform.saved()).toMatchObject({ hints: false });
     // Every hint is marked so the stylesheet can hide it: the status bar's, the empty state's.
@@ -70,7 +71,7 @@ describe("Hiding the key hints", () => {
   });
 
   it("init.lua's ui.hints wins over the State, and :hints says to change it there", async () => {
-    const { user } = await ready({ config: configWith({ ui: { hints: false } }), state: { version: 1, hints: true } });
+    const { user } = await ready({ config: configWith({ ui: { hints: false, messages: null } }), state: { version: 1, hints: true } });
     expect(hintsAttr()).toBe("off");
     await user.keyboard(`${LEADER}:hints on{Enter}`);
     expect(hintsAttr()).toBe("off");

@@ -190,6 +190,8 @@ def host_changes(path, old_text, new_text):
             continue
         a, b = host_view(old["hosts"][name]), host_view(h)
         fields = [k for k in b if a[k] != b[k]]
+        fields += ["mesh_dir"] if old["mesh_dirs"].get(name) != new["mesh_dirs"].get(name) else []
+        fields += ["seen_as"] if old["seen_as"].get(name) != new["seen_as"].get(name) else []
         if fields:
             out_.append({"host": name, "change": "changed", "fields": fields})
     out_ += [{"host": n, "change": "removed", "fields": []} for n in old["hosts"] if n not in new["hosts"]]
@@ -210,8 +212,9 @@ def diff(path):
     old_text, new_text = repo.head_text() or "", read_text(repo.path)
     hosts = host_changes(repo.path, old_text, new_text)
     groups = group_changes(repo.path, old_text, new_text)
+    links = link_changes(repo.path, old_text, new_text)
     return {**base, "diff": text, "hosts": hosts, "groups": groups, "count": len(hosts) or 1,
-            "message": commit_message(hosts, groups)}
+            "message": commit_message(hosts, groups, links)}
 
 
 def last_commit(repo):
@@ -255,25 +258,45 @@ def group_changes(path, old_text, new_text):
             + [{"group": g, "change": "removed"} for g in a if g not in b])
 
 
+def link_changes(path, old_text, new_text):
+    """[{link: 'a -> b', change: added|removed|changed, fields}] between two versions of roster.yml's `links:`
+    (T67), each Link named by its ends (and its hop when added or removed). Empty if either doesn't load."""
+    old, new = loaded(path, old_text), loaded(path, new_text)
+    if old is None or new is None:
+        return []
+    a, b = ({(x["from"], x["to"]): x for x in cfg["links"]} for cfg in (old, new))
+
+    def name(x):
+        return f"{x['from']} -> {x['to']}" + (f" via {x['via']}" if x.get("via") else "")
+    return ([{"link": name(b[k]), "change": "added", "fields": []} for k in b if k not in a]
+            + [{"link": f"{k[0]} -> {k[1]}", "change": "changed",
+                "fields": [f for f in ("both", "via") if a[k].get(f) != b[k].get(f)]} for k in b if k in a and a[k] != b[k]]
+            + [{"link": name(a[k]), "change": "removed", "fields": []} for k in a if k not in b])
+
+
 def describe(c):
-    """One Host's or group's change in a few words: 'change esx (title, ip)', 'add web-01', 'remove group old'."""
-    name = c["host"] if "host" in c else f"group {c['group']}"
+    """One Host's, group's or Link's change in a few words: 'change esx (title, ip)', 'add web-01',
+    'remove group old', 'add link orion-2 -> storage'."""
+    name = c["host"] if "host" in c else f"group {c['group']}" if "group" in c else f"link {c['link']}"
     verb = {"added": "add", "removed": "remove", "changed": "change"}[c["change"]]
     fields = f" ({', '.join(c['fields'])})" if c.get("fields") else ""
     return f"{verb} {name}{fields}"
 
 
-def commit_message(hosts, groups):
+def commit_message(hosts, groups, links=()):
     """The generated message: a subject naming what changed, and a line per change when it doesn't fit."""
-    items = [describe(c) for c in groups + hosts]
+    links = list(links)
+    items = [describe(c) for c in groups + hosts + links]
     if not items:
         return "roster: edit roster.yml"
     subject = "roster: " + ", ".join(items)
     if len(subject) <= SUBJECT_MAX:
         return subject
-    counts = [f"{len(hosts)} Host{'s' * (len(hosts) != 1)}" if hosts else "",
-              f"{len(groups)} group{'s' * (len(groups) != 1)}" if groups else ""]
-    return f"roster: change {' and '.join(c for c in counts if c)}\n\n" + "\n".join(f"- {i}" for i in items)
+    counts = [c for c in (f"{len(hosts)} Host{'s' * (len(hosts) != 1)}" if hosts else "",
+                          f"{len(groups)} group{'s' * (len(groups) != 1)}" if groups else "",
+                          f"{len(links)} Link{'s' * (len(links) != 1)}" if links else "") if c]
+    counted = " and ".join(counts) if len(counts) < 3 else f"{counts[0]}, {counts[1]} and {counts[2]}"
+    return f"roster: change {counted}\n\n" + "\n".join(f"- {i}" for i in items)
 
 
 def undo_commit(repo, commit):
@@ -354,7 +377,8 @@ def publish(path, message=None):
     old_text = repo.head_text() or ""
     hosts = host_changes(repo.path, old_text, text)
     groups = group_changes(repo.path, old_text, text)
-    msg = message.strip() if message and message.strip() else commit_message(hosts, groups)
+    links = link_changes(repo.path, old_text, text)
+    msg = message.strip() if message and message.strip() else commit_message(hosts, groups, links)
     r = git(repo.top, "commit", "--quiet", "--only", "-m", msg, "--", repo.rel)
     if r.returncode != 0:
         raise Problem(COMMIT_FAILED, "git didn't make the commit, so nothing was published", {"upstream": upstream},

@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeHosts } from "../backend/fake";
 import type { Tab, TabsSnapshot } from "../session/tabs";
-import { builtinSidebarRegistry } from "../sidebar/sections";
-import { foldersSection } from "../folders/folders";
+import { builtinSidebarRegistry, hostRow, type SidebarSectionDef } from "../sidebar/sections";
 import { builtinFinderRegistry, finderResults, searchItems, type FinderContext, type FinderItem } from "./sources";
 
 const hosts = makeHosts(12);
@@ -20,11 +19,12 @@ const tab = (id: number, host: string, status: Tab["status"] = { state: "open" }
   attempt: 1,
   quick: null,
   save: null,
+  prompt: null,
 });
 
 function context(sessions: TabsSnapshot = { tabs: [], active: null, previous: null }, state: Record<string, unknown> = {}): FinderContext {
   const sidebar = builtinSidebarRegistry();
-  sidebar.register(foldersSection());
+  sidebar.register(foldersLike);
   return {
     sessions,
     hosts,
@@ -36,6 +36,24 @@ function context(sessions: TabsSnapshot = { tabs: [], active: null, previous: nu
     sidebar: sidebar.list(),
   };
 }
+
+/** A section shaped as the Folders Plugin's (ticket 61): a Folder, then its Hosts. */
+const foldersLike: SidebarSectionDef = {
+  id: "folders",
+  source: "folders",
+  order: 200,
+  build: ({ state, hostByName }) => {
+    const list = (state.folders ?? []) as { name: string; hosts: string[] }[];
+    return {
+      id: "folders",
+      title: "Folders",
+      rows: list.flatMap((f) => [
+        { id: `folders:${f.name}`, label: f.name, level: 0, foldable: true, command: `togglefold folders:${f.name}` },
+        ...f.hosts.map((h) => hostRow(hostByName.get(h)!, `folders:${f.name}/${h}`, 1)),
+      ]),
+    };
+  },
+};
 
 const registry = builtinFinderRegistry();
 const source = (id: string) => registry.get(id)!;

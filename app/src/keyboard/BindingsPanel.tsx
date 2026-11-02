@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { BUILTIN } from "../registry";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import { filterRows, type BindingRow } from "./bindings";
 
@@ -28,9 +29,12 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
     <aside className="keys-panel" aria-label="Key bindings">
       <header>
         <h2>Key bindings</h2>
-        <button type="button" className="icon-button keys-close" aria-label="Close key bindings" onClick={onClose}>
-          <CloseGlyph />
-        </button>
+        <span className="panel-head-buttons">
+          <PanelButton />
+          <button type="button" className="icon-button keys-close" aria-label="Close key bindings" onClick={onClose}>
+            <CloseGlyph />
+          </button>
+        </span>
       </header>
       <input
         type="search"

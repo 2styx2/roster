@@ -1,9 +1,10 @@
 // `:source` (`:so`), Neovim-style reloading (decision Q58): saving a Config file doesn't reload
 // it unless `auto_reload = true`; `:source` reloads every Config file now, and `:source PATH`
 // only the one that owns PATH. What can be reloaded is a registry (ADR 0006): init.lua (with its
-// Lua modules) registers here, and ticket 28's folders.yml and roster.yml register the same way.
+// Lua modules) registers here, and ticket 28's roster.yml registers the same way.
 import type { CommandDef } from "../commands/table";
 import { BUILTIN, Registry, type Entry } from "../registry";
+import { quiet, type Message } from "../ui/messages";
 
 /** A Config file `:source` reloads; its id is how it's named ("init.lua"). */
 export interface ReloaderDef extends Entry {
@@ -23,8 +24,9 @@ export function reloaderRegistry(): ReloaderRegistry {
   return new Registry<ReloaderDef>();
 }
 
-/** Reloads `which` (every reloader when it's empty) and says what happened. */
-async function reloadAll(which: readonly ReloaderDef[], say: (m: string) => void) {
+/** Reloads `which` (every reloader when it's empty) and says what happened: quiet when all went
+ * well (ticket 111), else what went wrong, always. */
+async function reloadAll(which: readonly ReloaderDef[], say: (m: Message) => void) {
   const results = await Promise.all(which.map(async (r) => ({ id: r.id, problem: await r.reload().catch((e: unknown) => String(e)) })));
   const failed = results.filter((r) => r.problem !== null);
   const done = results.filter((r) => r.problem === null).map((r) => r.id);
@@ -32,7 +34,7 @@ async function reloadAll(which: readonly ReloaderDef[], say: (m: string) => void
     ...(done.length ? [`Reloaded ${done.join(", ")}`] : []),
     ...failed.map((r) => r.problem as string),
   ];
-  say(parts.join(". "));
+  say(failed.length ? parts.join(". ") : quiet(parts.join(". ")));
 }
 
 /** `source [PATH]` and its alias `so`. */

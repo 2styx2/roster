@@ -84,6 +84,13 @@ const date = (at: number) => {
   const d = new Date(at * 1000);
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${clock(at)}`;
 };
+/** match ago(): "just now", "4 min ago", then the time (HH:MM). */
+const ago = (at: number) => {
+  const s = Math.floor(Date.now() / 1000) - at;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  return clock(at).slice(0, 5);
+};
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const list = (p: string[]) => (p.length === 1 ? (p[0] ?? "") : `${p.slice(0, -1).join(", ")} or ${p[p.length - 1] ?? ""}`);
 
@@ -113,7 +120,7 @@ export function recentAlerts(options: RecentAlertsOptions = {}): FakePlugin {
       version: options.version ?? "1.0.0",
       description: "Lines your Sessions print that look like trouble: ERROR, panic, disk full",
       author: "A. N. Author",
-      api: 2,
+      api: 3,
       permissions: options.permissions ?? ["terminal.read"],
     },
     load: (roster) => load(roster, options),
@@ -123,7 +130,9 @@ export function recentAlerts(options: RecentAlertsOptions = {}): FakePlugin {
 function load(roster: FakeRoster, options: RecentAlertsOptions) {
   const [s, problems] = settings(roster.plugin.config);
   for (const p of problems) roster.notify(`${p}; using the default`, "warn");
-  const reads = roster.plugin.permissions.includes("terminal.read");
+  const reads = roster.has("terminal.read");
+  /** While there are alerts, the timer that draws them again so "2 min ago" stays true. */
+  let ticking: number | null = null;
 
   let alerts: Alert[] = [];
   let nextId = 0;
@@ -150,7 +159,7 @@ function load(roster: FakeRoster, options: RecentAlertsOptions) {
         id: String(a.id),
         label: a.text,
         detail: where(a),
-        note: clock(a.at),
+        note: ago(a.at),
         title: `${where(a)} at ${clock(a.at)}: ${a.text}`,
         ...(a.host ? { host: a.host } : {}),
         actions: [
@@ -187,6 +196,11 @@ function load(roster: FakeRoster, options: RecentAlertsOptions) {
       roster.badges.set(host, n ? String(n) : null);
     }
     badged = perHost;
+    if (alerts.length > 0 && ticking === null) ticking = roster.every(30000, show);
+    else if (alerts.length === 0 && ticking !== null) {
+      roster.cancel(ticking);
+      ticking = null;
+    }
   };
 
   roster.commands.add("alerts", {
@@ -197,9 +211,10 @@ function load(roster: FakeRoster, options: RecentAlertsOptions) {
         const n = alerts.length;
         alerts = [];
         show();
-        roster.notify(n === 0 ? "No alerts to clear" : `Dismissed ${plural(n, "alert", "alerts")}`);
+        // "Dismissed 3 alerts" is routine (quiet unless ui.messages = "all"); "No alerts to clear" answers.
+        roster.notify(n === 0 ? "No alerts to clear" : `Dismissed ${plural(n, "alert", "alerts")}`, "info", { quiet: n > 0 });
       } else if (what === undefined) {
-        if (alerts.length === 0) return roster.notify("No alerts");
+        if (alerts.length === 0) return roster.notify("No alerts", "info", { quiet: false });
         roster.float.open({ title: "Recent alerts", lines: [...alerts].reverse().map((x) => `${clock(x.at)}  ${where(x)}  ${x.text}`) });
       } else roster.notify(":alerts shows the alerts, :alerts clear dismisses them all", "warn");
     },
@@ -236,7 +251,9 @@ function load(roster: FakeRoster, options: RecentAlertsOptions) {
       const fresh: Alert[] = [];
       for (const raw of whole) {
         const all = raw.trim();
-        const pattern = all !== "" && !prompt(all) ? s.patterns.find((p) => all.includes(p)) : undefined;
+        // A line OSC 133 marks call a prompt or input (ticket 94) is never an alert; else the guess.
+        const echoed = e.kind === "prompt" || e.kind === "input" || prompt(all);
+        const pattern = all !== "" && !echoed ? s.patterns.find((p) => all.includes(p)) : undefined;
         const line = tidy(all);
         if (pattern) {
           const a: Alert = { id: ++nextId, host, session, text: line, pattern, at: Math.floor(Date.now() / 1000), before: seen.slice(-CONTEXT) };

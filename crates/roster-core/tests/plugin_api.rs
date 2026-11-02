@@ -3,6 +3,8 @@
 //! and values api.rs declares for them, `roster.plugin` exactly the Plugin type's fields, and
 //! the committed reference, stubs and data are what the generator writes.
 
+mod common;
+
 use roster_core::plugin::api::{self, Needs};
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
 use serde_json::{Value, json};
@@ -48,10 +50,8 @@ end
 roster.help.set("walk", { markdown = table.concat(found, "\n") .. "\n--\n" .. table.concat(plugin, "\n") .. "\n--\n" .. errors .. "\n--\n" .. lua })
 "#;
 
-fn plugin_dir(test: &str, permissions: &[&str]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roster-core-plugin-api-{}-{test}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+fn plugin_dir(test: &str, permissions: &[&str]) -> common::Temp {
+    let dir = common::temp(&format!("plugin-api-{test}"));
     let list: Vec<String> = permissions.iter().map(|p| format!("{p:?}")).collect();
     std::fs::write(
         dir.join("roster-plugin.lua"),
@@ -70,7 +70,8 @@ fn plugin_dir(test: &str, permissions: &[&str]) -> PathBuf {
 fn walk(test: &str, permissions: &[&str]) -> (BTreeSet<String>, Vec<String>, String, String) {
     let host = PluginHost::new(Arc::new(NoServe), Limits::default());
     let grants: Vec<Permission> = permissions.iter().map(|p| Permission::parse(p).unwrap()).collect();
-    let (_, reply) = host.load(&Source::Dir(plugin_dir(test, permissions)), &grants).unwrap();
+    let folder = plugin_dir(test, permissions);
+    let (_, reply) = host.load(&Source::Dir(folder.to_path_buf()), &grants).unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
     let text = reply.ops[0]["spec"]["markdown"].as_str().unwrap().to_string();
     let mut parts = text.split("\n--\n");
@@ -83,12 +84,15 @@ fn walk(test: &str, permissions: &[&str]) -> (BTreeSet<String>, Vec<String>, Str
 /// What api.rs says a Plugin granted `permissions` has.
 fn declared(permissions: &[&str]) -> BTreeSet<String> {
     let serve = permissions.iter().any(|p| p.starts_with("serve:"));
+    let network = permissions.iter().any(|p| p.starts_with("network:"));
     let mut out: BTreeSet<String> = api::VALUES.iter().map(|v| v.path.to_string()).collect();
     for f in api::FUNCTIONS {
         let has = match f.needs {
             Needs::Nothing => true,
             Needs::Permission(p) => permissions.contains(&p),
             Needs::AnyServe => serve,
+            Needs::AnyNetwork => network,
+            Needs::Hears(_) => f.needs.any_of().iter().any(|p| permissions.contains(p)),
         };
         if has {
             out.insert(format!("{}()", f.path));
@@ -107,6 +111,7 @@ fn the_runtime_exposes_exactly_what_the_api_declares_for_every_grant() {
         &["terminal.read"],
         &["terminal.write"],
         &["serve:inventory.info"],
+        &["network:api.example.com"],
         &[
             "inventory.read",
             "inventory.write",
@@ -114,6 +119,7 @@ fn the_runtime_exposes_exactly_what_the_api_declares_for_every_grant() {
             "terminal.read",
             "terminal.write",
             "serve:hosts.list",
+            "network:*.example.com",
         ],
     ];
     for (i, set) in sets.iter().enumerate() {
@@ -132,8 +138,9 @@ fn the_runtime_exposes_exactly_what_the_api_declares_for_every_grant() {
 #[test]
 fn roster_plugin_has_the_plugin_types_fields_and_errors_reach_pcall_as_strings() {
     let (_, plugin, errors, lua) = walk("plugin", &["inventory.read"]);
-    // The reference's "The Lua": 5.4, integers, native bitwise operators, and the sandbox.
-    assert_eq!(lua, "Lua 5.4 1 integer 1 nil nil nil nil nil nil nil nil");
+    // The reference's "The Lua": 5.4, integers, native bitwise operators, `coroutine` (api 3),
+    // and the sandbox.
+    assert_eq!(lua, "Lua 5.4 1 integer 1 table nil nil nil nil nil nil nil");
     let ty = api::TYPES.iter().find(|t| t.name == "Plugin").unwrap();
     let mut want: Vec<String> = ty.fields.iter().map(|f| f.name.to_string()).collect();
     want.sort();
@@ -144,10 +151,8 @@ fn roster_plugin_has_the_plugin_types_fields_and_errors_reach_pcall_as_strings()
         lines.next().unwrap(),
         "string roster.notify: the level is \"info\", \"warn\" or \"error\""
     );
-    assert_eq!(
-        lines.next().unwrap(),
-        "false roster.inventory.host: unknown host 'web-9' (code 2)"
-    );
+    // An unknown Host is `nil`, not an error (api 3).
+    assert_eq!(lines.next().unwrap(), "true nil");
 }
 
 #[test]
@@ -167,8 +172,8 @@ fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
     }
 }
 
-/// `roster.inventory.host` raises on an unknown name (as the reference says), so the pinned
-/// example asks through `pcall`: `:pin web-9` is a notice, not an error that counts against it.
+/// `roster.inventory.host` gives `nil` for an unknown name (as the reference says): the pinned
+/// example's `:pin web-9` is a notice, not an error that counts against it.
 #[test]
 fn the_pinned_example_answers_an_unknown_host_with_a_notice() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/pinned");

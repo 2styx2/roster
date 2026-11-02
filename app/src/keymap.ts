@@ -135,10 +135,17 @@ export const defaultBindings: KeymapTables = {
     N: "group new",
     c: "changes",
     r: "reconnect",
+    // Fill the password prompt on screen from the vault (ticket 119): offered only at one.
+    p: "fill",
     m: "mode",
     b: "finder sessions",
     // The Sidebar's tree as a finder (in Focus, where the Sidebar is hidden by default).
     t: "finder tree",
+    // The panel with focus, else the one used last (ticket 95): full window and back, as tmux's
+    // prefix z zooms a pane; narrower and wider, as Vim's Ctrl+W < and >.
+    z: "panel",
+    "<": "panel narrower",
+    ">": "panel wider",
     Escape: "terminal",
   },
   list: {

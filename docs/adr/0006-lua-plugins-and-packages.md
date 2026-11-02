@@ -2,13 +2,14 @@
 
 _Formerly roster-desk ADR 0004; renumbered when the app joined the roster repo (ADR 0007)._
 
-The roster app can be extended the way Neovim is. A **Plugin** is Lua code, loaded through the same mlua runtime as the Config (ADR 0004), that adds to the app's registries: commands, key bindings, themes, Sidebar sections, Picker and finder sources, status-line segments, and event hooks (`on_session_open`, `on_session_exit`, `on_host_selected`, `on_lock`, …). A **Package** is a Plugin fetched from a git repo. `init.lua` lists the Packages it wants, and each is pinned to a commit in a lock file, the way lazy.nvim works. The built-in features use exactly these registries too, so a Plugin can do anything the app itself does, and the app's own code proves the API is complete.
+The roster app can be extended the way Neovim is. A **Plugin** is Lua code, loaded through the same mlua runtime as the Config (ADR 0004), that adds to the app's registries: commands, key bindings, themes, Sidebar sections, Picker and finder sources, status-line segments, and events (`roster.on("session_open", …)`, `session_exit`, `host_selected`, `lock`, …). A **Package** is a Plugin fetched from a git repo. `init.lua` lists the Packages it wants, and each is pinned to a commit in a lock file, the way lazy.nvim works. The built-in features use exactly these registries too, so a Plugin can do anything the app itself does, and the app's own code proves the API is complete.
 
 ## Boundaries
 
 - **Never secrets.** Plugins run in the Rust core, which never holds a password (roster ADR 0001). They get Hosts and Login *references* through `roster serve`'s read methods, and can open Sessions through the normal command table. They never see a password, a vault session or an askpass token.
 - **Inventory writes only as Pending changes.** A Plugin may call the same write methods as the UI, but changes always land as Pending changes that the user reviews and Publishes. A Plugin can never Publish by itself.
 - **Declarative UI in v1.** Plugins add UI through the registries (commands, Sidebar sections, finder sources, status segments, themes). Plugin-supplied HTML/JS panels are not supported in v1; that would give arbitrary code the webview, and is a later decision.
+- **Acting waits for the user** (added later). A Plugin may be granted serve methods that change Hosts or scan networks, and named web sites (`network:`), but anything flagged runs only in a call the user started (decisions Q97, Q100, Q103).
 - **Explicit trust.** Packages are third-party code. Nothing installs unless it's named in `init.lua`. Every Package is pinned to a commit in `roster.lock`, and updating shows a diff of what changed.
 
 ## Why Lua 5.4, not LuaJIT
@@ -31,5 +32,5 @@ The cost: Neovim authors meet small differences (no `bit` library, no `jit`, no 
 
 ## Consequences
 
-- Every feature built from now on registers through a registry (commands, keymap, themes, Sidebar sections, finder sources, status segments, events) rather than being wired in directly. Tickets 07, 17, 21 and 22 follow this.
-- The plugin API is versioned like `roster serve`'s (`roster.api_version`), and it's documented in [docs/plugins.md](../plugins.md) and, function by function, in [docs/plugin-api.md](../plugin-api.md) (decision Q89). Permissions (decision Q81), how ticket 23 built it (Q82) and how ticket 24 built Packages (Q83) refine this ADR.
+- Every feature built from now on registers through a registry (commands, keymap, themes, Sidebar sections, finder sources, status segments, events) rather than being wired in directly. Tickets 07, 17, 21 and 22 follow this; Folders and the status bar's Host count are built-in Plugins on the public API (Q93).
+- The plugin API is versioned like `roster serve`'s (`roster.api_version`), and it's documented in [docs/plugins.md](../plugins.md) and, function by function, in [docs/plugin-api.md](../plugin-api.md) (decision Q89). Permissions (decision Q81), how ticket 23 built it (Q82) and how ticket 24 built Packages (Q83) refine this ADR. Later decisions refine it too: Q93 (a data folder per Plugin; Folders as a built-in Plugin), Q94 (first-party Plugins in `plugins/`), Q95 to Q99 (views, runtime, network, interactions, graphs), Q103 and Q112 (a busy serve, jobs).

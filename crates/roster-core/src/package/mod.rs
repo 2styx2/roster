@@ -3,7 +3,9 @@
 //!
 //! `init.lua` names each one (`packages = { { "owner/repo", tag = "v1.0.0" } }`, checked by
 //! [`check_specs`]); [`Packages`] keeps a clone of each in the app's own data folder and pins the
-//! commit in `roster.lock`, next to `init.lua`, so the lock can live in dotfiles. The interface
+//! commit in `roster.lock`, next to `init.lua`, so the lock can live in dotfiles. A Package may
+//! load its Plugin from a folder of the repo (`dir = "plugins/topology"`, decision Q94): the clone
+//! is still the whole repo, one per Package, and the folder must stay inside it. The interface
 //! is what the app does with them:
 //!
 //! - [`Packages::sync`] at start and after `init.lua` changes: clones what's missing and checks
@@ -49,6 +51,9 @@ pub struct LockEntry {
     pub tag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The folder in the repo the Plugin loads from, when it isn't the top (decision Q94).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
     pub commit: String,
 }
 
@@ -64,6 +69,8 @@ pub struct Status {
     pub source: String,
     /// The git URL that means.
     pub url: String,
+    /// The folder in the repo the Plugin loads from (`plugins/topology`); none for the top.
+    pub dir: Option<String>,
     /// What init.lua asks for: `tag v1.0.0`, `branch main`, `commit 1a2b3c4`, `default branch`.
     pub wants: String,
     /// The commit its clone is at, if it has one.
@@ -124,7 +131,15 @@ pub fn check_specs(specs: &[PackageSpec]) -> Result<(), Invalid> {
         let n = (i + 1).to_string();
         let at = |key: &str| vec!["packages".to_string(), n.clone(), key.to_string()];
         url_of(&spec.source).map_err(|m| (at("source"), m))?;
-        let name = name_of(spec).map_err(|m| (at(if spec.name.is_some() { "name" } else { "source" }), m))?;
+        if let Some(d) = &spec.dir {
+            subfolder(d).map_err(|m| (at("dir"), m))?;
+        }
+        let name_key = match (&spec.name, &spec.dir) {
+            (Some(_), _) => "name",
+            (None, Some(_)) => "dir",
+            _ => "source",
+        };
+        let name = name_of(spec).map_err(|m| (at(name_key), m))?;
         let pins = [&spec.tag, &spec.branch, &spec.commit];
         if pins.iter().filter(|p| p.is_some()).count() > 1 {
             return Err((at("tag"), "one of tag, branch or commit, not several".into()));
@@ -221,7 +236,41 @@ fn is_absolute(s: &str) -> bool {
     s.starts_with('/') || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
 }
 
-/// A Package's name: `name = …`, else its repo's (`recent-alerts` for `…/recent-alerts.git`).
+/// A Package's `dir` as roster keeps it (`plugins/topology`, no `./` or trailing `/`), or why it
+/// can't be one: it must name a folder inside the repo, relative, with `/` between folders, never
+/// `..` or `.git` (decision Q94). Symlinks are checked once the clone is there.
+pub fn subfolder(dir: &str) -> Result<String, String> {
+    let d = dir.trim();
+    if d.chars().any(|c| c.is_control()) {
+        return Err(format!("{d:?} isn't a folder name"));
+    }
+    if d.starts_with(['/', '\\']) || is_absolute(d) || d.contains(':') {
+        return Err(format!(
+            "dir = {d:?}: a folder inside the repo, like \"plugins/topology\", not a full path"
+        ));
+    }
+    if d.contains('\\') {
+        return Err(format!("dir = {d:?}: use / between folders"));
+    }
+    let parts: Vec<&str> = d.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    if parts.contains(&"..") {
+        return Err(format!(
+            "dir = {d:?}: \"..\" would leave the repo; name a folder inside it"
+        ));
+    }
+    if parts.iter().any(|p| p.eq_ignore_ascii_case(".git")) {
+        return Err(format!(
+            "dir = {d:?}: not inside .git; name a folder of the repo's files"
+        ));
+    }
+    if parts.is_empty() {
+        return Err("which folder? dir = \"plugins/NAME\", or leave dir out for the repo's top".into());
+    }
+    Ok(parts.join("/"))
+}
+
+/// A Package's name: `name = …`, else its folder's when it has a `dir` (`topology` for
+/// `plugins/topology`), else its repo's (`recent-alerts` for `…/recent-alerts.git`).
 pub fn name_of(spec: &PackageSpec) -> Result<String, String> {
     if let Some(n) = &spec.name {
         return if valid_name(n) {
@@ -230,6 +279,15 @@ pub fn name_of(spec: &PackageSpec) -> Result<String, String> {
             Err(format!(
                 "{n:?} isn't a Package name (letters, digits, . _ -; not starting with . or -)"
             ))
+        };
+    }
+    if let Some(d) = &spec.dir {
+        let d = subfolder(d)?;
+        let last = d.rsplit('/').next().unwrap_or_default();
+        return if valid_name(last) {
+            Ok(last.to_string())
+        } else {
+            Err(format!("can't name a Package after the folder {d:?}: add name = \"…\""))
         };
     }
     let url = url_of(&spec.source)?;
@@ -260,6 +318,23 @@ fn wants(spec: &PackageSpec) -> String {
         (_, _, Some(c)) => format!("commit {c}"),
         _ => "default branch".into(),
     }
+}
+
+/// The spec's `dir`, as roster keeps it; none for the repo's top (or a `dir` check_specs refuses).
+fn dir_of(spec: &PackageSpec) -> Option<String> {
+    spec.dir.as_deref().and_then(|d| subfolder(d).ok())
+}
+
+/// The lock line is for what init.lua names: the same repo and folder.
+fn same_source(e: &LockEntry, spec: &PackageSpec, url: &str) -> bool {
+    e.source == url && e.dir == dir_of(spec)
+}
+
+/// The lock line pins the version init.lua asks for (else `:packages update` moves it).
+fn wants_match(e: &LockEntry, spec: &PackageSpec) -> bool {
+    e.tag == spec.tag
+        && e.branch == spec.branch
+        && spec.commit.as_ref().is_none_or(|c| e.commit.starts_with(c.as_str()))
 }
 
 fn is_commit(c: &str) -> bool {
@@ -325,7 +400,36 @@ impl Packages {
         if !dir.join(".git").exists() {
             return Err(format!("the Package {name} isn't fetched yet"));
         }
-        Ok((dir, Json::Object(spec.config.clone())))
+        Ok((self.plugin_dir(&dir, spec)?, Json::Object(spec.config.clone())))
+    }
+
+    /// The folder in a clone the Plugin loads from: the clone, or its `dir`, which must be a
+    /// folder there and, after symlinks, still inside the clone (decision Q94).
+    fn plugin_dir(&self, clone: &Path, spec: &PackageSpec) -> Result<PathBuf, String> {
+        let Some(sub) = dir_of(spec) else {
+            return Ok(clone.to_path_buf());
+        };
+        let path = clone.join(&sub);
+        if !path.is_dir() {
+            let at = self
+                .head(clone)
+                .map(|c| format!(" at {}", short(&c)))
+                .unwrap_or_default();
+            return Err(format!(
+                "{}{at} has no folder {sub}: check dir in init.lua",
+                url_of(&spec.source).unwrap_or_default()
+            ));
+        }
+        // The Plugin host's rule for every file of a Plugin (crate::plugin::folder::inside),
+        // and not into git's own folder either.
+        let escape =
+            || format!("dir = {sub:?} leads outside the Package's clone (through a symlink): roster won't load it");
+        let top = clone.canonicalize().map_err(|e| format!("{}: {e}", clone.display()))?;
+        let inside = crate::plugin::folder::inside(clone, Path::new(&sub)).map_err(|_| escape())?;
+        if inside.starts_with(top.join(".git")) {
+            return Err(escape());
+        }
+        Ok(inside)
     }
 
     /// Makes each Package's clone match the lock: clones what's missing and checks out the
@@ -359,6 +463,7 @@ impl Packages {
             name: name_of(spec).unwrap_or_else(|_| spec.source.clone()),
             source: spec.source.clone(),
             url: url_of(&spec.source).unwrap_or_default(),
+            dir: dir_of(spec),
             wants: wants(spec),
             commit: None,
             locked: None,
@@ -373,7 +478,7 @@ impl Packages {
         let name = name_of(spec)?;
         let url = url_of(&spec.source)?;
         let dir = self.clones.join(&name);
-        let entry = lock.get(&name).filter(|e| e.source == url);
+        let entry = lock.get(&name).filter(|e| same_source(e, spec, &url));
         // init.lua now names another repo for this name: the old clone is different code.
         if dir.exists() && self.origin(&dir).as_deref() != Some(url.as_str()) {
             remove_dir(&dir)?;
@@ -393,9 +498,7 @@ impl Packages {
         status.locked = entry.map(|e| e.commit.clone());
         status.pinned = entry.is_some_and(|e| Some(&e.commit) == head.as_ref());
         if let Some(e) = entry
-            && (e.tag != spec.tag
-                || e.branch != spec.branch
-                || spec.commit.as_ref().is_some_and(|c| !e.commit.starts_with(c.as_str())))
+            && !wants_match(e, spec)
         {
             status.note = Some(format!(
                 "init.lua asks for {}; roster.lock pins {}: :packages update moves it",
@@ -403,6 +506,7 @@ impl Packages {
                 short(&e.commit)
             ));
         }
+        self.plugin_dir(&dir, spec)?;
         Ok(())
     }
 
@@ -430,6 +534,7 @@ impl Packages {
                 source: url_of(&spec.source)?,
                 tag: spec.tag.clone(),
                 branch: spec.branch.clone(),
+                dir: dir_of(spec),
                 commit: commit.to_string(),
             },
         );
@@ -479,6 +584,31 @@ impl Packages {
             .collect()
     }
 
+    /// `:packages update NAME`: [`Packages::check`] for the one Package init.lua names `name`,
+    /// fetching only it. An error when init.lua names no such Package or it isn't cloned.
+    pub fn check_named(&self, specs: &[PackageSpec], name: &str) -> Result<Checked, String> {
+        let spec = specs
+            .iter()
+            .find(|s| name_of(s).ok().as_deref() == Some(name))
+            .ok_or_else(|| format!("init.lua names no Package {name}"))?;
+        let _busy = self.busy.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = self.clones.join(name);
+        if !dir.join(".git").exists() {
+            return Err(format!(
+                "{name} isn't installed: :packages install {name} asks to install it"
+            ));
+        }
+        let (update, error) = match self.check_one(spec, &dir, name) {
+            Ok(u) => (u, None),
+            Err(e) => (None, Some(e)),
+        };
+        Ok(Checked {
+            name: name.to_string(),
+            update,
+            error,
+        })
+    }
+
     fn check_one(&self, spec: &PackageSpec, dir: &Path, name: &str) -> Result<Option<Update>, String> {
         self.git.run(
             Some(dir),
@@ -491,18 +621,41 @@ impl Packages {
         if from == to {
             return Ok(None);
         }
+        let sub = dir_of(spec);
+        // A Package from a folder of a bigger repo: commits that leave its folder as it was
+        // aren't an update to it (unless init.lua now asks for another version than the lock).
+        if let Some(sub) = &sub {
+            let tree = |c: &str| {
+                self.git
+                    .run(Some(dir), &["rev-parse", "--verify", "--quiet", &format!("{c}:{sub}")])
+                    .ok()
+            };
+            let url = url_of(&spec.source)?;
+            let pinned_as_asked = self
+                .lock()?
+                .get(name)
+                .is_some_and(|e| same_source(e, spec, &url) && wants_match(e, spec));
+            if pinned_as_asked && tree(&from).is_some() && tree(&from) == tree(&to) {
+                return Ok(None);
+            }
+        }
+        // Only the Package's folder: the rest of the repo isn't loaded.
+        let only: Vec<&str> = sub.as_deref().map(|s| vec!["--", s]).unwrap_or_default();
         let range = format!("{from}..{to}");
+        let max = format!("--max-count={MAX_LOG}");
         let log = self
             .git
             .run(
                 Some(dir),
-                &["log", "--format=%h %s", &format!("--max-count={MAX_LOG}"), &range],
+                &[&["log", "--format=%h %s", &max, &range][..], &only].concat(),
             )?
             .lines()
             .map(str::to_string)
             .collect();
-        let stat = self.git.run(Some(dir), &["diff", "--stat", &from, &to])?;
-        let mut diff = self.git.run(Some(dir), &["diff", &from, &to])?;
+        let stat = self
+            .git
+            .run(Some(dir), &[&["diff", "--stat", &from, &to][..], &only].concat())?;
+        let mut diff = self.git.run(Some(dir), &[&["diff", &from, &to][..], &only].concat())?;
         let truncated = diff.len() > MAX_DIFF;
         if truncated {
             let mut cut = MAX_DIFF;
@@ -511,18 +664,16 @@ impl Packages {
             }
             diff.truncate(cut);
         }
-        let (manifest, manifest_error) = match self
-            .git
-            .run(Some(dir), &["show", &format!("{to}:{}", crate::plugin::MANIFEST)])
-        {
+        let manifest_at = match &sub {
+            Some(s) => format!("{s}/{}", crate::plugin::MANIFEST),
+            None => crate::plugin::MANIFEST.to_string(),
+        };
+        let (manifest, manifest_error) = match self.git.run(Some(dir), &["show", &format!("{to}:{manifest_at}")]) {
             Ok(text) => match crate::plugin::manifest_from(&text, name) {
                 Ok(m) => (Some(m), None),
                 Err(e) => (None, Some(e.to_string())),
             },
-            Err(_) => (
-                None,
-                Some(format!("the new version has no {}", crate::plugin::MANIFEST)),
-            ),
+            Err(_) => (None, Some(format!("the new version has no {manifest_at}"))),
         };
         Ok(Some(Update {
             from,
@@ -548,7 +699,15 @@ impl Packages {
         self.git
             .run(Some(&dir), &["cat-file", "-e", &format!("{commit}^{{commit}}")])
             .map_err(|_| format!("{} isn't in {name}'s clone: run :packages update again", short(commit)))?;
+        let before = self.head(&dir);
         self.checkout(&dir, commit)?;
+        // The new version's folder must still be one roster loads; else it stays where it was.
+        if let Err(e) = self.plugin_dir(&dir, spec) {
+            if let Some(b) = before {
+                let _ = self.checkout(&dir, &b);
+            }
+            return Err(e);
+        }
         self.write_entry(spec, name, commit)?;
         let mut status = self.blank(spec);
         status.commit = Some(commit.to_string());

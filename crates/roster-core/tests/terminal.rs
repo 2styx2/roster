@@ -2,13 +2,12 @@
 //! terminal options (a font list, sizes in points, the renderer, the cursor, a cell height)
 //! and `roster.set`, which `:config import-terminal` writes.
 
-use roster_core::config::{self, Config, CursorStyle, FontSize, Renderer};
-use std::path::PathBuf;
+mod common;
 
-fn with_init(name: &str, lua: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roster-core-terminal-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+use roster_core::config::{self, Config, CursorStyle, FontSize, Renderer};
+
+fn with_init(name: &str, lua: &str) -> common::Temp {
+    let dir = common::temp(&format!("terminal-{name}"));
     std::fs::write(dir.join("init.lua"), lua).unwrap();
     dir
 }

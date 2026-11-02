@@ -12,6 +12,7 @@ import { memoryPlatform } from "./platform/memory";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
 import type { Registries } from "./registries";
+import type { FakePlugin } from "./backend/fakePlugins";
 
 const LEADER = "{Control>} {/Control}";
 
@@ -55,7 +56,7 @@ describe(":check with no Host", () => {
     const h2 = within(help())
       .getAllByRole("heading", { level: 2 })
       .map((h) => h.textContent);
-    expect(h2).toEqual(["The app and roster serve", "roster", "Inventory", "ssh", "Vault", "askpass", "Infra repo", "init.lua", "Terminal font"]);
+    expect(h2).toEqual(["The app and roster serve", "roster", "Inventory", "ssh", "Vault", "askpass", "Infra repo", "init.lua", "Terminal font", "Folders (folders)"]);
     const error = entries().find((e) => e.getAttribute("data-tone") === "error") as HTMLElement;
     expect(error).toHaveTextContent("ERROR");
     expect(error).toHaveTextContent(/isn't logged in on this box.*Fix: sign in from the app's lock screen/);
@@ -109,6 +110,53 @@ describe(":check with no Host", () => {
     await command(user, "check");
     await waitFor(() => expect(help()).toHaveTextContent(/the lab VPN profile is missing/));
     expect(within(help()).getByRole("heading", { name: "Lab tools (lab-tools)" })).toBeInTheDocument();
+  });
+
+  // Ticket 60: a Plugin's section is a function, called on each :check (like vim.health).
+  it("a Plugin's check function runs on :check, and its OK, WARNING and ERROR lines show", async () => {
+    let runs = 0;
+    const doctor: FakePlugin = {
+      manifest: { name: "doctor", version: "1.0.0", description: "Checks the lab", author: null, api: 3, permissions: [] },
+      load(roster) {
+        roster.health.set("doctor", {
+          title: "Doctor",
+          check: () => {
+            runs++;
+            return [
+              { level: "ok", message: `checked ${runs} times` },
+              { level: "warn", message: "the lab VPN profile is old", fix: "import the new one" },
+              { level: "error", message: "the lab CA isn't trusted" },
+            ];
+          },
+        });
+      },
+    };
+    const { user } = await ready({ hosts: makeHosts(12), apiVersion: 16, plugins: { "~/plugins/doctor": doctor } });
+    await command(user, "plugins install ~/plugins/doctor");
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Install" }));
+    await command(user, "check");
+    await waitFor(() => expect(help()).toHaveTextContent(/checked 1 times/));
+    expect(within(help()).getByRole("heading", { name: "Doctor (doctor)" })).toBeInTheDocument();
+    const lines = entries().filter((e) => /lab|checked/.test(e.textContent ?? ""));
+    expect(lines.map((e) => e.getAttribute("data-tone"))).toEqual(["ok", "warn", "error"]);
+    expect(lines.map((e) => e.textContent)).toEqual([
+      expect.stringMatching(/^OK.*checked 1 times/),
+      expect.stringMatching(/^WARNING.*the lab VPN profile is old.*Fix: import the new one/),
+      expect.stringMatching(/^ERROR.*the lab CA isn't trusted/),
+    ]);
+    await command(user, "check");
+    await waitFor(() => expect(help()).toHaveTextContent(/checked 2 times/));
+  });
+
+  it(":check % checks the Host of the Session on screen, and says when there's none", async () => {
+    const { user, boxChecks } = await ready({ hosts: makeHosts(12), apiVersion: 16 });
+    await command(user, "check %");
+    expect(await screen.findByText(":check % needs a Session on screen")).toBeInTheDocument();
+    const host = makeHosts(12).hosts[0]!.name;
+    await command(user, `connect ${host}`);
+    await command(user, "check %");
+    expect(await screen.findByRole("region", { name: `Check ${host}` })).toBeInTheDocument();
+    expect(boxChecks()).toBe(0);
   });
 
   it(":check HOST still checks that one Host", async () => {

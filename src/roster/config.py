@@ -1,5 +1,6 @@
 """Loading and querying roster.yml."""
 
+import ipaddress
 import os
 import re
 import socket
@@ -9,6 +10,7 @@ from urllib.parse import urlparse
 import yaml
 
 from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, die, oneline, user_config_dir
+from .providers import NO_PASSWORD
 from .resources import load_resources
 
 HOST_DEFAULTS = {"user": None, "port": 22, "enroll": True, "auth": "prompt",
@@ -58,7 +60,11 @@ def parse_config(text, path):
         die(f"{path} is not valid YAML:\n{e}")
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
-    hosts, groups = {}, {}
+    hosts, groups, mesh_dirs, seen_as, sudo_refs = {}, {}, {}, {}, {}
+    for where, layer in (("defaults", raw.get("defaults") or {}),
+                         *((f"group {g!r}", x or {}) for g, x in (raw.get("groups") or {}).items())):
+        if isinstance(layer, dict) and "seen_as" in layer:
+            die(f"{where}: seen_as: goes on a Host (the addresses it connects from), not on a group or defaults")
     for gname, group in (raw.get("groups") or {}).items():
         group = group or {}
         gset = {k: v for k, v in group.items() if k not in GROUP_ONLY}
@@ -89,6 +95,18 @@ def parse_config(text, path):
             m["mesh"] = first(layers, "mesh")
             if m["mesh"] is not None and not isinstance(m["mesh"], bool):
                 die(f"host {hname!r}: mesh: must be true or false")
+            # The app sends this Host's shell its hook line (ticket 121); roster only checks it.
+            if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
+                die(f"host {hname!r}: shell_hooks: must be true or false")
+            md = mesh_dir(hname, first(layers, "mesh_dir"))
+            m.pop("mesh_dir", None)          # kept beside the Hosts, so serve's Host (and the Plugin API's) is as it was
+            if md:
+                mesh_dirs[hname] = md
+            m.pop("sudo", None)              # kept beside the Hosts too: a vault reference only the prompt fill reads
+            if sudo := sudo_auth(hname, layers):
+                sudo_refs[hname] = sudo
+            if seen := addresses_seen(hname, m.pop("seen_as", None)):
+                seen_as[hname] = seen
             for k in TEXT_FIELDS:
                 m[k] = oneline(m.get(k))
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
@@ -101,29 +119,66 @@ def parse_config(text, path):
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
     return {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
             "pub": Path(str(key) + ".pub"), "workers": int(raw.get("workers") or 32),
-            "inline_limit": int(raw.get("claude_inline_limit") or 60), "hosts": hosts, "groups": groups,
+            "inline_limit": int(raw.get("claude_inline_limit") or 60), "hosts": hosts, "groups": groups, "mesh_dirs": mesh_dirs,
+            "seen_as": seen_as, "sudo": sudo_refs,
             "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])}
 
 
 # ---------------------------------------------------------------- the Mesh's links (decision Q63)
 
-LINK_KEYS = ("from", "to", "both")
+MESH_DIR_RE = re.compile(r"^(/[A-Za-z0-9._-]+)+/?$")
+
+
+def mesh_dir(hname, v):
+    """A Host's `mesh_dir:` (T58), where it keeps its Mesh files as a source: an absolute path that can go into
+    ssh's config as it is (no spaces or quotes, no `..`), or None for roster's own pick."""
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not MESH_DIR_RE.match(v) or "/../" in v + "/" or "/./" in v + "/":
+        die(f"host {hname!r}: mesh_dir: must be an absolute path of letters, digits and . _ - / (it goes into ssh's "
+            f"config as it is), not {v!r}")
+    return v.rstrip("/")
+
+def addresses_seen(hname, v):
+    """A Host's `seen_as:` (T83): the other addresses it connects from (an address or a network, one or a list), which
+    a peer's from= takes beside its ip:, as roster.yml has them; [] without one."""
+    if v is None:
+        return []
+    out = []
+    for x in v if isinstance(v, list) else [v]:
+        try:
+            ipaddress.ip_network(str(x).strip(), strict=False)
+        except ValueError:
+            die(f"host {hname!r}: seen_as: must be IP addresses or networks (10.0.9.1, 10.0.9.0/24), one or a list, "
+                f"not {x!r}")
+        out.append(str(x).strip())
+    return out
+
+
+LINK_KEYS = ("from", "to", "both", "via")
 
 
 def load_links(raw, hosts, groups):
-    """roster.yml's top-level `links:`, checked: [{from, to, both}], each end a Host or a group by name.
-    One-way unless `both: true`. Unknown names, self-links and names that are both a Host and a group stop here."""
+    """roster.yml's top-level `links:`, checked: [{from, to, both, via}], each end a Host or a group by name.
+    One-way unless `both: true`. `via: HOST` (T57): the source reaches the peer through that Host (ProxyJump).
+    Unknown names, self-links, names that are both a Host and a group, and two entries that send the same pair
+    of Hosts through different Hosts stop here."""
     links = raw.get("links")
     if links is None:
         return []
     if not isinstance(links, list):
-        die("links: must be a list of { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true|false }")
-    out = []
+        die("links: must be a list of { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true|false, via: HOST }")
+    out, hops = [], {}                         # hops: (source, peer) -> (entry, the Host it goes through)
+
+    def members(name):
+        return [name] if name in hosts else [h for h, m in hosts.items() if m["group"] == name]
     for n, link in enumerate(links, 1):
         where = f"links: entry {n}"
         if not isinstance(link, dict) or set(map(str, link)) - set(LINK_KEYS) or not {"from", "to"} <= set(link):
-            die(f"{where} must be a mapping with from: and to: (and both: true for two-way), nothing else")
+            die(f"{where} must be a mapping with from: and to: (and both: true for two-way, via: HOST for a hop), "
+                "nothing else")
         ends = {}
         for k in ("from", "to"):
             name = str(link[k]) if link[k] is not None else ""
@@ -139,7 +194,24 @@ def load_links(raw, hosts, groups):
         both = link.get("both", False)
         if not isinstance(both, bool):
             die(f"{where}: both: must be true or false")
-        out.append({"from": ends["from"], "to": ends["to"], "both": both})
+        via = None if link.get("via") is None else str(link["via"])
+        if via is not None:
+            if via in groups and via not in hosts:
+                die(f"{where}: via: {via!r} is a group: a Link goes through one Host")
+            if via not in hosts:
+                die(f"{where}: via: {via!r} isn't a Host in roster.yml")
+            if via in (ends["from"], ends["to"]):
+                die(f"{where}: via: {via!r} is an end of the Link itself")
+            for a in members(ends["from"]):
+                for b in members(ends["to"]):
+                    for pair in {(a, b), (b, a)} if both else {(a, b)}:
+                        if via in pair or pair[0] == pair[1]:
+                            continue
+                        seen = hops.setdefault(pair, (n, via))
+                        if seen[1] != via:
+                            die(f"links: entries {seen[0]} and {n} send {pair[0]} -> {pair[1]} through different "
+                                f"Hosts ({seen[1]}, {via})")
+        out.append({"from": ends["from"], "to": ends["to"], "both": both, "via": via})
     return out
 
 
@@ -199,6 +271,22 @@ def resolve_ssh(hname, layers):
     flat = [x for layer in layers for x in (ssh_block(hname, layer), layer)] + [HOST_DEFAULTS]
     return {"port": check_port(f"host {hname!r} ssh", first(flat, "port")),
             "user": as_user(first(flat, "user")), "auth": as_auth(first(flat, "auth"))}
+
+
+def sudo_auth(hname, layers):
+    """The vault reference for a Host's own sudo (and su) password, from its most specific `sudo: {auth: REF}`
+    (host, group, defaults), or None: then a prompt fill (ticket 119, decision Q129) uses its ssh Login. A reference
+    only, never a value, and never `prompt`, `agent`, `key` or `none`, which have no password to fill."""
+    blk = first(layers, "sudo")
+    if blk is None:
+        return None
+    if not isinstance(blk, dict) or set(map(str, blk)) != {"auth"}:
+        die(f"host {hname!r}: sudo: must be a mapping with only auth (a vault reference, e.g. "
+            "sudo: {auth: \"bw:esx-02 sudo\"})")
+    ref = as_auth(blk["auth"]) or ""
+    if ref.partition(":")[0].strip() in ("prompt", "", *NO_PASSWORD):
+        die(f"host {hname!r}: sudo: auth must be a vault reference (bw:ITEM, op:ITEM, ...), not {ref!r}")
+    return ref
 
 
 def service_entry(v):

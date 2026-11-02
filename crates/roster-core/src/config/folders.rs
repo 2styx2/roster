@@ -1,9 +1,11 @@
-//! `folders.yml` next to `init.lua` (decision Q46): the Folders made in the app, as plain data
-//! both the app and the user edit. The core only reads and writes the text, atomically; the
-//! frontend parses it (src/folders/file.ts), and the watcher (watch.rs) says when it changed.
+//! `folders.yml` next to `init.lua` (decision Q46): the Folders made in the app before they moved
+//! into the Folders Plugin (decision Q93). The app only reads it, once at each start, to hand its
+//! Folders to the Plugin; it never writes or watches it. The frontend parses it (src/folders/file.ts).
 
-use super::watch::FOLDERS_FILE;
 use std::path::{Path, PathBuf};
+
+/// The old Folders file next to `init.lua`.
+pub const FOLDERS_FILE: &str = "folders.yml";
 
 /// A Folders file bigger than this is a mistake, not something to read into the window.
 pub const MAX_BYTES: usize = 1024 * 1024;
@@ -25,16 +27,4 @@ pub fn read(dir: &Path) -> std::io::Result<Option<String>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
-}
-
-/// Replaces the file with `text`, all at once (a temporary file beside it, then a rename), so
-/// an editor or the watcher never sees half of it.
-pub fn write(dir: &Path, text: &str) -> std::io::Result<()> {
-    if text.len() > MAX_BYTES {
-        return Err(std::io::Error::other(format!(
-            "the Folders are {} bytes (at most {MAX_BYTES})",
-            text.len()
-        )));
-    }
-    super::write_atomic(&path(dir), text)
 }

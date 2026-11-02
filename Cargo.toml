@@ -10,3 +10,11 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Lua is built optimised in debug and test builds too: unoptimised, a Plugin ran about six times
+# slower than in the app, so the Plugin tests needed a scaled budget. Now they use the app's.
+[profile.dev.package.mlua-sys]
+opt-level = 3
+
+[profile.dev.package.mlua]
+opt-level = 3

@@ -16,6 +16,7 @@ import type { Problem } from "../errors/classify";
 import { CheckSteps } from "../errors/CheckPanel";
 import { ProblemBody, type ProblemActions } from "../errors/ErrorPanel";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import { changesOf, draftOf, FIELDS, fieldProblem, needsVerify, rebaseDraft, touchesLogin, type Draft, type FieldName } from "./form";
 import { useFormPull, type PullGate, type PullOutcome } from "./pull";
@@ -158,9 +159,12 @@ export function EditPanel({ backend, host, pendingCount, rows, actions, onSaved,
           <span className="muted">Edit · </span>
           <span className="mono">{host.name}</span>
         </h2>
-        <button type="button" className="icon-button close" aria-label="Close the edit" onClick={onClose}>
-          <CloseGlyph />
-        </button>
+        <span className="panel-head-buttons">
+          <PanelButton />
+          <button type="button" className="icon-button close" aria-label="Close the edit" onClick={onClose}>
+            <CloseGlyph />
+          </button>
+        </span>
       </header>
       <form
         className="edit-form"

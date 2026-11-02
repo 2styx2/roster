@@ -14,12 +14,13 @@ import { blockLinks, type Block } from "../help/doc";
 import helpDocCss from "../help/doc.css?raw";
 import { guides, PARTS } from "../help/guides";
 import { HelpDoc, type RenderEnv } from "../help/HelpPanel";
-import { headingTag, helpContext, linkKind, topicIndex, type HelpContext, type HelpPage } from "../help/pages";
+import { headingTag, helpContext, linkKind, pageTexts, topicIndex, type HelpContext, type HelpPage, type Topic } from "../help/pages";
 import { defaultOptions, keymapOf } from "../keymap";
 import { builtinRegistries } from "../registries";
 import { rosterDark, rosterLight } from "../theme/themes";
 import { themeVariables } from "../theme/theme";
 import keysCss from "../ui/keys.css?raw";
+import type { SearchIndex } from "./search";
 
 export interface SiteOptions {
   /** The commit it's built from: the footer's "Generated from". */
@@ -172,10 +173,37 @@ export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
     for (const { pg, html } of rendered) files.push({ path: `${pg.id}.html`, body: sitePage(pg, html, pages, opts, gh) });
     files.push({ path: "tags.json", body: `${JSON.stringify(tagUrls, null, 1)}\n` });
     files.push({ path: "tag.html", body: tagPage(tagUrls) });
+    files.push({ path: "search.html", body: searchPage(pages, opts, gh) });
+    files.push({ path: "search-index.js", body: `window.rosterSearchIndex = ${json(searchIndexOf(ctx, topics, urlOf))};\n` });
     files.push({ path: "site.css", body: siteCss() });
   }
   problems.push(...linkProblems(files));
   return { files, problems };
+}
+
+/** JSON safe inside a <script> (tag.html) or as a script of its own (search-index.js). */
+const json = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
+
+/** What the search box searches (search.ts): every topic, as `:help`'s topic finder lists them,
+ * and every page's text, as `:helpgrep` searches it, each with the address of where it is. */
+function searchIndexOf(ctx: HelpContext, topics: readonly Topic[], urlOf: (tag: string) => string): SearchIndex {
+  const places: SearchIndex["places"] = [];
+  const placeOf = new Map<string, number>();
+  const texts: SearchIndex["texts"] = [];
+  for (const hit of pageTexts(ctx)) {
+    // The index and `all` only repeat other pages' titles and summaries (as in :helpgrep), and
+    // a heading is a topic already.
+    if (hit.page === "index" || hit.page === "all" || hit.heading) continue;
+    const href = urlOf(hit.tag) || `${hit.page}.html`;
+    const key = `${href}\n${hit.where}`;
+    let place = placeOf.get(key);
+    if (place === undefined) {
+      place = places.push([href, hit.where]) - 1;
+      placeOf.set(key, place);
+    }
+    texts.push([place, hit.text]);
+  }
+  return { topics: topics.map((t) => [t.tag, t.label, t.path ?? "", urlOf(t.tag)]), places, texts };
 }
 
 /** The build's own check of what it wrote: every `x.html#id` link goes to a page that has that
@@ -224,7 +252,7 @@ function footer(pg: HelpPage, opts: SiteOptions, gh: string): string {
 </footer>`;
 }
 
-function nav(current: HelpPage, pages: HelpPage[]): string {
+function nav(current: string, pages: HelpPage[]): string {
   const groups = new Map<string, HelpPage[]>();
   for (const pg of pages) {
     if (pg.id === "index") continue;
@@ -235,9 +263,9 @@ function nav(current: HelpPage, pages: HelpPage[]): string {
   // Themes guide).
   const label = (pg: HelpPage) => (pages.filter((x) => short(x.title) === short(pg.title)).length > 1 ? pg.title : short(pg.title));
   const item = (pg: HelpPage) =>
-    `<li><a href="${pg.id}.html"${pg.id === current.id ? ' aria-current="page"' : ""}>${esc(label(pg))}</a></li>`;
+    `<li><a href="${pg.id}.html"${pg.id === current ? ' aria-current="page"' : ""}>${esc(label(pg))}</a></li>`;
   return `<nav class="site-nav" id="site-pages" aria-label="Pages">
-<p class="site-nav-home"><a href="index.html"${current.id === "index" ? ' aria-current="page"' : ""}>roster help</a></p>
+<p class="site-nav-home"><a href="index.html"${current === "index" ? ' aria-current="page"' : ""}>roster help</a></p>
 ${[...groups].map(([part, list]) => `<h2>${esc(part)}</h2>\n<ul>${list.map(item).join("")}</ul>`).join("\n")}
 </nav>`;
 }
@@ -263,23 +291,28 @@ function sitePage(pg: HelpPage, article: string, pages: HelpPage[], opts: SiteOp
   const intro = start
     ? `<div class="site-start">${logoHtml(56)}<p>The same pages as <code>:help</code> in the roster app, made from the same source. Also as one <a href="roster-docs.pdf">PDF</a>, and on <a href="${esc(gh)}">GitHub</a>.</p></div>`
     : "";
-  return `${head(start ? "roster help" : `${pg.title} · roster help`, pg.summary, '<link rel="stylesheet" href="site.css">')}
+  return frame(start ? "roster help" : `${pg.title} · roster help`, pg.summary, pg.id, `${intro}${note}${article}\n${footer(pg, opts, gh)}`, pages);
+}
+
+/** A page of the website: the top bar with the search box, the pages by part, and `main`. */
+function frame(title: string, description: string, current: string, main: string, pages: HelpPage[]): string {
+  return `${head(title, description, '<link rel="stylesheet" href="site.css">\n<script src="search.js" defer></script>')}
 <body>
 <a class="site-skip" href="#main">Skip to the page</a>
 <header class="site-top">
 <a class="site-name" href="index.html">roster</a>
-<form class="site-go" action="tag.html" role="search">
+<form class="site-go" action="search.html" role="search">
 <label for="site-topic">:help</label>
-<input id="site-topic" name="t" type="search" placeholder="topic" autocomplete="off" spellcheck="false" autocapitalize="off">
+<input id="site-topic" name="q" type="search" placeholder="topic or text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="search">
+<kbd class="keycap site-slash" aria-hidden="true">/</kbd>
 </form>
 <a class="site-pages" href="#site-pages">Pages</a>
 <a class="site-pdf" href="roster-docs.pdf">PDF</a>
 </header>
 <div class="site-body">
-${nav(pg, pages)}
+${nav(current, pages)}
 <main id="main">
-${intro}${note}${article}
-${footer(pg, opts, gh)}
+${main}
 </main>
 </div>
 </body>
@@ -287,10 +320,26 @@ ${footer(pg, opts, gh)}
 `;
 }
 
+/** `search.html?q=WORDS`: every topic and every place in the text that has the words, for when
+ * the search box's short list isn't enough (its last row comes here). search.js fills it. */
+function searchPage(pages: HelpPage[], opts: SiteOptions, gh: string): string {
+  const main = `<div class="help-doc site-search">
+<h1>Search</h1>
+<form class="site-search-form" action="search.html" role="search">
+<label class="visually-hidden" for="site-q">Search every page</label>
+<input id="site-q" name="q" type="search" placeholder="topic or text" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="search">
+</form>
+<p class="site-search-count" id="site-count" role="status"></p>
+<div id="site-results"></div>
+<noscript><p>Search needs JavaScript. <a href="all.html">Every topic</a> lists them all, and the <a href="roster-docs.pdf">PDF</a> has every page in one file.</p></noscript>
+</div>
+<footer class="site-foot"><p>The same topics as <code>:help</code> and the same text as <code>:helpgrep</code> in the app. Generated from <a href="${esc(`${gh}/commit/${opts.sha}`)}"><code>${esc(opts.sha.slice(0, 7))}</code></a>.</p></footer>`;
+  return frame("Search · roster help", "Search every roster help page", "search", main, pages);
+}
+
 /** `tag.html?t=terminal.size`: a topic's stable address, like Neovim's helptag.html. The table is
  * in the page, so it works without fetching anything. */
 function tagPage(urls: Record<string, string>): string {
-  const json = JSON.stringify(urls).replace(/</g, "\\u003c");
   return `${head("roster help: topic", "Opens a :help topic", '<link rel="stylesheet" href="site.css">')}
 <body>
 <main id="main" class="site-tag">
@@ -298,7 +347,7 @@ function tagPage(urls: Record<string, string>): string {
 <noscript><p>This page needs JavaScript to find a topic. <a href="all.html">Every topic</a> lists them all.</p></noscript>
 </main>
 <script>
-const tags = ${json};
+const tags = ${json(urls)};
 const lower = Object.fromEntries(Object.entries(tags).map(([k, v]) => [k.toLowerCase(), v]));
 const asked = (new URLSearchParams(location.search).get("t") || "").trim().replace(/^:?help\\s+/, "");
 const to = tags[asked] || lower[asked.toLowerCase()] || lower[(":" + asked.replace(/^:/, "")).toLowerCase()];
@@ -307,7 +356,8 @@ else {
   const msg = document.getElementById("site-tag-msg");
   msg.textContent = asked ? "No topic named " : "No topic given. ";
   if (asked) { const c = document.createElement("code"); c.textContent = asked; msg.append(c, ". "); }
-  const a = document.createElement("a"); a.href = "all.html"; a.textContent = "Every topic"; msg.append(a, " lists them all.");
+  if (asked) { const s = document.createElement("a"); s.href = "search.html?q=" + encodeURIComponent(asked); s.textContent = "Search the text for it"; msg.append(s, ", or see "); }
+  const a = document.createElement("a"); a.href = "all.html"; a.textContent = asked ? "every topic" : "Every topic"; msg.append(a, asked ? "." : " lists them all.");
 }
 </script>
 </body>
@@ -398,13 +448,49 @@ const SCREEN = `.site-skip { position: absolute; left: 8px; top: -40px; padding:
   height: 48px; padding: 0 20px; background: var(--chrome); border-bottom: 1px solid var(--line);
 }
 .site-name { font: 500 var(--text-md) var(--font-mono); color: var(--text); text-decoration: none; }
-.site-go { display: flex; align-items: center; gap: 6px; margin-left: auto; font: var(--text-sm) var(--font-mono); color: var(--muted); }
+.site-go { position: relative; display: flex; align-items: center; gap: 6px; margin-left: auto; font: var(--text-sm) var(--font-mono); color: var(--muted); }
 .site-go input {
-  width: 16ch; height: 30px; padding: 0 8px; font: var(--text-sm) var(--font-mono); color: var(--text);
+  width: 24ch; padding-right: 28px; height: 30px; padding: 0 8px; font: var(--text-sm) var(--font-mono); color: var(--text);
   background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
 }
 .site-go input::placeholder { color: var(--muted); }
 .site-go input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.site-go input::-webkit-search-cancel-button { display: none; }
+/* The / that focuses the box, as a keycap in it (taste.md: keycaps sit next to what they do). */
+.site-slash { position: absolute; right: 7px; pointer-events: none; }
+.site-go:focus-within .site-slash { visibility: hidden; }
+@media (hover: none) { .site-slash { display: none; } .site-go input { padding-right: 8px; } }
+/* The search box's list (src/docs-site/client.ts). It appears and goes at once: it's opened and
+   walked from the keyboard, many times a visit (taste.md, "motion confirms"). */
+.site-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 3; width: min(36rem, calc(100vw - 32px));
+  max-height: min(70vh, 34rem); overflow: auto; overscroll-behavior: contain; padding: 4px;
+  font: var(--text-sm) var(--font-ui); color: var(--text);
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: 0 8px 24px var(--shadow);
+}
+.site-pop-msg { margin: 0; padding: 8px 10px; color: var(--muted); }
+.site-hits-head { padding: 8px 10px 4px; font-size: var(--text-xs); font-weight: 600; color: var(--muted); }
+.site-hits-head:empty { display: none; }
+.site-hits-group + .site-hits-group:last-child { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.site-hit { display: grid; gap: 1px; padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; }
+.site-hit[aria-selected="true"] { background: var(--raised); box-shadow: inset 0 0 0 1px var(--raised-line); }
+.site-hit-name, .site-hit-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-hit-tag { font-family: var(--font-mono); }
+.site-hit-where { font-size: var(--text-xs); color: var(--muted); }
+.site-hit-all .site-hit-name { color: var(--muted); }
+.site-hit mark, .site-result mark { background: none; color: inherit; font-weight: 600; }
+/* search.html */
+.site-search-form input {
+  width: 100%; max-width: 40rem; height: 40px; padding: 0 12px; font: var(--text-md) var(--font-mono); color: var(--text);
+  background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--radius);
+}
+.site-search-form input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.site-search-count { color: var(--muted); font-size: var(--text-sm); }
+.site-search .site-results { margin: 0 0 12px; padding: 0; list-style: none; }
+.site-result { display: grid; gap: 1px; padding: 6px 8px; margin: 0 -8px; border-radius: var(--radius-sm); text-decoration: none; }
+.site-result .site-hit-name { white-space: normal; }
+@media (hover: hover) and (pointer: fine) { .site-result:hover { background: var(--hover); } }
+.site-search-more { color: var(--muted); font-size: var(--text-sm); }
 .site-pdf, .site-pages { font-size: var(--text-sm); color: var(--muted); }
 .site-pages { display: none; }
 .site-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
@@ -436,7 +522,9 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 .site-tag { padding: 40px 24px; }
 @media (max-width: 760px) {
   .site-top { padding: 0 16px; gap: 10px; }
-  .site-go input { width: 11ch; }
+  .site-go label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .site-go input { width: 15ch; }
+  .site-pop { position: fixed; top: 54px; left: 8px; right: 8px; width: auto; max-height: calc(100vh - 70px); }
   .site-pages { display: inline; }
   /* The page first; the pages list after it, a tap away ("Pages"). */
   .site-body { display: flex; flex-direction: column-reverse; }

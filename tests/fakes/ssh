@@ -5,13 +5,19 @@
 # FAKE_SSH_PROMPT + _PASSWORD   act as a password login: run $SSH_ASKPASS PROMPT, as ssh does, and succeed
 #                               only if it prints FAKE_SSH_PASSWORD (its stderr goes to ours, as with ssh); once
 #                               logged in, it runs -o LocalCommand with sh -c (cmd.exe on Windows) when -o PermitLocalCommand=yes, as ssh does
+# FAKE_SSH_HANG=FILE            write this process's pid to FILE, then hang for a minute before the login (a slow
+#                               server's key exchange)
 # FAKE_HOSTS=DIR                stand-in Hosts for the Mesh (tests/test_mesh.py): `ssh NAME CMD` runs CMD with sh in
 #                               DIR/NAME as that Host (HOME=DIR/NAME/home), when that directory exists:
 #                                 DIR/NAME/down     the Host is down: ssh times out (exit 255), nothing runs
 #                                 DIR/NAME/esxi     it's ESXi: `uname -s` says VMkernel, and ESXi's own paths
 #                                                   (/etc/ssh/keys-USER, /vmfs/volumes) are DIR/NAME/etc/..., DIR/NAME/vmfs/...
 #                                 DIR/NAME/blocked  ip:port lines this Host can't reach (its `nc -z` fails)
+#                                 DIR/NAME/slow     seconds each connection to it takes before it runs anything
+#                               FAKE_HOST_PATH=DIR goes first on every stand-in Host's PATH (a test's own tools)
 #                               Each run appends "start NAME" and "end NAME" to DIR/connections.
+# FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
+#                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
 import os, subprocess, sys, time
 args = sys.argv[1:]
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("ssh " + " ".join(args) + "\n")
@@ -40,32 +46,52 @@ if hosts:
     dest, command = destination(args)
     root = os.path.join(hosts, dest or "-")
     if dest and os.path.isdir(root):
+        # the Host's root as its sh names it: on Windows Git's sh names C:\x\y /c/x/y (and pwd -P says so)
+        shroot = root
+        if os.name == "nt":
+            shroot = root.replace("\\", "/")
+            if shroot[1:2] == ":":
+                shroot = "/" + shroot[0].lower() + shroot[2:]
         log = os.path.join(hosts, "connections")
         if os.path.exists(os.path.join(root, "down")):
             open(log, "a").write(f"down {dest}\n")
             print(f"ssh: connect to host {dest} port 22: Connection timed out", file=sys.stderr)
             sys.exit(255)
         open(log, "a").write(f"start {dest}\n")
+        slow = os.path.join(root, "slow")
+        if os.path.exists(slow):
+            time.sleep(float(open(slow).read() or 1))
         line = " ".join(command) or "sh"
-        stdin = sys.stdin.read() if line == "sh -s" else None
+        stdin = sys.stdin.buffer.read().decode() if line == "sh -s" else None
         esxi = os.path.exists(os.path.join(root, "esxi"))
 
         def on_host(text):
             if esxi:
-                text = text.replace("/etc/ssh/keys-", root + "/etc/ssh/keys-").replace("/vmfs/volumes", root + "/vmfs/volumes")
+                text = text.replace("/etc/ssh/keys-", shroot + "/etc/ssh/keys-").replace("/vmfs/volumes", shroot + "/vmfs/volumes")
             return text
 
         os.makedirs(os.path.join(root, "home"), exist_ok=True)
-        env = {**os.environ, "HOME": os.path.join(root, "home"), "FAKE_HOST_ROOT": root,
-               "PATH": os.path.join(os.path.dirname(os.path.abspath(__file__)), "host") + os.pathsep + os.environ["PATH"]}
-        argv = ["/bin/sh", "-s"] if stdin is not None else ["/bin/sh", "-c", on_host(line)]
-        r = subprocess.run(argv, input=on_host(stdin) if stdin is not None else None, stdout=subprocess.PIPE,
-                           text=True, env=env, cwd=env["HOME"])
+        env = {**os.environ, "HOME": os.path.join(root, "home"), "FAKE_HOST_ROOT": shroot,
+               "PATH": os.pathsep.join([*filter(None, [os.environ.get("FAKE_HOST_PATH")]), os.path.join(os.path.dirname(os.path.abspath(__file__)), "host"),
+                                        # Windows: the sh's own commands (sort, find) before Windows' namesakes
+                                        *([os.path.dirname(os.environ.get("FAKE_SH", "/bin/sh"))] if os.name == "nt" else []),
+                                        os.environ["PATH"]])}
+        sh = os.environ.get("FAKE_SH", "/bin/sh")
+        argv = [sh, "-s"] if stdin is not None else [sh, "-c", on_host(line)]
+        # bytes both ways: no CRLF from Windows' text mode, as from a real Host
+        r = subprocess.run(argv, input=on_host(stdin).encode() if stdin is not None else None, stdout=subprocess.PIPE,
+                           env=env, cwd=env["HOME"])
+        out = r.stdout.decode()
         # what the Host prints names its own paths, as a real ESXi's would
-        sys.stdout.write(r.stdout.replace(root + "/etc/ssh/keys-", "/etc/ssh/keys-").replace(root + "/vmfs/volumes", "/vmfs/volumes"))
+        sys.stdout.buffer.write(out.replace(shroot + "/etc/ssh/keys-", "/etc/ssh/keys-").replace(shroot + "/vmfs/volumes", "/vmfs/volumes").encode())
+        sys.stdout.flush()
         time.sleep(0.01)
         open(log, "a").write(f"end {dest}\n")
         sys.exit(r.returncode)
+
+if os.environ.get("FAKE_SSH_HANG"):
+    open(os.environ["FAKE_SSH_HANG"], "w").write(str(os.getpid()))
+    time.sleep(60)
 
 prompt = os.environ.get("FAKE_SSH_PROMPT")
 if prompt is not None and os.environ.get("SSH_ASKPASS"):

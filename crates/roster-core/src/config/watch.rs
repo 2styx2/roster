@@ -14,16 +14,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::{Duration, Instant};
 
-/// The Folders file next to `init.lua` (decision Q46): plain data the app writes and the user may edit.
-pub const FOLDERS_FILE: &str = "folders.yml";
-
-/// What a burst of events touched: a `.lua` file of the Config, `folders.yml`, or both.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Changed {
-    pub lua: bool,
-    pub folders: bool,
-}
-
 /// Stops watching when dropped.
 pub struct Watcher {
     _inner: Arc<Mutex<notify::RecommendedWatcher>>,
@@ -52,11 +42,6 @@ impl Targets {
     }
 }
 
-/// `folders.yml` right in the config dir (an editor's rename over it names the file too).
-fn is_folders(roots: &[PathBuf], p: &Path) -> bool {
-    p.file_name().is_some_and(|n| n == FOLDERS_FILE) && p.parent().is_some_and(|d| roots.iter().any(|r| r == d))
-}
-
 /// `p` with its folder resolved (the file itself may be gone, renamed over).
 fn canonical_parent(p: &Path) -> Option<PathBuf> {
     Some(p.parent()?.canonicalize().ok()?.join(p.file_name()?))
@@ -69,19 +54,10 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Watches `dir` (created if missing, so a first `init.lua` is seen) and calls `on_change` on
 /// its own thread after each save of a `.lua` file of the Config.
 pub fn watch(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<Watcher> {
-    watch_files(dir, move |c| {
-        if c.lua {
-            on_change();
-        }
-    })
-}
-
-/// As [`watch`], for `folders.yml` too: `on_change` says what a save touched.
-pub fn watch_files(dir: &Path, on_change: impl Fn(Changed) + Send + 'static) -> notify::Result<Watcher> {
     std::fs::create_dir_all(dir).map_err(notify::Error::io)?;
     let root = dir.canonicalize().map_err(notify::Error::io)?;
     let targets = Arc::new(Mutex::new(Targets::default()));
-    let (tx, rx) = mpsc::channel::<Changed>();
+    let (tx, rx) = mpsc::channel::<()>();
     let seen = Arc::clone(&targets);
     // Events may name the dir as given or as resolved.
     let roots = vec![root.clone(), dir.to_path_buf()];
@@ -92,12 +68,8 @@ pub fn watch_files(dir: &Path, on_change: impl Fn(Changed) + Send + 'static) -> 
                 return;
             }
             let t = lock(&seen);
-            let changed = Changed {
-                lua: event.paths.iter().any(|p| t.counts(&roots, p)),
-                folders: event.paths.iter().any(|p| is_folders(&roots, p)),
-            };
-            if changed.lua || changed.folders {
-                let _ = tx.send(changed);
+            if event.paths.iter().any(|p| t.counts(&roots, p)) {
+                let _ = tx.send(());
             }
         },
         // Symlinked folders are watched at their targets (below), the same way on every OS.
@@ -111,23 +83,16 @@ pub fn watch_files(dir: &Path, on_change: impl Fn(Changed) + Send + 'static) -> 
     let weak = Arc::downgrade(&inner);
     std::thread::spawn(move || {
         // Ends when the watcher (and with it the sender) is dropped.
-        while let Ok(mut changed) = rx.recv() {
+        while rx.recv().is_ok() {
             let first = Instant::now();
             loop {
                 let left = MAX_WAIT.saturating_sub(first.elapsed());
-                if left.is_zero() {
+                if left.is_zero() || rx.recv_timeout(QUIET.min(left)).is_err() {
                     break;
-                }
-                match rx.recv_timeout(QUIET.min(left)) {
-                    Ok(more) => {
-                        changed.lua |= more.lua;
-                        changed.folders |= more.folders;
-                    }
-                    Err(_) => break,
                 }
             }
             follow_links(&root, &targets, &weak, &mut watched);
-            on_change(changed);
+            on_change();
         }
     });
     Ok(Watcher { _inner: inner })

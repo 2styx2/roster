@@ -2,7 +2,7 @@
 (docs/app/dev/vault-auth.md has the research behind every choice here).
 
 `bw login` is one-shot and has no flag for the new-device code, so the password and SSO flows run it on a
-PTY and answer its own prompts (Email address, Two-step login method, Two-step login code, New device
+PTY (a pseudoconsole on native Windows, roster/conpty.py) and answer its own prompts (Email address, Two-step login method, Two-step login code, New device
 verification) as the person answers the app. The process lives between calls. Nothing secret goes on a
 command line: the master password is in an env var (--passwordenv), the API key in BW_CLIENTID/BW_CLIENTSECRET
 (bw's own), and the email and codes are typed at bw's prompts. What bw shows on the PTY is read here only;
@@ -43,17 +43,15 @@ from . import (
 )
 from .bitwarden import _bw, _bw_status_json, _bw_unlock
 
-if not WINDOWS:                         # a PTY is Linux's and macOS's; native Windows roster signs in with an API key
+if not WINDOWS:                         # a PTY is Linux's and macOS's; native Windows has its pseudoconsole
     import fcntl
     import pty
     import termios
 
-NO_PTY = ("signing in with a password or SSO from the app needs a terminal roster can drive, which native Windows "
-          "roster doesn't have yet - run `roster bw login` in a terminal (or sign in with an API key), then unlock here")
-
 ANSWER_WAIT = 40            # s: bw's answer to a step (a login is a KDF and a few requests)
 SSO_URL_WAIT = 15           # s: for bw to start its callback server and hand over the link
 SSO_TIMEOUT = 300           # s: for the person to finish SSO in the browser
+SSO_PORTS = range(8065, 8071)   # bw's SSO callback server listens on the first free one
 SSO_POLL = 20               # s: one vault.login call waits at most this long for the browser
 
 CLOUD = None                                        # bw's default (US cloud): `bw config server bitwarden.com`
@@ -103,13 +101,55 @@ def plain(text):
     return ANSI.sub("", text).replace("\r", "\n")
 
 
-class Pty:
+class Terminal:
+    """One bw process on a terminal roster drives: its prompts read from what the terminal shows, answers typed.
+    Pty (Linux, macOS) and ConsolePty (native Windows) supply the terminal."""
+
+    text = ""                   # what bw showed since the last answer, as plain text
+    out = b""                   # its stdout, where it's apart from the terminal (Pty: --raw puts the session key there)
+
+    def prompt(self):
+        """The prompt bw is showing now, if it's one not answered yet (an answer re-renders its prompt)."""
+        for key, marker in PROMPTS.items():
+            if key in self.answered or marker not in self.text:
+                continue
+            if key == METHOD and "Cancel" not in self.text.split(marker, 1)[1]:
+                continue                                # the list isn't drawn completely yet
+            return key
+        for marker in UNEXPECTED:
+            if marker in self.text:
+                return marker
+        return None
+
+    def wait(self, timeout, until=None):
+        """("prompt", key), ("exit", returncode), ("until", value) or ("timeout", None)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            found = self.prompt()
+            if found:
+                return "prompt", found
+            if until and (v := until()):
+                return "until", v
+            code = self.ended()
+            if code is not None:
+                return "exit", code
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return "timeout", None
+            self._read(min(left, 0.25))
+
+    def answer(self, key, text):
+        """Type at prompt KEY; what bw showed before is forgotten."""
+        self.answered.add(key)
+        self.text = ""
+        self._write(text)
+
+
+class Pty(Terminal):
     """One bw process with its stdin and stderr on a PTY (where its prompts are) and stdout on a pipe
     (where --raw puts the session key)."""
 
     def __init__(self, args, env):
-        if WINDOWS:
-            raise LoginError(NO_PTY)
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 240, 0, 0))     # no wrapped prompts
         try:
@@ -144,41 +184,15 @@ class Pty:
                 self.proc.stdout.close()
                 self.proc.stdout = None
 
-    def prompt(self):
-        """The prompt bw is showing now, if it's one not answered yet (an answer re-renders its prompt)."""
-        for key, marker in PROMPTS.items():
-            if key in self.answered or marker not in self.text:
-                continue
-            if key == METHOD and "Cancel" not in self.text.split(marker, 1)[1]:
-                continue                                # the list isn't drawn completely yet
-            return key
-        for marker in UNEXPECTED:
-            if marker in self.text:
-                return marker
+    def ended(self):
+        """bw's exit code once it has exited and everything it showed is read, else None."""
+        if self.fd is None and self.proc.stdout is None:
+            return self.proc.wait()
+        if self.fd is None and self.proc.poll() is not None:      # stdout held open by a grandchild
+            return self.proc.returncode
         return None
 
-    def wait(self, timeout, until=None):
-        """("prompt", key), ("exit", returncode), ("until", value) or ("timeout", None)."""
-        deadline = time.monotonic() + timeout
-        while True:
-            found = self.prompt()
-            if found:
-                return "prompt", found
-            if until and (v := until()):
-                return "until", v
-            if self.fd is None and self.proc.stdout is None:
-                return "exit", self.proc.wait()
-            if self.fd is None and self.proc.poll() is not None:      # stdout held open by a grandchild
-                return "exit", self.proc.returncode
-            left = deadline - time.monotonic()
-            if left <= 0:
-                return "timeout", None
-            self._read(min(left, 0.25))
-
-    def answer(self, key, text):
-        """Type at prompt KEY; what bw showed before is forgotten."""
-        self.answered.add(key)
-        self.text = ""
+    def _write(self, text):
         os.write(self.fd, text.encode())
 
     def close(self):
@@ -198,6 +212,68 @@ class Pty:
         if self.proc.stdout is not None:
             self.proc.stdout.close()
             self.proc.stdout = None
+
+
+# A pseudoconsole draws a screen: it places text with cursor moves where a PTY has newlines and spaces
+CURSOR_TO = re.compile(r"\x1b\[[0-9;]*[HfEFd]")          # to a row (and column): a line break
+CURSOR_RIGHT = re.compile(r"\x1b\[([0-9]*)C")
+
+
+def screen_text(vt):
+    """What a pseudoconsole drew, as plain text with its lines and spaces."""
+    vt = CURSOR_TO.sub("\n", vt)
+    vt = CURSOR_RIGHT.sub(lambda m: " " * min(int(m.group(1) or 1), 240), vt)
+    return plain(vt)
+
+
+class ConsolePty(Terminal):
+    """Native Windows' counterpart of Pty: one bw process on a pseudoconsole (ConPTY, roster/conpty.py). Its
+    stdout is on the console too, so once bw has exited, `out` is the last line it showed: what --raw printed."""
+
+    def __init__(self, args, env):
+        from ..conpty import ConPty
+        try:
+            self.con = ConPty(args, env)
+        except FileNotFoundError:
+            raise CliMissing(not_installed("bw"))
+        except ValueError as e:                         # a batch-file bw and an argument cmd.exe would act on
+            raise LoginError(str(e))
+        self.text, self.out, self.answered, self.code = "", b"", set(), None
+
+    def _read(self, timeout):
+        got = self.con.read(timeout)
+        if got:
+            self.text += screen_text(got)
+
+    def ended(self):
+        if self.code is None and (code := self.con.exitcode()) is not None:
+            self.con.finish()                   # closes the console: it draws what's left, then its output ends
+            got = self.con.read(0)              # all of it, or what came within finish()'s wait: never more waiting
+            if got:
+                self.text += screen_text(got)
+            self.out = self.last_line().encode()
+            self.code = code
+        return self.code
+
+    def last_line(self):
+        """What bw printed last: with --raw, after a sign-in, the session key (its stdout is this console too)."""
+        lines = [line.strip() for line in self.text.split("\n") if line.strip()]
+        return lines[-1] if lines else ""
+
+    def listening(self, ports):
+        """Which of PORTS bw (or what it started) listens on."""
+        return self.con.listening(ports)
+
+    def _write(self, text):
+        self.con.write(text)
+
+    def close(self):
+        self.con.close()
+
+
+def terminal(args, env):
+    """bw running on the terminal this system has."""
+    return ConsolePty(args, env) if WINDOWS else Pty(args, env)
 
 
 def parse_methods(text):
@@ -341,7 +417,7 @@ class BwLogin:
     def run_password_login(self):
         """`bw login` on a PTY: the email typed at its prompt, the password from an env var."""
         self.close_bw()
-        self.bw = Pty(["bw", "login", "--raw", "--passwordenv", "ROSTER_BW_MASTER"],
+        self.bw = terminal(["bw", "login", "--raw", "--passwordenv", "ROSTER_BW_MASTER"],
                       self.env({"ROSTER_BW_MASTER": self.password}))
         how, what = self.bw.wait(ANSWER_WAIT)
         if (how, what) != ("prompt", EMAIL):
@@ -405,6 +481,8 @@ class BwLogin:
         m = re.search(r'BW_SESSION="([^"]+)"', out)
         if m:
             return m.group(1)
+        if out in self.secrets or out == self.email:        # Windows: a typed answer was the last thing shown
+            return None
         return out if out and not any(c.isspace() for c in out) else None
 
     # ---- API key, SSO
@@ -417,12 +495,14 @@ class BwLogin:
         return self.at({"step": "master_password", "email": None})
 
     def sso_login(self, identifier):
+        if WINDOWS:
+            return self.sso_login_windows(identifier)
         self.shim = Path(tempfile.mkdtemp(prefix="roster-sso-"))       # 0700
         (self.shim / "xdg-open").write_text(SHIM)
         (self.shim / "xdg-open").chmod(0o700)
         url_file = self.shim / "url"
         path = os.environ.get("PATH", "")
-        self.bw = Pty(["bw", "login", "--sso", *([identifier] if identifier else [])],
+        self.bw = terminal(["bw", "login", "--sso", *([identifier] if identifier else [])],
                       self.env({"PATH": f"{self.shim}{os.pathsep}{path}", "ROSTER_SSO_PATH": path,
                                 "ROSTER_SSO_URL_FILE": str(url_file)}))
         how, what = self.bw.wait(SSO_URL_WAIT, until=lambda: url_file.is_file() and url_file.read_text().strip())
@@ -433,6 +513,19 @@ class BwLogin:
         self.sso_url = what
         self.sso_deadline = time.monotonic() + sso_timeout()
         return self.at({"step": "sso", "url": self.sso_url, "expires_in": sso_timeout()})
+
+    def sso_login_windows(self, identifier):
+        """On Windows bw opens the page itself, with PowerShell's Start by its full path, which no PATH entry can
+        stand in for: so there's no link to hand over (`url` null), and bw having opened it is known by its
+        callback server listening (it opens the page as that server starts), as Windows' TCP table shows it."""
+        self.bw = terminal(["bw", "login", "--sso", *([identifier] if identifier else [])], self.env())
+        how, what = self.bw.wait(SSO_URL_WAIT, until=lambda: self.bw.listening(SSO_PORTS))
+        if how != "until":
+            if how == "timeout":
+                raise self.fail(BrowserLoginFailed("bw didn't start the SSO sign-in (its sign-in page didn't open)"))
+            return self.outcome(how, what, None)
+        self.sso_deadline = time.monotonic() + sso_timeout()
+        return self.at({"step": "sso", "url": None, "expires_in": sso_timeout()})
 
     def sso_wait(self):
         left = self.sso_deadline - time.monotonic()

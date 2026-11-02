@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addToFolder, folderCommand, parseFolders, renameFolder, splitName, type Folder } from "./folders";
+import { addToFolder, parseFolders, renameFolder, splitName, type Folder } from "./folders";
 
 const lab: Folder[] = [
   { name: "Lab ESXi", hosts: ["esxi-02", "esxi-01"] },
@@ -44,16 +44,5 @@ describe("Folder names on the command line", () => {
     expect(splitName('"New one" Other', names)).toEqual(["New one", "Other"]);
     expect(splitName("Daily Every day", names)).toEqual(["Daily", "Every day"]);
     expect(splitName("Nope Every day", names)).toEqual(["Nope", "Every day"]);
-  });
-
-  it("completes subcommands, then Hosts, then the Folders that fit", () => {
-    let state: unknown = lab;
-    const command = folderCommand({ get: () => state, set: (_k, v) => (state = v) });
-    const hosts = ["esxi-02", "esxi-01", "orion3", "hub2"];
-    expect(command.complete?.("re", hosts)).toEqual(["rename ", "remove "]);
-    expect(command.complete?.("add e", hosts)).toEqual(["add esxi-02 ", "add esxi-01 "]);
-    expect(command.complete?.("add orion3 ", hosts)).toEqual(["add orion3 Lab ESXi"]);
-    expect(command.complete?.("remove orion3 ", hosts)).toEqual(["remove orion3 Daily"]);
-    expect(command.complete?.("rename L", hosts)).toEqual(['rename "Lab ESXi" ']);
   });
 });

@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import {
   ADD_API_VERSION,
@@ -29,6 +30,7 @@ import {
   EDIT_API_VERSION,
   PUBLISH_API_VERSION,
   LIVE_API_VERSION,
+  JOBS_API_VERSION,
   LiveError,
   BackendCallError,
   type Backend,
@@ -41,6 +43,8 @@ import {
   HOST_KEY_API_VERSION,
   QUICK_CONNECT_API_VERSION,
   SAVE_TO_VAULT_API_VERSION,
+  FILL_API_VERSION,
+  NESTED_FILL_API_VERSION,
   SIGN_OUT_API_VERSION,
   type VaultAccount,
   type VaultSettings,
@@ -48,14 +52,13 @@ import {
 import { publishChecked } from "./backend/afterTimeout";
 import { CommandLine } from "./cmdline/CommandLine";
 import { complete, runLine, type CommandContext, type Commands, type FoldHow } from "./commands/table";
-import { deriveConfig, registerConfig, type ConfigWarning } from "./config/apply";
+import { deriveConfig, layoutWarnings, registerConfig, type ConfigWarning } from "./config/apply";
 import { ConfigToast } from "./config/ConfigToast";
 import { initLuaReloader } from "./config/source";
 import type { ConfigReport, ImportPreview } from "./config/types";
 import { vaultSettingsOf } from "./config/vault";
 import { ImportPanel } from "./config/ImportPanel";
-import { registerFolders } from "./folders/folders";
-import { FOLDERS_FILE, FoldersFile } from "./folders/file";
+import { foldersSettings } from "./folders/file";
 import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
 import type { InventoryFileError } from "./backend/types";
@@ -63,6 +66,7 @@ import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
+import { checkProgressed, checkStarted } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -92,11 +96,18 @@ import { SavePanel } from "./quick/SavePanel";
 import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
+import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import { allRows, moveCursor, Sidebar } from "./sidebar/Sidebar";
 import { sectionBuilder } from "./sidebar/sections";
-import { packagesCommand, pluginsCommand } from "./plugins/command";
-import { PluginManager } from "./plugins/manager";
-import { PackagesPanel, PluginFloatPanel, PluginNotices, PluginPrompt, PluginsPanel } from "./plugins/PluginsPanel";
+import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
+import { PluginManager, type DemoPlugins } from "./plugins/manager";
+import { ViewPanel } from "./view/ViewContent";
+import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
+import { PanelFrame } from "./panel/PanelFrame";
+import { registerPanel } from "./panel/command";
+import { GraphMemory } from "./graph/memory";
+import { registerViews, sectionsFor, ViewHost } from "./view/views";
+import { PackagesPanel, PluginConfirmPanel, PluginFloatPanel, PluginNotices, PluginProgressItems, PluginPrompt, PluginsPanel } from "./plugins/PluginsPanel";
 import { badgesByHost } from "./view/status";
 import { TerminalView, type TerminalEnv, type TerminalViewComponent } from "./terminal/TerminalView";
 import { rendererLabel, type RendererInUse } from "./terminal/renderer";
@@ -107,7 +118,7 @@ import { runHealth, type HealthContext, type HealthReport } from "./health/healt
 import { defaultTerminalOptions, zoom, type TerminalOptions, type ZoomAction } from "./terminal/options";
 import { memoryPlatform } from "./platform/memory";
 import type { Platform } from "./platform/types";
-import { setFolded, usedHost } from "./state/appState";
+import { currentFoldId, setFolded, usedHost } from "./state/appState";
 import { StateStore } from "./state/store";
 import { tutorCommand } from "./tutor/command";
 import { DemoBanner } from "./tutor/DemoBanner";
@@ -119,6 +130,8 @@ import { useTheme } from "./theme/useTheme";
 import { Logo } from "./chrome/Logo";
 import { countOf } from "./ui/format";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
+import { PromptWatch } from "./session/prompt";
+import { MESSAGES_VIEW, MessageLog, MessagesChoice, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
 import { Keys } from "./ui/Keys";
 import {
   defaultLayouts,
@@ -203,8 +216,17 @@ export interface AppProps {
  * how to start a tutorial (the real workspace) or the one running on the demo Inventory. */
 interface TutorLink {
   progress: TutorProgress;
-  start?(tutorial: TutorialDef): void;
-  demo?: { tutorial: TutorialDef; leave(): void; switchTo(tutorial: TutorialDef): void };
+  /** Starts `tutorial` on the demo, with `plugins` (the ones running here) loaded there too. */
+  start?(tutorial: TutorialDef, plugins?: DemoPlugins): void;
+  demo?: {
+    tutorial: TutorialDef;
+    leave(): void;
+    switchTo(tutorial: TutorialDef): void;
+    /** Registers what stops this workspace's Plugins when the demo ends (ticket 66). */
+    onStop(stop: () => void): () => void;
+    /** Why your Plugins aren't in the demo, said once; null when they are. */
+    problem: string | null;
+  };
 }
 
 interface WorkspaceProps extends AppProps {
@@ -216,6 +238,16 @@ interface WorkspaceProps extends AppProps {
   suspended?: boolean;
 }
 
+/** What `:integrate` says (ticket 121). */
+const INTEGRATE_SAYS: Record<IntegrateResult, (label: string) => string> = {
+  on: (t) => `Shell integration is on in ${t}: its prompts are marked.`,
+  "no-marks": (t) =>
+    `Sent ${t}'s shell the hook line, but no marked prompt came back: its shell or prompt framework doesn't take it (:help shell-hooks).`,
+  marked: (t) => `${t}'s shell marks its prompts already: nothing to send.`,
+  "no-prompt": (t) => `${t} isn't at an empty prompt roster knows (bash, zsh, fish, PowerShell): nothing sent.`,
+  "not-open": (t) => `${t}'s Session isn't open: nothing sent.`,
+};
+
 /** The app: your workspace, and while a tutorial runs (`:tutor`, ticket 55, decision Q76), the demo
  * Inventory's in front of it. The workspace stays mounted behind, hidden and inert, so its
  * Sessions keep running and its vault and State are never touched; leaving the demo throws the
@@ -224,28 +256,51 @@ export function App(props: AppProps) {
   const [platform] = useState(() => props.platform ?? memoryPlatform());
   const [store] = useState(() => new StateStore(platform));
   const [progress] = useState(() => new TutorProgress(store));
-  // The tutorial asked for, and the demo it runs on once its fake Backend has loaded.
+  // The tutorial asked for, the Plugins of yours it brings along (ticket 66), and the demo it
+  // runs on once its fake Backend has loaded.
   const [tutorial, setTutorial] = useState<TutorialDef | null>(null);
-  const [loaded, setLoaded] = useState<{ backend: Backend; platform: Platform } | null>(null);
+  const [plugins, setPlugins] = useState<DemoPlugins | null>(null);
+  const [loaded, setLoaded] = useState<{ backend: Backend; platform: Platform; problem: string | null; close(): Promise<void> } | null>(null);
+  // What stops the demo's Plugin manager (its workspace registers it), run before the demo goes.
+  const [stoppers] = useState(() => new Set<() => void>());
+  const realBackend = props.backend;
   useEffect(() => {
     if (!tutorial || loaded) return;
     let live = true;
-    void demoBackend().then((backend) => {
-      if (live) setLoaded({ backend, platform: demoPlatform(platform, (k) => store.get(k)) });
+    void demoBackend(realBackend, plugins ?? undefined).then((demo) => {
+      if (live) setLoaded({ backend: demo.backend, platform: demoPlatform(platform, (k) => store.get(k), demo.plugins ?? undefined), problem: demo.problem, close: demo.close });
+      else void demo.close();
     });
     return () => {
       live = false;
     };
-  }, [tutorial, loaded, platform, store]);
+  }, [tutorial, loaded, platform, store, realBackend, plugins]);
   // Another tutorial while one runs: the same demo, the new tutorial.
-  const start = useCallback((def: TutorialDef) => setTutorial(def), []);
-  const leave = useCallback(() => {
-    setTutorial(null);
-    setLoaded(null);
+  const start = useCallback((def: TutorialDef, yours?: DemoPlugins) => {
+    setTutorial(def);
+    if (yours) setPlugins(yours);
   }, []);
+  // Leaving stops the demo's Plugins and throws their files away (the core does it too when the
+  // app quits).
+  const leave = useCallback(() => {
+    for (const stop of [...stoppers]) stop();
+    stoppers.clear();
+    void loaded?.close();
+    setTutorial(null);
+    setPlugins(null);
+    setLoaded(null);
+  }, [loaded, stoppers]);
+  const onStop = useCallback(
+    (stop: () => void) => {
+      stoppers.add(stop);
+      return () => void stoppers.delete(stop);
+    },
+    [stoppers],
+  );
   const demo = tutorial && loaded ? { tutorial, ...loaded } : null;
   const real = useMemo(() => ({ progress, start }), [progress, start]);
-  const inDemo = useMemo(() => (tutorial ? { progress, demo: { tutorial, leave, switchTo: start } } : null), [tutorial, progress, leave, start]);
+  const problem = loaded?.problem ?? null;
+  const inDemo = useMemo(() => (tutorial ? { progress, demo: { tutorial, leave, switchTo: start, onStop, problem } } : null), [tutorial, progress, leave, start, onStop, problem]);
   return (
     <>
       <div className="app-slot" hidden={demo !== null} inert={demo !== null}>
@@ -292,7 +347,7 @@ function Workspace({
   // The Config (ticket 21): the one the app started with, then each save's. A broken save comes
   // with the last good Config and the error, so nothing changes but the toast.
   const [report, setReport] = useState<ConfigReport | null>(configProp);
-  /** Config files saved since their last reload and not applied yet ("init.lua", "folders.yml",
+  /** Config files saved since their last reload and not applied yet ("init.lua",
    * "roster.yml"): the status bar's quiet hint to `:source` (decision Q58). */
   const [stale, setStaleFiles] = useState<readonly string[]>([]);
   const setStale = useCallback((file: string, on: boolean) => {
@@ -337,7 +392,7 @@ function Workspace({
   const terminalOptions = derived?.terminalOptions ?? terminalOptionsProp;
   // Keys, Themes and Folders go through the registries as "init.lua"; the next Config replaces
   // them. Before paint, so a custom Theme never flashes the default.
-  const [warnings, setWarnings] = useState<readonly ConfigWarning[]>([]);
+  const [configWarnings, setWarnings] = useState<readonly ConfigWarning[]>([]);
   useLayoutEffect(() => {
     if (!config) return;
     const registered = registerConfig(registries, config);
@@ -404,7 +459,16 @@ function Workspace({
     if (derived) setLayouts(derived.layouts);
   }
   const [hint, setHint] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessageNow] = useState<Message>("");
+  // Every message goes into `:messages`'s history too, quiet ones included (ticket 111).
+  const [messageLog] = useState(() => new MessageLog());
+  const setMessage = useCallback(
+    (m: Message) => {
+      setMessageNow(m);
+      messageLog.push(m);
+    },
+    [messageLog],
+  );
   const [store] = useState(() => storeProp ?? new StateStore(platform));
   const appState = useSyncExternalStore(store.subscribe, store.snapshot);
   // The Sidebar shown or hidden (issue #78): what the toggle chose is kept in the State, per mode,
@@ -445,6 +509,12 @@ function Workspace({
   useLayoutEffect(() => {
     if (!suspended) document.documentElement.dataset.hints = hintsShown ? "on" : "off";
   }, [hintsShown, suspended]);
+  // The message line, as Neovim's (ticket 111, decision Q115): init.lua's `ui.messages`, else
+  // `:messages`'s choice in the State, else quiet (routine confirmations and tips don't show).
+  const [messagesChoice] = useState(() => new MessagesChoice(store));
+  messagesChoice.setConfig(config?.ui.messages ?? null);
+  const allMessages = messagesChoice.all();
+  const spokenMessage = spokenText(message, allMessages);
   const [fontSize, setFontSize] = useState(terminalOptions.fontSize);
   // A new size in the Config is a new zoom reset point, and where the font goes now.
   const [sizeFrom, setSizeFrom] = useState(terminalOptions.fontSize);
@@ -458,17 +528,72 @@ function Workspace({
   // Plugins (ticket 23): the Lua runs in roster-core; they act on the app through command lines,
   // and their UI goes into the registries with their name as its source.
   const runRef = useRef<(line: string) => void>(() => {});
+  const openCommandLineRef = useRef<(text: string) => void>(() => {});
+  // The Session on screen, for a Plugin handler's context (api 3): read when a handler runs.
+  const onScreenRef = useRef<{ session: number; host: string | null } | null>(null);
+  // `roster.sessions.show` (ticket 78): the Session to go to, and the line to find in it.
+  const showSessionRef = useRef<(id: number, line: string | null) => boolean>(() => false);
+  const [reveal, setReveal] = useState<{ session: number; text: string; nonce: number } | null>(null);
+  const [viewHost] = useState(() => new ViewHost());
+  // Graphs' places and folds (ticket 77), kept in the State.
+  const [graphMemory] = useState(() => new GraphMemory(store));
+  // Every panel's place and width (ticket 95, decision Q106): the user's, kept in the State, over
+  // init.lua's `views` and `panel.width`.
+  const [panelLayout] = useState(() => new PanelLayout(store));
+  // Drawn again when the panels' arrangement changes: the body says what the layering and the
+  // terminal's minimum need, without CSS :has() (#176).
+  // Only those two: focus moving between panels changes the layout too, and needn't redraw the app.
+  const bodyPanels = useSyncExternalStore(panelLayout.subscribe, () => `${panelLayout.anyDocked() ? "d" : ""}${panelLayout.anyFull() ? "f" : ""}`);
   const [plugins] = useState(
     () => new PluginManager(backend, registries, store, {
         run: (line) => runRef.current(line),
         send: (id, text) => tabs.write(id, text),
         copy: (text) => platform.clipboard.writeText(text),
+        onScreen: () => onScreenRef.current,
+        closeView: (id) => viewHost.close(id),
+        openView: (id, select) => viewHost.open(id, select),
+        showSession: (id, line) => showSessionRef.current(id, line),
+        openUrl: (url) => {
+          platform.openUrl?.(url).catch(() => undefined);
+        },
+        say: (message) => setMessage(message),
+        // A Plugin's messages follow ui.messages as roster's own do (tickets 117, 118).
+        messagesAll: () => messagesChoice.all(),
+        log: (message) => messageLog.push(message),
+        openCommandLine: (text) => openCommandLineRef.current(text),
+        // Folders (ticket 61, decision Q93): init.lua's Folders, and the ones to move in once.
+        builtinSettings: async (name) => (name === "folders" ? foldersSettings(registries.folders, platform.folders, store) : null),
       }),
   );
   const pluginSnap = useSyncExternalStore(plugins.subscribe, plugins.snapshot);
+  // On the demo: its Plugins stop for good when the tutorial ends (ticket 66).
+  const demoStop = tutor?.demo?.onStop;
+  useEffect(() => demoStop?.(() => plugins.stop()), [demoStop, plugins]);
+  // And why your Plugins aren't there, if they aren't: one notice.
+  const demoProblem = tutor?.demo?.problem ?? null;
+  useEffect(() => {
+    if (demoProblem && !plugins.snapshot().notices.some((n) => n.text === demoProblem)) plugins.notify("tutor", "warn", demoProblem);
+  }, [demoProblem, plugins]);
+  // Views (ticket 76): the one open, and each Host's sections from Plugins.
+  const viewAt = useSyncExternalStore(viewHost.subscribe, viewHost.snapshot);
+  useEffect(() => registerViews(registries, viewHost), [registries, viewHost]);
+  const viewList = useSyncExternalStore(registries.views.subscribe, registries.views.list);
+  const openView = viewAt.at === null ? undefined : viewList.find((v) => v.id === viewAt.at);
+  const detailsList = useSyncExternalStore(registries.details.subscribe, registries.details.list);
+  // What a Plugin does when one of its HTTP requests answers comes from the core on its own.
+  useEffect(() => backend.onPluginReply((r) => plugins.replied(r)), [backend, plugins]);
   const statusDefs = useSyncExternalStore(registries.status.subscribe, registries.status.list);
   const badgeList = useSyncExternalStore(registries.badges.subscribe, registries.badges.list);
   const hostBadges = useMemo(() => badgesByHost(badgeList), [badgeList]);
+  // The layouts' names are checked once the Plugins have loaded, and again as they come and go:
+  // a Plugin's section or segment isn't there while the Config is applied (ticket 79).
+  const layoutsJudged = pluginSnap.settled || conn.state === "failed";
+  const warnings = useMemo(
+    () => (config && layoutsJudged ? [...configWarnings, ...layoutWarnings(registries, config)] : configWarnings),
+    // The registries' lists are what layoutWarnings reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [config, configWarnings, layoutsJudged, registries, sectionDefs, statusDefs, toolbarDefs],
+  );
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const openPlugins = useRef(() => {});
   useEffect(() => registries.commands.register(pluginsCommand(plugins, () => openPlugins.current())), [registries, plugins]);
@@ -478,7 +603,7 @@ function Workspace({
     if (!tutor) return;
     return registries.commands.register(
       tutorCommand(registries.tutorials, {
-        start: (def) => (tutor.demo ? (def.id === tutor.demo.tutorial.id ? openTutorial.current(def) : tutor.demo.switchTo(def)) : tutor.start?.(def)),
+        start: (def) => (tutor.demo ? (def.id === tutor.demo.tutorial.id ? openTutorial.current(def) : tutor.demo.switchTo(def)) : tutor.start?.(def, plugins.forDemo())),
         quit: () => {
           if (!tutor.demo) return false;
           tutor.demo.leave();
@@ -490,13 +615,14 @@ function Workspace({
         },
       }),
     );
-  }, [registries, tutor]);
+  }, [registries, tutor, plugins]);
   // Packages (ticket 24): `:packages`, and a sync whenever init.lua's `packages` change.
   const [packagesOpen, setPackagesOpen] = useState(false);
   const openPackages = useRef(() => {});
   useEffect(() => registries.commands.register(packagesCommand(plugins, () => openPackages.current())), [registries, plugins]);
+  useEffect(() => registries.commands.register(cancelCommand(plugins)), [registries, plugins]);
   useEffect(() => {
-    tabs.setOutputTap({ output: (id, host, data) => plugins.output(id, host, data), resized: (id) => plugins.resized(id) });
+    tabs.setOutputTap({ output: (id, host, data, size) => plugins.output(id, host, data, size) });
     return () => tabs.setOutputTap(null);
   }, [tabs, plugins]);
   // `:tutor` (ticket 55): on the demo Inventory, what happens is fed to the tutorial running, whose
@@ -508,31 +634,55 @@ function Workspace({
     if (link?.demo) link.progress.feed(link.demo.tutorial, { name, data });
   }, []);
   // Sessions opening and ending, and the Session on screen, as Plugin events.
-  const seenTabs = useRef(new Map<number, "live" | "ended">());
+  // Each tab's state and Host (a Quick Connect Session's is null), so a tab closed while it ran
+  // still names its Host in `session_exit`.
+  const seenTabs = useRef(new Map<number, { state: "live" | "ended"; host: string | null }>());
+  // The Sessions open now, in the order they opened (a reconnect is a new open, so it goes last):
+  // the whole list goes to the core on start and whenever it changes, before the events that
+  // changed it, for `roster.sessions.list()` (ticket 96, decision Q127).
+  const openOrder = useRef(new Map<number, string | null>());
+  const sentOpen = useRef<string | null>(null);
   useEffect(() => {
     const before = seenTabs.current;
-    const now = new Map<number, "live" | "ended">();
+    const now = new Map<number, { state: "live" | "ended"; host: string | null }>();
+    const events: [() => void, () => void][] = [];
+    const order = openOrder.current;
     for (const t of sessions.tabs) {
       const ended = t.status.state === "ended" || t.status.state === "failed";
-      now.set(t.id, ended ? "ended" : "live");
-      if (!ended && before.get(t.id) !== "live") {
+      const host = t.quick ? null : t.host;
+      now.set(t.id, { state: ended ? "ended" : "live", host });
+      if (!ended && before.get(t.id)?.state !== "live") {
+        order.delete(t.id);
+        order.set(t.id, host);
         // A Quick Connect Session's `host` is nil to a Plugin: it isn't a Host of the Inventory.
-        void plugins.event("session_open", { session: t.id, host: t.quick ? null : t.host });
-        tutorEvent("session_open", { host: t.host });
+        events.push([() => void plugins.event("session_open", { session: t.id, host }), () => tutorEvent("session_open", { host: t.host })]);
       }
-      if (ended && before.get(t.id) === "live") {
+      if (ended && before.get(t.id)?.state === "live") {
+        order.delete(t.id);
         const code = t.status.state === "ended" ? t.status.exit.code : null;
-        void plugins.event("session_exit", { session: t.id, host: t.quick ? null : t.host, code });
-        tutorEvent("session_exit", { host: t.host, code });
+        events.push([() => void plugins.event("session_exit", { session: t.id, host, code }), () => tutorEvent("session_exit", { host: t.host, code })]);
       }
     }
     for (const [id, was] of before) {
-      if (!now.has(id) && was === "live") void plugins.event("session_exit", { session: id, host: null, code: null });
+      if (now.has(id)) continue;
+      order.delete(id);
+      if (was.state === "live") events.push([() => void plugins.event("session_exit", { session: id, host: was.host, code: null }), () => {}]);
     }
     seenTabs.current = now;
+    const open = [...order].map(([session, host]) => ({ session, host }));
+    const text = JSON.stringify(open);
+    if (text !== sentOpen.current) {
+      sentOpen.current = text;
+      plugins.sessions(open);
+    }
+    for (const [toPlugins, toTutor] of events) {
+      toPlugins();
+      toTutor();
+    }
   }, [sessions.tabs, plugins, tutorEvent]);
   const onScreenTab = sessions.tabs.find((t) => t.id === sessions.active);
   const onScreenHost = onScreenTab?.host ?? null;
+  onScreenRef.current = onScreenTab ? { session: onScreenTab.id, host: onScreenTab.quick ? null : onScreenTab.host } : null;
   // A Quick Connect Session isn't on a Host: Plugins hear `host_selected` only for a Host's.
   const onScreenQuick = Boolean(onScreenTab?.quick);
   useEffect(() => {
@@ -583,7 +733,7 @@ function Workspace({
     return () => {
       live = false;
     };
-  }, [backend, connInfo, configuresVault, vaultSettingsKey, checkVault]);
+  }, [backend, connInfo, configuresVault, vaultSettingsKey, checkVault, setMessage]);
   // A password Host whose vault turns out locked (session.prepare code 14) brings up the lock
   // screen; the tab opens by itself once the vault is unlocked again.
   // `vault` is a new object each render; its `lock` is stable, so the handler is set once.
@@ -617,6 +767,12 @@ function Workspace({
     else void plugins.event("inventory_changed");
   }, [hosts, plugins]);
   const hostByName = useMemo(() => new Map((hosts?.hosts ?? []).map((h) => [h.name, h])), [hosts]);
+  // Shell hooks (ticket 121): init.lua's terminal.shell_hooks and each Host's shell_hooks.
+  const shellHooksInit = config?.terminal.shellHooks ?? null;
+  useEffect(
+    () => tabs.setShellHooks((tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks)),
+    [tabs, shellHooksInit, hostByName],
+  );
   const groupNames = useMemo(() => {
     const names = Object.keys(hosts?.groups ?? {});
     for (const h of hosts?.hosts ?? []) if (!names.includes(h.group)) names.push(h.group);
@@ -726,7 +882,7 @@ function Workspace({
         setConn({ state: "failed", problem: asProblem(e) });
       }
     },
-    [backend],
+    [backend, setMessage],
   );
 
   useEffect(() => {
@@ -753,10 +909,31 @@ function Workspace({
   // Pending changes (ticket 10): asked for once the Backend is up, and after every edit, discard
   // and pull. A roster older than API 5 has none to show.
   const apiVersion = conn.state === "ready" ? conn.info.inventory.api_version : 0;
+  // A prompt fill (ticket 119): Sessions to Hosts are watched for sudo's prompt for their login
+  // user, only on a roster that can fill one.
+  const canFill = apiVersion >= FILL_API_VERSION;
+  // A nested ssh (ticket 120): the watch follows it to an Inventory Host (the breadcrumb), read at
+  // the shell's C mark against the Inventory as it is then; filling that Host's prompts needs API 26.
+  const canNestedFill = apiVersion >= NESTED_FILL_API_VERSION;
+  const inventoryNow = useRef<readonly Host[]>([]);
+  inventoryNow.current = hosts?.hosts ?? [];
+  useEffect(
+    () =>
+      tabs.setFillPrompts(
+        canFill
+          ? {
+              userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
+              watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: () => inventoryNow.current, fill: canNestedFill }, nonce),
+            }
+          : null,
+      ),
+    [tabs, canFill, canNestedFill, hostByName],
+  );
   const canEdit = apiVersion >= EDIT_API_VERSION;
   const canPublish = apiVersion >= PUBLISH_API_VERSION;
   const canAdd = apiVersion >= ADD_API_VERSION;
   const canLive = apiVersion >= LIVE_API_VERSION;
+  const canJobs = apiVersion >= JOBS_API_VERSION;
   const canSave = apiVersion >= SAVE_TO_VAULT_API_VERSION && vault.view.state === "unlocked";
   const refreshPending = useCallback(() => {
     if (!canEdit) return;
@@ -777,7 +954,7 @@ function Workspace({
       },
       () => {},
     );
-  }, [backend]);
+  }, [backend, setMessage]);
 
   // The pull before an Inventory write (decision Q88): one gate per Backend, shared by the forms
   // and `:pull`, so a pull within `pull_fresh_minutes` isn't repeated and one running is joined.
@@ -815,7 +992,20 @@ function Workspace({
     });
     backend.watchInventory(autoReload).catch(() => {});
     return stop;
-  }, [backend, conn.state, canLive, autoReload, reloadHosts, refreshPending, setStale]);
+  }, [backend, conn.state, canLive, autoReload, reloadHosts, refreshPending, setStale, setMessage]);
+  // serve's jobs push their progress (API 20, decision Q112): each is a `job_progress` for the
+  // Plugins that may ask about that kind of job (the core checks which), so they needn't poll.
+  useEffect(() => {
+    if (conn.state !== "ready" || !canJobs) return;
+    return backend.onJobProgress((job) => void plugins.event("job_progress", job));
+  }, [backend, conn.state, canJobs, plugins]);
+  // `:check HOST` as it runs (ticket 110): serve's check job says which step it's on (API 21; an
+  // older serve sends nothing, and the panel waits for the answer as before).
+  const checking = check?.state === "running";
+  useEffect(() => {
+    if (conn.state !== "ready" || !checking) return;
+    return backend.onJobProgress((job) => setCheck((c) => checkProgressed(c, job, Date.now())));
+  }, [backend, conn.state, checking]);
   // `:source` reloads roster.yml too.
   useEffect(() => {
     if (!canLive) return;
@@ -860,43 +1050,39 @@ function Workspace({
   // The window's size and place go in the State; the Tauri shell restores them at the next start.
   useEffect(() => platform.window?.watchGeometry((g) => store.set("window", g)), [platform, store]);
 
-  // Folders (GLOSSARY) register their section, commands and keys like a Plugin (ADR 0006). They
-  // live in folders.yml next to init.lua (ticket 28, decision Q46) where there's a config folder,
-  // else in the State (a plain browser).
-  const [foldersFile] = useState(() => (platform.folders ? new FoldersFile(platform.folders, store) : null));
-  useEffect(() => registerFolders(registries, foldersFile ?? store), [registries, store, foldersFile]);
-  const autoReloadRef = useRef(autoReload);
-  autoReloadRef.current = autoReload;
-  useEffect(() => {
-    const source = platform.folders;
-    if (!foldersFile || !source) return;
-    foldersFile.load().catch((e: unknown) => setMessage(`Can't read ${FOLDERS_FILE}: ${e instanceof Error ? e.message : String(e)}`));
-    const stop = source.watch(() => {
-      void foldersFile.isOutsideEdit().then(async (outside) => {
-        if (!outside) return;
-        if (!autoReloadRef.current) return setStale(FOLDERS_FILE, true);
-        const problem = await foldersFile.reload();
-        if (problem) setMessage(problem);
-      });
-    });
-    const unregister = registries.reloaders.register({
-      id: FOLDERS_FILE,
-      source: BUILTIN,
-      describe: "folders.yml (your Folders)",
-      files: () => [FOLDERS_FILE],
-      owns: (p) => /(^|[\\/])folders\.yml$/.test(p.trim()),
-      async reload() {
-        setStale(FOLDERS_FILE, false);
-        return foldersFile.reload();
-      },
-    });
-    return () => {
-      stop();
-      unregister();
-    };
-  }, [platform, foldersFile, registries, setStale]);
+  // Folders (GLOSSARY) is a built-in Plugin (ticket 61, decision Q93): init.lua's Folders are its
+  // settings, so a change to them loads it again.
+  useEffect(() => registries.folders.subscribe(() => void plugins.reloadBuiltin("folders")), [registries, plugins]);
   useEffect(() => registerThemePicker(registries, themeChoice), [registries, themeChoice]);
   useEffect(() => registerHints(registries, hintsChoice), [registries, hintsChoice]);
+  useEffect(
+    () => registerMessages(registries, messagesChoice, messageLog, () => viewHost.open(MESSAGES_VIEW)),
+    [registries, messagesChoice, messageLog, viewHost],
+  );
+  const loggedMessages = useSyncExternalStore(messageLog.subscribe, messageLog.snapshot);
+  // The new list goes in before the old one comes out, so an open `:messages` view stays open.
+  const messagesView = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const remove = registries.views.register(logView(loggedMessages));
+    messagesView.current?.();
+    messagesView.current = remove;
+  }, [registries, loggedMessages]);
+  useEffect(
+    () => () => {
+      messagesView.current?.();
+      messagesView.current = null;
+    },
+    [registries],
+  );
+  useEffect(() => registerPanel(registries, panelLayout), [registries, panelLayout]);
+  const configPanel = config?.panel;
+  const configViews = config?.views;
+  useEffect(() => {
+    const views = Object.fromEntries(
+      Object.entries(configViews ?? {}).map(([id, v]) => [id, { ...(v.place ? { place: v.place } : {}), ...(v.width !== null ? { width: v.width } : {}) }]),
+    );
+    panelLayout.setDefaults(configPanel || configViews ? { width: configPanel?.width ?? null, views } : NO_DEFAULTS);
+  }, [panelLayout, configPanel, configViews]);
   // `:help` (ticket 37): its pages read the live registries and the Config each time they show.
   const [helpView] = useState(() => new HelpView());
   const helpAt = useSyncExternalStore(helpView.subscribe, helpView.snapshot);
@@ -905,6 +1091,7 @@ function Workspace({
   const helpPages = useSyncExternalStore(registries.help.subscribe, registries.help.list);
   const healthSections = useSyncExternalStore(registries.health.subscribe, registries.health.list);
   const hintsStored = hintsChoice.stored();
+  const messagesStored = messagesChoice.stored();
   const configPath = report?.path ?? null;
   // `:tutor`'s progress: a tick re-renders the tutorial's page.
   const tutorDone = useSyncExternalStore(tutor?.progress.subscribe ?? noSubscribe, tutor?.progress.snapshot ?? noSnapshot);
@@ -929,13 +1116,13 @@ function Workspace({
           options,
           config: config ?? defaultConfig,
           configPath,
-          state: { theme: themeInEffect, hints: hintsStored },
+          state: { theme: themeInEffect, hints: hintsStored, messages: messagesStored },
           activeTheme: theme.id,
           health: { sections: healthSections, report: health },
           ...(tutorCtx ? { tutor: tutorCtx } : {}),
         },
       ),
-    [registries, commandList, keymap, options, config, configPath, themeInEffect, hintsStored, theme.id, themeList, helpPages, errorRows, finderSources, healthSections, health, tutorCtx],
+    [registries, commandList, keymap, options, config, configPath, themeInEffect, hintsStored, messagesStored, theme.id, themeList, helpPages, errorRows, finderSources, healthSections, health, tutorCtx],
   );
   helpView.setContext(() => helpCtx);
   // Where help went, for `:tutor`'s steps: a page opened, Ctrl+O back, Ctrl+I forward.
@@ -946,7 +1133,7 @@ function Workspace({
   const onHelpSearch = useCallback((page: string, query: string) => tutorEvent("help_search", { page, query }), [tutorEvent]);
   // `cmdline.help` (ticket 52): the command line to come back to when help closes, as it was.
   const backToLine = useRef<{ line: string; caret: number } | null>(null);
-  // init.lua is what `:source` reloads (decision Q58); ticket 28 registers folders.yml and roster.yml.
+  // init.lua is what `:source` reloads (decision Q58); ticket 28 registers roster.yml.
   const reportPath = useRef<string | null>(null);
   reportPath.current = report?.path ?? null;
   useEffect(() => {
@@ -1036,7 +1223,7 @@ function Workspace({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- saying it once the workspace shows is the effect
     setMessage(newsLine);
     setNewsLine(null);
-  }, [unlockedOnce, newsLine]);
+  }, [unlockedOnce, newsLine, setMessage]);
 
   // On the demo Inventory: the tutorial running is the demo's too (a Plugin's isn't registered in
   // the demo's registries), and once the demo is up its page opens where you left off.
@@ -1078,6 +1265,24 @@ function Workspace({
     if (el instanceof HTMLElement && el.isConnected) el.focus();
     else mainRef.current?.focus();
   };
+
+  // A Plugin's question (ticket 78) takes the keys; answering puts them back where they were.
+  // Before the panel's own effect focuses its button (layout effects run first).
+  const confirmId = pluginSnap.confirm?.id ?? null;
+  useLayoutEffect(() => {
+    if (confirmId !== null && !document.activeElement?.closest(".plugin-confirm")) rememberFocus();
+    // Only when a new question comes up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmId]);
+
+  // A Plugin's float (opened from a table's action, say) takes the keys; closing it puts them back
+  // where they were, in the table (ticket 91).
+  const floatKey = pluginSnap.float ? `${pluginSnap.float.plugin}:${pluginSnap.float.title}` : null;
+  useLayoutEffect(() => {
+    if (floatKey !== null && !document.activeElement?.closest(".plugin-float")) rememberFocus();
+    // Only when a new float comes up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floatKey]);
 
   const closeOverlay = () => {
     setOverlay(null);
@@ -1131,7 +1336,8 @@ function Workspace({
   const cursorRow = () => rows.find((r) => r.id === cursor) ?? null;
 
   /** h, l and the chevrons: fold or unfold a row, or move to its parent or first child. */
-  const fold = (id: string | null, how: FoldHow) => {
+  const fold = (given: string | null, how: FoldHow) => {
+    const id = given === null ? null : currentFoldId(given);
     const row = id === null ? cursorRow() : (rows.find((r) => r.id === id) ?? null);
     const target = id ?? row?.id;
     if (!target) return;
@@ -1166,7 +1372,7 @@ function Workspace({
     helpView.open({ page: "health" });
     const info = conn.state === "ready" ? conn.info : null;
     const api = info?.inventory.api_version ?? 0;
-    const finish = (box: HealthContext["box"], boxProblem: string | null) => {
+    const finish = async (box: HealthContext["box"], boxProblem: string | null) => {
       if (run !== healthRun.current) return;
       const hctx: HealthContext = {
         box,
@@ -1175,9 +1381,11 @@ function Workspace({
         config: { path: report?.path ?? null, error: report?.error ?? null, warnings },
         font: { families: terminalOptions.fonts, inUse: fontFound(terminalOptions.fonts, platform.fontInstalled ?? (() => null)) },
       };
-      setHealth({ state: "done", at: new Date(), sections: runHealth(registries.health.list(), hctx) });
+      // A Plugin's section may answer later (ticket 60): the page says it's checking until then.
+      const sections = await runHealth(registries.health.list(), hctx);
+      if (run === healthRun.current) setHealth({ state: "done", at: new Date(), sections });
     };
-    if (!info || api < BOX_CHECK_API_VERSION) return finish(null, null);
+    if (!info || api < BOX_CHECK_API_VERSION) return void finish(null, null);
     backend.checkBox().then(
       (box) => finish(box, null),
       (e: unknown) => finish(null, e instanceof Error ? e.message : String(e)),
@@ -1225,19 +1433,26 @@ function Workspace({
     },
     check: (name) => {
       if (name === null) return checkBox();
-      const host = name;
+      // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
+      const current = onScreenTab && !onScreenTab.quick ? onScreenTab.host : null;
+      if (name === "%" && current === null) {
+        return setMessage(onScreenTab ? ":check % needs a Host's Session: a Quick Connect Session isn't on one" : ":check % needs a Session on screen");
+      }
+      const host = name === "%" ? (current ?? "") : name;
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
       const api = conn.state === "ready" ? conn.info.inventory.api_version : 0;
       if (api < CHECK_API_VERSION) {
         return setMessage(`:check needs a newer roster (API version ${CHECK_API_VERSION}; this one speaks ${api})`);
       }
       const run = ++checkRun.current;
-      setCheck({ state: "running", host });
+      setCheck((prev) => checkStarted(prev, host, Date.now()));
+      // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
+      const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
       backend.checkHost(host).then(
-        (result) => run === checkRun.current && setCheck({ state: "done", host, result }),
+        (result) => run === checkRun.current && setCheck((prev) => ({ state: "done", host, result, at: at(prev) })),
         (e: unknown) =>
           run === checkRun.current &&
-          setCheck({ state: "error", host, message: e instanceof Error ? e.message : String(e) }),
+          setCheck((prev) => ({ state: "error", host, message: e instanceof Error ? e.message : String(e), at: at(prev) })),
       );
     },
     selectRelative: (delta) => tabs.selectRelative(delta),
@@ -1249,15 +1464,19 @@ function Workspace({
     toggleSidebar: () => {
       const shown = !isShown(layout, "sidebar");
       const name = `modes.${viewMode}.sidebar`;
+      const said = `Sidebar ${shown ? "shown" : "hidden"}`;
       if (configSetsSidebar) {
         // init.lua sets it: this lasts until the Config is loaded again (or the app restarts).
         setLayouts((l) => ({ ...l, [viewMode]: togglePiece(l[viewMode], "sidebar") }));
         return setMessage(
-          `Sidebar ${shown ? "shown" : "hidden"} for now: init.lua sets ${name} = ${String(!shown)}, which comes back on :source or a restart`,
+          quiet(
+            said,
+            `${said} for now: init.lua sets ${name} = ${String(!shown)}, which comes back on :source or a restart`,
+          ),
         );
       }
       store.set(SIDEBAR_KEY, { ...sidebarChoices(appState), [viewMode]: shown });
-      setMessage(`Sidebar ${shown ? "shown" : "hidden"}, and kept that way. ${name} = ${String(shown)} in init.lua makes it the default`);
+      setMessage(quiet(said, `${said}, and kept that way. ${name} = ${String(shown)} in init.lua makes it the default`));
     },
     toggleStatusBar: () => {
       const next = togglePiece(layout, layout.bar);
@@ -1298,7 +1517,15 @@ function Workspace({
     },
     // The panel drawn last (help, Key bindings, beside :check) is the topmost.
     closePanel: () => {
-      if (pluginSnap.float) return plugins.closeFloat();
+      if (pluginSnap.confirm) {
+        plugins.answerConfirm(false);
+        return restoreFocus();
+      }
+      if (pluginSnap.float) {
+        plugins.closeFloat();
+        return restoreFocus();
+      }
+      if (openView) return viewHost.close();
       if (helpAt.at) return helpView.close();
       if (pluginsOpen) return closePlugins();
       if (packagesOpen) return closePackages();
@@ -1405,6 +1632,11 @@ function Workspace({
       setSaving(null);
       setAdding({ group });
     },
+    integrate: () => {
+      const tab = sessions.tabs.find((t) => t.id === sessions.active);
+      if (!tab) return setMessage("No Session to integrate: open one first.");
+      void tabs.integrate(tab.id).then((r) => setMessage(INTEGRATE_SAYS[r](tab.label)));
+    },
     saveSession: () => {
       const tab = sessions.tabs.find((t) => t.id === sessions.active);
       if (apiVersion < SAVE_TO_VAULT_API_VERSION) {
@@ -1418,6 +1650,21 @@ function Workspace({
       setEditing(null);
       setAdding(null);
       setSaving(tab.id);
+    },
+    fillPrompt: () => {
+      if (apiVersion < FILL_API_VERSION) {
+        return setMessage(`Filling a password prompt needs a newer roster (API version ${FILL_API_VERSION}; this one speaks ${apiVersion})`);
+      }
+      const id = sessions.active;
+      if (id === null) return setMessage("No Session to fill");
+      tabs.fill(id).then(
+        (host) => setMessage(quiet(`Filled ${host}'s password`)),
+        (e: unknown) => {
+          const fix = e instanceof BackendCallError ? e.data?.["fix"] : undefined;
+          const said = e instanceof Error ? e.message : String(e);
+          setMessage(typeof fix === "string" && fix ? `${said} - ${fix}` : said);
+        },
+      );
     },
     review: (name, reviewed = true) => {
       const verb = reviewed ? "review" : "unreview";
@@ -1438,7 +1685,7 @@ function Workspace({
         (r) => {
           reloadHosts();
           refreshPending();
-          setMessage(r.changed ? done : already);
+          setMessage(r.changed ? quiet(`Marked ${host} ${reviewed ? "reviewed" : "unreviewed"}`, done) : already);
         },
         (e: unknown) =>
           setMessage(`Couldn't mark ${host} ${reviewed ? "reviewed" : "unreviewed"}: ${e instanceof Error ? e.message : String(e)}`),
@@ -1458,7 +1705,7 @@ function Workspace({
     },
     pull: () => {
       if (!canEdit) return setMessage(`:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
-      setMessage("Pulling the infra repo…");
+      setMessage(quiet("Pulling the infra repo…"));
       gate.pull().then(
         (r) => {
           setMessage(
@@ -1485,6 +1732,13 @@ function Workspace({
         );
         return;
       }
+      if (what === "types") {
+        source.writeTypes().then(
+          (file) => setMessage(`Wrote ${file}: init.lua's option types, for lua-language-server (:help options#editor-support)`),
+          (e: unknown) => setMessage(`Couldn't write the types: ${failed(e)}`),
+        );
+        return;
+      }
       // `:config reload` is `:source init.lua` (decision Q58).
       if (what === "reload") return void runLine(commands, ctx, "source init.lua");
       source.open().then(
@@ -1492,7 +1746,7 @@ function Workspace({
           setMessage(
             created
               ? `Created ${path} with every option commented out. Uncomment one and save: it applies at once.`
-              : `Opened ${path}. Saving it applies it.`,
+              : quiet(`Opened ${path}`, `Opened ${path}. Saving it applies it.`),
           ),
         (e: unknown) => setMessage(`Can't open init.lua: ${failed(e)}`),
       );
@@ -1519,35 +1773,38 @@ function Workspace({
     refreshPending();
   }
 
-  async function inventoryCall(op: InventoryOp): Promise<string> {
+  async function inventoryCall(op: InventoryOp): Promise<Message> {
     const pendingNote = "as a Pending change";
     switch (op.op) {
       case "remove": {
         const r = await backend.removeHost(op.host);
-        return `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`;
+        return quiet(`Removed ${r.removed}`, `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`);
       }
       case "rename": {
         const r = await backend.renameHost(op.host, op.to);
-        return r.changed ? `Renamed ${op.host} to ${op.to} ${pendingNote}. Sessions use it after roster sync.` : `${op.host} already has that name.`;
+        return r.changed
+          ? quiet(`Renamed ${op.host} to ${op.to}`, `Renamed ${op.host} to ${op.to} ${pendingNote}. Sessions use it after roster sync.`)
+          : `${op.host} already has that name.`;
       }
       case "move": {
         const r = await backend.moveHost(op.host, op.group);
         if (!r.changed) return `${op.host} is already in ${op.group}.`;
-        const kept = r.pinned.length ? ` It keeps its ${r.pinned.join(", ")}, now written on the Host.` : "";
-        return `Moved ${op.host} to ${op.group} ${pendingNote}.${kept}`;
+        // What it keeps from its old group is worth knowing: said whatever the setting.
+        if (r.pinned.length) return `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.`;
+        return quiet(`Moved ${op.host} to ${op.group}`, `Moved ${op.host} to ${op.group} ${pendingNote}.`);
       }
       case "group-new":
         await backend.newGroup(op.name);
-        return `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`;
+        return quiet(`Added group ${op.name}`, `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`);
       case "group-rename": {
         const r = await backend.renameGroup(op.group, op.to);
-        return r.changed ? `Renamed group ${op.group} to ${op.to} ${pendingNote}.` : `${op.group} already has that name.`;
+        return r.changed ? quiet(`Renamed group ${op.group} to ${op.to}`, `Renamed group ${op.group} to ${op.to} ${pendingNote}.`) : `${op.group} already has that name.`;
       }
       case "group-delete": {
         const r = await backend.deleteGroup(op.group, op.to);
         return r.moved.length
           ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.`
-          : `Deleted group ${op.group} ${pendingNote}.`;
+          : quiet(`Deleted group ${op.group}`, `Deleted group ${op.group} ${pendingNote}.`);
       }
     }
   }
@@ -1567,7 +1824,7 @@ function Workspace({
     if (!checked) return setMessage(`${host}'s ${service} has no http or https URL to open`);
     if (!platform.openUrl) return setMessage(`There's no browser to hand ${checked} to here`);
     platform.openUrl(checked).then(
-      () => setMessage(`Opened ${host}'s ${service} in the browser: ${checked}`),
+      () => setMessage(quiet(`Opened ${host}'s ${service} in the browser`, `Opened ${host}'s ${service} in the browser: ${checked}`)),
       (e: unknown) => setMessage(`Couldn't open ${checked}: ${e instanceof Error ? e.message : String(e)}`),
     );
   }
@@ -1581,6 +1838,14 @@ function Workspace({
     }
   }
   runRef.current = run;
+  openCommandLineRef.current = (text) => ctx.openCommandLine(text);
+  showSessionRef.current = (id, line) => {
+    if (!sessions.tabs.some((t) => t.id === id)) return false;
+    tabs.select(id);
+    ctx.toTerminal();
+    if (line) setReveal((r) => ({ session: id, text: line, nonce: (r?.nonce ?? 0) + 1 }));
+    return true;
+  };
   openPlugins.current = () => {
     rememberFocus();
     setPluginsOpen(true);
@@ -1704,7 +1969,7 @@ function Workspace({
         {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
         <div className="window-body">{content}</div>
         {toast}
-        <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} />
+        <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
       </div>
     </HintsShown>
   );
@@ -1857,14 +2122,28 @@ function Workspace({
   const statusBar = (
     <footer key="statusbar" className="statusbar">
       {segments.filter((id) => !right.has(id)).map(segment)}
+      <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => setMessage(plugins.cancelProgress(id))} />
       <span className="statusbar-right">{segments.filter((id) => right.has(id)).map(segment)}</span>
     </footer>
+  );
+
+  // Every docked panel and view goes in a frame: docked or full window, its width, its edge.
+  const panelKeys = hintFor(keymap, "panel");
+  const framed = (id: string, title: string, kind: string, node: ReactNode, extra: { side?: "left" | "right"; fallback?: PanelPlace } = {}) => (
+    <PanelFrame key={`panel:${id}`} id={id} title={title} kind={kind} layout={panelLayout} keys={panelKeys} {...extra}>
+      {node}
+    </PanelFrame>
   );
 
   const shell = (
     <div className={`screen app ${appMode ? "mode-app" : "mode-terminal"}`} data-view={viewMode}>
       {pieces("top")}
-      <div className={`body sidebar-${sidebarSide}`}>
+      <div
+        className={`body sidebar-${sidebarSide}`}
+        {...(sidebarShown ? { "data-sidebar": "" } : {})}
+        {...(bodyPanels.includes("d") ? { "data-docked": "" } : {})}
+        {...(bodyPanels.includes("f") ? { "data-full": "" } : {})}
+      >
         {sidebarShown && (
           <Sidebar
             sections={sections}
@@ -1943,10 +2222,13 @@ function Workspace({
               addressOf={(name) => hostByName.get(name)?.ip ?? null}
               canSave={canSave}
               saveKeys={hintFor(keymap, "save")}
+              canFill={canFill}
+              fillKeys={hintFor(keymap, "fill")}
+              reveal={reveal}
             />
           )}
         </main>
-        {detailsHost && conn.hosts && (
+        {detailsHost && conn.hosts && framed("details", "Host details", "details", 
           <HostDetails
             host={detailsHost}
             groups={conn.hosts.groups}
@@ -1954,8 +2236,14 @@ function Workspace({
             onClose={() => setDetails(null)}
             cmdlineKeys={hintFor(keymap, "cmdline")}
             leader={options.leader}
-          />
+            sections={sectionsFor(detailsList, detailsHost.name)}
+          />,
+          { side: sidebarSide === "right" ? "left" : "right" },
         )}
+        {openView &&
+          framed(`view:${openView.id}`, openView.title, "view", <ViewPanel view={openView} leader={options.leader} onClose={() => viewHost.close()} graphs={graphMemory} select={viewAt.select} />, {
+            fallback: openView.place,
+          })}
         {importing && (
           <ImportPanel
             preview={importing.preview}
@@ -2006,7 +2294,7 @@ function Workspace({
             }}
           />
         )}
-        {check && (
+        {check && framed("check", "Check", "check", 
           <CheckPanel
             check={check}
             rows={errorRows}
@@ -2015,9 +2303,9 @@ function Workspace({
               checkRun.current++;
               setCheck(null);
             }}
-          />
+          />,
         )}
-        {editing !== null && hostByName.get(editing) && (
+        {editing !== null && hostByName.get(editing) && framed("edit", "Edit", "edit", 
           <EditPanel
             key={editing}
             backend={backend}
@@ -2031,9 +2319,9 @@ function Workspace({
               reloadHosts();
               refreshPending();
               setMessage(
-                (update.changed
-                  ? `Saved ${update.host.name} as a Pending change. Sessions use it after roster sync.`
-                  : `Nothing changed on ${update.host.name}.`) + (update.warnings?.length ? ` But ${update.warnings.join("; ")}.` : ""),
+                update.changed
+                  ? routine(`Saved ${update.host.name}`, `Saved ${update.host.name} as a Pending change. Sessions use it after roster sync.`, update.warnings)
+                  : `Nothing changed on ${update.host.name}.` + butWarnings(update.warnings),
               );
             }}
             onClose={closeEdit}
@@ -2053,9 +2341,9 @@ function Workspace({
                   },
                 }
               : {})}
-          />
+          />,
         )}
-        {adding && hosts && (
+        {adding && hosts && framed("add", "Add a Host", "add", 
           <AddPanel
             backend={backend}
             hosts={hosts}
@@ -2071,17 +2359,21 @@ function Workspace({
               reloadHosts();
               refreshPending();
               const where = `${r.host.name} to ${r.host.group}`;
+              // Unreviewed, it can't be opened yet: worth saying whatever the setting.
               setMessage(
-                (r.host.reviewed
-                  ? `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`
-                  : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.`) +
-                  (r.warnings?.length ? ` But ${r.warnings.join("; ")}.` : ""),
+                r.host.reviewed
+                  ? routine(
+                      `Added ${where}`,
+                      `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
+                      r.warnings,
+                    )
+                  : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` + butWarnings(r.warnings),
               );
             }}
             onClose={closeAdd}
-          />
+          />,
         )}
-        {saveTab?.save && hosts && (
+        {saveTab?.save && hosts && framed("save", "Save to vault", "save", 
           <SavePanel
             key={saveTab.id}
             backend={backend}
@@ -2104,16 +2396,23 @@ function Workspace({
               reloadHosts();
               refreshPending();
               setMessage(
-                ("added" in r
-                  ? `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`
-                  : `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`) +
-                  (r.warnings?.length ? ` But ${r.warnings.join("; ")}.` : ""),
+                "added" in r
+                  ? routine(
+                      `Saved ${r.host.name}`,
+                      `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
+                      r.warnings,
+                    )
+                  : routine(
+                      `Saved ${r.host.name}'s password`,
+                      `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`,
+                      r.warnings,
+                    ),
               );
             }}
             onClose={closeSave}
-          />
+          />,
         )}
-        {changesView && pending && (
+        {changesView && pending && framed("changes", "Pending changes", "changes", 
           <ChangesPanel
             key={changesView.step}
             changes={pending}
@@ -2126,7 +2425,7 @@ function Workspace({
             onDiscard={async () => {
               try {
                 const r = await backend.discardChanges();
-                setMessage(r.discarded ? "Discarded the Pending changes: roster.yml is as the last commit has it." : "Nothing to discard.");
+                setMessage(r.discarded ? quiet("Discarded the Pending changes", "Discarded the Pending changes: roster.yml is as the last commit has it.") : "Nothing to discard.");
               } catch (e) {
                 setMessage(`Couldn't discard: ${e instanceof Error ? e.message : String(e)}`);
               }
@@ -2145,7 +2444,7 @@ function Workspace({
               return r;
             }}
             onClose={closeChanges}
-          />
+          />,
         )}
         {confirming && (
           <ConfirmPanel
@@ -2196,19 +2495,31 @@ function Workspace({
             }}
           />
         )}
-        {pluginsOpen && <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} />}
-        {packagesOpen && <PackagesPanel snapshot={pluginSnap} onClose={closePackages} />}
+        {pluginsOpen && framed("plugins", "Plugins", "plugins", <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} onRefresh={() => void plugins.refreshRequests()} onOpen={() => void plugins.refreshData()} />)}
+        {packagesOpen && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={closePackages} />)}
+        {pluginSnap.confirm && (
+          <PluginConfirmPanel
+            key={pluginSnap.confirm.id}
+            confirm={pluginSnap.confirm}
+            onAnswer={(yes) => {
+              plugins.answerConfirm(yes);
+              restoreFocus();
+            }}
+          />
+        )}
         {pluginSnap.float && (
           <PluginFloatPanel
             key={pluginSnap.float.plugin}
             float={pluginSnap.float}
+            onAction={(i) => plugins.floatAction(i)}
+            onLink={(i) => plugins.openLink(i)}
             onClose={() => {
               plugins.closeFloat();
               restoreFocus();
             }}
           />
         )}
-        {keysOpen && (
+        {keysOpen && framed("keys", "Key bindings", "keys", 
           <BindingsPanel
             rows={bindingRows(keymap, options, commands)}
             leader={options.leader}
@@ -2217,9 +2528,9 @@ function Workspace({
               closeKeys();
               run(`help ${optionTopic(option, new Set(topics(helpCtx).map((t) => t.tag)))}`);
             }}
-          />
+          />,
         )}
-        {helpAt.at && (
+        {helpAt.at && framed("help", "Help", "help", 
           <HelpPanel
             view={helpView}
             snapshot={helpAt}
@@ -2229,7 +2540,7 @@ function Workspace({
             onFind={() => run("help")}
             onOutline={() => run("finder outline")}
             onSearch={onHelpSearch}
-          />
+          />,
         )}
       </div>
       {overlay !== null && typeof overlay === "object" && "cmdline" in overlay && (
@@ -2273,10 +2584,18 @@ function Workspace({
           }}
         />
       )}
-      <div className="message-line" role="status">
-        {message}
+      {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
+          line as visually hidden text, so a screen reader still hears what changed. */}
+      <div className={spokenMessage ? "message-line visually-hidden" : "message-line"} role="status">
+        {shownText(message, allMessages) || spokenMessage}
       </div>
       {pieces("bottom")}
+      {/* Progress needs a place without the status bar (Focus hides it, ticket 85): a corner. */}
+      {pluginSnap.progress.length > 0 && !(["top", "bottom"] as const).some((at) => placed(layout, at).includes("statusbar")) && (
+        <div className="corner-progress" role="group" aria-label="What Plugins are doing">
+          <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => setMessage(plugins.cancelProgress(id))} />
+        </div>
+      )}
       {hint && modeKeys.length > 0 && (
         <div className="mode-hint key-hint" role="status" aria-label={`How to leave ${viewMode === "focus" ? "Focus" : "this mode"}`}>
           {/* Two ways out, not one sequence: "␣ m or F11", never "␣ m F11". */}
@@ -2391,6 +2710,17 @@ export function servicesLeftOut(list: HostList): string | null {
 }
 
 /** roster.yml doesn't load (an outside edit): its line, and that the last good Inventory stays. */
+/** " But WARNING; WARNING." after a result, or nothing. */
+function butWarnings(warnings: readonly string[] | undefined): string {
+  return warnings?.length ? ` But ${warnings.join("; ")}.` : "";
+}
+
+/** A routine action's confirmation: quiet (ticket 111), unless roster warned about something, which
+ * always shows. */
+function routine(said: string, text: string, warnings: readonly string[] | undefined): Message {
+  return warnings?.length ? text + butWarnings(warnings) : quiet(said, text);
+}
+
 /** Where a saved password went, for the add message: said unless it's the personal vault (ticket 35). */
 function savedIn(target: Omit<SaveTarget, "save_to"> | undefined): string {
   return target && target.kind !== "personal" ? `, in ${target.label}` : "";

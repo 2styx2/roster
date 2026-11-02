@@ -1,30 +1,17 @@
-// folders.yml (decision Q46): the Folders made in the app, next to init.lua, as plain data both the
-// app and you edit. The app writes it on every Folder change, keeping your comments and the order of
-// what it didn't change; edits made outside the app apply on `:source` (or at once with
-// `auto_reload = true`, decision Q58). A file that doesn't parse keeps the last good Folders and
-// says the line. The first time there's no file, the Folders the State held (before ticket 28) are
-// written into it, once, and leave the State.
+// folders.yml (decision Q46, retired by Q93): where the Folders made in the app lived, next to
+// init.lua, before Folders became a built-in Plugin with its own data folder (ticket 61). The app
+// still reads it, never writes it: at start it parses it here and hands the Folders to the
+// Folders Plugin, which moves them in once, when it has none of its own yet. A file that doesn't
+// parse moves nothing (the Plugin says the line in :check), so nothing is lost while it's fixed.
 //
-//   # Folders: your own groupings of Hosts …
 //   Lab ESXi:
 //     - esxi-02
 //     - esxi-03
 //   Night shift: []
-import { Document, isMap, isScalar, isSeq, LineCounter, Pair, parseDocument, Scalar, YAMLMap, YAMLSeq } from "yaml";
-import type { FoldersSource } from "../platform/types";
-import { parseFolders, STATE_KEY, type Folder, type FolderStore } from "./folders";
+import { isMap, isScalar, isSeq, LineCounter, parseDocument } from "yaml";
+import { parseFolders, STATE_KEY, type Folder } from "./folders";
 
 export const FOLDERS_FILE = "folders.yml";
-
-/** The comment a new folders.yml starts with. */
-export const HEADER = [
-  " Folders: your own groupings of Hosts, for the roster app (they never go into roster.yml).",
-  " The app writes this file on every Folder change, keeping comments. Edit it by hand too,",
-  " then :source applies it (or at once, with auto_reload = true in init.lua). Each Folder is",
-  " its name and its Hosts:",
-  "   Lab ESXi:",
-  "     - esxi-02",
-].join("\n");
 
 /** Why the text isn't Folders, at a line (from 1) when there's one to point at. */
 export interface FoldersError {
@@ -74,152 +61,31 @@ export function parseFoldersYml(text: string): Parsed {
   return { folders };
 }
 
-/** A sequence of `hosts`, reusing the old one's nodes (and their comments) for Hosts it still has. */
-function hostsNode(old: unknown, hosts: readonly string[]): YAMLSeq {
-  const seq = isSeq(old) ? old : new YAMLSeq();
-  const kept = new Map<string, unknown>();
-  if (isSeq(old)) for (const item of old.items) if (isScalar(item) && typeof item.value === "string") kept.set(item.value.trim(), item);
-  seq.items = hosts.map((h) => kept.get(h) ?? new Scalar(h));
-  seq.flow = hosts.length === 0;
-  return seq;
-}
-
-/** `folders` as folders.yml's text: `previous` changed as little as it takes (comments, order and
- * spelling of what's still there kept), or a new file with the HEADER. */
-export function foldersYml(previous: string | null, folders: readonly Folder[]): string {
-  const doc = previous !== null && !("error" in parseFoldersYml(previous)) ? parseDocument(previous, { uniqueKeys: false }) : null;
-  const map = doc && isMap(doc.contents) ? (doc.contents as YAMLMap) : null;
-  const out: Document = doc ?? new Document();
-  if (!doc) out.commentBefore = HEADER;
-  const pairs = map ? [...map.items] : [];
-  const nameOf = (p: Pair) => (isScalar(p.key) ? String(p.key.value ?? "").trim() : "");
-  const lower = (s: string) => s.toLowerCase();
-  const unmatchedOld = pairs.filter((p) => !folders.some((f) => lower(f.name) === lower(nameOf(p))));
-  const unmatchedNew = folders.filter((f) => !pairs.some((p) => lower(nameOf(p)) === lower(f.name)));
-  // One gone and one new where it was: a rename, which keeps the entry (and its comments).
-  const renamed = unmatchedOld.length === 1 && unmatchedNew.length === 1 ? unmatchedOld[0] : undefined;
-  const items = folders.map((f) => {
-    const pair = pairs.find((p) => lower(nameOf(p)) === lower(f.name)) ?? (renamed && f === unmatchedNew[0] ? renamed : undefined);
-    if (!pair) return new Pair(new Scalar(f.name), hostsNode(null, f.hosts));
-    if (nameOf(pair) !== f.name) {
-      const key = isScalar(pair.key) ? pair.key : new Scalar(f.name);
-      key.value = f.name;
-      pair.key = key;
-    }
-    pair.value = hostsNode(pair.value, f.hosts);
-    return pair;
-  });
-  const next = map ?? new YAMLMap();
-  next.items = items;
-  out.contents = next;
-  return out.toString();
-}
-
-/** The Folders store for the `folder` command and the Sidebar: folders.yml through the platform.
- * `get`/`set` hold the one key Folders use (FolderStore), so the command works on it unchanged. */
-export class FoldersFile implements FolderStore {
-  private folders: Folder[] = [];
-  /** What the app last read or wrote: its own writes aren't outside edits. */
-  private text: string | null = null;
-  private path: string = FOLDERS_FILE;
-  private writing: Promise<void> = Promise.resolve();
-  private ready: Promise<void> | null = null;
-  private readonly listeners = new Set<() => void>();
-  private readonly source: FoldersSource;
-  private readonly state: { load(): Promise<void>; get(key: string): unknown; set(key: string, value: unknown): void };
-
-  constructor(
-    source: FoldersSource,
-    state: { load(): Promise<void>; get(key: string): unknown; set(key: string, value: unknown): void },
-  ) {
-    this.source = source;
-    this.state = state;
-  }
-
-  /** Reads folders.yml once; with no file yet, moves the State's Folders into a new one. Says
-   * what went wrong (a broken file keeps no Folders until it's fixed). */
-  load(): Promise<void> {
-    this.ready ??= this.first();
-    return this.ready;
-  }
-
-  private async first() {
-    const { path, text } = await this.source.read();
-    this.path = path;
-    if (text !== null) {
-      this.take(text);
-      return;
-    }
-    await this.state.load();
-    const old = parseFolders(this.state.get(STATE_KEY));
-    if (old.length === 0) return;
-    const made = foldersYml(null, old);
-    await this.source.write(made);
-    this.text = made;
-    this.folders = old;
-    this.state.set(STATE_KEY, undefined);
-    this.changed();
-  }
-
-  /** Applies TEXT; returns what's wrong with it instead (the Folders stay as they were). */
-  private take(text: string): string | null {
-    const parsed = parseFoldersYml(text);
-    this.text = text;
+/** What the Folders Plugin is handed as `roster.plugin.config` at each load (ticket 61):
+ * init.lua's Folders (`fixed`), and the Folders to move in once when it has none of its own
+ * yet (`import`, from folders.yml, else from the State of before folders.yml), or why folders.yml
+ * can't be read (`import_error`: then nothing moves, so nothing is lost). */
+export async function foldersSettings(
+  fixed: { list(): readonly { name: string; hosts: readonly string[]; source: string }[] },
+  source: { read(): Promise<{ path: string; text: string | null }> } | undefined,
+  state: { load(): Promise<void>; get(key: string): unknown },
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = { fixed: fixed.list().map((f) => ({ name: f.name, hosts: [...f.hosts], source: f.source })) };
+  const file = source ? await source.read().catch(() => null) : null;
+  if (file?.text != null) {
+    const parsed = parseFoldersYml(file.text);
+    out.import_from = FOLDERS_FILE;
     if ("error" in parsed) {
       const { line, message } = parsed.error;
-      return `${FOLDERS_FILE}${line ? `:${line}` : ""} has an error (${message}): the last good Folders are still in use`;
-    }
-    this.folders = parsed.folders;
-    this.changed();
-    return null;
+      out.import_error = `${FOLDERS_FILE}${line ? `:${line}` : ""} has an error (${message}): fix it and they move in at the next start`;
+    } else out.import = parsed.folders;
+    return out;
   }
-
-  /** `:source`: reads folders.yml again now. Null, or why it couldn't be used. */
-  async reload(): Promise<string | null> {
-    await this.load();
-    await this.writing;
-    const { text } = await this.source.read();
-    if (text === null) return null;
-    return this.take(text);
+  await state.load();
+  const old = parseFolders(state.get(STATE_KEY));
+  if (old.length > 0) {
+    out.import = old;
+    out.import_from = "the State";
   }
-
-  /** folders.yml was saved: whether that's an outside edit (not what the app has). */
-  async isOutsideEdit(): Promise<boolean> {
-    await this.load();
-    await this.writing;
-    const { text } = await this.source.read();
-    return text !== null && text !== this.text;
-  }
-
-  where(): string {
-    return this.path;
-  }
-
-  get(key: string): unknown {
-    return key === STATE_KEY ? this.folders : undefined;
-  }
-
-  set(key: string, value: unknown) {
-    if (key !== STATE_KEY) return;
-    this.folders = parseFolders(value);
-    this.changed();
-    const folders = this.folders;
-    this.writing = this.writing
-      .then(() => this.load())
-      .then(async () => {
-        const text = foldersYml(this.text, folders);
-        await this.source.write(text);
-        this.text = text;
-      })
-      .catch(() => {});
-  }
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
-
-  private changed() {
-    for (const l of this.listeners) l();
-  }
+  return out;
 }

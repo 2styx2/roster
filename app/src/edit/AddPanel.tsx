@@ -32,6 +32,7 @@ import type { Problem } from "../errors/classify";
 import { CheckSteps } from "../errors/CheckPanel";
 import { ProblemBody, type ProblemActions } from "../errors/ErrorPanel";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import { useFormPull, type PullGate } from "./pull";
 import { PullStatus } from "./PullStatus";
@@ -276,9 +277,12 @@ export function AddPanel({
     >
       <header>
         <h2>Add a Host</h2>
-        <button type="button" className="icon-button close" aria-label="Close the add form" onClick={onClose}>
-          <CloseGlyph />
-        </button>
+        <span className="panel-head-buttons">
+          <PanelButton />
+          <button type="button" className="icon-button close" aria-label="Close the add form" onClick={onClose}>
+            <CloseGlyph />
+          </button>
+        </span>
       </header>
       <PullStatus pull={formPull} rows={rows} actions={actions} />
       {pulledIn && hosts.hosts.some((h) => h.name === draft.name.trim()) && (

@@ -9,11 +9,12 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, mesh
+from . import __version__, jsonout, mesh
 from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
 from .config import access_label, find_config, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
+from .errors import ROSTER_ERROR, UNKNOWN_HOST, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
 from .providers import NO_PASSWORD, PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
@@ -121,7 +122,8 @@ def cmd_sync(cfg, args):
 # ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
 
 LINK_WORDS = {"ok": "ok", "untested": "ok (port not tested: no nc or bash there)", "unreachable": "UNREACHABLE",
-              "no-host-key": "NO HOST KEY", "pending": "pending", "skipped": "skipped"}
+              "no-host-key": "NO HOST KEY", "no-via": "NO LINK TO ITS HOP", "pending": "pending", "skipped": "skipped"}
+BROKEN_LINKS = ("unreachable", "no-host-key", "no-via")       # make `roster check` fail
 
 
 def plural(n, word):
@@ -134,15 +136,18 @@ def show_mesh(r, drift=False):
     if not drift:
         say(f"links        {plural(len(links), 'link')} "
             f"({sum(x['kind'] == 'key' for x in links)} key, {sum(x['kind'] == 'password' for x in links)} password)")
-        width = max((len(x["from"]) + len(x["to"]) for x in links), default=0) + 4
+        def pair(x):
+            return f"{x['from']} -> {x['to']}" + (f" via {x['via']}" if x.get("via") else "")
+        width = max((len(pair(x)) for x in links), default=0)
         for x in links:
             word = LINK_WORDS[x["status"]]
-            why = f" - {x['why']}" if x.get("why") and x["status"] != "untested" else ""
+            word = "ok (hop not tested)" if x["status"] == "untested" and x.get("via") else word
+            why = f" - {x['why']}" if x.get("why") and (x["status"] != "untested" or x.get("via")) else ""
             note = " (ssh asks the person for the password)" if x["kind"] == "password" and x["status"] == "ok" else ""
-            say(f"  {x['from'] + ' -> ' + x['to']:<{width}} {x['kind']:<9}{word}{note}{why}")
+            say(f"  {pair(x):<{width}} {x['kind']:<9}{word}{note}{why}")
     else:
         for x in links:
-            if x["status"] in ("unreachable", "no-host-key"):
+            if x["status"] in BROKEN_LINKS:
                 say(f"  link {x['from']} -> {x['to']}: {x['why']}")
     changed = [h for h in r["hosts"] if h["changes"]]
     if changed:
@@ -179,6 +184,9 @@ def cmd_mesh(cfg, args):
     from .errors import Problem
     if args.action == "status":
         st = mesh.status(cfg)
+        if args.json:
+            jsonout.emit(st)
+            return 0
         for n in st["members"]:
             say(f"  {n:<16} can reach {plural(st['reach'].get(n, 0), 'Host')}")
         if st["pending"]:
@@ -205,10 +213,16 @@ def cmd_mesh(cfg, args):
             say(f"warning: mesh: false not written: {change['error']} - {change['fix']}")
         for n, why in r["pending"].items():
             say(f"  not confirmed  {n}: {why}")
+        for w in r["warnings"]:
+            say(f"warning: {w}")
         warn_cut({args.target: sorted(r["pending"])} if r["pending"] else {})
         return 1 if r["pending"] or change.get("error") else 0
     if args.target:
         die(f"unexpected {args.target!r}: roster mesh [--dry-run] [--rotate HOST], or roster mesh cut HOST")
+    if args.json:                       # --dry-run: mesh.plan's result; a Problem is the JSON error (main)
+        r = mesh.run(cfg, apply=False, rotate=args.rotate or ())
+        jsonout.emit(r)
+        return 1 if r["pending"] else 0
     try:
         r = mesh.run(cfg, apply=not args.dry_run, rotate=args.rotate or (), say=say)
     except Problem as e:
@@ -223,7 +237,8 @@ def cmd_mesh(cfg, args):
 
 def cmd_check(cfg, args):
     hosts = selected(cfg, args.only)
-    warn_problems(hosts)
+    if not args.json:
+        warn_problems(hosts)
 
     def check(h):
         res = {"ssh": ssh_ok(h["name"]) if h["enroll"] else tcp_ok(h["ip"], h["ssh"]["port"])}
@@ -231,6 +246,16 @@ def cmd_check(cfg, args):
             res[name] = tcp_ok(urlparse(s["url"]).hostname if s["url"] else h["ip"], s["port"])
         return h, res
 
+    if args.json:
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            results = [{"name": h["name"], "ok": all(res.values()), "ssh": "login" if h["enroll"] else "port",
+                        "checks": res} for h, res in ex.map(check, hosts)]
+        drift = mesh.drift(cfg) if not args.only else None
+        broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
+                                            or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
+        ok = all(r["ok"] for r in results) and not broken
+        jsonout.emit({"hosts": results, "mesh": drift, "ok": ok})
+        return 0 if ok else 1
     bad = 0
     width = max(len(h["name"]) for h in hosts)
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
@@ -245,7 +270,7 @@ def cmd_check(cfg, args):
         say()
         show_mesh(drift, drift=True)
         bad += bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
-                    or any(x["status"] in ("unreachable", "no-host-key") for x in drift["links"]))
+                    or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
     return 1 if bad else 0
@@ -269,6 +294,9 @@ def cmd_check_host(args):
 
     with askpass.Channel(diagnose.askpass_lookup) as channel:
         result = diagnose.check_host(args.host, inventory, channel)
+    if args.json:
+        jsonout.emit(result)
+        return 0 if result["ok"] else 1
     words = {"ok": "ok", "fail": "FAIL", "skipped": "skip"}
     width = max(len(s["step"]) for s in result["steps"])
     for s in result["steps"]:
@@ -298,6 +326,10 @@ def cmd_check_box(args):
     except OSError as e:
         channel = health.askpass_state(None, e)
     checks = health.check_box(path, cfg, error, channel)
+    errors = sum(c["level"] == "error" for c in checks)
+    if args.json:
+        jsonout.emit({"checks": checks, "ok": not errors})
+        return 1 if errors else 0
     section = None
     for c in checks:
         if c["section"] != section:
@@ -308,7 +340,6 @@ def cmd_check_box(args):
             say(f"         fix: {c['fix']}")
         if c.get("topic"):
             say(f"         help: {c['topic']}")
-    errors = sum(c["level"] == "error" for c in checks)
     warnings = sum(c["level"] == "warn" for c in checks)
     words = [f"{warnings} warning{'' if warnings == 1 else 's'}"] if warnings else []
     words.append(f"{errors} error{'' if errors == 1 else 's'}" if errors else "no errors")
@@ -345,6 +376,8 @@ def warn_problems(hosts):
 
 def cmd_hosts(cfg, args):
     hosts, rs = selected(cfg, args.only, resources=True)
+    if args.json:
+        return hosts_json(cfg, args, hosts, rs)
     warn_problems(hosts)
     if args.find:
         hosts = [h for h in hosts if matches(h, args.find)]
@@ -375,6 +408,18 @@ def cmd_hosts(cfg, args):
         say(f"\n{len(hidden)} unreviewed hosts not shown (roster hosts --all). "
             "roster hosts --long shows type, web URL and description.")
     return 0
+
+
+def hosts_json(cfg, args, hosts, rs):
+    """`roster hosts --json`: serve's hosts.list for the same filters. Hosts and resources in roster.yml order;
+    each Host's `problems` stand in for the warnings the table prints on stderr."""
+    if args.find:
+        hosts = [h for h in hosts if matches(h, args.find)]
+        rs = [r for r in rs if resource_matches(r, args.find)]
+    hidden = [] if args.all or args.find or args.only else [h for h in hosts if not h["reviewed"]]
+    jsonout.emit({"hosts": [h for h in hosts if h not in hidden], "resources": rs, "groups": cfg["groups"],
+                  "hidden": len(hidden)})
+    return 1 if args.find and not hosts and not rs else 0
 
 
 def _table(rows):
@@ -412,6 +457,9 @@ def cmd_resources(cfg, args):
         rs = [r for r in rs if wanted & {r["name"], r["type"], r["group"]}]     # unlike hosts, no match isn't fatal
     if args.find:
         rs = [r for r in rs if resource_matches(r, args.find)]
+    if args.json:
+        jsonout.emit({"resources": rs})
+        return 1 if cfg["resources"] and not rs else 0
     if not rs:
         if cfg["resources"]:
             say("no resource matches")
@@ -457,6 +505,12 @@ def cmd_reveal(cfg, args):
 
 def cmd_info(cfg, args):
     h = find_host(cfg, args.host, resources=True)
+    if args.json:
+        g = cfg["groups"].get(h["group"], {})
+        group = {"name": h["group"], "title": g.get("title", ""), "description": g.get("description", "")} \
+            if h["group"] else None
+        jsonout.emit({"host" if "ip" in h else "resource": h, "group": group})
+        return 0
     if "ip" not in h:
         return show_resource(cfg, h)
     g = cfg["groups"].get(h["group"], {})
@@ -570,6 +624,9 @@ def cmd_revoke(cfg, args):
     return 1 if bad else 0
 
 
+AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
+
+
 def cmd_providers(cfg, args):
     import shutil
     used = {}
@@ -579,6 +636,16 @@ def cmd_providers(cfg, args):
     for r in (cfg or {}).get("resources", {}).values():
         if r["auth"]:
             used.setdefault(r["auth"].split(":", 1)[0], set()).add(r["group"] or "resources")
+    unknown = sorted(set(used) - set(PROVIDERS) - set(NO_PASSWORD))
+    if args.json:
+        rows = [{"name": name, "kind": PROVIDERS[name]["kind"], "help": PROVIDERS[name]["help"],
+                 "tool": PROVIDERS[name].get("tool") or None,
+                 "installed": bool(shutil.which(PROVIDERS[name]["tool"])) if PROVIDERS[name].get("tool") else None,
+                 "used_by": sorted(used.get(name, ()))} for name in sorted(PROVIDERS)]
+        rows.append({"name": "agent", "kind": "built-in", "help": AGENT_HELP, "tool": None, "installed": None,
+                     "used_by": sorted(used.get("agent", ()))})
+        jsonout.emit({"providers": rows, "unknown": unknown, "ok": not unknown})
+        return 1 if unknown else 0
     say("password providers (use as  auth: NAME:SPEC  in roster.yml):\n")
     for name in sorted(PROVIDERS):
         p = PROVIDERS[name]
@@ -586,8 +653,7 @@ def cmd_providers(cfg, args):
         installed = "" if not tool else ("  [tool found]" if shutil.which(tool) else f"  [`{tool}` NOT installed]")
         groups = f"  - used by: {', '.join(sorted(used[name]))}" if name in used else ""
         say(f"  {name:<8} {p['kind']:<10} {p['help']}{installed}{groups}")
-    say(f"  {'agent':<8} {'built-in':<10} no password: an SSH key you already have (ssh-agent) gets in")
-    unknown = sorted(set(used) - set(PROVIDERS) - set(NO_PASSWORD))
+    say(f"  {'agent':<8} {'built-in':<10} {AGENT_HELP}")
     if unknown:
         say(f"\nUNKNOWN providers used in roster.yml: {', '.join(unknown)}")
         return 1
@@ -597,7 +663,8 @@ def cmd_providers(cfg, args):
 def cmd_auth_check(cfg, args):
     uses = {}                                    # (ref, group) -> [(service, host, user)]
     hosts, resources = selected(cfg, args.only, resources=True)
-    warn_problems(hosts)
+    if not args.json:
+        warn_problems(hosts)
     for h in hosts:
         for svc, s in [("ssh", h["ssh"]), *h["services"].items()]:
             if svc == "ssh" or s["auth"] is not None:
@@ -605,6 +672,8 @@ def cmd_auth_check(cfg, args):
     for r in resources:
         if r["auth"]:
             uses.setdefault((r["auth"], r["group"] or "resources"), []).append((r["type"], r["name"], r["user"]))
+    if args.json:
+        return auth_check_json(uses)
     bad = 0
     for ref, group in sorted(uses, key=lambda t: (t[1], str(t[0]))):
         users = sorted({u for _, _, u in uses[ref, group] if u})
@@ -620,6 +689,28 @@ def cmd_auth_check(cfg, args):
             say(f"  FAIL  {label}\n        {e}")
     say("\nok = a value was found. It is not tested against any host here; `setup` does that.")
     return 1 if bad else 0
+
+
+def auth_check_json(uses):
+    """`roster auth-check --json`: one row per (Login reference, group), never the value it found."""
+    rows = []
+    for ref, group in sorted(uses, key=lambda t: (t[1], str(t[0]))):
+        by_svc = {}
+        for svc, host, _ in uses[ref, group]:
+            by_svc.setdefault(svc, []).append(host)
+        row = {"group": group, "auth": ref, "users": sorted({u for _, _, u in uses[ref, group] if u}),
+               "used_for": [{"service": svc, "hosts": hs} for svc, hs in by_svc.items()], "status": "ok"}
+        if ref == "prompt":
+            row["status"] = "ask"
+        else:
+            try:
+                get_secret(ref, group)
+            except RuntimeError as e:
+                row |= {"status": "fail", "error": str(e)}
+        rows.append(row)
+    ok = all(r["status"] != "fail" for r in rows)
+    jsonout.emit({"logins": rows, "ok": ok})
+    return 0 if ok else 1
 
 
 def used_for(uses):
@@ -649,23 +740,52 @@ def cmd_bw(args):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    words = argv[:argv.index("--")] if "--" in argv else argv
+    Parser.json_errors = "--json" in words
     try:
         return _main(argv) or 0
+    except Problem as e:                 # inventory() raises one with --json: the error as JSON on stderr
+        if not Parser.json_errors:
+            raise
+        jsonout.fail(e.code, e.message, e.fix)
+        return 1
+    except SystemExit as e:
+        if not (Parser.json_errors and isinstance(e.code, str)):
+            raise
+        message = e.code.removeprefix("error: ")
+        jsonout.fail(UNKNOWN_HOST if message.startswith("unknown host") else ROSTER_ERROR, message)
+        return 1
     except KeyboardInterrupt:
         return 130
     except BrokenPipeError:              # output piped into head/grep that closed early
         sys.stdout = None
         os._exit(0)
+    finally:
+        Parser.json_errors = False
+
+
+class Parser(argparse.ArgumentParser):
+    """roster's argument parser: with --json on the command line, a usage error is JSON on stderr (exit 2)."""
+    json_errors = False
+
+    def error(self, message):
+        if Parser.json_errors:
+            jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")
+            sys.exit(2)
+        super().error(message)
 
 
 def build_parser():
     """Every command and option. The man page (roster.manpage) is generated from this too."""
-    p = argparse.ArgumentParser(prog="roster",
-                                description="Give this box (and Claude) access to the hosts in roster.yml.")
+    p = Parser(prog="roster",
+               description="Give this box (and Claude) access to the hosts in roster.yml.")
     p.add_argument("--version", action="version", version=f"roster {__version__}")
-    p.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: ./roster.yml, then ~/.config/roster/)")
+    p.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, ./roster.yml, then ~/.config/roster/roster.yml)")
     sub = p.add_subparsers(dest="cmd", required=True)
     only = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
+    as_json = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
+               "Machine-readable output in docs/cli-reference.md)"}
     sub.add_parser("init", help="write an example roster.yml")
     s = sub.add_parser("setup", help="one-time setup of this box")
     s.add_argument("--only", **only)
@@ -678,19 +798,23 @@ def build_parser():
     s.add_argument("--box", action="store_true", help="check this Box instead, without connecting anywhere: "
                    "roster.yml, ssh and its config, vault CLIs, askpass, the infra repo")
     s.add_argument("--only", **only)
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("hosts", help="list hosts")
     s.add_argument("--only", **only)
     s.add_argument("--find", metavar="TEXT", help="search name, title, description, type, product, group, ip")
     s.add_argument("--all", action="store_true", help="include unreviewed (scanned) hosts")
     s.add_argument("--long", action="store_true", help="full table: type, product, web URL, description")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("resources", help="list Wi-Fi networks, accounts and secrets that aren't hosts")
     s.add_argument("--only", metavar="LIST", help="resource names, types or groups")
     s.add_argument("--find", metavar="TEXT", help="search every field")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) - for people, not Claude")
     s.add_argument("name", help="the resource")
     s.add_argument("--wifi", action="store_true", help="print a WIFI:... string for a QR code instead")
     s = sub.add_parser("info", help="show everything about one host or resource")
     s.add_argument("host", nargs="+", metavar="NAME", help="a host or resource; fuzzy words work")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("run", help="run a command on a host")
     s.add_argument("--sudo", action="store_true",
                    help="run it as root with sudo; roster gives sudo the login's password (never shown)")
@@ -709,11 +833,14 @@ def build_parser():
     s.add_argument("--timeout", type=float, default=0.5, metavar="SECONDS",
                    help="built-in scanner connect timeout (default: 0.5)")
     s.add_argument("--force", action="store_true", help="allow scanning more than 4096 addresses")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("bw", help="run the Bitwarden CLI with this box's vault session (bw-session file)")
     s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw")
-    sub.add_parser("providers", help="list password providers (built-in, plugins, roster.yml)")
+    s = sub.add_parser("providers", help="list password providers (built-in, plugins, roster.yml)")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("auth-check", help="test each group's password source, print nothing secret")
     s.add_argument("--only", **only)
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("web", help="HTTP request to a host's web service, logged in with its stored credentials")
     s.add_argument("request", nargs="+", metavar="HOST [SERVICE] METHOD PATH",
                    help="e.g. esxi GET /folder  or  orion3 https GET /api/status")
@@ -729,6 +856,8 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="show the plan; change nothing on any Host")
     s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)")
     s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
+    s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
+                   "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
     s.add_argument("--only", **only)
     s.add_argument("-y", "--yes", action="store_true", help="don't ask first")
@@ -740,6 +869,18 @@ def build_parser():
                    help="copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv tool install)")
     s.add_argument("--prefix", metavar="DIR", help="with --install: install into DIR/share/man/man1/ instead")
     return p
+
+
+def inventory(args):
+    """roster.yml, loaded. With --json, one that isn't found or doesn't load is a Problem (code 1, with its fix)."""
+    path = None
+    try:
+        path = find_config(args.config)
+        return load_config(path)
+    except SystemExit as e:
+        if not getattr(args, "json", False):
+            raise
+        raise inventory_problem(str(e.code).removeprefix("error: "), path) from None
 
 
 def _main(argv=None):
@@ -755,9 +896,13 @@ def _main(argv=None):
         from .manpage import cmd_man
         return cmd_man(args)
     if args.cmd == "discover":
+        if args.json and args.write:
+            build_parser().error("--json goes with discover's preview, not --write: drop one of them")
         return cmd_discover(args)
     if args.cmd == "bw":
         return cmd_bw(args)
+    if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
+        build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
     if args.cmd == "check" and args.box:
         if args.host or args.only:
             build_parser().error("check --box takes no HOST or --only: it checks this Box, not its Hosts")
@@ -774,7 +919,7 @@ def _main(argv=None):
             cfg = None                              # no roster.yml yet: still list what's available
         setup_providers(cfg)
         return cmd_providers(cfg, args)
-    cfg = load_config(find_config(args.config))
+    cfg = inventory(args)
     setup_providers(cfg)
     return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "info": cmd_info,
             "run": cmd_run, "revoke": cmd_revoke, "resources": cmd_resources, "reveal": cmd_reveal, "auth-check": cmd_auth_check, "web": cmd_web,

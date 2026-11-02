@@ -250,25 +250,31 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     disposers.push(registries.folders.register(entry));
   }
 
-  // Layout pieces the app doesn't know (a Plugin's, later) are kept; say so for typos.
+  return { dispose: () => disposers.forEach((d) => d()), warnings };
+}
+
+/** The `modes` layouts' names the app has nothing for (a typo, most likely). Plugins' sections,
+ * segments and controls count, so this waits until they've loaded (ticket 79: Plugins load after
+ * the Config, and their names were warned about as unknown). */
+export function layoutWarnings(registries: Registries, c: Config): ConfigWarning[] {
+  const warnings: ConfigWarning[] = [];
+  const warn = (message: string) => warnings.push({ file: "init.lua", line: null, message });
   // Folders registers its section from App; it counts as known from the start.
   const sections = new Set(["sessions", "folders", "inventory", ...registries.sidebar.list().map((s) => s.id)]);
+  const segments = [...new Set([...STATUS_SEGMENTS, ...registries.status.list().map((s) => s.id)])];
+  const controls = registries.toolbar.list().map((t) => t.id);
   for (const [mode, m] of Object.entries(c.modes)) {
     for (const id of m.sidebar.sections ?? []) {
-      if (!sections.has(id)) warn(null, `modes.${mode}.sidebar.sections: no section named "${id}" (there's ${[...sections].join(", ")})`);
+      if (!sections.has(id)) warn(`modes.${mode}.sidebar.sections: no section named "${id}" (there's ${[...sections].join(", ")})`);
     }
-    const controls = registries.toolbar.list().map((t) => t.id);
     for (const id of m.toolbar.controls ?? []) {
-      if (!controls.includes(id)) warn(null, `modes.${mode}.toolbar: no control named "${id}" (there's ${controls.join(", ")})`);
+      if (!controls.includes(id)) warn(`modes.${mode}.toolbar: no control named "${id}" (there's ${controls.join(", ")})`);
     }
     for (const id of m.statusbar.segments ?? []) {
-      if (!(STATUS_SEGMENTS as readonly string[]).includes(id)) {
-        warn(null, `modes.${mode}.statusbar: no segment named "${id}" (there's ${STATUS_SEGMENTS.join(", ")})`);
-      }
+      if (!segments.includes(id)) warn(`modes.${mode}.statusbar: no segment named "${id}" (there's ${segments.join(", ")})`);
     }
   }
-
-  return { dispose: () => disposers.forEach((d) => d()), warnings };
+  return warnings;
 }
 
 /** `init.lua:12: message`. */

@@ -27,7 +27,7 @@ These pages are also online, at [2styx2.github.io/roster/](https://2styx2.github
 
 ## See how far it goes
 
-Commands, keys, Themes, finders, Sidebar sections, the toolbar and these help pages are all registries that your `init.lua`, and later Plugins, add to. [How far roster bends](extending.md) shows each one and what you can do with it today.
+Commands, keys, Themes, finders, Sidebar sections, the toolbar and these help pages are all registries that your `init.lua` and Plugins add to. [How far roster bends](extending.md) shows each one and what you can do with it today.
 
 ## When something's wrong
 

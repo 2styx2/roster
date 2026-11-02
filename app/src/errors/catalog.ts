@@ -479,6 +479,40 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     fix: () => "Rotate a Host that reaches peers; the Mesh's plan lists them.",
     actions: [],
   }),
+  // A Mesh job (API 17, ticket 50) still runs: docs/app/errors.md row 93.
+  row("mesh-busy", {
+    row: 93,
+    codes: [111],
+    where: ["roster"],
+    fix: () => "Wait for the Mesh job (its progress is in the status bar), or stop it with `:cancel mesh`; then run it again.",
+    actions: [],
+  }),
+  // serve answers concurrently (API 20, ticket 101): a lock held past this request's wait,
+  // docs/app/errors.md row 113. Nothing was done.
+  row("serve-busy", {
+    row: 113,
+    codes: [4],
+    where: ["roster"],
+    fix: () => "Try again once it has finished: nothing was done.",
+    actions: [],
+  }),
+  // $/cancel (API 21, ticket 108): the core gave up waiting and cancelled a request that hadn't
+  // started; docs/app/errors.md row 114. Nothing was done.
+  row("serve-cancelled", {
+    row: 114,
+    codes: [5],
+    where: ["roster"],
+    fix: () => "Nothing was done: do it again if you still want it.",
+    actions: [],
+  }),
+  // host.check_job (API 21, ticket 108): no such check in this serve; docs/app/errors.md row 115.
+  row("check-gone", {
+    row: 115,
+    codes: [49],
+    where: ["roster"],
+    fix: () => "Check the Host again.",
+    actions: [],
+  }),
   // Adding a Host (ticket 11). A failed test login uses the failing step's own row.
   row("add-invalid", {
     row: 44,
@@ -573,6 +607,22 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     codes: [103],
     where: ["roster.yml"],
     fix: () => "Move it by hand in roster.yml, setting what it inherits on the Host itself; nothing was written.",
+    actions: [],
+  }),
+  // Filling a password prompt (`session.fill`, ticket 119): docs/app/errors.md rows 143-144. Shown
+  // on the message line when the fill key is pressed; nothing was looked up or typed.
+  row("fill-refused", {
+    row: 143,
+    codes: [130],
+    where: ["the Host"],
+    fix: () => "roster fills only sudo's prompt for the Session's own Host's login user: type this password yourself, or reconnect if the Host was edited.",
+    actions: [],
+  }),
+  row("fill-nothing-saved", {
+    row: 144,
+    codes: [131],
+    where: ["roster.yml"],
+    fix: () => "Add a sudo: {auth: VAULT-REFERENCE} to the Host in roster.yml for its own sudo password, or type it yourself.",
     actions: [],
   }),
   row("other", {

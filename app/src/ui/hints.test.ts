@@ -5,6 +5,7 @@ import { memoryPlatform } from "../platform/memory";
 import { builtinRegistries } from "../registries";
 import { StateStore } from "../state/store";
 import { HintsChoice, registerHints } from "./hints";
+import { quiet, type Message } from "./messages";
 
 async function setup(state: Record<string, unknown> = {}) {
   const platform = memoryPlatform({ state });
@@ -13,8 +14,8 @@ async function setup(state: Record<string, unknown> = {}) {
   const registries = builtinRegistries();
   const choice = new HintsChoice(store);
   registerHints(registries, choice);
-  const said: string[] = [];
-  const run = (arg: string | undefined) => registries.commands.get("hints")?.run({ say: (m: string) => said.push(m) } as never, arg);
+  const said: Message[] = [];
+  const run = (arg: string | undefined) => registries.commands.get("hints")?.run({ say: (m: Message) => said.push(m) } as never, arg);
   const flush = () => new Promise((r) => setTimeout(r, 0));
   return { platform, choice, registries, run, said, flush };
 }
@@ -37,7 +38,8 @@ describe("HintsChoice", () => {
     expect(choice.shown()).toBe(true);
     await flush();
     expect(platform.saved()).toMatchObject({ hints: true, other: 1 });
-    expect(said).toEqual(["Key hints hidden", "Key hints shown", "Key hints hidden", "Key hints shown"]);
+    // The new state is quiet (ticket 111): shown with every message on, always said to a screen reader.
+    expect(said).toEqual([quiet("Key hints hidden"), quiet("Key hints shown"), quiet("Key hints hidden"), quiet("Key hints shown")]);
   });
 
   it("refuses a word it doesn't know", async () => {

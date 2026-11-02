@@ -9,6 +9,7 @@ import { groupCommand, hostCommand, type InventoryOp } from "../inventory/comman
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { SidebarRow } from "../sidebar/Sidebar";
 import { VIEW_MODES, type ViewMode } from "../view/layout";
+import type { Message } from "../ui/messages";
 
 export type ListMove = "down" | "up" | "top" | "bottom" | "choose";
 
@@ -59,8 +60,8 @@ export interface CommandContext {
   selectedHost(): string | null;
   /** Every Host's name, in roster.yml order (empty until the Inventory is loaded). */
   hostNames(): readonly string[];
-  /** A one-line message for the user. */
-  say(message: string): void;
+  /** A one-line message for the user: an error, a warning or an answer, or a quiet one (ui/messages.ts). */
+  say(message: Message): void;
   /** The view mode now (decision Q36). */
   viewMode(): ViewMode;
   /** Switches to `mode`, or to the other one. */
@@ -80,6 +81,12 @@ export interface CommandContext {
   /** Opens "Save to vault" for the current Session, once it logged in with a password typed for it
    * (tickets 15, 16). */
   saveSession(): void;
+  /** Fills the password prompt the current Session shows from the vault (ticket 119): only when
+   * one is detected; the password goes from serve to the Session's PTY through the core, never
+   * through the frontend. */
+  fillPrompt(): void;
+  /** `:integrate` (ticket 121): sends the current Session's shell the hook line now. */
+  integrate(): void;
   /** Removes, renames or moves a Host, or makes, renames or deletes a group (ticket 28): asks
    * first where it should (removing a Host; a group whose Hosts need somewhere to go). */
   inventory(op: InventoryOp): void;
@@ -102,8 +109,8 @@ export interface CommandContext {
 export const VAULT_ACTIONS = ["signout"] as const;
 export type VaultAction = (typeof VAULT_ACTIONS)[number];
 
-/** What `:config` does: `:config`, `:config reload`, `:config path`. */
-export const CONFIG_ACTIONS = ["open", "reload", "path", "import-terminal"] as const;
+/** What `:config` does: `:config`, `:config reload`, `:config path`, `:config types`. */
+export const CONFIG_ACTIONS = ["open", "reload", "path", "import-terminal", "types"] as const;
 export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
 /** The ones typed after `config` (open is `:config` alone). */
 const CONFIG_SUBCOMMANDS: readonly string[] = CONFIG_ACTIONS.filter((a) => a !== "open");
@@ -136,7 +143,7 @@ export interface CommandDef extends Entry {
 export interface CompletionContext {
   /** Every Host's name, in roster.yml order. */
   hostNames: readonly string[];
-  /** The Sidebar's rows that fold, by id: `section:sessions`, `group:subnet-42`, `folder:Lab`. */
+  /** The Sidebar's rows that fold, by id: `section:sessions`, `group:subnet-42`, `folders:Lab`. */
   foldIds: readonly string[];
   /** The open Sessions' Hosts, in order (what `session N` and `close N` take). */
   sessions: readonly string[];
@@ -242,6 +249,20 @@ export const builtinCommands: readonly CommandDef[] = [
     run: (ctx) => ctx.saveSession(),
   },
   {
+    id: "fill",
+    source: BUILTIN,
+    area: "Sessions",
+    label: () => "Fill sudo's (or a nested ssh's) password prompt on screen from the Host's Login in the vault",
+    run: (ctx) => ctx.fillPrompt(),
+  },
+  {
+    id: "integrate",
+    source: BUILTIN,
+    area: "Sessions",
+    label: () => "Turn on shell integration in this Session's shell: one line that marks its prompts and says its folder",
+    run: (ctx) => ctx.integrate(),
+  },
+  {
     id: "reconnect",
     source: BUILTIN,
     area: "Sessions",
@@ -257,7 +278,7 @@ export const builtinCommands: readonly CommandDef[] = [
     label: (h) =>
       h
         ? `Check ${h}`
-        : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font. With a Host: why a Session to it would fail",
+        : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail",
     run: (ctx, h) => ctx.check(h ?? null),
   },
   {
@@ -392,7 +413,9 @@ export const builtinCommands: readonly CommandDef[] = [
           ? "Say where init.lua is"
           : what === "import-terminal"
             ? "Copy Windows Terminal's font and colours into init.lua"
-            : "Open init.lua, the Config",
+            : what === "types"
+              ? "Write the option types for your editor (types/roster-config.lua)"
+              : "Open init.lua, the Config",
     run: (ctx, what) => {
       if (what === undefined) return ctx.config("open");
       const action = CONFIG_SUBCOMMANDS.find((a) => a === what.toLowerCase()) as ConfigAction | undefined;

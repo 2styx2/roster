@@ -129,7 +129,7 @@ describe(":help", () => {
   });
 
   it("keeps its key tables when the key hints are hidden", async () => {
-    const user = await ready({ config: configWith({ ui: { hints: false } }) });
+    const user = await ready({ config: configWith({ ui: { hints: false, messages: null } }) });
     await user.keyboard(`${LEADER}:help keys{Enter}`);
     const caps = help().querySelectorAll("table .keys");
     expect(caps.length).toBeGreaterThan(10);
@@ -190,6 +190,34 @@ describe(":help", () => {
     expect(within(help()).getByRole("searchbox", { name: /search this page/i })).toHaveValue("bytecode");
     expect(help().querySelector("mark.current")).toHaveTextContent(/bytecode/i);
   });
+
+  it(":options finds an option with its value now, its default and where it was set; Enter opens its help", async () => {
+    const config = configWith({ idleLockMinutes: 30, set: ["idle_lock_minutes"], lines: { idle_lock_minutes: { file: "lua/opts.lua", line: 3 } } });
+    const user = await ready({ config });
+    await user.keyboard(`${LEADER}:options{Enter}`);
+    const finder = await screen.findByRole("dialog", { name: /find an option/i });
+    await user.keyboard("idle_lock");
+    const first = within(finder).getAllByRole("option")[0] as HTMLElement;
+    expect(first).toHaveTextContent("idle_lock_minutes");
+    expect(first).toHaveTextContent("30");
+    expect(first).toHaveTextContent("lua/opts.lua:3");
+    expect(finder.querySelector(".picker-footer")).toHaveTextContent("Default 15 · integer");
+    await user.keyboard("{Enter}");
+    expect(heading()).toHaveTextContent("Options");
+    expect(target()).toHaveTextContent("idle_lock_minutes");
+  });
+
+  it("has an entry for every name of init.lua's roster table and every item type", async () => {
+    const user = await ready();
+    await user.keyboard(`${LEADER}:help roster.keymap.set{Enter}`);
+    expect(heading()).toHaveTextContent("Options");
+    expect(target()).toHaveTextContent("roster.keymap.set(context, keys, action)");
+    await user.keyboard(`${LEADER}:help roster.config.Theme{Enter}`);
+    expect(target()).toHaveTextContent("roster.config.Theme");
+    await user.keyboard(`${LEADER}:help terminal.size{Enter}`);
+    expect(target()).toHaveTextContent("6 to 72 px");
+    // :help options is a long page; jsdom renders it slowly on a shared CI runner.
+  }, 15_000);
 
   it("opens the CLI's docs too: :help roster.yml", async () => {
     const user = await ready();
@@ -265,7 +293,7 @@ describe("help from where you are", () => {
     expect(within(panel).getByText("Help on what's selected")).toBeInTheDocument();
     await user.keyboard("command typed{F1}");
     expect(heading()).toHaveTextContent("Options");
-    expect(within(help()).getByRole("searchbox", { name: /search this page/i })).toHaveValue("cmdline");
+    expect(target()).toHaveTextContent("keys.cmdline");
   });
 });
 

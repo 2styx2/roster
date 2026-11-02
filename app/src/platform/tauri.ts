@@ -43,15 +43,12 @@ export function tauriPlatform(): Platform {
         await invoke("config_import_apply", { previewed: { base, result, date } });
       },
       reload: () => invoke<ConfigReport | null>("config_reload"),
+      writeTypes: () => invoke<string>("config_types"),
     },
-    // roster-core config/folders.rs; the core's watcher sends `folders-changed` after a save.
+    // roster-core config/folders.rs: read once at start, to move its Folders into the Folders
+    // Plugin (ticket 61). The app never writes it now.
     folders: {
       read: () => invoke<{ path: string; text: string | null }>("folders_read"),
-      write: (text) => invoke("folders_write", { text }),
-      watch(onSaved) {
-        const stop = listen("folders-changed", () => onSaved());
-        return () => void stop.then((f) => f());
-      },
     },
   };
 }

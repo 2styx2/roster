@@ -13,6 +13,7 @@ import { problemFromCallError, type ErrorRow } from "../errors/catalog";
 import { CopyCommand, ProblemBody, type ProblemActions } from "../errors/ErrorPanel";
 import { countOf } from "../ui/format";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 
 export type ChangesState =
@@ -121,9 +122,12 @@ export function ChangesPanel(props: ChangesPanelProps) {
           Pending changes
           {changes.state === "done" && <span className="muted"> · {count}</span>}
         </h2>
-        <button type="button" className="icon-button close" aria-label="Close Pending changes" onClick={onClose}>
-          <CloseGlyph />
-        </button>
+        <span className="panel-head-buttons">
+          <PanelButton />
+          <button type="button" className="icon-button close" aria-label="Close Pending changes" onClick={onClose}>
+            <CloseGlyph />
+          </button>
+        </span>
       </header>
       {changes.state === "loading" && <p className="muted">Reading the infra repo…</p>}
       {changes.state === "error" && <p className="problem-message">{changes.message}</p>}

@@ -83,6 +83,10 @@
       }
     },
     "packages": [],
+    "panel": {
+      "width": null
+    },
+    "pluginProxy": null,
     "pullFreshMinutes": 5,
     "rosterCommand": null,
     "sessions": "sidebar",
@@ -103,13 +107,15 @@
       "renderer": "webgl",
       "rightClickPaste": true,
       "scrollback": 10000,
+      "shellHooks": null,
       "size": 17.333333333333332,
       "weight": 500
     },
     "theme": "auto",
     "themes": {},
     "ui": {
-      "hints": null
+      "hints": null,
+      "messages": null
     },
     "vault": {
       "kp": {
@@ -118,6 +124,7 @@
       },
       "saveTo": null
     },
+    "views": {},
     "vim": true
   },
   "terminalColors": [

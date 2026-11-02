@@ -17,8 +17,9 @@ import json
 import os
 import re
 import subprocess
+import threading
 
-from .common import current_deadline, deadline_at, past_deadline, program_argv, time_left, user_config_dir
+from .common import current_deadline, deadline_at, kill_tree, past_deadline, program_argv, time_left, user_config_dir
 from .sshops import hk_name, recorded_host_keys
 
 TAG = "roster-mesh"
@@ -29,15 +30,20 @@ CONNECT_TIMEOUT = 10
 STEP_TIMEOUT = 120          # s: one Host's script, at most
 CUT_TIMEOUT = 30            # s: one Host's part of a cut
 OUT_OF_TIME = "out of time: not visited (the next roster mesh finishes it)"   # past serve's deadline
+STOPPED = "stopped: not visited (the next roster mesh finishes it)"            # mesh.stop, before it got there
+CLOSED = "serve closed: stopped part way (the next roster mesh finishes it)"   # close(), mid-step
 
 
 # ---------------------------------------------------------------- who reaches whom (no connections)
 
 def graph(cfg):
-    """The Mesh roster.yml asks for: {links: [{from, to, kind, skip?}], excluded: {host: why}, sources, visit}.
-    kind is "key" (the peer takes the source's key) or "password" (ssh asks the person). A link from a password
-    Host is kept with skip="password-source": roster can't write files on a Host it reaches only with a password.
-    visit: the Hosts roster logs in to (sources and key peers), in name order."""
+    """The Mesh roster.yml asks for: {links: [{from, to, kind, via?, skip?}], excluded: {host: why}, sources, visit}.
+    kind is "key" (the peer takes the source's key) or "password" (ssh asks the person). via: the Host the source
+    goes through to reach the peer (a Link's `via:`, which wins over the same pair without one). A link from a
+    password Host is kept with skip="password-source": roster can't write files on a Host it reaches only with a
+    password.
+    visit: the Hosts roster logs in to (sources and key peers), in name order. meshed: {group: [hosts]}, each meshed
+    group's Hosts that reach each other (two or more), in roster.yml order."""
     hosts = cfg["hosts"]
     excluded = {}
 
@@ -50,13 +56,16 @@ def graph(cfg):
             return True
         return False
 
-    pairs = set()
+    pairs = {}                                  # (source, peer): the Host it goes through, or None
     by_group = {}
     for h in hosts.values():
         by_group.setdefault(h["group"], []).append(h)
-    for members in by_group.values():
+    groups = {}
+    for group, members in by_group.items():
         meshed = [h["name"] for h in members if h["mesh"] is not None and eligible(h) and h["mesh"]]
-        pairs |= {(a, b) for a in meshed for b in meshed if a != b}
+        pairs.update({(a, b): None for a in meshed for b in meshed if a != b})
+        if len(meshed) > 1:
+            groups[group] = meshed
 
     def expand(name):
         return [name] if name in hosts else [h["name"] for h in by_group.get(name, [])]
@@ -65,19 +74,23 @@ def graph(cfg):
         for a in expand(link["from"]):
             for b in expand(link["to"]):
                 if a != b and eligible(hosts[a]) and eligible(hosts[b]):
-                    pairs.add((a, b))
-                    if link["both"]:
-                        pairs.add((b, a))
+                    for pair in ((a, b), (b, a)) if link["both"] else ((a, b),):
+                        via = link.get("via")
+                        if via and via not in pair:
+                            pairs[pair] = via
+                        else:
+                            pairs.setdefault(pair, None)
     links = []
-    for a, b in sorted(pairs):
-        link = {"from": a, "to": b, "kind": "key" if hosts[b]["enroll"] else "password"}
+    for (a, b), via in sorted(pairs.items()):
+        link = {"from": a, "to": b, "kind": "key" if hosts[b]["enroll"] else "password", **({"via": via} if via else {})}
         if not hosts[a]["enroll"]:
             link["skip"] = "password-source"
         links.append(link)
     live = [x for x in links if "skip" not in x]
     sources = sorted({x["from"] for x in live})
     visit = sorted(set(sources) | {x["to"] for x in live if x["kind"] == "key"})
-    return {"links": links, "excluded": dict(sorted(excluded.items())), "sources": sources, "visit": visit}
+    return {"links": links, "excluded": dict(sorted(excluded.items())), "sources": sources, "visit": visit,
+            "meshed": groups}
 
 
 def reach(g):
@@ -94,7 +107,10 @@ def digest(cfg, g=None):
     g = g or graph(cfg)
     h = cfg["hosts"]
     parts = [(x["from"], x["to"], x["kind"], h[x["to"]]["ip"], h[x["to"]]["ssh"]["user"], h[x["to"]]["ssh"]["port"],
-              h[x["from"]]["ip"]) for x in g["links"] if "skip" not in x]
+              h[x["from"]]["ip"]) + ((x["via"], h[x["via"]]["ip"]) if x.get("via") else ())
+             + ((cfg["mesh_dirs"][x["from"]],) if x["from"] in cfg.get("mesh_dirs", {}) else ())
+             + tuple(cfg.get("seen_as", {}).get(x.get("via") or x["from"], ()))
+             for x in g["links"] if "skip" not in x]
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
 
 
@@ -135,10 +151,13 @@ def ere(name):
 
 # Where things live: Linux keeps the Mesh's files in ~/.ssh/roster-mesh; ESXi's home and /etc are rebuilt at every
 # boot, so there they go on a datastore (kept), and authorized_keys is ESXi's own /etc/ssh/keys-USER/ (kept).
+# A Host's mesh_dir: ($MD) overrides where the files go, on either; roster then only touches them there if they're
+# its own (mine: a Mesh key's public half, or a config roster wrote).
 WHERE = r"""
+mine() { grep -qs ' roster-mesh:' "$1/id_ed25519.pub" || head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'; }
 if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then
-  ESXI=1; AK=/etc/ssh/keys-$U/authorized_keys; R=; P=
-  for v in /vmfs/volumes/*; do [ -d "$v/.roster-mesh" ] && { P=$(cd "$v" && pwd -P)/.roster-mesh; break; }; done
+  ESXI=1; AK=/etc/ssh/keys-$U/authorized_keys; R=; P=$MD
+  [ -z "$P" ] && for v in /vmfs/volumes/*; do [ -d "$v/.roster-mesh" ] && { P=$(cd "$v" && pwd -P)/.roster-mesh; break; }; done
   if [ -z "$P" ]; then
     for v in /vmfs/volumes/*; do
       [ -L "$v" ] || continue
@@ -148,16 +167,47 @@ if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then
   fi
   [ -n "$P" ] && R=$P/ROSTER.md
 else
-  ESXI=; AK=$HOME/.ssh/authorized_keys; P=$HOME/.ssh/roster-mesh; R=$HOME/ROSTER.md
+  ESXI=; AK=$HOME/.ssh/authorized_keys; P=${MD:-$HOME/.ssh/roster-mesh}; R=$HOME/ROSTER.md
 fi
 """
 
 PROBE = r"""
 umask 077
+SEEN=$(cd "$P" 2>/dev/null && pwd -P)
+stale() {  # stale DIR: an earlier Mesh directory, once per directory, never the one in use
+  r=$(cd "$1" 2>/dev/null && pwd -P) || return 0
+  case " $SEEN " in *" $r "*) return 0;; esac
+  SEEN="$SEEN $r"; echo "STALE $1"
+}
 echo "DIR $P"
 [ -n "$ESXI" ] && echo "PLATFORM esxi"
 K=$P/id_ed25519
-if [ -z "$P" ]; then echo "ERROR no datastore to keep the Mesh's key on (ESXi)"; echo ROSTER_DONE; exit 0; fi
+if [ -z "$P" ]; then
+  echo "ERROR no datastore to keep the Mesh's key on (ESXi): name a directory on one with mesh_dir:"; echo ROSTER_DONE; exit 0
+fi
+if [ -n "$MD" ]; then
+  bad() { echo "ERROR mesh_dir $MD$1"; echo ROSTER_DONE; exit 0; }
+  if [ -n "$ESXI" ]; then
+    case "$P" in /vmfs/volumes/?*/?*) ;; *) bad " isn't on a datastore (/vmfs/volumes/...): ESXi rebuilds the rest at every boot";; esac
+  fi
+  [ -d "${P%/*}" ] || bad ": ${P%/*} isn't there"
+  if [ -d "$P" ]; then [ -w "$P" ] || bad ": roster can't write in it"; else [ -w "${P%/*}" ] || bad ": roster can't make it in ${P%/*}"; fi
+  if ! mine "$P"; then
+    for f in id_ed25519 id_ed25519.pub known_hosts config ROSTER.md; do
+      [ -e "$P/$f" ] && bad " holds a $f that isn't roster's: give the Mesh a directory of its own"
+    done
+  fi
+  if [ -n "$ESXI" ]; then
+    for v in /vmfs/volumes/*/.roster-mesh; do [ -f "$v/id_ed25519" ] && stale "$v"; done
+  elif [ -f "$HOME/.ssh/roster-mesh/id_ed25519" ]; then stale "$HOME/.ssh/roster-mesh"; fi
+fi
+# the directory the Include after roster's mark in ~/.ssh/config names: an earlier mesh_dir: (or roster's own pick)
+O=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$HOME/.ssh/config" 2>/dev/null)
+case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config}; [ -f "$O/id_ed25519" ] && mine "$O" && stale "$O";; esac
+# a key in $P from before that earlier directory took over: roster stopped using it (and warned then), and uses
+# it again now; said (OLDKEY), never replaced unasked (--rotate does). Only while that directory is still there.
+case "$O" in /*) r=$(cd "$O" 2>/dev/null && pwd -P) && [ -f "$K" ] && [ "$r" != "$(cd "$P" && pwd -P)" ] && [ "$ROTATE" != 1 ] \
+  && echo "OLDKEY $P";; esac
 KG=$(command -v ssh-keygen 2>/dev/null || echo /usr/lib/vmware/openssh/bin/ssh-keygen)
 if [ "$ROTATE" = 1 ] && [ -f "$K" ]; then
   if [ "$MODE" = apply ]; then rm -f "$K" "$K.pub"; fi
@@ -173,6 +223,9 @@ if [ ! -f "$K" ] || [ ! -f "$K.pub" ]; then
   fi
 fi
 [ -f "$K.pub" ] && [ "$MODE" = apply -o "$ROTATE" != 1 ] && echo "PUB $(cat "$K.pub")"
+"""
+
+REACH = r"""
 reach() {
   if command -v nc >/dev/null 2>&1; then nc -z -w 5 "$2" "$3" >/dev/null 2>&1 && echo "REACH $1 ok" || echo "REACH $1 fail"
   elif command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then
@@ -218,7 +271,9 @@ else
   echo "CHANGE include"
   if [ "$MODE" = apply ]; then
     mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; t=$(mktemp)
-    { echo "$MARK"; echo "$INC"; grep -vxF -e "$MARK" "$C" 2>/dev/null; } > "$t"; replace "$C" < "$t"; rm -f "$t"
+    # the Include after an earlier mark (another directory) goes with it
+    { echo "$MARK"; echo "$INC"; awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C" 2>/dev/null; } > "$t"
+    replace "$C" < "$t"; rm -f "$t"
   fi
 fi
 if [ -n "$R" ] && [ -f "$R" ] && ! ours "$R"; then echo "CONFLICT $R"; fi
@@ -236,15 +291,31 @@ if [ -z "$ESXI" ] && [ -d "$HOME/.claude" ]; then
 fi
 """
 
+# A Host that's no longer a source: its Mesh files go, and its Include. The directory in use until now is the one
+# the Include after roster's mark names, which isn't $P when mesh_dir: changed in the same edit (T97): roster's own
+# pick goes, as $P would; a mesh_dir: is only warned about (STALE), as after a move.
 NOT_SOURCE = r"""
-if [ -n "$P" ]; then
-  for f in id_ed25519 id_ed25519.pub known_hosts config ROSTER.md; do drop "$P/$f" "remove $f"; done
-  [ "$MODE" = apply ] && rmdir "$P" 2>/dev/null
+clean() {  # clean DIR: roster's files in it; the public half goes last: until it does, mine knows the rest is roster's
+  for f in id_ed25519 known_hosts config ROSTER.md id_ed25519.pub; do drop "$1/$f" "remove $f"; done
+  [ "$MODE" = apply ] && rmdir "$1" 2>/dev/null
+}
+O=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$C" 2>/dev/null)
+case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config};; *) O=;; esac
+if [ -n "$O" ] && [ "$(cd "$O" 2>/dev/null && pwd -P)" = "$(cd "$P" 2>/dev/null && pwd -P)" ]; then O=; fi
+if [ -n "$P" ] && { [ -z "$MD" ] || mine "$P"; }; then clean "$P"; fi
+if [ -n "$O" ] && [ -f "$O/id_ed25519" ] && mine "$O"; then
+  OWN=
+  if [ -n "$ESXI" ]; then
+    case "$O" in /vmfs/volumes/*/.roster-mesh) v=${O#/vmfs/volumes/}; case "${v%/.roster-mesh}" in */*) ;; *) OWN=1;; esac;; esac
+  elif [ "$O" = "$HOME/.ssh/roster-mesh" ]; then OWN=1; fi
+  if [ -n "$OWN" ]; then clean "$O"; else echo "STALE $O"; fi
 fi
-if grep -qxF "$INC" "$C" 2>/dev/null; then
+if grep -qxF -e "$MARK" -e "$INC" "$C" 2>/dev/null; then
   echo "CHANGE remove include"
   if [ "$MODE" = apply ]; then
-    t=$(mktemp); grep -vxF -e "$MARK" -e "$INC" "$C" > "$t"; replace "$C" < "$t"; rm -f "$t"; [ -s "$C" ] || rm -f "$C"
+    t=$(mktemp)
+    awk -v m="$MARK" -v i="$INC" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i { next } { print }' "$C" > "$t"
+    replace "$C" < "$t"; rm -f "$t"; [ -s "$C" ] || rm -f "$C"
   fi
 fi
 [ -z "$ESXI" ] && ours "$R" && drop "$R" "remove ROSTER.md"
@@ -266,15 +337,27 @@ grep -vxFf "$H" "$W" | while read -r l; do echo "ADD ${l##*:}"; done
 S1=$(mktemp); S2=$(mktemp); sort "$H" > "$S1"; sort "$W" > "$S2"
 if [ "$MODE" = apply ] && ! cmp -s "$S1" "$S2"; then
   d=${AK%/*}; mkdir -p "$d"; [ -z "$ESXI" ] && chmod 700 "$d"
+  NEW=; [ -f "$AK" ] || NEW=1
   t=$(mktemp); grep -vE "$TAGS" "$AK" 2>/dev/null > "$t"; cat "$W" >> "$t"; replace "$AK" < "$t"; rm -f "$t"
+  # ESXi keeps a file under /etc across a reboot only with the sticky bit (its own keys file is 1600); cp -p keeps
+  # it on a rewrite, so only a file roster makes needs it
+  [ -n "$ESXI" ] && [ -n "$NEW" ] && [ -f "$AK" ] && chmod 1600 "$AK"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
 rm -f "$H" "$W" "$S1" "$S2"
 """
 
 
+def with_mesh_dirs(cfg):
+    """cfg's Hosts, each with its mesh_dir (None: roster's own pick) and seen_as (its other addresses), which
+    roster.yml keeps beside them."""
+    return {n: {**h, "mesh_dir": cfg.get("mesh_dirs", {}).get(n), "seen_as": cfg.get("seen_as", {}).get(n, [])}
+            for n, h in cfg["hosts"].items()}
+
+
 def preamble(h, mode):
     return (f"NAME={q(h['name'])}\nU={q(h['ssh']['user'])}\nMODE={mode}\nMARK={q(MARK)}\n"
+            f"MD={q(h.get('mesh_dir') or '')}\n"
             f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE)
 
 
@@ -284,9 +367,14 @@ def heredoc(text):
 
 def probe_script(h, peers, mode, rotate):
     """Phase 1 on a source: its key (made on apply), its public key, and whether it reaches each peer's ssh port."""
-    lines = [preamble(h, mode), f"ROTATE={1 if rotate else 0}\n", PROBE]
+    lines = [preamble(h, mode), f"ROTATE={1 if rotate else 0}\n", PROBE, REACH]
     lines += [f"reach {q(p['name'])} {q(p['ip'])} {p['ssh']['port']}\n" for p in peers]
     return "".join(lines) + "echo ROSTER_DONE\n"
+
+
+def hop_script(peers):
+    """Phase 1 on a jump Host that isn't a source: whether it reaches the ssh port of each peer it's a hop to."""
+    return REACH + "".join(f"reach {q(p['name'])} {q(p['ip'])} {p['ssh']['port']}\n" for p in peers) + "echo ROSTER_DONE\n"
 
 
 def write_script(h, mode, files, keys, keep):
@@ -328,23 +416,48 @@ grep -qE "$T" "$AK" 2>/dev/null && echo "ERROR a roster-mesh line is still there
 def on_host(h, script, timeout=STEP_TIMEOUT):
     """Run SCRIPT on H over the Box's ssh (its key, roster's ssh config). Returns (report lines, None) or
     (None, why it didn't finish). The script goes as bytes: text mode on Windows would hand sh "\r\n" line ends."""
+    with _ssh["lock"]:
+        if _ssh["closed"]:
+            return None, CLOSED
+        try:
+            p = subprocess.Popen(program_argv(["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={CONNECT_TIMEOUT}",
+                                               h["name"], "sh -s"]),
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except FileNotFoundError:
+            return None, "ssh isn't installed on this Box"
+        _ssh["live"].add(p)
     try:
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={CONNECT_TIMEOUT}",
-                                         h["name"], "sh -s"]),
-                           input=script.encode(), capture_output=True, timeout=time_left(timeout))
+        raw_out, raw_err = p.communicate(script.encode(), timeout=time_left(timeout))
     except subprocess.TimeoutExpired:
+        kill_tree(p)
+        p.communicate()
         return None, "didn't answer in time"
-    except FileNotFoundError:
-        return None, "ssh isn't installed on this Box"
-    stdout, stderr = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
+    finally:
+        with _ssh["lock"]:
+            _ssh["live"].discard(p)
+    stdout, stderr = raw_out.decode(errors="replace"), raw_err.decode(errors="replace")
     lines = stdout.splitlines()
+    if _ssh["closed"] and "ROSTER_DONE" not in lines:
+        return None, CLOSED
     err = next((x[6:] for x in lines if x.startswith("ERROR ")), None)
     if err:
         return None, err
     if "ROSTER_DONE" not in lines:
-        words = (stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-        return None, f"no answer: {words}" if r.returncode == 255 else f"stopped part way: {words}"
+        words = (stderr.strip().splitlines() or [f"exit {p.returncode}"])[-1]
+        return None, f"no answer: {words}" if p.returncode == 255 else f"stopped part way: {words}"
     return lines, None
+
+
+_ssh = {"lock": threading.Lock(), "live": set(), "closed": False}      # on_host's ssh runs now, for close()
+
+
+def close():
+    """serve is closing: end the ssh runs under way now (the Host's step is pending, CLOSED) and start no more.
+    Each file a step writes is replaced whole (WRITE's replace), so a run cut short leaves each as before or after."""
+    with _ssh["lock"]:
+        _ssh["closed"] = True
+        for p in _ssh["live"]:
+            kill_tree(p)            # Windows: an ssh run through a batch file (ssh.cmd) is cmd.exe and its child
 
 
 def report(lines, prefix):
@@ -357,12 +470,13 @@ def host_key_lines(t):
     return [f"{hk_name(t)} {kt} {k.get_base64()}" for kt, k in sorted(recorded_host_keys(t).items())]
 
 
-def ssh_config(cfg, src, peers, d):
+def ssh_config(cfg, src, peers, d, vias=None):
     out = [f"# Written by roster mesh for {src} from {cfg['path'].name}: the Hosts {src} reaches. Don't edit by hand.",
            ""]
     for p in peers:
         out += [f"Host {p['name']}", f"    HostName {p['ip']}", f"    User {p['ssh']['user']}",
-                f"    Port {p['ssh']['port']}", f"    UserKnownHostsFile {d}/known_hosts",
+                f"    Port {p['ssh']['port']}"] + ([f"    ProxyJump {vias[p['name']]}"] if p["name"] in (vias or {}) else [])
+        out += [f"    UserKnownHostsFile {d}/known_hosts",
                 "    StrictHostKeyChecking yes", f"    ConnectTimeout {CONNECT_TIMEOUT}"]
         if p["enroll"]:
             out += [f"    IdentityFile {d}/id_ed25519", "    IdentitiesOnly yes"]
@@ -372,7 +486,7 @@ def ssh_config(cfg, src, peers, d):
     return "\n".join(out)
 
 
-def roster_md(src, peers, d, esxi):
+def roster_md(src, peers, d, esxi, vias=None):
     ssh = f"ssh -F {d}/config" if esxi else "ssh"
     md = [f"<!-- roster-mesh: written by roster for {src}; roster mesh rewrites it, don't edit by hand -->",
           f"# Hosts {src} can reach", "",
@@ -383,37 +497,77 @@ def roster_md(src, peers, d, esxi):
           f"user to log in themselves (`{ssh} <name>` in their own terminal).",
           "- Never read, print or copy the Mesh's private key, and ask before changing anything on another Host.", "",
           "| name | address | access |", "|---|---|---|"]
-    md += [f"| {p['name']} | {p['ssh']['user']}@{p['ip']}:{p['ssh']['port']} | {'key' if p['enroll'] else 'password'} |"
+    vias = vias or {}
+    md += [f"| {p['name']} | {p['ssh']['user']}@{p['ip']}:{p['ssh']['port']}"
+           + (f" via {vias[p['name']]}" if p["name"] in vias else "") + f" | {'key' if p['enroll'] else 'password'} |"
            for p in peers]
     return "\n".join(md) + "\n"
 
 
-def key_line(src, pub):
+def key_line(src, pub, via=None):
+    """The peer's authorized_keys line for SRC: from= the addresses the peer sees, VIA's when it goes through one
+    (its ip: and its seen_as:)."""
     parts = pub.split()
-    return f"{OPTIONS.format(ip=src['ip'])} {parts[0]} {parts[1]} {TAG}:{src['name']}"
+    seen = via or src
+    return f"{OPTIONS.format(ip=','.join([seen['ip'], *seen.get('seen_as', [])]))} {parts[0]} {parts[1]} {TAG}:{src['name']}"
 
 
 # ---------------------------------------------------------------- plan and apply
 
-def run(cfg, apply=False, rotate=(), say=None):
-    """The Mesh as roster.yml asks for it, against what the Hosts hold now, one connection at a time.
-    Plan (apply=False) changes nothing anywhere; apply makes it so and remembers what it couldn't finish.
-    ROTATE: sources whose key is replaced. Returns the result serve and the CLI show (docs/serve-api.md, mesh.plan)."""
-    say = say or (lambda msg: None)
-    hosts, mode = cfg["hosts"], "apply" if apply else "check"
-    g = graph(cfg)
-    st = load_state()
+def check_rotate(g, rotate):
+    """Problem 110 when ROTATE names a Host that isn't a Mesh source of graph G."""
     unknown = [r for r in rotate if r not in g["sources"]]
     if unknown:
         from .errors import NOT_A_SOURCE, Problem
         raise Problem(NOT_A_SOURCE, f"{', '.join(unknown)} isn't a Mesh source, so it has no Mesh key to replace",
                       {"hosts": unknown}, fix="rotate a Host that reaches peers (roster mesh --dry-run lists them)")
+
+
+def not_now(stopped):
+    """Why a step that hasn't started won't: serve's deadline passed, or the run was stopped (None: go on)."""
+    return OUT_OF_TIME if past_deadline() else STOPPED if stopped() else None
+
+
+def visits_of(cfg, hosts):
+    """What a run visits: (graph, mesh.json, Hosts visited only to take away what's no longer asked for, the Links,
+    {jump Host: {peer: Host}} for the hops, jump Hosts that aren't sources, every Host of phase 2)."""
+    g = graph(cfg)
+    st = load_state()
     # Hosts roster wrote on before and still knows how to reach: visited too, so what's no longer asked for goes
     ex = sorted(n for n in set(st["members"]) | set(st["pending"]) if n not in g["visit"] and n in hosts
                 and hosts[n]["enroll"] and hosts[n]["reviewed"])
-    gone = sorted(n for n in set(st["members"]) if n not in hosts)
     links = [dict(x) for x in g["links"]]
-    out = {"host": {}, "probe": {}}
+    live = {(x["from"], x["to"]) for x in links if "skip" not in x}
+    hops = {}                                   # jump Host: the peers it's tested against (a hop to them)
+    for x in links:
+        if x.get("via") and "skip" not in x and (x["from"], x["via"]) in live:
+            hops.setdefault(x["via"], {})[x["to"]] = hosts[x["to"]]
+    hop_only = [n for n in sorted(set(hops) - set(g["sources"])) if hosts[n]["enroll"]]
+    visits = sorted(set(g["visit"]) | set(ex))
+    return g, st, ex, links, hops, hop_only, visits
+
+
+def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visits=None):
+    """The Mesh as roster.yml asks for it, against what the Hosts hold now, one connection at a time.
+    Plan (apply=False) changes nothing anywhere; apply makes it so and remembers what it couldn't finish.
+    ROTATE: sources whose key is replaced. PROGRESS(done, total, host) is told before each Host's step and once at
+    the end; STOPPED() true leaves the Hosts not yet visited pending, as serve's deadline does. VISITS: what
+    visits_of(cfg, with_mesh_dirs(cfg)) said just before, so serve works out a big Mesh once for a job.
+    Returns the result serve and the CLI show (docs/serve-api.md, mesh.plan)."""
+    say = say or (lambda msg: None)
+    progress = progress or (lambda done, total, host: None)
+    stopped = stopped or (lambda: False)
+    hosts, mode = with_mesh_dirs(cfg), "apply" if apply else "check"
+    g, st, ex, links, hops, hop_only, visits = visits or visits_of(cfg, hosts)
+    check_rotate(g, rotate)
+    gone = sorted(n for n in set(st["members"]) if n not in hosts)
+    out = {"host": {}, "probe": {}, "hop": {}}
+    live = {(x["from"], x["to"]) for x in links if "skip" not in x}
+    steps = {"done": 0, "total": len(g["sources"]) + len(hop_only) + len(visits)}
+
+    def step(name):
+        progress(steps["done"], steps["total"], name)
+        steps["done"] += 1
 
     def finish(name, changes, error=None):
         out["host"][name] = {"host": name, "changes": changes,
@@ -424,8 +578,10 @@ def run(cfg, apply=False, rotate=(), say=None):
     # phase 1: each source's key, and whether it reaches its peers
     for name in g["sources"]:
         peers = [hosts[x["to"]] for x in links if x["from"] == name and "skip" not in x]
-        if past_deadline():
-            out["probe"][name] = {"error": OUT_OF_TIME}
+        peers += [p for n, p in sorted(hops.get(name, {}).items()) if p not in peers]
+        step(name)
+        if why := not_now(stopped):
+            out["probe"][name] = {"error": why}
             continue
         say(f"  probe  {name}")
         lines, err = on_host(hosts[name], probe_script(hosts[name], peers, mode, name in rotate))
@@ -436,11 +592,28 @@ def run(cfg, apply=False, rotate=(), say=None):
         out["probe"][name] = {"dir": report(lines, "DIR ")[0], "esxi": "PLATFORM esxi" in lines, "pub": pub[0] if pub else None,
                               "key": report(lines, "KEY "),
                               "reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
+        stale(out, name, lines)
+        for d in report(lines, "OLDKEY "):
+            out.setdefault("warnings", []).append(
+                f"{name}: {d} still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: "
+                f"run roster mesh --rotate {name} to replace it")
+
+    # jump Hosts that aren't sources: whether they reach the peers they're a hop to
+    for name in hop_only:                       # a password Host isn't one: the Box can't run anything there
+        step(name)
+        if why := not_now(stopped):
+            out["hop"][name] = {"error": why}
+            continue
+        say(f"  probe  {name} (a hop)")
+        lines, err = on_host(hosts[name], hop_script(list(hops[name].values())))
+        out["hop"][name] = {"error": err} if err else {"reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
 
     # each link's status, from what the probe found
     for x in links:
         p = out["probe"].get(x["from"], {})
         t = hosts[x["to"]]
+        via = x.get("via")
+        hop = (out["probe"].get(via) or out["hop"].get(via) or {}) if via else {}
         if "skip" in x:
             x["status"], x["why"] = "skipped", f"{x['from']} is a password Host: roster doesn't write on it"
         elif "error" in p:
@@ -448,6 +621,28 @@ def run(cfg, apply=False, rotate=(), say=None):
         elif not recorded_host_keys(t):
             x["status"] = "no-host-key"
             x["why"] = f"no recorded host key for {x['to']} on this Box (roster setup --only {x['to']})"
+        elif via and (x["from"], via) not in live:
+            x["status"] = "no-via"
+            x["why"] = (f"{x['from']} has no Link to {via}, its hop to {x['to']} "
+                        f"(add {{ from: {x['from']}, to: {via} }})")
+        elif via and not recorded_host_keys(hosts[via]):      # its Link to VIA isn't written: no Host VIA to jump through
+            x["status"] = "no-host-key"
+            x["why"] = (f"no recorded host key for {via} ({x['from']}'s hop to {x['to']}) on this Box "
+                        f"(roster setup --only {via})")
+        elif via and "error" in hop:
+            x["status"], x["why"] = "pending", f"{via}: {hop['error']}"
+        elif via and p["reach"].get(via) == "fail":
+            v = hosts[via]
+            x["status"] = "unreachable"
+            x["why"] = f"{x['from']} can't reach {v['ip']}:{v['ssh']['port']} (its hop to {x['to']})"
+        elif via and hop.get("reach", {}).get(x["to"]) == "fail":
+            x["status"] = "unreachable"
+            x["why"] = f"{via} can't reach {t['ip']}:{t['ssh']['port']} ({x['from']}'s hop to {x['to']})"
+        elif via:
+            tested = p["reach"].get(via) == "ok" and hop.get("reach", {}).get(x["to"]) == "ok"
+            x["status"] = "ok" if tested else "untested"
+            if not tested:
+                x["why"] = f"the hop through {via} couldn't be tested (no nc or bash, or a password Host)"
         elif p["reach"].get(x["to"]) == "fail":
             x["status"], x["why"] = "unreachable", f"{x['from']} can't reach {t['ip']}:{t['ssh']['port']}"
         else:
@@ -457,21 +652,26 @@ def run(cfg, apply=False, rotate=(), say=None):
     written = [x for x in links if x["status"] in ("ok", "untested")]
 
     # phase 2: every Host roster visits, as a source and as a peer
-    for name in sorted(set(g["visit"]) | set(ex)):
+    for name in visits:
         h = hosts[name]
         p = out["probe"].get(name)
-        if p is not None and "error" in p:
-            finish(name, [], p["error"])
+        step(name)
+        bad = (p or {}).get("error") or out["hop"].get(name, {}).get("error")
+        if bad:
+            finish(name, [], bad)
             continue
-        if past_deadline():
-            finish(name, [], OUT_OF_TIME)
+        if why := not_now(stopped):
+            finish(name, [], why)
             continue
         files = None
         if name in g["sources"]:
-            peers = [hosts[x["to"]] for x in written if x["from"] == name]
+            mine = [x for x in written if x["from"] == name]
+            peers = [hosts[x["to"]] for x in mine]
+            vias = {x["to"]: x["via"] for x in mine if x.get("via")}
             d = p["dir"]
             files = {"known_hosts": "".join(line + "\n" for t in peers for line in host_key_lines(t)),
-                     "config": ssh_config(cfg, name, peers, d), "ROSTER.md": roster_md(name, peers, d, p["esxi"])}
+                     "config": ssh_config(cfg, name, peers, d, vias),
+                     "ROSTER.md": roster_md(name, peers, d, p["esxi"], vias)}
         keys, keep = [], set()
         for x in links:
             if x["to"] != name or x["kind"] != "key" or "skip" in x:
@@ -480,7 +680,7 @@ def run(cfg, apply=False, rotate=(), say=None):
             if x["status"] == "pending":
                 keep.add(x["from"])
             elif x["status"] in ("ok", "untested"):
-                keys.append(key_line(hosts[x["from"]], src["pub"]) if src.get("pub")
+                keys.append(key_line(hosts[x["from"]], src["pub"], hosts.get(x.get("via"))) if src.get("pub")
                             else f"new-key {x['from']} {TAG}:{x['from']}")
         say(f"  {'write' if apply else 'check'}  {name}")
         lines, err = on_host(h, write_script(h, mode, files, sorted(keys, key=lambda k: k.rsplit(":", 1)[1]), keep))
@@ -499,15 +699,25 @@ def run(cfg, apply=False, rotate=(), say=None):
                    .replace("remove include", "remove the Include from ~/.ssh/config")
                    .replace("remove claude", "remove the import from ~/.claude/CLAUDE.md") for c in changes]
         finish(name, changes)
+        stale(out, name, lines)                 # a source that left with its mesh_dir: (NOT_SOURCE)
         for path in report(lines, "CONFLICT "):
             out.setdefault("warnings", []).append(
                 f"{name}: {path} isn't roster's, so roster left it alone (move it away and apply again)")
 
+    progress(steps["total"], steps["total"], None)
     result = summary(cfg, g, links, out, apply, gone)
     if apply:
         record(cfg, g, st, result, ex)
     result["cut_pending"] = load_state()["cut"] if apply else st["cut"]
     return result
+
+
+def stale(out, name, lines):
+    """A warning for each earlier Mesh directory NAME's script found (STALE): roster never removes one."""
+    for old in report(lines, "STALE "):
+        out.setdefault("warnings", []).append(
+            f"{name}: {old} holds an earlier Mesh key that roster no longer uses (mesh_dir: changed), so delete it "
+            "by hand")
 
 
 def key_changes(probe, apply, rotate):
@@ -548,14 +758,62 @@ def record(cfg, g, st, result, ex):
 
 # ---------------------------------------------------------------- status and drift
 
-def status(cfg):
+BRIEF_LINKS = 1000          # Links a brief answer lists at most
+BRIEF_CHANGES = 10          # changes per Host a brief answer lists at most
+WORKING = (None, "ok", "untested")      # a Link that works (None: mesh.status's, not tested yet)
+
+
+def no_via(links):
+    """Marks the Links whose source has no Link to their `via` Host as `no-via`: that needs no connection."""
+    live = {(x["from"], x["to"]) for x in links if "skip" not in x}
+    for x in links:
+        via = x.get("via")
+        if via and "status" not in x and "skip" not in x and (x["from"], via) not in live:
+            x["status"] = "no-via"
+            x["why"] = f"{x['from']} has no Link to {via}, its hop to {x['to']} (add {{ from: {x['from']}, to: {via} }})"
+    return links
+
+
+def brief(r):
+    """A mesh.status or Mesh result (brief: true, API 17) small enough for a Mesh of hundreds of Hosts, where every
+    pair is a Link: `links` keeps only those worth a look (a hop, or a status other than working or skipped), at most
+    BRIEF_LINKS (`links_more` counts the rest); `link_count`, `link_statuses` ({status: n}) and `reached` ({host: how
+    many Hosts reach it}) say the rest, and each Host's `changes` are cut to BRIEF_CHANGES (`more` counts the rest)."""
+    links = no_via([dict(x) for x in r["links"]])
+    keep = [x for x in links if x.get("via") or x.get("status") not in (*WORKING, "skipped")]
+    works = [x for x in links if "skip" not in x and x.get("status") in WORKING]
+    out = {**r, "links": keep[:BRIEF_LINKS], "links_more": max(0, len(keep) - BRIEF_LINKS), "link_count": len(links)}
+    out["link_statuses"], out["reached"], out["reach"] = {}, {}, {s: 0 for s in r.get("reach", {})}
+    for x in links:
+        k = x.get("status") or ("skipped" if "skip" in x else "asked")
+        out["link_statuses"][k] = out["link_statuses"].get(k, 0) + 1
+    for x in works:
+        out["reached"][x["to"]] = out["reached"].get(x["to"], 0) + 1
+        out["reach"][x["from"]] = out["reach"].get(x["from"], 0) + 1
+    if "hosts" in r:
+        out["hosts"] = [{**h, "changes": h["changes"][:BRIEF_CHANGES],
+                         **({"more": len(h["changes"]) - BRIEF_CHANGES} if len(h["changes"]) > BRIEF_CHANGES else {})}
+                        for h in r["hosts"]]
+    return out
+
+
+def status(cfg, grouped=False):
     """No connections: who reaches whom as roster.yml says, what's unfinished, and whether roster.yml changed the
-    Mesh since the last complete apply on this Box."""
+    Mesh since the last complete apply on this Box. grouped: each meshed group once, as meshed: {group: [hosts]},
+    and links only those it doesn't already cover (a pair in one meshed group without a via: hop), so a map
+    of 2,000 meshed Hosts is 2,000 names and not 98,000 Links."""
     g = graph(cfg)
     st = load_state()
-    return {"links": g["links"], "excluded": g["excluded"], "reach": reach(g), "members": g["visit"],
-            "pending": st["pending"], "cut_pending": st["cut"],
-            "out_of_date": bool(g["links"] or st["members"]) and st["applied"] != digest(cfg, g)}
+    links = g["links"]
+    out = {"links": links, "excluded": g["excluded"], "reach": reach(g), "members": g["visit"],
+           "pending": st["pending"], "cut_pending": st["cut"],
+           "out_of_date": bool(g["links"] or st["members"]) and st["applied"] != digest(cfg, g)}
+    if grouped:
+        group_of = {n: grp for grp, names in g["meshed"].items() for n in names}
+        out["links"] = [x for x in links if x.get("via") or group_of.get(x["from"]) is None
+                        or group_of.get(x["from"]) != group_of.get(x["to"])]
+        out["meshed"] = g["meshed"]
+    return out
 
 
 def drift(cfg):
@@ -568,33 +826,47 @@ def drift(cfg):
 
 # ---------------------------------------------------------------- cut
 
-def cut(cfg, name, workers=16):
-    """HOST out of the Mesh now, in parallel: its key off every peer, every peer's key off HOST, HOST's own Mesh
-    files gone. The Box's own key (roster-managed) is never touched. Returns {host, confirmed, pending: {host: why}}."""
-    hosts = cfg["hosts"]
+def cut_hosts(cfg, name):
+    """The Hosts a cut of NAME visits: its peers, then NAME itself (when roster can log in to it)."""
+    hosts = with_mesh_dirs(cfg)
     h = hosts[name]
     g = graph(cfg)
     st = load_state()
     peers = sorted(n for n in (set(g["visit"]) | set(st["members"]) | set(st["cut"].get(name, [])))
                    if n in hosts and n != name and hosts[n]["enroll"] and hosts[n]["reviewed"])
-    todo = [(n, False) for n in peers] + ([(name, True)] if h["enroll"] and h["reviewed"] else [])
+    return [(n, False) for n in peers] + ([(name, True)] if h["enroll"] and h["reviewed"] else [])
+
+
+def cut(cfg, name, workers=16, progress=None, stopped=None):
+    """HOST out of the Mesh now, in parallel: its key off every peer, every peer's key off HOST, HOST's own Mesh
+    files gone. The Box's own key (roster-managed) is never touched. Returns {host, confirmed, pending: {host: why},
+    warnings}: WARNINGS name an earlier mesh_dir: HOST still holds, which roster never removes.
+    PROGRESS(done, total, host) is told as each Host answers; STOPPED() true leaves the Hosts not started pending."""
+    progress = progress or (lambda done, total, host: None)
+    stopped = stopped or (lambda: False)
+    hosts = with_mesh_dirs(cfg)
+    todo = cut_hosts(cfg, name)
     at = current_deadline()                     # serve's, for the worker threads too
 
     def one(item):
         n, own = item
         with deadline_at(at):
-            if past_deadline():
-                return n, OUT_OF_TIME
-            _, err = on_host(hosts[n], cut_script(hosts[n], name, own), timeout=CUT_TIMEOUT)
-        return n, err
+            if why := not_now(stopped):
+                return n, None, why
+            lines, err = on_host(hosts[n], cut_script(hosts[n], name, own), timeout=CUT_TIMEOUT)
+        return n, lines, err
 
-    confirmed, pending = [], {}
+    confirmed, pending, out = [], {}, {}
+    progress(0, len(todo), None)
     with cf.ThreadPoolExecutor(max(1, min(workers, len(todo)))) as ex:
-        for n, err in ex.map(one, todo):
+        for i, (n, lines, err) in enumerate(ex.map(one, todo), 1):
             if err:
                 pending[n] = err
             else:
                 confirmed.append(n)
+            if lines and n == name:
+                stale(out, n, lines)            # HOST's own side: an earlier mesh_dir: it leaves alone
+            progress(i, len(todo), n)
     st = load_state()
     if pending:
         st["cut"][name] = sorted(pending)
@@ -604,7 +876,7 @@ def cut(cfg, name, workers=16):
     st["members"] = sorted((set(st["members"]) - {name}) | set(pending))
     st["applied"] = None
     save_state(st)
-    return {"host": name, "confirmed": sorted(confirmed), "pending": pending}
+    return {"host": name, "confirmed": sorted(confirmed), "pending": pending, "warnings": out.get("warnings", [])}
 
 
 def write_cut(cfg, name):

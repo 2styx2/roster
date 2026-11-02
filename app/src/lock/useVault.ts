@@ -116,7 +116,8 @@ export function useVault(
   const attempts = useRef(0);
 
   /** After an unlock failed without a clear answer (a timeout, a lost serve), serve may still
-   * have unlocked, or may do so later. serve answers in order, so `vault.status` comes back after
+   * have unlocked, or may do so later. `vault.status` waits for the vault's lock, which the
+   * unlock holds alone (serve API 20; before, serve answered in order), so it comes back after
    * that unlock is done; if it says unlocked while the app is locked, lock it. */
   const lockIfServeUnlocked = useCallback(
     async (attempt: number) => {

@@ -21,8 +21,8 @@ PAGE = Path(__file__).with_name("roster.1")
 REFERENCE = Path(__file__).resolve().parents[2] / "docs" / "cli-reference.md"    # in a clone only
 
 # cli-reference.md's sections that become the page's, in order: (heading in the doc, man section)
-SECTIONS = [("Files", "FILES"), ("Environment", "ENVIRONMENT"), ("Exit status", "EXIT STATUS"),
-            ("Examples", "EXAMPLES")]
+SECTIONS = [("Machine-readable output", "JSON OUTPUT"), ("Files", "FILES"), ("Environment", "ENVIRONMENT"),
+            ("Exit status", "EXIT STATUS"), ("Examples", "EXAMPLES")]
 
 
 def install_prefix():

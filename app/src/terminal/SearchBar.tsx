@@ -1,6 +1,6 @@
 // Find in the scrollback: Enter finds the next match up the scrollback, Shift+Enter the one below,
 // Esc closes and goes back to the shell.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
 
 export interface SearchResults {
@@ -14,6 +14,8 @@ export interface SearchBarProps {
   /** `incremental`: the query changed, so keep the current match if it still fits. */
   onFind(query: string, direction: "next" | "previous", incremental: boolean): void;
   onClose(): void;
+  /** What it opens with, found at once (a Plugin's line, ticket 78). */
+  initial?: string;
 }
 
 function resultText(query: string, r: SearchResults | null): string {
@@ -22,8 +24,13 @@ function resultText(query: string, r: SearchResults | null): string {
   return r.index < 0 ? `${r.count}+ matches` : `${r.index + 1} of ${r.count}`;
 }
 
-export function SearchBar({ results, onFind, onClose }: SearchBarProps) {
-  const [query, setQuery] = useState("");
+export function SearchBar({ results, onFind, onClose, initial = "" }: SearchBarProps) {
+  const [query, setQuery] = useState(initial);
+  useEffect(() => {
+    if (initial) onFind(initial, "previous", true);
+    // Once, as it opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="term-search" role="search">
       <input

@@ -73,3 +73,19 @@ def test_find_config_order(isolated, monkeypatch):
     assert find_config(None) == isolated["work"] / "roster.yml"
     monkeypatch.setenv("ROSTER_CONFIG", "/somewhere/else.yml")
     assert find_config(None) == Path("/somewhere/else.yml")
+
+
+# ---------------------------------------------------------------- shell_hooks (ticket 121)
+
+def test_shell_hooks_is_passed_through_as_set_on_a_host_group_or_defaults(write_config):
+    cfg = load_config(write_config(
+        "defaults: {user: u, shell_hooks: true}\n"
+        "groups:\n  lab: {hosts: {a1: 10.0.0.1, a2: {ip: 10.0.0.2, shell_hooks: false}}}\n"
+        "  net: {shell_hooks: false, hosts: {sw1: 10.0.0.3}}\n"))
+    assert [cfg["hosts"][h]["shell_hooks"] for h in ("a1", "a2", "sw1")] == [True, False, False]
+
+
+def test_shell_hooks_must_be_true_or_false(write_config):
+    with pytest.raises(SystemExit) as e:
+        load_config(write_config("groups:\n  lab: {shell_hooks: yes-please, user: u, hosts: {a1: 10.0.0.1}}\n"))
+    assert "shell_hooks: must be true or false" in str(e.value)

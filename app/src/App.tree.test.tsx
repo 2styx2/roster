@@ -175,6 +175,13 @@ describe("Folders", () => {
     expect(within(folders()).queryByRole("treeitem", { name: /^Daily/ })).toBeNull();
   });
 
+  it("still folds a Folder by its old id (:fold folder:NAME)", async () => {
+    const { user } = await ready();
+    await user.keyboard(`${LEADER}:folder new Lab{Enter}`);
+    await user.keyboard(`${LEADER}:fold folder:Lab{Enter}`);
+    expect(within(folders()).getByRole("treeitem", { name: /^Lab/ })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("adds the Host under the cursor with ␣ a, and removes it with ␣ A", async () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}ggjjjj`);
@@ -185,7 +192,7 @@ describe("Folders", () => {
     const inFolder = within(folders()).getByRole("treeitem", { name: /^linux-1-000/ });
     expect(inFolder).toHaveTextContent("10.19.1.2");
     await user.keyboard(`${LEADER}ggjjj`);
-    expect(cursorRow()).toHaveAttribute("data-row", "folder:Lab/linux-1-000");
+    expect(cursorRow()).toHaveAttribute("data-row", "folders:Lab/linux-1-000");
     await user.keyboard("A");
     expect(within(folders()).queryByRole("treeitem", { name: /^linux-1-000/ })).toBeNull();
     expect(within(folders()).getByRole("treeitem", { name: /^Lab/ })).toHaveTextContent("0");
@@ -197,11 +204,12 @@ describe("Folders", () => {
     fireEvent.dragStart(rowOf(inv("esxi-2-001")));
     fireEvent.dragOver(within(folders()).getByRole("treeitem", { name: /^Lab/ }));
     fireEvent.drop(within(folders()).getByRole("treeitem", { name: /^Lab/ }));
-    const inFolder = within(folders()).getByRole("treeitem", { name: /^esxi-2-001/ });
+    // The Folders Plugin answers a drop (ticket 61): it comes a moment later.
+    const inFolder = await within(folders()).findByRole("treeitem", { name: /^esxi-2-001/ });
     fireEvent.dragStart(rowOf(inFolder));
     fireEvent.dragOver(inv("linux-1-000"));
     fireEvent.drop(inv("linux-1-000"));
-    expect(within(folders()).queryByRole("treeitem", { name: /^esxi-2-001/ })).toBeNull();
+    await vi.waitFor(() => expect(within(folders()).queryByRole("treeitem", { name: /^esxi-2-001/ })).toBeNull());
     expect(inv("esxi-2-001")).toBeInTheDocument();
   });
 
@@ -215,7 +223,7 @@ describe("Folders", () => {
     await within(output()).findByText(/Connected to linux-1-000/);
   });
 
-  it("keeps Folders in State across a restart, and never sends them to roster serve", async () => {
+  it("keeps Folders in the Folders Plugin's own data across a restart, never in the State or roster serve", async () => {
     const platform = memoryPlatform({ state: { version: 1, recentHosts: [], somethingNewer: { keep: true } } });
     const calls: unknown[] = [];
     const fake = fakeBackend({ hosts });
@@ -224,7 +232,8 @@ describe("Folders", () => {
         const value = Reflect.get(target, prop, receiver);
         return typeof value === "function"
           ? (...args: unknown[]) => {
-              calls.push([prop, ...args.filter((a) => typeof a !== "object" || a === null || !("output" in a))]);
+              // The Plugin host is the core's, not roster serve's: Folders' own calls go there.
+              if (!String(prop).startsWith("plugin")) calls.push([prop, ...args.filter((a) => typeof a !== "object" || a === null || !("output" in a))]);
               return value.apply(target, args);
             }
           : value;
@@ -236,17 +245,17 @@ describe("Folders", () => {
     await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     await user.keyboard(`${LEADER}:folder add linux-1-000 Secret Lab{Enter}`);
-    await user.click(within(folders()).getByRole("treeitem", { name: /^linux-1-000/ }));
+    await user.click(await within(folders()).findByRole("treeitem", { name: /^linux-1-000/ }));
     await within(output()).findByText(/Connected to linux-1-000/);
-    await vi.waitFor(() =>
-      expect(platform.saved()).toMatchObject({
-        folders: [{ name: "Secret Lab", hosts: ["linux-1-000"] }],
-        somethingNewer: { keep: true },
-      }),
-    );
+    expect(fake.pluginFiles("folders").get("folders.json")).toMatch(/Secret Lab/);
+    await vi.waitFor(() => expect(platform.saved()).toMatchObject({ somethingNewer: { keep: true } }));
+    expect(JSON.stringify(platform.saved())).not.toMatch(/Secret Lab/);
     expect(JSON.stringify(calls)).not.toMatch(/Secret Lab/);
     view.unmount();
-    await ready(platform);
-    expect(within(folders()).getByRole("treeitem", { name: /^Secret Lab/ })).toBeInTheDocument();
+    render(<App backend={backend} platform={platform} terminalView={StubTerminal} />);
+    await screen.findByText(/12 hosts/i);
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    expect(await within(folders()).findByRole("treeitem", { name: /^Secret Lab/ })).toBeInTheDocument();
   });
+
 });

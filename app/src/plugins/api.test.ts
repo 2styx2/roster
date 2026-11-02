@@ -35,6 +35,7 @@ describe("the Plugin API reference and ops.ts agree", () => {
         title: "T",
         order: 1,
         empty: "none",
+        actions: [{ label: "Dismiss all", icon: "close", run: { handler: 3 } }],
         rows: [
           typed("Row", {
             id: "r",
@@ -71,14 +72,102 @@ describe("the Plugin API reference and ops.ts agree", () => {
         lessons: [typed("Lesson", { title: "L", text: "t", steps: [typed("Step", { id: "a", text: "t", on: { event: "command", id: "finder" } })] })],
       }),
     },
-    { op: "float", spec: typed("Float", { title: "F", lines: ["a"] }) },
+    {
+      op: "float",
+      spec: typed("Float", {
+        title: "F",
+        lines: ["a"],
+        actions: [typed("FloatAction", { label: "Go", key: "g", run: { handler: 4 } })],
+        links: [typed("Link", { label: "Runbook", url: "https://wiki.example.com/disk" })],
+      }),
+    },
+    {
+      op: "confirm",
+      spec: typed("Confirm", {
+        title: "Cut esx-02?",
+        text: "t",
+        facts: [],
+        action: "Cut",
+        danger: true,
+        typed: "esx-02",
+        run: { handler: 5 },
+        cancel: { handler: 6 },
+      }),
+    },
+    { op: "progress", id: "p", spec: typed("Progress", { title: "Scanning", text: "t", done: 1, total: 4, cancel: { handler: 7 } }) },
+    { op: "toolbar", id: "t", spec: typed("ToolbarControl", { label: "Scan a network", text: "Scan", icon: "map", run: "view scan" }) },
+    {
+      op: "view",
+      id: "v",
+      spec: typed("View", {
+        title: "V",
+        place: "full",
+        actions: [typed("HeadAction", { label: "Plan", icon: "plan", key: "P", run: { handler: 9 } })],
+        text: "t",
+        facts: [typed("Fact", { label: "l", value: "v", data: true })],
+        table: typed("Table", {
+          columns: [typed("Column", { id: "a", label: "A", kind: "number", width: 6 })],
+          rows: [typed("TableRow", { id: "r", cells: { a: 1 }, host: "esx-02", tone: "muted" })],
+          sort: "a",
+          desc: true,
+          empty: "none",
+          open: { handler: 1 },
+          actions: [typed("TableAction", { label: "K", key: "x", icon: "add", when: { state: ["up"] }, run: { handler: 2 } })],
+        }),
+      }),
+    },
+    {
+      op: "view_update",
+      id: "v",
+      changes: typed("ViewUpdate", {
+        title: "V",
+        text: "t",
+        facts: [],
+        rows: [{ id: "r", cells: { a: 2 } }],
+        remove: ["q"],
+        columns: [{ id: "a", label: "A" }],
+        sort: "a",
+        desc: false,
+        actions: [{ label: "K", key: "x", run: { handler: 8 } }],
+      }),
+    },
+    {
+      op: "view",
+      id: "g",
+      spec: typed("View", {
+        title: "G",
+        place: "full",
+        graph: typed("Graph", {
+          clusters: [typed("GraphCluster", { id: "lab", title: "Lab", mesh: true, collapsed: false })],
+          nodes: [
+            typed("GraphNode", { id: "esx-02", label: "esx-02", kind: "esxi", shape: "ring", state: "live", mark: "warn", note: "out of date", cluster: "lab", host: "esx-02", detail: "10.0.0.5" }),
+          ],
+          edges: [typed("GraphEdge", { id: "e", from: "esx-02", to: "lab", dir: "both", style: "dashed", tone: "warn", cut: true, label: "Link" })],
+          reach: "direct",
+          filter: typed("GraphFilter", { clusters: ["lab"], kinds: ["esxi"], states: ["live"] }),
+          open: { handler: 1 },
+          actions: [typed("NodeAction", { label: "Check", key: "c", icon: "info", run: { handler: 2 } })],
+        }),
+      }),
+    },
+    {
+      op: "view_update",
+      id: "g",
+      changes: typed("ViewUpdate", { nodes: [{ id: "a" }], edges: [{ from: "a", to: "b" }], clusters: [{ id: "c" }], remove_edges: ["a>b"], filter: {} }),
+    },
+    {
+      op: "details",
+      id: "d",
+      host: "esx-02",
+      spec: typed("DetailsSection", { title: "D", order: 1, actions: [{ label: "Cut", icon: "cut", run: { handler: 10 } }], text: "t", facts: [], table: { columns: [{ id: "a", label: "A" }] } }),
+    },
   ];
 
   it("ops.ts takes every op with every documented field", () => {
     for (const op of ops) expect(parseOp(op)).not.toHaveProperty("invalid");
   });
 
-  it.each(["Section", "Row", "RowAction", "StatusSegment", "Finder", "FinderItem", "HelpPage", "HealthSection", "HealthCheck", "Tutorial", "Lesson", "Step", "Float"])(
+  it.each(["Section", "Row", "RowAction", "HeadAction", "StatusSegment", "Finder", "FinderItem", "HelpPage", "HealthSection", "HealthCheck", "Tutorial", "Lesson", "Step", "Float", "View", "ViewUpdate", "DetailsSection", "Fact", "Table", "Column", "TableRow", "TableAction", "FloatAction", "Link", "Confirm", "Progress", "ToolbarControl", "Graph", "GraphNode", "GraphEdge", "GraphCluster", "GraphFilter", "NodeAction"])(
     "%s: ops.ts reads exactly the fields the reference lists",
     (type) => {
       for (const op of ops) parseOp(op);
@@ -94,6 +183,11 @@ describe("the Plugin API reference and ops.ts agree", () => {
       const op = { op: "section", id: "s", spec: { rows: [{ label: "x", actions: [{ label: "a", icon, run: "x" }] }] } };
       expect(parseOp(op), icon).not.toHaveProperty("invalid");
     }
+    for (const icon of literals(TYPES.ToolbarIcon?.alias)) {
+      expect(parseOp({ op: "toolbar", id: "t", spec: { label: "x", icon, run: "x" } }), icon).not.toHaveProperty("invalid");
+    }
+    const { PLUGIN_TOOLBAR_ICONS } = await import("./ops");
+    expect(literals(TYPES.ToolbarIcon?.alias)).toEqual([...PLUGIN_TOOLBAR_ICONS]);
     const bad = { op: "section", id: "s", spec: { rows: [{ label: "x", actions: [{ label: "a", icon: "nope", run: "x" }] }] } };
     const message = (parseOp(bad) as { invalid: string }).invalid;
     expect(message.split("icon must be one of ")[1]?.split(", ")).toEqual(literals(TYPES.RowIcon?.alias));

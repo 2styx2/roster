@@ -49,6 +49,9 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
   const selectedItem = shown[current];
   useEffect(() => source.move?.(selectedItem), [source, selectedItem]);
   useEffect(() => () => source.close?.(), [source]);
+  // Once per opening (the Finder is keyed by the source's id), not each time it registers again.
+  const opened = useRef(source.open);
+  useEffect(() => opened.current?.(), []);
 
   useLayoutEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-index="${current}"]`)?.scrollIntoView?.({ block: "nearest" });

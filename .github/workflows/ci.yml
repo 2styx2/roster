@@ -3,8 +3,11 @@
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
 #   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest; rustfmt, clippy and
 #        cargo test on Linux (with the WebKitGTK/D-Bus dev packages, so clippy covers the Tauri
-#        crate too); release builds of the Windows and Linux apps; lua-language-server over the
-#        example Plugins, against the Plugin API's generated stubs.
+#        crate too); roster-core's cargo test on Windows; the JS and CSS size budget; release
+#        builds of the Windows and Linux apps; lua-language-server over the example and first-party
+#        Plugins, against the Plugin API's generated stubs, and over init.lua's option reference
+#        examples and the example init.lua files, against init.lua's. The first-party Plugins' own tests
+#        (plugins/README.md) run in cargo test and npm run check.
 name: CI
 
 on:
@@ -73,8 +76,9 @@ jobs:
           path: report.xml
           retention-days: 7
 
-  # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH and named pipes. Tests that
-  # run a POSIX shell script on the machine (the remote half of a command, stand-in Hosts) skip themselves there.
+  # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
+  # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
+  # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
   cli-test-windows:
     name: CLI tests (Windows)
     runs-on: windows-latest
@@ -134,9 +138,12 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - run: npm run check
+      # The JS and CSS size budget (docs/app/performance.md, "Bundle size"): a build takes a second or two.
+      - run: npx vite build
+      - run: python3 ../scripts/check-bundle-size.py dist
 
   plugin-types:
-    name: Plugin types (lua-language-server)
+    name: Plugin and Config types (lua-language-server)
     runs-on: ubuntu-latest
     env:
       LUALS_VERSION: "3.19.2"
@@ -153,6 +160,26 @@ jobs:
           echo "$LUALS_SHA256  $RUNNER_TEMP/luals.tar.gz" | sha256sum --check
           tar xzf "$RUNNER_TEMP/luals.tar.gz" -C "$RUNNER_TEMP/luals"
       - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/plugins --checklevel=Hint'
+      # The first-party Plugins (plugins/, decision Q94), against the same stubs (plugins/.luarc.json).
+      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
+      # Every example in init.lua's option reference (docs/app/options.md, decision Q132), against
+      # init.lua's generated stubs (examples/types/roster-config.lua): what :help shows type-checks.
+      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/config-check --checklevel=Hint'
+      # The example Configs (examples/init.lua, examples/init-split), against the Config's generated
+      # types, set up the way docs/app/options.md's "Editor support" says: types/roster-config.lua
+      # and a .luarc.json next to init.lua.
+      - name: Check the example Configs against examples/types/roster-config.lua
+        run: |
+          check() {
+            dir="$RUNNER_TEMP/config-$1"; mkdir -p "$dir/types"; cp -R "$2"/. "$dir"/
+            cp examples/types/roster-config.lua "$dir/types/"
+            printf '%s\n' '{' '  "runtime.version": "Lua 5.4",' '  "runtime.path": ["lua/?.lua", "lua/?/init.lua"],' \
+              '  "workspace.library": ["types"],' '  "diagnostics.globals": ["roster"]' '}' > "$dir/.luarc.json"
+            "$RUNNER_TEMP/luals/bin/lua-language-server" --check "$dir" --checklevel=Hint
+          }
+          mkdir -p "$RUNNER_TEMP/one" && cp examples/init.lua "$RUNNER_TEMP/one/"
+          check one "$RUNNER_TEMP/one"
+          check split examples/init-split
 
   app-rust:
     name: App Rust (fmt, clippy, cargo test)
@@ -175,8 +202,59 @@ jobs:
       - name: Stub the frontend build for clippy
         run: mkdir -p app/dist && echo '<!doctype html><title>Roster</title>' > app/dist/index.html
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # Default member roster-core: the PTY, JSON-RPC (tests/fake_serve.py) and Lua Config tests.
-      - run: cargo test
+      # Default member roster-core: the PTY, JSON-RPC (tests/fake_serve.py) and Lua Config tests. In a temp dir
+      # of its own, then nothing a test made may be left in it (ticket 109: 37k leftovers once filled /tmp).
+      - name: cargo test
+        run: |
+          export TMPDIR="$RUNNER_TEMP/core-tests"
+          mkdir -p "$TMPDIR"
+          cargo test
+      - name: No test folder left behind
+        run: |
+          ls -A "$RUNNER_TEMP/core-tests"
+          left=$(find "$RUNNER_TEMP/core-tests" -mindepth 1 -maxdepth 1 -name 'roster-core-*' | wc -l)
+          if [ "$left" -ne 0 ]; then
+            echo "::error::cargo test left $left roster-core-* folders in the temp dir (use common::temp in tests)"
+            exit 1
+          fi
+
+  # roster-core's tests on Windows (ticket 92): its cfg(windows) code, such as the junctions and reparse points of the
+  # Plugin "stays inside its folder" rule (mklink /J), only runs here. The core only: the Tauri crate is built by the
+  # release build below, and its own cache keeps this job to the core's tests.
+  core-test-windows:
+    name: Core tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # tests/fake_serve.py stands in for roster serve; the tests run it as python3, which Windows lacks.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Add python3
+        shell: pwsh
+        run: |
+          $d = Split-Path (Get-Command python).Source
+          if (-not (Test-Path "$d\python3.exe")) { Copy-Item "$d\python.exe" "$d\python3.exe" }
+          python3 --version
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        shell: pwsh
+        run: |
+          $env:TMP = $env:TEMP = "$env:RUNNER_TEMP\core-tests"
+          New-Item -ItemType Directory -Force $env:TMP | Out-Null
+          cargo test -p roster-core --no-fail-fast
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Nothing a test made may be left in its temp dir (ticket 109), junctions and read-only git objects included.
+      - name: No test folder left behind
+        shell: pwsh
+        run: |
+          Get-ChildItem -Force "$env:RUNNER_TEMP\core-tests" | Select-Object -ExpandProperty Name
+          $left = @(Get-ChildItem -Force "$env:RUNNER_TEMP\core-tests" -Filter 'roster-core-*').Count
+          if ($left -ne 0) {
+            Write-Output "::error::cargo test left $left roster-core-* folders in the temp dir (use common::temp in tests)"
+            exit 1
+          }
 
   app-windows:
     name: App Windows release build

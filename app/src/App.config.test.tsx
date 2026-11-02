@@ -8,6 +8,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
+import type { FakePlugin } from "./backend/fakePlugins";
 import { configWith, defaultConfig } from "./config/fixture";
 import type { Config, ConfigError, ConfigReport } from "./config/types";
 import { memoryPlatform, type MemoryPlatform } from "./platform/memory";
@@ -246,5 +247,32 @@ describe("A save while the app starts (review 2)", () => {
     );
     await screen.findByLabelText(/master password/i);
     expect(root().dataset.theme).toBe("nord");
+  });
+});
+
+// Ticket 79 (#137): Plugins load after the Config, so a layout naming a Plugin's section or
+// segment was warned about as unknown. The names are judged once the Plugins have loaded.
+describe("a layout that names a Plugin's pieces", () => {
+  it("isn't warned about; a name nothing has still is", async () => {
+    const modes = structuredClone(defaultConfig.modes);
+    modes.standard.sidebar = { shown: true, side: "left", sections: ["sessions", "pins", "nosuch"] };
+    modes.standard.statusbar = { shown: true, segments: ["hosts", "pin-count"] };
+    const config = configWith({ modes });
+    const user = userEvent.setup();
+    const pins: FakePlugin = {
+      manifest: { name: "pins", version: "1", description: "", author: null, api: 2, permissions: [] },
+      load(roster) {
+        roster.sidebar.set("pins", { title: "Pins", rows: [] });
+        roster.status.set("pin-count", { text: "0 pins" });
+      },
+    };
+    const platform = memoryPlatform({ config: report(config), state: { plugins: [{ path: "/p/pins", name: "pins", granted: [], asked: [] }] } });
+    render(
+      <App backend={fakeBackend({ hosts, plugins: { "/p/pins": pins } })} terminalView={StubTerminal} registries={builtinRegistries()} platform={platform} config={report(config)} />,
+    );
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByText(/no section named "nosuch"/);
+    expect(screen.queryByText(/no section named "pins"/)).toBeNull();
+    expect(screen.queryByText(/no segment named "pin-count"/)).toBeNull();
   });
 });

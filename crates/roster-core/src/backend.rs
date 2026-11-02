@@ -4,7 +4,7 @@
 use crate::detect::{Candidate, OVERRIDE_VAR, Target};
 use crate::error::{BackendError, ErrorKind};
 use crate::rpc::{CallError, Notify, RpcClient};
-use crate::session::{Prepared, SessionCommand, session_command};
+use crate::session::{FillTarget, LoginAs, Prepared, Secret, SessionCommand, session_command};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::process::Command;
@@ -80,6 +80,14 @@ pub const CALL_SECS: &[(&str, u64)] = &[
     ("mesh.cut", 120),
 ];
 
+/// The first serve API with `host.check {background: true}` and `host.check_job` (ticket 108).
+pub const CHECK_JOBS_API_VERSION: i64 = 21;
+/// The first serve API whose `session.fill` takes `hop` (ticket 120): an older one ignores it and
+/// answers for the Session's own Host, so the core never sends it a nested fill.
+pub const NESTED_FILL_API_VERSION: i64 = 26;
+/// How often [`Backend::check_host`] asks a check job how it's going.
+pub const CHECK_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// How long the app waits for `method` (see [`CALL_SECS`]).
 pub fn timeout_for(method: &str) -> std::time::Duration {
     CALL_SECS
@@ -148,6 +156,66 @@ impl Backend {
                 inventory,
             },
         })
+    }
+
+    /// The `api_version` serve reported at start.
+    pub fn api_version(&self) -> i64 {
+        self.info
+            .inventory
+            .get("api_version")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    }
+
+    /// roster's diagnostics for one Host (`host.check`): `{host, ok, steps}`. From serve API 21
+    /// (ticket 108) the check is a job in serve: it's started in the background and
+    /// `host.check_job` (a quick read) is asked every [`CHECK_POLL`] until it's over, so no worker
+    /// of serve waits for the check meanwhile. An older serve gets the waiting form. Past
+    /// [`timeout_for`] `host.check` this is [`CallError::Timeout`], and the job is stopped if
+    /// this call started it ([`Backend::check_host_within`]).
+    pub fn check_host(&self, host: &str) -> Result<Value, CallError> {
+        self.check_host_within(host, timeout_for("host.check"))
+    }
+
+    /// [`Backend::check_host`], giving up after `limit`. Giving up stops the job only when serve
+    /// says this call started it (`joined: false`, serve API 22): a check it joined (one per Host
+    /// at a time) is another caller's too, which may still be waiting for it.
+    pub fn check_host_within(&self, host: &str, limit: std::time::Duration) -> Result<Value, CallError> {
+        if self.api_version() < CHECK_JOBS_API_VERSION {
+            return self.call("host.check", json!({ "host": host }));
+        }
+        let started = self.call("host.check", json!({ "host": host, "background": true }))?;
+        let job = started.get("job").cloned().ok_or_else(|| CallError::Io {
+            message: "host.check answered without a job".into(),
+        })?;
+        let started_here = started.get("joined").and_then(Value::as_bool) == Some(false);
+        let end = std::time::Instant::now() + limit;
+        loop {
+            let r = self.call("host.check_job", json!({ "job": job }))?;
+            match r.get("state").and_then(Value::as_str) {
+                Some("running" | "stopping") => {}
+                Some("failed") => {
+                    let e = r.get("error").cloned().unwrap_or(Value::Null);
+                    return Err(CallError::Rpc {
+                        code: e.get("code").and_then(Value::as_i64).unwrap_or(-32603),
+                        message: e.get("message").and_then(Value::as_str).unwrap_or("").to_string(),
+                        data: e.get("data").cloned(),
+                    });
+                }
+                _ => {
+                    return r.get("result").cloned().ok_or_else(|| CallError::Io {
+                        message: "host.check_job answered without a result".into(),
+                    });
+                }
+            }
+            if std::time::Instant::now() >= end {
+                if started_here {
+                    let _ = self.call("jobs.stop", json!({ "kind": "check", "job": job }));
+                }
+                return Err(CallError::Timeout);
+            }
+            std::thread::sleep(CHECK_POLL);
+        }
     }
 
     /// A call, waiting as long as [`timeout_for`] says for that method.
@@ -255,16 +323,63 @@ impl Backend {
                 message: "quick.prepare answered something unexpected: `quick` isn't a string".into(),
             })?
             .to_owned();
+        let mut command = session_command(&self.target, &prepared);
+        command.fill_as = None; // not an Inventory Host: no Login a prompt fill could use
         Ok(QuickSession {
-            command: session_command(&self.target, &prepared),
+            command,
             quick,
             held: held_id(&v),
         })
     }
 
+    /// The password for the prompt a Host Session shows (`session.fill {host, prompt}`, serve API
+    /// 25, ticket 119): for [`crate::session::SessionManager::fill`] to type, and nothing else.
+    /// The value is moved out of serve's answer into a [`Secret`] and never copied, logged or put
+    /// in an error; serve's refusals (130, 131, the vault's) come back as they are.
+    ///
+    /// `hop` is a nested ssh's Host, as the frontend resolved it (ticket 120, serve API 26): serve
+    /// then answers for that Host, still checking the Session's own.
+    pub fn fill_secret(
+        &self,
+        target: &FillTarget,
+        prompt: &str,
+        hop: Option<&FillTarget>,
+    ) -> Result<Secret, CallError> {
+        let LoginAs { address, port, user } = &target.login;
+        let mut params =
+            json!({ "host": target.host, "address": address, "port": port, "user": user, "prompt": prompt });
+        if let Some(hop) = hop {
+            let api = self.api_version();
+            if api < NESTED_FILL_API_VERSION {
+                return Err(CallError::Io {
+                    message: format!(
+                        "filling a nested ssh's prompt needs roster serve API {NESTED_FILL_API_VERSION}; this one speaks {api}, so roster didn't fill it"
+                    ),
+                });
+            }
+            let LoginAs { address, port, user } = &hop.login;
+            params["hop"] = json!({ "host": hop.host, "address": address, "port": port, "user": user });
+        }
+        let v = self.call("session.fill", params)?;
+        let Value::Object(mut answer) = v else {
+            return Err(fill_shape_error());
+        };
+        match answer.remove("password") {
+            Some(Value::String(password)) if !password.is_empty() => Ok(Secret::new(password)),
+            _ => Err(fill_shape_error()),
+        }
+    }
+
     /// False once serve has exited; the app then has to start a new one.
     pub fn is_alive(&self) -> bool {
         !self.client.is_dead()
+    }
+}
+
+/// session.fill's answer had no password: by name only, never a value.
+fn fill_shape_error() -> CallError {
+    CallError::Io {
+        message: "session.fill answered something unexpected: `password` isn't a non-empty string".into(),
     }
 }
 

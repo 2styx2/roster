@@ -8,16 +8,19 @@
 //! Config, so a typo while editing never takes the app's keys or colours away. [`watch`] calls
 //! back when a `.lua` file in the dir changes, for live reload.
 
+mod api;
 pub(crate) mod editor;
 pub mod folders;
 mod locate;
 pub(crate) mod lua;
 pub mod schema;
+pub mod shape;
+pub(crate) mod store;
 mod watch;
 
 pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};
 pub use schema::*;
-pub use watch::{Changed, FOLDERS_FILE, Watcher, watch, watch_files};
+pub use watch::{Watcher, watch};
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -27,7 +30,7 @@ use std::time::Duration;
 /// The file the app runs.
 pub const FILE_NAME: &str = "init.lua";
 /// The version of the `roster` Lua table (`roster.api_version`), raised when it changes.
-pub const API_VERSION: u32 = 2;
+pub const API_VERSION: u32 = 4;
 
 /// What went wrong: where, and what. Shown as `init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -188,7 +191,7 @@ pub fn load_with(dir: &Path, env: &Env) -> Result<Config, ConfigError> {
 pub fn returned_table(dir: &Path, source: &str) -> Result<serde_json::Value, ConfigError> {
     lua::run(dir, source, &Env::default())
         .map(|o| o.value)
-        .map_err(|e| place(e, source, &[]))
+        .map_err(|e| place(e, &Sources::of(source), &[]))
 }
 
 /// The Config `source` gives as `dir`'s init.lua, without reading the file.
@@ -199,21 +202,20 @@ pub fn load_source(dir: &Path, source: &str, env: &Env) -> Result<Config, Config
 /// [`load_source`], with `renamed` as the deprecated options (tests pass their own).
 pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Renamed]) -> Result<Config, ConfigError> {
     let source = source.to_string();
-    let out = lua::run(dir, &source, env).map_err(|e| place(e, &source, &[]))?;
+    let out = lua::run(dir, &source, env).map_err(|e| place(e, &Sources::of(&source), &[]))?;
+    let sources = Sources {
+        init: &source,
+        modules: &out.modules,
+    };
 
-    // The API's registrations, under what the returned table sets itself (the table wins).
-    let mut value = out.value;
-    for entry in &out.api {
-        set_if_absent(&mut value, &entry.path, entry.value.clone());
-    }
+    let returned = out.value;
+    let mut value = returned.clone();
+    under_calls(&mut value, &out.calls, &out.api);
     // A deprecated option moves to its new name (which wins when both are set), before the schema
     // check would call it unknown.
     let used = rename_deprecated(&mut value, renamed);
-    let api_lines: Vec<(Vec<String>, Location)> = out
-        .api
-        .iter()
-        .filter_map(|e| e.at.clone().map(|at| (e.path.clone(), at)))
-        .collect();
+    // Only the calls whose value is in the Config give lines (ticket 140).
+    let api_lines = winning_calls(&returned, &out.api);
 
     let mut config: Config = serde_path_to_error::deserialize(&value).map_err(|e| {
         let mut path: Vec<String> = e.path().iter().filter_map(segment).collect();
@@ -232,7 +234,7 @@ pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Rena
                 message,
                 path,
             },
-            &source,
+            &sources,
             &api_lines,
         )
     })?;
@@ -245,22 +247,16 @@ pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Rena
                 message,
                 path,
             },
-            &source,
+            &sources,
             &api_lines,
         ));
     }
     config.set = set_paths(&value);
-    config.lines = lines(&config, &source, &api_lines);
+    config.lines = lines(&config, &sources, &api_lines, &out.folders);
     for r in used {
         let path: Vec<String> = r.old.split('.').map(str::to_string).collect();
-        if let Some(line) = locate::line_of(&source, &path) {
-            config.lines.insert(
-                r.old.to_string(),
-                Location {
-                    file: FILE_NAME.into(),
-                    line,
-                },
-            );
+        if let Some(at) = sources.find(&path) {
+            config.lines.insert(r.old.to_string(), at);
         }
         config.deprecated.push(DeprecatedUse {
             old: r.old.into(),
@@ -325,6 +321,30 @@ fn set_paths(value: &serde_json::Value) -> Vec<String> {
     out
 }
 
+/// Whether `value` at `path` is something the schema takes there, on its own (a name it has, a
+/// value of the right type): what a `roster.*` write checks at its line. Ranges and what depends
+/// on other options are checked once the whole Config is in ([`validate`]).
+pub(crate) fn check_value(path: &[String], value: &serde_json::Value) -> Result<(), String> {
+    let mut whole = value.clone();
+    for key in path.iter().rev() {
+        let mut map = serde_json::Map::new();
+        map.insert(key.clone(), whole);
+        whole = serde_json::Value::Object(map);
+    }
+    serde_path_to_error::deserialize::<_, Config>(&whole)
+        .map(drop)
+        .map_err(|e| {
+            let mut at: Vec<String> = e.path().iter().filter_map(segment).collect();
+            let inner = e.inner().to_string();
+            if let Some(name) = inner.strip_prefix("unknown field `").and_then(|r| r.split('`').next())
+                && at.last().map(String::as_str) != Some(name)
+            {
+                at.push(name.to_string());
+            }
+            located_message(&at, &shorten(&inner))
+        })
+}
+
 /// `terminal.size: message`, or just the message when there's no path.
 pub(crate) fn located_message(path: &[String], message: &str) -> String {
     if path.is_empty() {
@@ -354,9 +374,47 @@ fn segment(s: &serde_path_to_error::Segment) -> Option<String> {
     }
 }
 
+/// The Lua text a run read: `init.lua` and the modules it required, for finding a value's line.
+struct Sources<'a> {
+    init: &'a str,
+    modules: &'a [(String, String)],
+}
+
+impl<'a> Sources<'a> {
+    fn of(init: &'a str) -> Self {
+        Sources { init, modules: &[] }
+    }
+
+    fn each(&self) -> impl Iterator<Item = (&str, &str)> {
+        std::iter::once((FILE_NAME, self.init)).chain(self.modules.iter().map(|(f, s)| (f.as_str(), s.as_str())))
+    }
+
+    /// The first line with `text` outside a comment, in `init.lua` and then the modules.
+    fn find_text(&self, text: &str) -> Option<Location> {
+        self.each().find_map(|(file, source)| {
+            locate::line_of_text(source, text).map(|line| Location {
+                file: file.into(),
+                line,
+            })
+        })
+    }
+
+    /// Where `path` is set: its whole path as keys in `init.lua`, else in a required module.
+    /// None when it's in neither (a value built by code, a module's table placed under a key).
+    fn find(&self, path: &[String]) -> Option<Location> {
+        self.each().find_map(|(file, source)| {
+            locate::line_of(source, path).map(|line| Location {
+                file: file.into(),
+                line,
+            })
+        })
+    }
+}
+
 /// Gives a schema error its line: from the API call that set the value, else by finding the
-/// key in `init.lua`.
-fn place(mut e: ConfigError, source: &str, api: &[(Vec<String>, Location)]) -> ConfigError {
+/// key in `init.lua` or a module it required; else it says the line is unknown, rather than
+/// naming a wrong one (ticket 140).
+fn place(mut e: ConfigError, sources: &Sources, api: &[(Vec<String>, Location)]) -> ConfigError {
     if e.line.is_some() || e.path.is_empty() {
         return e;
     }
@@ -367,8 +425,68 @@ fn place(mut e: ConfigError, source: &str, api: &[(Vec<String>, Location)]) -> C
         e.line = Some(at.line);
         return e;
     }
-    e.line = locate::line_of(source, &e.path);
+    match sources.find(&e.path) {
+        Some(at) => {
+            e.file = at.file;
+            e.line = Some(at.line);
+        }
+        None => e.message.push_str(" (line unknown)"),
+    }
     e
+}
+
+/// The calls whose value is in the Config, with their lines: the last write at its path (no
+/// later write replaced it or a table above it), at a path the returned table doesn't set.
+fn winning_calls(returned: &serde_json::Value, api: &[store::Write]) -> Vec<(Vec<String>, Location)> {
+    let reached = |path: &[String]| {
+        let mut node = returned;
+        for key in path {
+            match node {
+                serde_json::Value::Object(map) => match map.get(key) {
+                    Some(child) => node = child,
+                    None => return true,
+                },
+                _ => return false,
+            }
+        }
+        false
+    };
+    // From the last write back: one is replaced when a later one is at its path or above it.
+    let mut later: std::collections::HashSet<&[String]> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for w in api.iter().rev() {
+        let replaced = (1..=w.path.len()).any(|n| later.contains(&w.path[..n]));
+        later.insert(&w.path);
+        if !replaced
+            && !w.removed
+            && reached(&w.path)
+            && let Some(at) = &w.at
+        {
+            out.push((w.path.clone(), at.clone()));
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// Lays what the calls wrote (`calls`, where the last write at a path won, ticket 139) under what
+/// the returned table sets itself, path by written path: the returned table wins over every call,
+/// value by value.
+fn under_calls(value: &mut serde_json::Value, calls: &serde_json::Value, api: &[store::Write]) {
+    let mut done = std::collections::HashSet::new();
+    for w in api.iter().filter(|w| !w.removed) {
+        if !done.insert(&w.path) {
+            continue;
+        }
+        let pointer: String = w.path.iter().map(|k| format!("/{}", pointer_escape(k))).collect();
+        if let Some(v) = calls.pointer(&pointer) {
+            set_if_absent(value, &w.path, v.clone());
+        }
+    }
+}
+
+fn pointer_escape(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
 }
 
 fn set_if_absent(root: &mut serde_json::Value, path: &[String], value: serde_json::Value) {
@@ -458,6 +576,33 @@ fn validate(c: &Config) -> Result<(), Invalid> {
             format!("{} is out of range (1 to 1440)", c.idle_lock_minutes),
         ));
     }
+    if let Some(w) = c.panel.width
+        && !(10..=95).contains(&w)
+    {
+        return Err(at(
+            &["panel", "width"],
+            format!("{w} is out of range (10 to 95, percent of the window)"),
+        ));
+    }
+    for (id, v) in &c.views {
+        if id.is_empty() || id.len() > 64 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_".contains(ch)) {
+            return Err(at(
+                &["views", id],
+                format!("{id:?} isn't a panel or view id (letters, digits, - and _)"),
+            ));
+        }
+        if let Some(w) = v.width
+            && !(10..=95).contains(&w)
+        {
+            return Err(at(
+                &["views", id, "width"],
+                format!("{w} is out of range (10 to 95, percent of the window)"),
+            ));
+        }
+    }
+    if let Some(proxy) = &c.plugin_proxy {
+        crate::plugin::network::Proxy::parse(proxy).map_err(|e| at(&["plugin_proxy"], e))?;
+    }
     if c.pull_fresh_minutes > 1440 {
         return Err(at(
             &["pull_fresh_minutes"],
@@ -509,31 +654,34 @@ fn validate(c: &Config) -> Result<(), Invalid> {
 
 /// Where each key binding, Theme, Folder and other value was set, for the frontend's warnings
 /// and `:help options`.
-fn lines(c: &Config, source: &str, api: &[(Vec<String>, Location)]) -> std::collections::BTreeMap<String, Location> {
+fn lines(
+    c: &Config,
+    sources: &Sources,
+    api: &[(Vec<String>, Location)],
+    folder_lines: &[(String, Location)],
+) -> std::collections::BTreeMap<String, Location> {
     let mut out = std::collections::BTreeMap::new();
-    let mut put = |path: Vec<String>, found: Option<u32>| {
+    let by_path: std::collections::HashMap<&[String], &Location> =
+        api.iter().map(|(p, at)| (p.as_slice(), at)).collect();
+    // `found` looks in the sources only when no call set it.
+    let mut put = |path: Vec<String>, found: &dyn Fn(&[String]) -> Option<Location>| {
         let key = path.join(".");
-        if let Some((_, at)) = api.iter().find(|(p, _)| *p == path) {
-            out.insert(key, at.clone());
-        } else if let Some(line) = found {
-            out.insert(
-                key,
-                Location {
-                    file: FILE_NAME.into(),
-                    line,
-                },
-            );
+        // The call that set it: at its path, or a table above it (`roster.o.fonts = { ui = … }`
+        // gives fonts.ui its line). Only calls that won are here (ticket 139).
+        if let Some(at) = (1..=path.len()).rev().find_map(|n| by_path.get(&path[..n])) {
+            out.insert(key, (*at).clone());
+        } else if let Some(at) = found(&path) {
+            out.insert(key, at);
         }
     };
+    let find = |path: &[String]| sources.find(path);
     for b in &c.keys.0 {
         let path = vec!["keys".to_string(), b.context.lua_name().to_string(), b.keys.clone()];
-        let found = locate::line_of(source, &path);
-        put(path, found);
+        put(path, &find);
     }
     for id in c.themes.keys() {
         let path = vec!["themes".to_string(), id.clone()];
-        let found = locate::line_of(source, &path);
-        put(path, found);
+        put(path, &find);
     }
     // Every other value the file set (`:help options` names its line, ticket 37).
     for p in &c.set {
@@ -542,13 +690,25 @@ fn lines(c: &Config, source: &str, api: &[(Vec<String>, Location)]) -> std::coll
             continue;
         }
         let path: Vec<String> = p.split('.').map(str::to_string).collect();
-        let found = locate::line_of(source, &path);
-        put(path, found);
+        put(path, &find);
     }
+    // A Folder the calls made: the line that added it (roster.folders.add, or the list's
+    // assignment), when the Config's Folders are the calls'.
+    let from_calls = api.iter().any(|(p, _)| p.len() == 1 && p[0] == "folders");
     for f in &c.folders {
-        let found = locate::line_of_text(source, &format!("\"{}\"", f.name))
-            .or_else(|| locate::line_of_text(source, &format!("'{}'", f.name)));
-        put(vec!["folders".to_string(), f.name.clone()], found);
+        let added = folder_lines
+            .iter()
+            .find(|(key, _)| from_calls && *key == f.name.trim().to_lowercase())
+            .map(|(_, at)| at.clone());
+        let found = added.or_else(|| {
+            sources
+                .find_text(&format!("\"{}\"", f.name))
+                .or_else(|| sources.find_text(&format!("'{}'", f.name)))
+        });
+        let key = format!("folders.{}", f.name);
+        if let Some(at) = found {
+            out.insert(key, at);
+        }
     }
     out
 }

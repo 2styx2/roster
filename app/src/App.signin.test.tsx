@@ -257,6 +257,18 @@ describe("signing in from the lock screen", () => {
     await workspace();
   });
 
+  it("signs in with SSO on native Windows, where bw opens the page itself and there's no link (API 23)", async () => {
+    const { user } = await start({ ...(fixtures["sign-in-sso"] as FakeScenario), signIn: { sso: "ok", ssoMs: 50, ssoLink: false } });
+    await user.click(within(dialog()).getByRole("button", { name: /use sso/i }));
+    await user.type(field(/organization identifier/i), "yourorg{Enter}");
+    expect(await within(dialog()).findByText(/bitwarden opened the sign-in page in your browser/i)).toBeInTheDocument();
+    expect(within(dialog()).queryByText(/null/)).not.toBeInTheDocument();
+    expect(within(dialog()).queryByRole("button", { name: /copy link/i })).not.toBeInTheDocument();
+    const pw = await within(dialog()).findByLabelText<HTMLInputElement>(/master password/i);
+    await user.type(pw, `${FAKE_PASSWORD}{Enter}`);
+    await workspace();
+  });
+
   it("keeps exactly one SSO poll in flight while the App re-renders (review 2)", async () => {
     const backend = fakeBackend({ ...(fixtures["sign-in-sso"] as FakeScenario), signIn: { sso: "ok", ssoMs: 200 } });
     const answer = backend.signInAnswer.bind(backend);

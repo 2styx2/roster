@@ -19,6 +19,7 @@ import { SaveToField, useSaveTo } from "../edit/SaveTo";
 import { useFormPull, type PullGate } from "../edit/pull";
 import { PullStatus } from "../edit/PullStatus";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import { suggestedName } from "./hostname";
 import { formatQuickTarget, type QuickTarget } from "./target";
@@ -160,9 +161,12 @@ export function SavePanel({
     >
       <header>
         <h2>Save to vault</h2>
-        <button type="button" className="icon-button close" aria-label="Close the save form" onClick={onClose}>
-          <CloseGlyph />
-        </button>
+        <span className="panel-head-buttons">
+          <PanelButton />
+          <button type="button" className="icon-button close" aria-label="Close the save form" onClick={onClose}>
+            <CloseGlyph />
+          </button>
+        </span>
       </header>
       <p className="edit-note">
         <span className="mono">{label}</span> logged in with the password you typed. roster saves it as a Vault item, then{" "}

@@ -166,15 +166,134 @@ def complain(code, reason):
 
 # ---------------------------------------------------------------- serve's side
 
+PREFIX = "roster-askpass-"
+# A folder serve made: PREFIX, the pid of the serve that owns it, and mkdtemp's 8 random characters. Before ticket 113
+# the name had no pid (PREFIX and the 8 characters only).
+FOLDER = re.compile(r"roster-askpass-(?:(\d+)-)?[A-Za-z0-9_]{8}")
+SERVE_FILES = {"socket", "askpass", "logged-in", "quick_known_hosts"}     # all serve ever puts in one
+SOCKET_ROOM = 100           # a Unix socket's path is at most ~107 bytes
+MAX_PID = 2**31 - 1         # a pid beyond this (or not above 0) isn't one: such a folder is left alone
+SOCKET_SETTLE = 10          # s: a socket younger than this may be between bind() and listen(): never taken for dead
+NO_SOCKET_AGE = 600         # s: a folder with no socket goes only once it's this old (a serve between mkdtemp and bind)
+
+
+def runtime_bases():
+    """Where serve may put its folder, in order: $XDG_RUNTIME_DIR, the temp dir, and /tmp when the temp dir's path
+    leaves a socket no room."""
+    bases = []
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg and os.path.isdir(xdg):
+        bases.append(xdg)
+    bases.append(tempfile.gettempdir())
+    if not WINDOWS and "/tmp" not in bases and os.path.isdir("/tmp"):
+        bases.append("/tmp")
+    return bases
+
+
 def runtime_dir():
-    """A fresh directory only this user can open: under $XDG_RUNTIME_DIR, else the temp dir."""
-    base = os.environ.get("XDG_RUNTIME_DIR")
-    if base and os.path.isdir(base):
-        d = tempfile.mkdtemp(prefix="roster-askpass-", dir=base)
-        if len(os.path.join(d, "socket")) < 100:        # a Unix socket path is at most ~107 bytes
+    """A fresh directory only this user can open (mkdtemp makes it 0700), named for this process, in the first of
+    runtime_bases() where its socket's path fits."""
+    prefix = f"{PREFIX}{os.getpid()}-"
+    for base in runtime_bases():
+        d = tempfile.mkdtemp(prefix=prefix, dir=base)
+        if WINDOWS or len(os.path.join(d, "socket")) < SOCKET_ROOM:
             return d
         os.rmdir(d)
-    return tempfile.mkdtemp(prefix="roster-askpass-")    # mkdtemp makes it 0700
+    raise OSError(f"no folder with room for a socket's path (TMPDIR is {tempfile.gettempdir()!r})")
+
+
+def sweep(base):
+    """Remove from BASE the askpass folders that a serve of this user left behind when it couldn't clean up (killed
+    with SIGKILL, the interpreter crashed). A folder goes only if all of this holds: it's a real directory (a link
+    is never followed or removed), it's this user's, it holds nothing but what serve puts there (no folder in it), the
+    serve its name gives is gone, and its socket doesn't answer: no serve listens on it (a pid from another pid
+    namespace, a container sharing /tmp, isn't taken for dead). A socket younger than SOCKET_SETTLE may not be
+    listening yet, and a folder with no socket may belong to a serve that hasn't bound it yet, so those go only once
+    they're older (SOCKET_SETTLE, NO_SOCKET_AGE). A folder from before ticket 113, with no pid in its name, goes only
+    once its socket is dead. Each entry is reached through the folder's own descriptor, opened with
+    O_NOFOLLOW, so nothing a link points at is touched. Never raises: what it can't tell, it leaves."""
+    if WINDOWS:
+        return
+    try:
+        dfd = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+    except Exception:                       # noqa: BLE001 - never raises: serve starts whatever is here
+        return
+    try:
+        for name in os.listdir(dfd):
+            m = FOLDER.fullmatch(name)
+            if not m:
+                continue
+            pid = int(m.group(1)) if m.group(1) else None
+            if pid is not None and (pid == os.getpid() or not 0 < pid <= MAX_PID):
+                continue                    # ours, or not a pid at all
+            try:
+                _sweep_one(base, dfd, name, pid)
+            except Exception:               # noqa: BLE001 - what it can't tell, it leaves
+                pass
+    except Exception:                       # noqa: BLE001
+        pass
+    finally:
+        os.close(dfd)
+
+
+def _sweep_one(base, dfd, name, pid):
+    import stat
+    st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return
+    if pid is not None and process_alive(pid):
+        return
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dfd)
+    try:
+        now = os.fstat(fd)
+        if (now.st_dev, now.st_ino, now.st_uid) != (st.st_dev, st.st_ino, os.getuid()):
+            return                          # replaced since: not the folder looked at
+        entries = os.listdir(fd)
+        if not set(entries) <= SERVE_FILES:
+            return
+        kinds = {e: os.stat(e, dir_fd=fd, follow_symlinks=False).st_mode for e in entries}
+        if any(stat.S_ISDIR(m) for m in kinds.values()):
+            return
+        if "socket" in kinds:
+            sock = os.stat("socket", dir_fd=fd, follow_symlinks=False)
+            if not stat.S_ISSOCK(sock.st_mode) or time.time() - sock.st_mtime < SOCKET_SETTLE \
+                    or listening(os.path.join(base, name, "socket")):
+                return                      # not a socket, maybe not listening yet, or a serve answers on it
+        elif pid is None or time.time() - now.st_mtime < NO_SOCKET_AGE:
+            return                          # an older serve's with nothing to tell, or one that may not have bound yet
+        for e in entries:
+            os.unlink(e, dir_fd=fd)         # a link is removed itself, never what it points at
+    finally:
+        os.close(fd)
+    os.rmdir(name, dir_fd=dfd)
+
+
+def process_alive(pid):
+    """Is there a process PID (any user's)? POSIX only. True when it can't tell."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError, ValueError):
+        return True                         # another user's (it exists), or not a pid the OS takes
+    return True
+
+
+def listening(path):
+    """Does a serve listen on the socket at PATH? True when it can't tell (a path too long to reach, a timeout)."""
+    if len(path) >= SOCKET_ROOM + 7:
+        return True
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(1)
+    try:
+        probe.connect(path)
+    except (ConnectionRefusedError, FileNotFoundError):
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+    return True
 
 
 def installed_helper(name):
@@ -229,7 +348,37 @@ class Channel:
         self.labels = {}                     # token -> (label, until): names a spent token's prompt reports
         self.handed = {}                     # token -> (Typed, label, until): handed to ssh, awaiting its login report
         self.lock = threading.Lock()
+        for base in runtime_bases():         # what a serve that was killed outright left behind
+            sweep(base)
         self.dir = runtime_dir()
+        try:
+            self._open()
+        except BaseException:               # a failure, or a signal's SystemExit, before it's open: no folder left
+            self._abandon()
+            raise
+
+    def _abandon(self):
+        """Undo a half-done __init__: close what it opened and remove the folder."""
+        server = getattr(self, "server", None)
+        if server is not None:
+            try:
+                server.close()
+            except OSError:
+                pass
+        for fd in (getattr(self, "wake_r", None), getattr(self, "wake_w", None)):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        try:
+            for name in os.listdir(self.dir):
+                os.unlink(os.path.join(self.dir, name))
+            os.rmdir(self.dir)
+        except OSError:
+            pass
+
+    def _open(self):
         os.chmod(self.dir, 0o700)
         self.known_hosts = os.path.join(self.dir, "quick_known_hosts")   # Quick Connect's keys (serve writes it)
         self.stopping = threading.Event()
@@ -422,6 +571,7 @@ class Channel:
             try:
                 conn.settimeout(5)
                 if not same_user(conn):
+                    self.log("askpass: refused a connection from a process that isn't this user's")
                     return
                 data = b""
                 while b"\n" not in data and len(data) < 1024:
@@ -505,9 +655,16 @@ class Channel:
 
 
 def same_user(conn):
-    """Is the other end this user? (the directory's 0700 already says so; this checks it on Linux. On Windows the
-    pipe's DACL lets nobody else open it.)"""
-    if WINDOWS or not hasattr(socket, "SO_PEERCRED"):
+    """Is the other end this user? The directory's 0700 already says so on Linux, and the pipe's DACL lets nobody else
+    open it on Windows; this checks the client itself: its uid (SO_PEERCRED) on Linux, its process's token user on
+    Windows (ticket 63). What can't be told is refused."""
+    if WINDOWS:
+        from . import winpipe
+        try:
+            return winpipe.client_sid(conn) == winpipe.user_sid()
+        except OSError:
+            return False
+    if not hasattr(socket, "SO_PEERCRED"):
         return True
     _pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
                                                           struct.calcsize("3i")))

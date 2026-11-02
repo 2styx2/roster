@@ -9,6 +9,8 @@
 //! stand-in for this Plugin and check it does the same, so the UI tests test this Plugin's
 //! behaviour, not a guess at it. `ROSTER_UPDATE_TRANSCRIPT=1 cargo test` rewrites the file.
 
+mod common;
+
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
@@ -24,11 +26,8 @@ fn example() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/recent-alerts")
 }
 
-fn temp(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roster-core-recent-alerts-{}-{test}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp(test: &str) -> common::Temp {
+    common::temp(&format!("recent-alerts-{test}"))
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -135,6 +134,7 @@ fn spec(url: &str, config: Map<String, Value>) -> PackageSpec {
         tag: None,
         branch: None,
         commit: None,
+        dir: None,
         config,
     }
 }
@@ -145,12 +145,13 @@ fn perms(names: &[&str]) -> Vec<Permission> {
 
 /// An installed recent-alerts: the author's repo, the Packages, and the host it runs in.
 struct World {
-    root: PathBuf,
     repo: Repo,
     packages: Packages,
     specs: Vec<PackageSpec>,
     host: PluginHost,
     serve: Arc<Serve0>,
+    /// Last, so it's deleted after the host above has stopped.
+    root: common::Temp,
 }
 
 impl World {
@@ -162,12 +163,12 @@ impl World {
         let serve = Arc::new(Serve0::default());
         let host = PluginHost::new(serve.clone(), Limits::default());
         World {
-            root,
             repo,
             packages,
             specs,
             host,
             serve,
+            root,
         }
     }
 
@@ -449,6 +450,26 @@ fn what_you_type_echoed_after_a_shell_prompt_isnt_an_alert() {
     );
 }
 
+/// Ticket 94 (#167): a shell's OSC 133 marks say what each run of lines is (`kind`). recent-alerts
+/// skips the prompt and the line typed at it whatever they look like (a prompt its guess doesn't
+/// know), and keeps its guess for the rest: a command's output may be an `ssh` echoing you.
+#[test]
+fn lines_the_marks_call_prompt_or_input_are_never_alerts_and_the_rest_keep_the_guess() {
+    let w = World::new("marks");
+    ok(&w.install(&["terminal.read"]));
+    let say = |kind: &str, text: &str| {
+        w.host.event(Event {
+            name: "terminal_output".into(),
+            payload: json!({ "session": 1, "host": "esx-02", "text": text, "kind": kind }),
+        })
+    };
+    assert!(say("input", "esx-02 % grep ERROR app.log\n").is_empty());
+    assert!(say("prompt", "ERROR count: 3 (main)\n").is_empty());
+    assert!(say("output", "esx-03$ grep ERROR x\n").is_empty());
+    let replies = say("output", "ERROR: disk full\n");
+    assert_eq!(rows(one(&replies[0].ops, "section")), ["ERROR: disk full"]);
+}
+
 #[test]
 fn a_quick_connect_session_has_no_host_so_its_alerts_have_no_badge_and_no_goto() {
     let w = World::new("quick");
@@ -539,10 +560,10 @@ fn its_actions_show_the_details_copy_the_line_and_dismiss_it_and_alerts_clear_di
         .call(NAME, command, json!({ "args": "clear", "words": ["clear"] }));
     ok(&r);
     assert!(rows(one(&r.ops, "section")).is_empty());
-    assert_eq!(
-        one(&r.ops, "remove"),
-        &json!({ "op": "remove", "kind": "status", "id": "alerts" })
-    );
+    // The status segment goes, and so does the timer that kept "2 min ago" true.
+    let removed: Vec<&Value> = find(&r.ops, "remove");
+    assert_eq!(removed[0], &json!({ "op": "remove", "kind": "status", "id": "alerts" }));
+    assert_eq!(removed[1]["kind"], "timer");
     assert_eq!(one(&r.ops, "notify")["text"], "Dismissed 1 alert");
 }
 
@@ -644,7 +665,7 @@ roster.status.set("probe", { text = table.concat(found, " | ") })
         .to_string();
     for (name, says) in [
         ("terminal.send", "attempt to index a nil value (field 'terminal')"),
-        ("sessions.open", "attempt to index a nil value (field 'sessions')"),
+        ("sessions.open", "attempt to call a nil value (field 'open')"),
         ("inventory", "attempt to index a nil value (field 'inventory')"),
         ("serve", "attempt to index a nil value (field 'serve')"),
         ("network", "attempt to index a nil value (field 'network')"),
@@ -664,9 +685,9 @@ roster.status.set("probe", { text = table.concat(found, " | ") })
 }
 
 #[test]
-fn a_version_that_asks_for_network_or_a_secret_doesnt_install() {
+fn a_version_that_asks_for_network_without_a_site_or_a_secret_doesnt_install() {
     for (permission, says) in [
-        ("network", "isn't available yet"),
+        ("network", "names the site it may reach"),
         ("serve:vault.unlock", "never one that reaches a secret"),
         ("serve:session.prepare", "never one that reaches a secret"),
     ] {
@@ -685,8 +706,10 @@ fn a_version_that_asks_for_network_or_a_secret_doesnt_install() {
     }
 }
 
+/// T56's gap 1 (#105): an update that asks for `network` shows each site it names, flagged,
+/// and declining keeps the version it has; a later one that adds a site asks again for it.
 #[test]
-fn an_update_that_asks_for_network_cant_be_used_and_the_old_version_stays() {
+fn an_update_that_asks_for_network_shows_its_sites_flagged_and_a_new_site_asks_again() {
     let w = World::new("update-network");
     ok(&w.install(&["terminal.read"]));
     let old = git(&w.repo.work, &["rev-parse", "HEAD"]);
@@ -694,27 +717,47 @@ fn an_update_that_asks_for_network_cant_be_used_and_the_old_version_stays() {
     w.repo.edit(
         "roster-plugin.lua",
         "permissions = { \"terminal.read\" }",
-        "permissions = { \"terminal.read\", \"network\" }",
+        "permissions = { \"terminal.read\", \"network:hooks.example.com\" }",
     );
-    w.repo.publish("v2: post alerts to a webhook");
+    let v2 = w.repo.publish("v2: post alerts to a webhook");
 
     let checked = w.packages.check(&w.specs);
     let update = checked[0].update.as_ref().expect("an update");
-    assert!(update.manifest.is_none());
-    assert!(
-        update
-            .manifest_error
-            .as_deref()
-            .unwrap()
-            .contains("\"network\" isn't available yet")
-    );
-    assert!(update.log[0].ends_with("v2: post alerts to a webhook"));
-    // Nothing moved: the clone, the lock and the running Plugin are the old version.
+    let m = update.manifest.as_ref().expect("a usable manifest");
+    assert_eq!(m.permissions, perms(&["terminal.read", "network:hooks.example.com"]));
+    let shown = serde_json::to_value(m).unwrap();
+    let risk = shown["permissions"][1]["risk"].as_str().expect("flagged");
+    assert!(risk.contains("hooks.example.com"), "{risk}");
+    // Declined (Esc): nothing moved, and it runs as it did, with no roster.http.
     let status = w.packages.sync(&w.specs);
     assert_eq!(status[0].commit.as_deref(), Some(old.as_str()));
-    assert!(status[0].pinned);
     assert_eq!(w.host.list()[0].manifest.version, "1.0.0");
     assert_eq!(w.output(1, "esx-02", "ERROR still here\n").len(), 1);
+    // Allowed: it moves and runs with the site granted.
+    w.packages.apply(&w.specs, NAME, &v2).unwrap();
+    ok(&w.load(&["terminal.read", "network:hooks.example.com"]));
+    assert_eq!(
+        w.host.list()[0].granted,
+        perms(&["terminal.read", "network:hooks.example.com"])
+    );
+
+    // v3 adds a site: that one is a new permission, so the prompt asks for it.
+    w.repo.edit(
+        "roster-plugin.lua",
+        "\"network:hooks.example.com\" }",
+        "\"network:hooks.example.com\", \"network:*.chat.example\" }",
+    );
+    w.repo.publish("v3: and to chat");
+    let checked = w.packages.check(&w.specs);
+    let m = checked[0].update.as_ref().unwrap().manifest.as_ref().unwrap();
+    let granted = &w.host.list()[0].granted;
+    let new: Vec<String> = m
+        .permissions
+        .iter()
+        .filter(|p| !granted.contains(p))
+        .map(|p| p.to_string())
+        .collect();
+    assert_eq!(new, ["network:*.chat.example"]);
 }
 
 #[test]
@@ -836,6 +879,8 @@ fn steps() -> Value {
         { "do": "event", "name": "terminal_output", "payload": { "session": 1, "host": "esx-02", "text": "all good\n" } },
         { "do": "event", "name": "terminal_output", "payload": { "session": 1, "host": "esx-02", "text": "esx-02$ grep ERROR /var/log/syslog\n" } },
         { "do": "event", "name": "terminal_output", "payload": { "session": 3, "host": null, "text": "ERROR on a box\n" } },
+        { "do": "event", "name": "terminal_output", "payload": { "session": 4, "host": "esx-02", "text": "esx-02 % grep ERROR app.log\n", "kind": "input" } },
+        { "do": "timer" },
         { "do": "action", "label": "Details of ERROR on a box" },
         { "do": "action", "label": "Details of ERROR: disk /dev/sda1 full" },
         { "do": "action", "label": "Copy ERROR again" },
@@ -847,6 +892,16 @@ fn steps() -> Value {
         { "do": "event", "name": "session_exit", "payload": { "session": 2, "host": "appliance", "code": 0 } },
         { "do": "load", "grants": [], "config": { "patterns": ["ERROR", "panic"], "leader": "w a" } }
     ])
+}
+
+/// An op as the transcript keeps it: as [`normal`], with a timer's id as `"N"` (it's a handler's
+/// number, which the stand-in counts its own way).
+fn normal_op(op: &Value) -> Value {
+    let mut op = normal(op);
+    if op["op"] == "timer" || (op["op"] == "remove" && op["kind"] == "timer") {
+        op["id"] = json!("N");
+    }
+    op
 }
 
 /// Ops as the transcript keeps them: each function as `"fn"`, each time as `HH:MM:SS`, each date
@@ -903,6 +958,7 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
     let mut sections: BTreeMap<String, Value> = BTreeMap::new();
     let mut commands: BTreeMap<String, u64> = BTreeMap::new();
     let mut finders: BTreeMap<String, Value> = BTreeMap::new();
+    let mut timer: Option<u64> = None;
     let mut out = Vec::new();
     for step in steps().as_array().unwrap() {
         let replies: Vec<Reply> = match step["do"].as_str().unwrap() {
@@ -945,6 +1001,8 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
                     .clone();
                 vec![w.host.call(NAME, handler(&item["run"]), json!({}))]
             }
+            // The app's clock: the timer the Plugin set last fires.
+            "timer" => vec![w.host.call(NAME, timer.expect("a timer"), json!({}))],
             other => panic!("no step {other}"),
         };
         let mut ops = Vec::new();
@@ -961,9 +1019,10 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
                     "finder" => {
                         finders.insert(op["id"].as_str().unwrap().into(), op.clone());
                     }
+                    "timer" => timer = Some(handler(&op["run"])),
                     _ => {}
                 }
-                ops.push(normal(op));
+                ops.push(normal_op(op));
             }
         }
         let mut step = step.clone();

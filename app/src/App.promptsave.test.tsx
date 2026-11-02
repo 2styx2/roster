@@ -27,6 +27,8 @@ async function ready(backend: FakeBackend = backendWith()) {
   render(<App backend={backend} terminalView={StubTerminal} />);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i });
+  // The confirmations' whole text shows with every message on (ticket 111).
+  await user.keyboard("{Control>} {/Control}:messages all{Enter}");
   return user;
 }
 

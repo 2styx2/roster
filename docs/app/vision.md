@@ -2,13 +2,13 @@
 
 ## Why
 
-Most of the day goes into getting a shell on hosts in the team Inventory. roster already knows every Host, how to reach it and which Login opens it. Today, though, reaching one means typing `roster hosts --find`, remembering exact names, switching terminals, and doing a separate vault step for password-only gear. The roster app is **a GUI whose whole job is getting you into the terminal quickly, then getting out of the way**.
+Most of the day goes into getting a shell on hosts in the team Inventory. roster already knows every Host, how to reach it and which Login opens it. Today, though, reaching one means typing `roster hosts --find`, remembering exact names, switching terminals, and doing a separate vault step for password-only gear. The roster app is **a GUI whose whole job is getting you onto a Host quickly, securely, then getting out of the way**.
 
-SecureCRT is the reference point for the skeleton: saved Hosts, tabs, and logging in for you. It is not the model for the look or the workflow. Those are our own taste: terminal first, keyboard first with vim keys, and quiet, fast motion.
+SecureCRT is the reference point for the skeleton: saved Hosts, tabs, and logging in for you. It is not the model for the look or the workflow. Those are our own taste: access first, keyboard first with vim keys, and quiet, fast motion.
 
 ## Who
 
-It's a personal tool first. If it gets good enough, and does something the other tools don't, it may be open-sourced later, or even have a small subscription. Until then, choose what feels best to use every day over what would sell.
+It's a personal tool first, open source under GPL-3.0-or-later. Choose what feels best to use every day over what would sell.
 
 ## What already exists (checked 2026-10-29)
 
@@ -30,4 +30,5 @@ Full, sourced comparison of 15 tools plus adjacent ones: [competitors.md](compet
 3. **A review gate.** Discovered Hosts aren't connectable until a person marks them reviewed.
 4. **Secrets never reach the UI.** Passwords go from the vault, through roster, into `ssh`, and nothing else.
 5. **"Save to vault" on first login.** A password login becomes a properly named Vault item plus a Host for the whole team.
-6. **The same model the AI uses.** Claude works through the same roster without ever seeing secrets.
+6. **The same model the AI uses.** Claude works through the same roster without ever seeing secrets, and other tools read the same data with `--json`.
+7. **It knows your network.** The Mesh says which Host can reach which, with their own keys and no agent; Topology draws it; Discover adds what a scan finds, behind the review gate.

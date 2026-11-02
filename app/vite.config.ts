@@ -12,8 +12,9 @@ export default defineConfig({
     strictPort: true,
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**"] },
     // src/config/fixture.ts imports the Rust core's defaults fixture from ../crates, and the help
-    // pages (src/help/guides.ts) bundle the guides from ../docs and the Plugin API's stubs.
-    fs: { allow: [".", "../crates/roster-core/tests/fixtures", "../docs", "../examples/plugins/types"] },
+    // pages (src/help/guides.ts) bundle the guides from ../docs and the Plugin API's stubs; the docs
+    // lint (src/help/lint.test.ts) reads ../plugins/README.md for its headings.
+    fs: { allow: [".", "../crates/roster-core/tests/fixtures", "../docs", "../examples/plugins/types", "../plugins"] },
   },
   test: {
     environment: "jsdom",

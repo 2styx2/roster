@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
-import { FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
+import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import type { Backend } from "./backend/types";
 import { defaultOptions } from "./keymap";
 import { manualClock } from "./lock/manualClock";
@@ -43,6 +43,8 @@ async function ready(scenario: FakeScenario = fixtures.edit as FakeScenario, pul
   );
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i });
+  // The confirmations' whole text shows with every message on (ticket 111).
+  await user.keyboard(`${LEADER}:messages all{Enter}`);
   return { user, backend, clock, pulls: () => pulls };
 }
 
@@ -156,6 +158,21 @@ describe("the pull before an Inventory write (Q88)", () => {
     expect(within(panel).getByLabelText(/^Title/)).toHaveValue("Mine");
     expect(within(panel).getByLabelText("Address")).toHaveValue("10.0.0.9");
     expect(within(panel).getByText(/Pulled 2 new commits from origin\/main/)).toBeInTheDocument();
+  });
+
+  it("in :host add, calls out a name the pull brought (T72)", async () => {
+    const theirs = { ...makeHosts(1).hosts[0]!, name: "nas-01" };
+    const { user } = await ready({
+      ...(fixtures.edit as FakeScenario),
+      pullDelay: 200,
+      pullBrings: { commits: 1, changes: {}, adds: [theirs] },
+    });
+    await user.keyboard(`${LEADER}:host add{Enter}`);
+    const panel = await screen.findByRole("region", { name: "Add a Host" });
+    await user.type(within(panel).getByLabelText(/^Name/), "nas-01");
+    expect(within(panel).queryByText(/The pull brought a Host named/)).toBeNull();
+    const note = await within(panel).findByText(/The pull brought a Host named/);
+    expect(note).toHaveTextContent("The pull brought a Host named nas-01, so this one needs another name.");
   });
 
   it("doesn't pull when Pending changes are already here", async () => {

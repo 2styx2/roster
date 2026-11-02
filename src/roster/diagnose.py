@@ -9,6 +9,8 @@ import os
 import shutil
 import socket
 import subprocess
+import time
+from contextlib import nullcontext
 
 from . import askpass, errors, providers
 from .common import not_reviewed, time_left
@@ -47,13 +49,14 @@ def check_user(h):
         raise no_user(h)
 
 
-def check_provider(h):
+def check_provider(h, auth=None, what="ssh"):
     """The password Login's provider exists on this box and can answer now (11 not logged in, 12 no CLI,
-    14 locked). Providers without a status (env, prompt, cmd) are left to try."""
-    auth = str(password_login(h)["auth"])
+    14 locked). Providers without a status (env, prompt, cmd) are left to try. AUTH: another of the Host's
+    references than its ssh Login (its sudo: one), named WHAT in errors."""
+    auth = str(password_login(h)["auth"] if auth is None else auth)
     name = auth.partition(":")[0].strip()
     if name not in PROVIDERS:
-        raise unknown_provider(h, auth)
+        raise unknown_provider(h, auth, what)
     try:
         status = providers.vault_status(name)
     except providers.SecretError as e:
@@ -64,19 +67,19 @@ def check_provider(h):
         return                  # the command line may unlock by itself (BW_PASSWORD, session file, prompt)
     if error:
         message = providers.status_message(name, status) or f"{name} vault is locked - unlock it first"
-        raise login_problem(error(message), h)
+        raise login_problem(error(message), h, what)
 
 
-def resolve_password(h):
+def resolve_password(h, auth=None, what="ssh"):
     """The Login's password, looked up now (into this process's memory only; never returned to the app).
     Raises a Problem: item not found, several match, no password/field, or the provider's own failure."""
-    login = password_login(h)
-    if str(login["auth"]).partition(":")[0].strip() not in PROVIDERS:
-        raise unknown_provider(h, login["auth"])
+    auth = password_login(h)["auth"] if auth is None else auth
+    if str(auth).partition(":")[0].strip() not in PROVIDERS:
+        raise unknown_provider(h, auth, what)
     try:
-        return providers.get_secret(login["auth"], h["group"])
+        return providers.get_secret(auth, h["group"])
     except providers.SecretError as e:
-        raise login_problem(e, h) from None
+        raise login_problem(e, h, what) from None
 
 
 def check_login(h):
@@ -97,21 +100,44 @@ def askpass_lookup(h):
 
 # ---------------------------------------------------------------- host.check / `roster check HOST`
 
-def check_host(name, inventory, channel=None):
+VAULT_STEPS = ("provider", "vault-item", "auth")    # a password Login's: the steps that fetch a secret or mint a token
+
+
+class Stopped(Exception):
+    """VAULT gave up waiting because the check was stopped: this step and the rest are "skipped"."""
+
+
+def check_host(name, inventory, channel=None, progress=None, halted=None, vault=None):
     """Run STEPS for Host NAME in order and stop at the first failure; the rest are "skipped". INVENTORY()
     returns the loaded config or raises Problem(1). CHANNEL is an askpass.Channel for a password login
     (without one, the auth step of a password Host is skipped).
     The local steps come first, so nothing touches the network once one fails; then one TCP connection
     (port, then the host key over it) and one ssh login attempt. Returns {host, ok, steps: [...]}, each step
-    {step, status: ok|fail|skipped, message, code?, fix?, details?, data?}."""
-    ctx = {"name": name, "inventory": inventory, "channel": channel}
+    {step, status: ok|fail|skipped, message, code?, fix?, details?, data?}.
+    serve's check job (ticket 108) passes PROGRESS(done, total, step), called as each step starts, and HALTED (an
+    Event): once it's set no further step starts (the rest are "skipped", and ok is false). And VAULT(), a context
+    manager that shares the vault, held only for a password Login's VAULT_STEPS: between them a lock or an unlock
+    needn't wait for the check (decision Q112 (q)). It raises Stopped when the check was stopped meanwhile."""
+    ctx = {"name": name, "inventory": inventory, "channel": channel, "halted": halted}
     steps, failed = [], False
-    for step in STEPS:
+    for i, step in enumerate(STEPS):
+        if not failed and halted is not None and halted.is_set():
+            failed = "stopped"
         if failed:
-            steps.append({"step": step, "status": "skipped", "message": "an earlier step failed"})
+            why = "the check was stopped" if failed == "stopped" else "an earlier step failed"
+            steps.append({"step": step, "status": "skipped", "message": why})
             continue
+        if progress is not None:
+            progress(i, len(STEPS), step)
+        held = vault() if vault is not None and step in VAULT_STEPS and "h" in ctx and uses_password(ctx["h"]) \
+            else nullcontext()
         try:
-            outcome = STEP_FNS[step](ctx)
+            with held:
+                outcome = STEP_FNS[step](ctx)
+        except Stopped:
+            failed = "stopped"
+            steps.append({"step": step, "status": "skipped", "message": "the check was stopped"})
+            continue
         except Problem as e:
             failed = True
             steps.append(problem_step(step, e))
@@ -182,7 +208,7 @@ def step_vault_item(ctx):
     h = ctx["h"]
     if not uses_password(h):
         return "skipped", "key login: no vault needed" if h["enroll"] else "no password Login"
-    ctx["password"] = resolve_password(h)
+    resolve_password(h)                 # not kept: the vault may lock before the auth step (it looks it up again)
     return f"{h['ssh']['auth']} resolves to one item with a value"
 
 
@@ -267,18 +293,82 @@ def step_auth(ctx):
         argv += ["-o", "BatchMode=yes"]
     argv += [h["name"], "true"]
     limit = round(time_left(LOGIN_TIMEOUT + 20))
-    try:
-        r = subprocess.run(argv, env={**os.environ, **env}, stdin=subprocess.DEVNULL, capture_output=True,
-                           text=True, timeout=limit)
-    except subprocess.TimeoutExpired:
+    r = login_attempt(argv, {**os.environ, **env}, limit, ctx.get("halted"))
+    if r is None:
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't finish the login within {limit} s",
-                      fix=unreachable_fix(h)) from None
+                      fix=unreachable_fix(h))
     if r.returncode == 0:
         return f"logged in as {h['ssh']['user']}"
     details = r.stderr.strip()
-    if ctx.get("password"):
-        details = details.replace(ctx["password"], "****")
+    if password:
+        try:
+            secret = resolve_password(h)    # this run's cache: the askpass lookup just fetched it
+        except Problem:
+            secret = None
+        if secret:
+            details = details.replace(secret, "****")
     raise login_failure(h, password, details)
+
+
+STOP_POLL = 0.1            # s: how soon a stopped check notices it while its ssh logs in
+
+
+def login_attempt(argv, env, limit, halted=None):
+    """Run the login's ssh ARGV for at most LIMIT s: its CompletedProcess, or None when it ran out of time. Once
+    HALTED is set (serve's check was stopped: vault.lock, jobs.stop, its last waiter cancelled) its ssh is ended and
+    Stopped raised (it isn't started at all if HALTED is set already), so a lock never waits for a login (decision
+    Q119). Ending it is safe: the login runs `true` and nothing else, so nothing on the Host is left half-done, and the
+    attempt is already made or never will be: a stopped check never tries again, so the Host's rate limiter sees no
+    more attempts than before. On POSIX ssh runs in a process group of its own, so ending it ends what it started too
+    (a ProxyJump's ssh)."""
+    if halted is not None and halted.is_set():
+        raise Stopped
+    proc = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=os.name != "nt")
+    end = time.monotonic() + limit
+    try:
+        while True:
+            left = end - time.monotonic()
+            try:
+                out, err = proc.communicate(timeout=max(0.0, min(left, STOP_POLL) if halted is not None else left))
+                return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                if halted is not None and halted.is_set():
+                    raise Stopped from None
+                if time.monotonic() >= end:
+                    return None
+    finally:
+        if proc.returncode is None:         # stopped, out of time, or interrupted (Ctrl+C): it doesn't outlive us
+            end_process(proc)
+
+
+def end_process(proc):
+    """End PROC and everything in its process group on POSIX (SIGTERM first, so ssh closes its connection, then
+    SIGKILL), and always reap it; our ends of its pipes are closed, so a child of it that still holds them can't keep
+    us waiting."""
+    import signal
+
+    def send(sig):
+        try:
+            if os.name == "nt":
+                proc.kill() if sig == "kill" else proc.terminate()
+            else:
+                os.killpg(proc.pid, signal.SIGKILL if sig == "kill" else signal.SIGTERM)
+        except OSError:
+            pass
+    send("term")
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        pass
+    send("kill")                            # the group too, even once the leader has gone
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+    proc.wait()                             # SIGKILL can't be refused: this returns
 
 
 def login_failure(h, password, stderr):

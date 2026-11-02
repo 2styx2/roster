@@ -672,3 +672,51 @@ def test_a_mesh_change_names_its_host_in_the_diff_and_the_message(write_config):
     hosts = changes.host_changes(path, old, new)
     assert hosts == [{"host": "h1", "change": "changed", "fields": ["mesh"]}]
     assert "h1" in changes.commit_message(hosts, [])
+
+
+def committed(write_config, text):
+    path = write_config(text)
+    git(path.parent, "init", "-q")
+    git(path.parent, "add", path.name)
+    git(path.parent, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "inventory")
+    return path
+
+
+LINKED = ("groups:\n  lab:\n    user: u\n    hosts:\n      h1: 10.0.0.1\n      h2: 10.0.0.2\n      j1: 10.0.0.3\n"
+          "links:\n  - { from: h1, to: h2 }\n  - { from: h2, to: lab }\n")
+
+
+def test_a_links_change_names_the_links_in_the_message(write_config):
+    """T67: an edit to links: names each Link that changed, as Host changes do, not "edit roster.yml"."""
+    from roster import changes
+    path = committed(write_config, LINKED)
+    path.write_text(LINKED.replace("  - { from: h2, to: lab }\n", "  - { from: h2, to: lab, both: true }\n")
+                    + "  - { from: j1, to: h2, via: h1 }\n")
+    assert changes.diff(path)["message"] == "roster: add link j1 -> h2 via h1, change link h2 -> lab (both)"
+    path.write_text(LINKED.replace("  - { from: h1, to: h2 }\n", ""))
+    assert changes.diff(path)["message"] == "roster: remove link h1 -> h2"
+
+
+def test_links_and_hosts_together_past_the_subject_limit_are_counted_and_listed(write_config):
+    from roster import changes
+    path = committed(write_config, LINKED)
+    path.write_text(LINKED.replace("h1: 10.0.0.1", "h1: { ip: 10.0.0.1, title: the first one }")
+                    .replace("  - { from: h1, to: h2 }\n", "  - { from: h1, to: h2, via: j1 }\n")
+                    .replace("  - { from: h2, to: lab }\n", "  - { from: lab, to: h2 }\n"))
+    assert changes.diff(path)["message"].split("\n") == [
+        "roster: change 1 Host and 3 Links", "", "- change h1 (title)", "- add link lab -> h2",
+        "- change link h1 -> h2 (via)", "- remove link h2 -> lab"]
+
+
+def test_a_mesh_dir_change_names_its_host(write_config):
+    from roster import changes
+    path = committed(write_config, LINKED)
+    path.write_text(LINKED.replace("h1: 10.0.0.1", "h1: { ip: 10.0.0.1, mesh_dir: /srv/mesh }"))
+    assert changes.diff(path)["message"] == "roster: change h1 (mesh_dir)"
+
+
+def test_a_seen_as_change_names_its_host(write_config):
+    from roster import changes
+    path = committed(write_config, LINKED)
+    path.write_text(LINKED.replace("h1: 10.0.0.1", "h1: { ip: 10.0.0.1, seen_as: 10.0.9.1 }"))
+    assert changes.diff(path)["message"] == "roster: change h1 (seen_as)"

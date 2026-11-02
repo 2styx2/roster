@@ -26,6 +26,9 @@ export interface Host {
   /** The Host's default Login for its services (`login:` in roster.yml). */
   login?: { user: string | null; auth: string | null };
   mac?: string | null;
+  /** `shell_hooks:` in roster.yml (ticket 121): roster sends the Session's shell the hook line
+   * that turns on its prompt marks. Passed through as written; absent when it isn't set. */
+  shell_hooks?: boolean | null;
 }
 
 /** One of a Host's services, as roster resolves it. `auth` is a vault reference such as
@@ -461,8 +464,25 @@ export const SIGN_OUT_API_VERSION = 14;
  * `mesh.cut`, `mesh.status`, and a Host's `mesh`. The app's controls for them are T50's Plugin. */
 export const MESH_API_VERSION = 15;
 
+/** serve API 20 (ticket 101, decision Q112): serve answers requests concurrently, its jobs push
+ * `job.progress`, and `host.get` takes `settled`. */
+export const JOBS_API_VERSION = 20;
+
+/** serve's `job.progress` notification: a job started, moved on or ended. Never its result. */
+export type JobProgress = {
+  kind: string;
+  job: number | string;
+  action: string;
+  state: "running" | "stopping" | "done" | "stopped" | "failed";
+  done: number;
+  total: number;
+  at: string | null;
+  host?: string;
+  error?: { code: number; message: string; data?: unknown };
+};
+
 /** roster's code for the Mesh (ticket 39): `rotate` names a Host that isn't a Mesh source. */
-export const MeshError = { notASource: 110 } as const;
+export const MeshError = { notASource: 110, busy: 111 } as const;
 
 /** One Link of the Mesh: `from` reaches `to` (as `to`'s own user). `status` only in a plan or apply. */
 export interface MeshLink {
@@ -564,8 +584,9 @@ export type SignInStep = { login: string } & (
   /** `method` is null when the account has one method and bw picked it; `sent`: emailed just now. */
   | { step: "two_factor_code"; method: TwoFactorMethod | null; sent: boolean }
   | { step: "new_device_code"; email: string | null }
-  /** Open `url` in a browser; answer `{}` to wait for it (roster waits up to 20 s per call). */
-  | { step: "sso"; url: string; expires_in: number }
+  /** Open `url` in a browser; answer `{}` to wait for it (roster waits up to 20 s per call). `url` is null on
+   * native Windows (API 23), where bw opened the page itself and there's no link to hand over. */
+  | { step: "sso"; url: string | null; expires_in: number }
   /** After an API key or SSO, which only log in: the vault still needs the master password. */
   | { step: "master_password"; email: string | null }
   | { step: "done"; provider: string; status: "unlocked" }
@@ -639,6 +660,16 @@ export interface SessionHandle {
   resize(size: TermSize): Promise<void>;
   /** Ends it (kills ssh). The exit event still follows, with `closed: true`. */
   close(): Promise<void>;
+  /** Fills the password prompt the Session shows from the vault (serve API 25, ticket 119,
+   * decision Q129), for the line at its cursor (`prompt`, the Host's text). The core asks serve for
+   * the password of the Host the Session was opened to and types it only if the prompt doesn't
+   * echo; nothing of it comes back here, only the Host's name. Rejects with serve's code (130 a
+   * prompt roster won't fill, 131 no saved password, the vault's 11, 12, 14, 31-35) or the core's
+   * refusal (it echoes, a key was typed meanwhile). Absent on a Quick Connect: no Login to fill.
+   * `hop` (serve API 26, ticket 120): a nested ssh's Inventory Host, as roster resolved it from the
+   * command line; serve answers for that Host, and the core types it only if the Session printed
+   * `prompt` itself. */
+  fill?(prompt: string, hop?: NestedHost): Promise<{ host: string }>;
 }
 
 /** `session.prepare`'s error codes (docs/serve-api.md): the message is roster's, ready to show.
@@ -689,6 +720,34 @@ export const QUICK_CONNECT_API_VERSION = 12;
 export interface QuickConnect extends QuickTarget {
   fingerprint: string;
 }
+
+/** Login references with no password behind them: roster's providers.NO_PASSWORD, kept in step by
+ * tests/test_prompt_fill.py. (`prompt` has none saved either, but it's a provider of its own.) */
+export const NO_PASSWORD_AUTHS = ["agent", "key", "none"] as const;
+
+/** The first `api_version` with `session.fill` (ticket 119): filling a password prompt. */
+export const FILL_API_VERSION = 25;
+
+/** The first `api_version` with `session.fill`'s `hop` (ticket 120): filling a nested ssh's
+ * prompt, or that Host's sudo, with that Host's Login. */
+export const NESTED_FILL_API_VERSION = 26;
+
+/** The Inventory Host a nested ssh went to and what roster resolved it to (`session.fill`'s
+ * `hop`). Never a password. */
+export interface NestedHost {
+  host: string;
+  address: string;
+  port: number;
+  user: string;
+}
+
+/** `session.fill`'s codes (docs/serve-api.md): rows 143 and 144 in docs/app/errors.md. */
+export const FillRefusal = {
+  /** The prompt isn't one roster fills, or asks for another Host or account. */
+  refused: 130,
+  /** The Login that would answer has no saved password. */
+  nothingToFill: 131,
+} as const;
 
 /** The first `api_version` with "Save to vault" after a Session's own login (tickets 15, 16):
  * `quick.prepare`'s `save`, `quick.save`, `vault.forget_typed` and `session.logged_in`. */
@@ -755,8 +814,10 @@ export interface Backend {
   connect(options?: { restart?: boolean }): Promise<BackendInfo>;
   /** Every Host and group, in roster.yml order. */
   listHosts(): Promise<HostList>;
-  /** One Host by exact name. */
-  getHost(name: string): Promise<Host>;
+  /** One Host by exact name. `settled` (serve API 20) waits for a write to roster.yml under way
+   * first: serve answers concurrently, so a check after a timed-out `host.add` needs it. An older
+   * serve answers in order, which settles it anyway. */
+  getHost(name: string, options?: { settled?: boolean }): Promise<Host>;
   /** Where the vault stands. */
   vaultStatus(): Promise<VaultStatus>;
   /** Unlock the vault with its master password. Rejects with BackendCallError (VaultError codes). */
@@ -850,6 +911,9 @@ export interface Backend {
   watchInventory(auto: boolean): Promise<{ watching: boolean; auto: boolean }>;
   /** Calls `onChange` for each `inventory.changed`; returns stop. */
   onInventoryChanged(onChange: (change: InventoryChanged) => void): () => void;
+  /** Calls `onProgress` for each `job.progress` (serve API 20): a Mesh run's or a scan's progress,
+   * for the Plugins' `job_progress` event. Returns stop. */
+  onJobProgress(onProgress: (job: JobProgress) => void): () => void;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host
@@ -867,15 +931,47 @@ export interface Backend {
   /** Plugins (ticket 23, docs/plugins.md): the manifest of the Plugin folder at `path` (`~/…`,
    * absolute, or under the config folder), for the permission prompt. Runs none of its code. */
   pluginManifest(path: string): Promise<{ manifest: PluginManifest; dir: string }>;
+  /** `:plugins types PATH` (ticket 74): writes the Plugin API's stubs for this app's version as
+   * `types/roster.lua` in the Plugin folder at `path`; resolves to the file's path. */
+  pluginTypes(path: string): Promise<string>;
   /** Loads (or reloads) a Plugin with what the user granted (`builtin:NAME` for a built-in one).
    * Rejects when its manifest can't be used; an error in its code comes back in `reply`. */
-  pluginLoad(path: string, grants: readonly string[]): Promise<{ manifest: PluginManifest; dir: string; reply: PluginReply }>;
-  /** Calls a function the Plugin handed over (`{handler}` in its ops). */
-  pluginCall(plugin: string, handler: number, args: unknown): Promise<PluginReply>;
+  pluginLoad(path: string, grants: readonly string[], settings?: Record<string, unknown> | null): Promise<{ manifest: PluginManifest; dir: string; reply: PluginReply }>;
+  /** Calls a function the Plugin handed over (`{handler}` in its ops). `user` (default true): the
+   * user chose it; `"carried"` for the Plugin's own command its `roster.cmd` ran from the user's
+   * call (that call carried one hop: nothing made in it carries it further, issue #183); false for
+   * what the app runs on its own (a finder's items, a `:check`, a timer, a question's cancel
+   * because another took its place, a command a carried run's `roster.cmd` named), which is never
+   * the user's call. */
+  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCaller): Promise<PluginReply>;
   /** Tells every Plugin that listens and may hear it; the ones that changed something or failed answer. */
   pluginEvent(name: PluginEventName, payload: Record<string, unknown>): Promise<PluginReply[]>;
+  /** The Sessions open now, in the order the app saw them open: the whole list, which replaces
+   * the core's (`roster.sessions.list()`, ticket 96, decision Q127). */
+  pluginSessions(open: OpenSession[]): Promise<void>;
   /** Takes a Plugin out of the core. */
   pluginUnload(plugin: string): Promise<boolean>;
+  /** Removes a Plugin's data folder with everything in it (decision Q93), when the Plugin is
+   * removed: `:plugins remove`, `:packages clean`. True if it had one. */
+  pluginForget(plugin: string): Promise<boolean>;
+  /** The app's built-in commands (issue #184), at the start and when one registers later: none is
+   * a Plugin's own to run with `roster.cmd` or a `run` line, whatever it named its commands. */
+  pluginBuiltins(names: readonly string[]): Promise<void>;
+  /** Each loaded Plugin's network requests by site since the app started, by its name (decision
+   * Q116), for `:plugins`. */
+  pluginRequests(): Promise<Record<string, SiteRequests[]>>;
+  /** How full each named Plugin's data folder is, loaded or not (ticket 98), for `:plugins`. */
+  pluginData(names: readonly string[]): Promise<Record<string, PluginData>>;
+  /** The replies nobody asked for: what a Plugin did when one of its HTTP requests answered
+   * (the `network` permission, decision Q97). The core sends them as they come. */
+  onPluginReply(onReply: (reply: PluginReply) => void): () => void;
+  /** `:tutor`'s demo (ticket 66, decision Q123): a Plugin host of its own, beside this one, over
+   * the demo Inventory's `hosts`. Its Plugins run with the grants they have here, but roster serve
+   * answers only `hosts.list` and `host.get` from `hosts` (any other method is refused), no
+   * request reaches the network, and each Plugin's files are a throwaway folder, empty at the
+   * start. `close` stops them all and throws the folder away. Absent: the demo has only its own
+   * built-in Plugins. */
+  demoPlugins?(hosts: HostList): Promise<DemoPluginHost>;
   /** Packages (ticket 24, docs/plugins.md): clones what init.lua names and isn't cloned yet, and
    * checks out what roster.lock pins. A Package loads as the Plugin `package:NAME`. */
   packagesSync(): Promise<PackageStatus[]>;
@@ -885,8 +981,10 @@ export interface Backend {
   packagesDiscard(name: string): Promise<void>;
   /** Removes a Package's clone and its roster.lock entry (`:plugins remove`). */
   packagesRemove(name: string): Promise<void>;
-  /** `:packages update`, step 1: fetches and describes each new commit. Changes nothing. */
-  packagesCheck(): Promise<PackageChecked[]>;
+  /** `:packages update`, step 1: fetches and describes each new commit. Changes nothing. With a
+   * name (`:packages update NAME`), only that Package; rejects when init.lua names no such
+   * Package or it isn't installed. */
+  packagesCheck(name?: string): Promise<PackageChecked[]>;
   /** Step 2: moves a Package to a commit the user saw and allowed, and pins it. */
   packagesApply(name: string, commit: string): Promise<PackageStatus>;
   /** `:packages clean`: removes what init.lua no longer names; gives their names. */
@@ -900,6 +998,8 @@ export interface PackageStatus {
   source: string;
   /** The git URL that means. */
   url: string;
+  /** The folder in the repo the Plugin loads from (`plugins/topology`); null for the repo's top (Q94). */
+  dir: string | null;
   /** `tag v1.0.0`, `branch main`, `commit 1a2b3c4` or `default branch`. */
   wants: string;
   /** The commit its clone is at. */
@@ -912,6 +1012,17 @@ export interface PackageStatus {
   config: Record<string, unknown>;
   note: string | null;
   error: string | null;
+}
+
+/** The demo's Plugin host (`Backend.demoPlugins`): the Plugin methods, on the demo's own host. */
+export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "pluginLoad" | "pluginCall" | "pluginEvent" | "pluginSessions" | "pluginUnload" | "pluginForget" | "pluginBuiltins" | "onPluginReply"> & {
+  close(): Promise<void>;
+};
+
+/** The words a Plugin on the demo gets for a serve method the demo has no stand-in for (errors.md
+ * row 135; the core's plugin/demo.rs says the same). */
+export function notOnDemo(method: string): string {
+  return `${method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get`;
 }
 
 /** A newer commit, shown before it's applied. */
@@ -961,6 +1072,27 @@ export interface PluginErrorInfo {
 
 /** What a Plugin answered: its function's result, the UI changes it asked for (untrusted data:
  * plugins/ops.ts checks them), an error, and whether it's now disabled. */
+/** Whose call a Plugin's run is: the user's (true), the user's carried one hop (a command the
+ * Plugin's `roster.cmd` ran from the user's call), or the app's (false). Decision Q98, issue #183. */
+export type PluginCaller = boolean | "carried";
+
+/** How a Plugin used one network site since the app started, as the core counts it (decision
+ * Q116): counts and a time only, never a path, a query, a header or a body. */
+export interface SiteRequests {
+  /** The site as its permission names it, after `network:`. */
+  site: string;
+  requests: number;
+  /** Of those, the ones that got no answer (an HTTP error status is an answer). */
+  failed: number;
+  /** When the last one was sent, in ms since 1970. */
+  last: number;
+}
+
+/** How full a Plugin's data folder is, as the core counts it (ticket 98): files and bytes as
+ * the caps (1,000 files, 10 MB) count them, never what they hold. `none`: nothing written yet;
+ * `problem`: it can't be counted (it's a link, or it can't be read). */
+export type PluginData = { state: "none" } | { state: "used"; files: number; bytes: number } | { state: "problem"; message: string };
+
 export interface PluginReply {
   plugin: string;
   result: unknown;
@@ -978,5 +1110,13 @@ export const PLUGIN_EVENTS = [
   "session_exit",
   "inventory_changed",
   "terminal_output",
+  "command_done",
+  "job_progress",
 ] as const;
+/** An open Session as the core's `roster.sessions.list()` gets it: a Quick Connect Session's host is null. */
+export interface OpenSession {
+  session: number;
+  host: string | null;
+}
+
 export type PluginEventName = (typeof PLUGIN_EVENTS)[number];

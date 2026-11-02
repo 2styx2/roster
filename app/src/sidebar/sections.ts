@@ -5,7 +5,7 @@
 // row's parent, and raises the on-screen Host's first row (the others are "also").
 import type { Host, HostList } from "../backend/types";
 import { connectPhase, linkOf, statusText } from "../session/Sessions";
-import type { Tab, TabsSnapshot } from "../session/tabs";
+import { tabFacts, type Tab, type TabsSnapshot } from "../session/tabs";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./Sidebar";
 import type { HostBadge } from "../view/status";
@@ -148,6 +148,11 @@ function dotOf(tab: Tab, host: Host | undefined): Dot {
   return host?.enroll ? "key" : "password";
 }
 
+/** The last folder of a path the shell said (OSC 7, ticket 121): `releases`, or `/`. */
+export function folderName(path: string): string {
+  return path.replace(/\/+$/, "").split("/").pop() || "/";
+}
+
 /** Open Sessions in tab order, with their state dot; rows run `session N` and `close N`. */
 export const sessionsSection: SidebarSectionDef = {
   id: "sessions",
@@ -161,20 +166,25 @@ export const sessionsSection: SidebarSectionDef = {
           title: "Sessions",
           count: sessions.tabs.length,
           empty: "No Sessions open.",
-          rows: sessions.tabs.map((tab, i) => ({
-            id: `session-${tab.id}`,
-            label: tab.label,
-            ...(tab.label !== tab.host ? { tail: tab.label.slice(tab.host.length) } : {}),
-            host: tab.host,
-            dot: dotOf(tab, hostByName.get(tab.host)),
-            link: linkOf(tab),
-            ...(statusText(tab) ? { note: statusText(tab) } : {}),
-            ...(tab.auth ? { title: `${tab.auth} login` } : {}),
-            raised: tab.id === sessions.active,
-            ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
-            command: `session ${i + 1}`,
-            actions: [{ label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` }],
-          })),
+          rows: sessions.tabs.map((tab, i) => {
+            const facts = tabFacts(tab);
+            return {
+              id: `session-${tab.id}`,
+              label: tab.label,
+              ...(tab.label !== tab.host ? { tail: tab.label.slice(tab.host.length) } : {}),
+              host: tab.host,
+              dot: dotOf(tab, hostByName.get(tab.host)),
+              link: linkOf(tab),
+              ...(statusText(tab) ? { note: statusText(tab) } : {}),
+              ...(tab.hop ? { hop: tab.hop } : {}),
+              ...(tab.cwd ? { detail: folderName(tab.cwd) } : {}),
+              ...(facts ? { title: facts } : {}),
+              raised: tab.id === sessions.active,
+              ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
+              command: `session ${i + 1}`,
+              actions: [{ label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` }],
+            };
+          }),
         },
 };
 

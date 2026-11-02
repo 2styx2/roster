@@ -133,6 +133,8 @@ describe("the add form", () => {
 
   it("shows the host key to confirm, then tests the login, saves the password and adds the Host", async () => {
     const { user, backend, calls } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     const panel = await openForm(user);
     await fill(user, panel, { Name: "nas-01", Address: "10.19.1.50", User: "root", Type: "nas" });
     await user.type(within(panel).getByLabelText("Password"), FAKE_HOST_PASSWORD);
@@ -249,6 +251,8 @@ describe("the add form", () => {
 describe("marking a Host reviewed", () => {
   it(":review flips only that Host, and it can be opened then", async () => {
     const { user, backend } = await ready();
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:connect ${UNREVIEWED}{Enter}`);
     expect(await screen.findByText(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`)).toBeInTheDocument();
     const before = await backend.getHost(UNREVIEWED);
@@ -293,6 +297,8 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
 
   it(":host unreview sets reviewed: false again, as a Pending change", async () => {
     const { user, backend } = await ready(current);
+    // The confirmation's whole text shows with every message on (ticket 111).
+    await user.keyboard(`${LEADER}:messages all{Enter}`);
     const before = await backend.getHost(REVIEWED);
     await user.keyboard(`${LEADER}:host unreview ${REVIEWED}{Enter}`);
     expect(

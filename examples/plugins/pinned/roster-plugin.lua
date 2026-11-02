@@ -4,6 +4,6 @@ return {
   version = "1.0.0",
   description = "A Sidebar section of the Hosts you pin",
   author = "roster",
-  api = 2,
+  api = 3,
   permissions = { "inventory.read" },
 }

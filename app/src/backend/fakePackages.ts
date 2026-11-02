@@ -20,6 +20,8 @@ export interface FakePackage {
   /** As init.lua writes it. */
   source: string;
   tag?: string;
+  /** The folder in the repo (`plugins/topology`), as init.lua's `dir`. */
+  dir?: string;
   config?: Record<string, unknown>;
   versions: FakePackageVersion[];
 }
@@ -45,7 +47,7 @@ export function fakePackageHost(
   packagesPin(name: string): Promise<PackageStatus>;
   packagesDiscard(name: string): Promise<void>;
   packagesRemove(name: string): Promise<void>;
-  packagesCheck(): Promise<PackageChecked[]>;
+  packagesCheck(name?: string): Promise<PackageChecked[]>;
   packagesApply(name: string, commit: string): Promise<PackageStatus>;
   packagesClean(): Promise<string[]>;
 } {
@@ -63,6 +65,7 @@ export function fakePackageHost(
       name: p.name,
       source: p.source,
       url: p.source.includes("://") || p.source.startsWith("/") ? p.source : `https://github.com/${p.source}.git`,
+      dir: p.dir ?? null,
       wants: p.tag ? `tag ${p.tag}` : "default branch",
       commit,
       locked,
@@ -110,8 +113,10 @@ export function fakePackageHost(
       Reflect.deleteProperty(clones, name);
       Reflect.deleteProperty(scenario.lock, name);
     },
-    async packagesCheck() {
+    async packagesCheck(name) {
+      if (name !== undefined && !clones[named(name).name]) throw new BackendCallError(`${name} isn't installed`);
       return scenario.named.flatMap((p): PackageChecked[] => {
+        if (name !== undefined && p.name !== name) return [];
         const from = clones[p.name];
         if (!from) return [];
         const to = latest(p);
