@@ -29,6 +29,16 @@ export function checkProgressed(check: CheckState | null, job: JobProgress, now:
   return { ...check, at: job.at, since: now };
 }
 
+/** `jobs.list`, asked once as `:check` starts (issue #221): a check it joined that was already
+ * running (started elsewhere, or before the app restarted) sent its progress before the panel
+ * opened, so this fills in the step under way. Only while nothing newer has come: a `job.progress`
+ * that arrived meanwhile wins over the list's older word. */
+export function checkJoined(check: CheckState | null, jobs: readonly JobProgress[], now: number): CheckState | null {
+  if (check?.state !== "running" || check.at !== null) return check;
+  const job = jobs.find((j) => j.kind === "check" && j.host === check.host && j.state === "running");
+  return job ? checkProgressed(check, job, now) : check;
+}
+
 export type LiveStatus = "pending" | "running" | "done" | "stopped";
 
 /** Each step while the check runs, or where it was when the call failed (`stopped`). */
