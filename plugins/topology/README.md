@@ -14,7 +14,7 @@ roster.packages.add({ "https://github.com/2styx2/roster", dir = "plugins/topolog
 
 The app clones roster's repo, shows the folder, the commit and every permission, and asks first. Allow pins the commit in `roster.lock`. Add `tag = "vX.Y.Z"` to stay on a release, and `config = { … }` for the settings below.
 
-It draws the Mesh best with roster serve's API 19 (`mesh.status`'s `grouped`, which says a meshed group once instead of every pair in it). An older roster still works, but a big Mesh is slow to draw there, and before API 15 there's no Mesh at all: the map shows the Box and the Hosts, and `:check` says why.
+It draws the Mesh best with roster serve's API 19 (`mesh.status`'s `grouped`, which says a meshed group once instead of every pair in it). An older roster still works, but a big Mesh is slow to draw there, and before API 15 there's no Mesh at all: the map shows the Box and the Hosts, and `:check` says why. Before API 21 a check isn't a job, so the Plugin hears no check's result: a failed `:check` or Check doesn't cross its Host out (a Session that couldn't connect still does), and nothing on the map or in `:check` says so.
 
 ## What it adds
 
