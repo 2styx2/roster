@@ -1,22 +1,13 @@
 // Ticket 08's keys, as one data block for the keymap (src/keymap.ts merges it in). Kept apart so
 // the keyboard model (ticket 07) can take it over as it is, and the Config can override it.
 
-/** Keys caught in a terminal before the shell sees them (Windows Terminal's defaults). */
-export type TerminalAction =
-  | "terminal.copy"
-  /** Copy and clear the selection if there is one; else the key goes on to the shell. */
-  | "terminal.copyIfSelected"
-  | "terminal.paste"
-  /** Paste the clipboard's text if it has some; else the key goes on to the program (Ctrl+V as
-   * ^V: an app's own image paste, Vim's block selection). */
-  | "terminal.pasteIfText"
-  | "terminal.search"
-  | "terminal.zoomIn"
-  | "terminal.zoomOut"
-  | "terminal.zoomReset";
-
-/** Every terminal action, bound by default or not: what `keys.terminal` in init.lua may name. */
-export const terminalActions: readonly TerminalAction[] = [
+/** Every terminal action, bound by default or not: what `keys.terminal` in init.lua may name.
+ * Keys caught in a terminal before the shell sees them (Windows Terminal's defaults):
+ * `terminal.copyIfSelected` copies and clears the selection if there is one, else the key goes on
+ * to the shell; `terminal.pasteIfText` (Ctrl+V only) lets the WebView paste the clipboard's text,
+ * and with no text Ctrl+V goes on to the program as ^V (an app's own image paste, Vim's block
+ * selection). */
+export const terminalActions = [
   "terminal.copy",
   "terminal.copyIfSelected",
   "terminal.paste",
@@ -25,7 +16,9 @@ export const terminalActions: readonly TerminalAction[] = [
   "terminal.zoomIn",
   "terminal.zoomOut",
   "terminal.zoomReset",
-];
+] as const;
+
+export type TerminalAction = (typeof terminalActions)[number];
 
 export type TerminalKeysAction = TerminalAction | "session.reconnect" | "picker.chooseHere";
 

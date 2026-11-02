@@ -12,6 +12,7 @@ import type { Registries } from "../registries";
 import { CONFIG } from "../registry";
 import { defaultTerminalOptions, standardAnsi, type TerminalOptions } from "../terminal/options";
 import { terminalActions } from "../terminal/keymap";
+import { PASTE_IF_TEXT_KEY } from "../terminal/input";
 import { terminalFontStack } from "../terminal/fonts";
 import type { AppearanceOptions, Theme } from "../theme/theme";
 import { layoutsOf, STATUS_SEGMENTS, type Layouts } from "../view/layout";
@@ -233,6 +234,10 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
         : registries.commands.get(k.action.split(/\s+/)[0] ?? "") !== undefined;
       if (!known) {
         warn(path, `key ${k.keys} (${snake(k.context)}): no action named "${k.action}"`);
+        continue;
+      }
+      if (k.action === "terminal.pasteIfText" && keys !== PASTE_IF_TEXT_KEY) {
+        warn(path, `key ${k.keys} (terminal): terminal.pasteIfText works only on ${PASTE_IF_TEXT_KEY}, the key the WebView pastes with (use terminal.paste)`);
         continue;
       }
     }

@@ -129,11 +129,16 @@ describe("registering the Config", () => {
         keys: [
           { context: "terminal", keys: "Ctrl+v", action: "terminal.pasteIfText" },
           { context: "terminal", keys: "Ctrl+b", action: "terminal.pasteIfTxt" },
+          { context: "terminal", keys: "F2", action: "terminal.pasteIfText" },
         ],
-        lines: { "keys.terminal.Ctrl+b": { file: "init.lua", line: 4 } },
+        lines: { "keys.terminal.Ctrl+b": { file: "init.lua", line: 4 }, "keys.terminal.F2": { file: "init.lua", line: 5 } },
       }),
     );
-    expect(warnings).toEqual([{ file: "init.lua", line: 4, message: 'key Ctrl+b (terminal): no action named "terminal.pasteIfTxt"' }]);
+    expect(warnings).toEqual([
+      { file: "init.lua", line: 4, message: 'key Ctrl+b (terminal): no action named "terminal.pasteIfTxt"' },
+      { file: "init.lua", line: 5, message: "key F2 (terminal): terminal.pasteIfText works only on Ctrl+v, the key the WebView pastes with (use terminal.paste)" },
+    ]);
+    expect(keymapOf(r.keymap.list()).terminal.F2).toBeUndefined();
     const km = keymapOf(r.keymap.list());
     expect(km.terminal["Ctrl+v"]).toEqual({ action: "terminal.pasteIfText", source: CONFIG });
     expect(km.terminal["Ctrl+b"]).toBeUndefined();
