@@ -506,7 +506,7 @@ export function fakePluginHost(
       remove: (id: string) => push({ op: "remove", kind, id }),
     });
     const m: FakeRoster = {
-      api_version: 4,
+      api_version: 5,
       plugin: { name: r.manifest.name, version: r.manifest.version, permissions: [...r.grants], config },
       commands: {
         add: (name, spec) => {

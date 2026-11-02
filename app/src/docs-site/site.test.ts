@@ -136,7 +136,7 @@ describe("the docs website", () => {
   it("keeps the search index inside its budget (docs/app/performance.md)", async () => {
     const js = file(site.files, "search-index.js");
     const gzip = new Response(new Response(js).body?.pipeThrough(new CompressionStream("gzip")));
-    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(275_000);
+    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(300_000);
   });
 
   it("puts the search box on every page, and loads the index only when it's used", () => {

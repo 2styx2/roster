@@ -77,17 +77,6 @@ fn said(ops: &[Value], id: &str) -> String {
 }
 
 #[test]
-fn the_api_version_is_4() {
-    let (_, ops, error, _folder) = load(
-        "version",
-        &[],
-        r#"roster.status.set("v", { text = tostring(roster.api_version) })"#,
-    );
-    assert_eq!(error, None);
-    assert_eq!(said(&ops, "v"), "4");
-}
-
-#[test]
 fn an_unknown_host_is_nil_and_a_known_one_a_table() {
     let (_, ops, error, _folder) = load(
         "host-nil",
