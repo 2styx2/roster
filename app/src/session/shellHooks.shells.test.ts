@@ -35,29 +35,46 @@ const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 // eslint-disable-next-line no-control-regex -- the questions are escape sequences
 const ASK = /\x1b\[0?c|\x1b\[6n/g;
 
-/** Runs `argv` on a pty, typing `lines` (each followed by Enter) and answering the terminal
- * questions it asks; what it printed, once it exits (or after 25 s). */
+/** Runs `argv` on a pty and types `lines`, each followed by Enter once the shell has been quiet
+ * for a moment (as a person would: typed ahead, .NET's console can lose its cursor-position
+ * answer), answering the terminal questions it asks; what it printed, once it exits (or after 20 s). */
 function runPty(argv: string[], lines: string[]): Promise<string> {
   return new Promise((resolve) => {
     const child = spawn("script", ["-qfec", argv.map(quote).join(" "), "/dev/null"], { env: ENV });
     let out = "";
     let answered = 0;
-    const timer = setTimeout(() => child.kill("SIGKILL"), 25_000);
+    const todo = [...lines];
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const typeSoon = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        const line = todo.shift();
+        if (line === undefined) return;
+        child.stdin.write(`${line}\r`);
+        typeSoon();
+      }, 300);
+    };
+    const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => {
       out += d;
       const asks = out.match(ASK) ?? [];
       for (; answered < asks.length; answered++) child.stdin.write(asks[answered] === "\x1b[6n" ? "\x1b[1;1R" : "\x1b[?62;22c");
+      typeSoon();
     });
     child.stderr.on("data", (d: Buffer) => (out += d.toString()));
     child.stdin.on("error", () => {});
     child.on("close", () => {
       clearTimeout(timer);
+      clearTimeout(idle);
       resolve(out);
     });
-    child.stdin.write(lines.map((l) => `${l}\r`).join(""));
+    typeSoon();
   });
 }
+
+/** The end of what a shell printed, escaped, for a failed test's message. */
+const tail = (out: string) => JSON.stringify(out.slice(-3000));
 
 const ESC = "\x1b";
 const BEL = "\x07";
@@ -83,13 +100,13 @@ const missing = (s: Shell) => !has(s.name) || (s.pty && !hasPty);
 describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_, shell) => {
   it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", async () => {
     const out = await runIn(shell, [hookLine(shell.kind, N), "false", "cd /tmp", "exit"]);
-    expect(out).toContain(own("A"));
+    expect(out, tail(out)).toContain(own("A"));
     expect(out).toContain(own("B"));
     expect(out).toContain(own("C"));
     expect(out).toContain(own("D;1"));
     expect(out).toContain(own("D;0"));
     expect(out).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
-  });
+  }, 30_000);
 });
 
 /** The rc-file snippet for `lang` in docs/plugins.md's "Shell integration": its first block. */
@@ -117,9 +134,9 @@ describe.each([
     const bare = await runIn(shell, commands);
     const count = (text: string, mark: string) => text.split(`${ESC}]133;${mark}${BEL}`).length - 1;
     for (const mark of ["A", "B", "C", "D;1", "D;0"]) {
-      expect(count(out, mark), mark).toBeGreaterThan(count(bare, mark));
+      expect(count(out, mark), `${mark}: ${tail(out)}`).toBeGreaterThan(count(bare, mark));
     }
-  });
+  }, 60_000);
 });
 
 describe("the hook line in bash, set up as people have it", () => {
