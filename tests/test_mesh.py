@@ -1030,7 +1030,7 @@ def test_serve_plans_applies_cuts_and_reports_status(net, serve, monkeypatch):
     assert s.call("mesh.cut", {"host": "nope"})["error"]["code"] == 2
     cut = s.call("mesh.cut", {"host": "orion-2"})["result"]
     assert cut["pending"] == {} and "nas-1" in cut["confirmed"]
-    assert cut["change"]["written"] is True
+    assert cut["change"]["written"] is True and cut["change"]["sync"] == {"ok": True}     # T150: this Box follows
     assert s.call("hosts.list")["result"]["hosts"][0]["mesh"] is False
     json.dumps(cut)
 

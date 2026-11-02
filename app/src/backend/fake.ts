@@ -25,6 +25,7 @@ import {
   type HostFields,
   type HostList,
   type GroupChange,
+  type BoxSync,
   type InventoryChanged,
   type JobProgress,
   type InventoryFileError,
@@ -177,6 +178,8 @@ export interface FakeScenario {
   publishRefusal?: Refusal;
   /** Ticket 12: the Publish works, but the `roster sync` after it fails with this. */
   publishSyncError?: string;
+  /** T150: every other change roster writes works, but the `roster sync` after it fails with this. */
+  syncError?: string;
   /** The vault locks itself again this many ms after each unlock (bw's own timeout, another
    * roster command), so the next password Session meets code 14. */
   relockAfterMs?: number;
@@ -1363,6 +1366,9 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       details: "timed out",
     });
   const wait = () => new Promise((r) => setTimeout(r, scenario.delay ?? 0));
+  /** T150: the `roster sync` serve runs after each change it writes. */
+  const synced = (): BoxSync =>
+    scenario.syncError ? { ok: false, error: scenario.syncError, fix: "run `roster sync` on this box" } : { ok: true };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** The vault's lock (serve API 20): vault calls wait behind a slow unlock, which holds it alone. */
   let serveBusy: Promise<unknown> = Promise.resolve();
@@ -1876,7 +1882,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (!(p.group in groups)) groups = { ...groups, [p.group]: { title: "", description: "" } };
       const { save_to: _s, ...shown } = target;
       void _s;
-      return { added: true, host, backup: "/home/you/infra/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [] };
+      return { added: true, host, backup: "/home/you/infra/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [], sync: synced() };
     },
     async saveLogin(p: SaveLoginParams): Promise<SaveLogin> {
       await wait();
@@ -1905,7 +1911,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       hosts = hosts.map((x) => (x.name === name ? host : x));
       const { save_to: _s, ...shown } = target;
       void _s;
-      return { changed: true, host, backup: "/home/you/infra/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [] };
+      return { changed: true, host, backup: "/home/you/infra/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [], sync: synced() };
     },
     async forgetTyped(held: string) {
       forgets.push(held);
@@ -1965,7 +1971,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         const adds = brings.adds ?? [];
         committed = [...committed.map(change), ...adds];
         hosts = [...hosts.map(change), ...adds];
-        return { updated: true, upstream: "origin/main", commits: brings.commits, ahead: 0 };
+        return { updated: true, upstream: "origin/main", commits: brings.commits, ahead: 0, sync: synced() };
       }
       return { updated: false, upstream: "origin/main", commits: 0, ahead: 0 };
     },
@@ -1995,7 +2001,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       }
       const updated = withFields(h, wanted);
       hosts = hosts.map((x) => (x.name === host ? updated : x));
-      return { changed: true, host: updated, backup: "~/infra/.git/roster/roster.yml.bak" };
+      return { changed: true, host: updated, backup: "~/infra/.git/roster/roster.yml.bak", sync: synced() };
     },
     async pendingChanges() {
       await wait();
@@ -2006,7 +2012,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (pending().count === 0) return { discarded: false, backup: null };
       hosts = committed;
       groups = committedGroups;
-      return { discarded: true, backup: "~/infra/.git/roster/roster.yml.bak" };
+      return { discarded: true, backup: "~/infra/.git/roster/roster.yml.bak", sync: synced() };
     },
     async publishChanges(message) {
       await wait();
@@ -2140,6 +2146,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           ? { provider: "bw", id: `fake-${p.name}`, name: item, ...(target ? { target: { id: target.id, kind: target.kind, label: target.label } } : {}) }
           : null,
         warnings: scenario.addWarnings?.[p.name] ?? [],
+        sync: synced(),
       };
     },
     async reviewHost(host, reviewed = true) {
@@ -2149,14 +2156,14 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (h.reviewed === reviewed) return { changed: false, host: h, backup: null };
       const updated = { ...h, reviewed };
       hosts = hosts.map((x) => (x.name === host ? updated : x));
-      return { changed: true, host: updated, backup: "~/infra/.git/roster/roster.yml.bak" };
+      return { changed: true, host: updated, backup: "~/infra/.git/roster/roster.yml.bak", sync: synced() };
     },
     async removeHost(host) {
       await wait();
       const h = hosts.find((x) => x.name === host);
       if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
       hosts = hosts.filter((x) => x.name !== host);
-      return { removed: host, group: h.group, backup: BACKUP };
+      return { removed: host, group: h.group, backup: BACKUP, sync: synced() };
     },
     async renameHost(host, to) {
       await wait();
@@ -2174,7 +2181,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       }
       const renamed = { ...h, name: to };
       hosts = hosts.map((x) => (x.name === host ? renamed : x));
-      return { changed: true, host: renamed, backup: BACKUP };
+      return { changed: true, host: renamed, backup: BACKUP, sync: synced() };
     },
     async moveHost(host, group) {
       await wait();
@@ -2184,7 +2191,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (h.group === group) return { changed: false, host: h, backup: null, pinned: [] };
       const moved = { ...h, group };
       hosts = [...hosts.filter((x) => x.name !== host), moved];
-      return { changed: true, host: moved, backup: BACKUP, pinned: [] };
+      return { changed: true, host: moved, backup: BACKUP, pinned: [], sync: synced() };
     },
     async newGroup(name, title) {
       await wait();
@@ -2193,7 +2200,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         throw new BackendCallError(`group '${name}' is already in roster.yml`, LiveError.nameTaken, { kind: "group", group: name, fix: "pick another name, or use that group" });
       }
       groups = { ...groups, [name]: { title: title ?? "", description: "" } };
-      return { group: name, backup: BACKUP };
+      return { group: name, backup: BACKUP, sync: synced() };
     },
     async renameGroup(group, to) {
       await wait();
@@ -2203,7 +2210,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (to in groups) throw new BackendCallError(`group '${to}' is already in roster.yml`, LiveError.nameTaken, { kind: "group", group: to });
       groups = Object.fromEntries(Object.entries(groups).map(([g, v]) => [g === group ? to : g, v]));
       hosts = hosts.map((h) => (h.group === group ? { ...h, group: to } : h));
-      return { changed: true, group: to, backup: BACKUP };
+      return { changed: true, group: to, backup: BACKUP, sync: synced() };
     },
     async deleteGroup(group, to) {
       await wait();
@@ -2219,13 +2226,13 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (to !== undefined && members.length && !(to in groups)) throw unknownGroup(to, groups);
       hosts = [...hosts.filter((h) => h.group !== group), ...hosts.filter((h) => h.group === group).map((h) => ({ ...h, group: to ?? h.group }))];
       groups = Object.fromEntries(Object.entries(groups).filter(([g]) => g !== group));
-      return { deleted: group, moved: members, to: members.length ? (to ?? null) : null, backup: BACKUP };
+      return { deleted: group, moved: members, to: members.length ? (to ?? null) : null, backup: BACKUP, sync: synced() };
     },
     async reloadInventory() {
       await wait();
       const changed = onDisk !== null;
       applyDisk();
-      return { changed, host_count: hosts.length, error: broken };
+      return { changed, host_count: hosts.length, error: broken, ...(changed && !broken ? { sync: synced() } : {}) };
     },
     async watchInventory(auto) {
       await wait();
@@ -2246,7 +2253,9 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       onDisk = next;
       if (watchAuto === null) return;
       if (watchAuto) applyDisk();
-      const change: InventoryChanged = watchAuto ? { applied: true, error: broken } : { applied: false, error: null };
+      const change: InventoryChanged = watchAuto
+        ? { applied: true, error: broken, ...(broken ? {} : { sync: synced() }) }
+        : { applied: false, error: null };
       for (const w of changeWatchers) w(change);
     },
     ...fakePluginHost(scenario.plugins ?? {}, () => hosts, packagePlugin, pluginServe(scenario)),

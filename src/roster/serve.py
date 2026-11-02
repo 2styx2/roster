@@ -610,8 +610,9 @@ def inventory_pull(state, params):
     """Fast-forward the infra repo before an edit (changes.pull), then load roster.yml again.
 
     Params: none
-    Result: `{updated, upstream, commits, ahead, from?, to?, message?}`: the repo fast-forwarded to its upstream
-        (`upstream: null` when the branch has none: nothing to pull). Refuses uncommitted changes (`71`,
+    Result: `{updated, upstream, commits, ahead, from?, to?, message?, sync?}`: the repo fast-forwarded to its upstream
+        (`upstream: null` when the branch has none: nothing to pull), then `roster sync` when it updated (`sync`,
+        T150, as `changes.publish`'s). Refuses uncommitted changes (`71`,
         `data.files`) and a diverged branch (`72`, `data.ahead`/`behind`); a failed fetch is `73`. Never merges,
         rebases or stashes
     Errors: 70-73
@@ -619,6 +620,8 @@ def inventory_pull(state, params):
     """
     result = changes.pull(inventory_path(state))
     state.reload()
+    if result["updated"]:
+        result["sync"] = sync_box(state)
     return result
 
 
@@ -675,8 +678,10 @@ def host_update(state, params):
     A change to its address, user or Login needs a host.verify_login of exactly those values first.
 
     Params: `{host, changes}`
-    Result: `{changed, host, backup, warnings}`: the edit written into `roster.yml`, `host` as it loads now,
-        `backup` the file as it was, `warnings` what failed after the write (recording a moved Host's key)
+    Result: `{changed, host, backup, warnings, sync}`: the edit written into `roster.yml`, `host` as it loads now,
+        `backup` the file as it was, `warnings` what failed after the write (recording a moved Host's key),
+        `sync: {ok, error?, fix?}` (T150) the `roster sync` after it, as `changes.publish`'s (left out when
+        nothing changed)
     Errors: 2, 70, 74, 75
     Since: API 5
     """
@@ -704,7 +709,7 @@ def host_update(state, params):
                             f"({failure_text(e)}) - test the login again before connecting")
     state.reload()
     return {"changed": True, "host": state.inventory()["hosts"][h["name"]], "backup": str(backup),
-            "warnings": warnings}
+            "warnings": warnings, "sync": sync_box(state)}
 
 
 def changes_diff(state, params):
@@ -725,12 +730,15 @@ def changes_discard(state, params):
     """Throw the Pending changes away: roster.yml back as the last commit has it, then load it again.
 
     Params: none
-    Result: `{discarded, backup}`: `roster.yml` back as the last commit has it (index and working tree)
+    Result: `{discarded, backup, sync?}`: `roster.yml` back as the last commit has it (index and working tree),
+        then `roster sync` (`sync`, T150, as `changes.publish`'s; left out when there was nothing to discard)
     Errors: 70
     Since: API 5
     """
     result = changes.discard(inventory_path(state))
     state.reload()
+    if result["discarded"]:
+        result["sync"] = sync_box(state)
     return result
 
 
@@ -749,15 +757,26 @@ def changes_publish(state, params):
         raise RpcError(INVALID_PARAMS, "params.message must be a string")
     result = changes.publish(inventory_path(state), message)
     state.reload()
-    try:
-        cfg = state.inventory()
-        write_ssh_config(cfg)
-        write_claude_files(cfg)
-        result["sync"] = {"ok": True}
-    except (Problem, SystemExit, OSError) as e:
-        why = e.message if isinstance(e, Problem) else die_message(e) if isinstance(e, SystemExit) else str(e)
-        result["sync"] = {"ok": False, "error": why, "fix": "run `roster sync` on this box"}
+    result["sync"] = sync_box(state)
     return result
+
+
+def sync_box(state):
+    """`roster sync` for this Box after serve changed roster.yml (T150): its ssh config and Claude files follow the
+    Inventory as it loads now, so a Session to a Host just added or changed opens without `roster sync`. Never
+    undoes the change: a failure is only reported, as `{ok: false, error, fix}` (else `{ok: true}`). A roster.yml
+    that doesn't load syncs nothing (the last good Inventory isn't what the file says)."""
+    with state.lock:                        # one writer of the ssh config at a time; a write already holds it
+        try:
+            if state.error is not None:
+                raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
+            cfg = state.inventory()
+            write_ssh_config(cfg)
+            write_claude_files(cfg)
+            return {"ok": True}
+        except (Problem, SystemExit, OSError) as e:
+            why = e.message if isinstance(e, Problem) else die_message(e) if isinstance(e, SystemExit) else str(e)
+            return {"ok": False, "error": why, "fix": "run `roster sync` on this box"}
 
 
 # ---------------------------------------------------------------- adding a Host (ticket 11, decision Q43)
@@ -1195,11 +1214,12 @@ def quick_save(state, params):
     written. The password is forgotten once it's saved.
 
     Params: `{quick, name, group, item?, title?, provider?, save_to?}`
-    Result: `{added: true, host, backup, item, warnings}`, like `host.add`'s: the Vault item `item` (default
+    Result: `{added: true, host, backup, item, warnings, sync}`, like `host.add`'s: the Vault item `item` (default
         `<name> ssh`), with the user in its username field and `ssh://address[:port]` in its URI field, then the
         Host `name` in `group` with `ip`, `user`, `port`, `auth: "<provider>:<item>"`, `reviewed: true` and
         `enroll: false`, as a Pending change, then the host key the user confirmed for the Session recorded for
-        it in `~/.ssh/roster_known_hosts` (never a fresh scan; a failure there is a `warning`)
+        it in `~/.ssh/roster_known_hosts` (never a fresh scan; a failure there is a `warning`), then `roster sync`
+        (`sync`, T150, as `host.add`'s)
     Errors: 80, 81, 74, 60-62, 64, 65, 14, 66, 67
     Since: API 13
     """
@@ -1238,7 +1258,7 @@ def save_quick(state, params):
                         f"({failure_text(e)}) - the first Session to it will ask about the key")
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
-            "warnings": warnings}
+            "warnings": warnings, "sync": sync_box(state)}
 
 
 def host_save_login(state, params):
@@ -1248,11 +1268,12 @@ def host_save_login(state, params):
     changed since that Session logged in: it would save a password for a login nobody tested.
 
     Params: `{held, item?, provider?, save_to?}`
-    Result: `{changed: true, host, backup, item, warnings}`: the Vault item `item` (default `<host> ssh`, the
+    Result: `{changed: true, host, backup, item, warnings, sync}`: the Vault item `item` (default `<host> ssh`, the
         user and `ssh://address[:port]` in it), then the Host's Login set to `<provider>:<item>` as a Pending
         change, written like `host.update` (comments and every other byte kept; an inherited `auth: prompt` gets
         an `auth:` of the Host's own). The item is taken back out if the Host can't be changed. `75` if the
-        Host's address, user, port or Login changed since that Session logged in
+        Host's address, user, port or Login changed since that Session logged in. Then `roster sync` (`sync`, T150,
+        as `host.add`'s)
     Errors: 75, 66, 67, 60-65, 14
     Since: API 13
     """
@@ -1280,7 +1301,7 @@ def save_login(state, params):
                              lambda path: edit.edited(path, name, wanted)[:2], f"{name}'s Login wasn't changed")
     state.reload()
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
-            "warnings": []}
+            "warnings": [], "sync": sync_box(state)}
 
 
 def quick_label(user, address, port):
@@ -1304,9 +1325,11 @@ def host_add(state, params):
 
     Params: `{name, group, address, user?, port?, type?, title?, description?, enroll?, auth? | password +
         item?, host_key?, provider?, save_to?}`
-    Result: `{added: true, host, backup, verify, item, warnings}`: `host` as `roster.yml` has it now, `verify`
-        the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made
-        (`{provider, id, name, target}`, or `null`)
+    Result: `{added: true, host, backup, verify, item, warnings, sync}`: `host` as `roster.yml` has it now,
+        `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made
+        (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the
+        Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`,
+        its `error` and `fix`)
     Errors: 80, 81, 74, 61, 11, 12, 14, 30-35, 40-48, 60, 62, 64, 65
     Since: API 6
     """
@@ -1365,7 +1388,7 @@ def add_host(state, params):
                             f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "verify": verify,
-            "item": made, "warnings": warnings}
+            "item": made, "warnings": warnings, "sync": sync_box(state)}
 
 
 def failure_text(e):
@@ -1414,10 +1437,10 @@ def host_review(state, params):
     With reviewed: false (API 9), mark it unreviewed again: a review made by mistake has a way back.
 
     Params: `{host, reviewed?}`
-    Result: `{changed, host, backup}`: `reviewed: true` set on that Host and nothing else (`changed: false` if
+    Result: `{changed, host, backup, sync?}`: `reviewed: true` set on that Host and nothing else (`changed: false` if
         it already was). `reviewed: false` (API 9) un-reviews it, for a review made by mistake: where the Host's
         own `reviewed: true` sits over an unreviewed group or defaults, its line is taken out again, so the text
-        goes back to what it was
+        goes back to what it was. `sync` (T150): the `roster sync` after a change, as `host.add`'s
     Errors: 2, 70, 74
     Since: API 6
     """
@@ -1435,7 +1458,7 @@ def host_review(state, params):
     backup = repo.backup(old_text)
     edit.replace_file(repo.path, new_text)
     state.reload()
-    return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup)}
+    return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "sync": sync_box(state)}
 
 
 # ---------------------------------------------------------------- the Live Inventory (ticket 28, decision Q45)
@@ -1443,12 +1466,13 @@ def host_review(state, params):
 # (edit.py) written as a Pending change, like host.update. Removing a Host never touches the vault.
 
 def write_edit(state, old_text, new_text):
-    """Write an edit of roster.yml (a Pending change), keeping what it replaced as the backup; load it again."""
+    """Write an edit of roster.yml (a Pending change), keeping what it replaced as the backup; load it again and
+    sync this Box (T150). Returns `{backup, sync}`, for the result."""
     repo = changes.Repo(state.path)
     backup = repo.backup(old_text)
     edit.replace_file(repo.path, new_text)
     state.reload()
-    return str(backup)
+    return {"backup": str(backup), "sync": sync_box(state)}
 
 
 def name_param(params, key):
@@ -1469,7 +1493,7 @@ def host_remove(state, params):
     item, if any, stays where it is.
 
     Params: `{host}`
-    Result: `{removed, group, backup}`: the Host's entry taken out, and every `links:` entry that names it.
+    Result: `{removed, group, backup, sync}`: the Host's entry taken out, and every `links:` entry that names it.
         Its group stays, even empty. **Never touches the vault**: its vault item, if any, stays
     Errors: 1, 2, 70, 74
     Since: API 8
@@ -1477,16 +1501,16 @@ def host_remove(state, params):
     name = name_param(params, "host")
     repo = live_repo(state)
     old_text, new_text, h = edit.removed(repo.path, name)
-    backup = write_edit(state, old_text, new_text)
-    return {"removed": name, "group": h["group"], "backup": backup}
+    written = write_edit(state, old_text, new_text)
+    return {"removed": name, "group": h["group"], **written}
 
 
 def host_rename(state, params):
     """Rename a Host (its key in roster.yml, nothing else), as a Pending change. Its vault item keeps its name.
 
     Params: `{host, to}`
-    Result: `{changed, host, backup}`: only its key changes, and its name in `links:`. Its vault item keeps its
-        name. `100` if `to` is taken
+    Result: `{changed, host, backup, sync?}`: only its key changes, and its name in `links:`. Its vault item keeps
+        its name. `100` if `to` is taken
     Errors: 1, 2, 70, 74, 80, 100
     Since: API 8
     """
@@ -1495,8 +1519,8 @@ def host_rename(state, params):
     old_text, new_text, h = edit.renamed(repo.path, name, to)
     if old_text == new_text:
         return {"changed": False, "host": h, "backup": None}
-    backup = write_edit(state, old_text, new_text)
-    return {"changed": True, "host": state.inventory()["hosts"][to], "backup": backup}
+    written = write_edit(state, old_text, new_text)
+    return {"changed": True, "host": state.inventory()["hosts"][to], **written}
 
 
 def host_move(state, params):
@@ -1504,7 +1528,7 @@ def host_move(state, params):
     wouldn't from the new one is written on the Host, so it stays the same Host (`pinned` names those fields).
 
     Params: `{host, group}`
-    Result: `{changed, host, pinned, backup}`: its lines cut and added at the end of `group`'s `hosts:`,
+    Result: `{changed, host, pinned, backup, sync?}`: its lines cut and added at the end of `group`'s `hosts:`,
         re-indented. What it inherited from its old group (user, port, Login, `enroll`, `reviewed`, `mesh`,
         `type`, …) and wouldn't from the new one is written on the Host (`pinned` names those fields), so it stays
         the same Host; a Host with no `mesh:` anywhere takes the new group's. `101` no such group, `103` if it
@@ -1517,15 +1541,15 @@ def host_move(state, params):
     old_text, new_text, h, pinned = edit.moved(repo.path, name, group)
     if old_text == new_text:
         return {"changed": False, "host": h, "pinned": [], "backup": None}
-    backup = write_edit(state, old_text, new_text)
-    return {"changed": True, "host": state.inventory()["hosts"][name], "pinned": pinned, "backup": backup}
+    written = write_edit(state, old_text, new_text)
+    return {"changed": True, "host": state.inventory()["hosts"][name], "pinned": pinned, **written}
 
 
 def group_new(state, params):
     """Add an empty group after the last one (`NAME:` with `hosts: {}`), as a Pending change.
 
     Params: `{name, title?}`
-    Result: `{group, backup}`: `NAME:` with `hosts: {}` (and its `title:`) after the last group. `100` if taken
+    Result: `{group, backup, sync}`: `NAME:` with `hosts: {}` (and its `title:`) after the last group. `100` if taken
     Errors: 1, 70, 74, 80, 100
     Since: API 8
     """
@@ -1535,16 +1559,16 @@ def group_new(state, params):
         raise RpcError(INVALID_PARAMS, "params.title must be one line")
     repo = live_repo(state)
     old_text, new_text = edit.group_added(repo.path, name, title)
-    backup = write_edit(state, old_text, new_text)
-    return {"group": name, "backup": backup}
+    written = write_edit(state, old_text, new_text)
+    return {"group": name, **written}
 
 
 def group_rename(state, params):
     """Rename a group (its key in roster.yml); its Hosts go with it. A Pending change.
 
     Params: `{group, to}`
-    Result: `{changed, group, backup}`: only its key changes, and its name in `links:`; its Hosts follow. `100`
-        if taken
+    Result: `{changed, group, backup, sync?}`: only its key changes, and its name in `links:`; its Hosts follow.
+        `100` if taken
     Errors: 1, 70, 74, 80, 100, 101
     Since: API 8
     """
@@ -1553,8 +1577,8 @@ def group_rename(state, params):
     old_text, new_text = edit.group_renamed(repo.path, group, to)
     if old_text == new_text:
         return {"changed": False, "group": to, "backup": None}
-    backup = write_edit(state, old_text, new_text)
-    return {"changed": True, "group": to, "backup": backup}
+    written = write_edit(state, old_text, new_text)
+    return {"changed": True, "group": to, **written}
 
 
 def group_delete(state, params):
@@ -1562,7 +1586,7 @@ def group_delete(state, params):
     to first (as host.move moves them). A Pending change.
 
     Params: `{group, to?}`
-    Result: `{deleted, moved, to, backup}`: the group's entry taken out, and every `links:` entry that names
+    Result: `{deleted, moved, to, backup, sync}`: the group's entry taken out, and every `links:` entry that names
         it. A group that still has Hosts is refused
         (`102`, `data.hosts`) unless `to` names the group they move to first (as `host.move` moves them)
     Errors: 1, 70, 74, 101-103
@@ -1574,8 +1598,8 @@ def group_delete(state, params):
         to = name_param(params, "to")
     repo = live_repo(state)
     old_text, new_text, moved = edit.group_deleted(repo.path, group, to)
-    backup = write_edit(state, old_text, new_text)
-    return {"deleted": group, "moved": moved, "to": to if moved else None, "backup": backup}
+    written = write_edit(state, old_text, new_text)
+    return {"deleted": group, "moved": moved, "to": to if moved else None, **written}
 
 
 # ---------------------------------------------------------------- reloading: `:source` and auto_reload (Q58)
@@ -1585,13 +1609,17 @@ def inventory_reload(state, params):
     `error` says why ({message, path, line?, fix}); `changed`: the file differs from what was loaded before.
 
     Params: none
-    Result: `{changed, host_count, error}`: `:source` for `roster.yml`, read again now
+    Result: `{changed, host_count, error, sync?}`: `:source` for `roster.yml`, read again now; `sync` (T150,
+        Q137) the `roster sync` after a changed file that loads
     Since: API 8
     """
     before = state.digest
     state.reload()
     cfg = state.inventory()
-    return {"changed": state.digest != before, "host_count": len(cfg["hosts"]), "error": broken(state)}
+    result = {"changed": state.digest != before, "host_count": len(cfg["hosts"]), "error": broken(state)}
+    if result["changed"] and state.error is None:      # Q137: an outside edit applied here syncs, once it loads
+        result["sync"] = sync_box(state)
+    return result
 
 
 WATCH_EVERY = 0.5           # s: how often the watcher looks at roster.yml while it doesn't change
@@ -1641,6 +1669,8 @@ class Watcher(threading.Thread):
             if state.auto:
                 state.reload()
                 params = {"applied": True, "error": broken(state)}
+                if state.error is None:     # Q137: the ssh config follows roster.yml, once it loads
+                    params["sync"] = sync_box(state)
             else:
                 state.noticed = digest
                 params = {"applied": False, "error": None}
@@ -2305,7 +2335,8 @@ def mesh_cut(state, params):
         and every peer's off HOST, at once. `warnings` (since API 24): what roster left on HOST's own side, an
         earlier `mesh_dir:` that still holds a Mesh key (roster never removes one), one sentence each. `change` is the `mesh: false` written for HOST as a Pending change: `{written: true,
         backup}` (`backup: null` and a `note` when `roster.yml` isn't in a git repo), `{written: false, note}` when
-        it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened).
+        it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened); a
+        written one has `sync` (T150), the `roster sync` after it, as `host.add`'s.
         With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job`
     Errors: 1, 2, 111
     Since: API 15
@@ -2323,6 +2354,8 @@ def mesh_cut(state, params):
             with claimed(state, [("inventory", False)], "mesh.cut"):
                 result["change"] = mesh.write_cut(state.fresh(), name)
                 state.reload()
+                if result["change"]["written"]:
+                    result["change"]["sync"] = sync_box(state)
         except RpcError as e:
             if e.code != BUSY:
                 raise
@@ -2519,7 +2552,7 @@ def discover_add(state, params):
     --write` writes them, with the names `discover.status` showed). Nothing else changes.
 
     Params: `{scan, addresses: [address], group?}`: `group` is new (`discovered-YYYYMMDD` if left out)
-    Result: `{group, added: [{address, name}], backup}`
+    Result: `{group, added: [{address, name}], backup, sync}`: `sync` (T150) as `host.add`'s
     Errors: 1, -32602, 70, 74, 100, 122, 123
     Since: API 18
     """
@@ -2562,9 +2595,9 @@ def discover_add(state, params):
     if any(after["hosts"].get(n) != cfg["hosts"].get(n) for n in cfg["hosts"]) or \
             any(n not in after["hosts"] or after["hosts"][n]["group"] != group for n in names):
         raise RpcError(INVALID_EDIT, "the result loads differently than asked: nothing was written")
-    backup = write_edit(state, old_text, new_text)
+    written = write_edit(state, old_text, new_text)
     scan.mark_added({a["address"]: a["name"] for a in added})
-    return {"group": group, "added": added, "backup": backup}
+    return {"group": group, "added": added, **written}
 
 
 METHODS["discover.plan"] = discover_plan

@@ -463,7 +463,8 @@ def test_an_outside_edit_is_applied_within_a_second_with_auto_reload(live, repo)
     start = time.monotonic()
     n = s.note(timeout=1.0)
     assert time.monotonic() - start < 1.0
-    assert n == {"jsonrpc": "2.0", "method": "inventory.changed", "params": {"applied": True, "error": None}}
+    assert n == {"jsonrpc": "2.0", "method": "inventory.changed",
+                 "params": {"applied": True, "error": None, "sync": {"ok": True}}}
     assert "plain2" in names(s) and "plain" not in names(s)
 
 
@@ -476,7 +477,7 @@ def test_a_broken_edit_keeps_the_last_good_inventory_and_says_the_line_then_reco
     listed = s.ok("hosts.list")
     assert "flow" in [h["name"] for h in listed["hosts"]] and listed["error"]["line"] == 11
     save(repo, INVENTORY.replace("      plain:", "      fixed:"))
-    assert s.note(timeout=1.0)["params"] == {"applied": True, "error": None}
+    assert s.note(timeout=1.0)["params"] == {"applied": True, "error": None, "sync": {"ok": True}}
     listed = s.ok("hosts.list")
     assert listed["error"] is None and "fixed" in [h["name"] for h in listed["hosts"]]
 

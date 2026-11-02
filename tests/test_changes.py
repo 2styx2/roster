@@ -175,7 +175,8 @@ def test_a_text_edit_needs_no_verify_and_keeps_every_other_byte(app, box):
     assert hosts["esx"]["title"] == "ESXi 8"
     assert (box / ".git" / "roster" / "roster.yml.bak").read_text() == before
     assert r["backup"] == str(box / ".git" / "roster" / "roster.yml.bak")
-    assert git(box, "status", "--porcelain") == "M roster.yml"          # the backup isn't in the working tree
+    # the backup isn't in the working tree (the sync's ROSTER.md and CLAUDE.md are untracked here)
+    assert git(box, "status", "--porcelain", "--untracked-files=no") == "M roster.yml"
 
 
 def test_the_diff_shows_exactly_the_change(app, box):
@@ -200,7 +201,7 @@ def test_discard_puts_the_file_back_as_it_was(app, box):
     r = result(app.call("changes.discard"))
     assert r["discarded"] and box.yml.read_bytes() == before
     assert (box / ".git" / "roster" / "roster.yml.bak").read_text() == edited       # what was discarded
-    assert git(box, "status", "--porcelain") == ""
+    assert git(box, "status", "--porcelain", "--untracked-files=no") == ""          # the sync's files are untracked
     assert {h["name"]: h for h in result(app.call("hosts.list"))["hosts"]}["other"]["type"] == ""
     assert result(app.call("changes.discard")) == {"discarded": False, "backup": None}
 
