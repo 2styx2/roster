@@ -855,17 +855,25 @@ function fakeSession(
      * Login's password (ticket 120): then `ssh` asks, without echo, and takes FAKE_LOGIN_PASSWORD. */
     reach?: (target: string) => { name: string; user: string; password: boolean } | null;
   } = {},
-): SessionHandle & { atPasswordPrompt(): boolean } {
+): SessionHandle & { atPasswordPrompt(): boolean; endsWith(text: string): boolean } {
   // What it printed, without escapes, for a ConPTY-style repaint.
   let screen = "";
+  // Its last output as text, for the core's printed-prompt check (ticket 137).
+  let shown = "";
+  const show = (bytes: Uint8Array) => {
+    shown = (shown + new TextDecoder().decode(bytes)).slice(-4096);
+  };
   const out = (bytes: Uint8Array) => {
+    show(bytes);
     // eslint-disable-next-line no-control-regex
     if (extra.repaints) screen = (screen + new TextDecoder().decode(bytes).replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\r/g, "")).slice(-8000);
     events.output(bytes);
   };
   const repaint = (s: TermSize) => {
     const rows = screen.split("\n").slice(-s.rows);
-    events.output(encode(`\x1b[?25l\x1b[H${rows.map((r) => `${r}\x1b[K`).join("\r\n")}\x1b[?25h`));
+    const bytes = encode(`\x1b[?25l\x1b[H${rows.map((r) => `${r}\x1b[K`).join("\r\n")}\x1b[?25h`);
+    show(bytes);
+    events.output(bytes);
   };
   let line = "";
   // `sudo …` (ticket 119): a password prompt that doesn't echo what's typed, as sudo's.
@@ -1014,7 +1022,24 @@ function fakeSession(
       end(null, true);
     },
     atPasswordPrompt: () => password && !ended,
+    endsWith: (text) => {
+      const want = asText(text).trim();
+      return !ended && want !== "" && asText(shown).trimEnd().endsWith(want);
+    },
   };
+}
+
+/** Output as the core compares it with a prompt: escape sequences out, a cursor-forward as a
+ * space, whitespace runs as one space. */
+function asText(s: string): string {
+  return (
+    s
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[[0-9;]*C/g, " ")
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Za-z]/g, "")
+      .replace(/\s+/g, " ")
+  );
 }
 
 /** The password the fake vault holds for every Host Login a prompt fill types (ticket 119). Never
@@ -1686,15 +1711,23 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
         },
       });
-      const { atPasswordPrompt, ...handle } = session;
-      // The core's prompt fill (ticket 119), as the Tauri build's: serve's refusals first (the Host
-      // changed since the Session connected, a prompt that isn't sudo's or ssh's for this Host's own
-      // Login, no saved password, the vault), then the probe (an echoing prompt, or no prompt,
-      // refuses), then the password typed into the Session.
+      const { atPasswordPrompt, endsWith, ...handle } = session;
+      // The core's prompt fill (ticket 119), as the Tauri build's: the core's printed-prompt check
+      // first (ticket 137), then serve's refusals (the Host changed since the Session connected, a
+      // prompt that isn't sudo's or ssh's for this Host's own Login, no saved password, the
+      // vault), then the probe (an echoing prompt, or no prompt, refuses), then the password typed
+      // into the Session.
       const connected = { ip: h.ip, port: h.ssh.port, user: h.ssh.user };
       // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
       const fill = async (prompt: string, hop?: NestedHost) => {
         await wait();
+        // The core's check comes first (ticket 137): the Session's output must end with the prompt,
+        // or nothing is asked or typed (130, so the app offers it again).
+        if (!endsWith(prompt)) {
+          throw new BackendCallError("the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it", FillRefusal.refused, {
+            fix: "press the key again while the prompt is at the cursor",
+          });
+        }
         const self = hosts.find((x) => x.name === host);
         if (!self) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
         if (self.ip !== connected.ip || self.ssh.port !== connected.port || self.ssh.user !== connected.user) {

@@ -18,6 +18,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - A Plugin written for Plugin API 5 (`api = 5` in its manifest) gets an error at its line, as `init.lua` does, when it takes away what it never added: `roster.themes.remove` of a Theme it didn't define, `roster.keymap.del` of keys it didn't bind, any collection's `remove`, and `roster.views.update`, `open` or `close` of a view it doesn't have. A key context other than `leader`, `list` or `list_vim` is an error there too, where the app refused it with a notice. A Plugin written for API 4 or older keeps the quiet removals. See [Errors](plugin-api.md#errors).
 
+### Security
+
+**App**
+
+- **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the cursor is right after that very prompt, as a terminal draws it (Windows' redraws included), as a nested ssh's fill already needed; a sudo prompt that went by gets nothing and the vault isn't asked, and pressing the key again works once the prompt is back at the cursor. `terminal.read` Plugins no longer get any of a Session's shell-hook token when the output is split at an unlucky point or wraps it with links, colours or charset switches inside; ordinary output reaches them unchanged.
+
 ### Fixed
 
 **App**

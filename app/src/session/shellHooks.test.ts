@@ -376,6 +376,175 @@ describe("TokenMask: Plugins never see the Session's token (ticket 120)", () => 
     expect(out).not.toContain(NONCE.slice(0, 5));
   });
 
+  // Ticket 137 (#243 f, decision Q136): output that stopped part-way into the token for the 50 ms
+  // hold went out with up to 5 of its characters as they were, and the rest of the token, in the
+  // next read, wasn't recognised at all. Every split point, with the hold timing out (flush) after
+  // every read, and byte by byte.
+  //
+  // The residual, stated: after `roster=` (every place roster's hook line puts the token, so every
+  // way a shell prints it), no character ever goes out. Anywhere else, a held start of the token
+  // shorter than 4 characters goes out as it was when the hold times out (it looks like ordinary
+  // output then: an echoed key, a counter, a hex id), so at most its first 3 hex characters, 12 of
+  // its 96 bits, and only when the output pauses for 50 ms right after them; the rest is dashed.
+  // That pause is the only case: a hold that passes its 4 KB bound dashes every start it holds.
+  describe("every way a read can split it, the hold timing out between reads", () => {
+    const run = (nonce: string, chunks: Uint8Array[], timeOut: boolean) => {
+      const mask = new TokenMask(nonce);
+      const out: number[] = [];
+      for (const c of chunks) {
+        out.push(...mask.mask(c));
+        if (timeOut && mask.holding()) out.push(...mask.flush());
+      }
+      out.push(...mask.flush());
+      return Uint8Array.from(out);
+    };
+    /** The token's bytes at `at` in `out`, with at most `clear` of its first ones as they were. */
+    const expectMasked = (text: Uint8Array, at: number, out: Uint8Array, clear: number, why: string) => {
+      expect(out.length, why).toBe(text.length);
+      for (let k = at; k < at + 24; k++) {
+        const ch = String.fromCharCode(out[k] ?? 0);
+        if (k < at + clear && ch === String.fromCharCode(text[k] ?? 0)) continue;
+        expect(ch, `${why}: byte ${k}`).toBe("-");
+      }
+    };
+    const RESIDUAL = 3;
+    /** [name, before, after, how many of its first characters may go out as they were]. */
+    const cases = (nonce: string): [string, string, string, number][] => [
+      ["roster mark", "\x1b]133;A;roster=", "\x07user$ ", 0],
+      ["printed by echo $PS1", "$ echo $PS1\r\n\\[\\e]133;A;roster=", "\\a\\]\\u$ \r\n$ ", 0],
+      ["wrapped right after roster=", "history | tail -1: roster=\x1b[K\r\n", " done\r\n", 0],
+      ["wrapped inside roster=", "declare -- PS1=ros\r\nter=", "\r\n", 0],
+      ["without roster= before it", "  12  printf x ", " done\r\n$ ", RESIDUAL],
+      ["after a near miss of its own start", `x ${nonce.slice(0, 3)}Z ${nonce.slice(0, 2)}`, "\r\n", RESIDUAL],
+    ];
+    const NONCES = [NONCE, "aaaaaaaaaaaaaaaaaaaaaaab", "abababababababababababac", newNonce(), newNonce()];
+
+    it.each(NONCES)("with one cut anywhere and two cuts across the token (%s)", (nonce) => {
+      for (const [name, before, after, clear] of cases(nonce)) {
+        const text = enc.encode(before + nonce + after);
+        const at = before.length;
+        for (let i = 0; i <= text.length; i++) {
+          for (const timeOut of [true, false]) {
+            const out = run(nonce, [text.slice(0, i), text.slice(i)], timeOut);
+            expectMasked(text, at, out, timeOut ? clear : 0, `${name}, cut at ${i}, timeOut ${timeOut}`);
+          }
+        }
+        for (let i = at; i <= at + nonce.length; i++) {
+          for (let j = i; j <= at + nonce.length; j++) {
+            const out = run(nonce, [text.slice(0, i), text.slice(i, j), text.slice(j)], true);
+            expectMasked(text, at, out, clear, `${name}, cuts at ${i} and ${j}`);
+          }
+        }
+      }
+    });
+
+    it.each(NONCES)("byte by byte (%s)", (nonce) => {
+      for (const [name, before, after, clear] of cases(nonce)) {
+        const text = enc.encode(before + nonce + after);
+        const bytes = Array.from(text, (b) => Uint8Array.of(b));
+        for (const timeOut of [true, false]) {
+          expectMasked(text, before.length, run(nonce, bytes, timeOut), timeOut ? clear : 0, `${name}, timeOut ${timeOut}`);
+        }
+      }
+    });
+
+    // Escape sequences a terminal or multiplexer draws inside a wrapped token (#5, #6 of the review).
+    it.each([
+      ["a line break and erase", "\x1b[K\r\n"],
+      ["ConPTY's cursor moves", "\x1b[?25l\x1b[2;1H"],
+      ["tmux's sgr0 (a charset designator)", "\x1b(B\x1b[m"],
+      ["an OSC 8 link", "\x1b]8;;https://example.com/a\x1b\\"],
+      ["a long title", `\x1b]0;${"t".repeat(3000)}\x07`],
+      ["a long SGR", `\x1b[${"1;".repeat(60)}0m`],
+      ["a DCS string", "\x1bP+q544e\x1b\\"],
+      ["an APC string", "\x1b_Gf=24;AAAA\x1b\\"],
+      ["a two-byte escape and a line feed", "\x1b7\n\x1b8"],
+    ])("through %s inside it, however it's split", (_, brk) => {
+      const before = "history: roster=";
+      const text = enc.encode(`${before}${NONCE.slice(0, 9)}${brk}${NONCE.slice(9)} done\r\n`);
+      for (const timeOut of [true, false]) {
+        const bytes = Array.from(text, (b) => Uint8Array.of(b));
+        expect(dec.decode(run(NONCE, bytes, timeOut)).replace(brk, "")).toContain(`${before}${"-".repeat(24)} done`);
+        for (let i = 0; i <= text.length; i += 7) {
+          const out = dec.decode(run(NONCE, [text.slice(0, i), text.slice(i)], timeOut));
+          expect(out.length).toBe(text.length);
+          expect(out).toContain(" done");
+          expect(out.replace(brk, "")).toContain(`${before}${"-".repeat(24)} done`);
+        }
+      }
+    });
+
+    it("leaves ordinary output as it came, a pause after every read", () => {
+      for (const ordinary of [
+        "echo 012 hello\r\n", // typed keys echoed one at a time, a few of them the token's start
+        "commit 0129ab5f0 (HEAD)\r\n",
+        "1000 1001 1002 1009 1010\r\n",
+        "\x1b[32m0\x1b[m12\r\nok 0\x1b[1C1\r\n",
+        "100%\r 0%\r 01%\r 012%\r",
+      ]) {
+        const text = enc.encode(ordinary);
+        const bytes = Array.from(text, (b) => Uint8Array.of(b));
+        expect(dec.decode(run(NONCE, bytes, true))).toBe(ordinary);
+        for (let i = 0; i <= text.length; i++) {
+          expect(dec.decode(run(NONCE, [text.slice(0, i), text.slice(i)], true))).toBe(ordinary);
+        }
+      }
+    });
+
+    it("holds nothing back from output that can't be the token", () => {
+      const mask = new TokenMask(NONCE);
+      const data = enc.encode("ls\r\nfile-9 a\r\n$ ");
+      expect(mask.mask(data)).toBe(data);
+      expect(mask.holding()).toBe(false);
+    });
+
+    it("holds once at most through a stream of cursor moves after what may be its start, in bounded memory", () => {
+      const mask = new TokenMask(NONCE);
+      let sent = mask.mask(enc.encode("roster=0123")).length;
+      expect(mask.holding()).toBe(true);
+      sent += mask.flush().length;
+      const move = enc.encode("\x1b[1C\x1b[?25l\r");
+      for (let n = 0; n < 2000; n++) {
+        const out = mask.mask(move);
+        expect(out.length).toBe(move.length);
+        expect(mask.holding()).toBe(false);
+        sent += out.length;
+      }
+      expect(sent).toBe(11 + 2000 * move.length);
+    });
+
+    // Re-review of #266: hitting the 4 KB bound fails toward masking, for a short start too, and
+    // the start is still followed, so none of the token goes out however long the string inside it.
+    it.each([
+      ["an OSC", "\x1b]0;", "\x07"],
+      ["a DCS", "\x1bP", "\x1b\\"],
+      ["an APC", "\x1b_", "\x1b\\"],
+    ])("dashes a short start when %s string inside it passes the bound", (_, open, close) => {
+      for (const n of [1, 2, 3]) {
+        const text = `x ${NONCE.slice(0, n)}${open}${"t".repeat(5000)}${close}${NONCE.slice(n)} done`;
+        for (const step of [text.length, 700, 1]) {
+          const mask = new TokenMask(NONCE);
+          let out = "";
+          for (let i = 0; i < text.length; i += step) out += dec.decode(mask.mask(enc.encode(text.slice(i, i + step))));
+          out += dec.decode(mask.flush());
+          expect(out.length).toBe(text.length);
+          expect(out.startsWith(`x ${"-".repeat(n)}`), `${n} chars, step ${step}`).toBe(true);
+          expect(out.endsWith(`${"-".repeat(24 - n)} done`), `${n} chars, step ${step}`).toBe(true);
+        }
+      }
+    });
+
+    it("bounds a hold that never resolves: a sequence that never ends goes out, the token's part dashed", () => {
+      const mask = new TokenMask(NONCE);
+      const head = dec.decode(mask.mask(enc.encode(`roster=${NONCE.slice(0, 4)}\x1b]0;`)));
+      expect(mask.holding()).toBe(true);
+      let rest = "";
+      for (let n = 0; n < 10; n++) rest += dec.decode(mask.mask(enc.encode("t".repeat(1000))));
+      expect(mask.holding()).toBe(false);
+      expect(head + rest).toBe(`roster=----\x1b]0;${"t".repeat(10000)}`);
+    });
+  });
+
   it("passes everything else as it came, without copying it", () => {
     const mask = new TokenMask(NONCE);
     const data = enc.encode("ls\r\nfile-0123 a\r\n$ ");
