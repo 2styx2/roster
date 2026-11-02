@@ -3,7 +3,7 @@
 // after a resize isn't output, a rewritten line (a progress bar) arrives as it ended up, and a
 // full-screen program's drawing isn't sent at all.
 import { afterEach, describe, expect, it } from "vitest";
-import { CommittedLines, OUTPUT_MAX } from "./committed";
+import { CommittedLines, lastLines, OUTPUT_MAX } from "./committed";
 
 const screens: CommittedLines[] = [];
 function screen(cols = 40, rows = 6) {
@@ -233,5 +233,24 @@ describe("a shell that marks its prompts (OSC 133)", () => {
       { command: "false", output: "", code: 1 },
       { command: "printf done", output: "done\n", code: 0 },
     ]);
+  });
+});
+
+// #223: the cap holds when the text over it ends in one line longer than the cap.
+describe("lastLines", () => {
+  it("keeps the last whole lines that fit", () => {
+    expect(lastLines("one\ntwo\nthree\n", 10)).toBe("two\nthree\n");
+    expect(lastLines("one\ntwo\nthree\n", 9)).toBe("three\n");
+    expect(lastLines("one\ntwo\nfour", 9)).toBe("two\nfour");
+    expect(lastLines("short\n", 10)).toBe("short\n");
+  });
+
+  it("keeps nothing when not even the last line fits, never the whole text", () => {
+    const long = "x".repeat(OUTPUT_MAX + 10);
+    // Lengths, not the text: a failure shouldn't print 16 KB of x.
+    expect(lastLines(long).length).toBe(0);
+    expect(lastLines(`one\n${long}`).length).toBe(0);
+    expect(lastLines(`one\n${long}\n`).length).toBe(0);
+    expect(lastLines("one\ntwo\nthreefour", 8)).toBe("");
   });
 });

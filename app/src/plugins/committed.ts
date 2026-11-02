@@ -29,9 +29,12 @@ export const DONES_MAX = 20;
 /** Lines after an `A` that are "prompt" (a prompt over a few rows); later ones have no kind. */
 export const PROMPT_LINES = 3;
 
-/** The last whole lines of `text` that fit in `max` characters. */
+/** The last whole lines of `text` that fit in `max` characters: none when its last line alone is
+ * longer (#223: never the whole text, which would break the cap). */
 export function lastLines(text: string, max = OUTPUT_MAX): string {
-  return text.length > max ? text.slice(text.indexOf("\n", text.length - max - 1) + 1) : text;
+  if (text.length <= max) return text;
+  const cut = text.indexOf("\n", text.length - max - 1);
+  return cut < 0 ? "" : text.slice(cut + 1);
 }
 
 /** A command a marked shell ran, from its `C` to its `D`. */
