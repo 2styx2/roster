@@ -790,6 +790,10 @@ fn deliver(slots: &Slots, listener: &Mutex<Option<Listener>>, limits: Limits, pl
         _ => None,
     };
     let Some((jobs, serving)) = target else { return };
+    let _turn = serving
+        .answering
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let start = Instant::now();
     let answer = send(&jobs, job).and_then(|rx| wait(&rx, start, limits.call + limits.grace, &serving));
     let reply = settle(slots, limits, plugin, Some(generation), answer);
@@ -910,6 +914,10 @@ pub(crate) struct ServeWait {
     serve: Mutex<(Duration, Option<Instant>)>,
     /// `roster.serve.request` and `roster.http` requests not yet answered and run.
     pub(crate) requests: std::sync::atomic::AtomicUsize,
+    /// Held by an answer from handing it to the Plugin until its reply is with the listener, so
+    /// replies reach the app in the order the Plugin made them: an answer's reply never lands
+    /// after the reply of a request that answer made (each answer comes on a thread of its own).
+    answering: Mutex<()>,
 }
 
 impl ServeWait {

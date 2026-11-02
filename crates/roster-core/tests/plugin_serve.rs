@@ -523,3 +523,54 @@ fn a_reloaded_plugins_calls_still_count_against_its_share() {
     *serve.go.0.lock().unwrap() = true;
     serve.go.1.notify_all();
 }
+
+/// An answer's reply reaches the app before the reply of a request that answer made (seen as a
+/// flaky Mesh transcript, T146): each answer comes back on a thread of its own, and the second
+/// one could run in the Plugin and reach the listener while the first thread was still on its
+/// way there, so the app drew an older view over a newer one. The listener here holds the first
+/// reply for a while, giving the second every chance to overtake it.
+#[test]
+fn replies_reach_the_app_in_the_order_the_plugin_made_them() {
+    use std::sync::Condvar;
+    let serve = Arc::new(SerialServe::default());
+    let host = host(&serve);
+    let seen = Arc::new((Mutex::new(Vec::<String>::new()), Condvar::new()));
+    let heard = Arc::clone(&seen);
+    host.set_listener(Arc::new(move |r: Reply| {
+        ok(&r);
+        let (said, changed) = &*heard;
+        for op in r.ops.iter().filter(|o| o["op"] == "notify") {
+            let text = op["text"].as_str().unwrap().to_string();
+            let mut said = said.lock().unwrap();
+            if text == "first" {
+                // Long enough for the second answer's whole round trip, if nothing holds it.
+                said = changed
+                    .wait_timeout_while(said, Duration::from_millis(500), |s| s.is_empty())
+                    .unwrap()
+                    .0;
+            }
+            said.push(text);
+            changed.notify_all();
+        }
+    }));
+    let (loaded, _folder) = load(
+        &host,
+        "order",
+        &["serve:hosts.list"],
+        r#"
+roster.commands.add("ask", { run = function()
+  roster.serve.request("hosts.list", {}, function()
+    roster.notify("first")
+    roster.serve.request("hosts.list", {}, function() roster.notify("second") end)
+  end)
+end })
+"#,
+    );
+    ok(&host.call(
+        "waiter",
+        command(&loaded.ops, "ask"),
+        json!({ "args": "", "words": [] }),
+    ));
+    settled(&host);
+    assert_eq!(*seen.0.lock().unwrap(), ["first", "second"]);
+}
