@@ -238,3 +238,39 @@ def test_a_channel_that_fails_to_open_leaves_no_folder(runtime_dir, monkeypatch)
     with pytest.raises(SystemExit):
         askpass.Channel(lambda login: "x")
     assert folders(runtime_dir) == []
+
+
+# ---------------------------------------------------------------- #222 item 3: the sweep's probe in a live serve's log
+
+def logged_lines(log, count=1, timeout=5):
+    """LOG once it has COUNT lines (the channel answers on its own threads)."""
+    end = time.monotonic() + timeout
+    while len(log) < count and time.monotonic() < end:
+        time.sleep(0.01)
+    return list(log)
+
+
+def test_another_serves_probe_isnt_logged_as_a_refused_token(runtime_dir):
+    # a starting serve checks whether a folder's socket answers (an older serve's, or one in another pid namespace):
+    # it connects and hangs up without asking anything, which the live serve logged as "refused a token"
+    log = []
+    with askpass.Channel(lambda login: "unused", log=log.append) as ch:
+        assert askpass.listening(ch.socket_path)
+        [line] = logged_lines(log)
+    assert "token" not in line and line.startswith("askpass: ")
+    assert "without a request" in line
+
+
+def test_a_spent_token_is_still_logged_as_refused_without_the_token(runtime_dir):
+    log = []
+    with askpass.Channel(lambda login: "s3cret-value", log=log.append) as ch:
+        token = ch.mint("esx ssh", "esx")
+        for _ in range(2):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
+                c.connect(ch.socket_path)
+                c.sendall(token.encode() + b"\n")
+                c.recv(1024)
+        lines = logged_lines(log, 2)
+    assert lines[0] == "askpass: esx: password handed to ssh"
+    assert lines[1].startswith("askpass: refused a token")
+    assert not [line for line in lines if token in line or "s3cret-value" in line]
