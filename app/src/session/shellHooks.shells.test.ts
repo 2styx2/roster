@@ -93,9 +93,9 @@ const pwshReady = (since: string) =>
   lastLine(since) === ">> " || (promptShell(since) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
 /** fish once it has drawn its prompt (`… ~> `, `… [1]> `; it then puts the cursor back with a
  * carriage return and a move right, so this looks at the text, not the last line), or, in an
- * unfinished command, once it has drawn the next line (a line feed, then it clears that line). A
- * command it runs sets the window title (OSC 0) first, and its line feed comes before that: that
- * one isn't a sign, the next prompt is. */
+ * unfinished command, once it has drawn the next line (a line feed, then it clears that line).
+ * When it runs a command it prints a line feed too, then sets the window title (OSC 0): that line
+ * feed isn't a sign, the next prompt is. */
 const fishReady = (since: string) =>
   shown(since).endsWith("> ") || (!since.includes("\x1b]0;") && since.includes("\n\x1b[K"));
 
