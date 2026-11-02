@@ -980,7 +980,7 @@ pub fn manifest_from(source: &str, shown: &str) -> Result<Manifest, PluginError>
                     .load(&source)
                     .set_name(format!("@{MANIFEST}"))
                     .set_mode(mlua::chunk::ChunkMode::Text)
-                    .eval()
+                    .call(())
                     .map_err(|e| lua::from_lua_error(&e))?;
                 lua::to_json(&value, &std::cell::Cell::new(lua::Budget::default())).map_err(|e| {
                     crate::config::ConfigError {

@@ -23,7 +23,7 @@ Everything configurable says its name where it shows, so you can tell where to c
 
 ## How it works
 
-- The Rust core runs the file with Lua 5.4 (mlua, built in). The file returns a table. Anything it leaves out keeps the built-in default.
+- The Rust core runs the file with Lua 5.4 (mlua, built in), as a block, the way Lua runs any file. It returns a table, or nothing when it sets everything with `roster.*` calls (in itself or in the modules it `require`s: a one-line `require("me")` that loads `lua/me/init.lua` is a whole Config). Anything it leaves out keeps the built-in default. A table needs its `return`: a bare `{ … }` is a syntax error at its line. `return require("me")` of a module that returns nothing returns `true`, which isn't a Config: leave out the `return`, or have the module return a table.
 - The table is checked against a schema (`crates/roster-core/src/config/schema.rs`, the source of truth) and sent to the frontend as one typed object (`app/src/config/types.ts`). The frontend never runs Lua.
 - The frontend applies it **through the registries** (ADR 0006), with source `init.lua`. Plugins use the same registries ([plugins.md](../plugins.md)). Key bindings, Themes and Folders are registry entries. Everything else becomes the app's options (`app/src/config/apply.ts`).
 - **Startup doesn't wait on it for long.** The window shows after at most 0.3 s; a Config that takes longer applies when it's done, the same way a `:source` does. Starting the backend waits for it, so `roster_command` and `backend` are always the file's.
@@ -31,7 +31,7 @@ Everything configurable says its name where it shows, so you can tell where to c
 - **`auto_reload = true` reloads on every save** instead. The core watches the folder, so editors that save by renaming a temp file over it work too. Any `.lua` file in the folder counts, including the modules it `require`s. If `init.lua`, a module or `lua/` is a symlink (stow, chezmoi), saving the file it points to counts too. Events that keep coming (a sync tool) still reload within half a second. Turning it on takes one `:source`, since the Config in effect decides.
 - **Errors.** A Lua error (syntax or runtime), or a name or value the schema doesn't accept, shows a message with the file and line, for example `init.lua:12: terminal.size: 400 is out of range (6 to 72 px, 4.5 to 54 pt)`. The last good Config stays in use. A misspelled name is an error, not silently ignored.
 - **Warnings.** Some things only the app can check: an action that isn't a command, a Theme name that isn't registered, a Sidebar section or status segment it doesn't know. These show as a warning, and the rest of the Config still applies.
-- **Line numbers** come from Lua for Lua errors and for `roster.*` calls. For a value in the returned table, the core finds the key in the source (`size =`, `["d d"] =`) after its parent keys. That's a best effort: a value built in a loop or in a required module may get its parent's line, or no line.
+- **Line numbers** come from Lua for Lua errors and for `roster.*` calls (only a call whose value is the one in use: when the returned table wins, its line is given). For a value in the returned table, the core finds its keys in the source (`size =`, `["d d"] =`), each after its parent's, first in `init.lua` and then in the modules it required, and names that file (`lua/opts.lua:4: terminal.size: …`). When it can't find the whole path (a value built in a loop or under a computed key, or a module's table placed under a key: `terminal = require("term")`) the message says `(line unknown)` instead of naming a wrong line.
 
 ## The sandbox
 
@@ -56,7 +56,7 @@ A global, and also `require("roster")`. It's kept small. A Plugin gets the same 
 | `roster.themes.define(id, theme)` | A Theme, as in `themes` below |
 | `roster.set(name, value)` | Any option by its dotted name: `roster.set("terminal.size", "16pt")`. What `:config import-terminal` writes |
 
-Calls and the returned table go to the same place. If both set the same key or Theme, the returned table wins. A call's errors point at the call's line.
+Calls and the returned table go to the same place. Among calls, the last one wins, as in Neovim: a base module and then a module of overrides works, and a later call replaces whatever earlier calls put at its name (`roster.set("terminal", { … })` replaces an earlier `roster.set("terminal.size", …)`, and a later `roster.set("terminal.size", …)` changes just that value). If the returned table and a call set the same option, key or Theme, the returned table wins. A call's errors point at the call's line.
 
 ## Options
 

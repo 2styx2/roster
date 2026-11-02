@@ -164,6 +164,9 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- `init.lua` runs as a block, as Lua runs a file: a one-line `require("me")` of a module that only makes `roster.*` calls loads, where it failed with "init.lua must return a table (it returned a boolean)" unless the file had a second line. `return require("me")` of a module that returns nothing says what happened and what to do. A bare `{ … }` with no `return` is now a syntax error at its line. See [How it works](app/config.md#how-it-works).
+- Among `roster.*` calls the last one wins, so a module of overrides required after a base module takes effect (the first call won before). The returned table still wins over calls. See [The `roster` table](app/config.md#the-roster-table).
+- A Config error in a value a required module returns names that module and line (`lua/opts.lua:4: …`), and one roster can't place says `(line unknown)`; it gave `init.lua` with a parent key's line, or the line of a `roster.set` whose value the returned table had replaced.
 - A Plugin call that fails no longer leaves the buttons it was replacing dead ("that action is gone"), nor timers and commands behind it; 100 failed calls could use up a Plugin's timers.
 - A Plugin that asks roster serve in a loop gets an error after 100 calls (or 300 s of waiting) in one go, instead of running for ever and keeping serve from the app.
 - An answer to what a Plugin asked while loading is no longer lost (first load) or put on the load before (reload).
