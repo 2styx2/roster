@@ -47,7 +47,7 @@ const shown = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07
  * console waits for a cursor-position answer is lost). Then Enter, on its own, once the shell has
  * drawn the line. Each step waits for a sign, never for the shell to go quiet: on a busy machine
  * a shell still starting is quiet too. */
-function runPty(argv: string[], lines: string[], ready: (since: string, first: boolean) => boolean): Promise<string> {
+function runPty(argv: string[], lines: string[], ready: (since: string) => boolean): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
@@ -57,12 +57,10 @@ function runPty(argv: string[], lines: string[], ready: (since: string, first: b
     // Where the last thing typed went in: what the shell printed after it is its answer.
     let mark = 0;
     let line: string | undefined;
-    let first = true;
     const next = () => {
       const since = out.slice(mark);
       if (line === undefined) {
-        if (!lines.length || !ready(since, first)) return;
-        first = false;
+        if (!lines.length || !ready(since)) return;
         line = lines.shift()!;
         child.stdin.write(line);
       } else {
@@ -83,7 +81,6 @@ function runPty(argv: string[], lines: string[], ready: (since: string, first: b
     child.stderr.on("data", (d: Buffer) => (out += d.toString()));
     child.stdin.on("error", () => {});
     child.on("close", () => {
-      if (argv[0] === "fish") console.log("[DEBUG-t156]", JSON.stringify(out)); // [DEBUG-t156]
       clearTimeout(timer);
       resolve(out);
     });
@@ -94,11 +91,13 @@ function runPty(argv: string[], lines: string[], ready: (since: string, first: b
  * or at `>> `, the next line of an unfinished command (no question there). */
 const pwshReady = (since: string) =>
   lastLine(since) === ">> " || (promptShell(since) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
-/** fish once it has drawn its prompt (`… ~> `; it then puts the cursor back with a carriage
- * return and a move right, so this looks at the text, not the last line). It queues keys typed
- * ahead and asks nothing it loses them to, so in an unfinished command, that it has taken the
- * Enter (gone to a new line) is enough. */
-const fishReady = (since: string, first: boolean) => shown(since).endsWith("> ") || (!first && since.includes("\n"));
+/** fish once it has drawn its prompt (`… ~> `, `… [1]> `; it then puts the cursor back with a
+ * carriage return and a move right, so this looks at the text, not the last line), or, in an
+ * unfinished command, once it has drawn the next line (a line feed, then it clears that line). A
+ * command it runs sets the window title (OSC 0) first, and its line feed comes before that: that
+ * one isn't a sign, the next prompt is. */
+const fishReady = (since: string) =>
+  shown(since).endsWith("> ") || (!since.includes("\x1b]0;") && since.includes("\n\x1b[K"));
 
 /** The end of what a shell printed, escaped, for a failed test's message. */
 const tail = (out: string) => JSON.stringify(out.slice(-3000));
@@ -114,7 +113,7 @@ interface Shell {
   argv: string[];
   kind: ShellKind;
   /** On a pty (or else piped in): when it waits for the next line typed. */
-  pty?: (since: string, first: boolean) => boolean;
+  pty?: (since: string) => boolean;
 }
 const SHELLS: Shell[] = [
   { name: "bash", argv: ["bash", "--norc", "--noprofile", "-i"], kind: "posix" },
