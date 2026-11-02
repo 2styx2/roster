@@ -39,6 +39,14 @@ window.matchMedia ??= ((q: string) => ({ matches: false, media: q, onchange: nul
 - Verified: a picker test (type to filter, then Esc closes) passes with `userEvent.type` / `userEvent.keyboard("{Escape}")`.
 - **xterm in jsdom:** without the `matchMedia` stub, `term.open()` throws `this._parentWindow.matchMedia is not a function`. With it, open, write and dispose work (DOM renderer, so never load WebglAddon in tests). Even so, keep the terminal behind a `TerminalView` component, and in picker and tab tests substitute a stub.
 
+### Tests that pass on a busy machine too (T146)
+
+The checks run beside other work (a full `npm run check` next to `cargo test`, CI runners shared with other jobs), so a test never depends on how fast the machine is:
+
+- **Wait for what you expect, not for a while.** `findBy*`, `waitFor` and `expect.poll` return as soon as it's there; their ceiling (`asyncUtilTimeout`, 10 s, in `src/test-setup.ts`) and a test's (30 s, `testTimeout` in `vite.config.ts`) are only how long a broken test takes to say so. A fake that takes time (a pull, a Session's open) is held until the test lets it go (`ready(…, { held: true })` and `release()` in `App.pull.test.tsx`), or the test lets the fake's 0 ms steps run out (`settle` in `session/tabs.test.ts`), rather than sleeping a few milliseconds and hoping.
+- **In Rust, the same.** A slow `init.lua` waits for a module the test writes (`held_loader` in `tests/config.rs`), not for a loop calibrated to take 600 ms. A test that isn't about the Plugin limits gives the host generous ones (`unhurried()`): the defaults (1 s a load, 250 ms a call) are wall-clock time, and a loaded machine pauses a process for longer than that.
+- **A performance budget is a test of its own, run on request on an idle machine.** It times the machine as much as the code, so it fails under load however fast the code is. What the code does stays in an ordinary test that always runs; the budget is `budget(…)` (`src/test-budget.ts`), run with `ROSTER_PERF=1 npm test` in `app/`, or `#[ignore]` in Rust, run with `cargo test -p roster-core --test plugin_topology -- --ignored`. Run them before and after a change to the graph's drawing or layout, the Picker's search, or the Topology Plugin.
+
 ### The fake backend (the seam from ticket 03)
 
 ```ts

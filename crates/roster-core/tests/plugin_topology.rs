@@ -270,6 +270,17 @@ fn limits() -> Limits {
     Limits::default()
 }
 
+/// Limits far beyond what any machine needs, for a test that checks what the Plugin builds, not
+/// how long it takes: the 2,000-Host one failed 19 of 48 runs on a loaded machine with the app's
+/// own (T146). [`two_thousand_hosts_load_inside_the_apps_own_limits`] times it, on request.
+fn unhurried() -> Limits {
+    Limits {
+        load: Duration::from_secs(60),
+        call: Duration::from_secs(60),
+        ..Limits::default()
+    }
+}
+
 fn perms(names: &[&str]) -> Vec<Permission> {
     names.iter().map(|n| Permission::parse(n).unwrap()).collect()
 }
@@ -288,6 +299,11 @@ struct World {
 
 impl World {
     fn with(test: &str, serve: FakeServe) -> World {
+        World::within(test, serve, limits())
+    }
+
+    /// [`World::with`] under `limits`.
+    fn within(test: &str, serve: FakeServe, limits: Limits) -> World {
         let root = temp(test);
         let (bare, work) = (root.join("remote/roster.git"), root.join("work"));
         std::fs::create_dir_all(&bare).unwrap();
@@ -311,7 +327,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(serve);
-        let host = PluginHost::new(serve.clone(), limits());
+        let host = PluginHost::new(serve.clone(), limits);
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -949,10 +965,10 @@ fn what_it_wasnt_granted_isnt_in_its_sandbox() {
 
 // ------------------------------------------------------------------- 2,000 Hosts
 
-#[test]
-fn two_thousand_hosts_in_a_mesh_of_98000_links_load_inside_the_limits_as_40_meshed_clusters() {
-    // With mesh.status grouped (serve API 19) it's 2,000 names; the 98,000 Links one by one, from a
-    // serve before 19, are more than a quarter of a second of Lua could take in.
+/// 2,000 Hosts in 40 groups of 50, each group meshed: 98,000 Links. With mesh.status grouped
+/// (serve API 19) it's 2,000 names; the 98,000 Links one by one, from a serve before 19, are more
+/// than a quarter of a second of Lua could take in.
+fn two_thousand_hosts(test: &str, limits: Limits) -> World {
     let groups = 40;
     let per = 50;
     let mut hosts = Vec::new();
@@ -986,14 +1002,18 @@ fn two_thousand_hosts_in_a_mesh_of_98000_links_load_inside_the_limits_as_40_mesh
     let mut grouped = mesh.clone();
     grouped["links"] = json!([]);
     grouped["meshed"] = Value::Object(meshed);
-    let w = World::with(
-        "big",
+    World::within(
+        test,
         FakeServe::new(json!({ "hosts": hosts, "groups": groups_map, "error": null }), mesh).grouped(grouped),
-    );
-    let t = Instant::now();
+        limits,
+    )
+}
+
+#[test]
+fn two_thousand_hosts_in_a_mesh_of_98000_links_load_as_40_meshed_clusters() {
+    let w = two_thousand_hosts("big", unhurried());
     let reply = w.load(ALL);
     ok(&reply);
-    eprintln!("2,000 Hosts, 98,000 Links: loaded in {:?}", t.elapsed());
     let g = &view(&reply)["graph"];
     assert!(
         view(&reply)["text"]
@@ -1023,6 +1043,25 @@ fn two_thousand_hosts_in_a_mesh_of_98000_links_load_inside_the_limits_as_40_mesh
     let r = w.call(handler(&timer["run"]), json!({}));
     ok(&r);
     assert!(find(&r.ops, "view_update").is_empty());
+}
+
+/// The same load and refresh within the app's own limits (a quarter of a second a call): a
+/// performance budget, so it times this machine, and a busy machine fails it however fast the
+/// Plugin is (T146). Run it on an idle one:
+/// `cargo test -p roster-core --test plugin_topology -- --ignored`.
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn two_thousand_hosts_load_inside_the_apps_own_limits() {
+    let w = two_thousand_hosts("big-timed", limits());
+    let t = Instant::now();
+    let reply = w.load(ALL);
+    ok(&reply);
+    eprintln!("2,000 Hosts, 98,000 Links: loaded in {:?}", t.elapsed());
+    let timer = find(&reply.ops, "timer")
+        .into_iter()
+        .find(|t| t["every"] == true)
+        .unwrap();
+    ok(&w.call(handler(&timer["run"]), json!({})));
 }
 
 // ------------------------------------------------------------------- transcript

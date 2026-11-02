@@ -174,7 +174,18 @@ fn load(
     config: Value,
     init: &str,
 ) -> (PluginHost, Reply, Receiver<Reply>, common::Temp) {
-    let host = PluginHost::new(Arc::new(NoServe), Limits::default());
+    load_within(test, permissions, config, init, Limits::default())
+}
+
+/// [`load`] with the host's `limits`.
+fn load_within(
+    test: &str,
+    permissions: &[&str],
+    config: Value,
+    init: &str,
+    limits: Limits,
+) -> (PluginHost, Reply, Receiver<Reply>, common::Temp) {
+    let host = PluginHost::new(Arc::new(NoServe), limits);
     let (tx, rx) = channel();
     let tx = Mutex::new(tx);
     host.set_listener(Arc::new(move |r: Reply| {
@@ -321,11 +332,19 @@ fn an_answer_that_comes_while_init_lua_still_runs_isnt_lost() {
       local n = 0
       for i = 1, 20000000 do n = n + i end
     "#;
-    let (_h, lr, rx, _folder) = load(
+    // The loop keeps init.lua running while the answer comes. How long it takes depends on the
+    // machine, and the load's time limit isn't what this tests: on a busy machine it once ran past
+    // the default 1 s (T146), so the limit here is far beyond any machine's loop.
+    let limits = Limits {
+        load: Duration::from_secs(60),
+        ..Limits::default()
+    };
+    let (_h, lr, rx, _folder) = load_within(
         "during-load",
         &[&server.site()],
         json!({ "url": server.url("/hello") }),
         init,
+        limits,
     );
     assert!(lr.error.is_none(), "{:?}", lr.error);
     assert_eq!(notices(&rx, 1, 20), ["got 200"]);
