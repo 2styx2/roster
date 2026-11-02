@@ -68,6 +68,7 @@ Everything about roster, the CLI and the app, in one place. The pages marked **:
 | [app/design/taste.md](app/design/taste.md) | roster's own design identity |
 | [app/design/interface-review.md](app/design/interface-review.md) | An earlier interface review, with what it fixed |
 | [app/dev/](app/dev/) | Researched notes: the Windows build loop, PTYs and WSL, xterm.js, test layout, vault sign-in |
+| [app/dev/copy-paste-checklist.md](app/dev/copy-paste-checklist.md) | Copy and paste in a Session: what the end-to-end suite covers, and the hand-test checklist for the Windows build |
 | [app/dev/linux.md](app/dev/linux.md) | Linux and WSLg: building or fetching the Linux app, running it with its own data, measuring it, what's different on WebKitGTK |
 | [app/spec/](app/spec/) | Product specs |
 | [agents/](agents/) | How agents use the issue tracker, triage labels and domain docs |

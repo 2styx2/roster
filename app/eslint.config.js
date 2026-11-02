@@ -13,8 +13,8 @@ export default tseslint.config(
     rules: { ...reactHooks.configs.recommended.rules },
   },
   {
-    // tests index into rendered lists they've just asserted on
-    files: ["**/*.test.{ts,tsx}"],
+    // tests index into rendered lists they've just asserted on (the e2e suite and its page too)
+    files: ["**/*.test.{ts,tsx}", "e2e/**/*.{ts,tsx}"],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },
 );
