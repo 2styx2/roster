@@ -182,7 +182,12 @@ fn mesh_grouped() -> Value {
 }
 
 fn mesh_cut(name: &str) -> Value {
-    json!({ "host": name, "confirmed": ["esx-02", "nas-01"], "pending": { "nas-02": "timed out" }, "change": { "written": true, "backup": "x" } })
+    mesh_cut_synced(name, json!({ "ok": true }))
+}
+
+/// A cut whose `roster sync` after writing `mesh: false` came to `sync` (T150).
+fn mesh_cut_synced(name: &str, sync: Value) -> Value {
+    json!({ "host": name, "confirmed": ["esx-02", "nas-01"], "pending": { "nas-02": "timed out" }, "change": { "written": true, "backup": "x", "sync": sync } })
 }
 
 /// A `roster serve` that answers from the made-up network and records every call.
@@ -197,6 +202,8 @@ struct FakeServe {
     grouped: Value,
     /// A `host.check_job` it answers 300 ms late, so a later one answers first.
     slow_check: Mutex<Option<String>>,
+    /// The `roster sync` after a cut wrote `mesh: false` (T150).
+    cut_sync: Mutex<Value>,
 }
 
 impl FakeServe {
@@ -208,6 +215,7 @@ impl FakeServe {
             mesh: Mutex::new(mesh),
             grouped: Value::Null,
             slow_check: Mutex::new(None),
+            cut_sync: Mutex::new(json!({ "ok": true })),
         }
     }
     fn grouped(mut self, grouped: Value) -> FakeServe {
@@ -265,7 +273,8 @@ impl Serve for FakeServe {
             }
             "mesh.cut" => Ok(mesh_cut(params["host"].as_str().unwrap_or(""))),
             "mesh.job" => Ok(
-                json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false, "result": mesh_cut("esx-01") }),
+                json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
+                        "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
             ),
             _ => Err(format!("unknown method {method}")),
         }
@@ -767,6 +776,39 @@ fn check_from_a_node_runs_the_apps_check_of_that_host() {
         .map(|a| a["label"].as_str().unwrap())
         .collect();
     assert_eq!(labels, ["Details"]);
+}
+
+/// T153: a cut whose `roster sync` failed after writing `mesh: false` says so, with what to run;
+/// the cut stands.
+#[test]
+fn a_cut_whose_sync_failed_says_this_boxs_ssh_config_didnt_follow() {
+    let w = World::new("cut-sync");
+    *w.serve.cut_sync.lock().unwrap() = json!({ "ok": false, "error": "Permission denied: /home/you/.ssh/config.d/roster", "fix": "run `roster sync` on this box" });
+    let reply = w.load(ALL);
+    let cut = action(view(&reply), "Cut");
+    let r = w.call(cut, on("esx-01"));
+    let r = w.call(
+        handler(&one(&r.ops, "confirm")["spec"]["run"]),
+        json!({ "confirm": "yes" }),
+    );
+    let r = w.call(handler(&one(&r.ops, "timer")["run"]), json!({}));
+    ok(&r);
+    let said: Vec<(&str, &str)> = r
+        .ops
+        .iter()
+        .filter(|o| o["op"] == "notify")
+        .map(|o| (o["text"].as_str().unwrap(), o["level"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("Cut esx-01: cut pending on 1 Host that didn't answer.", "warn"),
+            (
+                "mesh: false for esx-01 was written, but this Box's ssh config didn't follow (Permission denied: /home/you/.ssh/config.d/roster): run roster sync",
+                "warn"
+            )
+        ]
+    );
 }
 
 #[test]

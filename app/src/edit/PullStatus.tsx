@@ -15,7 +15,9 @@ export function PullStatus({
   actions: ProblemActions;
 }) {
   const { state } = pull;
-  if (state.at !== "failed") return <p className="muted edit-status">{pullLine(state)}</p>;
+  // A sync that failed after the pull (T153) isn't routine, so its line isn't muted.
+  const synced = state.at !== "pulled" || state.result.sync?.ok !== false;
+  if (state.at !== "failed") return <p className={synced ? "muted edit-status" : "edit-status"}>{pullLine(state)}</p>;
   return (
     <div className="edit-problem" role="alert">
       <p className="edit-status">{pullLine(state)}</p>

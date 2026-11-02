@@ -54,6 +54,9 @@ struct World {
     cut_pending: Value,
     /// Polls of `mesh.job` a job answers "running" before it's done.
     ticks: u64,
+    /// The `roster sync` serve ran after a cut wrote `mesh: false` (T150): failed by default, so the
+    /// transcript has the warning (T153).
+    cut_sync: Value,
 }
 
 impl Default for World {
@@ -64,6 +67,7 @@ impl Default for World {
             out_of_date: true,
             cut_pending: json!({}),
             ticks: 1,
+            cut_sync: json!({ "ok": false, "error": "Permission denied: /home/you/.ssh/config.d/roster", "fix": "run `roster sync` on this box" }),
         }
     }
 }
@@ -169,7 +173,7 @@ impl FakeMesh {
                 json!({ "host": host, "confirmed": confirmed,
                         "pending": { "nas-1": "no answer: ssh: connect to host nas-1 port 22: Connection timed out" },
                         "warnings": [format!("{host}: /srv/mesh holds an earlier Mesh key that roster no longer uses (mesh_dir: changed), so delete it by hand")],
-                        "change": { "written": true, "backup": "/home/you/.config/roster/backup/roster.yml" } })
+                        "change": { "written": true, "backup": "/home/you/.config/roster/backup/roster.yml", "sync": w.cut_sync } })
             }
             action => {
                 let apply = action == "apply";
@@ -821,6 +825,15 @@ fn cut_asks_for_the_hosts_name_and_warns_about_each_host_that_was_down() {
             "warn"
         )
     );
+    // The sync after mesh: false was written failed (T153): the cut stands, and it says what to run.
+    assert_eq!(
+        (said[3].as_str(), ops_level(&ops, 3)),
+        (
+            "mesh: false for orion-2 was written, but this Box's ssh config didn't follow (Permission denied: /home/you/.ssh/config.d/roster): run roster sync",
+            "warn"
+        )
+    );
+    assert_eq!(said.len(), 4, "{said:?}");
     let badge = run.last(|o| o["op"] == "badge" && o["host"] == "nas-1");
     assert_eq!(badge["text"], "cut pending");
     assert_eq!(run.last(|o| o["op"] == "status")["spec"]["text"], "Cut pending");
@@ -828,6 +841,21 @@ fn cut_asks_for_the_hosts_name_and_warns_about_each_host_that_was_down() {
     let ops = run.command("cut sw-1");
     assert!(of(&ops, "confirm").is_empty());
     assert_eq!(texts(&ops)[0], "sw-1 isn't in the Mesh: there's nothing to cut.");
+}
+
+/// T153: a cut whose sync went fine says nothing about it.
+#[test]
+fn a_cut_whose_sync_went_fine_says_nothing_about_the_ssh_config() {
+    let mut run = started(World {
+        cut_sync: json!({ "ok": true }),
+        ..World::default()
+    });
+    run.action("mesh", "Cut", "orion-2");
+    run.confirm();
+    run.tick();
+    let said = texts(&run.tick());
+    assert!(!said.iter().any(|t| t.contains("ssh config")), "{said:?}");
+    assert_eq!(said.len(), 3, "{said:?}");
 }
 
 /// serve API 20 pushes the job's progress (decision Q112f): the first push takes the timer away,

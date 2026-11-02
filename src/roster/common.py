@@ -117,6 +117,19 @@ def die(msg):
     sys.exit(f"error: {msg}")
 
 
+def die_message(e):
+    """The text of a die() (SystemExit("error: ...")), without the prefix."""
+    msg = str(e.code) if e.code is not None else "exited"
+    return msg.removeprefix("error: ")
+
+
+def failure_text(e):
+    """What went wrong, safe to show: an OSError's own words (paths only), else just the exception's type."""
+    if isinstance(e, OSError):
+        return f"{e.strerror or type(e).__name__}" + (f": {e.filename}" if e.filename else "")
+    return type(e).__name__
+
+
 def not_reviewed(h):
     """Why roster won't log in to a Host discover found (`roster run`, `roster serve` session.prepare)."""
     return f"{h['name']} is not reviewed yet (reviewed: false in roster.yml) - not logging in"
