@@ -226,16 +226,25 @@ export function keymapOf(entries: readonly KeyBindingEntry[]): Keymap {
   return keymap;
 }
 
-/** A keymap registry holding the built-in bindings. */
-export function builtinKeymap(): KeymapRegistry {
+/** What the built-in bindings depend on: the OS the app runs on. */
+export interface KeymapHost {
+  windows?: boolean;
+}
+
+/** The built-in bindings for Windows only, over `defaultBindings` (decision Q138). */
+export const windowsBindings: KeymapOverrides = { terminal: terminalKeys.terminalWindows };
+
+/** A keymap registry holding the built-in bindings (Windows' too when `host.windows`). */
+export function builtinKeymap(host: KeymapHost = {}): KeymapRegistry {
   const registry = new Registry<KeyBindingEntry>();
   registerBindings(registry, defaultBindings, BUILTIN);
+  if (host.windows) registerBindings(registry, windowsBindings, BUILTIN);
   return registry;
 }
 
 /** The built-in bindings with the Config's layered over them (a shortcut for tests and ticket 21). */
-export function resolveKeymap(overrides: KeymapOverrides = {}): Keymap {
-  const registry = builtinKeymap();
+export function resolveKeymap(overrides: KeymapOverrides = {}, host: KeymapHost = {}): Keymap {
+  const registry = builtinKeymap(host);
   registerBindings(registry, overrides, CONFIG);
   return keymapOf(registry.list());
 }
