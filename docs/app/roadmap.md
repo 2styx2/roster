@@ -12,9 +12,9 @@ We work in iterations. Each one ends with a hands-on check on the Windows machin
 | 5 | **Host details** | 18 | Detail panel, opening web services |
 | 6 | **Other platforms** | 19–20 | Native Windows backend; Linux under X11, Wayland and WSLg |
 | 7 | **Plugins and Packages** → **Release `v0.2.0`** | 23–24 | A Package from a git URL adds a command, a key and a theme. Built-in Folders run as an internal Plugin. Plugins can't reach secrets. |
-| 8 | **First-party Plugins** (decision Q80: minimal core) | 40, 44, 50 | Topology view, Discover UI and mesh controls ship as optional Plugins on the Plugin API, drawn with the core's UI primitives **(done; on `dev`, not released yet)** |
+| 8 | **First-party Plugins** (decision Q80: minimal core) | 40, 44, 50 | Topology view, Discover UI and mesh controls ship as optional Plugins on the Plugin API, drawn with the core's UI primitives, in **Release `v0.3.0`** |
 | 9 | **Fast, scriptable access** (decisions Q110, Q112) → **Release `v0.3.0`** | 101, 102, 105, 107–109, 111 | `roster serve` answers concurrently with a job manager (cancel, check jobs), `--json` on the CLI's read commands never holds a secret, and routine messages are quiet |
 
-The next Release is **`v0.3.0`**, after `v0.2.0`: iterations 8 and 9, and the follow-ups from their docs pass (116).
+**`v0.3.0`** follows `v0.2.0`: iterations 8 and 9, the follow-ups from their docs pass (116), and the round of open issues after them: password-prompt fill and nested ssh logins (119, 120), shell integration and opt-in shell hooks (94, 121), Plugin network sites, pins and a proxy (87), Plugins in `:tutor` (66), serve and askpass hardening (113), native Windows vault sign-in (63), docs website search (65), and the Neovim-style `init.lua` with an option reference (138–143). The next Release isn't named yet.
 
 Later, not planned yet: plugin HTML panels, split panes, broadcast input, SFTP, port forwarding, writing to other providers, MRs instead of pushing, macOS as a tested platform, code signing.
