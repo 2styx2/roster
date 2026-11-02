@@ -49,12 +49,14 @@ function runPty(argv: string[], lines: string[]): Promise<string> {
     let idle: ReturnType<typeof setTimeout> | undefined;
     const typeSoon = () => {
       clearTimeout(idle);
+      // Not before it has printed something: a shell still starting (pwsh takes a while) is quiet too.
+      if (!out) return;
       idle = setTimeout(() => {
         const line = todo.shift();
         if (line === undefined) return;
         child.stdin.write(`${line}\r`);
         typeSoon();
-      }, 300);
+      }, 500);
     };
     const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
     child.stdout.setEncoding("utf8");
@@ -71,7 +73,6 @@ function runPty(argv: string[], lines: string[]): Promise<string> {
       clearTimeout(idle);
       resolve(out);
     });
-    typeSoon();
   });
 }
 
@@ -103,11 +104,11 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
   it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", async () => {
     const out = await runIn(shell, [hookLine(shell.kind, N), "false", "cd /tmp", "exit"]);
     expect(out, tail(out)).toContain(own("A"));
-    expect(out).toContain(own("B"));
-    expect(out).toContain(own("C"));
-    expect(out).toContain(own("D;1"));
-    expect(out).toContain(own("D;0"));
-    expect(out).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
+    expect(out, tail(out)).toContain(own("B"));
+    expect(out, tail(out)).toContain(own("C"));
+    expect(out, tail(out)).toContain(own("D;1"));
+    expect(out, tail(out)).toContain(own("D;0"));
+    expect(out, tail(out)).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
   }, 30_000);
 });
 
