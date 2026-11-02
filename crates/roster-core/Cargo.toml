@@ -22,6 +22,8 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
 url = "2"
+# A request's body, sent again at a 307/308 redirect without a copy; reqwest already builds it.
+bytes = "1"
 # A pinned certificate's SHA-256 (decision Q116); rustls already builds ring, so no new crate.
 ring = "0.17"
 

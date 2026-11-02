@@ -94,6 +94,18 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
         "/redirect-out" => reply("302 Found", "Location: https://elsewhere.example/steal\r\n", b""),
         "/redirect-loopback" => reply("302 Found", "Location: http://127.0.0.2/hello\r\n", b""),
         "/redirect-loop" => reply("302 Found", "Location: /redirect-loop\r\n", b""),
+        "/found" => reply("302 Found", "Location: /echo\r\n", b""),
+        "/see-other" => reply("303 See Other", "Location: /echo\r\n", b""),
+        "/temporary" => reply("307 Temporary Redirect", "Location: /echo\r\n", b""),
+        "/no-location" => reply("302 Found", "", b"stay"),
+        "/moved" => reply("301 Moved Permanently", "Location: /echo\r\n", b""),
+        "/permanent" => reply("308 Permanent Redirect", "Location: /echo\r\n", b""),
+        // Raw UTF-8 in the Location, as some servers send it.
+        "/accented" => reply("302 Found", "Location: /h\u{e9}llo\r\n", b""),
+        "/h%C3%A9llo" => reply("200 OK", "", b"accented"),
+        "/to-file" => reply("302 Found", "Location: file:///etc/passwd\r\n", b""),
+        "/to-data" => reply("302 Found", "Location: data:text/plain,hi\r\n", b""),
+        "/protocol-relative-out" => reply("302 Found", "Location: //elsewhere.example/x\r\n", b""),
         "/big" => reply("200 OK", "", &vec![b'x'; 2 * 1024 * 1024]),
         "/big-unsized" => {
             // No Content-Length: the cap must hold while reading.
@@ -109,6 +121,25 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
         p if p.starts_with("/to/") => reply(
             "302 Found",
             &format!("Location: http://127.0.0.1:{}/echo\r\n", &p[4..]),
+            b"",
+        ),
+        p if p.starts_with("/creds/") => reply(
+            "302 Found",
+            &format!("Location: http://someone:secret@127.0.0.1:{}/echo\r\n", &p[7..]),
+            b"",
+        ),
+        // /hop/PORT/REST: on to http://127.0.0.1:PORT/REST.
+        p if p.starts_with("/hop/") => {
+            let (port, rest) = p[5..].split_once('/').unwrap_or((&p[5..], ""));
+            reply(
+                "302 Found",
+                &format!("Location: http://127.0.0.1:{port}/{rest}\r\n"),
+                b"",
+            )
+        }
+        p if p.starts_with("/protocol-relative/") => reply(
+            "302 Found",
+            &format!("Location: //127.0.0.1:{}/echo\r\n", &p[19..]),
             b"",
         ),
         p if p.starts_with("/tls/") => reply(
@@ -444,6 +475,32 @@ fn redirects_are_followed_only_to_its_sites() {
     assert!(looped.contains("more than 5 redirects"), "{looped}");
 }
 
+/// A redirect changes the method and drops the body as browsers do: a POST answered with 302 or
+/// 303 goes on as a GET with no body; 307 (and 308) keep both. One with no `Location` is the answer.
+#[test]
+fn a_redirect_keeps_or_drops_the_method_and_body_as_http_says() {
+    let server = Server::start();
+    let post = json!({ "method": "POST", "body": "data", "headers": { "Content-Type": "text/plain" } });
+    for (path, method, kept) in [
+        ("/found", "GET", false),
+        ("/see-other", "GET", false),
+        ("/temporary", "POST", true),
+        ("/moved", "GET", false),
+        ("/permanent", "POST", true),
+    ] {
+        let out = fetch(&format!("redir-method{}", &path[1..]), &server, path, post.clone());
+        assert!(
+            out.starts_with("200 ") && out.contains(&format!("{method} /echo")),
+            "{path}: {out}"
+        );
+        let lower = out.to_ascii_lowercase();
+        assert_eq!(lower.contains("content-length: 4"), kept, "{path}: {out}");
+        assert_eq!(lower.contains("content-type: text/plain"), kept, "{path}: {out}");
+    }
+    let stay = fetch("redir-none", &server, "/no-location", json!({}));
+    assert!(stay.starts_with("302 4 stay"), "{stay}");
+}
+
 #[test]
 fn a_token_isnt_carried_to_another_site_by_a_redirect() {
     let (a, b) = (Server::start(), Server::start());
@@ -457,6 +514,170 @@ fn a_token_isnt_carried_to_another_site_by_a_redirect() {
     assert!(got[0].starts_with("200 ") && got[0].contains("GET /echo"), "{got:?}");
     assert!(!got[0].to_ascii_lowercase().contains("authorization"), "{got:?}");
     assert!(a.heads.lock().unwrap()[0].contains("authorization: Bearer t0ken"));
+}
+
+#[test]
+fn a_user_or_password_in_a_redirect_isnt_sent() {
+    let server = Server::start();
+    let out = fetch("redir-creds", &server, &format!("/creds/{}", server.port), json!({}));
+    assert!(out.starts_with("200 ") && out.contains("GET /echo"), "{out}");
+    assert!(!out.to_ascii_lowercase().contains("authorization"), "{out}");
+}
+
+/// On to another site, none of the Plugin's own headers goes along but a few that carry no
+/// credential (`Accept`, `Accept-Language`, …), and one dropped stays dropped, back at the first
+/// site too (decision Q148).
+#[test]
+fn a_redirect_to_another_site_takes_none_of_the_plugins_own_credentials_along() {
+    let (a, b) = (Server::start(), Server::start());
+    let headers = json!({
+        "Authorization": "Bearer t0ken",
+        "X-Api-Key": "k3y",
+        "Private-Token": "pr1v",
+        "X-Auth-Token": "au7h",
+        "Accept": "application/json",
+        "Accept-Language": "en",
+    });
+    let (_h, _, rx, _folder) = load(
+        "redir-own-headers",
+        &[&a.site(), &b.site()],
+        json!({ "url": a.url(&format!("/hop/{}/hop/{}/echo", b.port, a.port)), "req": { "headers": headers } }),
+        FETCH,
+    );
+    let got = notices(&rx, 1, 20);
+    assert!(got[0].starts_with("200 ") && got[0].contains("GET /echo"), "{got:?}");
+    let seen = [
+        got[0].to_ascii_lowercase(),
+        b.heads.lock().unwrap()[0].to_ascii_lowercase(),
+    ];
+    for head in &seen {
+        for secret in ["t0ken", "k3y", "pr1v", "au7h"] {
+            assert!(!head.contains(secret), "{secret} went along: {head}");
+        }
+        assert!(head.contains("accept: application/json"), "{head}");
+        assert!(head.contains("accept-language: en"), "{head}");
+    }
+    // The first site got them all.
+    assert!(a.heads.lock().unwrap()[0].contains("x-api-key: k3y"));
+}
+
+#[test]
+fn a_location_in_utf8_is_followed() {
+    let server = Server::start();
+    let out = fetch("redir-utf8", &server, "/accented", json!({}));
+    assert!(out.starts_with("200 8 accented"), "{out}");
+}
+
+/// A redirect to anything but the Plugin's sites is refused, and the refusal never says "null"
+/// for an address with no origin.
+#[test]
+fn a_redirect_to_a_file_data_or_protocol_relative_address_is_judged_as_any() {
+    let server = Server::start();
+    let file = fetch("redir-file", &server, "/to-file", json!({}));
+    assert_eq!(
+        file,
+        "failed: redirected to a file: URL, which the Plugin may not reach"
+    );
+    let data = fetch("redir-data", &server, "/to-data", json!({}));
+    assert_eq!(
+        data,
+        "failed: redirected to a data: URL, which the Plugin may not reach"
+    );
+    let out = fetch("redir-pr-out", &server, "/protocol-relative-out", json!({}));
+    assert!(out.contains("redirected to http://elsewhere.example,"), "{out}");
+    let inside = fetch(
+        "redir-pr-in",
+        &server,
+        &format!("/protocol-relative/{}", server.port),
+        json!({}),
+    );
+    assert!(inside.starts_with("200 ") && inside.contains("GET /echo"), "{inside}");
+}
+
+/// Each hop is counted by its own site: sent there, and failed there when that's where it failed.
+#[test]
+fn each_hop_is_counted_by_its_site() {
+    let (a, b) = (Server::start(), Server::start());
+    let init = r#"
+      local c = roster.plugin.config
+      roster.http.get(c.ok, function(res, err) roster.notify("ok " .. tostring(res ~= nil)) end)
+      roster.http.get(c.big, function(res, err) roster.notify("big " .. tostring(err ~= nil)) end)
+    "#;
+    let (host, reply, rx, _folder) = load(
+        "hop-counts",
+        &[&a.site(), &b.site()],
+        json!({
+            "ok": a.url(&format!("/hop/{}/hello", b.port)),
+            "big": a.url(&format!("/hop/{}/big", b.port)),
+        }),
+        init,
+    );
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert_eq!(notices(&rx, 2, 20).len(), 2);
+    let counts = host.requests_by_site("fetcher");
+    let row = |port: u16| {
+        let c = counts
+            .iter()
+            .find(|c| c.site == format!("http://127.0.0.1:{port}"))
+            .unwrap_or_else(|| panic!("no row for {port}: {counts:?}"));
+        (c.requests, c.failed)
+    };
+    assert_eq!(row(a.port), (2, 0));
+    assert_eq!(row(b.port), (2, 1));
+}
+
+/// A server that keeps its connections open and counts them: `/r` redirects (with a body) to
+/// `/ok`, which answers.
+fn keep_alive_server() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&connections);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            counted.fetch_add(1, Ordering::SeqCst);
+            std::thread::spawn(move || {
+                loop {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        match stream.read(&mut byte) {
+                            Ok(1) => head.push(byte[0]),
+                            _ => return,
+                        }
+                    }
+                    let out = if head.starts_with(b"GET /r ") {
+                        // A page saying where it moved, longer than one read.
+                        let page = "moved ".repeat(5000);
+                        format!(
+                            "HTTP/1.1 302 Found\r\nLocation: /ok\r\nContent-Length: {}\r\n\r\n{page}",
+                            page.len()
+                        )
+                    } else {
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string()
+                    };
+                    if stream.write_all(out.as_bytes()).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    (port, connections)
+}
+
+/// A redirect's own short body is read before the next hop, so the connection is used again.
+#[test]
+fn a_redirect_on_the_same_site_reuses_its_connection() {
+    let (port, connections) = keep_alive_server();
+    let out = fetch_from(
+        "redir-reuse",
+        &format!("network:http://127.0.0.1:{port}"),
+        &format!("http://127.0.0.1:{port}/r"),
+    );
+    assert!(out.starts_with("200 2 ok"), "{out}");
+    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -710,7 +931,23 @@ fn tls_appliance(key: &str) -> u16 {
                         _ => return,
                     }
                 }
-                let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nhi there");
+                // /self: on to its own /hello; /away/PORT: on to http://127.0.0.1:PORT/hello.
+                let path = String::from_utf8_lossy(&head)
+                    .split(' ')
+                    .nth(1)
+                    .unwrap_or("/")
+                    .to_string();
+                let out = if path == "/self" {
+                    "HTTP/1.1 302 Found\r\nLocation: /hello\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_string()
+                } else if let Some(port) = path.strip_prefix("/away/") {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/hello\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nhi there".to_string()
+                };
+                let _ = tls.write_all(out.as_bytes());
                 let _ = tls.flush();
                 tls.conn.send_close_notify();
                 let _ = tls.flush();
@@ -773,6 +1010,31 @@ fn a_redirect_never_leads_to_a_pinned_site() {
     assert!(reply.error.is_none(), "{:?}", reply.error);
     let got = notices(&rx, 1, 20);
     assert!(got[0].contains("pinned certificate"), "{got:?}");
+}
+
+/// A pinned site may redirect to itself, and to nowhere else.
+#[test]
+fn a_pinned_site_is_redirected_only_to_itself() {
+    let server = Server::start();
+    let port = tls_appliance("appliance.key.der");
+    let pinned = format!("network:127.0.0.1:{port}#sha256:{}", appliance_pin());
+    let (_h, reply, rx, _f) = load(
+        "pin-self",
+        &[&pinned, &server.site()],
+        json!({ "url": format!("https://127.0.0.1:{port}/self") }),
+        FETCH,
+    );
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert!(notices(&rx, 1, 20)[0].starts_with("200 8 hi there"));
+    let (_h, _, rx, _f) = load(
+        "pin-away",
+        &[&pinned, &server.site()],
+        json!({ "url": format!("https://127.0.0.1:{port}/away/{}", server.port) }),
+        FETCH,
+    );
+    let got = notices(&rx, 1, 20);
+    assert!(got[0].contains("pinned certificate"), "{got:?}");
+    assert!(server.heads.lock().unwrap().is_empty());
 }
 
 /// A proxy on 127.0.0.1: what each request's first line was; a plain-http request gets "via
