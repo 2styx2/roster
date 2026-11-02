@@ -24,7 +24,7 @@ return {
   version = "1.0.0",
   description = "Lines your Sessions print that look like trouble",
   author = "you",
-  api = 3,                      -- the roster.api_version it's written for
+  api = 5,                      -- the roster.api_version it's written for
   permissions = { "terminal.read" },
 }
 ```
