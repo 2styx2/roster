@@ -5,13 +5,27 @@
 
 /// The 1-based line where `path` is set, when every name in it is found in `source` as a key.
 pub(crate) fn line_of(source: &str, path: &[String]) -> Option<u32> {
+    line_of_skipping(source, path, &|_| false)
+}
+
+/// [`line_of`], not counting keys inside a `roster.*` statement (`roster.o.terminal.size = 20`,
+/// a Theme's `terminal = { … }` in `roster.themes.define`): where a value the file's own tables
+/// set is, when a `roster.*` call that set the same option lost to them (ticket 148).
+pub(crate) fn line_of_outside_calls(source: &str, path: &[String]) -> Option<u32> {
+    let calls = call_lines(source);
+    line_of_skipping(source, path, &|at| {
+        calls.get(line_at(source, at) as usize - 1).copied().unwrap_or(false)
+    })
+}
+
+fn line_of_skipping(source: &str, path: &[String], skip: &dyn Fn(usize) -> bool) -> Option<u32> {
     let mut pos = 0;
     let mut line = None;
     for seg in path {
         if seg.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
-        let at = find_key(source, seg, pos)?;
+        let at = find_key(source, seg, pos, skip)?;
         pos = at + seg.len();
         line = Some(line_at(source, at));
     }
@@ -31,7 +45,24 @@ pub(crate) fn line_of_text(source: &str, text: &str) -> Option<u32> {
     None
 }
 
-fn find_key(source: &str, key: &str, from: usize) -> Option<usize> {
+/// For each line of `source`, whether it's part of a statement that starts with `roster.`: a
+/// line outside brackets starts a statement, and the lines its brackets span belong to it.
+fn call_lines(source: &str) -> Vec<bool> {
+    let mut out = Vec::new();
+    let mut open = 0;
+    let mut in_call = false;
+    for line in source.lines() {
+        if open <= 0 {
+            open = 0;
+            in_call = line.trim_start().starts_with("roster.");
+        }
+        out.push(in_call);
+        open += brackets(line);
+    }
+    out
+}
+
+fn find_key(source: &str, key: &str, from: usize, skip: &dyn Fn(usize) -> bool) -> Option<usize> {
     let ident = key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !key.is_empty();
     let mut best: Option<usize> = None;
     let mut consider = |at: usize| best = Some(best.map_or(at, |b: usize| b.min(at)));
@@ -39,7 +70,7 @@ fn find_key(source: &str, key: &str, from: usize) -> Option<usize> {
         let mut start = from;
         while let Some(i) = source[start..].find(&quoted) {
             let at = start + i;
-            if assigns(&source[at + quoted.len()..]) && !in_comment(source, at) {
+            if assigns(&source[at + quoted.len()..]) && !in_comment(source, at) && !skip(at) {
                 consider(at + 2);
                 break;
             }
@@ -52,7 +83,7 @@ fn find_key(source: &str, key: &str, from: usize) -> Option<usize> {
             let at = start + i;
             let before = source[..at].chars().next_back();
             let boundary = before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-            if boundary && assigns(&source[at + key.len()..]) && !in_comment(source, at) {
+            if boundary && assigns(&source[at + key.len()..]) && !in_comment(source, at) && !skip(at) {
                 consider(at);
                 break;
             }
@@ -125,7 +156,9 @@ impl SourceIndex {
     /// The last line from `from` to `to` that assigns `key` (`key =`, `["key"] =`): where a name
     /// inside a table assigned over several lines is.
     pub(crate) fn key_line(&self, key: &str, from: u32, to: u32) -> Option<u32> {
-        (from..=to).rev().find(|&n| find_key(self.line(n), key, 0).is_some())
+        (from..=to)
+            .rev()
+            .find(|&n| find_key(self.line(n), key, 0, &|_| false).is_some())
     }
 }
 
