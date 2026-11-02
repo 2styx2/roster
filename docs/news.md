@@ -32,6 +32,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.
 - Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
 - Dropping a Host on a Folder no longer fails with ":folder can't run yet" when the app couldn't yet tell roster which commands are its own: the drop (and any Plugin action you start meanwhile) waits up to 5 s for that to get through, then runs. If it still hasn't, the drop is refused as before; try again in a moment. See [Errors](app/errors.md).
+- A long option, command or error description shown beside its topic, in `:help`'s topic finder and on the docs website's search page, ends with "…" where it's cut at 80 characters, instead of stopping mid-word.
 - A Plugin's view no longer goes back to an older state on a busy machine: when roster serve's answer to one of a Plugin's requests led it to ask again (the Mesh Plugin's job ending, then its status), the second answer's changes could reach the window first and be drawn over by the first's. The app now gets them in the order the Plugin made them. See [Asking roster serve](plugins.md#asking-roster-serve).
 
 ### Deprecated
