@@ -31,6 +31,12 @@ do
   if roster.o.vim then roster.o.keys.leader.p = "connect esx-02" end
 end
 
+-- roster.o.get
+do
+  local views = roster.o.get("views") or {}
+  for id in pairs(views) do print(id) end
+end
+
 -- roster.o.reset
 do
   roster.o.reset("terminal.size")

@@ -97,6 +97,32 @@
           "listed": false
         },
         {
+          "tag": "roster.o.get",
+          "heading": "roster.o.get(name)",
+          "what": "function",
+          "kind": "",
+          "written": "",
+          "ty": "any",
+          "default": "",
+          "about": "Reads any option by its dotted name: a copy of what init.lua set there, or nil. The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [
+            {
+              "name": "name",
+              "ty": "roster.config.OptionName",
+              "default": "",
+              "about": "An option's dotted name: \"terminal.size\", \"views.get\".",
+              "names": []
+            }
+          ],
+          "example": "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end",
+          "methods": [],
+          "listed": false
+        },
+        {
           "tag": "roster.o.reset",
           "heading": "roster.o.reset(name)",
           "what": "function",
@@ -867,7 +893,7 @@
           "written": "",
           "ty": "boolean",
           "default": "",
-          "about": "Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.",
+          "about": "Whether init.lua set this key of a map. A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.get(name) always reads and roster.o.reset(name) always resets.",
           "takes": "",
           "names": [],
           "item": null,
@@ -3393,6 +3419,7 @@
     "roster.o.fonts.mono": "fonts.mono",
     "roster.o.fonts.ui": "fonts.ui",
     "roster.o.fonts.ui_size": "fonts.ui_size",
+    "roster.o.get()": "roster.o.get",
     "roster.o.idle_lock_minutes": "idle_lock_minutes",
     "roster.o.keys": "keys",
     "roster.o.keys.cmdline": "keys.cmdline",

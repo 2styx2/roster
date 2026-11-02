@@ -396,7 +396,7 @@ local roster_o_Map = {}
 function roster_o_Map:get() end
 
 --- Whether init.lua set this key of a map.
---- A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.
+--- A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.get(name) always reads and roster.o.reset(name) always resets.
 ---
 --- ```lua
 --- if not roster.o.views:has("topology") then roster.o.views.topology = { place = "panel" } end
@@ -555,6 +555,17 @@ roster.config_dir = nil
 --- ```
 ---@class roster.o : roster.config.Options
 roster.o = {}
+
+--- Reads any option by its dotted name: a copy of what init.lua set there, or nil.
+--- The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.
+---
+--- ```lua
+--- local views = roster.o.get("views") or {}
+--- for id in pairs(views) do print(id) end
+--- ```
+---@param name roster.config.OptionName An option's dotted name: "terminal.size", "views.get".
+---@return any
+function roster.o.get(name) end
 
 --- Puts an option back to its default: what init.lua set there is taken away.
 --- Any option: a value, an object, a map or a list. An unknown name is an error at its line.

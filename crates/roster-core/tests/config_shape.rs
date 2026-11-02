@@ -261,6 +261,7 @@ fn the_roster_table_has_what_the_shape_declares() {
           end
         end
         if type(roster.o.reset) == "function" then names[#names + 1] = "roster.o.reset" end
+        if type(roster.o.get) == "function" then names[#names + 1] = "roster.o.get" end
         table.sort(names)
         return { theme = table.concat(names, ",") }
     "#;

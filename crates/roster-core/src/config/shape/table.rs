@@ -861,6 +861,18 @@ pub(super) const API: &[ApiItem] = &[
         "roster.o.terminal.size = \"16pt\"\nroster.o.terminal.font:prepend(\"Cascadia Mono\")\nif roster.o.vim then roster.o.keys.leader.p = \"connect esx-02\" end",
     ),
     item(
+        "roster.o.get",
+        Some(&[param(
+            "name",
+            "roster.config.OptionName",
+            "An option's dotted name: \"terminal.size\", \"views.get\".",
+        )]),
+        "any",
+        "Reads any option by its dotted name: a copy of what init.lua set there, or nil.",
+        "The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.",
+        "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end",
+    ),
+    item(
         "roster.o.reset",
         Some(&[param(
             "name",
@@ -1169,7 +1181,7 @@ pub(super) const METHODS: &[ApiItem] = &[
         Some(&[param("key", "string", "A key.")]),
         "boolean",
         "Whether init.lua set this key of a map.",
-        "A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.",
+        "A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.get(name) always reads and roster.o.reset(name) always resets.",
         "if not roster.o.views:has(\"topology\") then roster.o.views.topology = { place = \"panel\" } end",
     ),
     item(
