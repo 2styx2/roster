@@ -96,7 +96,7 @@ After the Leader you're in App mode until Esc, or until a command that isn't lis
 | In the Picker: Ctrl+I | `picker.info` | The selected Host's details (closes the Picker) |
 | In the Picker and every finder: F1 | `picker.help` | Help on the selected result: a Host opens `:connect`, a Theme its entry (`themes#nord`), a help topic itself, anything else the command Enter runs ([help.md](help.md#help-from-where-you-are)) |
 | In the Picker: `j`/`k` | — | Move, once you've moved with Ctrl+N/P or an arrow. Until then letters go to the query, and any other letter goes back to it |
-| Terminal: Ctrl+Shift+C/V, Ctrl+Insert / Shift+Insert, Ctrl+C with a selection, select to copy, right-click; Ctrl+Shift+F; Ctrl+= / Ctrl+- / Ctrl+0 | — | Clipboard, find, zoom (the keymap's `terminal` table; see "Copy and paste" below) |
+| Terminal: Ctrl+Shift+C/V, Ctrl+Insert / Shift+Insert, Ctrl+C with a selection, Ctrl+V (Windows), select to copy, right-click; Ctrl+Shift+F; Ctrl+= / Ctrl+- / Ctrl+0 | — | Clipboard, find, zoom (the keymap's `terminal` table; see "Copy and paste" below) |
 
 ## Panels: docked or full window
 
@@ -122,10 +122,11 @@ In a terminal, as in Windows Terminal. These are the keymap's `terminal` table (
 | Ctrl+Shift+C, Ctrl+Insert | `terminal.copy` | Copy the selection |
 | Ctrl+C | `terminal.copyIfSelected` | With a selection: copy it and clear it. Without one, Ctrl+C goes to the shell as usual (its interrupt) |
 | Ctrl+Shift+V, Shift+Insert | `terminal.paste` | Paste |
+| Ctrl+V (Windows) | `terminal.pasteIfText` | Paste the clipboard's text, as Windows Terminal does. With no text on the clipboard (empty, or an image only) Ctrl+V goes to the program as usual (^V). It works on Ctrl+V only |
 | Select with the mouse | (`terminal.copy_on_select`) | Copies the selection, unless `copy_on_select = false` |
 | Right-click | (`terminal.right_click_paste`) | Copies the selection and clears it, or pastes when nothing is selected |
 
-Ctrl+V is the shell's (`quoted-insert`, Vim's block selection). To paste with it anyway: `roster.keymap.set("terminal", "Ctrl+v", "terminal.paste")`. A paste goes to the shell as xterm.js sends it: each line end as Enter, and the whole paste between bracketed-paste marks when the shell asked for them (bash, zsh, fish and Vim do), so several lines land in the prompt instead of running one by one. What's copied or pasted goes only between the clipboard and the terminal, never into a log or the State ([security.md](security.md)).
+On Windows, Ctrl+V pastes text, as in Windows Terminal; a voice-typing tool that pastes by sending Ctrl+V works the same way, and pastes once. What's pasted is what the clipboard held at the key, even if a tool puts the old clipboard back right after. When the clipboard has no text, the program gets its ^V, so an app's own image paste and Vim's block selection still work there. A held Ctrl+V pastes once, and Ctrl+V works on any keyboard layout (Ctrl+м on a Russian one), as do the other terminal keys on letters. To give Ctrl+V back to the program always: `roster.keymap.set("terminal", "Ctrl+v", false)`. On Linux and macOS, Ctrl+V is the program's (`quoted-insert`, Vim's block selection), as in their terminals; to paste with it as on Windows: `roster.keymap.set("terminal", "Ctrl+v", "terminal.pasteIfText")`. A paste goes to the shell as xterm.js sends it: each line end as Enter, and the whole paste between bracketed-paste marks when the shell asked for them (bash, zsh, fish and Vim do), so several lines land in the prompt instead of running one by one. What's copied or pasted goes only between the clipboard and the terminal, never into a log or the State ([security.md](security.md)).
 
 In every text field (the lock screen, the command line, the Picker and finders, the bindings filter, the add and edit forms) the usual editing keys belong to the field: Ctrl+C / Ctrl+X / Ctrl+V, Ctrl+Insert / Shift+Insert, Ctrl+A, Ctrl+Z / Ctrl+Shift+Z. The keymap never takes them there, and right-click shows the WebView's own Cut / Copy / Paste menu. The release build reads and writes the clipboard through Tauri's clipboard plugin (`clipboard-manager:allow-read-text` and `allow-write-text` in `app/src-tauri/capabilities/default.json`), since WebView2 won't let the page read it.
 
