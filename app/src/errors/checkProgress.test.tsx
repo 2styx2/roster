@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend, type FakeScenario } from "../backend/fake";
 import { BackendCallError, CHECK_STEPS, type HostCheck, type JobProgress } from "../backend/types";
+import { checkJoined, type CheckState } from "./checkProgress";
 import { memoryPlatform } from "../platform/memory";
 import { StubTerminal } from "../terminal/StubTerminal";
 
@@ -137,6 +138,27 @@ describe(":check HOST, live", () => {
     expect(running(panel)).toBe("dns");
   });
 
+  it("joining a check that's already running shows its step at once, from jobs.list (issue #221)", async () => {
+    const { user, backend } = await ready();
+    // Started elsewhere (or before the app restarted): its progress went by before the panel opened.
+    progress(backend, host, "tcp");
+    const panel = await check(user, host);
+    await waitFor(() => expect(running(panel)).toBe("tcp"));
+    expect(statuses(panel).slice(0, 6)).toEqual(["done", "done", "done", "done", "done", "running"]);
+    // Progress from then on moves it as before.
+    progress(backend, host, "host-key");
+    expect(running(panel)).toBe("host-key");
+  });
+
+  it("a jobs.list with no running check of that Host changes nothing", async () => {
+    const { user, backend } = await ready();
+    progress(backend, other, "tcp");
+    progress(backend, host, "dns", { state: "done" });
+    const panel = await check(user, host);
+    await waitFor(() => expect(backend.jobsListed()).toBe(1));
+    expect(running(panel)).toBeNull();
+  });
+
   it("checking another Host starts over, and the first Host's steps no longer move it", async () => {
     const { user, backend } = await ready();
     await check(user, host);
@@ -162,6 +184,18 @@ describe(":check HOST, live", () => {
     await waitFor(() => expect(line).toHaveTextContent("Stopped at TCP port"));
     expect(step).toHaveTextContent("");
     expect(panel.querySelectorAll('[aria-live="polite"]')[1]).toBe(line);
+  });
+});
+
+describe("jobs.list on joining a check", () => {
+  const job = (at: string): JobProgress => ({ kind: "check", job: "check-1", action: "check", state: "running", done: 0, total: 8, at, host });
+  it("never moves back a step that progress has already shown", () => {
+    const moved: CheckState = { state: "running", host, at: "auth", since: 5 };
+    expect(checkJoined(moved, [job("dns")], 9)).toBe(moved);
+  });
+  it("fills in the step under way when nothing has come yet", () => {
+    const fresh: CheckState = { state: "running", host, at: null, since: 5 };
+    expect(checkJoined(fresh, [job("dns")], 9)).toEqual({ state: "running", host, at: "dns", since: 9 });
   });
 });
 
