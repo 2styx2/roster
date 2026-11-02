@@ -59,11 +59,8 @@ export interface PasswordPrompt {
   kind: "sudo" | "ssh";
   /** The Inventory Host a nested ssh went to, whose Login answers it, and what roster resolved it
    * to (for serve's check); null: the Session's own Host. Never a password. */
-  hop: FillHop | null;
+  hop: NestedHost | null;
 }
-
-/** The Host a nested ssh went to, as roster resolved it from the Inventory at its `C` mark. */
-export type FillHop = NestedHost;
 
 /** What PromptWatch needs to follow a nested ssh: the Inventory, and whether roster serve fills
  * another Host's prompt (API 26). */
@@ -128,6 +125,11 @@ export class PromptWatch {
   /** Without roster's marks: the command line that may have reached another machine, after which
    * roster fills nothing more in this Session. */
   private relayed: string | null = null;
+  /** Commands the Session's shell has started, and which one set `relayed`: that command's own
+   * prompts are judged as Q129 judges them (sudo's own first prompt of `sudo -i`), every later
+   * command's are refused. */
+  private commands = 0;
+  private relayedBy = -1;
   private hopState: HopState | null = null;
   /** You pressed Enter since the outer shell's `B`: its `C` is a line you ran. */
   private entered = false;
@@ -225,7 +227,8 @@ export class PromptWatch {
       if (sudo) return sudo[1] === this.user ? { line, elsewhere: null, marked: false, kind, hop: null } : null;
       return this.hops ? refuse("without the shell's marks roster can't tell where this ssh went (turn on shell integration, or :integrate)") : null;
     }
-    if (!this.hooked && this.relayed !== null) {
+    const sameCommand = this.relayedBy === this.commands && this.outer.phase === "output";
+    if (!this.hooked && this.relayed !== null && !(sudo && sameCommand)) {
       if (sudo && sudo[1] !== this.user) return null;
       return refuse(
         `\`${this.relayed}\` ran in this Session and may have reached another machine, and this shell's marks aren't roster's own, ` +
@@ -292,12 +295,18 @@ export class PromptWatch {
 
   private lineFeed() {
     const state = this.hopState;
-    const out = (lv: Level) => (lv.phase === "output" ? lv : null);
-    const lv = state ? (state.innerMarked ? out(state.inner) : null) : out(this.outer);
-    if (!state && !lv) return;
+    // Only the lines that can still change an offer are read: once one is out of reach for this
+    // command (or this ssh's login), the rest go by unread.
+    const live = (lv: Level) => (lv.phase === "output" && !lv.dirty ? lv : null);
+    let lv: Level | null;
+    if (!state) lv = live(this.outer);
+    else if (state.innerMarked) lv = state.innerDone ? null : live(state.inner);
+    else lv = null;
+    const login = state !== null && !state.innerMarked && state.hop.known && !state.typed && !state.filled && !state.sshDirty;
+    if (!lv && !login) return;
     const text = this.lineAbove(lv);
     if (text === null) return;
-    if (state && !state.innerMarked) {
+    if (login) {
       if (state.asked && !SSH_OWN.test(text)) state.sshDirty = true;
       if (SSH.test(text)) state.asked = true;
     }
@@ -350,8 +359,12 @@ export class PromptWatch {
       case "C": {
         if (lv.phase === "output") return;
         this.run(lv);
+        this.commands++;
         if (!own) {
-          if (mayReachElsewhere(lv.command)) this.relayed ??= lv.command ?? "a command roster couldn't read";
+          if (this.relayed === null && mayReachElsewhere(lv.command)) {
+            this.relayed = lv.command ?? "a command roster couldn't read";
+            this.relayedBy = this.commands;
+          }
           return;
         }
         let hop = this.hops && lv.command !== null ? resolveHop(lv.command, this.hops.hosts()) : null;
@@ -451,6 +464,7 @@ function newHop(hop: Hop): HopState {
   return { hop, inner: level(), innerMarked: false, innerDone: false, typed: false, asked: false, sshDirty: false, filled: false };
 }
 
-function fillHop(hop: Extract<Hop, { known: true }>): FillHop {
+/** The Host a nested ssh went to, as roster resolved it from the Inventory at its `C` mark. */
+function fillHop(hop: Extract<Hop, { known: true }>): NestedHost {
   return { host: hop.host, address: hop.address, port: hop.port, user: hop.user };
 }

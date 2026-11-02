@@ -1089,6 +1089,79 @@ describe("a nested ssh (ticket 120)", () => {
     await expect(tabs.fill(id)).rejects.toThrow(/typed/);
   });
 
+  it("takes the offer away the moment a key goes into the ssh, before anything is printed", async () => {
+    const { tabs, id, asked, print, own } = await onHost();
+    await print(`ssh ${to.name}\r\n${own("C")}admin@${to.name}'s password: `);
+    expect(tabs.snapshot().tabs[0]?.prompt?.elsewhere).toBeNull();
+    tabs.write(id, "h"); // no echo at a password prompt: nothing comes back
+    expect(tabs.snapshot().tabs[0]?.prompt?.elsewhere).toMatch(/typed/);
+    await expect(tabs.fill(id)).rejects.toThrow(/typed/);
+    expect(asked).toEqual([]);
+  });
+
+  it("keeps the hook line's echo from Plugins, wrapped as ConPTY wraps it, until roster's own prompt", async () => {
+    const backend = fakeBackend({ ...unlocked, hosts });
+    let ev: SessionEvents | null = null;
+    let sent = "";
+    backend.openSession = async (_host, _size, events) => {
+      ev = events;
+      const done = async () => {};
+      return { id: 1, auth: "key", write: async (d: string) => void (sent += d), resize: done, close: done };
+    };
+    const tabs = new Tabs(backend);
+    const seen: string[] = [];
+    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    const id = tabs.open(reviewed[0] ?? "");
+    await settle();
+    const print = async (t: string) => {
+      (ev as SessionEvents | null)?.output(new TextEncoder().encode(t));
+      await settle();
+    };
+    await print("user@web-01:~$ ");
+    void tabs.integrate(id);
+    const token = /roster=([0-9a-f]{24})/.exec(sent)?.[1] ?? "";
+    expect(token).toMatch(/^[0-9a-f]{24}$/);
+    // The echo, wrapped every 80 columns with a line break and an erase, in two reads.
+    const echo = sent.replace(/\r$/, "").replace(/(.{80})/g, "$1\x1b[K\r\n");
+    await print(echo.slice(0, 500));
+    await print(echo.slice(500) + "\r\n");
+    await print(`\x1b]133;D;0;roster=${token}\x07\x1b]133;A;roster=${token}\x07$ \x1b]133;B;roster=${token}\x07`);
+    const got = seen.join("");
+    // eslint-disable-next-line no-control-regex -- terminal output
+    expect(got.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\r|\n/g, "")).not.toMatch(/[0-9a-f]{6,}/);
+    // Nothing of the echo at all: roster knows what it sent, so the whole window stays out.
+    expect(got).not.toContain("__roster");
+    expect(got).toContain("$ ");
+  });
+
+  it("keeps the echo out even when no marked prompt comes back", async () => {
+    vi.useFakeTimers();
+    const backend = fakeBackend({ ...unlocked, hosts });
+    let ev: SessionEvents | null = null;
+    let sent = "";
+    backend.openSession = async (_host, _size, events) => {
+      ev = events;
+      const done = async () => {};
+      return { id: 1, auth: "key", write: async (d: string) => void (sent += d), resize: done, close: done };
+    };
+    const tabs = new Tabs(backend);
+    const seen: string[] = [];
+    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    const id = tabs.open(reviewed[0] ?? "");
+    await vi.advanceTimersByTimeAsync(0);
+    const print = (t: string) => (ev as SessionEvents | null)?.output(new TextEncoder().encode(t));
+    print("user@web-01:~$ ");
+    void tabs.integrate(id);
+    print(sent.replace(/\r$/, "") + "\r\nsh: 1: [: unexpected\r\nuser@web-01:~$ ");
+    await vi.advanceTimersByTimeAsync(3000);
+    print("ls\r\nafter\r\n");
+    await vi.advanceTimersByTimeAsync(100);
+    vi.useRealTimers();
+    const got = seen.join("");
+    expect(got).not.toContain("__roster");
+    expect(got).toContain("after");
+  });
+
   it("never hands Plugins the attempt's token", async () => {
     const { tabs, print, own, token } = await onHost();
     const seen: string[] = [];

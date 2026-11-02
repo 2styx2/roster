@@ -3,6 +3,7 @@
 // itself and has printed nothing but sudo's own lines. Refuse whenever in doubt.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Host } from "../backend/types";
+import { mayReachElsewhere } from "./commandLine";
 import { PromptWatch, sudoOnly } from "./prompt";
 
 const watches: PromptWatch[] = [];
@@ -110,7 +111,8 @@ describe("PromptWatch with marks: only while sudo itself runs", () => {
 
   it("stays unsure for good once a shell with marks starts inside a command", async () => {
     const w = await fed(...marked("bash"), `\r\n${A}$ ${B}ls\r\n${C}${D(0)}${A}$ ${B}sudo -v\r\n${C}${SUDO}`);
-    expect(w.prompt()?.elsewhere).toMatch(/shell started inside/);
+    // A shell is something that may reach another machine, too (ticket 120): every fill stops.
+    expect(w.prompt()?.elsewhere).toMatch(/shell started inside|aren't roster's own/);
   });
 
   it("refuses when the command line couldn't be read", async () => {
@@ -363,4 +365,23 @@ describe("PromptWatch: a Session whose marks aren't roster's own (fail closed)",
     expect(w.hop()).toBeNull();
     expect(w.prompt()?.elsewhere).toMatch(/aren't roster's own/);
   });
+});
+
+describe("mayReachElsewhere: what stops every fill when the marks aren't roster's (best effort)", () => {
+  it.each([
+    "cu -l /dev/ttyUSB0", "minicom -D /dev/ttyS0", "picocom /dev/ttyUSB0", "screen /dev/ttyUSB0 115200", "tmux attach",
+    "console fw01", "ipmitool -I lanplus -H 10.0.0.9 sol activate", "aws ssm start-session --target i-0abc",
+    "gcloud compute ssh vm-1", "az ssh vm -n vm-1", "virsh console vm1", "lxc exec c1 -- bash", "incus exec c1 bash",
+    "podman exec -it c sh", "nerdctl exec -it c sh", "nsenter -t 1 -a", "chroot /mnt", "bash", "su -", "sudo -i",
+    "sudo -s", "sudo su -", "doas sh", "ssh esx-02", "a $(b)", "eval $X",
+  ])("%j", (command) => {
+    expect(mayReachElsewhere(command)).toBe(true);
+  });
+
+  it.each(["ls -l", "sudo -v", "sudo apt upgrade", "aws s3 ls", "gcloud config list", "cat /etc/hosts", "make deploy"])(
+    "not %j",
+    (command) => {
+      expect(mayReachElsewhere(command)).toBe(false);
+    },
+  );
 });

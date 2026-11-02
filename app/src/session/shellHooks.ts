@@ -119,6 +119,8 @@ export interface ShellHooksIo {
   cwd(path: string): void;
   /** Whether roster may send the line by itself (`shell_hooks`). */
   enabled(): boolean;
+  /** What came of the line, once it's known (ticket 120: the echo window for Plugins closes). */
+  settled?(outcome: "on" | "no-marks"): void;
 }
 
 /** Escape sequences in what's typed: CSI (keys, and the terminal's reports: cursor, attributes,
@@ -280,6 +282,7 @@ export class ShellHooks {
 
   private settle(outcome: "on" | "no-marks") {
     this.outcome = outcome;
+    this.io.settled?.(outcome);
     for (const resolve of this.waiting.splice(0)) resolve(outcome);
   }
 
@@ -382,47 +385,97 @@ export function shellHooksOn(init: boolean | null, host: boolean | null | undefi
 }
 
 /** Takes a Session's token out of its output before Plugins get it (ticket 120, decision Q131):
- * the echoed hook line and every mark carry it, and only the Session's own shell may know it. Each
- * occurrence becomes dashes of the same length; output ending in `roster=` and part of the token
- * waits for the next read (or `flush`), so a token cut across reads is still hidden. */
+ * the marks carry it, and anything that prints the shell's prompt settings or history shows it.
+ * Each token character becomes a dash, found even when a terminal wraps it (a line break, or
+ * cursor moves and erases, inside it, as ConPTY draws a long line). Output ending part-way into
+ * what may be the token waits for the next read (`holding`); `flush` lets it out with that part
+ * dashed when it's long enough to be the token's (6 characters) or follows `roster=`, so a held
+ * part never goes out as it was. Output with nothing of it passes as the same bytes, uncopied. */
 export class TokenMask {
   private readonly token: Uint8Array;
-  private readonly lead: Uint8Array;
-  private carry = new Uint8Array(0);
+  private carry: Uint8Array | null = null;
+  /** The held part follows `roster=`. */
+  private carryAfterLead = false;
 
   constructor(nonce: string) {
     this.token = encoder.encode(nonce);
-    this.lead = encoder.encode(`roster=${nonce}`);
+  }
+
+  /** Whether output is held back, waiting for the read that tells whether it's the token. */
+  holding(): boolean {
+    return this.carry !== null;
   }
 
   mask(data: Uint8Array): Uint8Array {
-    const buf = this.carry.length ? joined([this.carry, data]) : data.slice();
-    const t = this.token;
-    for (let i = 0; i + t.length <= buf.length; i++) {
-      let j = 0;
-      while (j < t.length && buf[i + j] === t[j]) j++;
-      if (j === t.length) buf.fill(45, i, i + t.length);
+    const buf = this.carry ? joined([this.carry, data]) : data;
+    this.carry = null;
+    let out: Uint8Array | null = null;
+    const first = this.token[0] ?? 0;
+    for (let i = buf.indexOf(first); i >= 0; i = buf.indexOf(first, i + 1)) {
+      const m = this.matchAt(buf, i);
+      if (m.complete) {
+        out ??= buf === data ? buf.slice() : buf;
+        for (const at of m.at) out[at] = 45;
+      } else if (m.atEnd) {
+        const kept = out ?? buf;
+        this.carry = kept.slice(i);
+        this.carryAfterLead = indexOf(kept.subarray(Math.max(0, i - 7), i), "roster=") === 0;
+        return kept.subarray(0, i);
+      }
     }
-    const hold = this.partial(buf);
-    this.carry = buf.slice(buf.length - hold);
-    return buf.subarray(0, buf.length - hold);
+    return out ?? buf;
   }
 
-  /** What's held back, as it is: the Session ended. */
+  /** What's held back, with any part of the token in it dashed when it may be the token's. */
   flush(): Uint8Array {
     const rest = this.carry;
-    this.carry = new Uint8Array(0);
+    this.carry = null;
+    if (!rest) return new Uint8Array(0);
+    const m = this.matchAt(rest, 0);
+    if (m.at.length >= 6 || this.carryAfterLead) for (const at of m.at) rest[at] = 45;
     return rest;
   }
 
-  /** How many bytes at the end of `buf` are `roster=` and the start of the token. */
-  private partial(buf: Uint8Array): number {
-    const prefix = "roster=".length;
-    for (let n = Math.min(this.lead.length - 1, buf.length); n >= prefix; n--) {
-      let j = 0;
-      while (j < n && buf[buf.length - n + j] === this.lead[j]) j++;
-      if (j === n) return n;
+  /** The token's characters from `i` on, skipping line breaks and escape sequences between them:
+   * where each was, whether it's all there, and whether `buf` ended part-way. */
+  private matchAt(buf: Uint8Array, i: number): { at: number[]; complete: boolean; atEnd: boolean } {
+    const t = this.token;
+    const at: number[] = [];
+    let k = i;
+    while (at.length < t.length) {
+      if (k >= buf.length) return { at, complete: false, atEnd: true };
+      const b = buf[k];
+      if (b === t[at.length]) {
+        at.push(k++);
+        continue;
+      }
+      if (at.length === 0) break;
+      const skip = ignorable(buf, k);
+      if (skip === 0) break;
+      if (skip < 0) return { at, complete: false, atEnd: true };
+      k += skip;
     }
-    return 0;
+    return { at, complete: at.length === t.length, atEnd: false };
   }
+}
+
+/** How long the line break or escape sequence at `k` is (0: neither; -1: cut off at the end). */
+function ignorable(buf: Uint8Array, k: number): number {
+  const b = buf[k];
+  if (b === 13 || b === 10) return 1;
+  if (b !== 27) return 0;
+  const next = buf[k + 1];
+  if (next === undefined) return -1;
+  if (next === 91) {
+    for (let j = k + 2; j < buf.length; j++) if ((buf[j] ?? 0) >= 0x40 && (buf[j] ?? 0) <= 0x7e) return j - k + 1;
+    return -1;
+  }
+  if (next === 93) {
+    for (let j = k + 2; j < buf.length; j++) {
+      if (buf[j] === 7) return j - k + 1;
+      if (buf[j] === 27 && buf[j + 1] === 92) return j - k + 2;
+    }
+    return -1;
+  }
+  return 2;
 }

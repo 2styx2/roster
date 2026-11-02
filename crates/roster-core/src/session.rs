@@ -250,8 +250,8 @@ struct Running {
     /// while it checked the prompt.
     output: Arc<AtomicU64>,
     writes: AtomicU64,
-    /// Its last [`TAIL`] bytes of output, as the PTY gave them: a nested fill's prompt must be in
-    /// there ([`SessionManager::fill_printed`]).
+    /// Its last [`TAIL`] bytes of output, as the PTY gave them: a nested fill's prompt must end
+    /// them ([`SessionManager::at_prompt`]).
     tail: Arc<Mutex<VecDeque<u8>>>,
 }
 
@@ -452,11 +452,12 @@ impl SessionManager {
         Ok(target.host)
     }
 
-    /// Whether the Session printed `text` in its last [`TAIL`] bytes, read as text: escape
-    /// sequences taken out (a cursor-forward, as ConPTY draws spaces, counts as a space), and every
-    /// run of whitespace, carriage returns and line feeds included, as one space, on both sides. So
-    /// a prompt redrawn with colours or cursor moves is still the prompt the screen shows.
-    pub fn printed(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
+    /// Whether the Session's output, read as text, ends with `text`: the cursor sits right after
+    /// it, as at a prompt (ticket 120). Its last [`TAIL`] bytes are read with escape sequences
+    /// taken out (a cursor-forward, as ConPTY draws spaces, counts as a space) and every run of
+    /// whitespace as one space, on both sides; trailing whitespace doesn't count. So a prompt
+    /// redrawn with colours or cursor moves still counts, and one with other output after it doesn't.
+    pub fn at_prompt(&self, id: SessionId, text: &str) -> Result<bool, SessionError> {
         let running = self.get(id)?;
         let tail = running.tail.lock().unwrap();
         let (a, b) = tail.as_slices();
@@ -466,15 +467,16 @@ impl SessionManager {
         let hay = plain_text(&seen);
         let needle = plain_text(text.as_bytes());
         let needle = needle.trim_ascii();
-        Ok(!needle.is_empty() && hay.windows(needle.len()).any(|w| w == needle))
+        Ok(!needle.is_empty() && hay.trim_ascii_end().ends_with(needle))
     }
 
     /// [`SessionManager::fill`] for a nested ssh's prompt (ticket 120, decision Q131), whose Host
-    /// the frontend names: only when the Session printed `prompt` itself, in its last [`TAIL`]
-    /// bytes, so the frontend's word alone can't send another Host's password to a Session that
-    /// never asked ([`FillError::NotPrinted`], before anything is looked up).
+    /// the frontend names: only when the Session's output ends with `prompt` itself
+    /// ([`SessionManager::at_prompt`]), so the frontend's word alone can't send another Host's
+    /// password to a Session that isn't asking for it ([`FillError::NotPrinted`], before anything
+    /// is looked up).
     /// Returns the name of `hop`, the Host whose password it typed.
-    pub fn fill_printed<E>(
+    pub fn fill_at_prompt<E>(
         &self,
         id: SessionId,
         wait: Duration,
@@ -482,7 +484,7 @@ impl SessionManager {
         hop: &FillTarget,
         lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
     ) -> Result<String, FillError<E>> {
-        match self.printed(id, prompt.trim()) {
+        match self.at_prompt(id, prompt.trim()) {
             Ok(true) => self.fill(id, wait, lookup).map(|_| hop.host.clone()),
             Ok(false) => Err(FillError::NotPrinted),
             Err(_) => Err(FillError::NotFound(id)),
@@ -536,10 +538,10 @@ impl SessionManager {
 /// echoes, the letter is printed, which is how roster tells.
 pub const PROBE: &[u8] = b"\x15x\x15";
 
-/// How much of a Session's latest output the core keeps, for [`SessionManager::printed`].
+/// How much of a Session's latest output the core keeps, for [`SessionManager::at_prompt`].
 pub const TAIL: usize = 4096;
 
-/// `bytes` as the text a screen shows, for [`SessionManager::printed`]: CSI, OSC and other escape
+/// `bytes` as the text a screen shows, for [`SessionManager::at_prompt`]: CSI, OSC and other escape
 /// sequences out (a cursor-forward, `ESC [ n C`, as one space), control characters as spaces, and
 /// each run of whitespace as one space. A sequence cut off at the start of the tail is dropped.
 fn plain_text(bytes: &[u8]) -> Vec<u8> {
@@ -635,7 +637,7 @@ pub enum FillError<E> {
     Echoes,
     /// A key was sent to the Session while roster checked the prompt.
     Typed,
-    /// A nested fill's prompt isn't in what the Session printed lately (ticket 120). Nothing was
+    /// The Session's output doesn't end with the nested fill's prompt (ticket 120). Nothing was
     /// looked up or typed.
     NotPrinted,
     /// Writing to the PTY failed.
@@ -653,7 +655,7 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
             ),
             FillError::Typed => f.write_str("a key was typed while roster checked the prompt, so roster didn't fill it"),
             FillError::NotPrinted => f.write_str(
-                "the Session didn't print that prompt lately, so roster didn't fill it (it fills only a prompt the Session shows)",
+                "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
             ),
             FillError::Io(m) => f.write_str(m),
         }

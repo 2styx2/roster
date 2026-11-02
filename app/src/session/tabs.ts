@@ -21,7 +21,7 @@ import { hostnameIn } from "../quick/hostname";
 import { formatQuickTarget, type QuickTarget } from "../quick/target";
 // Types only: the watch itself (xterm) comes from setFillPrompts, so this module loads without a
 // terminal (the docs site's generator reads tabs.ts's helpers in Node).
-import type { Breadcrumb, FillHop, PasswordPrompt, PromptWatch } from "./prompt";
+import type { Breadcrumb, PasswordPrompt, PromptWatch } from "./prompt";
 import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult } from "./shellHooks";
 import { hopWords } from "./breadcrumb";
 
@@ -73,7 +73,7 @@ export interface Tab {
   hop?: Breadcrumb | null;
 }
 
-export type { Breadcrumb, FillHop, PasswordPrompt };
+export type { Breadcrumb, PasswordPrompt };
 
 /** How Tabs watches Host Sessions for sudo's prompt (ticket 119): `setFillPrompts`. */
 export interface FillPrompts {
@@ -177,6 +177,10 @@ interface Entry {
   filling: boolean;
   /** The attempt's shell hooks (ticket 121): the hook line, its echo held back, OSC 7. */
   hooks: ShellHooks | null;
+  /** From roster's hook line going out until its first own prompt (or the hooks giving up), what
+   * the Session prints is kept from Plugins: it's the echo of a line with the attempt's token.
+   * `tail` is the window's last bytes, to find that prompt's mark across reads. */
+  echoWindow: { tail: Uint8Array } | null;
 }
 
 /** How much of the output after the login is searched for the box's name. */
@@ -434,6 +438,7 @@ export class Tabs {
       watch: null,
       filling: false,
       hooks: null,
+      echoWindow: null,
       wiring: {
         attach: (sink) => this.attach(id, sink),
         onData: (data) => this.write(id, data),
@@ -519,15 +524,17 @@ export class Tabs {
           const shown = hooks.output(data, text);
           if (shown) this.output(entry, shown);
           // A Quick Connect Session isn't on a Host of the Inventory: no Host to name.
-          // Plugins never see the attempt's token (the echoed hook line, the marks).
-          const tapped = this.outputTap ? mask.mask(data) : data;
-          if (tapped.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, tapped, entry.sentSize);
+          // Plugins never see the attempt's token: not the echoed hook line (its whole window stays
+          // out), nor anything after that prints it.
+          const plugins = this.outputTap ? this.pastEchoWindow(entry, nonce, data) : null;
+          if (plugins && plugins.length > 0) this.tapOut(entry, id, mask, mask.mask(plugins));
           if (!entry.tab.shell && data.length > 0) entry.tab = { ...entry.tab, shell: true };
           if (entry.tab !== before) this.changed();
         },
         exit: (exit) => {
           if (!current()) return;
           entry.session = null;
+          entry.echoWindow = null;
           const rest = mask.flush();
           if (rest.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, rest, entry.sentSize);
           watch?.dispose();
@@ -601,6 +608,7 @@ export class Tabs {
         // Its token proves the Session's own shell only if the line can only have gone there.
         entry.watch?.hookSent();
         entry.watch?.typed(line);
+        entry.echoWindow = { tail: new Uint8Array(0) };
         void entry.session.write(line).catch(() => {});
         return true;
       },
@@ -613,6 +621,11 @@ export class Tabs {
         this.changed();
       },
       enabled: () => this.shellHooksOn(entry.tab),
+      // No marked prompt came: what was printed meanwhile stays out of Plugins' sight (it held the
+      // echo); what comes next goes to them.
+      settled: () => {
+        if (current()) entry.echoWindow = null;
+      },
     }, nonce);
   }
 
@@ -831,7 +844,9 @@ export class Tabs {
     const entry = this.find(id);
     if (!entry) throw new Error("No Session to fill");
     const { session } = entry;
-    const prompt = entry.tab.prompt;
+    // What the watch says now, not what the tab last showed: a key typed since may have changed it.
+    if (entry.watch) this.promptChanged(entry, entry.watch);
+    const prompt = entry.watch ? entry.tab.prompt : null;
     if (!session || entry.tab.status.state !== "open" || prompt === null) {
       throw new Error(`No password prompt in ${entry.tab.label}'s Session right now`);
     }
@@ -852,7 +867,7 @@ export class Tabs {
     try {
       // A nested ssh's prompt names the Host roster resolved it to (ticket 120); the core checks the
       // Session printed it, and serve that the Host is still what it was resolved to.
-      return (await (prompt.hop ? session.fill(prompt.line, prompt.hop) : session.fill(prompt.line))).host;
+      return (await session.fill(prompt.line, prompt.hop ?? undefined)).host;
     } catch (e) {
       if (watch && e instanceof BackendCallError && typeof e.code === "number") {
         watch.unspent();
@@ -874,7 +889,10 @@ export class Tabs {
     if (!entry) return;
     entry.hooks?.typed(data);
     // A nested ssh's prompt after you've typed into it may not be its login's (ticket 120).
-    if (hasTyping(data)) entry.watch?.typed(data);
+    if (hasTyping(data) && entry.watch) {
+      entry.watch.typed(data);
+      this.promptChanged(entry, entry.watch);
+    }
     if (entry.session) void entry.session.write(data).catch(() => {});
     else if (entry.tab.status.state === "connecting") entry.pending.push(data);
   }
@@ -896,6 +914,35 @@ export class Tabs {
     void session.resize(size).catch(() => {});
   }
 
+  /** What of `data` Plugins may get while roster's hook line may be echoing: nothing until the
+   * attempt's first own prompt mark (`133;A;roster=TOKEN`), then from that mark on. */
+  private pastEchoWindow(entry: Entry, nonce: string, data: Uint8Array): Uint8Array | null {
+    const window = entry.echoWindow;
+    if (!window) return data;
+    const seen = new Uint8Array(window.tail.length + data.length);
+    seen.set(window.tail);
+    seen.set(data, window.tail.length);
+    const at = indexOfBytes(seen, `\x1b]133;A;roster=${nonce}`);
+    if (at < 0) {
+      window.tail = seen.slice(-64);
+      return null;
+    }
+    entry.echoWindow = null;
+    return seen.subarray(at);
+  }
+
+  /** Hands Plugins `data`; output the mask holds back goes after 50 ms if nothing follows it. */
+  private tapOut(entry: Entry, id: number, mask: TokenMask, data: Uint8Array) {
+    const host = entry.tab.quick ? null : entry.tab.host;
+    if (data.length > 0) this.outputTap?.output(id, host, data, entry.sentSize);
+    if (!mask.holding()) return;
+    setTimeout(() => {
+      if (!mask.holding() || !this.find(id)) return;
+      const rest = mask.flush();
+      if (rest.length > 0) this.outputTap?.output(id, host, rest, entry.sentSize);
+    }, 50);
+  }
+
   /** What `watch` says of the prompt now, onto the tab, if it's still the tab's watch. */
   private promptChanged(entry: Entry, watch: PromptWatch) {
     if (entry.watch !== watch || !this.find(entry.tab.id)) return;
@@ -914,4 +961,16 @@ export class Tabs {
     entry.tab = { ...entry.tab, prompt, hop };
     this.changed();
   }
+}
+
+/** Where the ASCII `needle` first starts in `bytes`, or -1. */
+function indexOfBytes(bytes: Uint8Array, needle: string): number {
+  const n = new TextEncoder().encode(needle);
+  const first = n[0] ?? 0;
+  for (let i = bytes.indexOf(first); i >= 0 && i + n.length <= bytes.length; i = bytes.indexOf(first, i + 1)) {
+    let j = 1;
+    while (j < n.length && bytes[i + j] === n[j]) j++;
+    if (j === n.length) return i;
+  }
+  return -1;
 }

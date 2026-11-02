@@ -20,6 +20,8 @@ The first argument picks a behaviour:
   bad-prepare        session.prepare for a password Host answers a numeric askpass token (a malformed result)
   bad-fill           session.fill answers a numeric password (a malformed result)
   old-login          session.prepare leaves out `login`, as serve before API 25
+  nested             inventory.info reports api_version 26 (session.fill's `hop`, ticket 120)
+  fill-25            inventory.info reports api_version 25: session.fill without `hop`, which it would ignore
   hang               never answers host.get; a `$/cancel` (ticket 108) is echoed back as the notification
                      test.cancelled {params, had_id} so a test can see the client sent it
   checks             speaks API 21: host.check {background: true} starts a check job (counted in inventory.info's
@@ -77,7 +79,8 @@ def answer(req):
         return {"result": {"path": "/home/u/infra/roster.yml", "box": "box1", "host_count": len(HOSTS),
                            "providers": ["bw"], "roster_version": "0.1.0",
                            "api_version": 0 if mode == "old-api" else 21 if mode == "checks"
-                           else 22 if mode == "stuck-check" else 1,
+                           else 22 if mode == "stuck-check" else 26 if mode == "nested"
+                           else 25 if mode == "fill-25" else 1,
                            "argv": sys.argv[2:], "checks": checks, "stops": stops}}
     if m == "host.check":
         p = req.get("params", {})

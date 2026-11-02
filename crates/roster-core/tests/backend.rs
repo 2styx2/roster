@@ -469,7 +469,7 @@ fn esxi_02() -> FillTarget {
 #[test]
 fn a_nested_fill_names_the_host_the_ssh_went_to() {
     // fake_serve.py fills esxi-02's own prompt only with its `hop`, and refuses another address.
-    let b = Backend::start(&fake("ok")).unwrap();
+    let b = Backend::start(&fake("nested")).unwrap();
     let prompt = "root@esxi-02's password: ";
     assert!(b.fill_secret(&sw_core(), prompt, Some(&esxi_02())).is_ok());
     let moved = FillTarget {
@@ -487,6 +487,20 @@ fn a_nested_fill_names_the_host_the_ssh_went_to() {
         roster_core::rpc::CallError::Rpc { code, .. } => assert_eq!(code, 130),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_nested_fill_is_never_sent_to_a_serve_that_would_ignore_the_hop() {
+    // serve before API 26 doesn't know `hop`: it would answer for the Session's own Host, whose
+    // password would then be typed on the nested one. The core refuses before asking.
+    let b = Backend::start(&fake("fill-25")).unwrap();
+    let err = b
+        .fill_secret(&sw_core(), "root@esxi-02's password: ", Some(&esxi_02()))
+        .unwrap_err();
+    assert!(err.to_string().contains("API 26"), "{err}");
+    assert!(!err.to_string().contains(FILL_PASSWORD));
+    // Its own Host's fill still goes.
+    assert!(b.fill_secret(&sw_core(), "[sudo] password for root: ", None).is_ok());
 }
 
 #[test]

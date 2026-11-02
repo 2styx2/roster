@@ -82,6 +82,9 @@ pub const CALL_SECS: &[(&str, u64)] = &[
 
 /// The first serve API with `host.check {background: true}` and `host.check_job` (ticket 108).
 pub const CHECK_JOBS_API_VERSION: i64 = 21;
+/// The first serve API whose `session.fill` takes `hop` (ticket 120): an older one ignores it and
+/// answers for the Session's own Host, so the core never sends it a nested fill.
+pub const NESTED_FILL_API_VERSION: i64 = 26;
 /// How often [`Backend::check_host`] asks a check job how it's going.
 pub const CHECK_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -346,6 +349,14 @@ impl Backend {
         let mut params =
             json!({ "host": target.host, "address": address, "port": port, "user": user, "prompt": prompt });
         if let Some(hop) = hop {
+            let api = self.api_version();
+            if api < NESTED_FILL_API_VERSION {
+                return Err(CallError::Io {
+                    message: format!(
+                        "filling a nested ssh's prompt needs roster serve API {NESTED_FILL_API_VERSION}; this one speaks {api}, so roster didn't fill it"
+                    ),
+                });
+            }
             let LoginAs { address, port, user } = &hop.login;
             params["hop"] = json!({ "host": hop.host, "address": address, "port": port, "user": user });
         }

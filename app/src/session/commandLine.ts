@@ -20,13 +20,25 @@ export function programAt(ws: readonly string[]): number {
   return i;
 }
 
-/** Programs that reach another machine or a container, or attach to a terminal that may be one:
- * a prompt while one runs may be that machine's. */
+/** Programs that reach another machine, a container or a serial console, attach to a terminal
+ * that may be one, or start a shell roster's marks don't see into: a prompt while one runs may be
+ * that machine's. Best effort: roster reads the line, it doesn't run the shell, so an alias or a
+ * script isn't caught; roster's own hook marks (with the Session's token) are the reliable path. */
 const REACH = new Set([
-  "ssh", "slogin", "mosh", "telnet", "rlogin", "rsh", "autossh", "sshpass", "docker", "podman", "kubectl", "oc",
-  "lxc", "lxc-attach", "incus", "nc", "ncat", "netcat", "socat", "virsh", "machinectl", "nsenter", "pdsh",
-  "vagrant", "multipass", "screen", "tmux", "expect", "eval",
+  "ssh", "slogin", "mosh", "telnet", "rlogin", "rsh", "autossh", "sshpass", "docker", "podman", "nerdctl", "kubectl",
+  "oc", "lxc", "lxc-attach", "incus", "nc", "ncat", "netcat", "socat", "virsh", "machinectl", "nsenter", "chroot",
+  "pdsh", "vagrant", "multipass", "screen", "tmux", "expect", "eval", "cu", "minicom", "picocom", "microcom", "tio",
+  "console", "conserver", "ipmitool", "su", "doas", "bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh",
+  "busybox", "pwsh", "powershell",
 ]); // prettier-ignore
+/** Cloud tools whose subcommand opens a shell on a machine: the tool and the word that does. */
+const REACH_VIA: Record<string, readonly string[]> = {
+  aws: ["ssm"],
+  gcloud: ["ssh", "serial-port", "connect-to-serial-port"],
+  az: ["ssh", "serial-console"],
+};
+/** sudo's options that start a shell. */
+const SUDO_SHELL = new Set(["-i", "-s", "--login", "--shell"]);
 /** REACH, and programs that copy to another machine or run another program that may: sudo running
  * any of them is not sudo alone. */
 const NOT_SUDO_ALONE = new Set([
@@ -56,11 +68,15 @@ export function sudoOnly(command: string): boolean {
   return ws.slice(i).every((w) => !NOT_SUDO_ALONE.has(base(w)));
 }
 
-/** Whether `command` may reach another machine (or a container), so what it prints, its prompts
- * and any shell marks included, may be that machine's: a word naming such a program, `$(…)` or a
- * backquote (roster can't see what they run), or a line roster couldn't read (null). An alias is
- * beyond it: roster reads the line, it doesn't run the shell. */
+/** Whether `command` may reach another machine (or a container, a console, a shell roster can't
+ * see into), so what it prints, its prompts and any shell marks included, may be that machine's: a
+ * word naming such a program, a cloud tool's shell subcommand, sudo starting a shell, `$(…)` or a
+ * backquote (roster can't see what they run), or a line roster couldn't read (null). Best effort
+ * (REACH): an alias or a script is beyond it. */
 export function mayReachElsewhere(command: string | null): boolean {
   if (command === null || /\$\(|`/.test(command)) return true;
-  return words(command).some((w) => REACH.has(base(w)));
+  const ws = words(command).map(base);
+  if (ws.some((w) => REACH.has(w))) return true;
+  if (ws.some((w, i) => (REACH_VIA[w] ?? []).some((sub) => ws.slice(i + 1).includes(sub)))) return true;
+  return ws.includes("sudo") && ws.some((w) => SUDO_SHELL.has(w));
 }

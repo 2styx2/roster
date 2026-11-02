@@ -1046,7 +1046,7 @@ const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 ///
 /// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
 /// decision Q131): serve answers for that Host (still checking the Session's own), and the core
-/// types it only if the Session printed that prompt itself (`SessionManager::fill_printed`).
+/// types it only if the Session printed that prompt itself (`SessionManager::fill_at_prompt`).
 #[tauri::command]
 async fn session_fill(
     state: tauri::State<'_, Arc<BackendState>>,
@@ -1060,7 +1060,7 @@ async fn session_fill(
     blocking(move || {
         let filled = match &hop {
             None => sessions.fill(id, FILL_WAIT, |target| backend.fill_secret(target, &prompt, None)),
-            Some(hop) => sessions.fill_printed(id, FILL_WAIT, &prompt, hop, |target| {
+            Some(hop) => sessions.fill_at_prompt(id, FILL_WAIT, &prompt, hop, |target| {
                 backend.fill_secret(target, &prompt, Some(hop))
             }),
         };

@@ -142,7 +142,7 @@ describe("filling a password prompt", () => {
     expect(note).not.toHaveTextContent(/can't tell whether you're still/);
     expect(within(note).queryByRole("button")).toBeNull();
     await user.keyboard(`${LEADER}p`);
-    await waitFor(() => expect(messageLine()).toHaveTextContent(/may have reached another machine/));
+    await waitFor(() => expect(messageLine()).toHaveTextContent(/may be another machine's/));
     expect(output()).not.toHaveTextContent(/sudo ok/);
   });
 

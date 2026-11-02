@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- terminal output is made of control characters */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn } from "./shellHooks";
 
@@ -349,18 +350,35 @@ describe("TokenMask: Plugins never see the Session's token (ticket 120)", () => 
     const mask = new TokenMask(NONCE);
     return chunks.map((c) => dec.decode(mask.mask(enc.encode(c)))).join("") + dec.decode(mask.flush());
   };
+  const hidden = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\r|\n/g, "");
 
-  it("hides it in the echoed hook line and in every mark, however the reads split it", () => {
-    const echo = `${hookLine("posix", NONCE)}\r\n\x1b]133;A;roster=${NONCE}\x07$ `;
-    for (let cut = 0; cut <= echo.length; cut += 7) {
-      const out = through([echo.slice(0, cut), echo.slice(cut)]);
-      expect(out).not.toContain(NONCE);
-      expect(out.length).toBe(echo.length);
+  it("hides it however the reads split it", () => {
+    const text = `$ echo $PS1\r\n\\[\\e]133;A;roster=${NONCE}\\a\\]\\u$ \r\n$ `;
+    for (let cut = 0; cut <= text.length; cut += 3) {
+      const out = through([text.slice(0, cut), text.slice(cut)]);
+      expect(hidden(out)).not.toContain(NONCE.slice(0, 8));
+      expect(out.length).toBe(text.length);
     }
   });
 
-  it("passes everything else as it came, at once", () => {
+  it("hides it when ConPTY wraps it at 80 columns, with a line break or cursor moves inside", () => {
+    for (const brk of ["\r\n", "\x1b[K\r\n", "\x1b[?25l\x1b[2;1H", "\x1b[1C"]) {
+      const at = 80 - "history | tail -1: roster=".length;
+      const text = `history | tail -1: roster=${NONCE.slice(0, at % 24)}${brk}${NONCE.slice(at % 24)} done\r\n`;
+      const out = through([text]);
+      expect(hidden(out)).not.toMatch(/[0-9a-f]{6,}/);
+      expect(out).toContain(" done");
+    }
+  });
+
+  it("never lets a held part of it out unmasked, even when the Session ends there", () => {
+    const out = through([`token roster=${NONCE.slice(0, 5)}`]);
+    expect(out).not.toContain(NONCE.slice(0, 5));
+  });
+
+  it("passes everything else as it came, without copying it", () => {
     const mask = new TokenMask(NONCE);
-    expect(dec.decode(mask.mask(enc.encode("ls\r\nfile-0123 a\r\n$ ")))).toBe("ls\r\nfile-0123 a\r\n$ ");
+    const data = enc.encode("ls\r\nfile-0123 a\r\n$ ");
+    expect(mask.mask(data)).toBe(data);
   });
 });

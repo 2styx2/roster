@@ -44,8 +44,10 @@ const HARMLESS_OPTIONS = new Set([
   "pubkeyauthentication", "passwordauthentication", "numberofpasswordprompts", "addkeystoagent",
 ]); // prettier-ignore
 
+/** The refused flags that take a value (ssh's -J, -F, -S, -W, -P, -O, -Q). */
+const REFUSED_VALUE = new Set("JFSWPOQ");
 /** Flags that take a value, the refused ones included: to find the destination of a refused line. */
-const ANY_VALUE = new Set("BbcDEeIiLlmopRwJFSWPOQ");
+const ANY_VALUE = new Set([...VALUE, ...REFUSED_VALUE]);
 
 /** The destination of a line roster refuses, for the breadcrumb only: the first word that isn't a
  * flag or a flag's value. */
