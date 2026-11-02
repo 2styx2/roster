@@ -32,6 +32,7 @@
 //! - **Async:** the request runs on the core's own network threads; the Plugin's function is
 //!   called with the answer later, as a call of its own with a call's budget.
 
+use bytes::Bytes;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::{Client, Method, Url, redirect};
 use serde::Serialize;
@@ -54,6 +55,25 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_IN_FLIGHT: usize = 4;
 /// How many redirects a request follows.
 pub const MAX_REDIRECTS: usize = 5;
+/// How many of one Plugin's lookups through the proxy may be waiting on this computer's resolver
+/// at once, counting those a request already gave up on (the OS lookup runs on to its own end).
+pub const MAX_LOOKUPS: usize = 4;
+/// The most of a redirect's own body read before the next hop, so its connection can be used
+/// again; a longer one is left, and its connection closed.
+const MAX_REDIRECT_BODY: usize = 64 * 1024;
+/// The Plugin's own headers that go along on a redirect to another site (scheme, host or port):
+/// what the answer should look like, never who is asking. Any other, `X-Api-Key` or
+/// `Private-Token` too, could carry a credential, so it stays with the site it was meant for
+/// (decision Q148). `Content-Type` only with the body it describes.
+const CARRIED_ELSEWHERE: &[&str] = &[
+    "accept",
+    "accept-language",
+    "cache-control",
+    "content-language",
+    "content-type",
+    "pragma",
+    "user-agent",
+];
 /// The most headers a request may set.
 pub const MAX_HEADERS: usize = 50;
 /// Headers a Plugin may not set: they steer the connection, not the request.
@@ -663,22 +683,37 @@ pub fn proxied(host: &str, lookup: Result<Vec<SocketAddr>, String>) -> Result<()
     }
 }
 
-/// How a name going through the proxy is looked up first ([`proxied`]): the system's resolver,
-/// on tokio's blocking pool, so a slow answer holds up no network thread and the request's time
-/// still runs out (#225 item 6).
-type Lookup = Arc<
-    dyn Fn(String) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<SocketAddr>, String>> + Send>> + Send + Sync,
->;
+/// How a name going through the proxy is looked up first ([`proxied`]): blocking, as the system's
+/// resolver is, so it runs on tokio's blocking pool and never holds up a network thread (#225
+/// item 6).
+type Lookup = Arc<dyn Fn(&str) -> Result<Vec<SocketAddr>, String> + Send + Sync>;
 
 fn system_lookup() -> Lookup {
-    Arc::new(|host: String| {
-        Box::pin(async move {
-            tokio::net::lookup_host((host.as_str(), 0))
-                .await
-                .map(Iterator::collect)
-                .map_err(|e| e.to_string())
-        })
+    Arc::new(|host: &str| {
+        use std::net::ToSocketAddrs;
+        (host, 0)
+            .to_socket_addrs()
+            .map(Iterator::collect)
+            .map_err(|e| e.to_string())
     })
+}
+
+/// One of a Plugin's [`MAX_LOOKUPS`], held until the OS answers the lookup.
+struct LookupSlot(Arc<Log>);
+
+impl LookupSlot {
+    fn take(log: &Arc<Log>) -> Option<LookupSlot> {
+        let taken = log.lookups.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            (n < MAX_LOOKUPS).then_some(n + 1)
+        });
+        taken.is_ok().then(|| LookupSlot(Arc::clone(log)))
+    }
+}
+
+impl Drop for LookupSlot {
+    fn drop(&mut self) {
+        self.0.lookups.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// One Plugin's proxy setting: handed over when it loads, and changed by the host when the
@@ -722,9 +757,14 @@ pub struct SiteCount {
     pub last: u64,
 }
 
-/// One Plugin's [`SiteCount`]s, kept by the host across its reloads, for as long as the app runs.
+/// One Plugin's [`SiteCount`]s, kept by the host across its reloads, for as long as the app runs,
+/// and how many of its lookups the OS is still answering ([`MAX_LOOKUPS`]), so a reload doesn't
+/// start that count over.
 #[derive(Debug, Default)]
-pub struct Log(Mutex<BTreeMap<String, SiteCount>>);
+pub struct Log {
+    counts: Mutex<BTreeMap<String, SiteCount>>,
+    lookups: AtomicUsize,
+}
 
 impl Log {
     fn sent(&self, site: &Site) {
@@ -732,7 +772,7 @@ impl Log {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as u64);
         let key = site.to_string();
-        let mut counts = self.0.lock().expect("network log");
+        let mut counts = self.counts.lock().expect("network log");
         let row = counts.entry(key.clone()).or_insert_with(|| SiteCount {
             site: key,
             requests: 0,
@@ -744,14 +784,14 @@ impl Log {
     }
 
     fn failed(&self, site: &Site) {
-        if let Some(row) = self.0.lock().expect("network log").get_mut(&site.to_string()) {
+        if let Some(row) = self.counts.lock().expect("network log").get_mut(&site.to_string()) {
             row.failed += 1;
         }
     }
 
     /// Every site used, in order.
     pub fn counts(&self) -> Vec<SiteCount> {
-        self.0.lock().expect("network log").values().cloned().collect()
+        self.counts.lock().expect("network log").values().cloned().collect()
     }
 }
 
@@ -816,7 +856,8 @@ pub struct Net {
 struct Going {
     task: tokio::task::AbortHandle,
     settled: Arc<std::sync::atomic::AtomicBool>,
-    site: Site,
+    /// The site of the hop it's on: the first, then each redirect's.
+    site: Arc<Mutex<Site>>,
 }
 
 struct Clients {
@@ -957,11 +998,14 @@ impl Net {
         }
         let clients = self.clients.borrow();
         let client = clients.for_site(&site).ok_or("no client for that pinned site")?;
+        let at = Arc::new(Mutex::new(site.clone()));
         let route = Route {
             sites: Arc::clone(&self.sites),
             proxy: clients.proxy.clone(),
             pinned: site.pin.is_some().then(|| site.clone()),
             lookup: Arc::clone(&self.lookup),
+            log: Arc::clone(&self.log),
+            at: Arc::clone(&at),
         };
         drop(clients);
         let n = self.in_flight.fetch_add(1, Ordering::SeqCst);
@@ -985,7 +1029,7 @@ impl Net {
             return Ok(());
         }
         self.log.sent(&site);
-        let (log, counted) = (Arc::clone(&self.log), site.clone());
+        let (log, counted) = (Arc::clone(&self.log), Arc::clone(&at));
         let settled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let done_once = Arc::clone(&settled);
         let task = rt.spawn(async move {
@@ -993,7 +1037,7 @@ impl Net {
             in_flight.fetch_sub(1, Ordering::SeqCst);
             // Counted once: here, or by the unload that stopped it.
             if !done_once.swap(true, Ordering::SeqCst) && matches!(answer, Answer::Failed(_)) {
-                log.failed(&counted);
+                log.failed(&counted.lock().expect("hop site"));
             }
             // Delivering waits for the Plugin's thread: not on a network thread.
             let _ = tokio::task::spawn_blocking(move || done(answer)).await;
@@ -1003,7 +1047,7 @@ impl Net {
         tasks.push(Going {
             task: task.abort_handle(),
             settled,
-            site,
+            site: at,
         });
         Ok(())
     }
@@ -1026,7 +1070,7 @@ impl Drop for Net {
         for t in self.tasks.borrow().iter() {
             t.task.abort();
             if !t.settled.swap(true, Ordering::SeqCst) {
-                self.log.failed(&t.site);
+                self.log.failed(&t.site.lock().expect("hop site"));
             }
         }
     }
@@ -1157,6 +1201,21 @@ struct Route {
     proxy: Option<Proxy>,
     pinned: Option<Site>,
     lookup: Lookup,
+    /// Where each hop is counted, and the Plugin's [`MAX_LOOKUPS`].
+    log: Arc<Log>,
+    /// The site of the hop going now, which a failure is counted against.
+    at: Arc<Mutex<Site>>,
+}
+
+/// Where a URL leads, for a message: its origin, or for one with none (`file:`, `data:`) its
+/// scheme, never "null".
+fn shown(url: &Url) -> String {
+    let origin = url.origin();
+    if origin.is_tuple() {
+        origin.ascii_serialization()
+    } else {
+        format!("a {}: URL", url.scheme())
+    }
 }
 
 impl Route {
@@ -1164,7 +1223,7 @@ impl Route {
     /// first request: one of the Plugin's sites, and on the same client (a redirect never leads to
     /// or from a pinned site).
     fn hop(&self, followed: usize, next: &Url) -> Result<(), String> {
-        let to = next.origin().ascii_serialization();
+        let to = shown(next);
         if followed >= MAX_REDIRECTS {
             Err(format!("more than {MAX_REDIRECTS} redirects"))
         } else if !allowed(&self.sites, next) {
@@ -1179,16 +1238,37 @@ impl Route {
     }
 
     /// Through the proxy, a public name is still looked up here first ([`proxied`]), at the
-    /// request and at every redirect, without holding up a network thread. `Ok(false)`: the time
-    /// ran out first.
+    /// request and at every redirect, on the blocking pool so no network thread waits.
+    /// `Ok(false)`: the time ran out first. A lookup given up on keeps its slot until the OS
+    /// answers it, so at most [`MAX_LOOKUPS`] of the Plugin's can be waiting there.
     async fn looked_up(&self, url: &Url, left: Duration) -> Result<bool, String> {
         let host = match (&self.proxy, url.host()) {
             (Some(p), Some(url::Host::Domain(d))) if p.carries(&self.sites, url) => d.to_string(),
             _ => return Ok(true),
         };
-        match tokio::time::timeout(left, (self.lookup)(host.clone())).await {
-            Ok(found) => proxied(&host, found).map(|()| true),
+        let Some(slot) = LookupSlot::take(&self.log) else {
+            return Err(format!(
+                "{MAX_LOOKUPS} lookups of this Plugin's are still waiting for this computer's resolver: {host} wasn't looked up (try again later)"
+            ));
+        };
+        let (lookup, name) = (Arc::clone(&self.lookup), host.clone());
+        let job = tokio::task::spawn_blocking(move || {
+            let found = lookup(&name);
+            drop(slot);
+            found
+        });
+        match tokio::time::timeout(left, job).await {
+            Ok(Ok(found)) => proxied(&host, found).map(|()| true),
+            Ok(Err(e)) => Err(format!("couldn't look up {host}: {e}")),
             Err(_) => Ok(false),
+        }
+    }
+
+    /// Counts the next hop's request by its site, and its failure there if it fails.
+    fn moved_to(&self, next: &Url) {
+        if let Some(site) = site_for(&self.sites, next) {
+            self.log.sent(site);
+            *self.at.lock().expect("hop site") = site.clone();
         }
     }
 }
@@ -1196,14 +1276,15 @@ impl Route {
 /// The request sent again to a redirect's `next`, as HTTP says (and as reqwest did when it
 /// followed redirects for us): a POST answered with 301 or 302, and anything but HEAD answered
 /// with 303, goes on as a GET without its body; 307 and 308 keep both. To another scheme, host or
-/// port, no credential header goes along.
+/// port, only the Plugin's headers in [`CARRIED_ELSEWHERE`] go along, and one dropped stays
+/// dropped for every later hop.
 fn redirected(
     status: u16,
     from: &Url,
     next: &Url,
     method: &mut Method,
     headers: &mut Vec<(String, String)>,
-    body: &mut Option<Vec<u8>>,
+    body: &mut Option<Bytes>,
 ) {
     let as_get = match status {
         301 | 302 => *method == Method::POST,
@@ -1226,12 +1307,8 @@ fn redirected(
         || next.port_or_known_default() != from.port_or_known_default()
         || next.scheme() != from.scheme();
     if elsewhere {
-        headers.retain(|(n, _)| {
-            !matches!(
-                n.as_str(),
-                "authorization" | "cookie" | "cookie2" | "proxy-authorization" | "www-authenticate"
-            )
-        });
+        let described = body.is_some();
+        headers.retain(|(n, _)| CARRIED_ELSEWHERE.contains(&n.as_str()) && (described || n != "content-type"));
     }
 }
 
@@ -1242,9 +1319,11 @@ async fn fetch(client: &Client, route: &Route, request: Request) -> Answer {
         mut method,
         mut url,
         mut headers,
-        mut body,
+        body,
         timeout,
     } = request;
+    // Sent again at a 307/308 without a copy.
+    let mut body = body.map(Bytes::from);
     let deadline = tokio::time::Instant::now() + timeout;
     let out_of_time = || Answer::Failed(format!("no answer within {} s", timeout.as_secs_f64()));
     let mut followed = 0;
@@ -1266,7 +1345,7 @@ async fn fetch(client: &Client, route: &Route, request: Request) -> Answer {
         if let Some(body) = &body {
             builder = builder.body(body.clone());
         }
-        let response = match builder.send().await {
+        let mut response = match builder.send().await {
             Ok(r) => r,
             Err(e) => return Answer::Failed(describe(&e, timeout)),
         };
@@ -1275,7 +1354,7 @@ async fn fetch(client: &Client, route: &Route, request: Request) -> Answer {
         let next = matches!(status, 301 | 302 | 303 | 307 | 308)
             .then(|| response.headers().get(reqwest::header::LOCATION))
             .flatten()
-            .and_then(|l| l.to_str().ok())
+            .and_then(|l| std::str::from_utf8(l.as_bytes()).ok())
             .and_then(|l| url.join(l).ok());
         let Some(mut next) = next else { break response };
         // A user or password in a Location goes nowhere: no credentials, the site's or roster's.
@@ -1284,7 +1363,21 @@ async fn fetch(client: &Client, route: &Route, request: Request) -> Answer {
         if let Err(why) = route.hop(followed, &next) {
             return Answer::Failed(why);
         }
+        // Its own short body read, so the connection can carry the next hop.
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let _ = tokio::time::timeout(left, async {
+            let mut read = 0;
+            while read <= MAX_REDIRECT_BODY {
+                match response.chunk().await {
+                    Ok(Some(chunk)) => read += chunk.len(),
+                    _ => break,
+                }
+            }
+        })
+        .await;
+        drop(response);
         redirected(status, &url, &next, &mut method, &mut headers, &mut body);
+        route.moved_to(&next);
         followed += 1;
         url = next;
     };
@@ -1348,9 +1441,7 @@ fn describe(e: &reqwest::Error, timeout: Duration) -> String {
     } else {
         causes.join(": ")
     };
-    if e.is_redirect() {
-        why
-    } else if e.is_connect() {
+    if e.is_connect() {
         format!("couldn't connect to {origin}: {why}")
     } else if e.is_body() || e.is_decode() {
         format!("the answer from {origin} broke off: {why}")
@@ -1754,19 +1845,18 @@ mod tests {
     fn proxied_net(port: u16, list: &[&str]) -> (Net, Arc<Mutex<Vec<String>>>) {
         let looked = Arc::new(Mutex::new(Vec::new()));
         let names = Arc::clone(&looked);
-        let lookup: Lookup = Arc::new(move |host: String| {
-            names.lock().unwrap().push(host.clone());
-            Box::pin(async move {
-                match host.as_str() {
-                    "slow.example" => {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                        Ok(addrs(&["45.10.20.30"]))
-                    }
-                    "inside.example" => Ok(addrs(&["10.0.0.5"])),
-                    "unknown.example" => Err("no such name".into()),
-                    _ => Ok(addrs(&["45.10.20.30"])),
+        // Blocking, as the system's resolver is: a lookup given up on runs on to its end.
+        let lookup: Lookup = Arc::new(move |host: &str| {
+            names.lock().unwrap().push(host.to_string());
+            match host {
+                "slow.example" => {
+                    std::thread::sleep(Duration::from_secs(5));
+                    Ok(addrs(&["45.10.20.30"]))
                 }
-            })
+                "inside.example" => Ok(addrs(&["10.0.0.5"])),
+                "unknown.example" => Err("no such name".into()),
+                _ => Ok(addrs(&["45.10.20.30"])),
+            }
         });
         let setup = Setup {
             proxy: Arc::new(ProxyCell::new(Some(
@@ -1898,5 +1988,81 @@ mod tests {
         // A name this computer can't look up at all is the proxy's (decision Q116).
         let unknown = answer("http://a.example/302/unknown.example/x");
         assert_eq!(unknown, "200 ok http://unknown.example/x");
+    }
+
+    /// A lookup the request gave up on still runs in the OS until it answers; each holds one of
+    /// the Plugin's [`MAX_LOOKUPS`] until then, so they can't pile up. With all of them held, a
+    /// request through the proxy fails at once.
+    #[test]
+    fn lookups_given_up_on_cant_pile_up() {
+        let (port, _) = fake_proxy();
+        let (net, _) = proxied_net(port, &["http://slow.example", "http://fast.example"]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        for _ in 0..MAX_LOOKUPS {
+            send(&net, "http://slow.example/x", Some(0.2), "slow", &tx);
+        }
+        for _ in 0..MAX_LOOKUPS {
+            let (_, answer) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(body(&answer), "failed: no answer within 0.2 s");
+        }
+        let started = std::time::Instant::now();
+        send(&net, "http://fast.example/ok", None, "fast", &tx);
+        let (_, answer) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            body(&answer).starts_with(&format!(
+                "failed: {MAX_LOOKUPS} lookups of this Plugin's are still waiting"
+            )),
+            "{}",
+            body(&answer)
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Once the OS answers them, the slots are free again.
+        std::thread::sleep(Duration::from_secs(5));
+        send(&net, "http://fast.example/ok", None, "fast", &tx);
+        let (_, answer) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(body(&answer), "200 ok http://fast.example/ok");
+    }
+
+    /// To another scheme, host or port, only the headers that carry no credential go along; on
+    /// the same site, all of them.
+    #[test]
+    fn a_redirect_elsewhere_keeps_only_headers_that_carry_no_credential() {
+        let own = || {
+            vec![
+                ("x-api-key".to_string(), "k3y".to_string()),
+                ("accept".to_string(), "application/json".to_string()),
+                ("content-type".to_string(), "text/plain".to_string()),
+            ]
+        };
+        let names = |h: &[(String, String)]| h.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        let from = url("http://api.example.com:8080/a");
+        for (next, kept) in [
+            (
+                "http://api.example.com:8080/b",
+                vec!["x-api-key", "accept", "content-type"],
+            ),
+            ("https://api.example.com:8080/b", vec!["accept", "content-type"]),
+            ("http://api.example.com:8081/b", vec!["accept", "content-type"]),
+            ("http://other.example.com:8080/b", vec!["accept", "content-type"]),
+        ] {
+            let (mut method, mut headers, mut body) = (Method::POST, own(), Some(Bytes::from_static(b"x")));
+            redirected(307, &from, &url(next), &mut method, &mut headers, &mut body);
+            assert_eq!(names(&headers), kept, "{next}");
+            assert!(body.is_some());
+        }
+        // A 303 drops the body, and the headers that described it.
+        let (mut method, mut headers, mut body) = (Method::POST, own(), Some(Bytes::from_static(b"x")));
+        redirected(
+            303,
+            &from,
+            &url("http://other.example.com/b"),
+            &mut method,
+            &mut headers,
+            &mut body,
+        );
+        assert_eq!(
+            (method, names(&headers), body),
+            (Method::GET, vec!["accept".to_string()], None)
+        );
     }
 }
