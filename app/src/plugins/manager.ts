@@ -12,8 +12,8 @@
 //
 // - Packages (ticket 24): Plugins from git repos that init.lua names. The core clones and pins them
 //   (`packagesSync`); each one is the Plugin `package:NAME` and goes through the same install
-//   prompt, showing its git URL as the unverified source. Cancel removes the clone and is kept in
-//   the State (`DECLINED_KEY`) until `:packages install NAME`. `:packages update [NAME]` shows each
+//   prompt, showing its git URL as the unverified source. Cancel (or `:plugins remove`) removes the clone and
+//   is kept in the State (`DECLINED_KEY`) until `:packages install NAME`. `:packages update [NAME]` shows each
 //   new commit with its diff and any new permission before applying it, and declining keeps the
 //   old version.
 //
@@ -116,8 +116,8 @@ export interface DemoPlugins {
 export const BUILTIN_PLUGINS = ["builtin:hosts", "builtin:folders"] as const;
 
 export const STATE_KEY = "plugins";
-/** The State's Packages whose install the user cancelled: not asked again while init.lua names
- * the same repo and folder for them (issue #111). */
+/** The State's Packages whose install the user cancelled, or that `:plugins remove` took out: not
+ * asked again while init.lua names the same repo and folder for them (issues #111, #213). */
 export const DECLINED_KEY = "packagesDeclined";
 
 /** A cancelled Package install as the State keeps it: its name, and the repo and folder it was
@@ -327,9 +327,6 @@ export class PluginManager {
   private snap: Snapshot = { plugins: [], packages: [], prompts: [], notices: [], float: null, confirm: null, progress: [], declined: [], settled: false };
   private settled = false;
   private packages: PackageStatus[] = [];
-  /** Packages `:plugins remove` took out this run while init.lua still names them: not asked
-   * again until the next start. A cancelled install is kept in the State instead (`DECLINED_KEY`). */
-  private readonly declined = new Set<string>();
   /** The settings each loaded Package got, so a changed init.lua reloads it. */
   private readonly packageConfig = new Map<string, string>();
   private starting: Promise<void> | null = null;
@@ -407,10 +404,10 @@ export class PluginManager {
     this.store.set(DECLINED_KEY, list);
   }
 
-  /** Whether the user cancelled this Package's install, this run or before, from the repo and
-   * folder init.lua names now. */
+  /** Whether the user cancelled this Package's install, or took it out with `:plugins remove`,
+   * this run or before, from the repo and folder init.lua names now. */
   private isDeclined(p: { name: string; url: string; dir: string | null }): boolean {
-    return this.declined.has(p.name) || this.cancelledInstalls().some((d) => d.name === p.name && d.url === p.url && d.dir === p.dir);
+    return this.cancelledInstalls().some((d) => d.name === p.name && d.url === p.url && d.dir === p.dir);
   }
 
   /** Loads the built-in Plugins and every installed one. One that asks for a permission the user
@@ -612,7 +609,6 @@ export class PluginManager {
       if (!p) return `init.lua names no Package ${name}`;
       const path = `${PACKAGE_PREFIX}${name}`;
       if (p.pinned && this.installed().some((e) => e.path === path)) return `${name} is installed already: :packages update ${name} checks it for a new version`;
-      this.declined.delete(name);
       this.saveCancelled(this.cancelledInstalls().filter((d) => d.name !== name));
       await this.syncPackagesNow();
       if (this.prompts.some((x) => x.path === path)) return null;
@@ -734,7 +730,10 @@ export class PluginManager {
       } catch (e) {
         return `Couldn't remove ${pkg}: ${e instanceof Error ? e.message : String(e)}`;
       }
-      this.declined.add(pkg);
+      // Remembered like a cancelled install (issue #213): the next start doesn't ask again while
+      // init.lua names the same repo and folder; `:packages install NAME` does.
+      const named = this.packages.find((p) => p.name === pkg);
+      if (named) this.saveCancelled([...this.cancelledInstalls().filter((d) => d.name !== pkg), { name: pkg, url: named.url, dir: named.dir }]);
       this.packages = this.packages.map((p) => (p.name === pkg ? { ...p, commit: null, locked: null, pinned: false } : p));
     }
     await this.forget(name);
@@ -743,7 +742,7 @@ export class PluginManager {
     this.saveInstalled(this.installed().filter((e) => e.name !== name));
     this.changed();
     const stillNamed = pkg !== null && this.packages.some((p) => p.name === pkg);
-    return stillNamed ? `Removed ${name}. init.lua still names it: take it out, or it asks again at the next start` : null;
+    return stillNamed ? `Removed ${name}. init.lua still names it: :packages install ${pkg} brings it back` : null;
   }
 
   /** Unloads a Plugin and forgets what the manager knew of it (not its State entry). */

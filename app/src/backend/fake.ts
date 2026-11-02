@@ -1149,6 +1149,8 @@ export interface FakeBackend extends Backend {
   outsideEdit(next: HostList | { error: InventoryFileError }): void;
   /** serve pushes a job's progress (`job.progress`, API 20). */
   jobProgress(job: JobProgress): void;
+  /** How many times `jobs.list` was asked. */
+  jobsListed(): number;
   /** Answers a held `host.check` (`heldChecks`) with its result, or fails it with an error (the
    * core giving up after 90 s, serve going away). */
   answerCheck(host: string, outcome: HostCheck | Error): void;
@@ -1201,7 +1203,11 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   let broken: InventoryFileError | null = null;
   const changeWatchers = new Set<(c: InventoryChanged) => void>();
   const jobWatchers = new Set<(j: JobProgress) => void>();
+  /** What `jobs.list` answers: each kind's latest job, each Host's latest check. */
+  const latestJobs = new Map<string, JobProgress>();
+  let jobsListed = 0;
   const pushJob = (job: JobProgress) => {
+    latestJobs.set(job.kind === "check" ? `check:${job.host ?? ""}` : job.kind, job);
     for (const w of jobWatchers) w(job);
   };
   const heldChecks = new Map<string, { resolve(c: HostCheck): void; reject(e: Error): void }>();
@@ -2248,6 +2254,12 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       return () => jobWatchers.delete(onProgress);
     },
     jobProgress: pushJob,
+    async listJobs() {
+      await wait();
+      jobsListed += 1;
+      return [...latestJobs.values()];
+    },
+    jobsListed: () => jobsListed,
     settledGets: () => [...settled],
     outsideEdit(next) {
       onDisk = next;

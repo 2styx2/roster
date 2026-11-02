@@ -39,9 +39,14 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A Host you just added opens straight away:** every change the app makes to `roster.yml` (adding, editing, reviewing, renaming, moving or removing a Host, the group changes, Discover's add, "Save to vault", discarding the Pending changes, a pull) now runs `roster sync` for this Box, as Publish did, so its Session no longer fails with "isn't in this box's ssh config - run `roster sync`". An edit to `roster.yml` made outside the app syncs too once it's applied and loads. If the sync fails, the change stays and the message says so, with `roster sync` to run.
 - [Shell integration](plugins.md#shell-integration) docs: a powerlevel10k recipe (its own `POWERLEVEL9K_TERM_SHELL_INTEGRATION` setting, since its instant and transient prompts can drop the snippet's marks), and where the shell-hook line stays in the history (PowerShell, zsh without `HIST_IGNORE_SPACE`, bash without `ignorespace`). The zsh, fish and PowerShell snippets and hook lines are now run in those shells in CI, as bash's were.
 
+- `:plugins remove NAME` on a Package that `init.lua` still names is remembered, as a cancelled install is: the next start no longer asks to install it again while `init.lua` names it from the same repo and folder. `:packages` shows it as cancelled, and `:packages install NAME` brings it back. See [Packages](plugins.md#packages).
+- `:check HOST` on a check that's already running (started elsewhere, or before the app restarted) shows the step it's on at once, instead of nothing until its next step starts. See [`:check`](app/errors.md).
+
 **`roster serve` API**
 
 - Each method that writes `roster.yml` (`host.add`, `host.update`, `host.review`, `host.remove`, `host.rename`, `host.move`, `group.*`, `discover.add`, `quick.save`, `host.save_login`, `changes.discard`, `inventory.pull`, `mesh.cut`'s `change`) runs `roster sync` after the write and says how it went in `sync: {ok, error?, fix?}`, as `changes.publish` does; so do `inventory.reload` and the `inventory.changed` notification when they apply a changed file that loads. A failed sync never undoes the change. No new API version: the field is new and optional. See [Editing](serve-api.md#editing-pending-changes).
+
+- serve's log no longer says it "refused a token" when another serve starting up checks whether this one is still alive (it connects and hangs up without asking anything): it logs that a connection hung up without a request. A real unknown, used or expired token is still logged as refused, and no log line ever has the token in it.
 
 ### Deprecated
 
