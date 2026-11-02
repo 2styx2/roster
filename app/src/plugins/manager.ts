@@ -255,6 +255,8 @@ const OUTPUT_EVERY_MS = 200;
  * again every second meanwhile; past this the call runs and the core refuses the line as ever. */
 export const BUILTINS_WAIT_MS = 5_000;
 const BUILTINS_TRY_MS = 1_000;
+/** What the core says refusing a Plugin's own command line before it has the list (runtime.rs). */
+const NOT_YET = "can't run yet: the app hasn't told roster its own commands";
 /** At most this many calls wait at once; another runs at once (and is refused the same way). */
 export const BUILTINS_HELD_MAX = 8;
 
@@ -345,8 +347,9 @@ export class PluginManager {
   /** Every built-in command id seen so far (issue #184): it only grows, so a built-in an effect
    * takes out and puts back is never a Plugin's own in between. */
   private readonly builtinsSeen = new Set<string>();
-  /** The list the core has taken, as sent (sorted, one per line): "" until a send succeeds. */
-  private builtinsHeld = "";
+  /** The list the core has taken, as sent (sorted, one per line): null until a send succeeds (an
+   * empty list is a real send). */
+  private builtinsHeld: string | null = null;
   /** The last send: each waits for the one before, so the core gets them in order. */
   private builtinsSending: Promise<void> = Promise.resolve();
   /** Sends that failed in a row, and the retry waiting. */
@@ -355,6 +358,11 @@ export class PluginManager {
   /** Whether the core has taken a list once, and the user's calls waiting until it has (issue #241). */
   private builtinsTaken = false;
   private builtinsWaiting = 0;
+  /** What the held calls wait on: settled when the core takes a list (by any send) or the manager
+   * stops. Null while none waits. */
+  private builtinsReady: { promise: Promise<void>; settle: () => void } | null = null;
+  /** Whether the held calls' own tries are under way (one loop, one send at a time, for all). */
+  private builtinsTrying = false;
   private stopBuiltins: (() => void) | null = null;
   /** Stopped for good (`stop`): nothing loads, no event or call reaches the core. */
   private stopped = false;
@@ -768,10 +776,12 @@ export class PluginManager {
    * command its `roster.cmd` ran from the user's call, that call one hop on). */
   async call(plugin: string, handler: number, args: unknown = {}, what: string | null = "ran an action", user: PluginCaller = true): Promise<unknown> {
     if (!this.loaded.has(plugin)) return undefined;
-    if (user !== false) await this.waitForBuiltins();
+    // Only the user's own call: a carried one is a hop from a call that has waited already.
+    if (user === true) await this.waitForBuiltins();
     if (!this.loaded.has(plugin)) return undefined;
     if (what !== null) this.used(plugin, what);
     const reply = await this.backend.pluginCall(plugin, handler, args, user).catch((e: unknown) => this.lost(plugin, e));
+    this.builtinsLost(reply);
     this.apply(reply);
     return reply.result;
   }
@@ -932,6 +942,7 @@ export class PluginManager {
     this.stopBuiltins = null;
     if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
     this.builtinsRetry = null;
+    this.builtinsSettled();
     for (const [name, l] of [...this.loaded]) {
       for (const d of l.disposers.values()) d();
       this.loaded.delete(name);
@@ -954,35 +965,73 @@ export class PluginManager {
    * each Plugin loads; until one gets through the core refuses every Plugin's own command line too
    * (runtime.rs), and the app checks every line itself. A call the user makes meanwhile waits for it
    * a moment first (`waitForBuiltins`, issue #241). */
-  private sendBuiltins(): Promise<void> {
+  private sendBuiltins(forWaiters = false): Promise<void> {
     for (const c of this.registries.commands.list()) if (c.source === BUILTIN) this.builtinsSeen.add(c.id);
-    this.builtinsSending = this.builtinsSending.then(() => this.sendBuiltinsNow());
+    this.builtinsSending = this.builtinsSending.then(() => this.sendBuiltinsNow(forWaiters));
     return this.builtinsSending;
   }
 
   /** Before a call the user made: until the core has taken roster's own commands once, it refuses
    * every Plugin's own command line (`:NAME can't run yet`, runtime.rs), so a Folders drop would
-   * fail (issue #241). The call waits for the list instead, trying to send it every second, up to
-   * BUILTINS_WAIT_MS and BUILTINS_HELD_MAX calls at once; then it runs as ever and the core still
+   * fail (issue #241). The call waits for the list instead: every held call waits on one promise,
+   * settled when any send gets through, so they run in the order they were made. Each waits at
+   * most BUILTINS_WAIT_MS (a timer, so neither a send that never answers nor the clock moving holds
+   * it longer), and at most BUILTINS_HELD_MAX wait at once; then it runs as ever and the core still
    * refuses the line. Nothing is let through: the core's rule doesn't change, only when the call
    * reaches it. */
   private async waitForBuiltins(): Promise<void> {
     if (this.builtinsTaken || this.stopped || this.builtinsWaiting >= BUILTINS_HELD_MAX) return;
     this.builtinsWaiting++;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const until = Date.now() + BUILTINS_WAIT_MS;
-      for (;;) {
-        await this.sendBuiltins();
-        const left = until - Date.now();
-        if (this.builtinsTaken || this.stopped || left <= 0) return;
-        await new Promise((r) => setTimeout(r, Math.min(BUILTINS_TRY_MS, left)));
+      if (!this.builtinsReady) {
+        let settle: () => void = () => undefined;
+        const promise = new Promise<void>((r) => {
+          settle = r;
+        });
+        this.builtinsReady = { promise, settle };
       }
+      const ready = this.builtinsReady.promise;
+      void this.tryForWaiters();
+      await Promise.race([ready, new Promise<void>((r) => (timer = setTimeout(r, BUILTINS_WAIT_MS)))]);
     } finally {
+      clearTimeout(timer);
       this.builtinsWaiting--;
     }
   }
 
-  private async sendBuiltinsNow(): Promise<void> {
+  /** Lets the held calls go: the core took a list, or the manager stopped. */
+  private builtinsSettled(): void {
+    this.builtinsReady?.settle();
+    this.builtinsReady = null;
+  }
+
+  /** While calls are held: a send at once, then every second, for all of them, one at a time
+   * after any send under way. A failure here isn't counted toward the app's own retries. */
+  private async tryForWaiters(): Promise<void> {
+    if (this.builtinsTrying) return;
+    this.builtinsTrying = true;
+    try {
+      while (this.builtinsWaiting > 0 && !this.builtinsTaken && !this.stopped) {
+        await this.sendBuiltins(true);
+        if (this.builtinsWaiting === 0 || this.builtinsTaken || this.stopped) break;
+        await new Promise((r) => setTimeout(r, BUILTINS_TRY_MS));
+      }
+    } finally {
+      this.builtinsTrying = false;
+    }
+  }
+
+  /** The core refused a Plugin's own command line because it hasn't the list, though it took one
+   * before (a core host built anew): it's sent again, and calls wait for it until it's taken. */
+  private builtinsLost(reply: PluginReply): void {
+    if (!this.builtinsTaken || !reply.error?.message.includes(NOT_YET)) return;
+    this.builtinsTaken = false;
+    this.builtinsHeld = null;
+    void this.sendBuiltins();
+  }
+
+  private async sendBuiltinsNow(forWaiters = false): Promise<void> {
     const names = [...this.builtinsSeen].sort();
     const list = names.join("\n");
     if (this.stopped || list === this.builtinsHeld) return;
@@ -993,7 +1042,10 @@ export class PluginManager {
       this.builtinsFailed = 0;
       if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
       this.builtinsRetry = null;
+      this.builtinsSettled();
     } catch {
+      // The held calls' own tries leave the app's retries as they were (said once, backing off).
+      if (forWaiters && !this.stopped) return;
       if (this.builtinsFailed++ === 0) this.ui.say?.(quiet("Plugins: couldn't tell roster its own commands; trying again"));
       if (this.builtinsRetry || this.stopped) return;
       const wait = Math.min(1000 * 2 ** (this.builtinsFailed - 1), 30_000);
