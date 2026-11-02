@@ -1,5 +1,5 @@
 ---@meta roster
--- roster's Plugin API, roster.api_version 4: LuaCATS annotations for lua-language-server.
+-- roster's Plugin API, roster.api_version 5: LuaCATS annotations for lua-language-server.
 -- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
 -- The reference: docs/plugin-api.md (`:help plugin-api`).
 
@@ -931,6 +931,23 @@ function roster.commands.add(name, spec) end
 ---@param name string A command this Plugin added.
 function roster.commands.remove(name) end
 
+--- One of the Plugin's commands, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's commands.
+---@return roster.CommandSpec? # `nil` if it has none by that id.
+function roster.commands.get(id) end
+
+--- Whether the Plugin has that command.
+--- Permission: none. Since: api 5.
+---@param id string A command's id.
+---@return boolean # `true` if it has.
+function roster.commands.has(id) end
+
+--- The ids of the Plugin's commands.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.commands.list() end
+
 --- Key bindings. 
 roster.keymap = {}
 
@@ -947,6 +964,26 @@ function roster.keymap.set(context, keys, action) end
 ---@param keys string The keys, as `set` took them.
 function roster.keymap.del(context, keys) end
 
+--- The command line one of the Plugin's key bindings runs.
+--- Permission: none. Since: api 5.
+---@param context roster.KeyContext `"leader"`, `"list"` or `"list_vim"`.
+---@param keys string The keys, as `set` took them.
+---@return string? # `nil` if it binds no such keys there.
+function roster.keymap.get(context, keys) end
+
+--- Whether the Plugin binds those keys there.
+--- Permission: none. Since: api 5.
+---@param context roster.KeyContext `"leader"`, `"list"` or `"list_vim"`.
+---@param keys string The keys, as `set` took them.
+---@return boolean # `true` if it has.
+function roster.keymap.has(context, keys) end
+
+--- The Plugin's key bindings in a context.
+--- Permission: none. Since: api 5.
+---@param context roster.KeyContext `"leader"`, `"list"` or `"list_vim"`.
+---@return table<string, string> # Keys to command line.
+function roster.keymap.list(context) end
+
 --- Themes. 
 roster.themes = {}
 
@@ -960,6 +997,23 @@ function roster.themes.define(id, theme) end
 --- Permission: none. Since: api 3.
 ---@param id string One of the Plugin's Themes.
 function roster.themes.remove(id) end
+
+--- One of the Plugin's Themes, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's Themes.
+---@return roster.Theme? # `nil` if it has none by that id.
+function roster.themes.get(id) end
+
+--- Whether the Plugin has that Theme.
+--- Permission: none. Since: api 5.
+---@param id string A Theme's id.
+---@return boolean # `true` if it has.
+function roster.themes.has(id) end
+
+--- The ids of the Plugin's Themes.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.themes.list() end
 
 --- Sidebar sections. 
 roster.sidebar = {}
@@ -975,6 +1029,23 @@ function roster.sidebar.set(id, section) end
 ---@param id string One of the Plugin's sections.
 function roster.sidebar.remove(id) end
 
+--- One of the Plugin's Sidebar sections, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's Sidebar sections.
+---@return roster.Section? # `nil` if it has none by that id.
+function roster.sidebar.get(id) end
+
+--- Whether the Plugin has that Sidebar section.
+--- Permission: none. Since: api 5.
+---@param id string A Sidebar section's id.
+---@return boolean # `true` if it has.
+function roster.sidebar.has(id) end
+
+--- The ids of the Plugin's Sidebar sections.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.sidebar.list() end
+
 --- Status bar segments. 
 roster.status = {}
 
@@ -988,6 +1059,23 @@ function roster.status.set(id, segment) end
 --- Permission: none. Since: api 2.
 ---@param id string One of the Plugin's segments.
 function roster.status.remove(id) end
+
+--- One of the Plugin's status segments, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's status segments.
+---@return roster.StatusSegment? # `nil` if it has none by that id.
+function roster.status.get(id) end
+
+--- Whether the Plugin has that status segment.
+--- Permission: none. Since: api 5.
+---@param id string A status segment's id.
+---@return boolean # `true` if it has.
+function roster.status.has(id) end
+
+--- The ids of the Plugin's status segments.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.status.list() end
 
 --- Finders (`:finder ID`). 
 roster.finders = {}
@@ -1003,6 +1091,23 @@ function roster.finders.set(id, finder) end
 ---@param id string One of the Plugin's finders.
 function roster.finders.remove(id) end
 
+--- One of the Plugin's finders, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's finders.
+---@return roster.Finder? # `nil` if it has none by that id.
+function roster.finders.get(id) end
+
+--- Whether the Plugin has that finder.
+--- Permission: none. Since: api 5.
+---@param id string A finder's id.
+---@return boolean # `true` if it has.
+function roster.finders.has(id) end
+
+--- The ids of the Plugin's finders.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.finders.list() end
+
 --- Help pages (`:help TOPIC`). 
 roster.help = {}
 
@@ -1016,6 +1121,23 @@ function roster.help.set(topic, page) end
 --- Permission: none. Since: api 2.
 ---@param topic string One of the Plugin's pages.
 function roster.help.remove(topic) end
+
+--- One of the Plugin's help pages, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's help pages.
+---@return roster.HelpPage? # `nil` if it has none by that id.
+function roster.help.get(id) end
+
+--- Whether the Plugin has that help page.
+--- Permission: none. Since: api 5.
+---@param id string A help page's id.
+---@return boolean # `true` if it has.
+function roster.help.has(id) end
+
+--- The ids of the Plugin's help pages.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.help.list() end
 
 --- Sections of `:check`. 
 roster.health = {}
@@ -1037,6 +1159,23 @@ function roster.health.answer(check, lines) end
 ---@param id string One of the Plugin's sections.
 function roster.health.remove(id) end
 
+--- One of the Plugin's `:check` sections, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's `:check` sections.
+---@return roster.HealthSection? # `nil` if it has none by that id.
+function roster.health.get(id) end
+
+--- Whether the Plugin has that `:check` section.
+--- Permission: none. Since: api 5.
+---@param id string A `:check` section's id.
+---@return boolean # `true` if it has.
+function roster.health.has(id) end
+
+--- The ids of the Plugin's `:check` sections.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.health.list() end
+
 --- Tutorials (`:tutor ID`). 
 roster.tutor = {}
 
@@ -1050,6 +1189,23 @@ function roster.tutor.set(id, tutorial) end
 --- Permission: none. Since: api 2.
 ---@param id string One of the Plugin's tutorials.
 function roster.tutor.remove(id) end
+
+--- One of the Plugin's tutorials, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's tutorials.
+---@return roster.Tutorial? # `nil` if it has none by that id.
+function roster.tutor.get(id) end
+
+--- Whether the Plugin has that tutorial.
+--- Permission: none. Since: api 5.
+---@param id string A tutorial's id.
+---@return boolean # `true` if it has.
+function roster.tutor.has(id) end
+
+--- The ids of the Plugin's tutorials.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.tutor.list() end
 
 --- Controls in the toolbar. A control in the title bar's toolbar (decision Q65), after roster's own by the window's buttons. It's shown unless `init.lua` picks the controls itself with `modes.<mode>.toolbar`: then it shows where that list names its id. It never takes focus from the terminal.
 roster.toolbar = {}
@@ -1065,6 +1221,23 @@ function roster.toolbar.set(id, control) end
 ---@param id string One of the Plugin's controls.
 function roster.toolbar.remove(id) end
 
+--- One of the Plugin's toolbar controls, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's toolbar controls.
+---@return roster.ToolbarControl? # `nil` if it has none by that id.
+function roster.toolbar.get(id) end
+
+--- Whether the Plugin has that toolbar control.
+--- Permission: none. Since: api 5.
+---@param id string A toolbar control's id.
+---@return boolean # `true` if it has.
+function roster.toolbar.has(id) end
+
+--- The ids of the Plugin's toolbar controls.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.toolbar.list() end
+
 --- Progress of something long. What the Plugin is doing that takes a while (a scan, a long roster serve call), shown in the status bar: how far it has got, or only that it's going, and a way to stop it. `:cancel ID` (or the button) calls its `cancel` function. Setting it any time is fine, from an event too: it changes nothing but itself.
 roster.progress = {}
 
@@ -1078,6 +1251,23 @@ function roster.progress.set(id, progress) end
 --- Permission: none. Since: api 3.
 ---@param id string One of the Plugin's progresses.
 function roster.progress.remove(id) end
+
+--- One of the Plugin's progresses, as it set it.
+--- Permission: none. Since: api 5.
+---@param id string One of the Plugin's progresses.
+---@return roster.Progress? # `nil` if it has none by that id.
+function roster.progress.get(id) end
+
+--- Whether the Plugin has that progress.
+--- Permission: none. Since: api 5.
+---@param id string A progress's id.
+---@return boolean # `true` if it has.
+function roster.progress.has(id) end
+
+--- The ids of the Plugin's progresses.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.progress.list() end
 
 --- Badges on Host rows. 
 roster.badges = {}
@@ -1131,6 +1321,17 @@ function roster.views.close(id) end
 ---@param id string One of the Plugin's views.
 function roster.views.remove(id) end
 
+--- Whether the Plugin has that view.
+--- Permission: none. Since: api 5.
+---@param id string A view's id.
+---@return boolean # `true` if it has.
+function roster.views.has(id) end
+
+--- The ids of the Plugin's views.
+--- Permission: none. Since: api 5.
+---@return string[] # A new list each call.
+function roster.views.list() end
+
 --- Sections of a Host's details. Your own sections in a Host's details panel (`:info HOST`), after roster's: set per Host, like a badge.
 roster.details = {}
 
@@ -1145,6 +1346,26 @@ function roster.details.set(id, host, section) end
 --- Permission: none. Since: api 3.
 ---@param id string One of the Plugin's sections.
 function roster.details.remove(id) end
+
+--- One of the Plugin's Host-details sections, as it set it for a Host.
+--- Permission: none. Since: api 5.
+---@param id string The section's id.
+---@param host string A Host's name.
+---@return roster.DetailsSection? # `nil` if it has none by that id on that Host.
+function roster.details.get(id, host) end
+
+--- Whether the Plugin has that section, on a Host or on any.
+--- Permission: none. Since: api 5.
+---@param id string The section's id.
+---@param host? string A Host's name; left out, any Host.
+---@return boolean # `true` if it has.
+function roster.details.has(id, host) end
+
+--- The ids of the Plugin's Host-details sections, or the Hosts one is on.
+--- Permission: none. Since: api 5.
+---@param id? string A section's id.
+---@return string[] # A new list each call.
+function roster.details.list(id) end
 
 --- The clipboard. 
 roster.clipboard = {}

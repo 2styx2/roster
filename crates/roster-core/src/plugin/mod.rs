@@ -678,7 +678,12 @@ impl PluginHost {
         proxy: &Arc<network::ProxyCell>,
     ) -> Jobs {
         let (tx, rx) = channel::<(Job, Sender<Answer>)>();
-        let (name, version, dir) = (manifest.name.clone(), manifest.version.clone(), dir.to_path_buf());
+        let (name, version, api, dir) = (
+            manifest.name.clone(),
+            manifest.version.clone(),
+            manifest.api,
+            dir.to_path_buf(),
+        );
         // Its calls into serve go through its own share and the one all Plugins have (fair.rs).
         let serve: Arc<dyn Serve> = Arc::new(fair::Fair {
             inner: Arc::clone(&self.serve),
@@ -719,6 +724,7 @@ impl PluginHost {
                 let runtime = runtime::Runtime::new(
                     &name,
                     &version,
+                    api,
                     &dir,
                     &config,
                     grants,

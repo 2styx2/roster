@@ -4,6 +4,14 @@ Old names that still work, and what replaces each one, newest Release first. Use
 
 An old name stays for at least one minor Release after the one that deprecates it: deprecated in 0.1, it works through 0.2 at least. When `init.lua` sets a deprecated option, roster still applies it under its new name and warns, naming the replacement and the row here.
 
+## Deprecated in 0.4
+
+### Plugin API
+
+| Old | New | Notes |
+|---|---|---|
+| A removal of something the Plugin never added doing nothing (`roster.themes.remove`, `roster.keymap.del`, any collection's `remove`, `roster.views.update`/`open`/`close` of an unknown view), and a key context that isn't one refused with a notice | An error at the Plugin's line; check first with the collection's `has` | For a Plugin whose manifest says `api = 4` or older, nothing changes. Raise it to `api = 5` and each such call is an error, as in `init.lua` ([plugin-api.md](plugin-api.md#errors)) |
+
 ## Deprecated in 0.3
 
 ### App

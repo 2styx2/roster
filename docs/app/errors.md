@@ -342,6 +342,15 @@ What `roster.o`, `roster.set` and the collections (`roster.packages`, `roster.fo
 | 155 | none (a Config error) | Removing or changing what isn't there: `roster.packages.remove`/`update`, `roster.folders.remove`/`update`/`add_hosts`/`remove_hosts`, `roster.keymap.del` of keys init.lua didn't bind, `roster.themes.update`/`remove` of an id it doesn't have (or a bundled Theme it didn't change), a list's `:remove` of an item it hasn't, `:insert` past the end | init.lua or a module | "init.lua:7: there's no Folder named \"Edge\" in the Config (it has lab)" | Check the name (`roster.folders.list()`); to unbind one of roster's keys, `roster.keymap.set(context, keys, false)` |
 | 156 | none (a Config error) | A list method on an option that isn't a list yet (`statusbar` is `true`, sidebar sections are unset: all of them), assigning to a read-only field (`roster.version`, `roster.o`) or to one of `roster.o`'s functions (`roster.o.get`, `roster.o.reset`), or a method called with a dot | init.lua or a module | "init.lua:4: roster.o.modes.standard.statusbar is true (not a list yet): assign a list first, such as roster.o.modes.standard.statusbar = { \"backend\", \"hosts\" }" | Assign the list first, then append; read-only fields are for reading |
 
+## A Plugin's collections
+
+What a Plugin written for Plugin API 5 (`api = 5` in its manifest) gets when it names something it doesn't have ([plugin-api.md](../plugin-api.md#errors)), as `init.lua` does (rows 155 and 153). Each is the Plugin's own error with its file and line; the call's other changes are dropped. A Plugin written for API 4 or older keeps the old behaviour: the removal does nothing, and a bad key context is refused with a notice.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 159 | none (a Plugin's error) | Taking away what the Plugin never added, or already took away: `roster.themes.remove` of a Theme it didn't define, `roster.keymap.del` (or `set(…, false)`) of keys it didn't bind, a collection's `remove` (`roster.commands`, `sidebar`, `status`, `finders`, `help`, `health`, `tutor`, `toolbar`, `progress`, `views`, `details`), `roster.views.update`, `open` or `close` of a view it doesn't have | The Plugin | "alerts: init.lua:40: roster.status.remove: the Plugin has no status segment \"alerts\" (roster.status.list() names its own)" | The Plugin's to fix: check first with the collection's `has` |
+| 160 | none (a Plugin's error) | A key context other than `leader`, `list` or `list_vim` in `roster.keymap.set`, `del`, `get`, `has` or `list` | The Plugin | "alerts: init.lua:3: roster.keymap.set: \"leadr\" isn't a key context (a Plugin binds keys in leader, list or list_vim)" | The Plugin's to fix: use one of the three |
+
 ## See also
 
 [The error catalog](errors) · [`roster check HOST`](../cli-reference.md#roster-check-host) · [The roster serve API](../serve-api.md)

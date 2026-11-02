@@ -23,6 +23,17 @@ const HANDLERS: &str = "roster.plugin.handlers";
 const LISTENERS: &str = "roster.plugin.listeners";
 /// The functions waiting for a `roster.http` or `roster.serve.request` answer, by request id.
 const REQUESTS: &str = "roster.plugin.requests";
+/// What the Plugin has added, by kind and id, as copies of what it gave (ticket 145): what the
+/// collections' `get`, `has` and `list` read, and what a removal checks.
+const OWN: &str = "roster.plugin.own";
+/// The `roster.api_version` from which taking away what the Plugin never added, or naming a key
+/// context that isn't one, is an error (ticket 145, decision Q134): a Plugin written for an older
+/// one keeps the quiet removals it was written against.
+const COMPLETE_API: u32 = 5;
+/// Where a Plugin's key bindings work (`KeyContext`).
+const KEY_CONTEXTS: &[&str] = &["leader", "list", "list_vim"];
+/// How deep a copy of a Plugin's table goes: past this it's a loop, or nothing a UI needs.
+const MAX_COPY_DEPTH: usize = 64;
 /// The keys `roster.http.request` takes.
 const REQUEST_KEYS: &[&str] = &["url", "method", "headers", "body", "timeout"];
 /// How many `roster.serve.request` calls one Plugin may have waiting at once (decision Q103).
@@ -174,6 +185,11 @@ const WRITES: &[(&str, &str, &[&str])] = &[
 
 struct Shared {
     plugin: String,
+    /// The `roster.api_version` its manifest says it was written for.
+    api: u32,
+    /// During a run, what each change to [`OWN`] replaced (kind, id, what was there), so a failed
+    /// run puts it back, as its ops never reach the app.
+    own_journal: RefCell<Option<Vec<(String, String, Value)>>>,
     grants: BTreeSet<Permission>,
     serve: Arc<dyn Serve>,
     clock: Rc<Clock>,
@@ -283,6 +299,7 @@ impl Runtime {
     pub(crate) fn new(
         plugin: &str,
         version: &str,
+        api: u32,
         dir: &Path,
         config: &Json,
         grants: BTreeSet<Permission>,
@@ -317,6 +334,8 @@ impl Runtime {
             lua::sandboxed(memory, (!dir.as_os_str().is_empty()).then_some(dir), plugin.to_string()).map_err(fail)?;
         let shared = Rc::new(Shared {
             plugin: plugin.to_string(),
+            api,
+            own_journal: RefCell::default(),
             grants,
             serve,
             clock,
@@ -349,6 +368,8 @@ impl Runtime {
             .map_err(fail)?;
         lua.set_named_registry_value(LISTENERS, lua.create_table().map_err(fail)?)
             .map_err(fail)?;
+        lua.set_named_registry_value(OWN, lua.create_table().map_err(fail)?)
+            .map_err(fail)?;
         coroutines(&lua, &shared.clock).map_err(fail)?;
         lua.set_named_registry_value(REQUESTS, lua.create_table().map_err(fail)?)
             .map_err(fail)?;
@@ -357,7 +378,7 @@ impl Runtime {
             .set_mode(ChunkMode::Text)
             .exec()
             .map_err(fail)?;
-        let roster = api(&lua, &shared, version, config).map_err(fail)?;
+        let roster = self::api(&lua, &shared, version, config).map_err(fail)?;
         lua::set_api(&lua, roster).map_err(fail)?;
         Ok(Runtime { lua, shared, budget })
     }
@@ -516,13 +537,15 @@ impl Runtime {
             quiet: s.quiet.borrow().clone(),
         };
         *s.dropping.borrow_mut() = Some(Vec::new());
+        *s.own_journal.borrow_mut() = Some(Vec::new());
         let result = body(&self.lua);
         let dropped = s.dropping.borrow_mut().take().unwrap_or_default();
+        let journal = s.own_journal.borrow_mut().take().unwrap_or_default();
         // The run's Inventory read is its own: the next run asks again, and nothing big is kept.
         s.host_list.borrow_mut().take();
         let settled = match &result {
             Ok(_) => dropped.into_iter().try_for_each(|id| forget(&self.lua, s, id)),
-            Err(_) => self.undo(before),
+            Err(_) => self.undo(before).and_then(|()| unjournal(&self.lua, journal)),
         };
         let result = result.and_then(|v| settled.map(|()| v));
         let ops = std::mem::take(&mut *self.shared.ops.borrow_mut());
@@ -798,6 +821,137 @@ fn check_id(what: &str, id: &str) -> mlua::Result<()> {
             "{what}: {id:?} isn't a name like \"recent-alerts\" (lower case letters, digits, - _ .; at most 64)"
         )))
     }
+}
+
+/// The table of what the Plugin has of one kind (`"status"`, `"key:leader"`, `"details:reach"`).
+fn own_kind(lua: &Lua, kind: &str) -> mlua::Result<Table> {
+    let own: Table = lua.named_registry_value(OWN)?;
+    if let Some(t) = own.raw_get::<Option<Table>>(kind)? {
+        return Ok(t);
+    }
+    let t = lua.create_table()?;
+    own.raw_set(kind, t.clone())?;
+    Ok(t)
+}
+
+/// Records that the Plugin has `value` as `kind` `id` (nil: it has none now), undone if the run fails.
+fn own_put(lua: &Lua, s: &Shared, kind: &str, id: &str, value: Value) -> mlua::Result<()> {
+    let t = own_kind(lua, kind)?;
+    let before: Value = t.raw_get(id)?;
+    if let Some(j) = s.own_journal.borrow_mut().as_mut() {
+        j.push((kind.to_string(), id.to_string(), before));
+    }
+    t.raw_set(id, value)
+}
+
+/// What the Plugin has as `kind` `id`, as it was recorded (nil: none).
+fn own_get(lua: &Lua, kind: &str, id: &str) -> mlua::Result<Value> {
+    own_kind(lua, kind)?.raw_get(id)
+}
+
+/// The ids the Plugin has of `kind`, sorted.
+fn own_ids(lua: &Lua, kind: &str) -> mlua::Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for pair in own_kind(lua, kind)?.pairs::<String, Value>() {
+        ids.push(pair?.0);
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+/// Puts back what a failed run's changes to [`OWN`] replaced, latest first.
+fn unjournal(lua: &Lua, journal: Vec<(String, String, Value)>) -> mlua::Result<()> {
+    for (kind, id, before) in journal.into_iter().rev() {
+        own_kind(lua, &kind)?.raw_set(id, before)?;
+    }
+    Ok(())
+}
+
+/// A copy of a Plugin's value: tables copied all the way down (without metatables), so neither
+/// what it changes later in the one it gave nor in one a read gave back reaches the other.
+/// Functions stay the same functions.
+fn copy(lua: &Lua, v: &Value) -> mlua::Result<Value> {
+    fn go(lua: &Lua, v: &Value, depth: usize) -> mlua::Result<Value> {
+        let Value::Table(t) = v else { return Ok(v.clone()) };
+        if depth > MAX_COPY_DEPTH {
+            return Err(mlua::Error::runtime(format!(
+                "a table nested more than {MAX_COPY_DEPTH} deep"
+            )));
+        }
+        let out = lua.create_table()?;
+        for pair in t.pairs::<Value, Value>() {
+            let (k, v) = pair?;
+            out.raw_set(go(lua, &k, depth + 1)?, go(lua, &v, depth + 1)?)?;
+        }
+        Ok(Value::Table(out))
+    }
+    go(lua, v, 0)
+}
+
+/// For something the Plugin never added: an error at the caller's line from api 5 on; for a
+/// Plugin written for an older one, nothing (its removal goes on and does nothing, as it did).
+fn not_had(s: &Shared, what: &str, why: String) -> mlua::Result<()> {
+    if s.api >= COMPLETE_API {
+        Err(mlua::Error::runtime(format!("{what}: {why}")))
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether the Plugin has `kind` `id`; if not, [`not_had`] says so, naming the collection.
+fn must_have(lua: &Lua, s: &Shared, what: &str, module: &str, noun: &str, kind: &str, id: &str) -> mlua::Result<()> {
+    if own_get(lua, kind, id)?.is_nil() {
+        not_had(
+            s,
+            what,
+            format!("the Plugin has no {noun} {id:?} (roster.{module}.list() names its own)"),
+        )?;
+    }
+    Ok(())
+}
+
+/// Takes the Plugin's binding of `keys` in `context` off its record; one it never set is
+/// [`not_had`].
+fn unbind(lua: &Lua, s: &Shared, what: &str, context: &str, keys: &str) -> mlua::Result<()> {
+    let kind = format!("key:{context}");
+    if own_get(lua, &kind, keys)?.is_nil() {
+        not_had(
+            s,
+            what,
+            format!("the Plugin binds no {keys:?} in {context} (a Plugin takes off only its own bindings)"),
+        )?;
+    }
+    own_put(lua, s, &kind, keys, Value::Nil)
+}
+
+/// The ids of the Host-details sections the Plugin has on at least one Host, sorted.
+fn details_ids(lua: &Lua) -> mlua::Result<Vec<String>> {
+    let own: Table = lua.named_registry_value(OWN)?;
+    let mut ids = Vec::new();
+    for pair in own.pairs::<String, Table>() {
+        let (kind, hosts) = pair?;
+        if let Some(id) = kind.strip_prefix("details:")
+            && hosts.pairs::<Value, Value>().next().is_some()
+        {
+            ids.push(id.to_string());
+        }
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+/// A key context: always checked by the reads, and by `set` and `del` from api 5 (for an older
+/// Plugin the app refuses one with a notice, as it did). False: not one, and not an error.
+fn key_context(s: &Shared, what: &str, context: &str, always: bool) -> mlua::Result<bool> {
+    if KEY_CONTEXTS.contains(&context) {
+        return Ok(true);
+    }
+    if always || s.api >= COMPLETE_API {
+        return Err(mlua::Error::runtime(format!(
+            "{what}: {context:?} isn't a key context (a Plugin binds keys in leader, list or list_vim)"
+        )));
+    }
+    Ok(false)
 }
 
 /// Why a call refused something only the user's call may do.
@@ -1158,6 +1312,34 @@ fn ask_later(lua: &Lua, s: &Shared, what: String, method: String, params: Json, 
     lua.named_registry_value::<Table>(REQUESTS)?.raw_set(id, done)
 }
 
+/// A collection's reads (api 5): `get(id)`, a copy of what the Plugin gave as `kind` `id` (nil:
+/// none); `has(id)`; `list()`, its ids, sorted.
+fn reads(lua: &Lua, t: &Table, module: &str, kind: &str) -> mlua::Result<()> {
+    let (getting, having) = (format!("roster.{module}.get"), format!("roster.{module}.has"));
+    let k = kind.to_string();
+    t.raw_set(
+        "get",
+        lua.create_function(move |lua, id: String| {
+            check_id(&getting, &id)?;
+            copy(lua, &own_get(lua, &k, &id)?)
+        })?,
+    )?;
+    let k = kind.to_string();
+    t.raw_set(
+        "has",
+        lua.create_function(move |lua, id: String| {
+            check_id(&having, &id)?;
+            Ok(!own_get(lua, &k, &id)?.is_nil())
+        })?,
+    )?;
+    let k = kind.to_string();
+    t.raw_set(
+        "list",
+        lua.create_function(move |lua, ()| lua.create_sequence_from(own_ids(lua, &k)?))?,
+    )?;
+    Ok(())
+}
+
 /// The `roster` module for one Plugin: everything every Plugin gets, then what its grants add.
 fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Result<Table> {
     let roster = lua.create_table()?;
@@ -1197,6 +1379,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     let commands = lua.create_table()?;
     func!(commands, "add", |lua, s, (name, spec): (String, Table)| {
         check_id("roster.commands.add", &name)?;
+        let given = Value::Table(spec.clone());
         let spec = data(
             lua,
             s,
@@ -1227,13 +1410,18 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             },
         }
         s.commands.borrow_mut().insert(name.clone());
+        own_put(lua, s, "command", &name, copy(lua, &given)?)?;
         push(s, op)
     });
-    func!(commands, "remove", |_lua, s, name: String| {
-        check_id("roster.commands.remove", &name)?;
+    func!(commands, "remove", |lua, s, name: String| {
+        let what = "roster.commands.remove";
+        check_id(what, &name)?;
+        must_have(lua, s, what, "commands", "command", "command", &name)?;
         s.commands.borrow_mut().remove(&name);
+        own_put(lua, s, "command", &name, Value::Nil)?;
         push(s, json!({ "op": "remove", "kind": "command", "id": name }))
     });
+    reads(lua, &commands, "commands", "command")?;
     roster.raw_set("commands", commands)?;
 
     // Key bindings, as init.lua's: the action is a command line (one of the Plugin's commands).
@@ -1241,16 +1429,33 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     func!(
         keymap,
         "set",
-        |_lua, s, (context, keys, action): (String, String, Value)| {
+        |lua, s, (context, keys, action): (String, String, Value)| {
+            let what = "roster.keymap.set";
+            let known = key_context(s, what, &context, false)?;
             let action = match action {
                 Value::String(a) => Json::String(a.to_str()?.to_string()),
-                Value::Boolean(false) => Json::Bool(false),
+                // `false` is `del`'s old spelling (api 3), and checked as `del` is.
+                Value::Boolean(false) => {
+                    if known {
+                        unbind(lua, s, what, &context, &keys)?;
+                    }
+                    Json::Bool(false)
+                }
                 _ => {
                     return Err(mlua::Error::runtime(
                         "roster.keymap.set: the action is a command line such as \"alerts\" (add a command for a function)",
                     ));
                 }
             };
+            if known && let Json::String(a) = &action {
+                own_put(
+                    lua,
+                    s,
+                    &format!("key:{context}"),
+                    &keys,
+                    Value::String(lua.create_string(a)?),
+                )?;
+            }
             push(
                 s,
                 json!({ "op": "key", "context": context, "keys": keys, "action": action }),
@@ -1258,11 +1463,27 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         }
     );
     // Takes the Plugin's own binding off (api 3); `set(…, false)` did the same before it.
-    func!(keymap, "del", |_lua, s, (context, keys): (String, String)| {
+    func!(keymap, "del", |lua, s, (context, keys): (String, String)| {
+        if key_context(s, "roster.keymap.del", &context, false)? {
+            unbind(lua, s, "roster.keymap.del", &context, &keys)?;
+        }
         push(
             s,
             json!({ "op": "key", "context": context, "keys": keys, "action": false }),
         )
+    });
+    // Its own bindings (api 5), as init.lua's `roster.keymap` reads the Config's.
+    func!(keymap, "get", |lua, s, (context, keys): (String, String)| {
+        key_context(s, "roster.keymap.get", &context, true)?;
+        own_get(lua, &format!("key:{context}"), &keys)
+    });
+    func!(keymap, "has", |lua, s, (context, keys): (String, String)| {
+        key_context(s, "roster.keymap.has", &context, true)?;
+        Ok(!own_get(lua, &format!("key:{context}"), &keys)?.is_nil())
+    });
+    func!(keymap, "list", |lua, s, context: String| {
+        key_context(s, "roster.keymap.list", &context, true)?;
+        copy(lua, &Value::Table(own_kind(lua, &format!("key:{context}"))?))
     });
     roster.raw_set("keymap", keymap)?;
 
@@ -1270,34 +1491,49 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     let themes = lua.create_table()?;
     func!(themes, "define", |lua, s, (id, theme): (String, Table)| {
         check_id("roster.themes.define", &id)?;
+        let given = Value::Table(theme.clone());
         let value = data(lua, s, "roster.themes.define", &Value::Table(theme), "theme")?;
         let def: ThemeDef = serde_json::from_value(value)
             .map_err(|e| mlua::Error::runtime(format!("roster.themes.define {id:?}: {e}")))?;
         let def = serde_json::to_value(def).map_err(mlua::Error::external)?;
+        own_put(lua, s, "theme", &id, copy(lua, &given)?)?;
         push(s, json!({ "op": "theme", "id": id, "theme": def }))
     });
-    func!(themes, "remove", |_lua, s, id: String| {
-        check_id("roster.themes.remove", &id)?;
+    func!(themes, "remove", |lua, s, id: String| {
+        let what = "roster.themes.remove";
+        check_id(what, &id)?;
+        if own_get(lua, "theme", &id)?.is_nil() {
+            not_had(
+                s,
+                what,
+                format!(
+                    "the Plugin has no Theme {id:?} (roster.themes.list() names its own; roster.themes.define adds one)"
+                ),
+            )?;
+        }
+        own_put(lua, s, "theme", &id, Value::Nil)?;
         push(s, json!({ "op": "remove", "kind": "theme", "id": id }))
     });
+    reads(lua, &themes, "themes", "theme")?;
     roster.raw_set("themes", themes)?;
 
     // UI pieces the core draws: a Sidebar section, a status segment, a finder source, a help
     // page, a `:check` section, a tutorial (`:tutor`), a toolbar control, a progress (ticket 78). `set` adds or replaces one; `remove` takes it away.
-    for (module, kind) in [
-        ("sidebar", "section"),
-        ("status", "status"),
-        ("finders", "finder"),
-        ("help", "help"),
-        ("health", "health"),
-        ("tutor", "tutor"),
-        ("toolbar", "toolbar"),
-        ("progress", "progress"),
+    for (module, kind, noun) in [
+        ("sidebar", "section", "Sidebar section"),
+        ("status", "status", "status segment"),
+        ("finders", "finder", "finder"),
+        ("help", "help", "help page"),
+        ("health", "health", "`:check` section"),
+        ("tutor", "tutor", "tutorial"),
+        ("toolbar", "toolbar", "toolbar control"),
+        ("progress", "progress", "progress"),
     ] {
         let t = lua.create_table()?;
         let what = format!("roster.{module}.set");
         func!(t, "set", |lua, s, (id, spec): (String, Table)| {
             check_id(&what, &id)?;
+            let given = Value::Table(spec.clone());
             let spec = data(lua, s, &what, &Value::Table(spec), &format!("{kind}:{id}"))?;
             // What the app runs on its own, never the user's choice: a finder's `items` as it
             // opens (whoever opened it, another Plugin's `roster.cmd` included) and a `:check`
@@ -1312,15 +1548,19 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             }
             let mut op = Map::new();
             op.insert("op".into(), kind.into());
+            own_put(lua, s, kind, &id, copy(lua, &given)?)?;
             op.insert("id".into(), id.into());
             op.insert("spec".into(), spec);
             push(s, Json::Object(op))
         });
         let removing = format!("roster.{module}.remove");
-        func!(t, "remove", |_lua, s, id: String| {
+        func!(t, "remove", |lua, s, id: String| {
             check_id(&removing, &id)?;
+            must_have(lua, s, &removing, module, noun, kind, &id)?;
+            own_put(lua, s, kind, &id, Value::Nil)?;
             push(s, json!({ "op": "remove", "kind": kind, "id": id }))
         });
+        reads(lua, &t, module, kind)?;
         roster.raw_set(module, t)?;
     }
 
@@ -1379,10 +1619,12 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         {
             table.insert("actions".into(), actions);
         }
+        own_put(lua, s, "view", &id, Value::Boolean(true))?;
         push(s, json!({ "op": "view", "id": id, "spec": spec }))
     });
     func!(views, "update", |lua, s, (id, changes): (String, Table)| {
         check_id("roster.views.update", &id)?;
+        must_have(lua, s, "roster.views.update", "views", "view", "view", &id)?;
         // Plain data, but for the table's `actions` (ticket 78), whose functions replace the ones
         // the set or an earlier update gave; `open` stays the set's.
         let rest = lua.create_table()?;
@@ -1411,8 +1653,9 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         }
         push(s, json!({ "op": "view_update", "id": id, "changes": changes }))
     });
-    func!(views, "open", |_lua, s, (id, opts): (String, Value)| {
+    func!(views, "open", |lua, s, (id, opts): (String, Value)| {
         check_id("roster.views.open", &id)?;
+        must_have(lua, s, "roster.views.open", "views", "view", "view", &id)?;
         if !s.user_call.get() {
             return Err(mlua::Error::runtime(
                 "roster.views.open: only while the user runs one of your actions, commands or finder items",
@@ -1442,15 +1685,27 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         }
         push(s, op)
     });
-    func!(views, "close", |_lua, s, id: String| {
+    func!(views, "close", |lua, s, id: String| {
         check_id("roster.views.close", &id)?;
+        must_have(lua, s, "roster.views.close", "views", "view", "view", &id)?;
         push(s, json!({ "op": "view_close", "id": id }))
     });
     func!(views, "remove", |lua, s, id: String| {
         check_id("roster.views.remove", &id)?;
+        must_have(lua, s, "roster.views.remove", "views", "view", "view", &id)?;
         let (owner, actions) = (format!("view:{id}"), format!("view:{id}:actions"));
         drop_owners(lua, s, |k| k == owner || k == actions)?;
+        own_put(lua, s, "view", &id, Value::Nil)?;
         push(s, json!({ "op": "remove", "kind": "view", "id": id }))
+    });
+    // Which views it has (api 5). A view's `get` waits for the core to keep each view as its
+    // updates leave it (a follow-up of ticket 145).
+    func!(views, "has", |lua, _s, id: String| {
+        check_id("roster.views.has", &id)?;
+        Ok(!own_get(lua, "view", &id)?.is_nil())
+    });
+    func!(views, "list", |lua, _s, (): ()| {
+        lua.create_sequence_from(own_ids(lua, "view")?)
     });
     roster.raw_set("views", views)?;
 
@@ -1462,10 +1717,17 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         |lua, s, (id, host, spec): (String, String, Option<Table>)| {
             check_id("roster.details.set", &id)?;
             let owner = format!("details:{id}@{host}");
+            let kind = format!("details:{id}");
             let spec = match spec {
-                Some(t) => data(lua, s, "roster.details.set", &Value::Table(t), &owner)?,
+                Some(t) => {
+                    let given = Value::Table(t.clone());
+                    let spec = data(lua, s, "roster.details.set", &Value::Table(t), &owner)?;
+                    own_put(lua, s, &kind, &host, copy(lua, &given)?)?;
+                    spec
+                }
                 None => {
                     drop_owners(lua, s, |k| k == owner)?;
+                    own_put(lua, s, &kind, &host, Value::Nil)?;
                     Json::Null
                 }
             };
@@ -1473,10 +1735,46 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         }
     );
     func!(details, "remove", |lua, s, id: String| {
-        check_id("roster.details.remove", &id)?;
+        let what = "roster.details.remove";
+        check_id(what, &id)?;
+        let kind = format!("details:{id}");
+        let hosts = own_ids(lua, &kind)?;
+        if hosts.is_empty() {
+            not_had(
+                s,
+                what,
+                format!("the Plugin has no Host-details section {id:?} (roster.details.list() names its own)"),
+            )?;
+        }
         let prefix = format!("details:{id}@");
         drop_owners(lua, s, |k| k.starts_with(&prefix))?;
+        for host in hosts {
+            own_put(lua, s, &kind, &host, Value::Nil)?;
+        }
         push(s, json!({ "op": "remove", "kind": "details", "id": id }))
+    });
+    // Its sections (api 5): one Host's, whether it has one (on a Host, or on any), and which.
+    func!(details, "get", |lua, _s, (id, host): (String, String)| {
+        check_id("roster.details.get", &id)?;
+        copy(lua, &own_get(lua, &format!("details:{id}"), &host)?)
+    });
+    func!(details, "has", |lua, _s, (id, host): (String, Option<String>)| {
+        check_id("roster.details.has", &id)?;
+        let kind = format!("details:{id}");
+        Ok(match host {
+            Some(h) => !own_get(lua, &kind, &h)?.is_nil(),
+            None => !own_ids(lua, &kind)?.is_empty(),
+        })
+    });
+    func!(details, "list", |lua, _s, id: Option<String>| {
+        let names = match id {
+            None => details_ids(lua)?,
+            Some(id) => {
+                check_id("roster.details.list", &id)?;
+                own_ids(lua, &format!("details:{id}"))?
+            }
+        };
+        lua.create_sequence_from(names)
     });
     roster.raw_set("details", details)?;
 
@@ -1914,6 +2212,7 @@ mod tests {
         Runtime::new(
             "quiet",
             "1.0.0",
+            crate::plugin::API_VERSION,
             Path::new(""),
             &Json::Null,
             BTreeSet::new(),
@@ -1962,6 +2261,7 @@ mod tests {
         let rt = Runtime::new(
             "slow",
             "1.0.0",
+            crate::plugin::API_VERSION,
             Path::new(""),
             &Json::Null,
             BTreeSet::from([Permission::Serve("mesh.status".into())]),
