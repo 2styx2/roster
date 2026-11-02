@@ -145,15 +145,14 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
-      # The shell-hook tests run each hook line in the real shell when it's installed, and skip it when
-      # it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh; add zsh and tcsh (#242).
-      # Not fish yet: Ubuntu's fish 3.7 is interactive only on a terminal, whatever -i says, and the test
-      # pipes its input in, so the prompt marks never come. Add it once that test runs fish under a pty.
-      - name: Install zsh and tcsh
+      # The shell-hook tests run each hook line and rc snippet in the real shell when it's installed, and
+      # skip it when it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh;
+      # add zsh, fish and tcsh (#242). fish and pwsh run under a pty (util-linux `script`, in the image).
+      - name: Install zsh, fish and tcsh
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh tcsh
-          zsh --version; tcsh --version; pwsh --version
+          sudo apt-get install -y --no-install-recommends zsh fish tcsh
+          zsh --version; fish --version; tcsh --version; pwsh --version; script --version
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

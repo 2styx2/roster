@@ -362,6 +362,12 @@ if [[ -o interactive ]]; then
 fi
 ```
 
+powerlevel10k (zsh) draws its prompt itself (instant prompt, transient prompt), which can drop the snippet's marks. Use its own OSC 133 setting instead of the snippet, in `~/.p10k.zsh`; it writes all four marks, exit code included:
+
+```zsh
+typeset -g POWERLEVEL9K_TERM_SHELL_INTEGRATION=true
+```
+
 fish, in `~/.config/fish/config.fish` (fish 4 writes some of these marks itself; a mark sent twice counts once):
 
 ```fish
@@ -413,9 +419,9 @@ Instead of an rc file, roster can send a Session's shell **one line** after logi
 
 **What you see.** roster holds the shell's echo of the line back from the screen until the new prompt comes (its `A` and `B` marks, after zsh's end-of-line mark if it prints one), then draws that prompt where the old one was, so the screen looks as it did. A shell that runs the line and marks nothing (dash, busybox ash, ksh: the line does nothing there) or doesn't take it (tcsh or csh with a bash-like prompt prints an error) gets its echo and that short error cleared after 2 seconds, and the prompt is as it was. Anything else (more than a few lines, a different prompt), or you typing meanwhile, shows everything as the shell printed it. A Plugin with `terminal.read` sees the Session's output as it came, except that what's printed from the line going out until roster's first own prompt (the echo) is left out, and the Session's token is dashed wherever it shows.
 
-**Prompt frameworks.** bash's and zsh's marks go on from a hook that runs last at each prompt, which wraps the prompt again whenever it has lost them, so a framework that builds the prompt at every prompt (starship, oh-my-bash, oh-my-zsh) keeps them; the exit code comes from a hook that runs first. One that redraws its prompt itself after the prompt hooks (powerlevel10k's instant prompt or transient prompt) may still drop them: such frameworks have their own OSC 133 setting, and `:integrate` says when no marked prompt came back. fish's and PowerShell's wrap the prompt function they find.
+**Prompt frameworks.** bash's and zsh's marks go on from a hook that runs last at each prompt, which wraps the prompt again whenever it has lost them, so a framework that builds the prompt at every prompt (starship, oh-my-bash, oh-my-zsh) keeps them; the exit code comes from a hook that runs first. One that redraws its prompt itself after the prompt hooks (powerlevel10k's instant prompt or transient prompt) may still drop them: such frameworks have their own OSC 133 setting (powerlevel10k's is `POWERLEVEL9K_TERM_SHELL_INTEGRATION=true`, [above](#shell-integration)), and `:integrate` says when no marked prompt came back. With it on, the shell marks its prompts itself, so roster doesn't send the line, and doesn't need to. fish's and PowerShell's wrap the prompt function they find.
 
-**History.** Each line starts with a space, so a shell that leaves such lines out of its history does: bash with `HISTCONTROL=ignorespace` or `ignoreboth` (Debian and Ubuntu's default), zsh with `setopt HIST_IGNORE_SPACE`, fish always. PowerShell keeps it in its history. PowerShell's line writes the `C` mark from PSReadLine's history handler and then asks the handler that was there (yours, or PSReadLine's default, which keeps lines that look like secrets out of the history file), so what's saved is as before.
+**History.** Each line starts with a space, so a shell that leaves such lines out of its history does: bash with `HISTCONTROL=ignorespace` or `ignoreboth` (Debian and Ubuntu's default), zsh with `setopt HIST_IGNORE_SPACE`, fish always. **Elsewhere the line stays in the history**, and in the history file when the shell saves one: bash without `ignorespace` (Fedora and RHEL's default is `ignoredups`), zsh without `HIST_IGNORE_SPACE` (`~/.zsh_history` or your `HISTFILE`), and PowerShell, whose PSReadLine saves it to `(Get-PSReadLineOption).HistorySavePath`. So it comes back with the Up key and in a history search, and whoever can read that file sees it. The token in it is that Session's only, so it's no use once the Session ends. To keep it out, set `ignorespace` or `HIST_IGNORE_SPACE` in the Host's rc file; PowerShell has no such setting, so delete the line from that file if you mind it. PowerShell's line writes the `C` mark from PSReadLine's history handler and then asks the handler that was there (yours, or PSReadLine's default, which keeps lines that look like secrets out of the history file), so what's saved afterwards is as before.
 
 **Older bash.** bash before 4.4 has no `PS0`, so it gets no `C` mark: prompts and exit codes are marked, and `command_done` has no command line. The line works under `set -u`.
 
@@ -439,7 +445,7 @@ PowerShell (Windows PowerShell 5.1 too: it writes the escape character as `[char
  $Global:__roster_p=$function:prompt; function Global:prompt { $c=if($?){0}elseif($LASTEXITCODE){$LASTEXITCODE}else{1}; $e=[char]27; $b=[char]7; $d='/'+($PWD.ProviderPath -replace '\\','/').TrimStart('/'); "$e]133;D;$c;roster=NONCE$b$e]7;file://$([Environment]::MachineName)$d$b$e]133;A;roster=NONCE$b$(& $Global:__roster_p)$e]133;B;roster=NONCE$b" }; try { $h=(Get-PSReadLineOption).AddToHistoryHandler; Set-PSReadLineOption -AddToHistoryHandler ({ param($l) [Console]::Write("$([char]27)]133;C;roster=NONCE$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}
 ```
 
-**Tested:** the bash line in bash 5 (CI runs it: with a prompt framework that sets the prompt at every prompt, under `set -u`, as a bash before 4.4, and in a POSIX shell that isn't bash, which it leaves alone); the PowerShell prompt function and history handler (with a handler of your own) in Windows PowerShell 5.1. The zsh, fish and PowerShell 7 lines follow the snippets above, which aren't tested in those shells either.
+**Tested:** CI runs each line, and each rc-file snippet above, in bash 5, zsh, fish and PowerShell 7 on Linux, and checks they mark prompts, commands and exit codes (and the folder, for the lines); the bash line also with a prompt framework that sets the prompt at every prompt, under `set -u`, as a bash before 4.4, and in a POSIX shell that isn't bash, which it leaves alone. The PowerShell prompt function and history handler (with a handler of your own) were tried by hand in Windows PowerShell 5.1. powerlevel10k isn't tested.
 
 ### Health sections
 
