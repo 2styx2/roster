@@ -2,7 +2,7 @@
 
 <!-- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
 
-Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 4. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
+Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 5. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
 
 Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations write them: `string?` may be `nil`, `Host[]` is a list of Hosts, `table<string, Group>` a table of Groups by name, `"info"|"warn"` one of those strings. The same declarations are [`roster.lua`](../examples/plugins/types/roster.lua), for [your editor](#editor-support).
 
@@ -37,27 +37,60 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`roster.cancel(timer)`](#rostercanceltimer) | Cancels a timer | none |
 | [`roster.commands.add(name, spec)`](#rostercommandsaddname-spec) | Adds a `:` command | none |
 | [`roster.commands.remove(name)`](#rostercommandsremovename) | Removes one of the Plugin's commands | none |
+| [`roster.commands.get(id)`](#rostercommandsgetid) | One of the Plugin's commands, as it set it | none |
+| [`roster.commands.has(id)`](#rostercommandshasid) | Whether the Plugin has that command | none |
+| [`roster.commands.list()`](#rostercommandslist) | The ids of the Plugin's commands | none |
 | [`roster.keymap.set(context, keys, action)`](#rosterkeymapsetcontext-keys-action) | Binds keys to a command line | none |
 | [`roster.keymap.del(context, keys)`](#rosterkeymapdelcontext-keys) | Takes one of the Plugin's key bindings off | none |
+| [`roster.keymap.get(context, keys)`](#rosterkeymapgetcontext-keys) | The command line one of the Plugin's key bindings runs | none |
+| [`roster.keymap.has(context, keys)`](#rosterkeymaphascontext-keys) | Whether the Plugin binds those keys there | none |
+| [`roster.keymap.list(context)`](#rosterkeymaplistcontext) | The Plugin's key bindings in a context | none |
 | [`roster.themes.define(id, theme)`](#rosterthemesdefineid-theme) | Adds a Theme | none |
 | [`roster.themes.remove(id)`](#rosterthemesremoveid) | Removes one of the Plugin's Themes | none |
+| [`roster.themes.get(id)`](#rosterthemesgetid) | One of the Plugin's Themes, as it set it | none |
+| [`roster.themes.has(id)`](#rosterthemeshasid) | Whether the Plugin has that Theme | none |
+| [`roster.themes.list()`](#rosterthemeslist) | The ids of the Plugin's Themes | none |
 | [`roster.sidebar.set(id, section)`](#rostersidebarsetid-section) | Adds a Sidebar section, or replaces it | none |
 | [`roster.sidebar.remove(id)`](#rostersidebarremoveid) | Removes a Sidebar section | none |
+| [`roster.sidebar.get(id)`](#rostersidebargetid) | One of the Plugin's Sidebar sections, as it set it | none |
+| [`roster.sidebar.has(id)`](#rostersidebarhasid) | Whether the Plugin has that Sidebar section | none |
+| [`roster.sidebar.list()`](#rostersidebarlist) | The ids of the Plugin's Sidebar sections | none |
 | [`roster.status.set(id, segment)`](#rosterstatussetid-segment) | Adds a status bar segment, or replaces it | none |
 | [`roster.status.remove(id)`](#rosterstatusremoveid) | Removes a status bar segment | none |
+| [`roster.status.get(id)`](#rosterstatusgetid) | One of the Plugin's status segments, as it set it | none |
+| [`roster.status.has(id)`](#rosterstatushasid) | Whether the Plugin has that status segment | none |
+| [`roster.status.list()`](#rosterstatuslist) | The ids of the Plugin's status segments | none |
 | [`roster.finders.set(id, finder)`](#rosterfinderssetid-finder) | Adds a finder, or replaces it | none |
 | [`roster.finders.remove(id)`](#rosterfindersremoveid) | Removes a finder | none |
+| [`roster.finders.get(id)`](#rosterfindersgetid) | One of the Plugin's finders, as it set it | none |
+| [`roster.finders.has(id)`](#rosterfindershasid) | Whether the Plugin has that finder | none |
+| [`roster.finders.list()`](#rosterfinderslist) | The ids of the Plugin's finders | none |
 | [`roster.help.set(topic, page)`](#rosterhelpsettopic-page) | Adds a help page, or replaces it | none |
 | [`roster.help.remove(topic)`](#rosterhelpremovetopic) | Removes a help page | none |
+| [`roster.help.get(id)`](#rosterhelpgetid) | One of the Plugin's help pages, as it set it | none |
+| [`roster.help.has(id)`](#rosterhelphasid) | Whether the Plugin has that help page | none |
+| [`roster.help.list()`](#rosterhelplist) | The ids of the Plugin's help pages | none |
 | [`roster.health.set(id, section)`](#rosterhealthsetid-section) | Adds a section to `:check` (this Box's health), or replaces it | none |
 | [`roster.health.answer(check, lines)`](#rosterhealthanswercheck-lines) | Answers a `:check` section's check that returned `"later"` | none |
 | [`roster.health.remove(id)`](#rosterhealthremoveid) | Removes a `:check` section | none |
+| [`roster.health.get(id)`](#rosterhealthgetid) | One of the Plugin's `:check` sections, as it set it | none |
+| [`roster.health.has(id)`](#rosterhealthhasid) | Whether the Plugin has that `:check` section | none |
+| [`roster.health.list()`](#rosterhealthlist) | The ids of the Plugin's `:check` sections | none |
 | [`roster.tutor.set(id, tutorial)`](#rostertutorsetid-tutorial) | Adds a tutorial, or replaces it | none |
 | [`roster.tutor.remove(id)`](#rostertutorremoveid) | Removes a tutorial | none |
+| [`roster.tutor.get(id)`](#rostertutorgetid) | One of the Plugin's tutorials, as it set it | none |
+| [`roster.tutor.has(id)`](#rostertutorhasid) | Whether the Plugin has that tutorial | none |
+| [`roster.tutor.list()`](#rostertutorlist) | The ids of the Plugin's tutorials | none |
 | [`roster.toolbar.set(id, control)`](#rostertoolbarsetid-control) | Adds a control to the toolbar, or replaces it | none |
 | [`roster.toolbar.remove(id)`](#rostertoolbarremoveid) | Removes a toolbar control | none |
+| [`roster.toolbar.get(id)`](#rostertoolbargetid) | One of the Plugin's toolbar controls, as it set it | none |
+| [`roster.toolbar.has(id)`](#rostertoolbarhasid) | Whether the Plugin has that toolbar control | none |
+| [`roster.toolbar.list()`](#rostertoolbarlist) | The ids of the Plugin's toolbar controls | none |
 | [`roster.progress.set(id, progress)`](#rosterprogresssetid-progress) | Shows or updates the progress of something long | none |
 | [`roster.progress.remove(id)`](#rosterprogressremoveid) | Takes a progress away: it's over | none |
+| [`roster.progress.get(id)`](#rosterprogressgetid) | One of the Plugin's progresses, as it set it | none |
+| [`roster.progress.has(id)`](#rosterprogresshasid) | Whether the Plugin has that progress | none |
+| [`roster.progress.list()`](#rosterprogresslist) | The ids of the Plugin's progresses | none |
 | [`roster.badges.set(host, text)`](#rosterbadgessethost-text) | Puts a badge on a Host's Inventory row, or takes it off | none |
 | [`roster.float.open(float)`](#rosterfloatopenfloat) | Opens a floating window over the terminal, or replaces the Plugin's | none |
 | [`roster.float.close()`](#rosterfloatclose) | Closes the Plugin's floating window | none |
@@ -66,8 +99,13 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`roster.views.open(id, opts)`](#rosterviewsopenid-opts) | Opens a view | none |
 | [`roster.views.close(id)`](#rosterviewscloseid) | Closes a view, if it's open | none |
 | [`roster.views.remove(id)`](#rosterviewsremoveid) | Removes a view | none |
+| [`roster.views.has(id)`](#rosterviewshasid) | Whether the Plugin has that view | none |
+| [`roster.views.list()`](#rosterviewslist) | The ids of the Plugin's views | none |
 | [`roster.details.set(id, host, section)`](#rosterdetailssetid-host-section) | Adds a section to a Host's details, or replaces it | none |
 | [`roster.details.remove(id)`](#rosterdetailsremoveid) | Removes a section from every Host's details | none |
+| [`roster.details.get(id, host)`](#rosterdetailsgetid-host) | One of the Plugin's Host-details sections, as it set it for a Host | none |
+| [`roster.details.has(id, host)`](#rosterdetailshasid-host) | Whether the Plugin has that section, on a Host or on any | none |
+| [`roster.details.list(id)`](#rosterdetailslistid) | The ids of the Plugin's Host-details sections, or the Hosts one is on | none |
 | [`roster.clipboard.copy(text)`](#rosterclipboardcopytext) | Puts text on the clipboard | none |
 | [`roster.storage.read(name)`](#rosterstoragereadname) | Reads one of the Plugin's files | none |
 | [`roster.storage.write(name, text)`](#rosterstoragewritename-text) | Writes one of the Plugin's files, whole | none |
@@ -226,6 +264,8 @@ Any function can also raise:
 - `more than 10000 functions handed to roster at once`.
 
 **Refused by the app** isn't an error: the app shows a warning notice naming the Plugin (`pinned: :pin is taken (builtin)`) and leaves that one change out. The call itself goes on.
+
+**What the Plugin added** (api 5): each collection (`roster.commands`, `roster.keymap`, `roster.themes`, `roster.sidebar`, `roster.views`, …) has `get`, `has` and `list`, which give only the Plugin's own, as it set them; `get` gives a copy, so changing it changes nothing until you set it again. Taking away what the Plugin never added (or already took away) is an error at your line, as in `init.lua` (`roster.status.remove: the Plugin has no status segment "alerts" (roster.status.list() names its own)`), and so is a key context that isn't one. A Plugin whose manifest says `api = 4` or older keeps what it was written against: such a removal does nothing.
 
 ## `roster`
 
@@ -632,7 +672,7 @@ roster.commands.add("pins", { desc = "Pinned Hosts", run = "finder pinned" })
 
 ### `roster.commands.remove(name)`
 
-Removes one of the Plugin's commands. Removing one it doesn't have does nothing.
+Removes one of the Plugin's commands. Since api 5, removing one it doesn't have is an error; written for an older api, it does nothing.
 
 **Parameters**
 
@@ -645,6 +685,7 @@ Nothing.
 **Errors**
 
 - `roster.commands.remove: "NAME" isn't a name like …`: a bad `name` (since api 3).
+- `roster.commands.remove: the Plugin has no command "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -653,6 +694,84 @@ Nothing.
 
 ```lua
 roster.commands.remove("alerts")
+```
+
+### `roster.commands.get(id)`
+
+One of the Plugin's commands, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's commands.
+
+**Returns**
+
+- [`CommandSpec`](#commandspec)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.commands.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.commands.get("alerts")
+if s then
+  s.desc = "Recent alerts, newest first"
+  roster.commands.add("alerts", s)
+end
+```
+
+### `roster.commands.has(id)`
+
+Whether the Plugin has that command.
+
+**Parameters**
+
+- `id` (`string`): A command's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.commands.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.commands.has("alerts") then roster.commands.remove("alerts") end
+```
+
+### `roster.commands.list()`
+
+The ids of the Plugin's commands. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.commands.list()) do roster.commands.remove(id) end
 ```
 
 ## `roster.keymap`
@@ -676,11 +795,13 @@ Nothing.
 **Errors**
 
 - `roster.keymap.set: the action is a command line such as "alerts" (add a command for a function)`: `action` isn't a string or `false`.
+- `roster.keymap.set: "CONTEXT" isn't a key context …`: not `leader`, `list` or `list_vim` (since api 5; for a Plugin written for an older api the app refuses it with a notice).
+- `roster.keymap.set: the Plugin binds no "KEYS" in CONTEXT …`: `action` is `false` and the Plugin has no such binding (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Refused by the app** (a warning notice, not an error)
 
-- a `context` other than the three (`keys go after the Leader or in the Sidebar …`).
+- a `context` other than the three (`keys go after the Leader or in the Sidebar …`), for a Plugin written for api 4 or older.
 - keys bound already, by roster, `init.lua` or another Plugin (`a` is Folders', `f` the Picker's; `:keys` lists them): the notice names what has them and up to three free ones like them (`␣ f is taken (by builtin: find). Free after the Leader: a, g, h`).
 - keys that would hide a binding, or be hidden by one (`"a z"` when `a` is bound).
 - when pressed, a line `roster.cmd` couldn't run (`:plugins grant …`, another Plugin's command): a notice says why.
@@ -695,7 +816,7 @@ roster.keymap.set("leader", roster.plugin.config.leader or "w w", "finder alerts
 
 ### `roster.keymap.del(context, keys)`
 
-Takes one of the Plugin's key bindings off. Keys it didn't bind stay as they are: a Plugin can't unbind roster's, `init.lua`'s or another Plugin's.
+Takes one of the Plugin's key bindings off. Keys it didn't bind stay as they are: a Plugin can't unbind roster's, `init.lua`'s or another Plugin's. Since api 5, taking off one it didn't bind is an error, as `init.lua`'s `roster.keymap.del` is; written for an older api, it does nothing.
 
 **Parameters**
 
@@ -708,7 +829,9 @@ Nothing.
 
 **Errors**
 
-Only [those of every function](#errors).
+- `roster.keymap.del: "CONTEXT" isn't a key context …`: not `leader`, `list` or `list_vim` (since api 5).
+- `roster.keymap.del: the Plugin binds no "KEYS" in CONTEXT …`: it has no such binding (since api 5; for a Plugin written for an older api it does nothing).
+- And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
 
@@ -716,6 +839,83 @@ Only [those of every function](#errors).
 
 ```lua
 roster.keymap.del("leader", "w w")
+```
+
+### `roster.keymap.get(context, keys)`
+
+The command line one of the Plugin's key bindings runs. Only the Plugin's own bindings, as it set them.
+
+**Parameters**
+
+- `context` ([`KeyContext`](#keycontext)): `"leader"`, `"list"` or `"list_vim"`.
+- `keys` (`string`): The keys, as `set` took them.
+
+**Returns**
+
+- `string?`: `nil` if it binds no such keys there.
+
+**Errors**
+
+- `roster.keymap.get: "CONTEXT" isn't a key context …`: not `leader`, `list` or `list_vim`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+roster.echo(roster.keymap.get("leader", "w w") or "not bound") -- "finder alerts"
+```
+
+### `roster.keymap.has(context, keys)`
+
+Whether the Plugin binds those keys there. Only the Plugin's own bindings.
+
+**Parameters**
+
+- `context` ([`KeyContext`](#keycontext)): `"leader"`, `"list"` or `"list_vim"`.
+- `keys` (`string`): The keys, as `set` took them.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.keymap.has: "CONTEXT" isn't a key context …`: not `leader`, `list` or `list_vim`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.keymap.has("leader", "w w") then roster.keymap.del("leader", "w w") end
+```
+
+### `roster.keymap.list(context)`
+
+The Plugin's key bindings in a context. Only the Plugin's own, as `init.lua`'s `roster.keymap.list` gives the Config's. A copy: changing it binds nothing.
+
+**Parameters**
+
+- `context` ([`KeyContext`](#keycontext)): `"leader"`, `"list"` or `"list_vim"`.
+
+**Returns**
+
+- `table<string, string>`: Keys to command line.
+
+**Errors**
+
+- `roster.keymap.list: "CONTEXT" isn't a key context …`: not `leader`, `list` or `list_vim`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for keys, line in pairs(roster.keymap.list("leader")) do roster.echo(keys .. ": " .. line) end
 ```
 
 ## `roster.themes`
@@ -755,7 +955,7 @@ roster.themes.define("dusk", { base = "nord", colors = { accent = "#e0a060" } })
 
 ### `roster.themes.remove(id)`
 
-Removes one of the Plugin's Themes. Removing one it doesn't have does nothing. If it was the Theme in use, the app goes back to `init.lua`'s.
+Removes one of the Plugin's Themes. If it was the Theme in use, the app goes back to `init.lua`'s. Since api 5, removing one it doesn't have is an error, as `init.lua`'s `roster.themes.remove` is; written for an older api, it does nothing.
 
 **Parameters**
 
@@ -768,6 +968,7 @@ Nothing.
 **Errors**
 
 - `roster.themes.remove: "ID" isn't a name like …`: a bad `id`.
+- `roster.themes.remove: the Plugin has no Theme "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
@@ -776,6 +977,84 @@ Nothing.
 
 ```lua
 roster.themes.remove("dusk")
+```
+
+### `roster.themes.get(id)`
+
+One of the Plugin's Themes, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's Themes.
+
+**Returns**
+
+- [`Theme`](#theme)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.themes.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.themes.get("dusk")
+if s then
+  s.appearance = "light"
+  roster.themes.define("dusk", s)
+end
+```
+
+### `roster.themes.has(id)`
+
+Whether the Plugin has that Theme.
+
+**Parameters**
+
+- `id` (`string`): A Theme's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.themes.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.themes.has("dusk") then roster.themes.remove("dusk") end
+```
+
+### `roster.themes.list()`
+
+The ids of the Plugin's Themes. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.themes.list()) do roster.themes.remove(id) end
 ```
 
 ## `roster.sidebar`
@@ -833,6 +1112,7 @@ Nothing.
 **Errors**
 
 - `roster.sidebar.remove: "ID" isn't a name like …`: a bad `id` (since api 3).
+- `roster.sidebar.remove: the Plugin has no Sidebar section "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -841,6 +1121,84 @@ Nothing.
 
 ```lua
 roster.sidebar.remove("pinned")
+```
+
+### `roster.sidebar.get(id)`
+
+One of the Plugin's Sidebar sections, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's Sidebar sections.
+
+**Returns**
+
+- [`Section`](#section)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.sidebar.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.sidebar.get("pinned")
+if s then
+  s.title = "Pinned Hosts"
+  roster.sidebar.set("pinned", s)
+end
+```
+
+### `roster.sidebar.has(id)`
+
+Whether the Plugin has that Sidebar section.
+
+**Parameters**
+
+- `id` (`string`): A Sidebar section's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.sidebar.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.sidebar.has("pinned") then roster.sidebar.remove("pinned") end
+```
+
+### `roster.sidebar.list()`
+
+The ids of the Plugin's Sidebar sections. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.sidebar.list()) do roster.sidebar.remove(id) end
 ```
 
 ## `roster.status`
@@ -893,6 +1251,7 @@ Nothing.
 **Errors**
 
 - `roster.status.remove: "ID" isn't a name like …`: a bad `id` (since api 3).
+- `roster.status.remove: the Plugin has no status segment "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -901,6 +1260,84 @@ Nothing.
 
 ```lua
 roster.status.remove("alerts")
+```
+
+### `roster.status.get(id)`
+
+One of the Plugin's status segments, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's status segments.
+
+**Returns**
+
+- [`StatusSegment`](#statussegment)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.status.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.status.get("alerts")
+if s then
+  s.text = "4 alerts"
+  roster.status.set("alerts", s)
+end
+```
+
+### `roster.status.has(id)`
+
+Whether the Plugin has that status segment.
+
+**Parameters**
+
+- `id` (`string`): A status segment's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.status.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.status.has("alerts") then roster.status.remove("alerts") end
+```
+
+### `roster.status.list()`
+
+The ids of the Plugin's status segments. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.status.list()) do roster.status.remove(id) end
 ```
 
 ## `roster.finders`
@@ -956,6 +1393,7 @@ Nothing.
 **Errors**
 
 - `roster.finders.remove: "ID" isn't a name like …`: a bad `id` (since api 3).
+- `roster.finders.remove: the Plugin has no finder "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -964,6 +1402,84 @@ Nothing.
 
 ```lua
 roster.finders.remove("pinned")
+```
+
+### `roster.finders.get(id)`
+
+One of the Plugin's finders, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's finders.
+
+**Returns**
+
+- [`Finder`](#finder)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.finders.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.finders.get("pinned")
+if s then
+  s.title = "Pinned Hosts"
+  roster.finders.set("pinned", s)
+end
+```
+
+### `roster.finders.has(id)`
+
+Whether the Plugin has that finder.
+
+**Parameters**
+
+- `id` (`string`): A finder's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.finders.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.finders.has("pinned") then roster.finders.remove("pinned") end
+```
+
+### `roster.finders.list()`
+
+The ids of the Plugin's finders. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.finders.list()) do roster.finders.remove(id) end
 ```
 
 ## `roster.help`
@@ -1020,6 +1536,7 @@ Nothing.
 **Errors**
 
 - `roster.help.remove: "TOPIC" isn't a name like …`: a bad `topic` (since api 3).
+- `roster.help.remove: the Plugin has no help page "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -1028,6 +1545,84 @@ Nothing.
 
 ```lua
 roster.help.remove("pinned")
+```
+
+### `roster.help.get(id)`
+
+One of the Plugin's help pages, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's help pages.
+
+**Returns**
+
+- [`HelpPage`](#helppage)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.help.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.help.get("pinned")
+if s then
+  s.title = "Pinned Hosts"
+  roster.help.set("pinned", s)
+end
+```
+
+### `roster.help.has(id)`
+
+Whether the Plugin has that help page.
+
+**Parameters**
+
+- `id` (`string`): A help page's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.help.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.help.has("pinned") then roster.help.remove("pinned") end
+```
+
+### `roster.help.list()`
+
+The ids of the Plugin's help pages. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.help.list()) do roster.help.remove(id) end
 ```
 
 ## `roster.health`
@@ -1124,6 +1719,7 @@ Nothing.
 **Errors**
 
 - `roster.health.remove: "ID" isn't a name like …`: a bad `id` (since api 3).
+- `roster.health.remove: the Plugin has no `:check` section "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -1132,6 +1728,84 @@ Nothing.
 
 ```lua
 roster.health.remove("recent-alerts")
+```
+
+### `roster.health.get(id)`
+
+One of the Plugin's `:check` sections, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's `:check` sections.
+
+**Returns**
+
+- [`HealthSection`](#healthsection)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.health.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.health.get("recent-alerts")
+if s then
+  s.title = "Recent alerts"
+  roster.health.set("recent-alerts", s)
+end
+```
+
+### `roster.health.has(id)`
+
+Whether the Plugin has that `:check` section.
+
+**Parameters**
+
+- `id` (`string`): A `:check` section's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.health.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.health.has("recent-alerts") then roster.health.remove("recent-alerts") end
+```
+
+### `roster.health.list()`
+
+The ids of the Plugin's `:check` sections. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.health.list()) do roster.health.remove(id) end
 ```
 
 ## `roster.tutor`
@@ -1191,6 +1865,7 @@ Nothing.
 **Errors**
 
 - `roster.tutor.remove: "ID" isn't a name like …`: a bad `id` (since api 3).
+- `roster.tutor.remove: the Plugin has no tutorial "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
@@ -1199,6 +1874,84 @@ Nothing.
 
 ```lua
 roster.tutor.remove("pinned")
+```
+
+### `roster.tutor.get(id)`
+
+One of the Plugin's tutorials, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's tutorials.
+
+**Returns**
+
+- [`Tutorial`](#tutorial)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.tutor.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.tutor.get("pinned")
+if s then
+  s.title = "Pinning Hosts"
+  roster.tutor.set("pinned", s)
+end
+```
+
+### `roster.tutor.has(id)`
+
+Whether the Plugin has that tutorial.
+
+**Parameters**
+
+- `id` (`string`): A tutorial's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.tutor.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.tutor.has("pinned") then roster.tutor.remove("pinned") end
+```
+
+### `roster.tutor.list()`
+
+The ids of the Plugin's tutorials. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.tutor.list()) do roster.tutor.remove(id) end
 ```
 
 ## `roster.toolbar`
@@ -1250,7 +2003,8 @@ Nothing.
 
 **Errors**
 
-Only [those of every function](#errors).
+- `roster.toolbar.remove: the Plugin has no toolbar control "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
+- And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
 
@@ -1258,6 +2012,84 @@ Only [those of every function](#errors).
 
 ```lua
 roster.toolbar.remove("scan")
+```
+
+### `roster.toolbar.get(id)`
+
+One of the Plugin's toolbar controls, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's toolbar controls.
+
+**Returns**
+
+- [`ToolbarControl`](#toolbarcontrol)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.toolbar.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.toolbar.get("scan")
+if s then
+  s.label = "Scan again"
+  roster.toolbar.set("scan", s)
+end
+```
+
+### `roster.toolbar.has(id)`
+
+Whether the Plugin has that toolbar control.
+
+**Parameters**
+
+- `id` (`string`): A toolbar control's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.toolbar.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.toolbar.has("scan") then roster.toolbar.remove("scan") end
+```
+
+### `roster.toolbar.list()`
+
+The ids of the Plugin's toolbar controls. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.toolbar.list()) do roster.toolbar.remove(id) end
 ```
 
 ## `roster.progress`
@@ -1313,7 +2145,8 @@ Nothing.
 
 **Errors**
 
-Only [those of every function](#errors).
+- `roster.progress.remove: the Plugin has no progress "ID" …`: it has none by that id (since api 5; for a Plugin written for an older api it does nothing).
+- And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
 
@@ -1322,6 +2155,84 @@ Only [those of every function](#errors).
 ```lua
 roster.progress.remove("scan")
 roster.notify("Scan done: 12 Hosts found")
+```
+
+### `roster.progress.get(id)`
+
+One of the Plugin's progresses, as it set it. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): One of the Plugin's progresses.
+
+**Returns**
+
+- [`Progress`](#progress)`?`: `nil` if it has none by that id.
+
+**Errors**
+
+- `roster.progress.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local s = roster.progress.get("scan")
+if s then
+  s.text = "Scanning 10.0.0.0/24"
+  roster.progress.set("scan", s)
+end
+```
+
+### `roster.progress.has(id)`
+
+Whether the Plugin has that progress.
+
+**Parameters**
+
+- `id` (`string`): A progress's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.progress.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.progress.has("scan") then roster.progress.remove("scan") end
+```
+
+### `roster.progress.list()`
+
+The ids of the Plugin's progresses. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.progress.list()) do roster.progress.remove(id) end
 ```
 
 ## `roster.badges`
@@ -1476,6 +2387,7 @@ Nothing.
 
 - `roster.views.update: "ID" isn't a name like …`: a bad `id`.
 - `roster.views.update "ID": … (an update is plain data: functions go in roster.views.set)`: a function in `changes`.
+- `roster.views.update: the Plugin has no view "ID" …`: it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Refused by the app** (a warning notice, not an error)
@@ -1519,6 +2431,7 @@ Nothing.
 - `roster.views.open: opts is a table, as { select = ID }`: `opts` isn't a table.
 - `roster.views.open: select is the id of a node or row (a string)`: `select` isn't a string.
 - `roster.views.open: only while the user runs one of your actions, commands or finder items`: at load or in an event listener.
+- `roster.views.open: the Plugin has no view "ID" …`: it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Refused by the app** (a warning notice, not an error)
@@ -1541,7 +2454,7 @@ roster.details.set("reach", "esx-02", { title = "Reach", facts = {}, actions = {
 
 ### `roster.views.close(id)`
 
-Closes a view, if it's open. Focus goes back where it was, as with `Esc`. Another view, or one that isn't open, stays as it is.
+Closes a view, if it's open. Focus goes back where it was, as with `Esc`. Another view, or one of its own that isn't open, stays as it is.
 
 **Parameters**
 
@@ -1554,6 +2467,7 @@ Nothing.
 **Errors**
 
 - `roster.views.close: "ID" isn't a name like …`: a bad `id`.
+- `roster.views.close: the Plugin has no view "ID" …`: it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
@@ -1579,6 +2493,7 @@ Nothing.
 **Errors**
 
 - `roster.views.remove: "ID" isn't a name like …`: a bad `id`.
+- `roster.views.remove: the Plugin has no view "ID" …`: it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
@@ -1587,6 +2502,55 @@ Nothing.
 
 ```lua
 roster.views.remove("discover")
+```
+
+### `roster.views.has(id)`
+
+Whether the Plugin has that view. Set and not removed, open or not.
+
+**Parameters**
+
+- `id` (`string`): A view's id.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.views.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if not roster.views.has("discover") then roster.views.set("discover", { title = "Discover" }) end
+```
+
+### `roster.views.list()`
+
+The ids of the Plugin's views. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, id in ipairs(roster.views.list()) do roster.views.remove(id) end
 ```
 
 ## `roster.details`
@@ -1643,6 +2607,7 @@ Nothing.
 **Errors**
 
 - `roster.details.remove: "ID" isn't a name like …`: a bad `id`.
+- `roster.details.remove: the Plugin has no Host-details section "ID" …`: it has that section on no Host (since api 5; for a Plugin written for an older api it does nothing).
 - And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 3
@@ -1651,6 +2616,83 @@ Nothing.
 
 ```lua
 roster.details.remove("mesh")
+```
+
+### `roster.details.get(id, host)`
+
+One of the Plugin's Host-details sections, as it set it for a Host. A copy (see [Errors](#errors)).
+
+**Parameters**
+
+- `id` (`string`): The section's id.
+- `host` (`string`): A Host's name.
+
+**Returns**
+
+- [`DetailsSection`](#detailssection)`?`: `nil` if it has none by that id on that Host.
+
+**Errors**
+
+- `roster.details.get: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local reach = roster.details.get("reach", "esx-02")
+```
+
+### `roster.details.has(id, host)`
+
+Whether the Plugin has that section, on a Host or on any.
+
+**Parameters**
+
+- `id` (`string`): The section's id.
+- `host` (`string?`, optional): A Host's name; left out, any Host.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+- `roster.details.has: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.details.has("reach") then roster.details.remove("reach") end
+```
+
+### `roster.details.list(id)`
+
+The ids of the Plugin's Host-details sections, or the Hosts one is on. Without `id`, the sections it has on at least one Host; with it, the Hosts that section is on. Sorted.
+
+**Parameters**
+
+- `id` (`string?`, optional): A section's id.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+- `roster.details.list: "ID" isn't a name like …`: a bad `id`.
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, host in ipairs(roster.details.list("reach")) do roster.details.set("reach", host, nil) end
 ```
 
 ## `roster.clipboard`

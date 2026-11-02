@@ -1,5 +1,5 @@
 {
-  "api_version": 4,
+  "api_version": 5,
   "commands": [
     {
       "name": "finder",
@@ -311,6 +311,39 @@
     {
       "params": [
         {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.commands.get",
+      "permission": null,
+      "returns": "CommandSpec?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.commands.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.commands.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
           "name": "context",
           "optional": false,
           "type": "KeyContext"
@@ -352,6 +385,55 @@
     {
       "params": [
         {
+          "name": "context",
+          "optional": false,
+          "type": "KeyContext"
+        },
+        {
+          "name": "keys",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.keymap.get",
+      "permission": null,
+      "returns": "string?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "context",
+          "optional": false,
+          "type": "KeyContext"
+        },
+        {
+          "name": "keys",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.keymap.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "context",
+          "optional": false,
+          "type": "KeyContext"
+        }
+      ],
+      "path": "roster.keymap.list",
+      "permission": null,
+      "returns": "table<string, string>",
+      "since": 5
+    },
+    {
+      "params": [
+        {
           "name": "id",
           "optional": false,
           "type": "string"
@@ -379,6 +461,39 @@
       "permission": null,
       "returns": "",
       "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.themes.get",
+      "permission": null,
+      "returns": "Theme?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.themes.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.themes.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
     },
     {
       "params": [
@@ -417,6 +532,39 @@
           "name": "id",
           "optional": false,
           "type": "string"
+        }
+      ],
+      "path": "roster.sidebar.get",
+      "permission": null,
+      "returns": "Section?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.sidebar.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.sidebar.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
         },
         {
           "name": "segment",
@@ -441,6 +589,39 @@
       "permission": null,
       "returns": "",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.status.get",
+      "permission": null,
+      "returns": "StatusSegment?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.status.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.status.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
     },
     {
       "params": [
@@ -476,6 +657,39 @@
     {
       "params": [
         {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.finders.get",
+      "permission": null,
+      "returns": "Finder?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.finders.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.finders.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
           "name": "topic",
           "optional": false,
           "type": "string"
@@ -503,6 +717,39 @@
       "permission": null,
       "returns": "",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.help.get",
+      "permission": null,
+      "returns": "HelpPage?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.help.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.help.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
     },
     {
       "params": [
@@ -559,6 +806,39 @@
           "name": "id",
           "optional": false,
           "type": "string"
+        }
+      ],
+      "path": "roster.health.get",
+      "permission": null,
+      "returns": "HealthSection?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.health.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.health.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
         },
         {
           "name": "tutorial",
@@ -583,6 +863,39 @@
       "permission": null,
       "returns": "",
       "since": 2
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.tutor.get",
+      "permission": null,
+      "returns": "Tutorial?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.tutor.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.tutor.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
     },
     {
       "params": [
@@ -621,6 +934,39 @@
           "name": "id",
           "optional": false,
           "type": "string"
+        }
+      ],
+      "path": "roster.toolbar.get",
+      "permission": null,
+      "returns": "ToolbarControl?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.toolbar.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.toolbar.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
         },
         {
           "name": "progress",
@@ -645,6 +991,39 @@
       "permission": null,
       "returns": "",
       "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.progress.get",
+      "permission": null,
+      "returns": "Progress?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.progress.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.progress.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
     },
     {
       "params": [
@@ -770,6 +1149,26 @@
           "name": "id",
           "optional": false,
           "type": "string"
+        }
+      ],
+      "path": "roster.views.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [],
+      "path": "roster.views.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
         },
         {
           "name": "host",
@@ -799,6 +1198,55 @@
       "permission": null,
       "returns": "",
       "since": 3
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "path": "roster.details.get",
+      "permission": null,
+      "returns": "DetailsSection?",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "name": "host",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "path": "roster.details.has",
+      "permission": null,
+      "returns": "boolean",
+      "since": 5
+    },
+    {
+      "params": [
+        {
+          "name": "id",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "path": "roster.details.list",
+      "permission": null,
+      "returns": "string[]",
+      "since": 5
     },
     {
       "params": [
@@ -1282,15 +1730,24 @@
     "roster.cmdline()": "plugin-api#rostercmdlinetext",
     "roster.commands": "plugin-api#rostercommands",
     "roster.commands.add()": "plugin-api#rostercommandsaddname-spec",
+    "roster.commands.get()": "plugin-api#rostercommandsgetid",
+    "roster.commands.has()": "plugin-api#rostercommandshasid",
+    "roster.commands.list()": "plugin-api#rostercommandslist",
     "roster.commands.remove()": "plugin-api#rostercommandsremovename",
     "roster.confirm()": "plugin-api#rosterconfirmquestion",
     "roster.defer()": "plugin-api#rosterdeferms-fn",
     "roster.details": "plugin-api#rosterdetails",
+    "roster.details.get()": "plugin-api#rosterdetailsgetid-host",
+    "roster.details.has()": "plugin-api#rosterdetailshasid-host",
+    "roster.details.list()": "plugin-api#rosterdetailslistid",
     "roster.details.remove()": "plugin-api#rosterdetailsremoveid",
     "roster.details.set()": "plugin-api#rosterdetailssetid-host-section",
     "roster.echo()": "plugin-api#rosterechotext-opts",
     "roster.every()": "plugin-api#rostereveryms-fn",
     "roster.finders": "plugin-api#rosterfinders",
+    "roster.finders.get()": "plugin-api#rosterfindersgetid",
+    "roster.finders.has()": "plugin-api#rosterfindershasid",
+    "roster.finders.list()": "plugin-api#rosterfinderslist",
     "roster.finders.remove()": "plugin-api#rosterfindersremoveid",
     "roster.finders.set()": "plugin-api#rosterfinderssetid-finder",
     "roster.float": "plugin-api#rosterfloat",
@@ -1299,9 +1756,15 @@
     "roster.has()": "plugin-api#rosterhaspermission",
     "roster.health": "plugin-api#rosterhealth",
     "roster.health.answer()": "plugin-api#rosterhealthanswercheck-lines",
+    "roster.health.get()": "plugin-api#rosterhealthgetid",
+    "roster.health.has()": "plugin-api#rosterhealthhasid",
+    "roster.health.list()": "plugin-api#rosterhealthlist",
     "roster.health.remove()": "plugin-api#rosterhealthremoveid",
     "roster.health.set()": "plugin-api#rosterhealthsetid-section",
     "roster.help": "plugin-api#rosterhelp",
+    "roster.help.get()": "plugin-api#rosterhelpgetid",
+    "roster.help.has()": "plugin-api#rosterhelphasid",
+    "roster.help.list()": "plugin-api#rosterhelplist",
     "roster.help.remove()": "plugin-api#rosterhelpremovetopic",
     "roster.help.set()": "plugin-api#rosterhelpsettopic-page",
     "roster.http": "plugin-api#rosterhttp",
@@ -1318,12 +1781,18 @@
     "roster.inventory.update()": "plugin-api#rosterinventoryupdatehost-changes",
     "roster.keymap": "plugin-api#rosterkeymap",
     "roster.keymap.del()": "plugin-api#rosterkeymapdelcontext-keys",
+    "roster.keymap.get()": "plugin-api#rosterkeymapgetcontext-keys",
+    "roster.keymap.has()": "plugin-api#rosterkeymaphascontext-keys",
+    "roster.keymap.list()": "plugin-api#rosterkeymaplistcontext",
     "roster.keymap.set()": "plugin-api#rosterkeymapsetcontext-keys-action",
     "roster.notify()": "plugin-api#rosternotifytext-level-opts",
     "roster.on()": "plugin-api#rosteronevent-listener",
     "roster.os": "plugin-api#rosteros",
     "roster.plugin": "plugin-api#rosterplugin",
     "roster.progress": "plugin-api#rosterprogress",
+    "roster.progress.get()": "plugin-api#rosterprogressgetid",
+    "roster.progress.has()": "plugin-api#rosterprogresshasid",
+    "roster.progress.list()": "plugin-api#rosterprogresslist",
     "roster.progress.remove()": "plugin-api#rosterprogressremoveid",
     "roster.progress.set()": "plugin-api#rosterprogresssetid-progress",
     "roster.serve": "plugin-api#rosterserve",
@@ -1334,9 +1803,15 @@
     "roster.sessions.open()": "plugin-api#rostersessionsopenhost",
     "roster.sessions.show()": "plugin-api#rostersessionsshowsession-line",
     "roster.sidebar": "plugin-api#rostersidebar",
+    "roster.sidebar.get()": "plugin-api#rostersidebargetid",
+    "roster.sidebar.has()": "plugin-api#rostersidebarhasid",
+    "roster.sidebar.list()": "plugin-api#rostersidebarlist",
     "roster.sidebar.remove()": "plugin-api#rostersidebarremoveid",
     "roster.sidebar.set()": "plugin-api#rostersidebarsetid-section",
     "roster.status": "plugin-api#rosterstatus",
+    "roster.status.get()": "plugin-api#rosterstatusgetid",
+    "roster.status.has()": "plugin-api#rosterstatushasid",
+    "roster.status.list()": "plugin-api#rosterstatuslist",
     "roster.status.remove()": "plugin-api#rosterstatusremoveid",
     "roster.status.set()": "plugin-api#rosterstatussetid-segment",
     "roster.storage": "plugin-api#rosterstorage",
@@ -1350,15 +1825,26 @@
     "roster.terminal.send()": "plugin-api#rosterterminalsendsession-text",
     "roster.themes": "plugin-api#rosterthemes",
     "roster.themes.define()": "plugin-api#rosterthemesdefineid-theme",
+    "roster.themes.get()": "plugin-api#rosterthemesgetid",
+    "roster.themes.has()": "plugin-api#rosterthemeshasid",
+    "roster.themes.list()": "plugin-api#rosterthemeslist",
     "roster.themes.remove()": "plugin-api#rosterthemesremoveid",
     "roster.toolbar": "plugin-api#rostertoolbar",
+    "roster.toolbar.get()": "plugin-api#rostertoolbargetid",
+    "roster.toolbar.has()": "plugin-api#rostertoolbarhasid",
+    "roster.toolbar.list()": "plugin-api#rostertoolbarlist",
     "roster.toolbar.remove()": "plugin-api#rostertoolbarremoveid",
     "roster.toolbar.set()": "plugin-api#rostertoolbarsetid-control",
     "roster.tutor": "plugin-api#rostertutor",
+    "roster.tutor.get()": "plugin-api#rostertutorgetid",
+    "roster.tutor.has()": "plugin-api#rostertutorhasid",
+    "roster.tutor.list()": "plugin-api#rostertutorlist",
     "roster.tutor.remove()": "plugin-api#rostertutorremoveid",
     "roster.tutor.set()": "plugin-api#rostertutorsetid-tutorial",
     "roster.views": "plugin-api#rosterviews",
     "roster.views.close()": "plugin-api#rosterviewscloseid",
+    "roster.views.has()": "plugin-api#rosterviewshasid",
+    "roster.views.list()": "plugin-api#rosterviewslist",
     "roster.views.open()": "plugin-api#rosterviewsopenid-opts",
     "roster.views.remove()": "plugin-api#rosterviewsremoveid",
     "roster.views.set()": "plugin-api#rosterviewssetid-view",

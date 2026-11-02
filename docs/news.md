@@ -6,6 +6,18 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### New
+
+**App**
+
+- **A Plugin can read back what it added** (Plugin API 5, `roster.api_version` 5): every collection has `get`, `has` and `list`, as `init.lua`'s do: `roster.status.get("alerts")` gives a copy of the segment as the Plugin set it, `roster.sidebar.has("pinned")` says whether it has that section, `roster.views.list()` names its views, `roster.keymap.get("leader", "w w")` gives a binding's command line and `roster.details.list("reach")` the Hosts a section is on. See [What the Plugin added](plugin-api.md#errors).
+
+### Changed
+
+**App**
+
+- A Plugin written for Plugin API 5 (`api = 5` in its manifest) gets an error at its line, as `init.lua` does, when it takes away what it never added: `roster.themes.remove` of a Theme it didn't define, `roster.keymap.del` of keys it didn't bind, any collection's `remove`, and `roster.views.update`, `open` or `close` of a view it doesn't have. A key context other than `leader`, `list` or `list_vim` is an error there too, where the app refused it with a notice. A Plugin written for API 4 or older keeps the quiet removals. See [Errors](plugin-api.md#errors).
+
 ### Security
 
 **App**
@@ -19,6 +31,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - `roster.o.get("views")` reads any option by its dotted name, so a map with a key named `get`, `has`, `keys` or `reset` (where `:get()` and `:keys()` read that key) still has a read that always works.
 - `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.
 - Two examples in `:help options` that didn't load: `roster.o.List:insert` and `roster.o.List:clear`. Every documented `init.lua` example now loads in the tests, since lua-language-server lets through a value outside an option's set (`cursor_style = "triangle"`).
+
+### Deprecated
+
+**App**
+
+- A Plugin's removal of something it never added doing nothing: it still does for a Plugin whose manifest says `api = 4` or older. See [Deprecated names](deprecated.md).
 
 ## v0.3.0
 

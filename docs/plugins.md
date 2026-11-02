@@ -29,6 +29,8 @@ return {
 }
 ```
 
+`api` also says which behaviour the Plugin gets where it changed: from `api = 5`, taking away what the Plugin never added (`roster.status.remove("alerts")` when it set no such segment) is an error at its line, as in `init.lua`, where an older `api` makes it do nothing ([What the Plugin added](plugin-api.md#errors)).
+
 And the heart of its `init.lua`, shortened:
 
 ```lua
