@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm run test",
+    "e2e": "vitest run --config e2e/vitest.config.ts",
     "icons": "node scripts/icons.mjs",
     "docs": "node scripts/vite-run.mjs scripts/gen-docs-site.ts",
     "docs:a11y": "node scripts/vite-run.mjs scripts/check-docs-a11y.ts"
