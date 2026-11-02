@@ -149,7 +149,7 @@ export function discoverPlugin(options: { permissions?: string[] } = {}): FakePl
       version: "1.0.0",
       description: "Scan a network from the app and add what it finds, as Pending changes you review",
       author: "roster",
-      api: 3,
+      api: 5,
       permissions: options.permissions ?? [...SCANS, ADDS],
     },
     load: (roster) => load(roster),
@@ -351,7 +351,7 @@ function load(roster: FakeRoster) {
         total: scan.total,
         cancel: stop,
       });
-    } else roster.progress.remove("scan");
+    } else if (roster.progress.has("scan")) roster.progress.remove("scan");
   };
 
   const heard = (ok: boolean, a: unknown) => {

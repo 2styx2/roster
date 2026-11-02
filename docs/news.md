@@ -11,12 +11,14 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - **A Plugin can read back what it added** (Plugin API 5, `roster.api_version` 5): every collection has `get`, `has` and `list`, as `init.lua`'s do: `roster.status.get("alerts")` gives a copy of the segment as the Plugin set it, `roster.sidebar.has("pinned")` says whether it has that section, `roster.views.list()` names its views, `roster.keymap.get("leader", "w w")` gives a binding's command line and `roster.details.list("reach")` the Hosts a section is on. See [What the Plugin added](plugin-api.md#errors).
+- `init.lua`'s `roster.keymap.has(context, keys)` and `roster.themes.has(id)` say whether init.lua bound those keys and whether there's a Theme by that id, as every other collection's `has` does. See [`roster.keymap.has`](app/options.md#rosterkeymaphascontext-keys).
+- **Badges are complete too:** `roster.badges.remove(host)` takes the Plugin's badge off a Host, and `get`, `has` and `list` read its badges back by Host. On Plugin API 5, taking off a badge it doesn't have (`remove`, or `set(host, nil)`) is an error at its line, as every other collection's removal is. See [`roster.badges`](plugin-api.md#rosterbadges).
 
 ### Changed
 
 **App**
 
-- A Plugin written for Plugin API 5 (`api = 5` in its manifest) gets an error at its line, as `init.lua` does, when it takes away what it never added: `roster.themes.remove` of a Theme it didn't define, `roster.keymap.del` of keys it didn't bind, any collection's `remove`, and `roster.views.update`, `open` or `close` of a view it doesn't have. A key context other than `leader`, `list` or `list_vim` is an error there too, where the app refused it with a notice. A Plugin written for API 4 or older keeps the quiet removals. See [Errors](plugin-api.md#errors).
+- A Plugin written for Plugin API 5 (`api = 5` in its manifest) gets an error at its line, as `init.lua` does, when it takes away what it never added: `roster.themes.remove` of a Theme it didn't define, `roster.keymap.del` of keys it didn't bind, any collection's `remove` (badges' too), and `roster.views.update`, `open` or `close` of a view it doesn't have. A key context other than `leader`, `list` or `list_vim` is an error there too, where the app refused it with a notice. A Plugin written for API 4 or older keeps the quiet removals. See [Errors](plugin-api.md#errors).
 
 ### Security
 
@@ -29,6 +31,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - **The fill key fills sudo with `pwfeedback`**: a sudo set to draw a `*` per key (`Defaults pwfeedback`) was refused as if its prompt echoed ("the prompt printed what roster typed to check it"). roster now takes sudo's `*` for its check and the erasure that follows as no echo, only at sudo's own prompt for the Host's user and only in exactly the form sudo prints it; the password goes in as `*`s, as when you type it. Anything else printed still refuses. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
+- The Topology Plugin reads your Hosts without waiting for roster serve, so a big Inventory or a busy serve no longer holds up the Plugin (and `:topology`) while it's read. roster's own Plugins (mesh, topology, discover, and the recent-alerts and pinned examples) are written for Plugin API 5 now.
 - **Ctrl+V pastes in a terminal on Windows**, as in Windows Terminal: the clipboard's text, through the terminal's paste (several lines as one bracketed paste), including from a voice-typing tool that pastes by sending Ctrl+V, and on any keyboard layout. With no text on the clipboard (an image, or nothing) Ctrl+V still reaches the program as ^V, so an app's own image paste and Vim's Ctrl+V work. Linux and macOS keep Ctrl+V for the program (paste with Ctrl+Shift+V there); `roster.keymap.set("terminal", "Ctrl+v", "terminal.pasteIfText")` pastes with it there too, and `false` gives it back on Windows. See [Copy and paste](app/keyboard.md#copy-and-paste).
 - `roster.o.get("views")` reads any option by its dotted name, so a map with a key named `get`, `has`, `keys` or `reset` (where `:get()` and `:keys()` read that key) still has a read that always works.
 - `:config import-terminal`'s preview names a `roster.o` line below the import block that sets the same option, at its line: running the import again replaces the block where it is, so that line still wins.

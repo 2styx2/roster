@@ -948,6 +948,17 @@ pub(super) const API: &[ApiItem] = &[
         "if not roster.keymap.get(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
     ),
     item(
+        "roster.keymap.has",
+        Some(&[
+            param("context", CONTEXTS, "The keymap's context."),
+            param("keys", "string", "The keys, as set took them."),
+        ]),
+        "boolean",
+        "Whether init.lua bound keys in a context.",
+        "A binding to false (one of roster's own taken off) counts: del takes it off. Roster's own bindings don't.",
+        "if not roster.keymap.has(\"leader\", \"p\") then roster.keymap.set(\"leader\", \"p\", \"close\") end",
+    ),
+    item(
         "roster.keymap.list",
         Some(&[param("context", CONTEXTS, "The keymap's context.")]),
         "table<string, roster.config.KeyAction>",
@@ -999,6 +1010,14 @@ pub(super) const API: &[ApiItem] = &[
         "A copy of init.lua's spec for a Theme, or nil.",
         "Nil for a bundled Theme init.lua didn't change.",
         "local paper = roster.themes.get(\"paper\")\nif paper then print(paper.label) end",
+    ),
+    item(
+        "roster.themes.has",
+        Some(&[param("id", "string", "A Theme's id.")]),
+        "boolean",
+        "Whether there's a Theme by that id: a bundled one or init.lua's.",
+        "As list names them; get says whether init.lua has a spec of its own for it.",
+        "if not roster.themes.has(\"paper\") then roster.themes.define(\"paper\", { appearance = \"light\" }) end",
     ),
     item(
         "roster.themes.list",

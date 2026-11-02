@@ -10,7 +10,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Limits, PluginHost, Serve, Source, read_manifest};
+use roster_core::plugin::{API_VERSION, Limits, PluginHost, Serve, Source, read_manifest};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -138,5 +138,24 @@ fn every_first_party_plugin_installs_as_a_package_from_its_folder_and_loads() {
             .unwrap_or_else(|e| panic!("plugins/{name}: {e}"));
         assert!(reply.error.is_none(), "plugins/{name}: {:?}", reply.error);
         packages.pin(&specs, name).unwrap();
+    }
+}
+
+/// roster's own Plugins, first-party and examples, are written against the current Plugin API, so
+/// they show (and are tested under) what a new Plugin gets: on api 5, a removal of what they
+/// don't have is an error, and they check with `has` first (#262).
+#[test]
+fn every_first_party_and_example_plugin_is_written_for_the_current_api() {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins");
+    let mut dirs: Vec<PathBuf> = first_party().iter().map(|n| plugins_dir().join(n)).collect();
+    for entry in std::fs::read_dir(&examples).unwrap().flatten() {
+        if entry.path().join("roster-plugin.lua").is_file() {
+            dirs.push(entry.path());
+        }
+    }
+    assert!(dirs.len() >= 5, "{dirs:?}");
+    for dir in dirs {
+        let manifest = read_manifest(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        assert_eq!(manifest.api, API_VERSION, "{}: api", dir.display());
     }
 }

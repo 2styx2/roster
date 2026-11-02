@@ -120,7 +120,7 @@ export function recentAlerts(options: RecentAlertsOptions = {}): FakePlugin {
       version: options.version ?? "1.0.0",
       description: "Lines your Sessions print that look like trouble: ERROR, panic, disk full",
       author: "A. N. Author",
-      api: 3,
+      api: 5,
       permissions: options.permissions ?? ["terminal.read"],
     },
     load: (roster) => load(roster, options),
@@ -189,7 +189,7 @@ function load(roster: FakeRoster, options: RecentAlertsOptions) {
     roster.finders.set("alerts", { title: "Recent alerts", items });
     if (alerts.length > 0) {
       roster.status.set("alerts", { text: `⚠ ${alerts.length}`, title: plural(alerts.length, "recent alert", "recent alerts"), run: "finder alerts" });
-    } else roster.status.remove("alerts");
+    } else if (roster.status.has("alerts")) roster.status.remove("alerts");
     const hosts = [...new Set([...perHost.keys(), ...badged.keys()])].sort();
     for (const host of hosts) {
       const n = perHost.get(host);

@@ -123,7 +123,7 @@ end
 local function over(j)
   if state.timer then roster.cancel(state.timer) end
   state.timer, state.done = nil, 0
-  roster.progress.remove("mesh")
+  if roster.progress.has("mesh") then roster.progress.remove("mesh") end
   local action, host = state.job and state.job.action, state.job and state.job.host
   state.job = nil
   if j == nil then
@@ -425,7 +425,7 @@ local function draw_details(names)
       -- The Host itself is the facts above and the Cut on the heading; the rows are its Links.
       local rows = {}
       for i, x in ipairs(mine[h] or {}) do
-        rows[#rows + 1] = { id = "l" .. i, cells = { link = words.link(x), status = words.status(x.status), member = "yes" },
+        rows[#rows + 1] = { id = "l" .. i, cells = { link = words.link(x), status = words.status(x.status) },
           tone = words.LEFT_OUT[x.status] and "error" or nil }
       end
       section.text = #rows == 0 and "Every Link of this Host works as roster.yml asks." or "The Links worth a look: a hop (via) or a problem."
@@ -491,8 +491,13 @@ local function badges(st)
   for h in pairs(want) do state.badged[h] = true end
 end
 
+-- Takes the segment off if it's there: from api 5 removing one that isn't is an error.
+local function no_segment()
+  if roster.status.has("mesh") then roster.status.remove("mesh") end
+end
+
 local function segment(st)
-  if state.job or not st then return roster.status.remove("mesh") end
+  if state.job or not st then return no_segment() end
   local cuts = words.keys(st.cut_pending)
   local pending = words.keys(st.pending)
   if #cuts > 0 then
@@ -502,7 +507,7 @@ local function segment(st)
   elseif #pending > 0 then
     roster.status.set("mesh", { text = "Mesh: " .. words.count(#pending) .. " pending", title = "Hosts that didn't answer: the next apply finishes them", run = "view mesh" })
   else
-    roster.status.remove("mesh")
+    no_segment()
   end
 end
 

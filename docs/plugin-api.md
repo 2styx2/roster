@@ -92,6 +92,10 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`roster.progress.has(id)`](#rosterprogresshasid) | Whether the Plugin has that progress | none |
 | [`roster.progress.list()`](#rosterprogresslist) | The ids of the Plugin's progresses | none |
 | [`roster.badges.set(host, text)`](#rosterbadgessethost-text) | Puts a badge on a Host's Inventory row, or takes it off | none |
+| [`roster.badges.remove(host)`](#rosterbadgesremovehost) | Takes the Plugin's badge off a Host's row | none |
+| [`roster.badges.get(host)`](#rosterbadgesgethost) | The text of the Plugin's badge on a Host | none |
+| [`roster.badges.has(host)`](#rosterbadgeshashost) | Whether the Plugin has a badge on a Host | none |
+| [`roster.badges.list()`](#rosterbadgeslist) | The Hosts the Plugin has a badge on | none |
 | [`roster.float.open(float)`](#rosterfloatopenfloat) | Opens a floating window over the terminal, or replaces the Plugin's | none |
 | [`roster.float.close()`](#rosterfloatclose) | Closes the Plugin's floating window | none |
 | [`roster.views.set(id, view)`](#rosterviewssetid-view) | Adds a view, or replaces it | none |
@@ -265,7 +269,7 @@ Any function can also raise:
 
 **Refused by the app** isn't an error: the app shows a warning notice naming the Plugin (`pinned: :pin is taken (builtin)`) and leaves that one change out. The call itself goes on.
 
-**What the Plugin added** (api 5): each collection (`roster.commands`, `roster.keymap`, `roster.themes`, `roster.sidebar`, `roster.views`, …) has `get`, `has` and `list`, which give only the Plugin's own, as it set them; `get` gives a copy, so changing it changes nothing until you set it again. Taking away what the Plugin never added (or already took away) is an error at your line, as in `init.lua` (`roster.status.remove: the Plugin has no status segment "alerts" (roster.status.list() names its own)`), and so is a key context that isn't one. A Plugin whose manifest says `api = 4` or older keeps what it was written against: such a removal does nothing.
+**What the Plugin added** (api 5): each collection (`roster.commands`, `roster.keymap`, `roster.themes`, `roster.sidebar`, `roster.views`, `roster.badges` by Host, …) has `get`, `has` and `list`, which give only the Plugin's own, as it set them; `get` gives a copy, so changing it changes nothing until you set it again. Taking away what the Plugin never added (or already took away) is an error at your line, as in `init.lua` (`roster.status.remove: the Plugin has no status segment "alerts" (roster.status.list() names its own)`), and so is a key context that isn't one. A Plugin whose manifest says `api = 4` or older keeps what it was written against: such a removal does nothing.
 
 ## `roster`
 
@@ -2241,7 +2245,7 @@ Badges on Host rows.
 
 ### `roster.badges.set(host, text)`
 
-Puts a badge on a Host's Inventory row, or takes it off. One badge per Host per Plugin; setting it again replaces it. A name that isn't a Host shows nowhere. The app draws it as a small chip right after the Host's name, in the text colour (never the accent, which means live), and cuts it after 12 characters; its tooltip and the row's accessible name have it whole, after your Plugin's name (`recent-alerts: 2`). So say the count, not what's counted: your Plugin's name says that.
+Puts a badge on a Host's Inventory row, or takes it off. One badge per Host per Plugin; setting it again replaces it. A name that isn't a Host shows nowhere. The app draws it as a small chip right after the Host's name, in the text colour (never the accent, which means live), and cuts it after 12 characters; its tooltip and the row's accessible name have it whole, after your Plugin's name (`recent-alerts: 2`). So say the count, not what's counted: your Plugin's name says that. `nil` is [`roster.badges.remove`](#rosterbadgesremovehost)'s old spelling, checked as it is.
 
 **Parameters**
 
@@ -2254,7 +2258,8 @@ Nothing.
 
 **Errors**
 
-Only [those of every function](#errors).
+- `roster.badges.set: the Plugin has no badge on "HOST" …`: `text` is `nil` and it has no badge on that Host (since api 5; for a Plugin written for an older api it does nothing).
+- And [those of every function](#errors).
 
 **Permission:** none · **Since:** api 2
 
@@ -2262,7 +2267,104 @@ Only [those of every function](#errors).
 
 ```lua
 roster.badges.set("esx-02", tostring(2))
-roster.badges.set("esx-02", nil)
+```
+
+### `roster.badges.remove(host)`
+
+Takes the Plugin's badge off a Host's row. Only its own: another Plugin's badge on the same Host stays.
+
+**Parameters**
+
+- `host` (`string`): A Host the Plugin put a badge on.
+
+**Returns**
+
+Nothing.
+
+**Errors**
+
+- `roster.badges.remove: the Plugin has no badge on "HOST" …`: it has no badge on that Host (since api 5; for a Plugin written for an older api it does nothing).
+- And [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.badges.has("esx-02") then roster.badges.remove("esx-02") end
+```
+
+### `roster.badges.get(host)`
+
+The text of the Plugin's badge on a Host. As the Plugin set it, before the app cuts it to fit.
+
+**Parameters**
+
+- `host` (`string`): A Host's name.
+
+**Returns**
+
+- `string?`: `nil` if it has none on that Host.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+local n = tonumber(roster.badges.get("esx-02") or "0") or 0
+roster.badges.set("esx-02", tostring(n + 1))
+```
+
+### `roster.badges.has(host)`
+
+Whether the Plugin has a badge on a Host.
+
+**Parameters**
+
+- `host` (`string`): A Host's name.
+
+**Returns**
+
+- `boolean`: `true` if it has.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+if roster.badges.has("esx-02") then roster.badges.remove("esx-02") end
+```
+
+### `roster.badges.list()`
+
+The Hosts the Plugin has a badge on. Sorted.
+
+**Parameters**
+
+None.
+
+**Returns**
+
+- `string[]`: A new list each call.
+
+**Errors**
+
+Only [those of every function](#errors).
+
+**Permission:** none · **Since:** api 5
+
+**Example**
+
+```lua
+for _, host in ipairs(roster.badges.list()) do roster.badges.remove(host) end
 ```
 
 ## `roster.float`
