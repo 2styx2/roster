@@ -2,7 +2,7 @@
 // pastes the clipboard's text as Windows Terminal does, and goes to the program as ^V when
 // there's no text; a voice-typing tool that injects Ctrl+V, or a paste event, pastes once. The
 // WebView's own paste does the reading: what it found at the key is what's pasted.
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { resolveKeymap, actionsOf, type KeymapOverrides } from "../keymap";
 import type { Clipboard } from "../platform/types";
@@ -53,13 +53,13 @@ function open(opts: { clipboard?: Clipboard; windows?: boolean; overrides?: Keym
   return { t, platform, clipboard, sent, searches, textarea, host };
 }
 
-const KEY_CODES: Record<string, number> = { v: 86, "м": 86, b: 66, c: 67, a: 65, j: 74, Insert: 45 };
+const KEY_CODES: Record<string, number> = { v: 86, "м": 86, "ą": 65, b: 66, c: 67, a: 65, j: 74, Insert: 45 };
 
 /** A key event as the WebView delivers it (keyCode too: xterm reads it). */
 function press(
   target: HTMLElement,
   key: string,
-  mods: { ctrl?: boolean; shift?: boolean } = {},
+  mods: { ctrl?: boolean; shift?: boolean; alt?: boolean; altGraph?: boolean } = {},
   type: "keydown" | "keypress" | "keyup" = "keydown",
   repeat = false,
   code = key.length === 1 ? `Key${key.toUpperCase()}` : key,
@@ -69,11 +69,13 @@ function press(
     code,
     ctrlKey: mods.ctrl ?? false,
     shiftKey: mods.shift ?? false,
+    altKey: mods.alt ?? false,
     repeat,
     bubbles: true,
     cancelable: true,
   });
   Object.defineProperty(e, "keyCode", { value: KEY_CODES[key] ?? 0 });
+  if (mods.altGraph) Object.defineProperty(e, "getModifierState", { value: (m: string) => m === "AltGraph" });
   target.dispatchEvent(e);
   return e;
 }
@@ -171,13 +173,40 @@ describe("Ctrl+V with no text on the clipboard", () => {
     expect(sent).toEqual(["\x16"]);
   });
 
-  it("when the WebView fires no paste event (refused): ^V, once, right after", async () => {
+  it("when the WebView fires no paste event (refused): ^V, once, at the keyup", async () => {
     const { sent, textarea } = open();
     ctrlV(textarea, null);
-    expect(sent).toEqual([]);
-    await settle();
+    expect(sent).toEqual(["\x16"]);
     await settle();
     expect(sent).toEqual(["\x16"]);
+  });
+
+  it("a paste event coming late, after that ^V, is swallowed: never ^V and the text", async () => {
+    const { sent, textarea } = open();
+    ctrlV(textarea, null);
+    const late = pasteEvent(textarea, "dictated");
+    await settle();
+    expect(sent).toEqual(["\x16"]);
+    expect(late.defaultPrevented).toBe(true);
+  });
+
+  it("with no keyup and no paste event, ^V comes after a moment; a paste event after it is swallowed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { sent, textarea } = open();
+      press(textarea, "v", { ctrl: true });
+      expect(sent).toEqual([]);
+      vi.advanceTimersByTime(1000);
+      expect(sent).toEqual(["\x16"]);
+      pasteEvent(textarea, "dictated");
+      expect(sent).toEqual(["\x16"]);
+      // Long after, a paste event is a paste of its own.
+      vi.advanceTimersByTime(5000);
+      pasteEvent(textarea, "later");
+      expect(sent).toEqual(["\x16", "later"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the order of keys typed after it (Vim's Ctrl+V, then j)", async () => {
@@ -227,6 +256,15 @@ describe("A paste event (the Edit menu, or a tool pasting without a key)", () =>
     pasteEvent(textarea, "");
     await settle();
     expect(sent.join("")).not.toContain("\x16");
+  });
+});
+
+describe("AltGr (Ctrl+Alt on Windows) types its character", () => {
+  it("AltGr+A (ą on a Polish layout) isn't taken for a Ctrl+Alt+a binding by its physical key", async () => {
+    const { searches, textarea } = open({ overrides: { terminal: { "Ctrl+Alt+a": "terminal.search" } } });
+    press(textarea, "ą", { ctrl: true, alt: true, altGraph: true }, "keydown", false, "KeyA");
+    press(textarea, "ą", { ctrl: true, alt: true }, "keydown", false, "KeyA");
+    expect(searches).toEqual([]);
   });
 });
 
