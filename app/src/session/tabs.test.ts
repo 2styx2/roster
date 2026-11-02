@@ -1048,7 +1048,8 @@ describe("filling a password prompt (ticket 119)", () => {
     at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
     await expect(at.tabs.fill(at.id)).rejects.toThrow(/printed what roster typed/);
     await at.print("typed by hand");
-    expect(seen.join("")).toContain("typed by hand");
+    // The token mask may hold a trailing hex letter for up to 50 ms.
+    await vi.waitFor(() => expect(seen.join("")).toContain("typed by hand"));
   });
 
   it("watches nothing on an older roster, or a Quick Connect", async () => {
