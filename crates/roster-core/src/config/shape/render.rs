@@ -12,6 +12,9 @@ pub const DOC_PATH: &str = "docs/app/options.md";
 pub const STUBS_PATH: &str = "examples/types/roster-config.lua";
 pub const JSON_PATH: &str = "crates/roster-core/tests/fixtures/config-options.json";
 pub const COMMAND: &str = "cargo run -p roster-core --example gen_config_options";
+/// Every example of the reference as one init.lua, which CI type-checks against the stubs with
+/// lua-language-server (examples/config-check/.luarc.json).
+pub const CHECK_PATH: &str = "examples/config-check/init.lua";
 /// The root class of the stubs: every option.
 const ROOT: &str = "roster.config.Options";
 
@@ -532,6 +535,13 @@ fn field(o: &Opt) -> String {
         }
         _ => o.ty.clone(),
     };
+    // A Package spec's source may be its first item instead (`{ "owner/repo", tag = … }`).
+    if o.path == "packages[].source" {
+        return format!(
+            "---@field [1]? string The source, as the spec's first item.\n---@field {name}? {ty} {}\n",
+            hover(o)
+        );
+    }
     format!("---@field {name}{optional} {ty} {}\n", hover(o))
 }
 
@@ -547,6 +557,12 @@ fn doc_comment(s: &mut String, a: &ApiItem) {
         let _ = writeln!(s, "--- {line}");
     }
     s.push_str("--- ```\n");
+    // A method's table is read through a field whose type also names what may be assigned to it
+    // (`string|string[]|roster.o.List`): lua-language-server has no separate type for reading,
+    // so the table the method is called on is taken as any.
+    if a.path.contains(':') {
+        s.push_str("---@param self any\n");
+    }
     for p in a.params.unwrap_or_default() {
         let _ = writeln!(s, "---@param {} {} {}", p.name, p.ty, p.about);
     }
@@ -649,20 +665,39 @@ pub fn stubs() -> String {
             None => {
                 // A value with functions of its own (roster.o) is a table here.
                 let holds = all.iter().any(|b| b.path.starts_with(&format!("{}.", a.path)));
-                let _ = writeln!(
-                    s,
-                    "---@type {}\n{} = {}\n",
-                    a.ty,
-                    a.path,
-                    if holds { "{}" } else { "nil" }
-                );
+                // A value with functions of its own (roster.o) is a class of its own, so they can be
+                // declared on it.
                 if holds {
+                    let _ = writeln!(s, "---@class {} : {}\n{} = {{}}\n", a.path, a.ty, a.path);
                     tables.push(a.path.to_string());
+                } else {
+                    let _ = writeln!(s, "---@type {}\n{} = nil\n", a.ty, a.path);
                 }
             }
         }
     }
     s.push_str("return roster\n");
+    s
+}
+
+/// examples/config-check/init.lua: every example in the reference (the `roster` table's, the
+/// methods', each option's), each in a block of its own, for lua-language-server to check
+/// against the stubs: what `:help` shows type-checks as written.
+pub fn check_lua() -> String {
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "-- Generated from crates/roster-core/src/config/shape by `{COMMAND}`: every example in\n-- the option reference, for lua-language-server to check against {STUBS_PATH}\n-- (CI runs `lua-language-server --check examples/config-check --checklevel=Hint`).\n"
+    );
+    for section in reference().sections {
+        for e in section.entries.iter().filter(|e| !e.example.is_empty()) {
+            let _ = writeln!(s, "-- {}\ndo", e.tag);
+            for line in e.example.lines() {
+                let _ = writeln!(s, "  {line}");
+            }
+            s.push_str("end\n\n");
+        }
+    }
     s
 }
 

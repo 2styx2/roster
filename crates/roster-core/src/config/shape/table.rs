@@ -857,7 +857,7 @@ pub(super) const API: &[ApiItem] = &[
         None,
         "roster.config.Options",
         "Every option, as a table you assign to and read: roster.o.terminal.size = \"16pt\".",
-        "Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch. The table init.lua returns, if any, wins over what roster.o sets.",
+        "Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch; assigning one roster.o table to another option copies what it holds (what init.lua set, else its default), and one that holds neither is an error. The table init.lua returns, if any, wins over what roster.o sets.",
         "roster.o.terminal.size = \"16pt\"\nroster.o.terminal.font:prepend(\"Cascadia Mono\")\nif roster.o.vim then roster.o.keys.leader.p = \"connect esx-02\" end",
     ),
     item(
@@ -986,7 +986,7 @@ pub(super) const API: &[ApiItem] = &[
         "roster.config.Theme?",
         "A copy of init.lua's spec for a Theme, or nil.",
         "Nil for a bundled Theme init.lua didn't change.",
-        "local paper = roster.themes.get(\"paper\")",
+        "local paper = roster.themes.get(\"paper\")\nif paper then print(paper.label) end",
     ),
     item(
         "roster.themes.list",
@@ -1037,7 +1037,7 @@ pub(super) const API: &[ApiItem] = &[
         "roster.config.Package?",
         "A copy of a Package's spec, or nil.",
         "Its source is in source.",
-        "local alerts = roster.packages.get(\"recent-alerts\")",
+        "local alerts = roster.packages.get(\"recent-alerts\")\nif alerts then print(alerts.tag) end",
     ),
     item(
         "roster.packages.list",
@@ -1096,7 +1096,7 @@ pub(super) const API: &[ApiItem] = &[
         "roster.config.Folder?",
         "A copy of a Folder's spec, or nil.",
         "",
-        "local lab = roster.folders.get(\"Lab\")",
+        "local lab = roster.folders.get(\"Lab\")\nif lab then print(#lab.hosts) end",
     ),
     item(
         "roster.folders.list",
@@ -1146,7 +1146,7 @@ pub(super) const METHODS: &[ApiItem] = &[
         "table?",
         "A copy of what init.lua set in an object (a table of named options), or nil.",
         "Defaults aren't in it: only what was set.",
-        "local t = roster.o.terminal:get()",
+        "local t = roster.o.terminal:get()\nif t then print(t.size) end",
     ),
     item(
         "roster.o.Object:reset",
@@ -1162,14 +1162,14 @@ pub(super) const METHODS: &[ApiItem] = &[
         "table?",
         "A copy of a map (a table keyed by names you pick): key → value, or nil when nothing is set.",
         "Read one key with map.KEY; set one with map.KEY = value, remove it with map.KEY = nil.",
-        "local views = roster.o.views:get()",
+        "local views = roster.o.views:get() or {}\nfor id in pairs(views) do print(id) end",
     ),
     item(
         "roster.o.Map:has",
         Some(&[param("key", "string", "A key.")]),
         "boolean",
         "Whether init.lua set this key of a map.",
-        "A key named like a method (has, keys, get, reset) is read with map:get()[KEY].",
+        "A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.",
         "if not roster.o.views:has(\"topology\") then roster.o.views.topology = { place = \"panel\" } end",
     ),
     item(
@@ -1194,7 +1194,7 @@ pub(super) const METHODS: &[ApiItem] = &[
         "any[]?",
         "A copy of a list, or nil when init.lua didn't set it.",
         "",
-        "local fonts = roster.o.terminal.font:get()",
+        "local fonts = roster.o.terminal.font:get()\nif fonts then print(#fonts) end",
     ),
     item(
         "roster.o.List:append",

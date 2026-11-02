@@ -17,7 +17,7 @@
 
 use super::api::{Ctx, roster_table};
 use super::schema::Location;
-use super::store::{ApiEntry, Store};
+use super::store::Write;
 use super::{ConfigError, Env, FILE_NAME, located_message};
 use mlua::chunk::ChunkMode;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
@@ -30,8 +30,10 @@ use std::time::{Duration, Instant};
 pub(crate) struct RunOutput {
     /// The returned table, as JSON (an empty object if the file returned nothing).
     pub value: Json,
-    /// What the `roster` table's calls wrote, in order (config/store.rs).
-    pub api: Vec<ApiEntry>,
+    /// Where each write of the `roster` table's calls was made, in order (config/store.rs).
+    pub api: Vec<Write>,
+    /// What those writes add up to.
+    pub calls: Json,
     /// The Folders the calls added, by name (lower case), with the line that added each.
     pub folders: Vec<(String, Location)>,
     /// Each module the run required, as (its path in the config dir, its text), in load order:
@@ -103,10 +105,7 @@ fn run_here(dir: &Path, source: &str, env: &Env) -> Result<RunOutput, ConfigErro
     // One budget for everything the run hands over as Config data: the copy is made outside
     // Lua's memory and time limits, and shared subtables are copied once per use.
     let budget = Rc::new(Cell::new(Budget::default()));
-    let ctx = Rc::new(Ctx {
-        store: RefCell::new(Store::new()),
-        budget: Rc::clone(&budget),
-    });
+    let ctx = Rc::new(Ctx::new(Rc::clone(&budget)));
     let roster = roster_table(&lua, env, dir, Rc::clone(&ctx)).map_err(internal)?;
     set_api(&lua, roster).map_err(internal)?;
     lua.set_app_data(Modules(RefCell::new(Vec::new())));
@@ -160,12 +159,14 @@ fn run_here(dir: &Path, source: &str, env: &Env) -> Result<RunOutput, ConfigErro
     let store = std::mem::take(&mut *ctx.store.borrow_mut());
     let folders = store
         .named("folders")
-        .into_iter()
-        .filter_map(|(k, at)| at.map(|a| (k, a)))
+        .iter()
+        .filter_map(|(k, at)| at.clone().map(|a| (k.clone(), a)))
         .collect();
+    let (calls, api) = store.into_parts();
     Ok(RunOutput {
         value,
-        api: store.into_entries(),
+        api,
+        calls,
         folders,
         modules,
     })

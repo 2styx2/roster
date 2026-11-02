@@ -77,16 +77,82 @@ fn line_at(source: &str, at: usize) -> u32 {
     (source[..at].matches('\n').count() + 1) as u32
 }
 
-/// The line, at `line` or at most 200 lines above it, where `key` is last assigned (`key =`,
-/// `["key"] =`): where a statement Lua reports at its last line (a table over several lines)
-/// sets `key`, or where a name inside that table is.
-pub(crate) fn key_line_before(source: &str, key: &str, line: u32) -> Option<u32> {
-    let lines: Vec<&str> = source.lines().take(line as usize).collect();
-    let first = lines.len().saturating_sub(201);
-    (first..lines.len())
-        .rev()
-        .find(|&i| find_key(lines[i], key, 0).is_some())
-        .map(|i| i as u32 + 1)
+/// A file's text with where each line starts, kept once per file for a run: the `roster.*`
+/// writes ask it where the statement they come from starts.
+pub(crate) struct SourceIndex {
+    text: String,
+    starts: Vec<usize>,
+}
+
+impl SourceIndex {
+    pub(crate) fn new(text: String) -> Self {
+        let starts = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        SourceIndex { text, starts }
+    }
+
+    /// Line `n` (from 1), without its newline; empty past the end.
+    fn line(&self, n: u32) -> &str {
+        let i = n as usize;
+        if i == 0 || i > self.starts.len() {
+            return "";
+        }
+        let start = self.starts[i - 1];
+        let end = self.starts.get(i).map_or(self.text.len(), |e| e - 1);
+        &self.text[start..end]
+    }
+
+    /// The line the statement Lua reports at `line` starts on. Lua gives an assignment of a
+    /// table over several lines its last line: when that line closes brackets opened above it,
+    /// this walks up to the line that opened them (at most 200 lines). Any other line is its own
+    /// statement's: a later write never moves to an earlier one.
+    pub(crate) fn statement_start(&self, line: u32) -> u32 {
+        let mut open = -brackets(self.line(line));
+        if open <= 0 {
+            return line;
+        }
+        let first = line.saturating_sub(200).max(1);
+        for n in (first..line).rev() {
+            open -= brackets(self.line(n));
+            if open <= 0 {
+                return n;
+            }
+        }
+        line
+    }
+
+    /// The last line from `from` to `to` that assigns `key` (`key =`, `["key"] =`): where a name
+    /// inside a table assigned over several lines is.
+    pub(crate) fn key_line(&self, key: &str, from: u32, to: u32) -> Option<u32> {
+        (from..=to).rev().find(|&n| find_key(self.line(n), key, 0).is_some())
+    }
+}
+
+/// Brackets a line opens (`{`, `(`, `[`) less those it closes, outside strings and comments.
+fn brackets(line: &str) -> i32 {
+    let mut n = 0;
+    let mut quote: Option<char> = None;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == '\\' {
+                    chars.next();
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '-' if chars.peek() == Some(&'-') => break,
+                '{' | '(' | '[' => n += 1,
+                '}' | ')' | ']' => n -= 1,
+                _ => {}
+            },
+        }
+    }
+    n
 }
 
 #[cfg(test)]
@@ -94,11 +160,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_key_is_found_at_or_above_a_line() {
-        let src = "roster.o.fonts = {\n  ui = \"Inter\",\n  szie = 1,\n}\nroster.o.vim = false\n";
-        assert_eq!(key_line_before(src, "fonts", 4), Some(1));
-        assert_eq!(key_line_before(src, "szie", 4), Some(3));
-        assert_eq!(key_line_before(src, "vim", 4), None);
-        assert_eq!(key_line_before(src, "vim", 5), Some(5));
+    fn a_statement_starts_where_its_brackets_open() {
+        let src = "roster.o.fonts = {\n  ui = \"Inter\", -- }\n  szie = 1,\n}\nroster.o.vim = false\nlocal t = { a = \"}\" }\n";
+        let s = SourceIndex::new(src.to_string());
+        assert_eq!(s.statement_start(4), 1);
+        assert_eq!(s.statement_start(5), 5);
+        assert_eq!(s.statement_start(6), 6);
+        assert_eq!(s.key_line("szie", 1, 4), Some(3));
+        assert_eq!(s.key_line("vim", 1, 4), None);
     }
 }

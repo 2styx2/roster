@@ -216,7 +216,8 @@
 
 --- A Package spec: { SOURCE, tag = …, config = { … } }, or just SOURCE.
 ---@class roster.config.Package
----@field source string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path.
+---@field [1]? string The source, as the spec's first item.
+---@field source? string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path.
 ---@field name? string Its name (its folder and its line in roster.lock); the repo's (or dir's) name when left out.
 ---@field tag? string The tag to pin. At most one of tag, branch and commit; none means the default branch.
 ---@field branch? string The branch to follow.
@@ -365,7 +366,9 @@ local roster_o_Object = {}
 ---
 --- ```lua
 --- local t = roster.o.terminal:get()
+--- if t then print(t.size) end
 --- ```
+---@param self any
 ---@return table?
 function roster_o_Object:get() end
 
@@ -374,6 +377,7 @@ function roster_o_Object:get() end
 --- ```lua
 --- roster.o.terminal:reset()
 --- ```
+---@param self any
 function roster_o_Object:reset() end
 
 --- What roster.o gives for a map (a table keyed by names you pick): its table, with these methods.
@@ -384,17 +388,20 @@ local roster_o_Map = {}
 --- Read one key with map.KEY; set one with map.KEY = value, remove it with map.KEY = nil.
 ---
 --- ```lua
---- local views = roster.o.views:get()
+--- local views = roster.o.views:get() or {}
+--- for id in pairs(views) do print(id) end
 --- ```
+---@param self any
 ---@return table?
 function roster_o_Map:get() end
 
 --- Whether init.lua set this key of a map.
---- A key named like a method (has, keys, get, reset) is read with map:get()[KEY].
+--- A key named like a method (get, has, keys, reset) reads as that key once init.lua has set it, and as the method until then; roster.o.reset(name) always resets.
 ---
 --- ```lua
 --- if not roster.o.views:has("topology") then roster.o.views.topology = { place = "panel" } end
 --- ```
+---@param self any
 ---@param key string A key.
 ---@return boolean
 function roster_o_Map:has(key) end
@@ -404,6 +411,7 @@ function roster_o_Map:has(key) end
 --- ```lua
 --- for _, id in ipairs(roster.o.themes:keys()) do print(id) end
 --- ```
+---@param self any
 ---@return string[]
 function roster_o_Map:keys() end
 
@@ -412,6 +420,7 @@ function roster_o_Map:keys() end
 --- ```lua
 --- roster.o.views:reset()
 --- ```
+---@param self any
 function roster_o_Map:reset() end
 
 --- What roster.o gives for a list: its table, with these methods.
@@ -422,7 +431,9 @@ local roster_o_List = {}
 ---
 --- ```lua
 --- local fonts = roster.o.terminal.font:get()
+--- if fonts then print(#fonts) end
 --- ```
+---@param self any
 ---@return any[]?
 function roster_o_List:get() end
 
@@ -432,6 +443,7 @@ function roster_o_List:get() end
 --- ```lua
 --- roster.o.terminal.font:append("Fira Code")
 --- ```
+---@param self any
 ---@param ... any Items to add.
 function roster_o_List:append(...) end
 
@@ -441,6 +453,7 @@ function roster_o_List:append(...) end
 --- ```lua
 --- roster.o.terminal.font:prepend("Cascadia Mono")
 --- ```
+---@param self any
 ---@param ... any Items to add.
 function roster_o_List:prepend(...) end
 
@@ -450,6 +463,7 @@ function roster_o_List:prepend(...) end
 --- ```lua
 --- roster.o.modes.standard.sidebar.sections:insert(1, "folders")
 --- ```
+---@param self any
 ---@param i integer The position, from 1 to the list's length + 1.
 ---@param value any The item.
 function roster_o_List:insert(i, value) end
@@ -460,6 +474,7 @@ function roster_o_List:insert(i, value) end
 --- ```lua
 --- roster.o.terminal.font:remove("Iosevka Term")
 --- ```
+---@param self any
 ---@param ... any Items to take out (for folders and packages, a name will do).
 function roster_o_List:remove(...) end
 
@@ -468,6 +483,7 @@ function roster_o_List:remove(...) end
 --- ```lua
 --- if not roster.o.terminal.font:has("Hack") then roster.o.terminal.font:append("Hack") end
 --- ```
+---@param self any
 ---@param value any An item (for folders and packages, a name will do).
 ---@return boolean
 function roster_o_List:has(value) end
@@ -477,6 +493,7 @@ function roster_o_List:has(value) end
 --- ```lua
 --- roster.o.terminal.font:clear()
 --- ```
+---@param self any
 function roster_o_List:clear() end
 
 --- Puts a list back to its default.
@@ -484,6 +501,7 @@ function roster_o_List:clear() end
 --- ```lua
 --- roster.o.terminal.font:reset()
 --- ```
+---@param self any
 function roster_o_List:reset() end
 
 --- init.lua's `roster` table. A Plugin's is another one (types/roster.lua).
@@ -528,14 +546,14 @@ roster.version = nil
 roster.config_dir = nil
 
 --- Every option, as a table you assign to and read: roster.o.terminal.size = "16pt".
---- Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch. The table init.lua returns, if any, wins over what roster.o sets.
+--- Nested objects need no setup. An unknown name is an error at its line, with the name meant; a value of the wrong type too. Reading an option gives the value set so far (a copy), or nil; reading an object, a map or a list gives its table, with the methods its kind has (roster.o.Object, roster.o.Map, roster.o.List). Assigning a whole table replaces that branch; assigning one roster.o table to another option copies what it holds (what init.lua set, else its default), and one that holds neither is an error. The table init.lua returns, if any, wins over what roster.o sets.
 ---
 --- ```lua
 --- roster.o.terminal.size = "16pt"
 --- roster.o.terminal.font:prepend("Cascadia Mono")
 --- if roster.o.vim then roster.o.keys.leader.p = "connect esx-02" end
 --- ```
----@type roster.config.Options
+---@class roster.o : roster.config.Options
 roster.o = {}
 
 --- Puts an option back to its default: what init.lua set there is taken away.
@@ -637,6 +655,7 @@ function roster.themes.remove(id) end
 ---
 --- ```lua
 --- local paper = roster.themes.get("paper")
+--- if paper then print(paper.label) end
 --- ```
 ---@param id string A Theme's id.
 ---@return roster.config.Theme?
@@ -685,6 +704,7 @@ function roster.packages.update(name, fields) end
 ---
 --- ```lua
 --- local alerts = roster.packages.get("recent-alerts")
+--- if alerts then print(alerts.tag) end
 --- ```
 ---@param name string Its name (letter case aside).
 ---@return roster.config.Package?
@@ -741,6 +761,7 @@ function roster.folders.update(name, fields) end
 ---
 --- ```lua
 --- local lab = roster.folders.get("Lab")
+--- if lab then print(#lab.hosts) end
 --- ```
 ---@param name string Its name (letter case aside).
 ---@return roster.config.Folder?
