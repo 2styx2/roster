@@ -1468,7 +1468,8 @@ fn a_bare_table_without_return_is_a_syntax_error_at_its_line() {
 }
 
 /// Ticket 139: among `roster.*` calls the last one wins (a base module, then an override), and
-/// the returned table still wins over every call.
+/// the returned table still wins over every call. A Theme is defined once and then updated
+/// (ticket 142: a second define is an error naming both lines).
 #[test]
 fn the_last_roster_call_wins() {
     let dir = with_init(
@@ -1478,7 +1479,7 @@ roster.keymap.set("leader", "p", "close")
 roster.themes.define("mine", { base = "nord", colors = { accent = "#111111" } })
 roster.set("terminal.size", "16pt")
 roster.keymap.set("leader", "p", "next")
-roster.themes.define("mine", { base = "nord", colors = { accent = "#222222" } })
+roster.themes.update("mine", { colors = { accent = "#222222" } })
 roster.set("vim", false)
 roster.set("vim", true)
 return { vim = false }

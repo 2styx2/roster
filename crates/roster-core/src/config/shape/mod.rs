@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 /// `roster.folders.add`) are in this version's runtime. Their declarations are below already;
 /// while this is false, the reference, the topics and the stubs leave them out and show
 /// `roster.set` in examples instead of `roster.o`. Flip it with the runtime and regenerate.
-pub const NEOVIM_STYLE: bool = false;
+pub const NEOVIM_STYLE: bool = true;
 
 /// What sits at a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,15 +43,24 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// What `roster.o` lets init.lua do with a value of this kind, besides assigning it: a map's
-    /// keys, a list's items, any value's reset to its default. The reference lists them once the
-    /// Neovim-style names are in.
+    /// The methods a `roster.o` table of this kind has (`roster.o.terminal.font:append(…)`),
+    /// besides assigning and reading it. A leaf is a plain value: `roster.o.reset(name)` resets it.
     pub fn methods(self) -> &'static [&'static str] {
         match self {
-            Kind::Object => &["get", "set", "reset"],
-            Kind::Map => &["get", "set", "remove", "has", "keys", "reset"],
-            Kind::List => &["append", "prepend", "insert", "remove", "has", "clear", "reset"],
-            Kind::Leaf => &["get", "set", "reset"],
+            Kind::Object => &["get", "reset"],
+            Kind::Map => &["get", "has", "keys", "reset"],
+            Kind::List => &["get", "append", "prepend", "insert", "remove", "has", "clear", "reset"],
+            Kind::Leaf => &[],
+        }
+    }
+
+    /// The LuaCATS class of a `roster.o` table of this kind, whose methods its help lists.
+    pub fn class(self) -> Option<&'static str> {
+        match self {
+            Kind::Object => Some("roster.o.Object"),
+            Kind::Map => Some("roster.o.Map"),
+            Kind::List => Some("roster.o.List"),
+            Kind::Leaf => None,
         }
     }
 
@@ -133,6 +142,9 @@ pub struct Opt {
     /// One of many names of the same kind (a colour token): listed in its parent's entry instead
     /// of having one of its own.
     pub brief: bool,
+    /// A list that takes each item once (`terminal.font`, `folders[].hosts`): a repeat is an
+    /// error at its line. `folders` and `packages` take each name once.
+    pub unique: bool,
 }
 
 impl Opt {
@@ -271,6 +283,17 @@ fn distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
+/// The Themes the app comes with, by id (app/src/theme/themes.ts `bundledThemes`, which a test
+/// there checks against this): `roster.themes.update` can change them, and `list` names them.
+pub const BUNDLED_THEMES: &[&str] = &[
+    "roster-dark",
+    "roster-light",
+    "gruvbox",
+    "nord",
+    "catppuccin-mocha",
+    "tokyo-night",
+];
+
 // ---------------------------------------------------------------- the `roster` table
 
 /// A name in init.lua's `roster` table (config/lua.rs `roster_api`). A Plugin's `roster` is
@@ -325,6 +348,11 @@ pub fn api() -> impl Iterator<Item = &'static ApiItem> {
 /// Every name, with the Neovim-style ones this version may not have yet.
 pub fn api_all() -> &'static [ApiItem] {
     table::API
+}
+
+/// The methods of `roster.o`'s tables (`roster.o.List:append`), by [`Kind::class`].
+pub fn methods() -> impl Iterator<Item = &'static ApiItem> {
+    table::METHODS.iter().filter(|a| NEOVIM_STYLE || !a.neovim_style)
 }
 
 #[cfg(test)]

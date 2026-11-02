@@ -2,6 +2,7 @@
 // and where it was set: what `:options` lists and `:help options` shows beside each entry.
 import { describe, expect, it } from "vitest";
 import { configWith, defaultConfig } from "./fixture";
+import { bundledThemes } from "../theme/themes";
 import { optionRows, reference } from "./reference";
 
 const row = (rows: ReturnType<typeof optionRows>, name: string) => rows.find((r) => r.name === name);
@@ -14,6 +15,18 @@ describe("the reference's data", () => {
     expect(size?.takes).toBe("6 to 72 px (4.5 to 54 pt)");
     expect(entries.find((e) => e.tag === "roster.keymap.set")?.heading).toBe("roster.keymap.set(context, keys, action)");
     expect(entries.find((e) => e.tag === "roster.config.Theme")?.what).toBe("type");
+  });
+
+  it("lists what roster.o does with each option, by kind, and documents each method", () => {
+    const entries = reference.sections.flatMap((s) => s.entries);
+    expect(entries.find((e) => e.tag === "terminal.font")?.methods).toContain(":append(value, …)");
+    expect(entries.find((e) => e.tag === "views")?.methods).toContain(":has(key)");
+    expect(entries.find((e) => e.tag === "terminal.size")?.methods).toContain('roster.o.reset("terminal.size")');
+    expect(entries.find((e) => e.tag === "roster.o.List:append")?.heading).toBe("roster.o.List:append(...)");
+  });
+
+  it("names the same bundled Themes as the app has (roster.themes.list)", () => {
+    expect(reference.bundledThemes).toEqual(bundledThemes.map((t) => t.id));
   });
 });
 

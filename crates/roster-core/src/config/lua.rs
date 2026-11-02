@@ -15,7 +15,9 @@
 //! registrations go into the same places as the returned table's values, and from there through
 //! the frontend's registries.
 
+use super::api::{Ctx, roster_table};
 use super::schema::Location;
+use super::store::{ApiEntry, Store};
 use super::{ConfigError, Env, FILE_NAME, located_message};
 use mlua::chunk::ChunkMode;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
@@ -25,17 +27,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// What the API calls registered, by schema path (`keys.leader.x`), with where they were made.
-pub(crate) struct ApiEntry {
-    pub path: Vec<String>,
-    pub value: Json,
-    pub at: Option<Location>,
-}
-
 pub(crate) struct RunOutput {
     /// The returned table, as JSON (an empty object if the file returned nothing).
     pub value: Json,
+    /// What the `roster` table's calls wrote, in order (config/store.rs).
     pub api: Vec<ApiEntry>,
+    /// The Folders the calls added, by name (lower case), with the line that added each.
+    pub folders: Vec<(String, Location)>,
     /// Each module the run required, as (its path in the config dir, its text), in load order:
     /// where a value the file didn't set itself may have come from (ticket 140).
     pub modules: Vec<(String, String)>,
@@ -43,6 +41,19 @@ pub(crate) struct RunOutput {
 
 /// Where `require` writes down the modules a Config run reads (only a Config run sets it).
 struct Modules(RefCell<Vec<(String, String)>>);
+
+/// init.lua's text, during a Config run.
+struct InitSource(String);
+
+/// The text of a file the Config run has read (`init.lua`, `lua/keys.lua`).
+pub(crate) fn source_of(lua: &Lua, file: &str) -> Option<String> {
+    if file == FILE_NAME {
+        return lua.app_data_ref::<InitSource>().map(|s| s.0.clone());
+    }
+    let modules = lua.app_data_ref::<Modules>()?;
+    let all = modules.0.borrow();
+    all.iter().find(|(f, _)| f == file).map(|(_, s)| s.clone())
+}
 
 /// A Lua value that can't become Config data, with where it is in the table.
 pub(crate) struct ConvertError {
@@ -89,13 +100,17 @@ fn run_here(dir: &Path, source: &str, env: &Env) -> Result<RunOutput, ConfigErro
     let (lua, clock) = sandboxed(env.limits.memory, Some(dir), FILE_NAME.into()).map_err(internal)?;
     clock.start(env.limits.time);
 
-    let api = Rc::new(RefCell::new(Vec::new()));
     // One budget for everything the run hands over as Config data: the copy is made outside
     // Lua's memory and time limits, and shared subtables are copied once per use.
     let budget = Rc::new(Cell::new(Budget::default()));
-    let roster = roster_api(&lua, env, Rc::clone(&api), Rc::clone(&budget)).map_err(internal)?;
+    let ctx = Rc::new(Ctx {
+        store: RefCell::new(Store::new()),
+        budget: Rc::clone(&budget),
+    });
+    let roster = roster_table(&lua, env, dir, Rc::clone(&ctx)).map_err(internal)?;
     set_api(&lua, roster).map_err(internal)?;
     lua.set_app_data(Modules(RefCell::new(Vec::new())));
+    lua.set_app_data(InitSource(source.to_string()));
 
     // A block, as Lua runs a file (ticket 138): `eval` would first try `return <file>`, so a
     // one-line `require("x")` would return what the module returned (`true` for nothing).
@@ -138,12 +153,22 @@ fn run_here(dir: &Path, source: &str, env: &Env) -> Result<RunOutput, ConfigErro
             ));
         }
     };
-    let api = std::mem::take(&mut *api.borrow_mut());
     let modules = lua
         .remove_app_data::<Modules>()
         .map(|m| m.0.into_inner())
         .unwrap_or_default();
-    Ok(RunOutput { value, api, modules })
+    let store = std::mem::take(&mut *ctx.store.borrow_mut());
+    let folders = store
+        .named("folders")
+        .into_iter()
+        .filter_map(|(k, at)| at.map(|a| (k, a)))
+        .collect();
+    Ok(RunOutput {
+        value,
+        api: store.into_entries(),
+        folders,
+        modules,
+    })
 }
 
 /// The run time a sandboxed Lua has left: a deadline checked every 1000 instructions. Plugins
@@ -359,90 +384,12 @@ fn sandbox(lua: &Lua, dir: Option<&Path>, clock: Rc<Clock>, label: String) -> ml
     Ok(())
 }
 
-/// The `roster` table: facts about the machine, and registration functions shaped like the
-/// Plugin API to come (ticket 23): `roster.keymap.set`, `roster.themes.define`, `roster.set`.
-fn roster_api(lua: &Lua, env: &Env, api: Rc<RefCell<Vec<ApiEntry>>>, budget: Rc<Cell<Budget>>) -> mlua::Result<Table> {
-    let roster = lua.create_table()?;
-    roster.raw_set("os", env.os.as_str())?;
-    roster.raw_set("api_version", super::API_VERSION)?;
-
-    let keymap = lua.create_table()?;
-    let entries = Rc::clone(&api);
-    let left = Rc::clone(&budget);
-    keymap.raw_set(
-        "set",
-        lua.create_function(move |lua, (context, keys, action): (String, String, Value)| {
-            if matches!(action, Value::Function(_)) {
-                return Err(mlua::Error::runtime(
-                    "roster.keymap.set: the action is a command line such as \"close\" (Lua functions as actions come with Plugins)",
-                ));
-            }
-            let value = to_json(&action, &left).map_err(|e| mlua::Error::runtime(e.message))?;
-            entries.borrow_mut().push(ApiEntry {
-                path: vec!["keys".into(), context, keys],
-                value,
-                at: caller(lua),
-            });
-            Ok(())
-        })?,
-    )?;
-    roster.raw_set("keymap", keymap)?;
-
-    let themes = lua.create_table()?;
-    let entries = Rc::clone(&api);
-    let theme_budget = Rc::clone(&budget);
-    themes.raw_set(
-        "define",
-        lua.create_function(move |lua, (id, theme): (String, Table)| {
-            let value = to_json(&Value::Table(theme), &theme_budget)
-                .map_err(|e| mlua::Error::runtime(located_message(&e.path, &e.message)))?;
-            entries.borrow_mut().push(ApiEntry {
-                path: vec!["themes".into(), id],
-                value,
-                at: caller(lua),
-            });
-            Ok(())
-        })?,
-    )?;
-    roster.raw_set("themes", themes)?;
-
-    // `roster.set("terminal.size", "16pt")`: any option by its dotted name, under what the
-    // returned table sets (`:config import-terminal` writes these, ticket 33).
-    let entries = Rc::clone(&api);
-    let left = Rc::clone(&budget);
-    roster.raw_set(
-        "set",
-        lua.create_function(move |lua, (name, value): (String, Value)| {
-            let path: Vec<String> = name.split('.').map(str::to_string).collect();
-            if path.iter().any(|p| p.is_empty()) {
-                return Err(mlua::Error::runtime(format!(
-                    "roster.set: {name:?} isn't an option name like \"terminal.size\""
-                )));
-            }
-            let value = if name == "packages" {
-                packages_table(lua, value).map_err(|(p, m)| mlua::Error::runtime(located_message(&p, &m)))?
-            } else {
-                value
-            };
-            let value =
-                to_json(&value, &left).map_err(|e| mlua::Error::runtime(located_message(&e.path, &e.message)))?;
-            entries.borrow_mut().push(ApiEntry {
-                path,
-                value,
-                at: caller(lua),
-            });
-            Ok(())
-        })?,
-    )?;
-    Ok(roster)
-}
-
 /// `packages` as the schema takes it (ticket 24): each entry written the lazy.nvim way,
 /// `{ "owner/repo", tag = … }` or a plain `"owner/repo"`, becomes `{ source = "owner/repo",
 /// tag = … }`. Anything else is left for the schema to report. A `config` that's a function is
 /// refused here, with a reason: init.lua and each Package run in Lua states of their own, and a
 /// function can't move between them (decision Q83).
-fn packages_table(lua: &Lua, packages: Value) -> Result<Value, (Vec<String>, String)> {
+pub(crate) fn packages_table(lua: &Lua, packages: Value) -> Result<Value, (Vec<String>, String)> {
     let Value::Table(list) = packages else {
         return Ok(packages);
     };
@@ -512,16 +459,6 @@ fn packages_table(lua: &Lua, packages: Value) -> Result<Value, (Vec<String>, Str
         }
     }
     Ok(Value::Table(out))
-}
-
-/// Where the Lua code that called a Rust function is.
-pub(crate) fn caller(lua: &Lua) -> Option<Location> {
-    lua.inspect_stack(1, |d| {
-        let file = d.source().short_src.map(|s| s.to_string())?;
-        let line = u32::try_from(d.current_line()?).ok()?;
-        Some(Location { file, line })
-    })
-    .flatten()
 }
 
 fn require(lua: &Lua, root: &Path, name: &str, place: &str) -> mlua::Result<Value> {

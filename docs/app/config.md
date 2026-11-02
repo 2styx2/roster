@@ -48,17 +48,29 @@ The Lua code runs in the Rust core, which never holds a secret (docs/app/securit
 
 ## The `roster` table
 
-A global, and also `require("roster")`. It's kept small. A Plugin gets the same module with more in it: commands, Sidebar sections, finders, status segments, events ([plugins.md](../plugins.md)).
+A global, and also `require("roster")`. A Plugin gets another table with more in it: commands, Sidebar sections, finders, status segments, events ([plugins.md](../plugins.md)); none of the names below reaches it. The [option reference](options.md#the-roster-table) has each name with its parameters and an example (`:help roster.o`, `:help roster.folders.add`).
 
 | Name | What |
 |---|---|
-| `roster.os` | `"windows"`, `"linux"` or `"macos"`, for `if roster.os == "windows" then … end` |
-| `roster.api_version` | `4`. Raised when this module changes (it went to 2 with Plugins, to 3 with more for Plugins and to 4 with the `command_done` event; nothing in `init.lua`'s changed) |
-| `roster.keymap.set(context, keys, action)` | A key binding, as in `keys` below. `action` is a command line, or `false` to unbind |
-| `roster.themes.define(id, theme)` | A Theme, as in `themes` below |
-| `roster.set(name, value)` | Any option by its dotted name: `roster.set("terminal.size", "16pt")`. What `:config import-terminal` writes |
+| `roster.os`, `roster.version`, `roster.config_dir`, `roster.api_version` | Read-only: the OS (`"windows"`, `"linux"` or `"macos"`), the app's version, the config folder, and the table's version (`4`, shared with the Plugin API) |
+| `roster.o` | Every option, Neovim style: `roster.o.terminal.size = "16pt"`. Nested objects need no setup; reading gives the value set so far (a copy) or nil, so `if roster.o.vim then` works; `roster.o.reset("terminal.size")` puts one back to its default |
+| `roster.set(name, value)` | Any option by its dotted name: `roster.set("terminal.size", "16pt")`. The same store as `roster.o`. What `:config import-terminal` writes |
+| `roster.keymap` | `set(context, keys, action)`, `del(context, keys)`, `get(context, keys)`, `list(context)`: key bindings, as in `keys` below. `action` is a command line, or `false` to unbind one of roster's |
+| `roster.themes` | `define(id, theme)`, `update(id, fields)` (yours or a bundled one), `remove(id)` (yours), `get(id)`, `list()`: Themes, as in `themes` below |
+| `roster.packages` | `add(spec, …)`, `remove(name)`, `update(name, fields)`, `get(name)`, `list()`, `has(name)`: Packages, as in `packages` below. Fetching stays a command (`:packages update`) |
+| `roster.folders` | `add(folder, …)`, `remove(name)`, `update(name, fields)`, `get(name)`, `list()`, `has(name)`, `add_hosts(name, hosts)`, `remove_hosts(name, hosts)`: Folders, as in `folders` below |
 
-Calls and the returned table go to the same place. Among calls, the last one wins, as in Neovim: a base module and then a module of overrides works, and a later call replaces whatever earlier calls put at its name (`roster.set("terminal", { … })` replaces an earlier `roster.set("terminal.size", …)`, and a later `roster.set("terminal.size", …)` changes just that value). If the returned table and a call set the same option, key or Theme, the returned table wins. A call's errors point at the call's line.
+**What `roster.o` gives back.** An option that holds a value reads as that value. An object (`roster.o.terminal`), a map (`roster.o.views`, `roster.o.keys.leader`) or a list (`roster.o.terminal.font`) reads as its table, with methods for its kind, called with a colon:
+
+- an object: `:get()` (a copy of what's set in it, or nil) and `:reset()`;
+- a map: `m.KEY = value`, `m.KEY`, `m.KEY = nil` (takes it away), `:has(key)`, `:keys()`, `:get()`, `:reset()`;
+- a list: assign the whole list, `:get()`, `:append(v, …)`, `:prepend(v, …)`, `:insert(i, v)`, `:remove(v)`, `:has(v)`, `:clear()`, `:reset()`. An unset list starts from its default (`roster.o.terminal.font:prepend("Cascadia Mono")` keeps the default fonts after it). A list that takes each item once (`terminal.font`, sidebar sections, a Folder's Hosts) refuses a repeat. `statusbar` and `toolbar` are `true` (all of them) until you assign a list.
+
+Each option's entry in the reference lists what its kind takes. A list's items (a Folder, a Package) change through their list's functions, or by assigning the list.
+
+**Checked at the line.** A name the Config doesn't have is an error at the line that wrote it, with the name meant (`lua/opts.lua:3: terminal.szie isn't an option (did you mean terminal.size?)`), and so is a value of the wrong type. A table assigned whole (`roster.o.terminal = { … }`) is checked the same way and replaces that branch. A second Package or Folder with the same name, or a second `roster.themes.define` of an id, is an error naming both lines; removing or changing something that isn't there is an error too, never a silent no-op ([errors](errors.md#initluas-roster-table)). What only the whole Config can tell (a range, a Windows path with the WSL backend) is checked once it has run, and still names the line that set it. Reads (`roster.packages.get`, `roster.o.terminal:get()`) are copies: changing one changes nothing until you write it back.
+
+**One store.** `roster.o`, `roster.set` and the collections write to the same place, and the last write wins, as in Neovim: a base module and then a module of overrides works, and a later write replaces whatever earlier ones put at its name (`roster.o.terminal = { … }` replaces an earlier `roster.o.terminal.size`, and a later `roster.o.terminal.size` changes just that value). Every write keeps its file and line, so `:options` and errors name it even for a value inside a table (`roster.o.fonts = { ui = … }`) or a module's table (`roster.o.terminal = require("term")`). If init.lua also returns a table and it sets the same option, key or Theme, the returned table wins.
 
 ## Options
 

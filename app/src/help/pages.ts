@@ -370,6 +370,7 @@ function optionsPage(ctx: HelpContext): Block[] {
       const meta: Inline[] = [];
       if (e.written) meta.push(code(e.written));
       if (e.ty && e.what !== "function") meta.push(code(e.ty));
+      if (e.ty && e.what === "function") meta.push(text("returns"), code(e.ty));
       if (e.default) meta.push(text("default"), e.default === "unset" || e.default === "required" ? text(e.default) : code(e.default));
       if (row) meta.push(text("now"), code(row.value), row.where.includes(":") && !row.where.startsWith("State") ? code(row.where) : text(`(${row.where})`));
       const body: Inline[] = spans(e.about);
@@ -381,7 +382,7 @@ function optionsPage(ctx: HelpContext): Block[] {
         e.fields.forEach((f, k) => body.push(...(k ? [text(", ")] : []), link(optionTag(f), [code(last(f))])));
         body.push(text("."));
       }
-      const more: Inline[] = e.methods.length ? [text("Methods: "), code(e.methods.join(", "))] : [];
+      const more: Inline[] = e.methods.length ? [text("Methods: "), code(e.methods.join(" · "))] : [];
       out.push({ t: "defs", items: [{ anchor: optionTag(e.tag), term: [code(e.heading)], meta, body, ...(more.length ? { more } : {}) }] });
       if (e.rows.length) {
         const fn = e.what === "function";

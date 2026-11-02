@@ -15,11 +15,12 @@
 -- `require` loads only files from this folder (`require("keys")` reads keys.lua or lua/keys.lua).
 -- It never sees a password: the app's core holds none (docs/app/security.md).
 
--- `roster` is the app's Lua table (also `require("roster")`):
---   roster.os                              "windows", "linux" or "macos"
---   roster.api_version                     1
+-- `roster` is the app's Lua table (also `require("roster")`); `:help roster.o` has it all:
+--   roster.os, roster.version              "windows", "linux" or "macos"; the app's version
+--   roster.o.terminal.size = "16pt"        any option, Neovim style (instead of the table below)
 --   roster.keymap.set(context, keys, action) a key binding, like `keys` below
 --   roster.themes.define(id, theme)        a Theme, like `themes` below
+--   roster.packages.add(spec, ...)         Packages, roster.folders.add(folder, ...) Folders
 local on_windows = roster.os == "windows"
 
 -- A Theme of your own, here as a call (it could equally go in `themes` below). It starts from a

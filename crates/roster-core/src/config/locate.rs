@@ -76,3 +76,29 @@ fn in_comment(source: &str, at: usize) -> bool {
 fn line_at(source: &str, at: usize) -> u32 {
     (source[..at].matches('\n').count() + 1) as u32
 }
+
+/// The line, at `line` or at most 200 lines above it, where `key` is last assigned (`key =`,
+/// `["key"] =`): where a statement Lua reports at its last line (a table over several lines)
+/// sets `key`, or where a name inside that table is.
+pub(crate) fn key_line_before(source: &str, key: &str, line: u32) -> Option<u32> {
+    let lines: Vec<&str> = source.lines().take(line as usize).collect();
+    let first = lines.len().saturating_sub(201);
+    (first..lines.len())
+        .rev()
+        .find(|&i| find_key(lines[i], key, 0).is_some())
+        .map(|i| i as u32 + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_is_found_at_or_above_a_line() {
+        let src = "roster.o.fonts = {\n  ui = \"Inter\",\n  szie = 1,\n}\nroster.o.vim = false\n";
+        assert_eq!(key_line_before(src, "fonts", 4), Some(1));
+        assert_eq!(key_line_before(src, "szie", 4), Some(3));
+        assert_eq!(key_line_before(src, "vim", 4), None);
+        assert_eq!(key_line_before(src, "vim", 5), Some(5));
+    }
+}

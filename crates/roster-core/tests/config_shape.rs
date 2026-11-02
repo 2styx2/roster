@@ -260,6 +260,7 @@ fn the_roster_table_has_what_the_shape_declares() {
             names[#names + 1] = "roster." .. k
           end
         end
+        if type(roster.o.reset) == "function" then names[#names + 1] = "roster.o.reset" end
         table.sort(names)
         return { theme = table.concat(names, ",") }
     "#;
@@ -312,7 +313,7 @@ fn the_reference_has_an_entry_for_every_option_and_roster_name() {
 fn the_stubs_are_lua_and_declare_every_option() {
     let stubs = shape::stubs();
     mlua::Lua::new().load(&stubs).exec().expect("the stubs run as Lua");
-    assert!(stubs.contains("---@class roster.config.Terminal\n"));
+    assert!(stubs.contains("---@class roster.config.Terminal : roster.o.Object\n"));
     assert!(stubs.contains("---@field size? number|string "));
     assert!(stubs.contains("---| \"terminal.size\"\n"));
     assert!(stubs.contains("function roster.keymap.set(context, keys, action) end"));
@@ -504,5 +505,187 @@ fn the_shape_declares_nothing_the_schema_lacks() {
             "{} isn't in the schema",
             o.path
         );
+    }
+}
+
+// ---------------------------------------------------------------- roster.o, everywhere (ticket 142)
+
+/// A Lua expression for the `roster.o` table or value at `path`: a map's key is `x`.
+fn accessor(o: &Opt) -> String {
+    let mut out = "roster.o".to_string();
+    for seg in o.segments() {
+        let seg = if seg == "*" { "x" } else { seg };
+        out.push_str(&format!("[{seg:?}]"));
+    }
+    out
+}
+
+/// Every option roster.o reaches (all but a list's items) has its kind's whole method set at
+/// runtime, and takes its example, reads it back and resets it.
+#[test]
+fn every_option_roster_o_reaches_has_its_methods_and_takes_its_example() {
+    let mut lua = String::from(
+        "local failed = {}\nlocal function check(name, f) local ok, e = pcall(f) if not ok then failed[#failed + 1] = name .. \": \" .. tostring(e) end end\n",
+    );
+    let mut count = 0;
+    for o in shape::options().iter().filter(|o| !o.path.contains("[]")) {
+        count += 1;
+        let at = accessor(o);
+        let concrete = o.path.replace(".*", ".x");
+        for m in o.kind.methods() {
+            lua.push_str(&format!(
+                "check({:?}, function() assert(type({at}[{m:?}]) == \"function\", \"no :{m}\") end)\n",
+                format!("{}:{m}", o.path)
+            ));
+        }
+        if !o.example.is_empty() {
+            let read = if o.kind == Kind::Leaf {
+                at.clone()
+            } else {
+                format!("{at}:get()")
+            };
+            lua.push_str(&format!(
+                "check({:?}, function() {at} = {}; assert({read} ~= nil, \"reads back nil\"); roster.o.reset({concrete:?}); assert({read} == nil, \"still set after reset\") end)\n",
+                o.path, o.example
+            ));
+        }
+    }
+    lua.push_str("return { theme = \"checked\\n\" .. table.concat(failed, \"\\n\") }\n");
+    let theme = load(&lua).unwrap_or_else(|e| panic!("{e}")).theme;
+    let failed = theme.strip_prefix("checked\n").unwrap_or(&theme);
+    assert!(count > 100);
+    assert!(failed.is_empty(), "{failed}");
+}
+
+/// Every option's reference entry (or its type's) says what roster.o does with it, by kind.
+#[test]
+fn every_option_lists_its_kinds_methods_in_its_entry() {
+    let r = shape::reference();
+    let entries: Vec<&shape::Entry> = r.sections.iter().flat_map(|s| &s.entries).collect();
+    for o in shape::options()
+        .iter()
+        .filter(|o| o.is_entry() && !o.path.contains("[]"))
+    {
+        let tag = if o.is_item() {
+            o.class.unwrap().to_string()
+        } else {
+            o.path.clone()
+        };
+        let e = entries
+            .iter()
+            .find(|e| e.tag == tag)
+            .unwrap_or_else(|| panic!("no entry {tag}"));
+        assert!(!e.methods.is_empty(), "{tag}: no methods listed");
+        for m in o.kind.methods() {
+            assert!(
+                e.methods.iter().any(|u| u.starts_with(&format!(":{m}("))),
+                "{tag}: :{m} isn't listed"
+            );
+        }
+    }
+}
+
+/// Each method a kind has is declared once, under its kind's class: a help entry and a stub.
+#[test]
+fn every_kinds_methods_are_declared() {
+    let declared: Vec<&str> = shape::methods().map(|m| m.path).collect();
+    for kind in [Kind::Object, Kind::Map, Kind::List] {
+        for m in kind.methods() {
+            let path = format!("{}:{m}", kind.class().unwrap());
+            assert!(declared.contains(&path.as_str()), "{path} isn't declared");
+        }
+    }
+    assert_eq!(
+        declared.len(),
+        [Kind::Object, Kind::Map, Kind::List]
+            .iter()
+            .map(|k| k.methods().len())
+            .sum::<usize>()
+    );
+}
+
+/// No object has an option named like one of its methods (the option would hide it).
+#[test]
+fn no_option_is_named_like_a_method() {
+    for o in shape::options().iter().filter(|o| o.kind == Kind::Object) {
+        for c in shape::children(o) {
+            let name = c.segments().last().copied().unwrap_or_default();
+            assert!(
+                !Kind::Object.methods().contains(&name),
+                "{} is named like a method",
+                c.path
+            );
+        }
+    }
+}
+
+/// Every function, value and method of the `roster` table and roster.o's tables has a help entry
+/// (summary, signature, what it expects, an example) and a stub with the same summary.
+#[test]
+fn every_function_field_and_method_has_its_help_and_its_stub() {
+    let md = shape::markdown();
+    let stubs = shape::stubs();
+    for a in shape::api().chain(shape::methods()) {
+        assert!(
+            !a.about.is_empty() && !a.example.is_empty(),
+            "{}: no summary or example",
+            a.path
+        );
+        assert!(
+            md.contains(&format!("### `{}`\n", a.signature())),
+            "{}: no help entry",
+            a.path
+        );
+        assert!(
+            stubs.contains(&format!("--- {}\n", a.about)),
+            "{}: the stub doesn't have its summary",
+            a.path
+        );
+        if a.is_function() {
+            assert!(
+                a.params
+                    .unwrap()
+                    .iter()
+                    .all(|p| !p.about.is_empty() && !p.ty.is_empty()),
+                "{}: a parameter without a type or a word on what it expects",
+                a.path
+            );
+            let call = a
+                .path
+                .replace("roster.o.Object:", "roster_o_Object:")
+                .replace("roster.o.Map:", "roster_o_Map:")
+                .replace("roster.o.List:", "roster_o_List:");
+            assert!(stubs.contains(&format!("function {call}(")), "{}: no stub", a.path);
+        }
+    }
+    // Each spec type (a Theme, a Package, a Folder, a key action) has its entry and its class.
+    for o in shape::options().iter().filter(|o| o.is_entry() && o.is_item()) {
+        let class = o.class.unwrap();
+        assert!(md.contains(&format!("### `{class}`\n")), "{class}: no help entry");
+        assert!(
+            stubs.contains(&format!("--- {}\n---@", o.about)),
+            "{class}: the stub doesn't have its summary"
+        );
+    }
+}
+
+/// init.lua's `roster` and a Plugin's are separate tables: a name both have means the same thing
+/// in each, with the same parameters.
+#[test]
+fn no_init_lua_name_means_something_else_in_the_plugin_api() {
+    let plugin: Vec<(String, Vec<String>)> = roster_core::plugin::api::FUNCTIONS
+        .iter()
+        .map(|f| {
+            (
+                f.path.to_string(),
+                f.params.iter().map(|p| p.name.to_string()).collect(),
+            )
+        })
+        .collect();
+    for a in shape::api().filter(|a| a.is_function()) {
+        if let Some((_, params)) = plugin.iter().find(|(p, _)| p == a.path) {
+            let ours: Vec<String> = a.params.unwrap().iter().map(|p| p.name.to_string()).collect();
+            assert_eq!(&ours, params, "{} takes other parameters in the Plugin API", a.path);
+        }
     }
 }
