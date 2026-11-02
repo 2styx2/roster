@@ -119,7 +119,7 @@ function cells(row: string): Inline[][] {
   return out.map((c) => inline(c.trim()));
 }
 
-/** Inline Markdown: `code`, **bold**, *em* / _em_, [text](href). */
+/** Inline Markdown: `code`, **bold**, *em* / _em_, [text](href), ![alt](src) (as a link). */
 export function inline(s: string): Inline[] {
   const out: Inline[] = [];
   let buf = "";
@@ -160,6 +160,18 @@ export function inline(s: string): Inline[] {
         flush();
         out.push({ t: "em", children: inline(s.slice(k + 1, end)) });
         k = end + 1;
+        continue;
+      }
+    }
+    // An image: help and the website show none, so it's a link to it, named by its alt text,
+    // else its file's name (an empty name is no link at all to a screen reader).
+    if (c === "!" && s[k + 1] === "[") {
+      const m = /^!\[([^\]]*)\]\(([^)\s]+)\)/.exec(s.slice(k));
+      if (m) {
+        flush();
+        const href = m[2] as string;
+        out.push({ t: "link", href, children: inline((m[1] as string).trim() || (href.split("/").pop() as string)) });
+        k += m[0].length;
         continue;
       }
     }

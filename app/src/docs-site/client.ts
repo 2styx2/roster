@@ -355,6 +355,16 @@ function loadIndex(doc: Document): Promise<SearchIndex> {
   });
 }
 
+/** A code block wider than the page scrolls sideways, so it takes the focus (tabindex 0) for the
+ * arrow keys to scroll it (WCAG 2.1.1; axe's scrollable-region-focusable); one that fits stays
+ * out of the tab order. Run again when the window's width changes. */
+export function focusableCode(doc: Document): void {
+  for (const pre of doc.querySelectorAll<HTMLElement>("main pre")) {
+    if (pre.scrollWidth > pre.clientWidth) pre.tabIndex = 0;
+    else pre.removeAttribute("tabindex");
+  }
+}
+
 /** Everything search.js does on a page. */
 export function start(doc: Document): void {
   const win = doc.defaultView;
@@ -389,6 +399,13 @@ export function start(doc: Document): void {
     field.form?.addEventListener("submit", (e) => e.preventDefault());
     if (!query) field.focus();
   }
+
+  focusableCode(doc);
+  let width = win.innerWidth;
+  win.addEventListener("resize", () => {
+    if (win.innerWidth !== width) focusableCode(doc);
+    width = win.innerWidth;
+  });
 
   const current = markPage(doc, win.location.search, win.location.hash);
   if (current) {
