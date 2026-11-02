@@ -1148,6 +1148,8 @@ export interface FakeBackend extends Backend {
   pluginReplied(reply: PluginReply): void;
   /** What a Plugin keeps in its data folder (`roster.storage`, decision Q93), by file name. */
   pluginFiles(plugin: string): Map<string, string>;
+  /** As a core host built anew: it hasn't been told roster's own commands. */
+  pluginForgetBuiltins(): void;
 }
 
 const NAME = /^[A-Za-z0-9._-]+$/;
