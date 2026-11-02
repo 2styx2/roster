@@ -1069,6 +1069,9 @@ const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 /// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
 /// decision Q131): serve answers for that Host (still checking the Session's own), with the same
 /// printed-prompt check in the core.
+///
+/// A refusal at sudo's own prompt whose mask roster didn't take logs what the probe drew, on
+/// stderr with the app's other `roster:` lines (ticket 155: no text but `*` and space in it).
 #[tauri::command]
 async fn session_fill(
     state: tauri::State<'_, Arc<BackendState>>,
@@ -1083,7 +1086,14 @@ async fn session_fill(
         let filled = sessions.fill(id, FILL_WAIT, &prompt, hop.as_ref(), |target| {
             backend.fill_secret(target, &prompt, hop.as_ref())
         });
-        filled.map(|host| json!({ "host": host })).map_err(fill_refusal)
+        filled.map(|host| json!({ "host": host })).map_err(|e| {
+            // What sudo's prompt drew that the mask check didn't take (ticket 155): the app's log
+            // only, never the error the message line shows.
+            if let Some(line) = e.log_line() {
+                eprintln!("roster: session {id}: {line}");
+            }
+            fill_refusal(e)
+        })
     })
     .await
 }

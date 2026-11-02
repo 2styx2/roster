@@ -5,7 +5,7 @@
 #![cfg(unix)]
 
 use roster_core::session::{
-    FillError, FillTarget, LoginAs, Secret, SessionCommand, SessionEvent, SessionManager, Size,
+    FillError, FillTarget, LoginAs, PROBE, Secret, SessionCommand, SessionEvent, SessionManager, Size,
 };
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
@@ -121,7 +121,7 @@ fn an_echoing_prompt_is_refused_and_the_secret_never_typed() {
     );
     until(&rx, "Password: ");
     let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
-    assert!(matches!(err, FillError::Echoes), "{err:?}");
+    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
     // The probe's letter was echoed and taken back; nothing else reached the prompt.
     m.write(id, b"\r").unwrap();
     let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
@@ -138,7 +138,7 @@ fn output_while_it_checks_refuses_too() {
     let (id, rx) = open(&m, host_sh(script));
     until(&rx, "Password: ");
     let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
-    assert!(matches!(err, FillError::Echoes), "{err:?}");
+    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
     m.close(id).unwrap();
 }
 
@@ -205,7 +205,7 @@ fn an_ended_session_is_not_found() {
 fn a_secret_never_prints() {
     let s = Secret::new(SECRET.to_string());
     assert!(!format!("{s:?}").contains(SECRET));
-    let e: FillError<String> = FillError::Echoes;
+    let e: FillError<String> = FillError::Echoes(None);
     assert!(!format!("{e} {e:?}").contains(SECRET));
 }
 
@@ -243,7 +243,7 @@ fn output_while_the_vault_answers_refuses_too() {
             secret()
         })
         .unwrap_err();
-    assert!(matches!(err, FillError::Echoes), "{err:?}");
+    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
     m.close(id).unwrap();
 }
 
@@ -488,7 +488,7 @@ fn a_refusal_that_typed_nothing_has_a_code_and_one_that_typed_the_probe_doesnt()
         }
         other => panic!("{other:?}"),
     }
-    for typed in [FillError::Echoes, FillError::Typed] {
+    for typed in [FillError::Echoes(None), FillError::Typed] {
         assert!(matches!(fill_refusal(typed), CallError::Io { .. }));
     }
     let serve = CallError::Rpc {
@@ -581,7 +581,7 @@ fn sudo_with_pwfeedback_on_a_nested_host_still_refuses() {
         (SUDO_OPS, "[sudo] password for ops:"),
     ] {
         let (got, out) = fill_pwfeedback(&pwfeedback(prompt, "", "*", ":"), line, Some(&hop));
-        assert!(matches!(got, Err(FillError::Echoes)), "{line}: {got:?}");
+        assert!(matches!(got, Err(FillError::Echoes(_))), "{line}: {got:?}");
         assert!(out.contains("got:[]") && !out.contains(SECRET), "{line}: {out:?}");
     }
 }
@@ -623,7 +623,7 @@ fn a_cursor_toggle_inside_another_sequence_refuses() {
         "[sudo] password for ops:",
         None,
     );
-    assert!(matches!(got, Err(FillError::Echoes)), "{got:?} {out:?}");
+    assert!(matches!(got, Err(FillError::Echoes(_))), "{got:?} {out:?}");
     assert!(!out.contains(SECRET), "{out:?}");
 }
 
@@ -636,7 +636,7 @@ fn a_mask_at_a_line_that_only_ends_with_sudos_prompt_refuses() {
         "[sudo] password for ops:",
         None,
     );
-    assert!(matches!(got, Err(FillError::Echoes)), "{got:?} {out:?}");
+    assert!(matches!(got, Err(FillError::Echoes(_))), "{got:?} {out:?}");
     assert!(!out.contains(SECRET), "{out:?}");
 }
 
@@ -727,7 +727,7 @@ fn a_mask_anywhere_else_or_with_anything_more_still_refuses() {
     ];
     for (name, script, prompt, hop) in cases {
         let (got, out) = fill_pwfeedback(&script, prompt, hop);
-        assert!(matches!(got, Err(FillError::Echoes)), "{name}: {got:?} {out:?}");
+        assert!(matches!(got, Err(FillError::Echoes(_))), "{name}: {got:?} {out:?}");
         assert!(!out.contains(SECRET), "{name}: {out:?}");
     }
 }
@@ -745,7 +745,7 @@ fn output_while_the_vault_answers_then_the_mask_refuses() {
             secret()
         })
         .unwrap_err();
-    assert!(matches!(err, FillError::Echoes), "{err:?}");
+    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
     m.write(id, b"\r").unwrap();
     let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
     assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
@@ -786,6 +786,105 @@ fn a_mask_that_leaves_the_cursor_off_the_prompt_refuses() {
     let pad = "~".repeat(55);
     let prompt = format!("{pad}{}", SUDO_OPS.trim_end());
     let (got, out) = fill_pwfeedback(&pwfeedback(&prompt, "", "*", ":"), "[sudo] password for ops:", None);
-    assert!(matches!(got, Err(FillError::Echoes)), "{got:?} {out:?}");
+    assert!(matches!(got, Err(FillError::Echoes(_))), "{got:?} {out:?}");
     assert!(!out.contains(SECRET), "{out:?}");
+}
+
+/// Ticket 155 (#284): a refused fill types nothing but its probe, and the probe holds no Enter,
+/// so a refusal can never be taken by sudo as a password attempt. The stand-in keeps every byte
+/// it reads, raw (no line discipline in the way), and reports them in hex once the input has been
+/// quiet for 1.5 s: nobody presses Enter here, so whatever it read came from the fill.
+#[test]
+fn a_refused_fill_types_only_its_probe_and_no_enter() {
+    assert!(!PROBE.iter().any(|&b| b == b'\r' || b == b'\n'), "{PROBE:?}");
+    // Each: name, what the stand-in draws for each key it reads, the prompt.
+    for (name, mask, prompt) in [
+        // A form the mask check doesn't take (yet): a colour around the `*`.
+        ("a coloured pwfeedback mask", "\\033[1m*\\033[0m", SUDO_OPS),
+        ("an echoing prompt", "x", SUDO_OPS),
+        ("another prompt's mask", "*", "Password: "),
+    ] {
+        let script = format!(
+            "stty raw -echo min 0 time 15; printf '%s' '{prompt}'; all=''; \
+             while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
+             [ -z \"$c\" ] && break; all=\"$all $c\"; \
+             if [ \"$c\" = 15 ]; then printf '\\b \\b'; else printf '{mask}'; fi; done; \
+             stty sane; echo; echo \"got:[$all ]\"; sleep 5"
+        );
+        let m = SessionManager::new();
+        let (id, rx) = open(&m, host_sh(&script));
+        until(&rx, prompt.trim_end());
+        std::thread::sleep(Duration::from_millis(150));
+        let got = m.fill(id, WAIT, prompt.trim_end(), None, |_| secret());
+        assert!(matches!(got, Err(FillError::Echoes(_))), "{name}: {got:?}");
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+        m.close(id).unwrap();
+        assert!(out.contains("got:[ 15 78 15 ]"), "{name}: {out:?}");
+    }
+}
+
+/// Ticket 155 (#284): a fill at sudo's own prompt for the Session's own Host that the mask watch
+/// refuses says, for the app's log only, what the probe drew there, so the form Windows' ConPTY
+/// draws can be added; the refusal's own text (the message line's) doesn't hold it, and nothing
+/// else (a nested Host, another prompt, a refusal with no output) has a log line.
+#[test]
+fn a_refused_mask_says_what_was_drawn_for_the_log_only() {
+    let (got, out) = fill_pwfeedback(
+        &pwfeedback(SUDO_OPS, "", "\\033[1m*\\033[0m", ":"),
+        "[sudo] password for ops:",
+        None,
+    );
+    assert!(!out.contains(SECRET), "{out:?}");
+    let err = got.unwrap_err();
+    assert_eq!(
+        err.log_line().as_deref(),
+        Some(
+            "prompt fill refused at sudo's prompt: the probe drew CSI[1m '*' CSI[0m BS ' ' BS, not sudo's pwfeedback mask as roster takes it"
+        ),
+        "{err:?}"
+    );
+    let said = err.to_string();
+    assert!(!said.contains("CSI") && !said.contains("drew"), "{said}");
+    let refusal = format!(
+        "{:?}",
+        roster_core::backend::fill_refusal(match err {
+            FillError::Echoes(d) => FillError::Echoes(d),
+            other => panic!("{other:?}"),
+        })
+    );
+    assert!(!refusal.contains("CSI"), "{refusal}");
+
+    // Text the prompt printed shows only as how many characters.
+    let (got, _) = fill_pwfeedback(
+        &pwfeedback(SUDO_OPS, "", "\\033[1mhunter\\033[0m", ":"),
+        "[sudo] password for ops:",
+        None,
+    );
+    let line = got.unwrap_err().log_line().unwrap_or_default();
+    assert!(
+        line.contains("CSI[1m text(6) CSI[0m") && !line.contains("hunter"),
+        "{line}"
+    );
+
+    let nested = FillTarget {
+        host: "esx-02".into(),
+        login: LoginAs {
+            address: "10.0.0.12".into(),
+            port: 22,
+            user: "ops".into(),
+        },
+    };
+    for (script, prompt, hop) in [
+        (
+            pwfeedback(SUDO_OPS, "", "*", ":"),
+            "[sudo] password for ops:",
+            Some(&nested),
+        ),
+        (pwfeedback("Password: ", "", "*", ":"), "Password:", None),
+    ] {
+        let (got, out) = fill_pwfeedback(&script, prompt, hop);
+        let err = got.unwrap_err();
+        assert!(matches!(err, FillError::Echoes(None)), "{err:?} {out:?}");
+        assert_eq!(err.log_line(), None);
+    }
 }
