@@ -1021,6 +1021,37 @@ describe("filling a password prompt (ticket 119)", () => {
     await expect(tabs.fill(id)).rejects.toThrow(/No password prompt/);
   });
 
+  it("keeps a fill's stars from Plugins: sudo's pwfeedback mask for the probe and the password's (ticket 154)", async () => {
+    let print: (s: string) => Promise<void> = async () => {};
+    const at = await atPrompt(async () => {
+      await print("*\b \b");
+      // sudo draws the password's stars as it reads it, maybe before the core has answered.
+      await print("*".repeat(9));
+      return { host: "h" };
+    });
+    print = at.print;
+    const seen: string[] = [];
+    at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    await expect(at.tabs.fill(at.id)).resolves.toBe("h");
+    await at.print("**");
+    await at.print(`${"\b \b".repeat(11)}\r\n[sudo ok]\r\n$ `);
+    const got = seen.join("");
+    expect(got).not.toContain("*");
+    expect(got).toContain("[sudo ok]");
+  });
+
+  it("hands Plugins what follows a refused fill", async () => {
+    const at = await atPrompt(async () => {
+      throw new BackendCallError("the prompt printed what roster typed to check it, so roster didn't fill it");
+    });
+    const seen: string[] = [];
+    at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    await expect(at.tabs.fill(at.id)).rejects.toThrow(/printed what roster typed/);
+    await at.print("typed by hand");
+    // The token mask may hold a trailing hex letter for up to 50 ms.
+    await vi.waitFor(() => expect(seen.join("")).toContain("typed by hand"));
+  });
+
   it("watches nothing on an older roster, or a Quick Connect", async () => {
     const backend = fakeBackend({ ...unlocked, hosts });
     const tabs = new Tabs(backend);
