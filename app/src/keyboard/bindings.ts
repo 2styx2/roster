@@ -49,6 +49,7 @@ const LOCAL: Record<string, { area: string; label: string }> = {
   "terminal.copy": { area: "Terminal", label: "Copy" },
   "terminal.copyIfSelected": { area: "Terminal", label: "Copy the selection (none: to the shell)" },
   "terminal.paste": { area: "Terminal", label: "Paste" },
+  "terminal.pasteIfText": { area: "Terminal", label: "Paste text (no text: to the program, Ctrl+V as ^V)" },
   "terminal.search": { area: "Terminal", label: "Find" },
   "terminal.zoomIn": { area: "Terminal", label: "Zoom in" },
   "terminal.zoomOut": { area: "Terminal", label: "Zoom out" },

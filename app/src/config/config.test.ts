@@ -121,6 +121,31 @@ describe("registering the Config", () => {
     expect(km.picker.Tab).toEqual({ action: "picker.next", source: BUILTIN });
   });
 
+  it("knows every terminal action on every OS (Ctrl+V's terminal.pasteIfText is bound by default only on Windows)", () => {
+    const r = builtinRegistries({ windows: false });
+    const { warnings } = registerConfig(
+      r,
+      configWith({
+        keys: [
+          { context: "terminal", keys: "Ctrl+v", action: "terminal.pasteIfText" },
+          { context: "terminal", keys: "Ctrl+b", action: "terminal.pasteIfTxt" },
+        ],
+        lines: { "keys.terminal.Ctrl+b": { file: "init.lua", line: 4 } },
+      }),
+    );
+    expect(warnings).toEqual([{ file: "init.lua", line: 4, message: 'key Ctrl+b (terminal): no action named "terminal.pasteIfTxt"' }]);
+    const km = keymapOf(r.keymap.list());
+    expect(km.terminal["Ctrl+v"]).toEqual({ action: "terminal.pasteIfText", source: CONFIG });
+    expect(km.terminal["Ctrl+b"]).toBeUndefined();
+  });
+
+  it("unbinds Windows' Ctrl+V paste with false (the program gets ^V)", () => {
+    const r = builtinRegistries({ windows: true });
+    expect(keymapOf(r.keymap.list()).terminal["Ctrl+v"]).toEqual({ action: "terminal.pasteIfText", source: BUILTIN });
+    registerConfig(r, configWith({ keys: [{ context: "terminal", keys: "Ctrl+v", action: null }] }));
+    expect(keymapOf(r.keymap.list()).terminal["Ctrl+v"]).toBeUndefined();
+  });
+
   it("registers a Theme built on a bundled one, changing only the tokens it sets", () => {
     const r = builtinRegistries();
     registerConfig(

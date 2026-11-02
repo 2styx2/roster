@@ -7,10 +7,25 @@ export type TerminalAction =
   /** Copy and clear the selection if there is one; else the key goes on to the shell. */
   | "terminal.copyIfSelected"
   | "terminal.paste"
+  /** Paste the clipboard's text if it has some; else the key goes on to the program (Ctrl+V as
+   * ^V: an app's own image paste, Vim's block selection). */
+  | "terminal.pasteIfText"
   | "terminal.search"
   | "terminal.zoomIn"
   | "terminal.zoomOut"
   | "terminal.zoomReset";
+
+/** Every terminal action, bound by default or not: what `keys.terminal` in init.lua may name. */
+export const terminalActions: readonly TerminalAction[] = [
+  "terminal.copy",
+  "terminal.copyIfSelected",
+  "terminal.paste",
+  "terminal.pasteIfText",
+  "terminal.search",
+  "terminal.zoomIn",
+  "terminal.zoomOut",
+  "terminal.zoomReset",
+];
 
 export type TerminalKeysAction = TerminalAction | "session.reconnect" | "picker.chooseHere";
 
@@ -30,6 +45,10 @@ export const terminalKeys = {
     "Ctrl+-": "terminal.zoomOut",
     "Ctrl+0": "terminal.zoomReset",
   },
+  /** In Terminal mode on Windows only, over `terminal` (decision Q138): Ctrl+V pastes text as in
+   * Windows Terminal. Elsewhere terminals paste with Ctrl+Shift+V and Ctrl+V stays the
+   * program's. */
+  terminalWindows: { "Ctrl+v": "terminal.pasteIfText" },
   /** After the Leader: reconnect the current tab when its Session has ended (or was refused). */
   leader: { r: "session.reconnect" },
   /** In the Picker: open the Host in the current tab if its Session has ended. */

@@ -8,7 +8,8 @@ import { builtinHealthRegistry, type HealthRegistry } from "./health/health";
 import { folderRegistry, type FolderRegistry } from "./folders/folders";
 import { builtinFinderRegistry, type FinderRegistry } from "./finder/sources";
 import { reloaderRegistry, sourceCommands, type ReloaderRegistry } from "./config/source";
-import { builtinKeymap, type KeymapRegistry } from "./keymap";
+import { builtinKeymap, type KeymapHost, type KeymapRegistry } from "./keymap";
+import { runsOnWindows } from "./platform/os";
 import { builtinSidebarRegistry, type SidebarRegistry } from "./sidebar/sections";
 import { builtinToolbarRegistry, type ToolbarRegistry } from "./chrome/toolbar";
 import type { ThemeRegistry } from "./theme/theme";
@@ -51,7 +52,8 @@ export interface Registries {
   details: DetailsRegistry;
 }
 
-export function builtinRegistries(): Registries {
+/** The built-ins; the keymap's depend on the OS (decision Q138), which tests can give. */
+export function builtinRegistries(host: KeymapHost = { windows: runsOnWindows() }): Registries {
   const finders = builtinFinderRegistry();
   const commands = builtinCommandRegistry();
   commands.register(finderCommand(finders));
@@ -63,7 +65,7 @@ export function builtinRegistries(): Registries {
   syncTutorPages(tutorials, help);
   return {
     commands,
-    keymap: builtinKeymap(),
+    keymap: builtinKeymap(host),
     sidebar: builtinSidebarRegistry(),
     errors: builtinErrorRegistry(),
     themes: builtinThemeRegistry(),

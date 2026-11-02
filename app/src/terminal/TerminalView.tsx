@@ -1,6 +1,7 @@
 // One Session's terminal: xterm.js with the WebGL renderer (the DOM renderer when WebGL isn't
 // there or its context is lost), fit, and search. Every key goes to the shell except the Leader
-// and the keymap's `terminal` chords (copy, paste, find, zoom); see docs/app/dev/xterm-setup.md.
+// and the keymap's `terminal` chords (copy, paste, find, zoom; input.ts); see
+// docs/app/dev/xterm-setup.md.
 // Nothing is added to or rewritten in what the shell prints (decision Q37). Tests substitute a
 // stub for this component (App's `terminalView`).
 import { useEffect, useRef, useState } from "react";
@@ -10,10 +11,10 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import type { TermSize } from "../backend/types";
-import { chordOf, type Action } from "../keymap";
+import type { Action } from "../keymap";
 import type { Clipboard } from "../platform/types";
-import { copyIfSelected, copySelection, pasteClipboard, rightClick } from "./clipboard";
-import { isLeaderKey } from "./keys";
+import { copySelection, rightClick } from "./clipboard";
+import { wireInput } from "./input";
 import { deviceAdvance, lineHeightFor, roundedCellSpacing } from "./fonts";
 import type { TerminalOptions, TerminalTheme, ZoomAction } from "./options";
 import { SearchBar, type SearchResults } from "./SearchBar";
@@ -131,42 +132,14 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
     host.dataset.renderer = "dom";
 
     const copy = () => copySelection(t, cb.current.env.clipboard);
-    const paste = () => void pasteClipboard(t, cb.current.env.clipboard);
-
-    // The Leader never reaches the shell (Ctrl+Space would send NUL); App's keymap acts on it.
-    // The keymap's terminal chords don't either; they act on keydown only.
-    t.attachCustomKeyEventHandler((e) => {
-      if (isLeaderKey(e, cb.current.leader)) {
-        e.preventDefault();
-        return false;
-      }
-      const action = cb.current.env.keys[chordOf(e)];
-      if (!action?.startsWith("terminal.")) return true;
-      if (action === "terminal.copyIfSelected") {
-        // Only a keydown with a selection is ours; anything else (^C) goes to the shell.
-        if (e.type !== "keydown" || !copyIfSelected(t, cb.current.env.clipboard)) return true;
-        e.preventDefault();
-        return false;
-      }
-      e.preventDefault();
-      if (e.type !== "keydown") return false;
-      switch (action) {
-        case "terminal.copy":
-          copy();
-          break;
-        case "terminal.paste":
-          paste();
-          break;
-        case "terminal.search":
-          cb.current.openSearch();
-          break;
-        case "terminal.zoomIn":
-        case "terminal.zoomOut":
-        case "terminal.zoomReset":
-          cb.current.env.onZoom(action);
-          break;
-      }
-      return false;
+    // Keys and pastes for the Session; the Leader and the keymap's terminal chords kept back.
+    const unwire = wireInput(t, host, {
+      leader: () => cb.current.leader,
+      keys: () => cb.current.env.keys,
+      clipboard: () => cb.current.env.clipboard,
+      send: (d) => cb.current.onData(d),
+      openSearch: () => cb.current.openSearch(),
+      onZoom: (a) => cb.current.env.onZoom(a),
     });
 
     // Select to copy (xterm has no option for it).
@@ -195,7 +168,6 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
 
     const subs = [
       onSelection,
-      t.onData((d) => cb.current.onData(d)),
       t.onResize(({ cols, rows }) => cb.current.onResize({ cols, rows })),
       s.onDidChangeResults(({ resultIndex, resultCount }) => setResults({ index: resultIndex, count: resultCount })),
     ];
@@ -222,6 +194,7 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       host.removeEventListener("contextmenu", onContextMenu);
       host.removeEventListener("wheel", onWheel, { capture: true });
       detach();
+      unwire();
       for (const sub of subs) sub.dispose();
       t.dispose();
       term.current = null;

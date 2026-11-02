@@ -11,6 +11,7 @@ import { bindingId, chordOf, defaultBindings, type KeymapContext, type Options }
 import type { Registries } from "../registries";
 import { CONFIG } from "../registry";
 import { defaultTerminalOptions, standardAnsi, type TerminalOptions } from "../terminal/options";
+import { terminalActions } from "../terminal/keymap";
 import { terminalFontStack } from "../terminal/fonts";
 import type { AppearanceOptions, Theme } from "../theme/theme";
 import { layoutsOf, STATUS_SEGMENTS, type Layouts } from "../view/layout";
@@ -154,7 +155,7 @@ function localActions(context: KeymapContext): Set<string> | null {
     return new Set([...Object.values(defaultBindings.picker), ...Object.values(defaultBindings.pickerVim)]);
   }
   if (context === "cmdline") return new Set(Object.values(defaultBindings.cmdline));
-  if (context === "terminal") return new Set(Object.values(defaultBindings.terminal));
+  if (context === "terminal") return new Set(terminalActions);
   return null;
 }
 

@@ -67,6 +67,7 @@ term.attachCustomKeyEventHandler((ev) => {
 - `navigator.clipboard.writeText` works in a focused secure context. `tauri://` and `http://tauri.localhost` both count.
 - **`readText` needs permission.** wry auto-allows `CLIPBOARD_READ` only when the webview was built with `clipboard: true`, and that defaults to **false**. There's no `tauri.conf.json` key for it in v2. Either create the main window in Rust with `WebviewWindowBuilder::new(..).enable_clipboard_access()`, or use `tauri-plugin-clipboard-manager` 2.5.0 (`@tauri-apps/plugin-clipboard-manager` 2.5.0, which needs `clipboard-manager:allow-read-text` and `allow-write-text` in capabilities). Use the plugin: it behaves the same on WebKitGTK too.
 - For paste, use `term.paste(text)`. It applies bracketed-paste mode.
+- Ctrl+V on Windows (`terminal.pasteIfText`, decision Q138, `app/src/terminal/input.ts`): the key handler must answer on keydown, but `readText` is async, so it always keeps the key (keydown, keypress and keyup), reads the clipboard, then calls `term.paste(text)` or sends `\x16` itself. Data xterm emits meanwhile waits behind it, to keep the order. A Ctrl+V and a `paste` event within 500 ms are one paste (a capture listener on the container drops the second), for tools that inject Ctrl+V.
 - Select-to-copy is the `term.onSelectionChange` handler plus `term.getSelection()`. Right-click to paste is a `contextmenu` listener on the container that calls `preventDefault`. xterm 6 has no copy-on-select option, so write it yourself.
 
 ## Search
