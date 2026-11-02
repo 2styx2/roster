@@ -612,6 +612,170 @@ fn sudo_with_pwfeedback_is_filled_through_conpty_style_redraws() {
     }
 }
 
+/// Ticket 155 (#284), from the owner's Windows build: ConPTY sends only what changed on its
+/// screen, so sudo's `*` and its erasure reach the core as nothing, and it repaints regions it
+/// already drew (here 0.2 s into the fill, while the vault answers). Each stand-in clears the
+/// screen, draws `$ sudo -v` and its prompt, then repaints the same content as ConPTY may
+/// (cursor addressing, erases, erased characters, the cursor hidden and shown) and draws
+/// nothing for the probe's keys.
+fn conpty(prompt: &str, repaint: &str) -> String {
+    erasing(prompt, "", "", "", &format!("(sleep 0.2; printf '{repaint}') & :")).replacen(
+        "printf '%s'",
+        "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'",
+        1,
+    )
+}
+
+/// ConPTY's repaints of the unchanged screen, with the cursor parked after the prompt on row 2.
+fn same_screen_repaints(prompt: &str) -> Vec<(&'static str, String)> {
+    let col = prompt.len() + 1;
+    vec![
+        (
+            "the viewport, line by line",
+            format!("\\033[?25l\\033[H$ sudo -v\\033[K\\r\\n{prompt}\\033[K\\r\\n\\033[K\\033[2;{col}H\\033[?25h"),
+        ),
+        (
+            "the prompt's line, spaces as erased characters",
+            format!(
+                "\\033[?25l\\033[2;1H{}\\033[1X\\033[2;{col}H\\033[?25h",
+                prompt.trim_end().replace(' ', "\\033[1X\\033[1C")
+            ),
+        ),
+        ("the cursor alone", format!("\\033[?25l\\033[2;{col}H\\033[?25h")),
+    ]
+}
+
+#[test]
+fn sudo_with_pwfeedback_is_filled_through_a_conpty_repaint_before_the_probe() {
+    for (name, repaint) in same_screen_repaints(SUDO_OPS) {
+        let m = SessionManager::new();
+        let (id, rx) = open(&m, host_sh(&conpty(SUDO_OPS, &repaint)));
+        until(&rx, "ops: ");
+        let got = m.fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+            std::thread::sleep(Duration::from_millis(400));
+            secret()
+        });
+        assert_eq!(got.as_ref().ok().map(String::as_str), Some("esx"), "{name}: {got:?}");
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        assert!(out.contains(&format!("got:[{SECRET}]")), "{name}: {out:?}");
+        m.close(id).unwrap();
+    }
+}
+
+#[test]
+fn a_plain_prompt_is_filled_through_a_conpty_repaint_before_the_probe() {
+    const PLAIN: &str = "Password: ";
+    for (name, repaint) in same_screen_repaints(PLAIN) {
+        let m = SessionManager::new();
+        let (id, rx) = open(&m, host_sh(&conpty(PLAIN, &repaint)));
+        until(&rx, "Password: ");
+        let got = m.fill(id, WAIT, "Password:", None, |_| {
+            std::thread::sleep(Duration::from_millis(400));
+            secret()
+        });
+        assert_eq!(got.as_ref().ok().map(String::as_str), Some("esx"), "{name}: {got:?}");
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        assert!(out.contains(&format!("got:[{SECRET}]")), "{name}: {out:?}");
+        m.close(id).unwrap();
+    }
+}
+
+/// Ticket 155 (#284): output before the probe that leaves the screen other than it was refuses,
+/// at sudo's prompt and any other, however little it changed: the owner's second press saw sudo
+/// redraw `Sorry, try again.` and a new prompt; a changed line elsewhere; the cursor left
+/// elsewhere. The log line says it was the screen before the probe, with no text.
+#[test]
+fn output_before_the_probe_that_changes_the_screen_refuses() {
+    for (prompt, line) in [(SUDO_OPS, "[sudo] password for ops:"), ("Password: ", "Password:")] {
+        let col = prompt.len() + 1;
+        for (name, repaint) in [
+            ("sudo's retry", format!("\\r\\nSorry, try again.\\r\\n{prompt}")),
+            (
+                "another line",
+                format!("\\033[?25l\\033[H$ sudo -k\\033[2;{col}H\\033[?25h"),
+            ),
+            ("a line below", format!("\\033[5;1Hmotd\\033[2;{col}H")),
+            ("the cursor elsewhere", "\\033[3;1H".to_string()),
+        ] {
+            let m = SessionManager::new();
+            let (id, rx) = open(&m, host_sh(&conpty(prompt, &repaint)));
+            until(&rx, prompt.trim_end());
+            let got = m.fill(id, WAIT, line, None, |_| {
+                std::thread::sleep(Duration::from_millis(400));
+                secret()
+            });
+            let err = got.unwrap_err();
+            assert!(matches!(err, FillError::Echoes(_)), "{line} {name}: {err:?}");
+            if prompt == SUDO_OPS {
+                let log = err.log_line().unwrap_or_default();
+                assert!(
+                    log.starts_with("prompt fill refused at sudo's prompt: what was printed before the probe (")
+                        && log.contains(" bytes) changed the screen; the probe drew ")
+                        && !log.contains("Sorry")
+                        && !log.contains("motd"),
+                    "{name}: {log}"
+                );
+            } else {
+                assert_eq!(err.log_line(), None);
+            }
+            m.write(id, b"\r").unwrap();
+            let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+            assert!(
+                out.contains("got:[]") && !out.contains(SECRET),
+                "{line} {name}: {out:?}"
+            );
+            m.close(id).unwrap();
+        }
+    }
+}
+
+/// Ticket 155 (#284): the probe's own output is still checked as before after a repaint that
+/// left the screen as it was: an echo (taken back or not) or a redraw during the probe refuses,
+/// and the log says it was the probe.
+#[test]
+fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
+    let repaint = same_screen_repaints(SUDO_OPS).remove(0).1;
+    for (name, mask) in [("an echo", "x"), ("a colour", "\\033[1m*\\033[0m")] {
+        let script = erasing(
+            SUDO_OPS,
+            "\\b \\b",
+            "",
+            mask,
+            &format!("(sleep 0.2; printf '{repaint}') & :"),
+        )
+        .replacen("printf '%s'", "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'", 1);
+        let m = SessionManager::new();
+        let (id, rx) = open(&m, host_sh(&script));
+        until(&rx, "ops: ");
+        let err = m
+            .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+                std::thread::sleep(Duration::from_millis(400));
+                secret()
+            })
+            .unwrap_err();
+        let log = err.log_line().unwrap_or_default();
+        assert!(
+            log.starts_with("prompt fill refused at sudo's prompt: the probe drew ")
+                && log.contains("not sudo's pwfeedback mask as roster takes it; ")
+                && log.ends_with(" bytes printed before the probe repainted the screen as it was"),
+            "{name}: {log}"
+        );
+        m.write(id, b"\r").unwrap();
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        assert!(!out.contains(SECRET), "{name}: {out:?}");
+        m.close(id).unwrap();
+    }
+    // The owner's second press: sudo took an Enter and redrew its retry during the probe.
+    let script = erasing(SUDO_OPS, "", "", "", ":").replacen(
+        "else pw=\"$pw$c\"",
+        "else printf '\\r\\nSorry, try again.\\r\\n[sudo] password for ops: '; pw=\"$pw$c\"",
+        1,
+    );
+    let (got, out) = fill_pwfeedback(&script, "[sudo] password for ops:", None);
+    assert!(matches!(got, Err(FillError::Echoes(Some(_)))), "{got:?} {out:?}");
+    assert!(!out.contains(SECRET), "{out:?}");
+}
+
 /// Ticket 154 (the review of #283, #3): a cursor hide or show inside another sequence isn't one.
 /// Taken out byte by byte, `ESC [ ESC[?25l K` would read as sudo's `ESC [ K`; a terminal reads a
 /// broken sequence, then a hide, then a `K` drawn on the line.

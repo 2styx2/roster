@@ -43,13 +43,26 @@ pub(crate) struct Screen {
     mask: Option<MaskWatch>,
 }
 
-/// The cursor and its line as they were when a fill typed its probe, and what the output has done
-/// since, as this parser reads it (ticket 154, decision Q144): never bytes taken out of the stream.
-struct MaskWatch {
+/// The whole screen as a terminal shows it, and the cursor: what a fill notes as it checks the
+/// prompt and as it types its probe, so output since can be told from a repaint of the same
+/// content (ticket 155, #284, decision Q151): [`Screen::snapshot`], [`Screen::matches`].
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Snapshot {
+    rows: usize,
+    cols: usize,
+    grid: Vec<Vec<u8>>,
     row: usize,
     col: usize,
     pending_wrap: bool,
-    line: Vec<u8>,
+    /// The alternate screen is up.
+    alternate: bool,
+}
+
+/// The screen and the cursor as they were when a fill typed its probe, and what the output has
+/// done since, as this parser reads it (ticket 154, decision Q144): never bytes taken out of the
+/// stream.
+struct MaskWatch {
+    at: Snapshot,
     /// `*`s drawn.
     stars: usize,
     /// Anything else: another character (a space aside), a line feed, a tab, a control or escape sequence that
@@ -137,9 +150,28 @@ pub struct Drawn {
     more: usize,
     /// The cursor (row, column, from 1) when the probe went and at the check, if they differ.
     moved: Option<((usize, usize), (usize, usize))>,
+    /// The prompt's own line changed.
     line_changed: bool,
-    /// Bytes the Session printed after the prompt check and before the probe (the fill sets it).
+    /// Another line of the screen changed, or its size or the alternate screen (ticket 155).
+    elsewhere_changed: bool,
+    /// Bytes the Session printed between the prompt check and the probe (the fill sets it).
     pub(crate) before: u64,
+    /// Which of the fill's rules refused (the fill sets it), for the log (ticket 155).
+    pub(crate) why: Why,
+}
+
+/// Which rule refused a fill at sudo's prompt for the Session's own Host, for the log
+/// ([`Drawn`], ticket 155).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Why {
+    /// What the probe drew isn't sudo's mask as roster takes it, or the screen didn't end as it was.
+    #[default]
+    Probe,
+    /// What was printed between the prompt check and the probe left the screen or the cursor other
+    /// than they were: not a repaint of the same content.
+    Repaint,
+    /// The cursor's line isn't sudo's prompt and nothing else.
+    Line,
 }
 
 /// What [`Screen::end_mask_watch`] found.
@@ -226,8 +258,8 @@ impl std::fmt::Display for Drawn {
         if self.line_changed {
             f.write_str("; the line changed")?;
         }
-        if self.before > 0 {
-            write!(f, "; {} bytes printed before the probe", self.before)?;
+        if self.elsewhere_changed {
+            f.write_str("; another line changed")?;
         }
         Ok(())
     }
@@ -252,14 +284,45 @@ impl Screen {
         }
     }
 
-    /// Starts noting what the output draws from here on, with the cursor and its line as they are
-    /// now: a fill does this as it types its probe (ticket 154).
-    pub(crate) fn watch_mask(&mut self) {
-        self.mask = Some(MaskWatch {
+    /// The whole screen and the cursor as they are now (ticket 155).
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            rows: self.rows,
+            cols: self.cols,
+            grid: self.grid.clone(),
             row: self.row,
             col: self.col,
             pending_wrap: self.pending_wrap,
-            line: self.grid[self.row].clone(),
+            alternate: self.main.is_some(),
+        }
+    }
+
+    /// Whether the screen shows exactly what it did at `shot`, every cell, with the cursor
+    /// (row, column, pending wrap) where it was, on the same screen (main or alternate) of the
+    /// same size (ticket 155): output since was at most a repaint of the same content.
+    pub(crate) fn matches(&self, shot: &Snapshot) -> bool {
+        (
+            self.rows,
+            self.cols,
+            self.row,
+            self.col,
+            self.pending_wrap,
+            self.main.is_some(),
+        ) == (
+            shot.rows,
+            shot.cols,
+            shot.row,
+            shot.col,
+            shot.pending_wrap,
+            shot.alternate,
+        ) && self.grid == shot.grid
+    }
+
+    /// Starts noting what the output draws from here on, with the screen and the cursor as they
+    /// are now: a fill does this as it types its probe (ticket 154).
+    pub(crate) fn watch_mask(&mut self) {
+        self.mask = Some(MaskWatch {
+            at: self.snapshot(),
             stars: 0,
             other: false,
             seen: Vec::new(),
@@ -271,9 +334,10 @@ impl Screen {
     /// Stops noting, and says whether everything since [`Screen::watch_mask`] was at most `stars`
     /// `*`s and any spaces drawn, cursor moves (`BS`, `CR`, CSI `A`-`H`, `a`, `d`, `e`, `f` and the backtick), erases within the
     /// line (CSI `K`, `X`) and the cursor's hide and show (CSI `?25l`, `?25h`), with nothing else
-    /// at all, and left the cursor where it was on a line that's exactly as it was: sudo's
-    /// `pwfeedback` mask for the probe and its erasure, however a terminal (ConPTY) redraws it.
-    /// [`Watched::drawn`] says what it saw, for the log.
+    /// at all, and left the cursor where it was on a screen that's exactly as it was, every line
+    /// of it (ticket 155: not only the cursor's): sudo's `pwfeedback` mask for the probe and its
+    /// erasure, however a terminal (ConPTY) redraws it. [`Watched::drawn`] says what it saw, for
+    /// the log.
     pub(crate) fn end_mask_watch(&mut self, stars: usize) -> Watched {
         let Some(w) = self.mask.take() else {
             return Watched {
@@ -281,17 +345,28 @@ impl Screen {
                 drawn: Drawn::default(),
             };
         };
-        let stayed = (w.row, w.col, w.pending_wrap) == (self.row, self.col, self.pending_wrap);
-        let line_same = self.grid[self.row] == w.line;
+        let at = &w.at;
+        let stayed = (at.row, at.col, at.pending_wrap) == (self.row, self.col, self.pending_wrap);
+        let same = self.matches(at);
+        // The prompt's own line, wherever the cursor went.
+        let line_changed = self.grid.get(at.row) != at.grid.get(at.row);
+        let elsewhere_changed = (self.rows, self.cols, self.main.is_some()) != (at.rows, at.cols, at.alternate)
+            || self
+                .grid
+                .iter()
+                .zip(&at.grid)
+                .enumerate()
+                .any(|(i, (now, was))| i != at.row && now != was);
         Watched {
-            masked: !w.other && w.stars <= stars && stayed && line_same,
+            masked: !w.other && w.stars <= stars && same,
             drawn: Drawn {
-                moved: (!stayed).then_some(((w.row + 1, w.col + 1), (self.row + 1, self.col + 1))),
-                // The prompt's own line, wherever the cursor went.
-                line_changed: self.grid.get(w.row) != Some(&w.line),
+                moved: (!stayed).then_some(((at.row + 1, at.col + 1), (self.row + 1, self.col + 1))),
+                line_changed,
+                elsewhere_changed,
                 seen: w.seen,
                 more: w.more,
                 before: 0,
+                why: Why::Probe,
             },
         }
     }
@@ -843,6 +918,71 @@ mod tests {
         assert!(!s.end_mask_watch(1).masked);
     }
 
+    /// Ticket 155 (#284, item 1): the mask watch compares the whole screen, not only the cursor's
+    /// row, so a `*` drawn on another row and the cursor put back isn't a mask.
+    #[test]
+    fn a_mask_watch_takes_nothing_drawn_on_another_row() {
+        const PROMPT: &[u8] = b"$ sudo -v\r\n[sudo] password for ops: ";
+        for out in [
+            &b"\x1b[1;1H*\x1b[2;26H"[..],
+            b"\x1b[A*\x1b[B\x1b[26G",
+            b"\x1b[1;3H*\x08 \x08\x1b[2;26H",
+        ] {
+            let mut s = screen(PROMPT);
+            s.watch_mask();
+            s.feed(out);
+            let watched = s.end_mask_watch(1);
+            assert!(!watched.masked, "{:?}", String::from_utf8_lossy(out));
+        }
+        let mut s = screen(PROMPT);
+        s.watch_mask();
+        s.feed(b"\x1b[1;1H*\x1b[2;26H");
+        assert_eq!(
+            s.end_mask_watch(1).drawn.to_string(),
+            "CSI[1;1H '*' CSI[2;26H; another line changed"
+        );
+    }
+
+    /// Ticket 155 (#284): ConPTY repaints regions of the screen it already drew. What a fill
+    /// notes at its start is the whole screen and the cursor; a repaint that draws the same
+    /// content leaves it as it was, anything else doesn't.
+    #[test]
+    fn a_repaint_of_the_same_screen_leaves_it_as_it_was() {
+        const PROMPT: &[u8] = b"\x1b[2J\x1b[H$ sudo -v\r\n[sudo] password for ops: ";
+        let same: &[&[u8]] = &[
+            b"",
+            b"\x1b[?25l\x1b[H$ sudo -v\x1b[K\r\n[sudo] password for ops: \x1b[K\r\n\x1b[K\x1b[2;26H\x1b[?25h",
+            b"\x1b[?25l\x1b[1;1H$\x1b[1X\x1b[1Csudo -v\x1b[2;1H[sudo]\x1b[1X\x1b[1Cpassword for ops:\x1b[1X\x1b[2;26H\x1b[?25h",
+            b"\x1b[?25l\x1b[2;1H[sudo] password for ops: \x1b[K\x1b[?25h",
+            b"\x1b[m\x1b[2;26H",
+        ];
+        for out in same {
+            let mut s = screen(PROMPT);
+            let shot = s.snapshot();
+            s.feed(out);
+            assert!(s.matches(&shot), "{:?}", String::from_utf8_lossy(out));
+        }
+        let changed: &[&[u8]] = &[
+            b"\r\nSorry, try again.\r\n[sudo] password for ops: ",
+            b"\x1b[H$ sudo -k\x1b[2;26H",
+            b"\x1b[24;1Hmotd\x1b[2;26H",
+            b"\x1b[2;1H[sudo] password for ops: \x1b[K\x1b[1;1H",
+            b"\x1b[?1049h",
+            b"\x1b[2;80Hx\x1b[2;26H",
+        ];
+        for out in changed {
+            let mut s = screen(PROMPT);
+            let shot = s.snapshot();
+            s.feed(out);
+            assert!(!s.matches(&shot), "{:?}", String::from_utf8_lossy(out));
+        }
+        // A resize is never the same screen.
+        let mut s = screen(PROMPT);
+        let shot = s.snapshot();
+        s.resize(24, 100);
+        assert!(!s.matches(&shot));
+    }
+
     #[test]
     fn the_whole_line_must_be_the_prompt() {
         let s = screen(b"Enter vault PIN for [sudo] password for ops: ");
@@ -881,7 +1021,10 @@ mod tests {
         let mut s = screen(PROMPT);
         s.watch_mask();
         s.resize(24, 100);
-        assert_eq!(s.end_mask_watch(1).drawn.to_string(), "resize; the line changed");
+        assert_eq!(
+            s.end_mask_watch(1).drawn.to_string(),
+            "resize; the line changed; another line changed"
+        );
         // At most 64 things, then how many more.
         let many = drawn(&b"\x1b[K".repeat(70));
         assert!(many.ends_with("CSI[K and 6 more"), "{many}");

@@ -11,7 +11,7 @@
 
 use crate::detect::Target;
 pub use crate::screen::Drawn;
-use crate::screen::Screen;
+use crate::screen::{Screen, Why};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -433,14 +433,17 @@ impl SessionManager {
     /// and `hop`), and a refusal there types nothing; then the probe, [`PROBE`], goes to the
     /// prompt: Ctrl+U (the line-kill key, which empties whatever was typed there already) around a
     /// letter. A prompt that doesn't echo, as sudo's, su's and ssh's don't, prints nothing for it;
-    /// one that echoes prints the letter (and takes it back). So if anything was printed since
-    /// the check (through `wait` after the probe), or a key was sent meanwhile, the secret isn't
-    /// typed ([`FillError::Echoes`], [`FillError::Typed`]). The one exception (ticket 154,
+    /// one that echoes prints the letter (and takes it back). So if anything was printed from the
+    /// probe through `wait`, or what was printed between the check and the probe left the
+    /// Session's whole screen or its cursor other than they were at the check (ConPTY repaints
+    /// what it already drew: ticket 155, decision Q151), or a key was sent meanwhile, the secret
+    /// isn't typed ([`FillError::Echoes`], [`FillError::Typed`]). The one exception (ticket 154,
     /// decision Q144): for the Session's own Host (no `hop`), at sudo's own prompt for its ssh
     /// user, which is the whole of the cursor's line, sudo with `pwfeedback` draws a `*` for the
-    /// letter and erases it; if nothing was printed before the probe, and after it the screen saw
-    /// at most that `*`, cursor moves, erases within the line and the cursor's hide and show, and
-    /// the cursor and its line end exactly as they were ([`Screen::end_mask_watch`]), the prompt
+    /// letter and erases it; if the screen was as it was at the check when the probe went, and
+    /// after it the screen saw at most that `*`, cursor moves, erases within the line and the
+    /// cursor's hide and show, and the cursor and the whole screen end exactly as they were
+    /// ([`Screen::end_mask_watch`]), the prompt
     /// doesn't echo. Otherwise the secret and Enter go to
     /// the PTY in one write, and the secret is wiped as it's dropped. Returns the name of the Host
     /// whose password it typed: `hop`'s, else the Session's own.
@@ -459,23 +462,25 @@ impl SessionManager {
         // Before the prompt check and the lookup, which may wait on the vault: what's printed or
         // typed from here on counts. The check reads the screen as of exactly the bytes counted.
         let writes = running.writes.load(Ordering::SeqCst);
-        let printed = {
+        let (printed, checked) = {
             let shown = running.shown.lock().unwrap();
             if !shown.screen.cursor_after(prompt) {
                 return Err(FillError::NotPrinted);
             }
-            shown.total
+            (shown.total, shown.screen.snapshot())
         };
         // sudo with `pwfeedback` draws a `*` for the probe's letter and erases it (ticket 154):
         // allowed only for the Session's own Host, at sudo's own prompt for its ssh user.
         let maskable = hop.is_none() && sudo_prompt_for(prompt, &target.login.user);
         let secret = lookup(&target).map_err(FillError::Lookup)?;
-        let probed = {
+        // ConPTY repaints regions it already drew (ticket 155, #284): output before the probe is
+        // allowed only if the whole screen and the cursor are exactly as they were at the check.
+        let (probed, repainted) = {
             let mut shown = running.shown.lock().unwrap();
             if maskable {
                 shown.screen.watch_mask();
             }
-            shown.total
+            (shown.total, shown.total == printed || shown.screen.matches(&checked))
         };
         {
             let mut w = running.writer.lock().unwrap();
@@ -489,13 +494,21 @@ impl SessionManager {
             let mut shown = running.shown.lock().unwrap();
             let watched = maskable.then(|| shown.screen.end_mask_watch(PROBE_KEYS));
             let masked = watched.as_ref().is_some_and(|w| w.masked);
-            if shown.total != printed
-                && !(masked && probed == printed && shown.screen.line_is(prompt) && shown.screen.cursor_after(prompt))
-            {
-                // What the probe drew, for the log (ticket 155): only where the mask could count.
+            let whole_line = shown.screen.line_is(prompt);
+            let quiet = shown.total == probed || (masked && whole_line && shown.screen.cursor_after(prompt));
+            if !(repainted && quiet) {
+                // What the probe drew and which rule refused, for the log (ticket 155): only where
+                // the mask could count.
                 return Err(FillError::Echoes(watched.map(|w| {
                     let mut drawn = w.drawn;
                     drawn.before = probed - printed;
+                    drawn.why = if !repainted {
+                        Why::Repaint
+                    } else if !whole_line {
+                        Why::Line
+                    } else {
+                        Why::Probe
+                    };
                     drawn
                 })));
             }
@@ -649,13 +662,28 @@ impl<E> FillError<E> {
     /// `pwfeedback` mask as roster takes it (ticket 155, #284), so the form a terminal (Windows'
     /// ConPTY) draws can be added. Never the message line, the State, Plugins or serve: the
     /// error's own text doesn't hold it. No printed text but `*` and space is in it ([`Drawn`]).
+    /// It names the rule that refused (ticket 155): output before the probe that changed the
+    /// screen, a line that isn't only sudo's prompt, or what the probe drew; and how many bytes
+    /// were printed before the probe, never what they were.
     pub fn log_line(&self) -> Option<String> {
-        match self {
-            FillError::Echoes(Some(drawn)) => Some(format!(
+        let FillError::Echoes(Some(drawn)) = self else {
+            return None;
+        };
+        let before = drawn.before;
+        Some(match drawn.why {
+            Why::Repaint => format!(
+                "prompt fill refused at sudo's prompt: what was printed before the probe ({before} bytes) changed the screen; the probe drew {drawn}"
+            ),
+            Why::Line => format!(
+                "prompt fill refused at sudo's prompt: the cursor's line isn't only sudo's prompt; the probe drew {drawn}"
+            ),
+            Why::Probe if before > 0 => format!(
+                "prompt fill refused at sudo's prompt: the probe drew {drawn}, not sudo's pwfeedback mask as roster takes it; {before} bytes printed before the probe repainted the screen as it was"
+            ),
+            Why::Probe => format!(
                 "prompt fill refused at sudo's prompt: the probe drew {drawn}, not sudo's pwfeedback mask as roster takes it"
-            )),
-            _ => None,
-        }
+            ),
+        })
     }
 }
 
