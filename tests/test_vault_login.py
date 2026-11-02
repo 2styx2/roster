@@ -235,7 +235,7 @@ def test_api_key_rejected(signin, client_id, words):
 
 def test_sso_hands_over_the_link_then_unlocks(signin):
     s, files = signin(sso="ok")
-    step = login(s, method="sso", identifier="yourorg", link_optional=True)["result"]
+    step = login(s, method="sso", identifier="yourorg")["result"]
     if WINDOWS:     # bw opens the page itself (PowerShell's Start, which no PATH can stand in for): there's no link
         assert step["step"] == "sso" and step["url"] is None
     else:
@@ -248,44 +248,13 @@ def test_sso_hands_over_the_link_then_unlocks(signin):
     no_secrets(s, files)
 
 
-def test_sso_hands_over_the_link_to_an_app_that_doesnt_say_it_can_do_without(signin):
-    # an app from before serve API 23 shows `url` as a link: off native Windows there always is one
-    if WINDOWS:
-        pytest.skip("native Windows has no link: see the test below")
-    s, files = signin(sso="ok")
-    step = login(s, method="sso", link_optional=False)["result"]
-    assert step["step"] == "sso" and step["url"].startswith("https://vault.bitwarden.com/#/sso?")
-    no_secrets(s, files)
-
-
-@pytest.mark.parametrize("asked", [{}, {"link_optional": False}, {"link_optional": "yes"}])
-def test_an_app_that_needs_an_sso_link_is_told_why_on_native_windows(monkeypatch, asked):
-    # #234: an app from before API 23 showed the `sso` step's `url` null as an empty link to copy. Without
-    # link_optional (which the app has sent since), native Windows refuses SSO before bw runs, saying what to do
-    from roster import providers
-    from roster.providers import bw_login
-    monkeypatch.setattr(bw_login, "WINDOWS", True)
-    ran = []
-    monkeypatch.setattr(bw_login, "_bw_status_json", lambda ctx: ran.append("status") or {})
-    monkeypatch.setattr(bw_login, "_bw", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr(bw_login, "terminal", lambda *a, **k: ran.append(a))
-    flow = bw_login.BwLogin(providers.Ctx("bw", None))
-    with pytest.raises(providers.LoginError) as e:
-        flow.start({"method": "sso", "identifier": "yourorg", "server": "https://vault.example.com", **asked})
-    assert ran == [] and e.value.step is None
-    assert type(e.value) is providers.LoginError                   # 59: an app of any age shows its message
-    message = str(e.value)
-    assert "no link" in message and "update the roster app" in message
-    assert "email and master password or an API key" in message
-
-
 @pytest.mark.parametrize("how, code, words", [
     ("fail", 56, "failed in the browser"),
     ("tde", 51, "trusted device encryption"),
 ])
 def test_sso_failures(signin, how, code, words):
     s, files = signin(sso=how)
-    step = login(s, method="sso", link_optional=True)["result"]
+    step = login(s, method="sso")["result"]
     err = answer(s, step)["error"]
     assert err["code"] == code and words in err["message"]
     no_secrets(s, files)
@@ -294,7 +263,7 @@ def test_sso_failures(signin, how, code, words):
 def test_sso_not_finished_in_time(signin, monkeypatch):
     monkeypatch.setenv("ROSTER_SSO_TIMEOUT", "1")
     s, files = signin(sso="hang")
-    step = login(s, method="sso", link_optional=True)["result"]
+    step = login(s, method="sso")["result"]
     err = answer(s, step)["error"]
     assert err["code"] == 56 and "wasn't finished in the browser" in err["message"]
     no_secrets(s, files)

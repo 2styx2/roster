@@ -427,7 +427,7 @@ A new Box's vault CLI isn't logged in (`vault.status`: `not-logged-in`). `vault.
 |---|---|---|---|---|
 | `vault.login` | `{action: "start", method: "password", email, password, server?, provider?}` | the first step | `10`, `12`, `13`, `51`-`54`, `57`, `59` | 3 |
 | `vault.login` | `{action: "start", method: "apikey", client_id, client_secret, server?}` | `master_password` | `12`, `13`, `52`-`54`, `57`-`59` | 3 |
-| `vault.login` | `{action: "start", method: "sso", identifier?, server?, link_optional?}` | `sso` | `12`, `13`, `51`, `53`, `54`, `56`, `57`, `59` | 3 |
+| `vault.login` | `{action: "start", method: "sso", identifier?, server?}` | `sso` | `12`, `13`, `51`, `53`, `54`, `56`, `57`, `59` | 3 |
 | `vault.login` | `{action: "answer", login, ...the step's answer}` | the next step | `10`, `50`-`53`, `55`, `56`, `59` | 3 |
 | `vault.login` | `{action: "cancel"}` | `{cancelled: true \| false}` |  | 3 |
 
@@ -440,7 +440,7 @@ A new Box's vault CLI isn't logged in (`vault.status`: `not-logged-in`). `vault.
 | `two_factor_method` | `methods: [{index, id, kind, name}]` in bw's order. `kind` is `authenticator`, `email`, `yubikey` or `other`; `id` is bw's method number (0, 1, 3). FIDO2 and Duo never appear: the CLI can't do them | `{method: index}` |
 | `two_factor_code` | `method` (as above, or `null` when the account has one method and bw picked it), `sent: true` when bw has just emailed the code | `{code}` |
 | `new_device_code` | `email`: Bitwarden emailed a one-time code because this Box is new | `{code}` |
-| `sso` | `url` to open in a browser (roster opens it on the Box too: `wslview`, `explorer.exe` on WSL, else `xdg-open`), `expires_in` seconds (5 minutes). On native Windows `url` is `null` (API 23): bw opens the page in the default browser itself, with PowerShell's `Start` by its full path, which roster can't stand in for, so there's no link to hand over; roster knows bw opened it when Windows' TCP table shows bw listening on its callback port (`8065`-`8070`); it never binds or connects to the port. There, SSO also needs `link_optional: true` in `start`, the app saying it shows this step without a link (the app has sent it since this change; a serve that predates it ignores it): without it serve answers `59` before bw runs, saying to update the app or sign in with the email and master password or an API key, since an app from before API 23 showed `null` as an empty link to copy | `{}`: waits up to 20 s for the browser, then answers `sso` again (with the time left) or the next step |
+| `sso` | `url` to open in a browser (roster opens it on the Box too: `wslview`, `explorer.exe` on WSL, else `xdg-open`), `expires_in` seconds (5 minutes). On native Windows `url` is `null` (API 23): bw opens the page in the default browser itself, with PowerShell's `Start` by its full path, which roster can't stand in for, so there's no link to hand over; roster knows bw opened it when Windows' TCP table shows bw listening on its callback port (`8065`-`8070`); it never binds or connects to the port. An app from before API 23 shows that `null` as an empty link; the sign-in still works through the page bw opened | `{}`: waits up to 20 s for the browser, then answers `sso` again (with the time left) or the next step |
 | `master_password` | after an API key or SSO, which only log in: the vault still needs the master password | `{password}` |
 | `done` | `provider`, `status: "unlocked"` | |
 
