@@ -4,11 +4,15 @@ change: it's reported in the result's `sync: {ok, error?, fix?}`, as changes.pub
 watcher applies sync too, once they load (decision Q137). Scratch infra repos and the stand-in bw only; no network."""
 # ruff: noqa: F811 (test_changes' fixtures, imported by name, are the tests' arguments)
 
+import json
+import queue
+
 import pytest
 from conftest import SECRET
 from test_changes import app, box, git, infra, result, sshd  # noqa: F401 (fixtures)
 from test_live import live, repo, save  # noqa: F401 (fixtures)
 
+from roster import serve as rpc
 from roster.sshops import fingerprint
 
 
@@ -145,3 +149,55 @@ def test_source_with_a_broken_file_syncs_nothing(live_s, repo, isolated):
     repo.write_text("groups: [\n")
     r = live_s.ok("inventory.reload")
     assert r["error"]["line"] and "sync" not in r and ssh_config(isolated) == ""
+
+
+# ---------------------------------------------------------------- anything a sync raises is a failed sync, never more
+
+class Odd(Exception):
+    """Not an OSError, a Problem or a die(): what a bug in the sync would raise."""
+
+
+def broken_sync(*a, **k):
+    raise Odd("hunter2")                        # its words never reach the result: they could be anything
+
+
+def handle(state, method, params):
+    return rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+
+
+@pytest.mark.parametrize("method, params", [
+    ("host.add", {"name": "nas", "group": "lab", "address": "10.0.0.50", "user": "root"}),
+    ("host.update", {"host": "esx", "changes": {"title": "ESXi 8"}}),
+    ("host.rename", {"host": "other", "to": "other-2"}),
+])
+def test_any_error_from_the_sync_is_a_failed_sync_and_the_change_stands(box, monkeypatch, method, params):
+    monkeypatch.setattr(rpc, "write_ssh_config", broken_sync)
+    state = rpc.State(str(box.yml))
+    r = handle(state, method, params)
+    assert "error" not in r, r
+    sync = r["result"]["sync"]
+    assert sync["ok"] is False and sync["error"] and sync["fix"] == "run `roster sync` on this box"
+    assert "hunter2" not in json.dumps(r)
+    assert git(box, "status", "--porcelain", "--untracked-files=no") == "M roster.yml"
+
+
+def test_the_watcher_still_notifies_and_keeps_watching_when_the_sync_raises(repo, monkeypatch):
+    monkeypatch.setattr(rpc, "write_ssh_config", broken_sync)
+    monkeypatch.setattr(rpc, "WATCH_EVERY", 0.05)
+    monkeypatch.setattr(rpc, "WATCH_SETTLE", 0.05)
+    notes = queue.Queue()
+    state = rpc.State(str(repo))
+    state.notify = lambda method, params: notes.put(params)
+    state.auto = True
+    watcher = rpc.Watcher(state)
+    watcher.start()
+    try:
+        save(repo, repo.read_text().replace("      plain:", "      plain2:"))
+        first = notes.get(timeout=3)
+        assert first["applied"] is True and first["sync"]["ok"] is False and "hunter2" not in json.dumps(first)
+        save(repo, repo.read_text().replace("      plain2:", "      plain3:"))
+        assert notes.get(timeout=3)["applied"] is True          # still watching
+        assert watcher.is_alive()
+    finally:
+        watcher.stop.set()
+        watcher.join()

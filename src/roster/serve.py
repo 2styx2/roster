@@ -774,9 +774,12 @@ def sync_box(state):
             write_ssh_config(cfg)
             write_claude_files(cfg)
             return {"ok": True}
-        except (Problem, SystemExit, OSError) as e:
-            why = e.message if isinstance(e, Problem) else die_message(e) if isinstance(e, SystemExit) else str(e)
+        except Exception as e:              # anything at all: the change is written already, and the watcher must live
+            # a Problem's own message; an OSError's own words (paths only); else just its type, never its text
+            why = e.message if isinstance(e, Problem) else failure_text(e)
             return {"ok": False, "error": why, "fix": "run `roster sync` on this box"}
+        except SystemExit as e:             # a die() isn't an Exception
+            return {"ok": False, "error": die_message(e), "fix": "run `roster sync` on this box"}
 
 
 # ---------------------------------------------------------------- adding a Host (ticket 11, decision Q43)
