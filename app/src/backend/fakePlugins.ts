@@ -430,6 +430,8 @@ export function fakePluginHost(
   pluginLoad(path: string, grants: readonly string[], settings?: Record<string, unknown> | null): Promise<{ manifest: PluginManifest; dir: string; reply: PluginReply }>;
   pluginForget(plugin: string): Promise<boolean>;
   pluginBuiltins(names: readonly string[]): Promise<void>;
+  /** As a core host built anew: it hasn't been told roster's own commands (tests use it). */
+  pluginForgetBuiltins(): void;
   pluginData(names: readonly string[]): Promise<Record<string, PluginData>>;
   /** What each Plugin keeps in its data folder (tests look). */
   pluginFiles(plugin: string): Map<string, string>;
@@ -811,6 +813,9 @@ export function fakePluginHost(
     },
     async pluginBuiltins(names) {
       builtins = new Set(names);
+    },
+    pluginForgetBuiltins() {
+      builtins = null;
     },
     async pluginForget(plugin) {
       return files.delete(plugin);
