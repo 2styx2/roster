@@ -184,6 +184,7 @@ export function tauriBackend(): Backend {
     openQuickSession,
     checkHost: (host) => call<HostCheck>("host_check", { host }),
     checkBox: () => call<BoxCheck>("box_check"),
+    listJobs: () => call<{ jobs: JobProgress[] }>("jobs_list").then((r) => r.jobs),
     pullInventory: () => call<PullResult>("inventory_pull"),
     verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
