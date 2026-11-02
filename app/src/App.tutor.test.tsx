@@ -107,7 +107,8 @@ describe(":tutor", () => {
     expect(await screen.findByRole("group", { name: `Session ${REAL}` })).toBeInTheDocument();
     expect(pane("demo-01")).toBeNull();
     expect(document.documentElement.dataset.theme).not.toBe("nord");
-  });
+    // It opens :help terminal.size, on the long :help options page (see below).
+  }, 15_000);
 
   it("comes back where you left off, and reset starts it over", async () => {
     const { user } = await ready({ tutor: { roster: ["picker", "session"] } });
