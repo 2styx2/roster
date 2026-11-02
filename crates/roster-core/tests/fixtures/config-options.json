@@ -1046,7 +1046,7 @@
               "names": []
             }
           ],
-          "example": "roster.o.modes.standard.sidebar.sections:insert(1, \"folders\")",
+          "example": "roster.o.terminal.font:insert(2, \"Cascadia Mono\")",
           "methods": [],
           "listed": false
         },
@@ -1110,13 +1110,13 @@
           "written": "",
           "ty": "",
           "default": "",
-          "about": "Empties a list.",
+          "about": "Empties a list. A list that needs an item (terminal.font) refuses to be empty, at the line.",
           "takes": "",
           "names": [],
           "item": null,
           "fields": [],
           "rows": [],
-          "example": "roster.o.terminal.font:clear()",
+          "example": "roster.o.folders:clear()",
           "methods": [],
           "listed": false
         },

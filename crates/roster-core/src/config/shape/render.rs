@@ -492,7 +492,7 @@ pub fn markdown() -> String {
     s.push_str("```json\n{\n  \"runtime.version\": \"Lua 5.4\",\n  \"workspace.library\": [\"types\"],\n  \"diagnostics.globals\": [\"roster\"]\n}\n```\n\n");
     let _ = writeln!(
         s,
-        "Then `---@type {ROOT}` on the table `init.lua` returns checks every name and value in it. The file is the copy this app was built with; run `:config types` again after an update.\n"
+        "Then `---@type {ROOT}` on the table `init.lua` returns checks every name and value in it, with one limit: lua-language-server doesn't flag a string outside an option's set (`terminal.cursor_style = \"triangle\"` passes its check), so the app's own check when it loads the file, at that line, is the one that catches it. The file is the copy this app was built with; run `:config types` again after an update.\n"
     );
     s
 }
@@ -687,7 +687,7 @@ pub fn check_lua() -> String {
     let mut s = String::new();
     let _ = writeln!(
         s,
-        "-- Generated from crates/roster-core/src/config/shape by `{COMMAND}`: every example in\n-- the option reference, for lua-language-server to check against {STUBS_PATH}\n-- (CI runs `lua-language-server --check examples/config-check --checklevel=Hint`).\n"
+        "-- Generated from crates/roster-core/src/config/shape by `{COMMAND}`: every example in\n-- the option reference, for lua-language-server to check against {STUBS_PATH}\n-- (CI runs `lua-language-server --check examples/config-check --checklevel=Hint`). It doesn't\n-- flag a string outside a \"a\"|\"b\" type, so tests/config_shape.rs loads every example too.\n"
     );
     for section in reference().sections {
         for e in section.entries.iter().filter(|e| !e.example.is_empty()) {

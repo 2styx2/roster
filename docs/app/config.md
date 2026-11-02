@@ -50,7 +50,7 @@ lua/myconf/folders.lua    roster.folders.add
 
 - **`:help options`** is the [option reference](options.md): every option and every name of the `roster` table, with its type, default, the values it takes and an example, and in the app the value each has now. `:help terminal.size` opens one, `:help roster.keymap.set` a function.
 - **`:options`** finds an option, with its value now, its default and where it was set (`lua/myconf/options.lua:3`, the State, or default). Enter opens its help.
-- **`:config types`** writes every option's type and summary as `types/roster-config.lua` in the config folder, so lua-language-server completes names in your editor and shows what each does as you type ([Editor support](options.md#editor-support)).
+- **`:config types`** writes every option's type and summary as `types/roster-config.lua` in the config folder, so lua-language-server completes names in your editor and shows what each does as you type ([Editor support](options.md#editor-support)). It checks names and types, but lets through a string outside an option's set (`terminal.cursor_style = "triangle"`): roster's own check catches that when the file loads, at its line.
 
 ### The returned table
 

@@ -512,7 +512,7 @@ Puts an item at a position of a list. A position outside the list is an error at
 | `value` | `any` | The item. |
 
 ```lua
-roster.o.modes.standard.sidebar.sections:insert(1, "folders")
+roster.o.terminal.font:insert(2, "Cascadia Mono")
 ```
 
 ### `roster.o.List:remove(...)`
@@ -543,10 +543,10 @@ if not roster.o.terminal.font:has("Hack") then roster.o.terminal.font:append("Ha
 
 ### `roster.o.List:clear()`
 
-Empties a list.
+Empties a list. A list that needs an item (terminal.font) refuses to be empty, at the line.
 
 ```lua
-roster.o.terminal.font:clear()
+roster.o.folders:clear()
 ```
 
 ### `roster.o.List:reset()`
@@ -1702,5 +1702,5 @@ roster.o.packages = { { "someone/recent-alerts", tag = "v1.2.0" }, "someone/pinn
 }
 ```
 
-Then `---@type roster.config.Options` on the table `init.lua` returns checks every name and value in it. The file is the copy this app was built with; run `:config types` again after an update.
+Then `---@type roster.config.Options` on the table `init.lua` returns checks every name and value in it, with one limit: lua-language-server doesn't flag a string outside an option's set (`terminal.cursor_style = "triangle"` passes its check), so the app's own check when it loads the file, at that line, is the one that catches it. The file is the copy this app was built with; run `:config types` again after an update.
 

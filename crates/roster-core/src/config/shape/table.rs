@@ -1233,7 +1233,7 @@ pub(super) const METHODS: &[ApiItem] = &[
         "",
         "Puts an item at a position of a list.",
         "A position outside the list is an error at the line.",
-        "roster.o.modes.standard.sidebar.sections:insert(1, \"folders\")",
+        "roster.o.terminal.font:insert(2, \"Cascadia Mono\")",
     ),
     item(
         "roster.o.List:remove",
@@ -1264,8 +1264,8 @@ pub(super) const METHODS: &[ApiItem] = &[
         Some(&[]),
         "",
         "Empties a list.",
-        "",
-        "roster.o.terminal.font:clear()",
+        "A list that needs an item (terminal.font) refuses to be empty, at the line.",
+        "roster.o.folders:clear()",
     ),
     item(
         "roster.o.List:reset",

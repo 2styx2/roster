@@ -461,7 +461,7 @@ function roster_o_List:prepend(...) end
 --- A position outside the list is an error at the line.
 ---
 --- ```lua
---- roster.o.modes.standard.sidebar.sections:insert(1, "folders")
+--- roster.o.terminal.font:insert(2, "Cascadia Mono")
 --- ```
 ---@param self any
 ---@param i integer The position, from 1 to the list's length + 1.
@@ -489,9 +489,10 @@ function roster_o_List:remove(...) end
 function roster_o_List:has(value) end
 
 --- Empties a list.
+--- A list that needs an item (terminal.font) refuses to be empty, at the line.
 ---
 --- ```lua
---- roster.o.terminal.font:clear()
+--- roster.o.folders:clear()
 --- ```
 ---@param self any
 function roster_o_List:clear() end
