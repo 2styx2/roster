@@ -535,6 +535,10 @@ export function topologyPlugin(): FakePlugin {
         const waiting = keys(r.pending).length;
         if (waiting > 0) roster.notify(`Cut ${host}: cut pending on ${plural(waiting, "Host")} that didn't answer.`, "warn");
         else roster.notify(`Cut ${host} from ${plural(((r.confirmed ?? []) as unknown[]).length, "Host")}.`, "info", { quiet: false });
+        const sync = ((r.change ?? {}) as { sync?: { ok: boolean; error?: string } }).sync;
+        if (sync && !sync.ok) {
+          roster.notify(`mesh: false for ${host} was written, but this Box's ssh config didn't follow (${sync.error ?? "roster sync failed"}): run roster sync`, "warn");
+        }
       };
       const cutOver = () => {
         if (cutting?.timer !== undefined) roster.cancel(cutting.timer);

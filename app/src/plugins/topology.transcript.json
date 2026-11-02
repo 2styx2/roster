@@ -289,6 +289,9 @@
       "result": {
         "change": {
           "backup": "x",
+          "sync": {
+            "ok": true
+          },
           "written": true
         },
         "confirmed": [

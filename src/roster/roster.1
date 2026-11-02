@@ -154,7 +154,7 @@ the command, after \-\-
 .PP
 \fBroster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]\fR
 .PP
-Scan networks; \fB\-\-write\fR adds the results to \fBroster.yml\fR
+Scan networks; \fB\-\-write\fR adds the results to \fBroster.yml\fR, then syncs this Box as \fBroster sync\fR does
 .TP
 \fBCIDR\fR
 e.g. 10.0.1.0/24 (several allowed)
@@ -239,7 +239,7 @@ how long to wait for the answer (default: 30)
 .PP
 \fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-json] [{cut,status}] [HOST]\fR
 .PP
-Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change; \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
+Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change, then syncs this Box as \fBroster sync\fR does; \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
 .TP
 \fBACTION\fR
 cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections)
@@ -417,7 +417,7 @@ Wrong arguments
 \fB130\fR
 Interrupted with Ctrl+C
 .PP
-With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR exit 1 while a Host is pending.
+With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR exit 1 while a Host is pending. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
 .SH EXAMPLES
 .PP
 .nf

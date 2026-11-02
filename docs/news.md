@@ -4,6 +4,19 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Fixed
+
+**CLI**
+
+- **`roster discover --write` and `roster mesh cut` sync this Box** after they change `roster.yml`, as the app's changes do: its ssh config and Claude files follow, so a Host they wrote needs no `roster sync` by hand. If the sync fails, the edit stays, and a `warning:` on stderr says why and to run `roster sync`; the command's exit status is the edit's. See [Commands](cli-reference.md#commands).
+
+**App**
+
+- **A sync that failed after a pull is no longer silent:** when the pull a form (`:edit`, `:host add`, Save to vault) runs before saving brought new commits and this Box's ssh config didn't follow, the form's pull line says so, with `roster sync` to run; `:pull` says it too.
+- **A sync that failed after a Mesh cut says so:** the mesh and Topology Plugins warn "mesh: false for HOST was written, but this Box's ssh config didn't follow (…): run roster sync" after a cut whose sync failed; the cut stands.
+
 ## v0.4.0
 
 ### New

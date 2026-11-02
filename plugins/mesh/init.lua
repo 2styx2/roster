@@ -172,6 +172,11 @@ local function over(j)
     for _, w in ipairs(r.warnings or {}) do roster.notify(w, "warn", { quiet = false }) end
     local c = r.change or {}
     if c.error then roster.notify("mesh: false for " .. host .. " wasn't written: " .. c.error .. " (" .. c.fix .. ")", "warn") end
+    -- The `roster sync` serve runs after writing it (T150): a failure doesn't undo the cut (T153).
+    if c.sync and not c.sync.ok then
+      roster.notify("mesh: false for " .. host .. " was written, but this Box's ssh config didn't follow ("
+        .. (c.sync.error or "roster sync failed") .. "): run roster sync", "warn")
+    end
   end
   refresh()
 end
