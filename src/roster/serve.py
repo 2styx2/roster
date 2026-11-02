@@ -2148,7 +2148,7 @@ def vault_login(state, params):
     Result: `master_password`
     Errors: 12, 13, 52-54, 57-59
     Since: API 3
-    Params: `{action: "start", method: "sso", identifier?, server?}`
+    Params: `{action: "start", method: "sso", identifier?, server?, link_optional?}`
     Result: `sso`
     Errors: 12, 13, 51, 53, 54, 56, 57, 59
     Since: API 3

@@ -54,7 +54,7 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 | 30 | 56 | SSO failed in the browser or wasn't finished within 5 minutes | Vault | "the SSO sign-in failed in the browser - try again" | Start SSO again |
 | 31 | 57 | The self-hosted address isn't one | Sign-in form | "'vault example com' isn't a server address - …" | Pick cloud or EU, or type an https:// address |
 | 32 | 58 | API key not accepted, or an organization key | Sign-in form | "Bitwarden didn't accept that API key (client_id or client_secret)" | Copy the personal key again from the web vault |
-| 33 | 59 | Anything else; bw's own words | Vault | "Bitwarden sign-in failed: …" | See Details; `bw login` in a terminal shows the same |
+| 33 | 59 | Anything else; bw's own words. Also SSO on native Windows asked by an app that didn't say it shows the step without a link (`link_optional`): an app from before serve API 23, which would have shown an empty link | Vault | "Bitwarden sign-in failed: …" | See Details; `bw login` in a terminal shows the same |
 
 ## Signing out
 

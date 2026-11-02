@@ -581,11 +581,13 @@ export interface VaultStatus {
 }
 
 /** Where `vault.login` starts: email + master password, an API key, or SSO in a browser.
- * `server` is "cloud", "eu" or a self-hosted https:// URL. */
+ * `server` is "cloud", "eu" or a self-hosted https:// URL. SSO's `link_optional: true` says the
+ * app shows the `sso` step without a link (`url` null, native Windows): serve refuses SSO there
+ * without it (59), since an app from before API 23 showed an empty link; older serves ignore it. */
 export type SignInStart =
   | { method: "password"; server: string; email: string; password: string }
   | { method: "apikey"; server: string; client_id: string; client_secret: string }
-  | { method: "sso"; server: string; identifier?: string };
+  | { method: "sso"; server: string; identifier?: string; link_optional?: boolean };
 
 /** A two-step method bw offers, in its order (FIDO2 and Duo never appear: the CLI can't do them). */
 export interface TwoFactorMethod {

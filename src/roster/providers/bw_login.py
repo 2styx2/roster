@@ -53,6 +53,11 @@ SSO_URL_WAIT = 15           # s: for bw to start its callback server and hand ov
 SSO_TIMEOUT = 300           # s: for the person to finish SSO in the browser
 SSO_PORTS = range(8065, 8071)   # bw's SSO callback server listens on the first free one
 SSO_POLL = 20               # s: one vault.login call waits at most this long for the browser
+# Native Windows, to an app that didn't send link_optional (one from before serve API 23 shows the `sso` step's
+# `url` null as an empty link to copy, #234): refused before bw runs, with what to do instead (59, which every app shows)
+SSO_NEEDS_LINK = ("this roster app can't show an SSO sign-in on native Windows, where Bitwarden opens the sign-in "
+                  "page itself and there's no link to show - update the roster app, or sign in with your email and "
+                  "master password or an API key")
 
 CLOUD = None                                        # bw's default (US cloud): `bw config server bitwarden.com`
 SERVERS = {"cloud": CLOUD, "us": CLOUD, "eu": "https://vault.bitwarden.eu"}
@@ -338,7 +343,10 @@ class BwLogin:
 
     def start(self, params):
         """params: method ("password", "apikey" or "sso"), server (optional; else as configured), and the
-        method's own: email + password, client_id + client_secret, or identifier (SSO org, optional)."""
+        method's own: email + password, client_id + client_secret, or identifier (SSO org, optional). SSO on
+        native Windows also needs link_optional: true, the app saying it can show the step with `url` null."""
+        if WINDOWS and params.get("method") == "sso" and params.get("link_optional") is not True:
+            raise LoginError(SSO_NEEDS_LINK)
         status = _bw_status_json(self.ctx)
         if status.get("status") != "unauthenticated":
             who = f" as {status['userEmail']}" if status.get("userEmail") else ""

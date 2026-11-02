@@ -1470,6 +1470,13 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       }
       return stepOf(id, { step: "master_password", email: null });
     }
+    if (scenario.signIn?.ssoLink === false && start.link_optional !== true) {
+      // as serve: native Windows refuses SSO to an app that can't show the step without a link (#234)
+      throw signInFailure(
+        SignInError.failed,
+        "this roster app can't show an SSO sign-in on native Windows, where Bitwarden opens the sign-in page itself and there's no link to show - update the roster app, or sign in with your email and master password or an API key",
+      );
+    }
     return stepOf(id, {
       step: "sso",
       url:

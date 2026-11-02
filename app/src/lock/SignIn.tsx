@@ -186,7 +186,9 @@ export function SignIn({
       }
       case "sso": {
         const identifier = value("identifier").trim();
-        return void run(() => vault.signInStart({ method: "sso", server, ...(identifier ? { identifier } : {}) }), "sso");
+        // link_optional: this app shows the step without a link (native Windows); every serve takes it (#234)
+        const start = { method: "sso", server, link_optional: true, ...(identifier ? { identifier } : {}) } as const;
+        return void run(() => vault.signInStart(start), "sso");
       }
       case "step": {
         const { step, via } = screen;
