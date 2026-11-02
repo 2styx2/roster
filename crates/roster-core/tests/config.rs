@@ -1674,7 +1674,10 @@ fn is_init_lua(block: &str) -> bool {
     let mut used = block.match_indices("roster.").filter_map(|(i, _)| {
         let before = block[..i].chars().next_back();
         let rest = &block[i + "roster.".len()..];
-        let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
         (!before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '"' || c == '/'))
             .then_some(name)
     });
@@ -1753,5 +1756,8 @@ fn every_init_lua_snippet_in_the_docs_loads() {
     }
     assert!(total > 20, "only {total} lua blocks found");
     // docs/plugins.md and docs/mesh.md add Packages; each first-party Plugin's README its own.
-    assert!(elsewhere >= 5, "only {elsewhere} init.lua blocks found outside the guides");
+    assert!(
+        elsewhere >= 5,
+        "only {elsewhere} init.lua blocks found outside the guides"
+    );
 }

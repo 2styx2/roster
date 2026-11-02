@@ -736,7 +736,10 @@ return { theme = table.concat({
     let e = err("roster.o.get = 1\n");
     assert!(e.message.contains("roster.o.get is a function"), "{e}");
     // The root's own :get() still gives everything set.
-    assert_eq!(says("roster.o.vim = false\nreturn { theme = tostring(roster.o:get().vim) }\n"), "false");
+    assert_eq!(
+        says("roster.o.vim = false\nreturn { theme = tostring(roster.o:get().vim) }\n"),
+        "false"
+    );
 }
 
 #[test]

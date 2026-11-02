@@ -990,7 +990,10 @@ fn add_methods(lua: &Lua) -> R<()> {
                 if path.iter().any(String::is_empty) {
                     return Err(fail(
                         lua,
-                        format!("roster.o.get: {:?} isn't an option name like \"terminal.size\"", path.join(".")),
+                        format!(
+                            "roster.o.get: {:?} isn't an option name like \"terminal.size\"",
+                            path.join(".")
+                        ),
                     ));
                 }
                 option(&path).map_err(|m| fail(lua, m))?;
