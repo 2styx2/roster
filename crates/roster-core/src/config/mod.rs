@@ -409,6 +409,17 @@ impl<'a> Sources<'a> {
             })
         })
     }
+
+    /// [`Sources::find`] for a value no `roster.*` call set (it's the returned table's, which
+    /// wins over the calls): keys inside a `roster.*` statement aren't it (ticket 148).
+    fn find_outside_calls(&self, path: &[String]) -> Option<Location> {
+        self.each().find_map(|(file, source)| {
+            locate::line_of_outside_calls(source, path).map(|line| Location {
+                file: file.into(),
+                line,
+            })
+        })
+    }
 }
 
 /// Gives a schema error its line: from the API call that set the value, else by finding the
@@ -425,7 +436,7 @@ fn place(mut e: ConfigError, sources: &Sources, api: &[(Vec<String>, Location)])
         e.line = Some(at.line);
         return e;
     }
-    match sources.find(&e.path) {
+    match sources.find_outside_calls(&e.path) {
         Some(at) => {
             e.file = at.file;
             e.line = Some(at.line);
@@ -674,7 +685,7 @@ fn lines(
             out.insert(key, at);
         }
     };
-    let find = |path: &[String]| sources.find(path);
+    let find = |path: &[String]| sources.find_outside_calls(path);
     for b in &c.keys.0 {
         let path = vec!["keys".to_string(), b.context.lua_name().to_string(), b.keys.clone()];
         put(path, &find);

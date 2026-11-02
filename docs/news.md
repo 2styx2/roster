@@ -4,6 +4,15 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Fixed
+
+**App**
+
+- `:options` names the returned table's line for an option it sets over a `roster.o` line (after `:config import-terminal`, it named the import block's line), and an error in that value is reported there too.
+- The editor types' `roster.config.OptionName` (what `roster.o.get` and `roster.o.reset` take) says so, and takes a map's own keys (`"views.files.width"`) as well as the names it lists. Run `:config types` again to update them.
+
 ## v0.4.0
 
 ### New

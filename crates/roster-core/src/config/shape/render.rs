@@ -616,11 +616,16 @@ pub fn stubs() -> String {
         s.push('\n');
     }
 
-    s.push_str("--- An option's dotted name, for roster.set.\n---@alias roster.config.OptionName\n");
+    // The names it lists are the fixed ones; a map's keys are the user's, so any string goes too.
+    s.push_str(
+        "--- An option's dotted name, for roster.o.get, roster.o.reset and roster.set: one of these, \
+         or a name under a map's key (\"views.files.width\", \"themes.paper.label\").\n\
+         ---@alias roster.config.OptionName\n",
+    );
     for o in options().iter().filter(|o| !o.in_item()) {
         let _ = writeln!(s, "---| \"{}\"", o.path);
     }
-    s.push('\n');
+    s.push_str("---| string\n\n");
 
     // roster.o's tables: a class per kind, with its methods.
     let mut classes: Vec<&str> = Vec::new();
