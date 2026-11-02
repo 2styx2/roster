@@ -225,6 +225,7 @@ With nmap installed, discover collects open ports, service versions, web page ti
 - It saves `roster.yml.bak`.
 - It refuses to write a file that wouldn't load.
 - It never overwrites hosts that are already in the file.
+- It then syncs this Box, as `roster sync` does (its ssh config and Claude files). If that fails, the hosts stay written and a `warning:` on stderr says why and to run `roster sync`.
 
 Let your security team know before scanning big ranges.
 
@@ -235,7 +236,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | Command | What it does |
 |---|---|
 | `init` | Write the commented example `roster.yml` |
-| `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml` |
+| `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`) |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
 | `check [HOST]` | Reachability of SSH, web UIs and services, and the Mesh's drift (without `--only`). With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)) |
@@ -249,7 +250,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `providers` | Available providers, whether their tools are installed, unknown ones in use |
 | `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
 | `revoke` | Remove this box's key from every host |
-| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change; `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
+| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
@@ -400,7 +401,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 | `2` | Wrong arguments |
 | `130` | Interrupted with Ctrl+C |
 
-With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` exit 1 while a Host is pending.
+With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` exit 1 while a Host is pending. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
 
 ## Examples
 

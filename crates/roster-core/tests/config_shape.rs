@@ -361,6 +361,31 @@ fn the_stubs_are_lua_and_declare_every_option() {
     assert!(stubs.contains("function roster.keymap.set(context, keys, action) end"));
 }
 
+/// Ticket 148: the name `roster.o.get` and `roster.o.reset` take says so, and takes a map's own
+/// keys (`"views.files.width"`) as well as the names it lists.
+#[test]
+fn the_option_name_type_says_what_takes_it_and_takes_a_maps_keys() {
+    let stubs = shape::stubs();
+    let start = stubs.find("---@alias roster.config.OptionName\n").expect("the alias");
+    let about = stubs[..start].lines().next_back().unwrap();
+    assert!(
+        about.contains("roster.o.get") && about.contains("roster.o.reset"),
+        "{about}"
+    );
+    assert!(!about.ends_with("for roster.set."), "{about}");
+    let members: Vec<&str> = stubs[start..]
+        .lines()
+        .skip(1)
+        .take_while(|l| l.starts_with("---|"))
+        .collect();
+    assert!(members.contains(&"---| \"views\""), "{members:?}");
+    assert!(
+        members.iter().all(|m| !m.contains('*') && !m.contains("[]")),
+        "{members:?}"
+    );
+    assert_eq!(members.last(), Some(&"---| string"), "a map's key is any string");
+}
+
 #[test]
 fn config_types_writes_the_stubs_into_the_config_folder() {
     let dir = common::temp("config-types");
