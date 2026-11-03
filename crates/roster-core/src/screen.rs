@@ -30,13 +30,13 @@ impl Cell {
         self.ch[0]
     }
 
-    /// How many columns xterm.js gives its character ([`crate::wcwidth::width`]).
-    fn width(self) -> u8 {
+    /// Its whole character (the second review of #318, #4: the prompt checks compare these).
+    fn char(self) -> char {
         let len = self.ch.iter().position(|&b| b == 0).unwrap_or(4).max(1);
         std::str::from_utf8(&self.ch[..len])
             .ok()
             .and_then(|s| s.chars().next())
-            .map_or(1, |c| crate::wcwidth::width(u32::from(c)))
+            .unwrap_or(char::REPLACEMENT_CHARACTER)
     }
 }
 
@@ -171,7 +171,8 @@ pub(crate) struct Screen {
     style: Style,
     /// A UTF-8 character begun: its bytes so far, how many, and how many it takes.
     utf8: Option<([u8; 4], usize, usize)>,
-    /// Bytes fed so far, where the last ESC (or C1 CSI) was, and where the last `ESC[2J` ended:
+    /// Bytes fed so far, where the last ESC that starts a sequence (in any state) or C1 CSI was,
+    /// and where the last `ESC[2J` ended:
     /// `ESC[3J` right after `ESC[2J` (ConPTY's `cls`) is the only one modelled (the review of #318).
     fed: u64,
     esc_at: u64,
@@ -187,6 +188,11 @@ pub(crate) struct Screen {
     /// The last [`ODD_KEPT`] of them, each with its number (`odd` after it), for the log
     /// (ticket 155c): never text ([`Seen`]).
     odd_seen: std::collections::VecDeque<(u64, Seen)>,
+    /// The first thing since the last full reset (RIS) that this screen doesn't model and that
+    /// can change how it reads later output (a mode, a charset, a wide character, a style it
+    /// can't read…): from then on it may not line up with xterm.js, so nothing matches until a
+    /// reset, which both start over from (the second review of #318, #1 and #2).
+    diverged: Option<Seen>,
     /// What a fill's probe draws, while it waits (ticket 154): [`Screen::watch_mask`].
     mask: Option<MaskWatch>,
     /// The OSC being read, while it may be a shell mark (ticket 162): only while a token is
@@ -225,8 +231,8 @@ pub(crate) struct Snapshot {
     alternate: bool,
     resizes: u64,
     odd: u64,
-    /// A wide or zero-width character was on the screen.
-    wide: bool,
+    /// The screen had lost track of xterm.js's ([`Screen::diverged`]).
+    diverged: bool,
 }
 
 /// How the screen now compares with a [`Snapshot`] (the review of #299, #9: one comparison for
@@ -253,7 +259,7 @@ const DIFF_ROWS: usize = 8;
 /// only its styles differ, and what it did that the screen doesn't model (the last
 /// [`ODD_KEPT`]). Never a character: a row says only which columns changed, and a style only its
 /// SGR parameters (`fg default -> 37`); unmodelled sequences are named as [`Drawn`] names them.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ScreenDiff {
     /// The cursor at the snapshot and now.
     cursor: Option<(CursorAt, CursorAt)>,
@@ -262,8 +268,9 @@ pub struct ScreenDiff {
     resizes: u64,
     /// Whether the alternate screen is up now, if that changed.
     alternate: Option<bool>,
-    /// A wide or zero-width character is on the screen, now or at the snapshot.
-    wide: bool,
+    /// Whether the screen had lost track of xterm.js's at the snapshot ([`Screen::diverged`]), and
+    /// what made it, if it still has (a reset since starts over).
+    diverged: Option<Option<Seen>>,
     rows: Vec<RowDiff>,
     rows_more: usize,
     odd: Vec<Seen>,
@@ -274,7 +281,7 @@ pub struct ScreenDiff {
 type CursorAt = (usize, usize, bool);
 
 /// One changed row of a [`ScreenDiff`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct RowDiff {
     /// From 1.
     row: usize,
@@ -309,8 +316,12 @@ impl std::fmt::Display for ScreenDiff {
                 if up { "came up" } else { "went away" }
             ));
         }
-        if self.wide {
-            parts.push("a wide or zero-width character is on the screen".to_string());
+        match &self.diverged {
+            Some(Some(seen)) => parts.push(format!(
+                "roster's screen lost track of the terminal at {seen} (a reset starts it over)"
+            )),
+            Some(None) => parts.push("roster's screen had lost track of the terminal at the check".to_string()),
+            None => {}
         }
         for r in &self.rows {
             let cols = match r.cols {
@@ -440,7 +451,7 @@ fn params_shown(params: &[u8]) -> bool {
 
 /// One thing a fill's probe drew, as the core's screen parsed it (ticket 155): never the text of
 /// a character other than `*` and space, nor an escape string's contents, only how many.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Seen {
     Star,
     Space,
@@ -481,7 +492,7 @@ enum Kind {
 /// (else `params(N)`) and its command only when it's one a redraw uses ([`CSI_SHOWN`], else `?`),
 /// as in `CSI[?25l`, so no sequence spells text into it. This is
 /// before any password is typed, but it's kept that narrow anyway.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Drawn {
     seen: Vec<Seen>,
     more: usize,
@@ -597,6 +608,26 @@ impl std::fmt::Display for Seen {
     }
 }
 
+/// Debug says what Display does (the second review of #318, #5): a derived one would print the
+/// bytes a Session sent.
+impl std::fmt::Debug for Seen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl std::fmt::Debug for Drawn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl std::fmt::Debug for ScreenDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
 impl std::fmt::Display for Drawn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.seen.is_empty() {
@@ -655,6 +686,7 @@ impl Screen {
             resizes: 0,
             odd: 0,
             odd_seen: std::collections::VecDeque::new(),
+            diverged: None,
             mask: None,
             osc: None,
             c1: false,
@@ -725,6 +757,8 @@ impl Screen {
                 self.parse = Parse::Csi;
                 self.csi.clear();
                 self.csi_long = false;
+                // Where its first byte (0xC2) was.
+                self.esc_at = self.fed - 2;
             }
             0x9d => self.str_start(b']'),
             0x90 => self.str_start(b'P'),
@@ -772,13 +806,22 @@ impl Screen {
                 .try_fold(0u32, |n, &d| n.checked_mul(10)?.checked_add(u32::from(d - b'0')))
                 .is_none_or(|n| matches!(n, 4 | 5 | 10..=19 | 104 | 105 | 110..=119));
         if palette {
-            self.odd(Seen::Palette);
+            self.odd_now(Seen::Palette);
         }
     }
 
     /// Notes something this screen doesn't model (the review of #299, #5), keeping the last
     /// [`ODD_KEPT`] for the log (ticket 155c).
     fn odd(&mut self, seen: Seen) {
+        if self.diverged.is_none() {
+            self.diverged = Some(seen.clone());
+        }
+        self.odd_now(seen);
+    }
+
+    /// Notes something this screen doesn't model that changes nothing about how it reads later
+    /// output (a palette change): it counts between a check and the probe, never after.
+    fn odd_now(&mut self, seen: Seen) {
         self.odd += 1;
         if self.odd_seen.len() == ODD_KEPT {
             self.odd_seen.pop_front();
@@ -798,22 +841,15 @@ impl Screen {
             alternate: self.main.is_some(),
             resizes: self.resizes,
             odd: self.odd,
-            wide: self.wide(),
+            diverged: self.diverged.is_some(),
         }
-    }
-
-    /// Whether a character xterm.js gives other than one column is on the screen: this screen
-    /// gives each one cell, so where it is, columns after it don't line up with xterm.js's (the
-    /// review of #318).
-    fn wide(&self) -> bool {
-        self.grid.iter().flatten().any(|c| c.byte() >= 0x80 && c.width() != 1)
     }
 
     fn compare(&self, at: &Snapshot) -> Compared {
         let dims = (self.rows, self.cols, self.main.is_some()) == (at.rows, at.cols, at.alternate);
         let odd = self.odd != at.odd;
         Compared {
-            shape: dims && !odd && self.resizes == at.resizes && !at.wide && !self.wide(),
+            shape: dims && !odd && self.resizes == at.resizes && !at.diverged && self.diverged.is_none(),
             odd,
             cursor: (self.row, self.col, self.pending_wrap) == (at.row, at.col, at.pending_wrap),
             prompt_row: dims && self.grid.get(at.row) == at.grid.get(at.row),
@@ -848,7 +884,7 @@ impl Screen {
             size: (size.0 != size.1).then_some(size),
             resizes: self.resizes - shot.resizes,
             alternate: (self.main.is_some() != shot.alternate).then_some(self.main.is_some()),
-            wide: shot.wide || self.wide(),
+            diverged: shot.diverged.then(|| self.diverged.clone()),
             ..ScreenDiff::default()
         };
         // Rows only on the same screen of the same size.
@@ -1010,9 +1046,9 @@ impl Screen {
     /// Whether the cursor's whole line, read as [`Screen::cursor_after`] reads it, is `text`
     /// and nothing else (ticket 154).
     pub(crate) fn line_is(&self, text: &str) -> bool {
-        let needle = squash(text.bytes().filter(|b| !(0x80..0xc0).contains(b)));
-        let needle = needle.trim_ascii();
-        !needle.is_empty() && squash(self.grid[self.row].iter().map(|c| c.byte())).trim_ascii() == needle
+        let needle = squash(text.chars());
+        let needle = needle.trim_matches(' ');
+        !needle.is_empty() && squash(self.grid[self.row].iter().map(|c| c.char())).trim_matches(' ') == needle
     }
 
     /// The terminal was resized: the cursor's row stays on screen, cells beyond the new width go.
@@ -1055,8 +1091,8 @@ impl Screen {
     /// whitespace as one space, trailing whitespace not counting) and nothing is drawn after the
     /// cursor on it: the cursor sits right after `text`, as at a prompt. An empty `text` never does.
     pub(crate) fn cursor_after(&self, text: &str) -> bool {
-        let needle = squash(text.bytes().filter(|b| !(0x80..0xc0).contains(b)));
-        let needle = needle.trim_ascii();
+        let needle = squash(text.chars());
+        let needle = needle.trim_matches(' ');
         if needle.is_empty() {
             return false;
         }
@@ -1065,8 +1101,8 @@ impl Screen {
         if line[end..].iter().any(|c| c.byte() != b' ') {
             return false;
         }
-        squash(line[..end].iter().map(|c| c.byte()))
-            .trim_ascii_end()
+        squash(line[..end].iter().map(|c| c.char()))
+            .trim_end_matches(' ')
             .ends_with(needle)
     }
 
@@ -1117,6 +1153,7 @@ impl Screen {
                         self.saw(Seen::Csi(params, None));
                     }
                     self.parse = Parse::Esc;
+                    self.esc_at = self.fed - 1;
                 } else if (0x20..=0x3f).contains(&b) {
                     if self.csi.len() < CSI_MAX {
                         self.csi.push(b);
@@ -1146,6 +1183,7 @@ impl Screen {
                 } else if b == 0x1b {
                     // A terminal (xterm.js) ends the string here, whatever follows the ESC.
                     self.parse = Parse::StrEsc;
+                    self.esc_at = self.fed - 1;
                     self.str_end();
                 } else if b == 0x18 || b == 0x1a {
                     // CAN and SUB abort it, and what follows is text again (xterm.js).
@@ -1171,6 +1209,9 @@ impl Screen {
                 }
                 if !(0x20..=0x2f).contains(&b) {
                     self.parse = if b == 0x1b { Parse::Esc } else { Parse::Ground };
+                    if b == 0x1b {
+                        self.esc_at = self.fed - 1;
+                    }
                     // The alignment test and double-size lines (`ESC #`), any charset but ASCII,
                     // and a control inside (xterm.js acts on it and goes on): not modelled.
                     if self.inter == b'#' || (b"()*+-./".contains(&self.inter) && b != b'B') || (b < 0x20 && b != 0x1b)
@@ -1321,7 +1362,10 @@ impl Screen {
                 self.parse = Parse::Inter;
                 self.inter = b;
             }
-            0x1b => self.parse = Parse::Esc,
+            0x1b => {
+                self.parse = Parse::Esc;
+                self.esc_at = self.fed - 1;
+            }
             b'7' => self.save(),
             b'8' => self.restore(),
             b'D' => {
@@ -1350,7 +1394,8 @@ impl Screen {
                 let fed = self.fed;
                 *self = Screen::new(self.rows as u16, self.cols as u16);
                 (self.resizes, self.odd, self.own, self.odd_seen, self.fed) = (resizes, odd, own, odd_seen, fed);
-                self.odd(Seen::Esc(vec![b'c']));
+                // Counted between a check and the probe; after it, both screens start over.
+                self.odd_now(Seen::Esc(vec![b'c']));
             }
             // The keypad modes and a string's end draw nothing.
             b'=' | b'>' | b'\\' => {}
@@ -1636,6 +1681,10 @@ impl Screen {
                         line.fill(blank);
                     }
                 }
+                // From the last column xterm.js 6.0.0 marks the next buffer line unwrapped, and
+                // throws when there isn't one (the cursor on the last row, no scrollback yet),
+                // dropping the rest of what it was given: not modelled.
+                1 if self.col + 1 >= cols => self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin))),
                 1 => {
                     for line in &mut self.grid[..self.row] {
                         line.fill(blank);
@@ -1738,9 +1787,12 @@ impl Screen {
                         }
                         // The other alternate screens and DECSC with them, 132 columns, reverse
                         // video, origin, wrap and reverse-wrap modes, side margins: not modelled.
+                        // Synchronized output too: xterm.js holds what it draws back (the second
+                        // review of #318, #6).
                         3 | 5 | 6 | 7 | 45 | 47 | 69 | 1047 | 1048 => {
                             self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin)));
                         }
+                        2026 if on => self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin))),
                         _ => {}
                     }
                 }
@@ -1767,15 +1819,15 @@ impl Screen {
 }
 
 /// `bytes` with every run of whitespace (and control character) as one space.
-fn squash(bytes: impl Iterator<Item = u8>) -> Vec<u8> {
-    let mut out = Vec::new();
-    for b in bytes {
-        if b <= b' ' || b == 0x7f {
-            if out.last() != Some(&b' ') {
-                out.push(b' ');
+fn squash(chars: impl Iterator<Item = char>) -> String {
+    let mut out = String::new();
+    for c in chars {
+        if c <= ' ' || c == '\x7f' {
+            if !out.ends_with(' ') {
+                out.push(' ');
             }
         } else {
-            out.push(b);
+            out.push(c);
         }
     }
     out
@@ -1819,7 +1871,14 @@ mod tests {
             let mut s = Screen::new(24, 80);
             s.feed(case["before"].as_str().unwrap().as_bytes());
             let shot = s.snapshot();
-            s.feed(case["after"].as_str().unwrap().as_bytes());
+            match case["after_hex"].as_array() {
+                Some(chunks) => {
+                    for chunk in chunks {
+                        s.feed(&unhex(chunk.as_str().unwrap()));
+                    }
+                }
+                None => s.feed(case["after"].as_str().unwrap().as_bytes()),
+            }
             if s.matches(&shot) != (case["kind"] == "same") {
                 wrong.push(format!("{} ({})", case["name"], case["kind"]));
             }
@@ -1841,11 +1900,17 @@ mod tests {
             let mut s = Screen::new(24, 80);
             s.feed(before.as_bytes());
             let shot = s.snapshot();
-            s.feed(case["after"].as_str().unwrap().as_bytes());
-            let same = s.matches(&shot);
-            if case["same"].as_bool() != Some(same) {
-                differ.push(case["after"].clone());
-                case["same"] = same.into();
+            s.feed(&unhex(case["after_hex"].as_str().unwrap()));
+            let verdict = serde_json::json!({
+                "same": s.matches(&shot),
+                "at_prompt": s.cursor_after("[sudo] password for ops:"),
+                "diverged": s.diverged.is_some(),
+            });
+            for key in ["same", "at_prompt", "diverged"] {
+                if case[key] != verdict[key] {
+                    differ.push(case["after_hex"].clone());
+                    case[key] = verdict[key].clone();
+                }
             }
         }
         if std::env::var_os("ROSTER_WRITE_REPAINT_FUZZ").is_some() {
@@ -1893,8 +1958,87 @@ mod tests {
         s.feed("\u{4e2d}\x1b[2;1H".as_bytes());
         assert_eq!(
             s.diff(&shot).to_string(),
-            "a wide or zero-width character is on the screen; row 2 characters (column 1); unmodelled: wide character"
+            "row 2 characters (column 1); unmodelled: wide character"
         );
+    }
+
+    /// The second review of #318 (#1, #2, #6, #8): once something the screen doesn't model was
+    /// printed, even long before the check, it may no longer line up with xterm.js, so nothing
+    /// matches until a full reset (RIS), which both start over from. A palette change doesn't
+    /// change how later output is read, so it counts only between a check and the probe.
+    #[test]
+    fn a_screen_that_lost_track_never_matches_until_a_reset() {
+        const PROMPT: &str = "\x1b[2J\x1b[H$ sudo -v\r\n[sudo] password for ops: ";
+        for (earlier, name) in [
+            ("\x1b[4h", "CSI[4?"),
+            ("\x1b(0", "ESC(0"),
+            ("\x1b[5;10r", "CSI[5;10r"),
+            ("\x1b[1:2m", "CSI[params(3)m"),
+            ("\x1b[3;1H\u{4e2d}\x1b[3;1H  ", "wide character"),
+            ("\x1b[3;1He\u{301}", "zero-width character"),
+            ("\x1b[?2026h", "CSI[?2026h"),
+            ("\x1b[3g", "CSI[3?"),
+        ] {
+            let mut s = screen(format!("{earlier}{PROMPT}").as_bytes());
+            let shot = s.snapshot();
+            assert!(!s.matches(&shot), "{earlier:?}");
+            assert_eq!(
+                s.diff(&shot).to_string(),
+                format!("roster's screen lost track of the terminal at {name} (a reset starts it over)"),
+                "{earlier:?}"
+            );
+            s.feed(format!("\x1bc{PROMPT}").as_bytes());
+            let shot = s.snapshot();
+            s.feed(b"\x1b[2;26H");
+            assert!(s.matches(&shot), "{earlier:?} then a reset: {}", s.diff(&shot));
+        }
+        let s = screen(format!("\x1b]4;1;rgb:ff/00/00\x07{PROMPT}").as_bytes());
+        let shot = s.snapshot();
+        assert!(s.matches(&shot));
+    }
+
+    /// The second review of #318 (#4): the prompt checks compare whole characters, not their
+    /// first bytes (`р` and `с` share theirs).
+    #[test]
+    fn the_prompt_checks_compare_whole_characters() {
+        let s = screen("[sudo] password for \u{441}ops: ".as_bytes());
+        assert!(s.cursor_after("[sudo] password for \u{441}ops:"));
+        assert!(s.line_is("[sudo] password for \u{441}ops:"));
+        assert!(!s.cursor_after("[sudo] password for \u{440}ops:"));
+        assert!(!s.line_is("[sudo] password for \u{440}ops:"));
+    }
+
+    /// The second review of #318 (#5): `{:?}` says what `{}` does, so no byte the Session
+    /// printed can reach a log through Debug.
+    #[test]
+    fn debug_never_holds_the_text() {
+        let mut s = screen(b"[sudo] password for ops: ");
+        let shot = s.snapshot();
+        s.watch_mask();
+        s.feed(b"\x1b[1;hunter2\x1b]0;hunter2\x07\x1b[2025s3cret");
+        let drawn = s.end_mask_watch(1).drawn;
+        let diff = s.diff(&shot);
+        let seen = Seen::Csi(Some(b"hunter2".to_vec()), Some(b'x'));
+        for said in [
+            format!("{drawn:?}"),
+            format!("{diff:?}"),
+            format!("{seen:?}"),
+            format!("{:?}", Seen::Esc(b"hunt".to_vec())),
+        ] {
+            for word in ["hunter", "unter", "s3cret", "cret", "hunt"] {
+                assert!(!said.contains(word), "{said}");
+            }
+        }
+        assert_eq!(format!("{drawn:?}"), drawn.to_string());
+        assert_eq!(format!("{diff:?}"), diff.to_string());
+    }
+
+    /// A fixture's hex as bytes.
+    fn unhex(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     /// The review of #308 (#4): a string CAN or SUB aborts is over, and what follows is drawn.
@@ -2264,7 +2408,7 @@ mod tests {
                 assert!(!said.contains(word), "{:?} -> {said}", String::from_utf8_lossy(out));
             }
             // Every word is one of its own, or a command letter a CSI or ESC may show.
-            let own = "the cursor moved from to wrap pending size changed resized time times alternate screen came up went away row rows characters column columns styles only and more unmodelled nothing on differs CSI ESC params cut bold faint italic underline blink reverse hidden strike overline fg bg colour default off stray UTF byte too many x OSC DCS APC PM SOS NUL BEL BS HT LF VT FF CR DEL";
+            let own = "the cursor moved from to wrap pending size changed resized time times alternate screen came up went away row rows characters column columns styles only and more unmodelled nothing on differs CSI ESC params cut bold faint italic underline blink reverse hidden strike overline fg bg colour default off stray UTF byte too many x wide zero width character palette change roster s lost track of terminal at a reset starts it over had check OSC DCS APC PM SOS NUL BEL BS HT LF VT FF CR DEL";
             for word in said.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| !w.is_empty()) {
                 let letter = word.len() == 1
                     && (CSI_SHOWN.contains(&word.as_bytes()[0]) || b"78DEHMNOZcAB".contains(&word.as_bytes()[0]));

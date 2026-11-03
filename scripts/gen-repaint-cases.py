@@ -36,6 +36,10 @@ def table() -> list[dict]:
     def c(name: str, after: str, kind: str, before: str = P) -> None:
         cases.append({"name": name, "before": before, "after": after, "kind": kind})
 
+    def raw(name: str, chunks: list[bytes], kind: str, before: str = P) -> None:
+        """A case whose output isn't text (bytes UTF-8 doesn't allow), in the chunks it comes in."""
+        cases.append({"name": name, "before": before, "after_hex": [b.hex() for b in chunks], "kind": kind})
+
     # ConPTY's repaints of the same screen (microsoft/terminal src/renderer/vt/).
     c(
         "every row, blanks erased in their buffer colour",
@@ -123,12 +127,37 @@ def table() -> list[dict]:
     c("BEL doesn't end a DCS", f"{E}P\x07abc{E}\\", "same")
     # The model refuses, whatever xterm.js draws.
     c("ESC[3J alone (#318 review, 6)", f"{E}[3J", "refused anyway")
-    c("a stray UTF-8 continuation after a space (#318 review, 7)", f"{E}[2;25H \x80{E}[2;26H", "refused anyway")
+    c("U+0080 after a space (#318 review, 7)", f"{E}[2;25H \x80{E}[2;26H", "refused anyway")
     c("a palette change (OSC 4)", f"{E}]4;1;rgb:ff/00/00\x07", "refused anyway")
     c("a wide character", f"{E}[3;1H\u4e2d{E}[3;1H  {E}[2;26H", "refused anyway")
     c("a private CUU", f"{E}[?5A", "refused anyway")
     c("SGR 6, which xterm.js ignores", f"{E}[6m{E}[m", "refused anyway")
     c("a CSI with an intermediate (SR)", f"{E}[1 A", "refused anyway")
+    # The second review of #318: raw bytes (#3), a sequence between ED 2 and ED 3 (#7), and what
+    # the screen lost track of before the check (#1, #2, #6).
+    esc = b"\x1b"
+    raw("a stray continuation byte after a space", [esc + b"[2;25H \x80" + esc + b"[2;26H"], "refused anyway")
+    raw("0xC0, never in UTF-8", [esc + b"[2;25H\xc0\x80" + esc + b"[2;26H"], "refused anyway")
+    raw("0xF5 and up, never in UTF-8", [esc + b"[2;25H\xf5\x80\x80\x80\xff" + esc + b"[2;26H"], "refused anyway")
+    raw("a character cut short", [esc + b"[3;1H\xe4\xb8" + esc + b"[2;26H"], "refused anyway")
+    raw(
+        "ED 3 as a C1 CSI right after ED 2, split across chunks, then the screen redrawn",
+        [esc + b"[2J\xc2", b"\x9b3J" + P[len(f"{E}[2J") :].encode()],
+        "same",
+    )
+    raw("a C1 CSI split across chunks", [b"\xc2", b"\x9b3;1Hx" + esc + b"[2;26H"], "changed")
+    c("an OSC between ED 2 and ED 3", f"{E}[2J{E}]0;t{E}[3J" + P[len(f"{E}[2J") :], "refused anyway")
+    for name, earlier in [
+        ("insert mode", f"{E}[4h"),
+        ("a DEC graphics charset", f"{E}(0"),
+        ("a scroll region", f"{E}[5;10r"),
+        ("an SGR xterm.js reads otherwise", f"{E}[1:2m"),
+        ("a wide character drawn and overwritten", f"{E}[3;1H\u4e2d{E}[3;1H  "),
+        ("a combining mark", f"{E}[3;1He\u0301"),
+        ("synchronized output", f"{E}[?2026h"),
+    ]:
+        c(f"{name}, before the check", f"{E}[2;26H", "refused anyway", earlier + P)
+    c("a palette change before the check", f"{E}[2;26H", "same", f"{E}]4;1;rgb:ff/00/00\x07" + P)
     return cases
 
 
@@ -178,7 +207,7 @@ def sgr(rng: random.Random) -> str:
     return f"{E}[" + ";".join(rng.choice(opts) for _ in range(rng.randint(1, 3))) + "m"
 
 
-def token(rng: random.Random) -> str:
+def token(rng: random.Random) -> str | bytes:
     """One thing a repaint may hold."""
     row, col = rng.choice([(2, 26), (2, 1), (1, 1), (3, 1), (2, 80), (3, 80), (24, 1), (24, 80), (1, 12)])
     choices = [
@@ -208,6 +237,7 @@ def token(rng: random.Random) -> str:
             [f"{E}]0;t\x07", f"{E}]8;;{E}\\", f"{E}P\x07ab{E}\\", f"{E}_x{E}\\", f"{E}]4;1;rgb:ff/00/00\x07"]
         ),
         lambda: f"{E}[{rng.choice(['', '1', '5', '80'])}{rng.choice('ABCDEFGadef`')}",
+        lambda: rng.choice([b"\x80", b"\xc0\x80", b"\xff", b"\xe4\xb8", b"\xc2\x9b2;26H", b"\xc2"]),
         lambda: rng.choice(
             [
                 f"{E}[1b",
@@ -235,10 +265,11 @@ def fuzz() -> list[dict]:
     rng = random.Random(FUZZ_SEED)
     cases = []
     for _ in range(FUZZ_CASES):
-        after = "".join(token(rng) for _ in range(rng.randint(1, 6)))
+        parts = [token(rng) for _ in range(rng.randint(1, 6))]
+        after = b"".join(t if isinstance(t, bytes) else t.encode() for t in parts)
         if rng.random() < 0.7:
-            after += f"{E}[m{E}[2;26H"
-        cases.append({"after": after, "same": None})
+            after += f"{E}[m{E}[2;26H".encode()
+        cases.append({"after_hex": after.hex(), "same": None, "at_prompt": None, "diverged": None})
     return cases
 
 
@@ -251,9 +282,11 @@ def main() -> None:
     )
     (FIXTURES / "repaints.json").write_text(json.dumps({"about": about, "cases": table()}, indent=1) + "\n")
     fuzz_about = (
-        "Random repaints of `before` (scripts/gen-repaint-cases.py); `same` is the core's verdict, written by "
-        "ROSTER_WRITE_REPAINT_FUZZ=1 cargo test -p roster-core --lib repaint_fuzz; xterm.js must agree "
-        "wherever it's true (ticket 155c)."
+        "Random repaints of `before` (scripts/gen-repaint-cases.py), as bytes; `same` (the screen matches), "
+        "`at_prompt` (the cursor right after `[sudo] password for ops:`) and `diverged` (the screen lost track) "
+        "are the core's, written by ROSTER_WRITE_REPAINT_FUZZ=1 cargo test -p roster-core --lib repaint_fuzz; "
+        "xterm.js must agree wherever the core says the same, and on `at_prompt` wherever it hasn't lost track "
+        "(ticket 155c)."
     )
     (FIXTURES / "repaint-fuzz.json").write_text(
         json.dumps({"about": fuzz_about, "before": P, "cases": fuzz()}, indent=0) + "\n"

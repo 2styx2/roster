@@ -1025,10 +1025,13 @@ mod tests {
             diff: Box::new(screen.diff(&shot)),
         };
         let line = err.log_line().unwrap();
+        // Its Debug too (the second review of #318, #5).
+        let debug = format!("{err:?}");
         for word in [
             "hunter", "s3cr3t", "secret", "title", "vault", "example", "token", "tok3n", "link", "rgb", "id=",
         ] {
             assert!(!line.contains(word), "{word} in {line}");
+            assert!(!debug.contains(word), "{word} in {debug}");
         }
         assert_eq!(
             line,

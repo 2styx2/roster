@@ -230,7 +230,7 @@
    "kind": "refused anyway"
   },
   {
-   "name": "a stray UTF-8 continuation after a space (#318 review, 7)",
+   "name": "U+0080 after a space (#318 review, 7)",
    "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
    "after": "\u001b[2;25H \u0080\u001b[2;26H",
    "kind": "refused anyway"
@@ -264,6 +264,110 @@
    "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
    "after": "\u001b[1 A",
    "kind": "refused anyway"
+  },
+  {
+   "name": "a stray continuation byte after a space",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after_hex": [
+    "1b5b323b32354820801b5b323b323648"
+   ],
+   "kind": "refused anyway"
+  },
+  {
+   "name": "0xC0, never in UTF-8",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after_hex": [
+    "1b5b323b323548c0801b5b323b323648"
+   ],
+   "kind": "refused anyway"
+  },
+  {
+   "name": "0xF5 and up, never in UTF-8",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after_hex": [
+    "1b5b323b323548f5808080ff1b5b323b323648"
+   ],
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a character cut short",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after_hex": [
+    "1b5b333b3148e4b81b5b323b323648"
+   ],
+   "kind": "refused anyway"
+  },
+  {
+   "name": "ED 3 as a C1 CSI right after ED 2, split across chunks, then the screen redrawn",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after_hex": [
+    "1b5b324ac2",
+    "9b334a1b5b481b5b39326d1b5b316d6f7073406573782d30321b5b6d3a7e24207375646f202d760d0a5b7375646f5d2070617373776f726420666f72206f70733a20"
+   ],
+   "kind": "same"
+  },
+  {
+   "name": "a C1 CSI split across chunks",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after_hex": [
+    "c2",
+    "9b333b3148781b5b323b323648"
+   ],
+   "kind": "changed"
+  },
+  {
+   "name": "an OSC between ED 2 and ED 3",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2J\u001b]0;t\u001b[3J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "insert mode, before the check",
+   "before": "\u001b[4h\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a DEC graphics charset, before the check",
+   "before": "\u001b(0\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a scroll region, before the check",
+   "before": "\u001b[5;10r\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "an SGR xterm.js reads otherwise, before the check",
+   "before": "\u001b[1:2m\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a wide character drawn and overwritten, before the check",
+   "before": "\u001b[3;1H\u4e2d\u001b[3;1H  \u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a combining mark, before the check",
+   "before": "\u001b[3;1He\u0301\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "synchronized output, before the check",
+   "before": "\u001b[?2026h\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a palette change before the check",
+   "before": "\u001b]4;1;rgb:ff/00/00\u0007\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H",
+   "kind": "same"
   }
  ]
 }
