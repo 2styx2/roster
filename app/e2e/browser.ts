@@ -28,10 +28,10 @@ export interface Harness {
   /** The terminal's size in cells. */
   size(): Promise<{ cols: number; rows: number }>;
   modes(): Promise<ReturnType<E2E["modes"]>>;
-  /** Drags the mouse from one cell to another (holding Shift when asked). */
-  drag(from: [number, number], to: [number, number], opts?: { shift?: boolean }): Promise<void>;
+  /** Drags the mouse from one cell to another (holding Shift, or Alt (Option), when asked). */
+  drag(from: [number, number], to: [number, number], opts?: Mods): Promise<void>;
   /** A right-click on a cell. */
-  rightClick(col: number, row: number, opts?: { shift?: boolean }): Promise<void>;
+  rightClick(col: number, row: number, opts?: Mods): Promise<void>;
   /** Lets every event, microtask and 0 ms timer the last action queued run (not a wait for time). */
   settled(): Promise<void>;
   /** Waits until the Session has been sent `n` chunks. */
@@ -40,6 +40,12 @@ export interface Harness {
   copiedCount(n: number): Promise<string[]>;
   /** A key as the OS delivers it, through the DevTools protocol (for layouts Playwright can't type). */
   rawKey(type: "keyDown" | "keyUp", key: string, code: string, keyCode: number, modifiers: number, text?: string): Promise<void>;
+}
+
+/** Keys held through a mouse action. */
+export interface Mods {
+  shift?: boolean;
+  alt?: boolean;
 }
 
 export async function launch(): Promise<Browser> {
@@ -51,17 +57,22 @@ export async function launch(): Promise<Browser> {
 /** A Chrome on Windows, as WebView2 reports itself. */
 const WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0";
 
+/** WKWebView on macOS, as Tauri's reports itself. */
+const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+
 /** A page on the harness. `os: "windows"` (the default) makes the page look like WebView2 on
  * Windows to xterm.js and roster (navigator.platform and the user agent), so xterm's Windows
- * handling (AltGr as Ctrl+Alt) is what runs; "linux" is the headless Chromium as it is. */
-export async function openHarness(browser: Browser, opts: { os?: "windows" | "linux" } = {}): Promise<Harness> {
-  const windows = (opts.os ?? "windows") === "windows";
+ * handling (AltGr as Ctrl+Alt) is what runs; "mac" like the WebView on macOS (xterm's isMac, so
+ * Option is the key that takes the mouse back); "linux" is the headless Chromium as it is. */
+export async function openHarness(browser: Browser, opts: { os?: "windows" | "mac" | "linux" } = {}): Promise<Harness> {
+  const os = opts.os ?? "windows";
+  const platform = os === "windows" ? "Win32" : os === "mac" ? "MacIntel" : null;
   const context = await browser.newContext({
     permissions: ["clipboard-read", "clipboard-write"],
     viewport: { width: 900, height: 500 },
-    ...(windows ? { userAgent: WINDOWS_UA } : {}),
+    ...(os === "windows" ? { userAgent: WINDOWS_UA } : os === "mac" ? { userAgent: MAC_UA } : {}),
   });
-  if (windows) await context.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "Win32" }));
+  if (platform) await context.addInitScript((p) => Object.defineProperty(Navigator.prototype, "platform", { get: () => p }), platform);
   const page = await context.newPage();
   const logs: string[] = [];
   page.on("console", (m) => logs.push(m.text()));
@@ -73,6 +84,9 @@ export async function openHarness(browser: Browser, opts: { os?: "windows" | "li
   await page.waitForFunction(() => "e2e" in window);
   const cell = (col: number, row: number) => page.evaluate(([c, r]) => (window as unknown as Win).e2e.cell(c, r), [col, row] as const);
   const cdp = await context.newCDPSession(page);
+  const hold = async (mods: Mods, dir: "down" | "up") => {
+    for (const [on, key] of [[mods.shift, "Shift"], [mods.alt, "Alt"]] as const) if (on) await page.keyboard[dir](key);
+  };
   const h: Harness = {
     page,
     logs,
@@ -93,7 +107,7 @@ export async function openHarness(browser: Browser, opts: { os?: "windows" | "li
     async drag(from, to, opts = {}) {
       const a = await cell(...from);
       const b = await cell(...to);
-      if (opts.shift) await page.keyboard.down("Shift");
+      await hold(opts, "down");
       // From the left edge of the first cell to the right edge of the last, so both are in.
       const half = (b.x - a.x) / Math.max(1, Math.abs(to[0] - from[0])) / 2 || 4;
       await page.mouse.move(a.x - half + 1, a.y);
@@ -102,13 +116,13 @@ export async function openHarness(browser: Browser, opts: { os?: "windows" | "li
       // the last change) can't copy half a selection however slowly a busy machine drags.
       await page.mouse.move(b.x + half - 1, b.y);
       await page.mouse.up();
-      if (opts.shift) await page.keyboard.up("Shift");
+      await hold(opts, "up");
     },
     async rightClick(col, row, opts = {}) {
       const a = await cell(col, row);
-      if (opts.shift) await page.keyboard.down("Shift");
+      await hold(opts, "down");
       await page.mouse.click(a.x, a.y, { button: "right" });
-      if (opts.shift) await page.keyboard.up("Shift");
+      await hold(opts, "up");
     },
     settled: () => page.evaluate(() => new Promise<void>((done) => setTimeout(done, 0))),
     async sentCount(n) {

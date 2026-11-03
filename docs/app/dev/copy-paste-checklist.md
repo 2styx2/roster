@@ -33,6 +33,7 @@ Tick each box; write down anything that differs with the build number and what y
 - [ ] **Full-width text**: `echo 日本語x`, select it; Notepad gets `日本語x` with no spaces in it.
 - [ ] **Trailing blanks**: `printf 'one\ntwo\n'`, select both lines and past the end; Notepad gets `one`, `two` without padding. Spaces a program printed at a line's end are trimmed too, as in Windows Terminal (`printf 'one   \ntwo\n'` copies `one`, `two`).
 - [ ] **Unicode out**: `echo '👍🏽 é שלום'`, select and copy; Notepad shows the same.
+- [ ] **Line ends** (#302): `printf 'one\ntwo\nthree\n'`, select the three lines and copy. Pasted in Notepad, each is on its own line; in PowerShell, `(Get-Clipboard -Raw).Contains("`r`n")` is `True`, as after the same copy in Windows Terminal.
 
 ## Programs
 
