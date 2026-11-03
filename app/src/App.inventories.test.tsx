@@ -8,7 +8,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
-import { INVENTORIES_API_VERSION, type Backend } from "./backend/types";
+import { BackendCallError, BackendStartError, INVENTORIES_API_VERSION, type Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 
@@ -35,36 +35,58 @@ const scenario = (more: Partial<FakeScenario> = {}): FakeScenario => ({
   ...more,
 });
 
+/** How a switch's calls go wrong, for the tests that need it. */
+interface Faults {
+  lockFails?: boolean;
+  /** `inventories.use` waits for this before answering. */
+  useWaits?: Promise<void>;
+  /** After `inventories.use`, the restart fails, or `inventories.list` does. */
+  restartFails?: boolean;
+  listFailsAfterUse?: boolean;
+}
+
 /** The fake Backend, recording the calls a switch makes, in order. */
-function recorded(s: FakeScenario) {
+function recorded(s: FakeScenario, faults: Faults = {}) {
   const backend = fakeBackend(s);
   const calls: string[] = [];
+  let used = false;
   const wrapped: Backend = {
     ...backend,
-    connect: (options) => {
+    connect: async (options) => {
       calls.push(options?.restart ? "restart" : "start");
+      if (used && faults.restartFails) {
+        throw new BackendStartError({ kind: "failed", message: "roster serve exited at start", hint: "Run roster serve in a terminal to see why.", detail: null });
+      }
       return backend.connect(options);
+    },
+    listInventories: async () => {
+      if (used && faults.listFailsAfterUse) throw new BackendCallError("roster's list of named Inventories doesn't load", 143);
+      return backend.listInventories();
     },
     vaultStatus: async () => {
       const status = await backend.vaultStatus();
       calls.push("status");
       return status;
     },
-    lockVault: () => {
+    lockVault: async () => {
       calls.push("lock");
+      if (faults.lockFails) throw new BackendCallError("bw lock failed");
       return backend.lockVault();
     },
-    useInventory: (name) => {
+    useInventory: async (name) => {
       calls.push(`use ${name}`);
-      return backend.useInventory(name);
+      await faults.useWaits;
+      const r = await backend.useInventory(name);
+      used = true;
+      return r;
     },
   };
   return { backend: wrapped, calls };
 }
 
-async function ready(s: FakeScenario = scenario()) {
+async function ready(s: FakeScenario = scenario(), faults: Faults = {}) {
   const user = userEvent.setup();
-  const { backend, calls } = recorded(s);
+  const { backend, calls } = recorded(s, faults);
   render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform()} />);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i });
@@ -151,7 +173,7 @@ describe(":inventory NAME", () => {
     await user.keyboard(`${LEADER}:inventory work{Enter}`);
     const dialog = await confirm();
     expect(dialog).toHaveTextContent(/roster runs on \/home\/you\/scratch\/roster\.yml, not on the active Inventory \(home\)/);
-    expect(dialog).toHaveTextContent(/\$ROSTER_CONFIG or a roster\.yml in the folder roster starts in comes first/);
+    expect(dialog).toHaveTextContent(/\$ROSTER_CONFIG, a roster\.yml in the folder roster starts in, or a -c in roster_command comes first/);
     expect(within(dialog).queryByRole("button", { name: "Switch to work" })).not.toBeInTheDocument();
     expect(calls.filter((c) => c !== "status")).toEqual(["start"]);
   });
@@ -168,5 +190,65 @@ describe(":inventory NAME", () => {
     const { user } = await ready(scenario({ inventories: { named: [], active: null } }));
     await user.keyboard(`${LEADER}:inventory{Enter}`);
     expect(await screen.findByText(/No named Inventories: roster inv add NAME PATH names one/, { selector: ".message-line" })).toBeInTheDocument();
+  });
+
+  it("reads its consequences to a screen reader, and says when roster restarts", async () => {
+    const { user } = await ready();
+    await user.keyboard(`${LEADER}:inventory home{Enter}`);
+    const dialog = await confirm();
+    expect(dialog).toHaveAccessibleDescription(/roster restarts on home's file and locks work's vault\. No open Sessions\. No Pending changes\./);
+    await user.click(within(dialog).getByRole("button", { name: "Switch to home" }));
+    expect(await screen.findByText("Restarting roster on home…", { selector: ".message-line" })).toBeInTheDocument();
+  });
+
+  it("won't switch when the vault doesn't lock, and says so", async () => {
+    const { user, calls } = await ready(scenario(), { lockFails: true });
+    await user.keyboard(`${LEADER}:inventory home{Enter}`);
+    await user.click(within(await confirm()).getByRole("button", { name: "Switch to home" }));
+    expect(await screen.findByText(/Couldn't lock the vault \(bw lock failed\): nothing switched/, { selector: ".message-line" })).toBeInTheDocument();
+    expect(calls.filter((c) => c !== "status")).toEqual(["start", "lock"]);
+  });
+
+  it("can't be closed or started twice while it runs", async () => {
+    // A vault with nothing to unlock (env, cmd): no lock screen covers the step while it runs.
+    let release = () => {};
+    const useWaits = new Promise<void>((r) => (release = r));
+    const user = userEvent.setup();
+    const { backend, calls } = recorded(scenario({ vault: { status: "unsupported" } }), { useWaits });
+    render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform()} />);
+    await screen.findByRole("main", { name: /workspace/i });
+    await user.keyboard(`${LEADER}:inventory home{Enter}`);
+    const dialog = await confirm();
+    await user.click(within(dialog).getByRole("button", { name: "Switch to home" }));
+    await waitFor(() => expect(calls).toContain("use home"));
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    await user.keyboard(`${LEADER}{Escape}`);
+    expect(screen.getByRole("alertdialog", { name: "Switch Inventory" })).toBeInTheDocument();
+    await user.keyboard(`${LEADER}:inventory work{Enter}`);
+    expect(await screen.findByText("A switch to home is already running", { selector: ".message-line" })).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(calls).toContain("restart"));
+    expect(calls.filter((c) => c.startsWith("use "))).toEqual(["use home"]);
+    await waitFor(() => expect(within(statusbar()).getByTitle(`Inventory home: ${HOME}`)).toBeInTheDocument());
+  });
+
+  it("says where roster stands when it doesn't start again after the switch", async () => {
+    const { user } = await ready(scenario(), { restartFails: true });
+    await user.keyboard(`${LEADER}:inventory home{Enter}`);
+    await user.click(within(await confirm()).getByRole("button", { name: "Switch to home" }));
+    expect(await screen.findByText(/home is the active Inventory now, but roster didn't start again on it/)).toBeInTheDocument();
+  });
+
+  it("says it can't tell when the new serve doesn't say where it runs", async () => {
+    const { user, calls } = await ready(scenario(), { listFailsAfterUse: true });
+    await user.keyboard(`${LEADER}:inventory home{Enter}`);
+    await user.click(within(await confirm()).getByRole("button", { name: "Switch to home" }));
+    await waitFor(() => expect(calls.slice(calls.indexOf("restart"))).toContain("status"));
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    expect(
+      await screen.findByText(/home is the active Inventory now, but roster couldn't say which Inventory it started on/, { selector: ".message-line" }),
+    ).toBeInTheDocument();
   });
 });

@@ -446,8 +446,14 @@ function Workspace({
   const [signingOut, setSigningOut] = useState<VaultAccount | null>(null);
   // Ticket 115: the named Inventories as serve last listed them (null until it has, or before API
   // 27), and `:inventory NAME`'s question while it's up.
-  const [inventories, setInventories] = useState<Inventories | null>(null);
+  // Kept with the serve it came from: one serve's answer never stands for the next one's.
+  const [inventoriesOf, setInventoriesOf] = useState<{ info: BackendInfo; list: Inventories } | null>(null);
   const [switching, setSwitching] = useState<Extract<SwitchPlan, { kind: "confirm" }> | null>(null);
+  /** The Inventory a confirmed switch is going to, while it runs: its step can't be closed, and a
+   * second `:inventory` waits for it. */
+  const switchingTo = useRef<string | null>(null);
+  /** What a switch left the error screen to say, when serve didn't start again after it. */
+  const [startNote, setStartNote] = useState<string | null>(null);
   const [keyState, setKeyState] = useState<KeyState>(terminalMode);
   const keyRef = useRef<KeyState>(terminalMode);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -890,19 +896,24 @@ function Workspace({
   }, [viewMode, showsHint, hintClock]);
 
   const connect = useCallback(
-    async (restart: boolean) => {
+    async (restart: boolean): Promise<boolean> => {
       setConn({ state: "connecting" });
+      // Whichever serve answers next may run on another Inventory (ticket 115): open Sessions count
+      // as another's until it says where it runs.
+      tabs.serveStarting();
       try {
         const info = await backend.connect(restart ? { restart: true } : undefined);
         const hosts = await backend.listHosts();
         setConn({ state: "ready", info, hosts });
         const leftOut = servicesLeftOut(hosts);
         if (leftOut) setMessage(leftOut);
+        return true;
       } catch (e) {
         setConn({ state: "failed", problem: asProblem(e) });
+        return false;
       }
     },
-    [backend, setMessage],
+    [backend, setMessage, tabs],
   );
 
   useEffect(() => {
@@ -1052,25 +1063,25 @@ function Workspace({
   // Named Inventories (ticket 115, API 27): asked of each serve once it's up, so the status bar
   // names the one it runs on and Sessions are marked with theirs. Forgotten while serve (re)starts.
   const listsInventories = apiVersion >= INVENTORIES_API_VERSION;
+  const inventories = inventoriesOf && connInfo && inventoriesOf.info === connInfo ? inventoriesOf.list : null;
+  const setInventories = useCallback((info: BackendInfo, list: Inventories | null) => setInventoriesOf(list && { info, list }), []);
   useEffect(() => {
-    if (!connInfo || !listsInventories) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- forgetting the last serve's list is the effect
-      setInventories(null);
-      return;
-    }
+    if (!connInfo || !listsInventories) return;
     let live = true;
     backend.listInventories().then(
-      (list) => live && setInventories(list),
-      () => live && setInventories(null),
+      (list) => live && setInventories(connInfo, list),
+      () => live && setInventories(connInfo, null),
     );
     return () => {
       live = false;
     };
-  }, [backend, connInfo, listsInventories]);
+  }, [backend, connInfo, listsInventories, setInventories]);
   useEffect(() => {
     if (!connInfo) return;
-    if (!listsInventories) tabs.setInventory(null);
-    else if (inventories) tabs.setInventory(inventories.name);
+    // Before API 27 there are no named Inventories: the file inventory.info names is where it runs.
+    // A list that fails never says, so Sessions opened before this serve stay another's.
+    if (!listsInventories) tabs.setInventory({ name: null, path: connInfo.inventory.path });
+    else if (inventories) tabs.setInventory({ name: inventories.name, path: inventories.path });
   }, [tabs, connInfo, listsInventories, inventories]);
   // Said when it changes, so a screen reader hears it too (the message line is a status region).
   const lastInventory = useRef<string | null | undefined>(undefined);
@@ -1386,6 +1397,35 @@ function Workspace({
     setSwitching(null);
     restoreFocus();
   };
+  /** A confirmed `:inventory` switch (ticket 115): lock, `inventories.use`, serve started again, then
+   * what roster runs on now, said plainly whatever happened. */
+  const switchTo = async (to: string) => {
+    // Only one Inventory's vault is ever unlocked: this one locks (covering the Sessions) before
+    // serve is asked to switch, and the new serve starts locked. One that doesn't lock stops it.
+    const lockFailed = await vault.lockNow();
+    if (lockFailed !== null) {
+      closeSwitch();
+      return setMessage(`Couldn't lock the vault (${lockFailed}): nothing switched`);
+    }
+    try {
+      await backend.useInventory(to);
+    } catch (e) {
+      closeSwitch();
+      return setMessage(`Couldn't switch to ${to}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    closeSwitch();
+    setMessage(`Restarting roster on ${to}…`);
+    setStartNote(null);
+    // serve starts again as for a new backend: its start asks roster which file to use.
+    if (!(await connect(true))) {
+      return setStartNote(`${to} is the active Inventory now, but roster didn't start again on it: fix what's above, then Retry.`);
+    }
+    const now = await backend.listInventories().catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+    if (typeof now === "string") {
+      return setMessage(`${to} is the active Inventory now, but roster couldn't say which Inventory it started on (${now}): its Sessions from before stay marked`);
+    }
+    if (now.name !== to) setMessage(afterSwitch(now, to));
+  };
   /** Sessions a switch leaves open (ended ones stay too, but aren't open). */
   const openSessions = () => sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").length;
   /** The Pending changes now, asked again (a switch is blocked by them); the last count if roster can't say. */
@@ -1625,7 +1665,7 @@ function Workspace({
       if (packagesOpen) return closePackages();
       if (keysOpen) return closeKeys();
       if (signingOut) return closeSignOut();
-      if (switching) return closeSwitch();
+      if (switching) return switchingTo.current === null ? closeSwitch() : undefined;
       if (confirming) return closeConfirm();
       if (editing !== null) return closeEdit();
       if (adding) return closeAdd();
@@ -1805,12 +1845,13 @@ function Workspace({
       setChangesView({ step: then ?? "diff" });
     },
     switchInventory: (name) => {
+      if (switchingTo.current !== null) return setMessage(`A switch to ${switchingTo.current} is already running`);
       if (!listsInventories) {
         return setMessage(`:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`);
       }
       backend.listInventories().then(
         async (list) => {
-          setInventories(list);
+          if (connInfo) setInventories(connInfo, list);
           if (name === null) return list.inventories.length === 0 ? setMessage(NONE_NAMED) : ctx.openCommandLine("inventory ");
           const plan = switchPlan(list, name, { sessions: openSessions(), pending: await pendingNow() });
           if (plan.kind === "say") return setMessage(plan.message);
@@ -2104,7 +2145,7 @@ function Workspace({
     );
   }
   if (conn.state === "failed") {
-    return frame(<ErrorScreen problem={conn.problem} onRetry={() => void connect(true)} copy={copy} />);
+    return frame(<ErrorScreen problem={conn.problem} note={startNote} onRetry={() => void connect(true)} copy={copy} />);
   }
 
   const { info } = conn;
@@ -2637,22 +2678,12 @@ function Workspace({
                 return setMessage(again.message);
               }
               if (again.action === null) return setSwitching(again);
-              // Only one Inventory's vault is ever unlocked: this one locks (covering the Sessions)
-              // before serve is asked to switch, and the new serve starts locked.
-              await vault.lockNow();
+              switchingTo.current = to;
               try {
-                await backend.useInventory(to);
-              } catch (e) {
-                closeSwitch();
-                return setMessage(`Couldn't switch to ${to}: ${e instanceof Error ? e.message : String(e)}`);
+                await switchTo(to);
+              } finally {
+                switchingTo.current = null;
               }
-              closeSwitch();
-              // serve starts again as for a new backend: its start asks roster which file to use.
-              await connect(true);
-              const now = await backend.listInventories().catch(() => null);
-              if (!now) return;
-              setInventories(now);
-              if (now.name !== to) setMessage(afterSwitch(now, to));
             }}
             onClose={closeSwitch}
           />

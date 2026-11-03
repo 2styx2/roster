@@ -22,6 +22,9 @@ export type SwitchPlan =
       action: string | null;
     };
 
+/** What comes before the active Inventory in roster's lookup, and so keeps serve where it is. */
+const EARLIER = "$ROSTER_CONFIG, a roster.yml in the folder roster starts in, or a -c in roster_command";
+
 /** No named Inventories yet: how to name one. */
 export const NONE_NAMED = "No named Inventories: roster inv add NAME PATH names one (:help :inventory)";
 
@@ -43,9 +46,9 @@ export function switchPlan(list: Inventories, to: string, open: { sessions: numb
       to,
       body:
         `roster runs on ${list.path ?? "another file"}, not on the active Inventory (${list.active}): ` +
-        "$ROSTER_CONFIG or a roster.yml in the folder roster starts in comes first, so starting roster again " +
+        `${EARLIER} comes first, so starting roster again ` +
         `wouldn't move it to ${to}.`,
-      more: [`Unset ROSTER_CONFIG (or move that roster.yml), then run roster inv use ${to} and start the app again.`],
+      more: [`Unset ROSTER_CONFIG (or move that roster.yml, or take the -c out of roster_command), then run roster inv use ${to} and start the app again.`],
       action: null,
     };
   }
@@ -76,8 +79,8 @@ export function switchPlan(list: Inventories, to: string, open: { sessions: numb
 export function afterSwitch(list: Inventories, to: string): string {
   if (list.name === to) return `Now on the ${to} Inventory (${list.path ?? ""}). Unlock its vault to open Sessions`;
   return (
-    `roster started again but runs on ${list.path ?? "another file"}, not ${to}: $ROSTER_CONFIG or a roster.yml ` +
-    `in the folder roster starts in comes first. ${to} is the active Inventory`
+    `roster started again but runs on ${list.path ?? "another file"}, not ${to}: ${EARLIER} comes first. ` +
+    `${to} is the active Inventory`
   );
 }
 

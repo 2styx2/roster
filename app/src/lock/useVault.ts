@@ -46,8 +46,9 @@ export interface Vault {
   /** Lock now. False if there's nothing to lock. */
   lock(): boolean;
   /** Lock now and wait for serve to have forgotten every secret (`:inventory`'s switch, ticket
-   * 115, before serve stops). Never rejects: a failure is said on the lock screen. */
-  lockNow(): Promise<void>;
+   * 115, before serve stops). Never rejects: a failure is said on the lock screen, and answered
+   * (its message), so the caller can stop; null when the vault locked. */
+  lockNow(): Promise<string | null>;
   /** `vault.login` (ticket 31). A `done` step unlocks the app. */
   signInStart(start: SignInStart): Promise<SignInStep>;
   signInAnswer(login: string, answer: SignInAnswer): Promise<SignInStep>;
@@ -162,14 +163,15 @@ export function useVault(
     [backend, lockIfServeUnlocked],
   );
 
-  const lockNow = useCallback(async (): Promise<void> => {
+  const lockNow = useCallback(async (): Promise<string | null> => {
     const v = viewRef.current;
     // Hide first, then forget: the Sessions are covered before the call goes out.
     if (v.state === "unlocked") setView({ state: "locked", provider: v.provider, error: null, account: v.account });
-    await backend.lockVault().then(
-      () => {},
+    return backend.lockVault().then(
+      () => null,
       (e: unknown) => {
         setView((cur) => (cur.state === "locked" ? { ...cur, error: `Locking the vault failed: ${messageOf(e)}` } : cur));
+        return messageOf(e);
       },
     );
   }, [backend]);

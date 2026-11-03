@@ -1,7 +1,7 @@
 // The question the Live Inventory asks before removing a Host (ticket 28): it names the Host and
 // says what happens to its vault item (nothing). Enter (the focused button) confirms, Esc keeps it.
 // It opens from a key or a row button, so it doesn't animate, like the other side panels.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { Keys } from "../ui/Keys";
 
@@ -27,6 +27,8 @@ export function ConfirmPanel({ title, body, more = [], action, keep = "Keep it",
   const yes = useRef<HTMLButtonElement>(null);
   const no = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
+  // Its text is the dialog's description, so a screen reader reads what will happen, not only the title.
+  const described = useId();
   useEffect(() => (yes.current ?? no.current)?.focus(), []);
   return (
     <section
@@ -34,6 +36,8 @@ export function ConfirmPanel({ title, body, more = [], action, keep = "Keep it",
       className="side-panel confirm-panel"
       role="alertdialog"
       aria-label={title}
+      aria-describedby={[`${described}-0`, ...more.map((_, i) => `${described}-${i + 1}`)].join(" ")}
+      aria-busy={busy}
       onKeyDown={(e) => {
         if (e.key !== "Escape" || busy) return;
         e.preventDefault();
@@ -43,14 +47,16 @@ export function ConfirmPanel({ title, body, more = [], action, keep = "Keep it",
     >
       <header>
         <h2>{title}</h2>
-        <button type="button" className="icon-button close" aria-label="Cancel" onClick={onClose}>
+        <button type="button" className="icon-button close" aria-label="Cancel" onClick={onClose} disabled={busy}>
           <CloseGlyph />
         </button>
       </header>
       <div className="changes-confirm">
-        <p>{body}</p>
-        {more.map((line) => (
-          <p key={line}>{line}</p>
+        <p id={`${described}-0`}>{body}</p>
+        {more.map((line, i) => (
+          <p key={line} id={`${described}-${i + 1}`}>
+            {line}
+          </p>
         ))}
         <div className="edit-actions">
           {action !== null && (
