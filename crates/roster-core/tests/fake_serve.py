@@ -76,7 +76,7 @@ def answer(req):
         return {"error": {"code": 1, "message": "no roster.yml found here or in ~/.config/roster/",
                           "data": {"path": None, "roster_version": "0.1.0", "api_version": 1}}}
     if m == "inventory.info":
-        return {"result": {"path": "/home/u/infra/roster.yml", "box": "box1", "host_count": len(HOSTS),
+        return {"result": {"path": "/home/u/team-inventory/roster.yml", "box": "box1", "host_count": len(HOSTS),
                            "providers": ["bw"], "roster_version": "0.1.0",
                            "api_version": 0 if mode == "old-api" else 21 if mode == "checks"
                            else 22 if mode == "stuck-check" else 26 if mode == "nested"
