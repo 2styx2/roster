@@ -98,7 +98,8 @@ export function pluginsCommand(manager: PluginManager, openPanel: () => void): C
 // `:packages` (ticket 24): Plugins from git repos that init.lua names.
 //
 //   packages               the panel: each Package, the commit it's at, and whether it runs
-//   packages update [NAME] fetches (every Package, or NAME), then shows each new commit with its diff before applying it
+//   packages update [NAME] fetches (every Package, or NAME), then shows each new commit with its diff before applying it;
+//                          NAME not installed gets the install prompt, as packages install NAME (issue #213)
 //   packages install NAME  asks again about a Package whose install was cancelled
 //   packages clean         removes the Packages init.lua no longer names
 const PACKAGE_SUBCOMMANDS = ["update", "install", "clean"] as const;
@@ -129,7 +130,7 @@ export function packagesCommand(manager: PluginManager, openPanel: () => void): 
           return openPanel();
         case "update":
           ctx.say(quiet(name ? `Checking ${name} for an update…` : "Checking the Packages for updates…"));
-          return void manager.checkPackages(name).then((m) => ctx.say(m));
+          return void manager.checkPackages(name).then((m) => m && ctx.say(m));
         case "install":
           if (!name) return ctx.say("Which Package? :packages install NAME");
           return void manager.installPackage(name).then((m) => m && ctx.say(m));

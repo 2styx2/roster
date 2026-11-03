@@ -14,6 +14,9 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **Fix buttons in `:packages` and `:plugins`** (#213): a Package that can't be fetched has **Try again**, a cancelled one **Install…** (both run `:packages install NAME`, which fetches it again and shows the install prompt for one not installed: nothing installs without it), and a stopped Plugin **Reload** (`:plugins reload NAME`), with **Check for an update** for a Package's. Each button's tooltip shows the command it runs. See [errors](app/errors.md#packages).
+- **`:packages update NAME` on a Package that isn't installed shows the install prompt** (#213), as `:packages install NAME` does, instead of pointing you there. See [Packages](plugins.md#packages).
+- **`:plugins` says when a Plugin was written before api 4** (#228): its info notices are quiet now unless it marks them `quiet = false`, and **What changed** opens [the note for its author](plugins.md#upgrading-a-plugin-written-before-api-4).
 - **A collapsed cluster on a graph moves whole** (#237): `m` on it, then `h` `j` `k` `l` until Enter keeps the place (Esc puts it back), or drag it. Its nodes go with it and keep their places in it, so it opens looking as it did. It stays where you put it and is remembered as yours: a cluster you put it on moves to the nearest free place, and nothing else does. Before, `m` there said to open the cluster first. See [Graphs](plugins.md#graphs).
 
 ### Changed
@@ -26,6 +29,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`init.lua` has a version of its own:** `roster.config_version` (read-only, `4` for v0.3.0's `roster.o` shape) rises only when a name in `init.lua`'s `roster` table or an option is removed, renamed or changes what it does, so a Config can tell what a name can't. `roster.api_version` is the Plugin API's version, which rises with Plugin-only changes too; it's no longer the way to tell what `init.lua` has (decision Q165). See [Feature detection](app/config.md#feature-detection) and `:help roster.config_version`.
 - **A Host's row in the Sidebar has a menu instead of buttons** (#314): selecting a Host no longer shows ⓘ, ✓, ✎ and × on its row. Right-click it, or press the Menu key or Shift+F10 on it in App mode (`menu`), for Open, New Session, Details, Check, Edit, Rename, Move to another group, Add to a Folder, Remove from the Inventory and any Plugin's own actions on that row (a Folder's "Remove from Lab"), each running the same command its button or key did, with the keys shown beside it. It's a keyboard and screen-reader menu: arrows, Home/End, a letter, Enter, Esc (decision Q156). Groups, Folders and Sessions keep their buttons. See [The Sidebar](app/keyboard.md#the-sidebar).
+- **A Plugin's quiet notice no longer hides an error** (#228): a quiet info notice a Plugin gives from a timer, an event or a request's answer, when you asked for nothing, leaves the message line as it is when it shows something, so an error stays on screen; `:messages` still lists the notice. A notice from something you ran replaces the line as before (decision Q162). See [`roster.notify`](plugin-api.md#rosternotifytext-level-opts).
 
 ### Security
 
