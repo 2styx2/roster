@@ -539,14 +539,16 @@ export class PluginManager {
   }
 
   /** `:packages update [NAME]`: fetches every Package (or the one named) and asks about each new
-   * commit, showing its diff and any permission it newly asks for. Says what it found. */
-  checkPackages(only?: string): Promise<string> {
+   * commit, showing its diff and any permission it newly asks for. Says what it found. NAME not
+   * installed gets the install prompt instead, as `:packages install NAME` (issue #213): null once
+   * it asks. */
+  checkPackages(only?: string): Promise<string | null> {
     return this.serially(async () => {
       await this.start();
       if (only !== undefined) {
         const p = this.packages.find((x) => x.name === only);
         if (!p) return `init.lua names no Package ${only}`;
-        if (!p.pinned) return `${only} isn't installed: :packages install ${only} asks to install it`;
+        if (!p.pinned) return this.installPackageNow(only);
       }
       let checked;
       try {
@@ -608,16 +610,23 @@ export class PluginManager {
   installPackage(name: string): Promise<string | null> {
     return this.serially(async () => {
       await this.start();
-      const p = this.packages.find((x) => x.name === name);
-      if (!p) return `init.lua names no Package ${name}`;
-      const path = `${PACKAGE_PREFIX}${name}`;
-      if (p.pinned && this.installed().some((e) => e.path === path)) return `${name} is installed already: :packages update ${name} checks it for a new version`;
-      this.saveCancelled(this.cancelledInstalls().filter((d) => d.name !== name));
-      await this.syncPackagesNow();
-      if (this.prompts.some((x) => x.path === path)) return null;
-      const now = this.packages.find((x) => x.name === name);
-      return now?.error ? `${name}: ${now.error}` : `${name} can't be installed: see :packages`;
+      return this.installPackageNow(name);
     });
+  }
+
+  private async installPackageNow(name: string): Promise<string | null> {
+    const p = this.packages.find((x) => x.name === name);
+    if (!p) return `init.lua names no Package ${name}`;
+    const path = `${PACKAGE_PREFIX}${name}`;
+    if (p.pinned && this.installed().some((e) => e.path === path)) return `${name} is installed already: :packages update ${name} checks it for a new version`;
+    this.saveCancelled(this.cancelledInstalls().filter((d) => d.name !== name));
+    await this.syncPackagesNow();
+    if (this.prompts.some((x) => x.path === path)) return null;
+    const now = this.packages.find((x) => x.name === name);
+    if (now?.error) return `${name}: ${now.error}`;
+    // Installed before, and couldn't be fetched (errors.md row 116): it loads again as it was.
+    if (now?.pinned && this.installed().some((e) => e.path === path)) return `Fetched ${name}`;
+    return `${name} can't be installed: see :packages`;
   }
 
   /** `:plugins install PATH`: reads the manifest and asks (the install prompt). Nothing runs yet. */

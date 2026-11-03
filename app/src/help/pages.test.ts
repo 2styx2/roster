@@ -6,6 +6,7 @@ import { defaultOptions, keymapOf, registerBindings } from "../keymap";
 import { builtinRegistries, type Registries } from "../registries";
 import { CONFIG } from "../registry";
 import { plain, type Block, type Def } from "./doc";
+import { UPGRADE_TOPIC } from "../plugins/PluginsPanel";
 import { findTopic, helpContext, pageBody, topicIndex, topics, type HelpContext } from "./pages";
 
 function ctxOf(r: Registries = builtinRegistries(), more: Partial<HelpContext> = {}): HelpContext {
@@ -33,6 +34,8 @@ describe("topics", () => {
     expect(tags).toContain("terminal.size");
     expect(tags).toContain("E13");
     expect(tags).toContain("config#the-sandbox");
+    // `:plugins`' "What changed" for a Plugin written before api 4 (issue #228).
+    expect(tags).toContain(UPGRADE_TOPIC);
     expect(new Set(tags).size).toBe(tags.length);
   });
 

@@ -1251,6 +1251,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .plugin-state.problem, .plugin-problem { color: var(--error); }
 .plugin-problem { overflow-wrap: anywhere; margin: 2px 0 4px; }
 .plugin-uses { margin-top: 4px; }
+/* A row's Fix buttons (errors.md rows 116-121): plain buttons, never the accent (nothing here is
+   live), the size of a notice's, with the command they run in their tooltip. */
+.plugin-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.plugin-actions button { height: calc(var(--ui-size) * 1.75); padding: 0 10px; font-size: var(--text-sm); }
 /* A granted site's request counts (decision Q116): numbers that line up, quiet under the switch. */
 .plugin-requests { margin: 2px 0 0 22px; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 /* A Plugin's float (roster.float.open) lies over the terminal in every layout, as its name says,
