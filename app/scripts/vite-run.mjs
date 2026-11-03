@@ -7,6 +7,7 @@
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runnerImport } from "vite";
+import { thirdPartyNotices } from "./notices-plugin.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [script, ...args] = process.argv.slice(2);
@@ -22,5 +23,5 @@ const noCss = {
   resolveId: (source) => (/\.css$/.test(source) ? "\0roster-empty-css" : null),
   load: (id) => (id === "\0roster-empty-css" ? "export {}" : null),
 };
-const { module } = await runnerImport(resolve(process.cwd(), script), { root, logLevel: "warn", plugins: [noCss] });
+const { module } = await runnerImport(resolve(process.cwd(), script), { root, logLevel: "warn", plugins: [noCss, thirdPartyNotices] });
 process.exitCode = await module.main(args);

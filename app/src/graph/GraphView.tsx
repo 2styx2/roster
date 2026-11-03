@@ -348,15 +348,16 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (s.x < m || s.y < m || s.x > size.w - m * 3 || s.y > size.h - m) painter.setCamera({ ...c, x, y });
   };
 
-  /** Selects scene node `id` and brings it on screen if it's off. */
-  const select = (id: string | null) => {
+  /** Selects scene node `id` and brings it on screen if it's off (`show`; a press doesn't: the
+   * camera moving under the pointer would make a drag that starts there jump, #341). */
+  const select = (id: string | null, show = true) => {
     if (id === null) return;
     aimed.current = true;
     setAwaited(undefined);
     setChosen(id);
     setMoveSays("");
     const n = scene.byId.get(id);
-    if (n) reveal(n.x, n.y);
+    if (n && show) reveal(n.x, n.y);
   };
 
   /** Puts the node being placed at (x, y): kept in the State, as a drag is (`mine`: placed by the
@@ -564,7 +565,8 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (moving) stopMoving(true);
     const p = local(e);
     const id = hit(p.x, p.y);
-    if (id !== null) select(id);
+    // Selected where it is: brought in only once the press ends without a drag (onPointerUp).
+    if (id !== null) select(id, false);
     drag.current = { id, x: p.x, y: p.y, moved: false, pointer: e.pointerId };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
@@ -597,6 +599,12 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (d?.pointer !== e.pointerId) return;
     drag.current = null;
     if (d.moved && d.id !== null && layout.clusters.has(d.id) && scene.byId.get(d.id)?.count !== undefined) letGo();
+    // A click: what it selected is brought in, as a key's selection is (its label clear of the edge).
+    const n = !d.moved && d.id !== null && e.type === "pointerup" ? scene.byId.get(d.id) : undefined;
+    if (n) {
+      reveal(n.x, n.y);
+      redraw();
+    }
   };
   // The wheel zooms where the pointer is; it's not passive, so the page doesn't scroll.
   useEffect(() => {

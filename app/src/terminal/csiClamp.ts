@@ -5,6 +5,12 @@
 // feeds a Session's output to (the tab's own, PromptWatch's, CommittedLines', the shell hooks'
 // prompt screen) takes it through a CsiClamp first. First written for the prompt screen (ticket
 // 159, #298), shared from here.
+//
+// Bound to its xterm, a CsiClamp also guards it (xtermGuard.ts): a throw inside xterm.js, as on
+// an ED 1 at the screen's end in 6.0.0, no longer stops it (ticket 172, #323; decision Q158).
+
+import type { Terminal } from "@xterm/xterm";
+import { guardXterm } from "./xtermGuard";
 
 /** The largest CSI parameter an xterm is given: more than any screen's rows or columns, so a
  * move, an erase, an insert, a scroll or a tab stop draws the same as with the count sent. Only
@@ -63,6 +69,13 @@ export class CsiClamp {
   private digits: number[] = [];
   private params = 0;
   private intermediates = 0;
+
+  /** A clamp for the output fed to `term`, if given: then `term` is guarded too (xtermGuard.ts),
+   * so a throw inside xterm.js (an ED 1 at the screen's end, in 6.0.0) doesn't stop its writes for
+   * good (ticket 172, #323). The bytes are the same either way. */
+  constructor(term?: Terminal) {
+    if (term) guardXterm(term);
+  }
 
   /** `data` with every CSI count capped; `data` itself when it comes out as it came. */
   clamp(data: Uint8Array): Uint8Array;

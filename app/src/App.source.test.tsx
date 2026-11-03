@@ -83,6 +83,15 @@ describe(":source", () => {
     expect(within(statusbar()).queryByText(/init\.lua changed/)).toBeNull();
   });
 
+  it("an automatic reload leaves an error on the message line (#349): it says nothing there", async () => {
+    const { user, platform } = await ready(configWith({ autoReload: true }));
+    await command(user, "connect nope");
+    expect(messageLine()).toHaveTextContent("No Host named nope");
+    await save(platform, report(configWith({ autoReload: true, theme: "nord" })));
+    expect(theme()).toBe("nord");
+    expect(messageLine()).toHaveTextContent("No Host named nope");
+  });
+
   it("a broken file keeps the last good Config and shows where", async () => {
     const { user, platform } = await ready(configWith({ theme: "nord" }));
     await save(

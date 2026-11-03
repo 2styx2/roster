@@ -195,6 +195,8 @@ app/src/docs-site/    the docs website and PDF (ticket 46, ADR 0008): site.tsx r
                       matching over search-index.js; entry.ts is bundled into the site's search.js
 app/scripts/gen-docs-site.ts  `npm run docs` (`-- --out DIR`, `--pdf FILE`): writes it, and bundles search.js; run through vite-run.mjs
                       (Vite's module runner, so the app's `?raw` imports work)
+app/scripts/notices-plugin.mjs  `virtual:third-party-notices`: THIRD-PARTY-NOTICES's text for `:version`'s help page
+                      (T180), in vite.config.ts and vite-run.mjs
 app/scripts/check-docs-a11y.ts  `npm run docs:a11y -- DIR`: axe-core over the built site in headless Chrome (dark, light,
                       the search box open); fails on any WCAG 2.x A/AA problem. docs.yml runs it on every PR
 app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [--build]`, `serve`;
@@ -206,7 +208,8 @@ app/e2e/              copy and paste end to end (T158): TerminalView in headless
                       Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md);
                       a Host row's menu placed in the whole app's layout (T173, host-menu.e2e.ts)
 app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it's shown (questions go through)
-app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153)
+app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153); bound to its xterm, guards it (T172)
+app/src/terminal/xtermGuard.ts  what keeps an xterm fed a Session's output going when a handler throws: ED 1 rerun as ED 2, any other sequence skipped, logged once (T172, Q158)
 ```
 
 **Checks** (run all before a commit):

@@ -1057,7 +1057,9 @@ export class PluginManager {
     } catch {
       // The held calls' own tries leave the app's retries as they were (said once, backing off).
       if (forWaiters && !this.stopped) return;
-      if (this.builtinsFailed++ === 0) this.ui.say?.(quiet("Plugins: couldn't tell roster its own commands; trying again"));
+      // Unasked (a built-in registering late, a core host built anew), so it keeps a line that
+      // shows, an error above all (decision Q162, #349).
+      if (this.builtinsFailed++ === 0) this.ui.say?.(backgroundQuiet("Plugins: couldn't tell roster its own commands; trying again"));
       if (this.builtinsRetry || this.stopped) return;
       const wait = Math.min(1000 * 2 ** (this.builtinsFailed - 1), 30_000);
       this.builtinsRetry = setTimeout(() => {
