@@ -125,7 +125,7 @@ In a terminal, as in Windows Terminal. These are the keymap's `terminal` table (
 | Ctrl+Shift+V, Shift+Insert | `terminal.paste` | Paste |
 | Ctrl+V (Windows) | `terminal.pasteIfText` | Paste the clipboard's text, as Windows Terminal does. With no text on the clipboard (empty, or an image only) Ctrl+V goes to the program as usual (^V). It works on Ctrl+V only |
 | Select with the mouse | (`terminal.copy_on_select`) | Copies the selection, unless `copy_on_select = false` |
-| Right-click | (`terminal.right_click_paste`) | Copies the selection and clears it, or pastes when nothing is selected. With `copy_on_select` on (the default) it always pastes: a right-click on a selection copies it, clears it and pastes it, as in Windows Terminal. While a program has mouse reporting on, a right-click is the program's, selection or not, as in Windows Terminal |
+| Right-click | (`terminal.right_click_paste`) | Copies the selection and clears it, or pastes when nothing is selected. With `copy_on_select` on (the default) it always pastes: a right-click on a selection copies it, clears it and pastes it, as in Windows Terminal (if the copy fails, nothing is pasted, never the clipboard's old text). While a program has mouse reporting on, a right-click is the program's, selection or not, as in Windows Terminal |
 | Shift+drag, Shift+right-click (macOS: Option+drag, Option+right-click) | | While a program has mouse reporting on: select in the terminal, and copy or paste, as without the program |
 | Select in a program (Claude Code, vim, tmux) | (`terminal.osc52`) | The program copies with OSC 52, and the text goes on the clipboard, unless `osc52 = false` |
 

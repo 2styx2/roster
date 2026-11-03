@@ -76,23 +76,29 @@ export async function pasteClipboard(term: Selectable, clipboard: Clipboard): Pr
  * and Q166). With `programHasMouse` (a program turned mouse reporting on, and the key that takes
  * the mouse back isn't held) it's the program's, selection or not: xterm has sent it the click,
  * and nothing is copied or pasted. Otherwise it copies the selection and clears it, or pastes
- * when there's none; with `copyOnSelect` on it always pastes, after the copy, so a
- * right-click on a selection pastes that selection ("CopyOnSelect: right click always pastes"). */
+ * when there's none; with `copyOnSelect` on it pastes after the copy, so a right-click on a
+ * selection pastes that selection ("CopyOnSelect: right click always pastes"), but only when the
+ * copy landed: a refused copy, or a selection of only spaces (nothing to copy), pastes nothing. */
 export async function rightClick(
   term: Selectable,
   clipboard: Clipboard,
   { programHasMouse = false, copyOnSelect = false }: { programHasMouse?: boolean; copyOnSelect?: boolean } = {},
 ): Promise<void> {
   if (programHasMouse) return;
-  const selected = term.hasSelection();
-  if (selected) {
+  if (term.hasSelection()) {
     const text = copiedText(term.getSelection());
     term.clearSelection();
-    // Waited for, so the paste below reads what was just copied (Windows Terminal's copy is done
-    // before its paste).
-    if (text) await clipboard.writeText(text).catch(() => {});
+    if (!text) return;
+    // Waited for, so the paste reads what was just copied (Windows Terminal's copy is done before
+    // its paste). It fails closed: when the copy didn't land, nothing is pasted, since the
+    // clipboard still holds what was there before (a password, say), not the selection.
+    try {
+      await clipboard.writeText(text);
+    } catch {
+      return;
+    }
+    if (!copyOnSelect) return;
   }
-  if (selected && !copyOnSelect) return;
   await pasteClipboard(term, clipboard);
 }
 

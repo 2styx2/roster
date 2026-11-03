@@ -157,18 +157,33 @@ describe("Copying and pasting", () => {
     expect(term.sent).toEqual(["x[201~y"]);
   });
 
+  // Fails closed (coordinator's review of #338): a paste after a failed copy would type whatever
+  // the clipboard held before (a password copied earlier, say) instead of the selection.
+  it("with copy-on-select on, a copy the clipboard refuses pastes nothing (never the old clipboard)", async () => {
+    const term = fakeTerm("10.0.0.5 esx-02");
+    const clipboard = {
+      readText: async () => "an old password",
+      writeText: async () => {
+        throw new Error("refused");
+      },
+    };
+    await rightClick(term, clipboard, { copyOnSelect: true });
+    expect(term.hasSelection()).toBe(false);
+    expect(term.sent).toEqual([]);
+  });
+
   it("with copy-on-select on and nothing selected, right-click pastes as before", async () => {
     const term = fakeTerm("");
     await rightClick(term, memoryPlatform({ clipboard: "uptime" }).clipboard, { copyOnSelect: true });
     expect(term.sent).toEqual(["uptime"]);
   });
 
-  it("with copy-on-select on and a selection of only spaces (nothing to copy), right-click still pastes the clipboard", async () => {
-    const platform = memoryPlatform({ clipboard: "uptime" });
+  it("with copy-on-select on and a selection of only spaces (nothing to copy), right-click clears it and pastes nothing", async () => {
+    const platform = memoryPlatform({ clipboard: "an old password" });
     const term = fakeTerm("   ");
     await rightClick(term, platform.clipboard, { copyOnSelect: true });
     expect(term.hasSelection()).toBe(false);
-    expect(term.sent).toEqual(["uptime"]);
+    expect(term.sent).toEqual([]);
   });
 
   it("copies each line without the spaces after its end, as Windows Terminal trims them", async () => {

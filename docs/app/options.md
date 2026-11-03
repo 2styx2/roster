@@ -918,7 +918,7 @@ roster.o.terminal.copy_on_select = false
 
 `roster.o.terminal.right_click_paste` · `boolean` · default `true`
 
-Right-click copies the selection, or pastes when there's none.
+Right-click copies the selection, or pastes when there's none; with copy_on_select on, it copies and then pastes.
 
 Methods: `roster.o.terminal.right_click_paste = value` · `roster.o.terminal.right_click_paste` · `roster.o.reset("terminal.right_click_paste")`.
 
