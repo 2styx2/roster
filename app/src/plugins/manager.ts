@@ -1711,13 +1711,15 @@ export class PluginManager {
       ...(row.host ? { drag: row.host } : {}),
       ...(row.icon ? { icon: row.icon } : {}),
     };
-    // Drawn as the Inventory draws the Host (api 3), with the row's own buttons after.
+    // Drawn as the Inventory draws the Host (api 3); the row's own actions go in its menu after the
+    // Host's (T166, Q156).
     const host = row.kind === "host" && row.host ? hostByName.get(row.host) : undefined;
     if (host) {
       const base = hostRow(host, id, row.level ?? 0);
       return { ...base, ...extra, ...(row.run ? { command: this.line(plugin, row.run, context) } : {}), actions: [...(base.actions ?? []), ...own] };
     }
-    const dot = row.kind === "host" && row.host ? { dot: "off" as const } : {};
+    // A Host roster doesn't have: its own actions are in its menu too (T166, Q156).
+    const dot = row.kind === "host" && row.host ? { dot: "off" as const, menu: true } : {};
     return {
       ...dot,
       ...extra,

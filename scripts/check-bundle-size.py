@@ -31,9 +31,13 @@ KB = 1000
 # build was already a few hundred bytes under 83 (#232, #243). It's the app's own stylesheets, grown a
 # rule at a time with features, not a dependency, so 2 KB of room lets the next small feature through
 # while a stylesheet library (tens of KB) still fails. Measured 83.3 raw / 15.2 gzipped on 2026-11-02.
+# JS 2,500 -> 2,550 raw, 730 -> 745 gzipped on 2026-11-03: a Host row's menu (T166, #314: RowMenu.tsx,
+# hostMenu.ts, the `menu` command and keyboard.md's new Sidebar section, bundled for :help) took it from
+# dev's 2,489.4 raw / 729.7 gzipped (already at the budget) to 2,497.5 / 732.4. The app's own code and
+# the text :help reads, not a dependency, so the budgets follow it with room for the next small feature.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2500, "gzip": 730},
+    "js": {"raw": 2550, "gzip": 745},
     "css": {"raw": 85, "gzip": 15.5},
 }
 

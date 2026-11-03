@@ -9,6 +9,7 @@ import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./back
 import { LONG_NAME_OPEN, worstCaseHosts } from "./backend/worstCase";
 import { memoryPlatform, type MemoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { chooseInMenu, inventoryRow } from "./test-menu";
 
 const LEADER = "{Control>} {/Control}";
 
@@ -94,9 +95,9 @@ describe("Host details", () => {
     expect(screen.getByRole("combobox", { name: "Command" })).toHaveValue("open admin");
   });
 
-  it("opens from the tree's row control and from the Picker (a row's control, or Ctrl+I)", async () => {
+  it("opens from the Host's menu in the tree and from the Picker (a row's control, or Ctrl+I)", async () => {
     const { user } = await ready();
-    await user.click(screen.getByRole("button", { name: "Show esxi-2-001's details" }));
+    await chooseInMenu(user, await inventoryRow("esxi-2-001"), /^Details/);
     expect(panel("esxi-2-001")).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
     await user.keyboard("printer");

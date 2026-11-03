@@ -472,6 +472,39 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sidebar .sb-foot button:hover { background: var(--hover); color: var(--text); }
 }
 
+/* A Host row's menu (T166, decision Q156): a right-click on a Host's row, or the Menu key or
+   Shift+F10 on the App-mode cursor. The Picker's surface, small: the panel fill, a strong hairline
+   and the floating shadow, since it lies over the tree and the terminal. Labels in Inter (the app
+   talking), keycaps right-aligned. The active item is raised, as the Picker's selected row; no
+   accent, which means live. Motion (the animate skill): opened by the pointer it fades in from
+   0.97 at the pointer, 120 ms on the strong ease-out, so the click visibly opened it; from a key
+   (.instant) it appears at once, and it closes at once, as a native menu does. Reduced motion
+   keeps the fade and drops the scale (--dur-move is 0 there). */
+.row-menu {
+  position: fixed; z-index: var(--z-over-full); min-width: 200px; max-width: min(320px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px); overflow-y: auto; padding: 4px; outline: none;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px var(--shadow), 0 2px 8px var(--shadow); font-size: var(--text-sm);
+  transition: opacity var(--dur-fade) var(--ease-out), transform var(--dur-move) var(--ease-out);
+  @starting-style { opacity: 0; transform: scale(0.97); }
+}
+.row-menu.instant { transition: none; }
+.sidebar .row-menu-item {
+  width: 100%; height: calc(var(--row-h) - 4px); display: flex; align-items: center; gap: 16px; padding: 0 8px;
+  color: var(--text); border-radius: var(--radius-sm); cursor: default; white-space: nowrap;
+}
+.row-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row-menu-keys { flex: none; margin-left: auto; }
+.sidebar .row-menu-item:focus, .sidebar .row-menu-item:focus-visible {
+  outline: none; background: var(--raised); box-shadow: inset 0 0 0 1px var(--raised-line);
+}
+.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+@media (forced-colors: active) {
+  .row-menu { border-color: CanvasText; }
+  .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
+  .row-menu-sep { background: CanvasText; }
+}
+
 /* ---------- Side panels: Key bindings, :check ---------- */
 
 .keys-panel {

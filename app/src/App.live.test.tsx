@@ -14,6 +14,7 @@ import type { Config, ConfigReport } from "./config/types";
 import { memoryPlatform } from "./platform/memory";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { chooseInMenu } from "./test-menu";
 
 const LEADER = "{Control>} {/Control}";
 const hosts = makeHosts(6);
@@ -60,9 +61,9 @@ describe("removing a Host", () => {
     expect(within(statusbar()).getByRole("button", { name: /1 Pending change/ })).toBeInTheDocument();
   });
 
-  it("works from the row's button with the mouse; with no Host given or selected it says so", async () => {
+  it("works from the Host's menu with the mouse; with no Host given or selected it says so", async () => {
     const { user } = await ready();
-    await user.click(within(rowOf(item("esxi-2-001") as HTMLElement)).getByRole("button", { name: "Remove esxi-2-001 from the Inventory" }));
+    await chooseInMenu(user, item("esxi-2-001") as HTMLElement, /^Remove from the Inventory/);
     await user.click(within(await screen.findByRole("alertdialog", { name: "Remove esxi-2-001?" })).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(item("esxi-2-001")).toBeNull());
     // the cursor on a Host row, then ␣ D
@@ -79,8 +80,8 @@ describe("renaming and moving Hosts", () => {
     await user.keyboard(`${LEADER}:host rename linux-1-000 web-1{Enter}`);
     await said(/Renamed linux-1-000 to web-1 as a Pending change/);
     expect(item("web-1")).not.toBeNull();
-    // the rename button opens the command line with the rest to type
-    await user.click(within(rowOf(item("web-1") as HTMLElement)).getByRole("button", { name: "Rename web-1" }));
+    // the menu's Rename opens the command line with the rest to type
+    await chooseInMenu(user, item("web-1") as HTMLElement, /^Rename/);
     expect(screen.getByRole("combobox", { name: "Command" })).toHaveValue("host rename web-1 ");
   });
 

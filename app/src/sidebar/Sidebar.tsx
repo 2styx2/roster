@@ -5,10 +5,12 @@
 // command table, so nothing here is a Sidebar-only action (decision Q36). The mouse works on every
 // row without taking focus from the terminal.
 //
-// A row's buttons (rename, ⓘ, remove…) show on the selected row only, never on hover (decision Q88,
-// owner): the row last left-clicked, or in App mode the cursor row. Hovering highlights a row and
-// nothing more, so its address stays in view, and touch and pen work the same as a mouse. They
-// appear without motion: j/k move them as often as a click does (taste.md: motion confirms).
+// A row's buttons (a group's rename and delete, a Session's close…) show on the selected row only,
+// never on hover (decision Q88, owner): the row last left-clicked, or in App mode the cursor row.
+// Hovering highlights a row and nothing more, so its address stays in view, and touch and pen work
+// the same as a mouse. They appear without motion: j/k move them as often as a click does
+// (taste.md: motion confirms). A Host's row has no buttons: a right-click, or the Menu key or
+// Shift+F10 on the cursor, opens its menu (T166, decision Q156: RowMenu.tsx, hostMenu.ts).
 //
 // For assistive tech (ticket 29 M4) the rows are an ARIA tree: the scroller is the tree, each
 // section a group, each row a treeitem with its level, and the App-mode cursor is the tree's
@@ -25,6 +27,8 @@ import { formatCount } from "../ui/format";
 import { HintsShown } from "../ui/hints";
 import { Keys, LEADER, WithKeys } from "../ui/Keys";
 import { DOT_WORDS, StateDot, type Dot } from "../ui/StateDot";
+import type { MenuEntry } from "./hostMenu";
+import { RowMenu } from "./RowMenu";
 
 export type { Dot } from "../ui/StateDot";
 
@@ -95,8 +99,10 @@ export interface SidebarRow {
   data?: Readonly<Record<string, string>>;
   /** What Enter or a click runs. */
   command: CommandLine;
-  /** Buttons shown on the selected row (decision Q88). */
+  /** Buttons shown on the selected row (decision Q88); on a `menu` row, items in its menu. */
   actions?: readonly RowAction[];
+  /** A Host's row (T166, Q156): no buttons; a right-click or the Menu key opens its menu. */
+  menu?: boolean;
   /** Dragging the row carries this (a Host name). */
   drag?: string;
   /** Run when the dragged row is dropped somewhere in the Sidebar that doesn't take it (out of a
@@ -143,6 +149,17 @@ export interface SidebarProps {
   onTreeFocus?(from: Element | null): void;
   /** Focus left the tree for somewhere outside it. */
   onTreeBlur?(to: Element | null): void;
+  /** The open Host row menu (T166, Q156): its row, and the pointer (null: opened by a key). */
+  menu?: OpenMenu | null;
+  /** Opens (a right-click on a Host's row) or closes the menu. */
+  onMenu?(menu: OpenMenu | null): void;
+  /** What a Host row's menu offers (hostMenu.ts). */
+  rowMenu?(row: SidebarRow): readonly MenuEntry[];
+}
+
+export interface OpenMenu {
+  row: string;
+  at: { x: number; y: number } | null;
 }
 
 /** A row's DOM id, for aria-activedescendant: any row id, made a valid id. */
@@ -285,6 +302,7 @@ const RowIcon = ({ name }: { name: NonNullable<SidebarRow["icon"]> }) => (
 
 
 type Select = (id: string) => void;
+type OpenRowMenu = (row: string, at: { x: number; y: number } | null) => void;
 
 const Row = memo(function Row({
   row,
@@ -293,6 +311,7 @@ const Row = memo(function Row({
   run,
   select,
   drag,
+  openMenu,
 }: {
   row: SidebarRow;
   cursor: boolean;
@@ -300,8 +319,10 @@ const Row = memo(function Row({
   run: Run;
   select: Select;
   drag: Drag;
+  openMenu: OpenRowMenu;
 }) {
-  const cls = `sb-row${row.raised ? " raised" : ""}${row.raised && row.live ? " live" : ""}${row.also ? " also" : ""}${cursor ? " cursor" : ""}${selected ? " selected" : ""}${row.actions ? " has-actions" : ""}${row.pending ? " pending" : ""}${row.link ? ` link-${row.link}` : ""}`;
+  const buttons = row.actions && !row.menu;
+  const cls = `sb-row${row.raised ? " raised" : ""}${row.raised && row.live ? " live" : ""}${row.also ? " also" : ""}${cursor ? " cursor" : ""}${selected ? " selected" : ""}${buttons ? " has-actions" : ""}${row.pending ? " pending" : ""}${row.link ? ` link-${row.link}` : ""}`;
   const cut = row.tail !== undefined && row.label.endsWith(row.tail);
   return (
     <li
@@ -315,6 +336,15 @@ const Row = memo(function Row({
       onDragStart={row.drag !== undefined ? (e) => drag.start(row, e) : undefined}
       onDragOver={row.drop ? (e) => drag.over(e, row.drop) : undefined}
       onDrop={row.drop ? (e) => drag.drop(e, row.drop) : undefined}
+      onContextMenu={
+        row.menu
+          ? (e) => {
+              e.preventDefault();
+              select(row.id);
+              openMenu(row.id, { x: e.clientX, y: e.clientY });
+            }
+          : undefined
+      }
     >
       <div
         role="treeitem"
@@ -361,7 +391,7 @@ const Row = memo(function Row({
         </span>
         {row.count !== undefined && <span className="sb-num">{formatCount(row.count)}</span>}
       </div>
-      {row.actions && <Actions actions={row.actions} run={run} />}
+      {buttons && row.actions && <Actions actions={row.actions} run={run} />}
     </li>
   );
 });
@@ -373,6 +403,7 @@ const Section = memo(function Section({
   run,
   select,
   drag,
+  openMenu,
   leader,
 }: {
   section: SidebarSection;
@@ -383,6 +414,7 @@ const Section = memo(function Section({
   run: Run;
   select: Select;
   drag: Drag;
+  openMenu: OpenRowMenu;
   leader: string;
 }) {
   const id = headingId(section.id);
@@ -426,7 +458,7 @@ const Section = memo(function Section({
       {!folded && (
         <ul className="sb-rows" role="none">
           {section.rows.map((row) => (
-            <Row key={row.id} row={row} cursor={row.id === cursor} selected={row.id === selected} run={run} select={select} drag={drag} />
+            <Row key={row.id} row={row} cursor={row.id === cursor} selected={row.id === selected} run={run} select={select} drag={drag} openMenu={openMenu} />
           ))}
         </ul>
       )}
@@ -460,16 +492,23 @@ export function Sidebar({
   treeRef,
   onTreeFocus,
   onTreeBlur,
+  menu = null,
+  onMenu,
+  rowMenu,
 }: SidebarProps) {
   // A stable `run` and `select` for the memoized rows; they always call the latest one.
   const runRef = useRef(run);
   const selectRef = useRef(onSelect);
+  const menuRef = useRef(onMenu);
   useLayoutEffect(() => {
     runRef.current = run;
     selectRef.current = onSelect;
+    menuRef.current = onMenu;
   });
   const stableRun = useCallback((line: CommandLine) => runRef.current(line), []);
   const stableSelect = useCallback((id: string) => selectRef.current?.(id), []);
+  const openMenu = useCallback<OpenRowMenu>((row, at) => menuRef.current?.({ row, at }), []);
+  const closeMenu = useCallback(() => menuRef.current?.(null), []);
 
   // Keep the cursor row in view as j/k walk a long tree.
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -492,6 +531,19 @@ export function Sidebar({
   const focusBefore = useRef<Element | null>(null);
   const pressing = useRef(false);
   const cursorRow = cursor === null ? null : (allRows(sections).find((r) => r.id === cursor) ?? null);
+  // The open menu's row on screen, for a menu opened by a key to go under it.
+  const menuAt = menu?.row ?? null;
+  const menuAnchor = useCallback(
+    () => (menuAt === null ? null : (scrollRef.current?.querySelector(`[data-row="${CSS.escape(menuAt)}"]`) ?? null)),
+    [menuAt],
+  );
+  // The open menu's row: gone (removed, folded away), the menu goes with it.
+  const menuRow = menu === null ? null : (allRows(sections).find((r) => r.id === menu.row && r.menu) ?? null);
+  const menuEntries = menuRow && rowMenu ? rowMenu(menuRow) : [];
+  const menuShown = menuRow !== null && menuEntries.length > 0;
+  useLayoutEffect(() => {
+    if (menu !== null && !menuShown) menuRef.current?.(null);
+  }, [menu, menuShown]);
 
   const [drag] = useState<Drag>(() => ({
     press(row, e) {
@@ -562,6 +614,13 @@ export function Sidebar({
         onBlur={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget)) onTreeBlur?.(e.relatedTarget);
         }}
+        onContextMenu={(e) => {
+          // The Menu key or Shift+F10 with the tree focused (App mode): the cursor row's menu. A
+          // row's own handler took a right-click on it already.
+          if (e.target !== e.currentTarget || e.defaultPrevented || e.button === 2) return;
+          e.preventDefault();
+          if (cursorRow?.menu && menu?.row !== cursorRow.id) openMenu(cursorRow.id, null);
+        }}
         onDragOver={(e) => drag.over(e, undefined)}
         onDrop={(e) => drag.drop(e, undefined)}
         onDragEnd={() => {
@@ -578,10 +637,23 @@ export function Sidebar({
             run={stableRun}
             select={stableSelect}
             drag={drag}
+            openMenu={openMenu}
             leader={leaderHint}
           />
         ))}
       </div>
+      {menuShown && menu && menuRow && (
+        <RowMenu
+          key={`${menu.row}:${menu.at ? `${menu.at.x},${menu.at.y}` : "keys"}`}
+          label={menuRow.label}
+          entries={menuEntries}
+          at={menu.at}
+          anchor={menuAnchor}
+          leader={leaderHint}
+          run={stableRun}
+          close={closeMenu}
+        />
+      )}
       {cursorRow && <Details row={cursorRow} />}
       <div className="sb-foot">
         <button type="button" onMouseDown={keepFocus} onClick={() => run("keys")}>
