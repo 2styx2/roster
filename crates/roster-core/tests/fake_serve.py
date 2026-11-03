@@ -27,7 +27,8 @@ The first argument picks a behaviour:
   checks             speaks API 21: host.check {background: true} starts a check job (counted in inventory.info's
                      `checks`), host.check_job says running twice, then done with the waiting form's result
   stuck-check HOW    as checks, but the check never ends; host.check {background: true} says `joined: true` when HOW
-                     is `joined` (serve API 22), and each jobs.stop is counted in inventory.info's `stops`
+                     is `joined` (serve API 22), and each jobs.stop is counted in inventory.info's `stops`; asking
+                     again for the same Host joins its check, and a stopped check's host.check_job says `stopped`
   slow-exit FILE     once stdin closes, takes 1.5 s to wind down (as serve stopping a Mesh job and recording
                      it), then writes FILE and exits on its own
 Arguments after it are echoed back by inventory.info as `argv`, so tests can see what was passed.
@@ -61,6 +62,9 @@ FILL_PASSWORD = "fill-pw-9d2e"   # session.fill's (ticket 119): tests check it's
 FINGERPRINT = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8"
 trusted = mode != "unknown-key"
 CHECKED = {"host": "esxi-02", "ok": True, "steps": [{"step": "inventory", "status": "ok", "message": "root@10.0.0.10"}]}
+STOPPED = {"host": "esxi-02", "ok": False, "steps": [
+    {"step": "inventory", "status": "ok", "message": "root@10.0.0.10"},
+    {"step": "ssh-config", "status": "skipped", "message": "the check was stopped"}]}
 checks, polls, stops = [], [], []
 
 
@@ -85,8 +89,13 @@ def answer(req):
     if m == "host.check":
         p = req.get("params", {})
         if p.get("background") is True and mode in ("checks", "stuck-check"):
+            again = mode == "stuck-check" and p["host"] in checks
             checks.append(p["host"])
-            joined = {"joined": sys.argv[2] == "joined"} if mode == "stuck-check" else {}
+            joined = {"joined": again or sys.argv[2] == "joined"} if mode == "stuck-check" else {}
+            if again:
+                return {"result": {"kind": "check", "job": f"check-{checks.index(p['host']) + 1}", "action": "check",
+                                   "state": "running", "done": 0, "total": 8, "at": None, "host": p["host"],
+                                   **joined}}
             return {"result": {"kind": "check", "job": f"check-{len(checks)}", "action": "check", "state": "running",
                                "done": 0, "total": 8, "at": None, "host": p["host"], **joined}}
         if "background" in p:
@@ -94,6 +103,9 @@ def answer(req):
         return {"result": CHECKED}
     if m == "host.check_job":
         polls.append(req["params"]["job"])
+        if mode == "stuck-check" and any(s["job"] == req["params"]["job"] for s in stops):
+            return {"result": {"kind": "check", "job": req["params"]["job"], "state": "stopped", "done": 1, "total": 8,
+                               "at": None, "host": "esxi-02", "result": STOPPED}}
         if len(polls) < 3 or mode == "stuck-check":
             return {"result": {"kind": "check", "job": req["params"]["job"], "state": "running", "done": len(polls),
                                "total": 8, "at": "dns", "host": "esxi-02"}}

@@ -99,6 +99,24 @@ pub fn timeout_for(method: &str) -> std::time::Duration {
         .map_or(crate::rpc::DEFAULT_TIMEOUT, |(_, s)| std::time::Duration::from_secs(*s))
 }
 
+/// One call's wait for a check of the core's own: forgets the job once no call waits for it.
+struct OwnCheck<'a> {
+    checks: &'a std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    id: String,
+}
+
+impl Drop for OwnCheck<'_> {
+    fn drop(&mut self) {
+        let mut checks = self.checks.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(waiting) = checks.get_mut(&self.id) {
+            *waiting -= 1;
+            if *waiting == 0 {
+                checks.remove(&self.id);
+            }
+        }
+    }
+}
+
 /// What the UI learns about the Backend once it's up.
 #[derive(Debug, Clone, Serialize)]
 pub struct BackendInfo {
@@ -110,8 +128,21 @@ pub struct BackendInfo {
     pub inventory: Value,
 }
 
+/// A check the core has under way (`host.check {background: true}`), as it starts: serve's job id,
+/// and whether it's the app's own to stop (#221 item 1): the core started it, or joined a check it
+/// had started itself. A check another caller started (a Plugin's `host.check`) isn't: stopping it
+/// would cut that caller's answer short.
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckStarted {
+    pub job: String,
+    pub own: bool,
+}
+
 pub struct Backend {
     client: RpcClient,
+    /// The check jobs this core started and still waits for, each with how many of its calls wait
+    /// for it: only these can be stopped through [`Backend::stop_check`].
+    own_checks: std::sync::Mutex<std::collections::HashMap<String, usize>>,
     /// Where serve (and so every Session) runs.
     pub target: Target,
     pub info: BackendInfo,
@@ -152,6 +183,7 @@ impl Backend {
         }
         Ok(Backend {
             client,
+            own_checks: Default::default(),
             target: c.target.clone(),
             info: BackendInfo {
                 backend: c.target.label(),
@@ -184,6 +216,18 @@ impl Backend {
     /// says this call started it (`joined: false`, serve API 22): a check it joined (one per Host
     /// at a time) is another caller's too, which may still be waiting for it.
     pub fn check_host_within(&self, host: &str, limit: std::time::Duration) -> Result<Value, CallError> {
+        self.check_host_with(host, limit, |_| {})
+    }
+
+    /// [`Backend::check_host_within`], telling `on_start` the check's job once serve has it under
+    /// way, so the app can stop it ([`Backend::stop_check`]). An older serve (before API 21) has no
+    /// job, and `on_start` isn't called.
+    pub fn check_host_with(
+        &self,
+        host: &str,
+        limit: std::time::Duration,
+        on_start: impl FnOnce(&CheckStarted),
+    ) -> Result<Value, CallError> {
         if self.api_version() < CHECK_JOBS_API_VERSION {
             return self.call("host.check", json!({ "host": host }));
         }
@@ -192,6 +236,23 @@ impl Backend {
             message: "host.check answered without a job".into(),
         })?;
         let started_here = started.get("joined").and_then(Value::as_bool) == Some(false);
+        let id = job.as_str().map_or_else(|| job.to_string(), str::to_string);
+        let own = {
+            let mut checks = self.own_checks.lock().unwrap_or_else(|e| e.into_inner());
+            match checks.get_mut(&id) {
+                Some(waiting) => *waiting += 1,
+                None if started_here => {
+                    checks.insert(id.clone(), 1);
+                }
+                None => {}
+            }
+            checks.contains_key(&id)
+        };
+        let _waiting = own.then(|| OwnCheck {
+            checks: &self.own_checks,
+            id: id.clone(),
+        });
+        on_start(&CheckStarted { job: id, own });
         let end = std::time::Instant::now() + limit;
         loop {
             let r = self.call("host.check_job", json!({ "job": job }))?;
@@ -219,6 +280,22 @@ impl Backend {
             }
             std::thread::sleep(CHECK_POLL);
         }
+    }
+
+    /// Stop a check of the app's own ([`CheckStarted::own`]) at its next step (`jobs.stop`): the
+    /// call waiting for it then answers with the steps that ran and the rest skipped. `{job,
+    /// stopping}`; `stopping: false` without asking serve for a job that isn't the core's own (over,
+    /// or another caller's), and from serve for one that's over by now.
+    pub fn stop_check(&self, job: &str) -> Result<Value, CallError> {
+        let own = self
+            .own_checks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(job);
+        if !own {
+            return Ok(json!({ "kind": "check", "job": job, "stopping": false }));
+        }
+        self.call("jobs.stop", json!({ "kind": "check", "job": job }))
     }
 
     /// A call, waiting as long as [`timeout_for`] says for that method.
