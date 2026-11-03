@@ -268,14 +268,16 @@ fn plugin_dir(test: &str, permissions: &[&str], init: &str) -> common::Temp {
 }
 
 /// Loads a Plugin granted `permissions`, with `config` as `roster.plugin.config`; the replies
-/// it sends on its own come out of the receiver.
+/// it sends on its own come out of the receiver. Its host has generous limits
+/// ([`common::unhurried`]): the default ones are wall-clock time, which a busy machine outruns,
+/// and only the test about them (the looping callback) asks [`load_within`] for tight ones.
 fn load(
     test: &str,
     permissions: &[&str],
     config: Value,
     init: &str,
 ) -> (PluginHost, Reply, Receiver<Reply>, common::Temp) {
-    load_within(test, permissions, config, init, Limits::default())
+    load_within(test, permissions, config, init, common::unhurried())
 }
 
 /// [`load`] with the host's `limits`.
@@ -352,7 +354,7 @@ fn without_a_network_grant_there_is_no_roster_http() {
     let server = Server::start();
     let init = "roster.notify(tostring(roster.http))";
     // Asked for but not granted: still nothing.
-    let host = PluginHost::new(Arc::new(NoServe), Limits::default());
+    let host = PluginHost::new(Arc::new(NoServe), common::unhurried());
     let dir = plugin_dir("ungranted", &[&server.site()], init);
     let (_, reply) = host.load(&Source::Dir(dir.to_path_buf()), &[]).unwrap();
     assert_eq!(reply.ops[0]["text"], "nil");
@@ -434,18 +436,14 @@ fn an_answer_that_comes_while_init_lua_still_runs_isnt_lost() {
       for i = 1, 20000000 do n = n + i end
     "#;
     // The loop keeps init.lua running while the answer comes. How long it takes depends on the
-    // machine, and the load's time limit isn't what this tests: on a busy machine it once ran past
-    // the default 1 s (T146), so the limit here is far beyond any machine's loop.
-    let limits = Limits {
-        load: Duration::from_secs(60),
-        ..Limits::default()
-    };
-    let (_h, lr, rx, _folder) = load_within(
+    // machine, and the time limits aren't what this tests: on a busy machine the loop once ran
+    // past the default 1 s a load (T146), and the answer's callback, which waits for it, past the
+    // default call limit (T200). [`load`]'s limits are far beyond any machine's loop.
+    let (_h, lr, rx, _folder) = load(
         "during-load",
         &[&server.site()],
         json!({ "url": server.url("/hello") }),
         init,
-        limits,
     );
     assert!(lr.error.is_none(), "{:?}", lr.error);
     assert_eq!(notices(&rx, 1, 20), ["got 200"]);
@@ -990,7 +988,19 @@ roster.http.request({ url = roster.plugin.config.url }, function()
   coroutine.wrap(function() while true do end end)()
 end)
 "#;
-    let (_host, reply, rx, _folder) = load("loop", &[&server.site()], json!({ "url": server.url("/echo") }), init);
+    // The call limit is what stops the loop: the default one, not [`load`]'s minute. The load
+    // isn't what this tests, so it gets a minute.
+    let limits = Limits {
+        call: Limits::default().call,
+        ..common::unhurried()
+    };
+    let (_host, reply, rx, _folder) = load_within(
+        "loop",
+        &[&server.site()],
+        json!({ "url": server.url("/echo") }),
+        init,
+        limits,
+    );
     assert!(reply.error.is_none(), "{:?}", reply.error);
     let mut seen_true = false;
     let mut seen_loop = false;
@@ -1326,9 +1336,9 @@ impl ResolvingProxy {
     }
 }
 
-/// A host whose Plugins look names up with [`lookup`].
+/// A host whose Plugins look names up with [`lookup`], with generous limits as [`load`]'s.
 fn host() -> PluginHost {
-    PluginHost::new(Arc::new(NoServe), Limits::default()).with_lookup(lookup())
+    PluginHost::new(Arc::new(NoServe), common::unhurried()).with_lookup(lookup())
 }
 
 fn load_proxied(
