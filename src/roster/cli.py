@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from . import __version__, boxsync, jsonout, mesh
@@ -334,7 +335,7 @@ def cmd_check_box(args):
     section = None
     for c in checks:
         if c["section"] != section:
-            say(("" if section is None else "\n") + health.SECTIONS.get(c["section"], c["section"]))
+            say(("" if section is None else "\n") + str(health.SECTIONS.get(c["section"], c["section"])))
             section = c["section"]
         say(f"  {c['level']:<5}  {c['message']}")
         if c.get("fix"):
@@ -500,7 +501,7 @@ def cmd_reveal(cfg, args):
             secret = get_secret(r["auth"], r["group"] or "resources")
         except RuntimeError as e:
             die(f"{r['name']}: {e}")
-    say(wifi_uri(r, secret) if args.wifi else secret)
+    say(wifi_uri(r, secret) if args.wifi else secret or "")
     return 0
 
 
@@ -784,8 +785,8 @@ def build_parser():
     p.add_argument("--version", action="version", version=f"roster {__version__}")
     p.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, ./roster.yml, then ~/.config/roster/roster.yml)")
     sub = p.add_subparsers(dest="cmd", required=True)
-    only = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
-    as_json = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
+    only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
+    as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
                "Machine-readable output in docs/cli-reference.md)"}
     sub.add_parser("init", help="write an example roster.yml")
     s = sub.add_parser("setup", help="one-time setup of this box")

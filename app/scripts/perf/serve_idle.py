@@ -45,7 +45,8 @@ def measure(watch):
                 p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}}) + "\n")
                 p.stdin.flush()
                 return json.loads(p.stdout.readline())
-            assert "result" in call(1, "inventory.info"), "serve didn't start"
+            if "result" not in call(1, "inventory.info"):
+                raise SystemExit("serve didn't start")
             if watch:
                 call(2, "inventory.watch", {"auto": False})
             time.sleep(1)

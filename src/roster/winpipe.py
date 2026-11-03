@@ -19,8 +19,11 @@ import functools
 import threading
 from ctypes import wintypes
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+# Windows-only parts of ctypes (WinDLL here, WinError and get_last_error below): typeshed declares them for win32
+# alone, and the type checker reads this module as Linux sees it; it runs on Windows only
+WinDLL = ctypes.WinDLL  # pyright: ignore[reportAttributeAccessIssue]
+kernel32 = WinDLL("kernel32", use_last_error=True)
+advapi32 = WinDLL("advapi32", use_last_error=True)
 
 PIPE_ACCESS_DUPLEX = 0x00000003
 FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
@@ -78,7 +81,7 @@ ConvertStringSecurityDescriptorToSecurityDescriptorW = _api(
 
 
 def _fail(err=None):
-    raise ctypes.WinError(ctypes.get_last_error() if err is None else err)
+    raise ctypes.WinError(ctypes.get_last_error() if err is None else err)  # pyright: ignore[reportAttributeAccessIssue] - Windows only
 
 
 @functools.lru_cache(maxsize=1)
@@ -178,7 +181,7 @@ class Conn:
         def read():
             buf, got = ctypes.create_string_buffer(size), D()
             if not ReadFile(self.handle, buf, size, ctypes.byref(got), None):
-                err = ctypes.get_last_error()
+                err = ctypes.get_last_error()  # pyright: ignore[reportAttributeAccessIssue] - Windows only
                 if err in (ERROR_BROKEN_PIPE, ERROR_PIPE_NOT_CONNECTED):
                     return b""
                 _fail(err)
@@ -242,7 +245,7 @@ class Server:
         if h is None:
             raise OSError("the askpass pipe is closed")
         if not ConnectNamedPipe(h, None):
-            err = ctypes.get_last_error()
+            err = ctypes.get_last_error()  # pyright: ignore[reportAttributeAccessIssue] - Windows only
             if err not in (ERROR_PIPE_CONNECTED, ERROR_NO_DATA):    # ERROR_NO_DATA: came and went already
                 _fail(err)
         with self._lock:
@@ -277,7 +280,7 @@ def connect(name, timeout):
                         SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, None)
         if h != INVALID_HANDLE_VALUE:
             return Conn(h)
-        err = ctypes.get_last_error()
+        err = ctypes.get_last_error()  # pyright: ignore[reportAttributeAccessIssue] - Windows only
         left = deadline - time.monotonic()
         if err != ERROR_PIPE_BUSY or left <= 0:
             _fail(err)
