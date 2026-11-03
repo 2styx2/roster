@@ -62,12 +62,12 @@ import { ImportPanel } from "./config/ImportPanel";
 import { foldersSettings } from "./folders/file";
 import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
-import type { BoxSync, InventoryFileError } from "./backend/types";
+import type { BoxSync, CheckStarted, InventoryFileError } from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkJoined, checkProgressed, checkStarted } from "./errors/checkProgress";
+import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -1470,7 +1470,9 @@ function Workspace({
       }
       // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
       const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
-      backend.checkHost(host).then(
+      // The core hands over the check's job as it starts: the app's own can be stopped (#221).
+      const started = (s: CheckStarted) => run === checkRun.current && setCheck((c) => checkOwned(c, host, s));
+      backend.checkHost(host, started).then(
         (result) => run === checkRun.current && setCheck((prev) => ({ state: "done", host, result, at: at(prev) })),
         (e: unknown) =>
           run === checkRun.current &&
@@ -2348,6 +2350,17 @@ function Workspace({
             onClose={() => {
               checkRun.current++;
               setCheck(null);
+            }}
+            onStop={(job) => {
+              const run = checkRun.current;
+              setCheck(checkStopping);
+              // serve stops it at its next step, and the check's own answer then says where. A stop
+              // that doesn't reach serve offers Stop again (errors.md row 203).
+              backend.stopCheck(job).catch((e: unknown) => {
+                if (run !== checkRun.current) return;
+                setCheck(checkStopFailed);
+                setMessage(`The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`);
+              });
             }}
           />,
         )}
