@@ -16,5 +16,6 @@ mod screen;
 pub mod session;
 pub mod slot;
 pub mod state;
+mod wcwidth;
 pub mod window;
 pub mod wt;

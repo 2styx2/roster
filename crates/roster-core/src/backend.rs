@@ -492,6 +492,12 @@ pub fn fill_refusal(e: FillError<CallError>) -> CallError {
             message: FillError::<CallError>::NotInHop.to_string(),
             data: Some(json!({ "fix": "press the key again once roster shows where the Session is" })),
         },
+        // Nothing was looked up or typed; a reset starts the screen over (the last pass on #318).
+        e @ FillError::LostTrack { .. } => CallError::Rpc {
+            code: FILL_REFUSED,
+            message: e.to_string(),
+            data: Some(json!({ "fix": "run `reset` in the Session, then press the key again at the prompt" })),
+        },
         // Nothing was typed: the prompt stays offered (the review of #299, #3).
         e @ FillError::Changed { .. } => CallError::Rpc {
             code: FILL_REFUSED,

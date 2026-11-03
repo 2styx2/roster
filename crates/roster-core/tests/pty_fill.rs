@@ -927,6 +927,15 @@ fn same_screen_repaints(prompt: &str) -> Vec<(&'static str, String)> {
             ),
         ),
         ("the cursor alone", format!("\\033[?25l\\033[2;{col}H\\033[?25h")),
+        (
+            // Ticket 155c (#284 item 5): ConPTY's own forms (microsoft/terminal's VtEngine):
+            // blanks erased or written in whatever colour its buffer holds, SGR resets as
+            // `ESC[m`, a title, the cursor's blink.
+            "ConPTY's forms: coloured blanks, a title, the cursor's blink",
+            format!(
+                "\\033[?25l\\033]0;sudo\\007\\033[H$ sudo -v\\033[37m\\033[1m\\033[60X\\033[m\\r\\n{prompt}\\033[93m   \\033[39m\\033[2;{col}H\\033[?12h\\033[?25h"
+            ),
+        ),
     ]
 }
 
@@ -1078,17 +1087,31 @@ fn output_before_the_probe_refuses_before_anything_is_typed() {
         let log = err.log_line().unwrap_or_default();
         assert!(
             log.starts_with("prompt fill refused before the probe: what was printed after the prompt check (")
-                && log.ends_with(" bytes) changed the screen")
+                && log.contains(" bytes) changed the screen: ")
                 && !log.contains("Sorry")
-                && !log.contains("motd"),
+                && !log.contains("motd")
+                && !log.contains("sudo -k"),
             "{name}: {log}"
         );
-        let FillError::Changed { before } = err else {
+        // What differed (ticket 155c), under ConPTY's rule: never the text.
+        if rules {
+            let what = log.split_once("changed the screen: ").map_or("", |(_, w)| w);
+            let expected = match name.split(", ").next().unwrap_or_default() {
+                "sudo's retry" => {
+                    "the cursor moved from 2:26 to 4:26; row 3 characters (columns 1-17); row 4 characters (columns 1-24)"
+                }
+                "another line" => "row 1 characters (column 9)",
+                "a line below" => "row 5 characters (columns 1-4)",
+                _ => "the cursor moved from 2:26 to 3:1",
+            };
+            assert_eq!(what, expected, "{name}");
+        }
+        let FillError::Changed { before, diff } = err else {
             unreachable!()
         };
         let refusal = format!(
             "{:?}",
-            roster_core::backend::fill_refusal(FillError::Changed { before })
+            roster_core::backend::fill_refusal(FillError::Changed { before, diff })
         );
         assert!(refusal.contains("130"), "{name}: {refusal}");
         assert_eq!(recorded(&m, id, &rx), "", "{name}: something was typed");
@@ -1632,5 +1655,44 @@ fn a_refused_mask_says_what_was_drawn_for_the_log_only() {
         let err = got.unwrap_err();
         assert!(matches!(err, FillError::Echoes(None)), "{err:?} {out:?}");
         assert_eq!(err.log_line(), None);
+    }
+}
+
+/// The last pass on #318: once the Session printed something the core's screen can't follow (a
+/// wide character, synchronized output), it doesn't say a prompt is at the cursor, on any
+/// platform, so the fill refuses before anything is looked up or typed, and the log says why.
+#[test]
+fn a_screen_that_lost_track_refuses_before_anything_is_looked_up() {
+    for (earlier, what) in [("\u{4e2d} ", "wide character"), ("\x1b[?2026h", "CSI[?2026h")] {
+        for rules in [false, true] {
+            let prompt = format!("{earlier}\r\n[sudo] password for ops: ");
+            let m = SessionManager::with_conpty_rules(rules);
+            let (id, rx) = open(&m, host_sh(&recording(&prompt, ":")));
+            shown(&rx, "ops: ");
+            let mut asked = false;
+            let err = m
+                .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+                    asked = true;
+                    secret()
+                })
+                .unwrap_err();
+            assert!(matches!(err, FillError::LostTrack { .. }), "{what} {rules}: {err:?}");
+            assert!(!asked, "{what} {rules}: the vault was asked");
+            let log = err.log_line().unwrap_or_default();
+            assert!(
+                log.contains(&format!("roster's screen lost track of the terminal at {what}")),
+                "{log}"
+            );
+            let FillError::LostTrack { diff } = err else {
+                unreachable!()
+            };
+            let refusal = format!(
+                "{:?}",
+                roster_core::backend::fill_refusal(FillError::LostTrack { diff })
+            );
+            assert!(refusal.contains("130"), "{refusal}");
+            assert_eq!(recorded(&m, id, &rx), "", "{what} {rules}: something was typed");
+            m.close(id).unwrap();
+        }
     }
 }

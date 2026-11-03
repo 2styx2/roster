@@ -10,7 +10,7 @@
 //! readable by other processes and logged by process auditing for its whole life).
 
 use crate::detect::Target;
-pub use crate::screen::Drawn;
+pub use crate::screen::{Drawn, ScreenDiff};
 use crate::screen::{Screen, Why};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -578,6 +578,11 @@ impl SessionManager {
         let writes = running.writes.load(Ordering::SeqCst);
         let (printed, checked) = {
             let shown = running.shown.lock().unwrap();
+            // A screen that lost track of the terminal never says where the prompt is (the last
+            // pass on #318), on any platform.
+            if let Some(diff) = shown.screen.lost_track() {
+                return Err(FillError::LostTrack { diff: Box::new(diff) });
+            }
             if !shown.screen.cursor_after(prompt) {
                 return Err(FillError::NotPrinted);
             }
@@ -604,6 +609,7 @@ impl SessionManager {
             if !same {
                 return Err(FillError::Changed {
                     before: shown.total - printed,
+                    diff: Box::new(shown.screen.diff(&checked)),
                 });
             }
             if maskable {
@@ -810,8 +816,9 @@ pub enum FillError<E> {
     Typed,
     /// Between the prompt check and the probe, the Session printed something (under ConPTY:
     /// something that changed its screen or cursor) or was resized (the review of #299, #3, #4
-    /// and #6): `before` bytes. Nothing was typed.
-    Changed { before: u64 },
+    /// and #6): `before` bytes. Nothing was typed. `diff` says what differs on the core's screen,
+    /// for the log only ([`FillError::log_line`], ticket 155c): never text.
+    Changed { before: u64, diff: Box<ScreenDiff> },
     /// Under Windows' ConPTY, a prompt other than sudo's own for the Session's own Host (decision
     /// Q151 (i)): an echo can't be told there. Nothing was looked up or typed.
     ConPty,
@@ -820,6 +827,11 @@ pub enum FillError<E> {
     /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
     /// looked up or typed.
     NotPrinted,
+    /// The Session printed something the core's screen can't follow (a wide character, a mode
+    /// it doesn't model…), so it can't tell where the prompt is until a terminal reset (`reset`,
+    /// RIS; the last pass on #318). Nothing was looked up or typed. `diff` names what did it, for
+    /// the log only ([`FillError::log_line`]).
+    LostTrack { diff: Box<ScreenDiff> },
     /// A nested ssh's fill, but the Session's own shell's marks don't show that ssh still running:
     /// it ended, another command started, or the Session has no marks of its own (ticket 162).
     /// Nothing was looked up or typed.
@@ -848,6 +860,9 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
             FillError::NotPrinted => f.write_str(
                 "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
             ),
+            FillError::LostTrack { .. } => f.write_str(
+                "roster's screen lost track of this Session's terminal (it printed something roster can't follow), so roster didn't fill it; `reset` in the Session starts it over",
+            ),
             FillError::NotInHop => f.write_str(
                 "the Session's own shell doesn't show the ssh to that Host still running (it ended, or another command started), so roster didn't fill it",
             ),
@@ -866,11 +881,14 @@ impl<E> FillError<E> {
     /// screen, a line that isn't only sudo's prompt, or what the probe drew; and how many bytes
     /// were printed before the probe, never what they were.
     pub fn log_line(&self) -> Option<String> {
-        if let FillError::Changed { before } = self {
-            // Only a count: no text (the review of #299, #3).
-            return Some(format!(
-                "prompt fill refused before the probe: what was printed after the prompt check ({before} bytes) changed the screen"
-            ));
+        if let FillError::LostTrack { diff } = self {
+            return Some(capped(format!("prompt fill refused at the prompt check: {diff}")));
+        }
+        if let FillError::Changed { before, diff } = self {
+            // A count and what differs, never text (the review of #299, #3; ticket 155c).
+            return Some(capped(format!(
+                "prompt fill refused before the probe: what was printed after the prompt check ({before} bytes) changed the screen: {diff}"
+            )));
         }
         let FillError::Echoes(Some(drawn)) = self else {
             return None;
@@ -890,6 +908,22 @@ impl<E> FillError<E> {
             ),
         })
     }
+}
+
+/// The longest log line a fill's refusal makes (ticket 155c): past it, it's cut and says so.
+const LOG_MAX: usize = 1200;
+
+/// `line`, cut to [`LOG_MAX`] bytes (on a character's boundary) with ` …(cut)` when longer.
+fn capped(mut line: String) -> String {
+    if line.len() > LOG_MAX {
+        let mut at = LOG_MAX;
+        while !line.is_char_boundary(at) {
+            at -= 1;
+        }
+        line.truncate(at);
+        line.push_str(" …(cut)");
+    }
+    line
 }
 
 /// The log's note that output before the probe only repainted the screen, when there was some.
@@ -990,6 +1024,45 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::time::Instant;
+
+    /// Ticket 155c: what a Session prints in strings (an OSC 0 title, an OSC 8 hyperlink, an
+    /// OSC 4 palette change, a DCS) and in text never reaches the log line of a refusal before
+    /// the probe: only counts, positions, SGR numbers and sequences' names.
+    #[test]
+    fn a_changed_log_line_never_holds_a_strings_text() {
+        let mut screen = Screen::new(24, 80);
+        screen.feed(b"$ sudo -v\r\n[sudo] password for ops: ");
+        let shot = screen.snapshot();
+        screen.feed(
+            b"\x1b]0;hunter2 s3cr3t title\x07\x1b]8;id=tok3n;https://vault.example/?token=s3cr3t\x1b\\hunter2 link\x1b]8;;\x1b\\\x1b]4;1;rgb:hu/nt/er\x07\x1bPq;s3cr3t\x1b\\\x1b[3;1Hhunter2\x1b[2;26H",
+        );
+        let err: FillError<()> = FillError::Changed {
+            before: 9,
+            diff: Box::new(screen.diff(&shot)),
+        };
+        let line = err.log_line().unwrap();
+        // Its Debug too (the second review of #318, #5).
+        let debug = format!("{err:?}");
+        for word in [
+            "hunter", "s3cr3t", "secret", "title", "vault", "example", "token", "tok3n", "link", "rgb", "id=",
+        ] {
+            assert!(!line.contains(word), "{word} in {line}");
+            assert!(!debug.contains(word), "{word} in {debug}");
+        }
+        assert_eq!(
+            line,
+            "prompt fill refused before the probe: what was printed after the prompt check (9 bytes) changed the screen: row 2 characters (columns 26-37); row 3 characters (columns 1-7); unmodelled: palette change"
+        );
+    }
+
+    /// Ticket 155c: a refusal's log line is at most [`LOG_MAX`] bytes and says when it was cut.
+    #[test]
+    fn a_long_log_line_is_cut_and_says_so() {
+        assert_eq!(capped("short".into()), "short");
+        let long = capped("é".repeat(LOG_MAX));
+        assert!(long.ends_with(" …(cut)"), "{long}");
+        assert!(long.len() <= LOG_MAX + " …(cut)".len(), "{}", long.len());
+    }
 
     /// Ticket 162 (#284 item 4): a fill that finds the PTY's writer gone (the Session closed while
     /// it checked, after the mask watch started) leaves no fill state set: no mask watch, no keys
