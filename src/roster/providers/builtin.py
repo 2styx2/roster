@@ -21,7 +21,7 @@ def _env(spec, ctx):
 
 @register("cmd", help="any command that prints the password:  cmd:COMMAND")
 def _cmd(spec, ctx):
-    r = ctx.run(spec, shell=True)
+    r = ctx.run(spec, shell=True)       # noqa: S604 - cmd:COMMAND is the user's own command, by definition
     if r.returncode != 0:
         raise SecretError(f"password command failed (exit {r.returncode})")
     return r.stdout.rstrip("\r\n")

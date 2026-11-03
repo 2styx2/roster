@@ -53,7 +53,7 @@ def check_provider(h, auth=None, what="ssh"):
     """The password Login's provider exists on this box and can answer now (11 not logged in, 12 no CLI,
     14 locked). Providers without a status (env, prompt, cmd) are left to try. AUTH: another of the Host's
     references than its ssh Login (its sudo: one), named WHAT in errors."""
-    auth = str(password_login(h)["auth"] if auth is None else auth)
+    auth = str((password_login(h) or h["ssh"])["auth"] if auth is None else auth)
     name = auth.partition(":")[0].strip()
     if name not in PROVIDERS:
         raise unknown_provider(h, auth, what)
@@ -73,7 +73,7 @@ def check_provider(h, auth=None, what="ssh"):
 def resolve_password(h, auth=None, what="ssh"):
     """The Login's password, looked up now (into this process's memory only; never returned to the app).
     Raises a Problem: item not found, several match, no password/field, or the provider's own failure."""
-    auth = password_login(h)["auth"] if auth is None else auth
+    auth = (password_login(h) or h["ssh"])["auth"] if auth is None else auth
     if str(auth).partition(":")[0].strip() not in PROVIDERS:
         raise unknown_provider(h, auth, what)
     try:
@@ -185,7 +185,7 @@ def step_ssh_config(ctx):
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
     if not in_ssh_config(h["name"]):
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
-    want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"])
+    want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
     if have != want:
         stale = f"{h['name']}'s entry in this box's ssh config is out of date"
         if "    IdentitiesOnly yes" in want and "    IdentitiesOnly yes" not in have:
@@ -479,7 +479,7 @@ def kind_of(ctx):
 def verify_user(ctx):
     h = ctx["h"]
     check_user(h)
-    how = {"key": "this box's key", "password": "password"}.get(kind_of(ctx)) or f"auth {h['ssh']['auth'] or 'none'}"
+    how = {"key": "this box's key", "password": "password"}.get(kind_of(ctx) or "") or f"auth {h['ssh']['auth'] or 'none'}"
     return f"{h['ssh']['user']}@{h['ip']}:{h['ssh']['port']} ({how})"
 
 

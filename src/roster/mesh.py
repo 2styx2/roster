@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import threading
+from typing import Any
 
 from .common import current_deadline, deadline_at, kill_tree, past_deadline, program_argv, time_left, user_config_dir
 from .sshops import hk_name, recorded_host_keys
@@ -471,11 +472,12 @@ def host_key_lines(t):
 
 
 def ssh_config(cfg, src, peers, d, vias=None):
+    vias = vias or {}
     out = [f"# Written by roster mesh for {src} from {cfg['path'].name}: the Hosts {src} reaches. Don't edit by hand.",
            ""]
     for p in peers:
         out += [f"Host {p['name']}", f"    HostName {p['ip']}", f"    User {p['ssh']['user']}",
-                f"    Port {p['ssh']['port']}"] + ([f"    ProxyJump {vias[p['name']]}"] if p["name"] in (vias or {}) else [])
+                f"    Port {p['ssh']['port']}"] + ([f"    ProxyJump {vias[p['name']]}"] if p["name"] in vias else [])
         out += [f"    UserKnownHostsFile {d}/known_hosts",
                 "    StrictHostKeyChecking yes", f"    ConnectTimeout {CONNECT_TIMEOUT}"]
         if p["enroll"]:
@@ -564,7 +566,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
     g, st, ex, links, hops, hop_only, visits = visits or visits_of(cfg, hosts)
     check_rotate(g, rotate)
     gone = sorted(n for n in set(st["members"]) if n not in hosts)
-    out = {"host": {}, "probe": {}, "hop": {}}
+    out: dict[str, Any] = {"host": {}, "probe": {}, "hop": {}}
     live = {(x["from"], x["to"]) for x in links if "skip" not in x}
     steps = {"done": 0, "total": len(g["sources"]) + len(hop_only) + len(visits)}
 
@@ -588,7 +590,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             continue
         say(f"  probe  {name}")
         lines, err = on_host(hosts[name], probe_script(hosts[name], peers, mode, name in rotate))
-        if err:
+        if err or lines is None:
             out["probe"][name] = {"error": err}
             continue
         pub = report(lines, "PUB ")
@@ -657,9 +659,9 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
     # phase 2: every Host roster visits, as a source and as a peer
     for name in visits:
         h = hosts[name]
-        p = out["probe"].get(name)
+        p = out["probe"].get(name) or {}
         step(name)
-        bad = (p or {}).get("error") or out["hop"].get(name, {}).get("error")
+        bad = p.get("error") or out["hop"].get(name, {}).get("error")
         if bad:
             finish(name, [], bad)
             continue
