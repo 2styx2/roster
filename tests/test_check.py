@@ -51,7 +51,7 @@ class Sshd:
         try:
             t.start_server(server=paramiko.ServerInterface())
             t.join(5)
-        except Exception:
+        except Exception:  # noqa: S110 - a stand-in server thread: the test checks what the client saw
             pass
         finally:
             t.close()
