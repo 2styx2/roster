@@ -166,4 +166,4 @@ To see who reaches whom as a map, add the Topology Plugin, [`plugins/topology`](
 
 ## Where it's kept on this Box
 
-`~/.config/roster/mesh.json` remembers what an apply or a cut couldn't finish (pending Hosts, cuts pending), the Hosts it wrote on, and what `roster.yml` looked like at the last complete apply (for `mesh out of date`). It's only bookkeeping: delete it and the next `roster mesh` still makes the Mesh what `roster.yml` says.
+`~/.config/roster/mesh.json` (a named Inventory's: `mesh-NAME.json`, so two Inventories never share it; see [Named Inventories](cli-reference.md#named-inventories)) remembers what an apply or a cut couldn't finish (pending Hosts, cuts pending), the Hosts it wrote on, and what `roster.yml` looked like at the last complete apply (for `mesh out of date`). It's only bookkeeping: delete it and the next `roster mesh` still makes the Mesh what `roster.yml` says.

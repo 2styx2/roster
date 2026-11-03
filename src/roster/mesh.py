@@ -20,7 +20,7 @@ import subprocess
 import threading
 from typing import Any
 
-from .common import current_deadline, deadline_at, kill_tree, past_deadline, program_argv, time_left, user_config_dir
+from .common import current_deadline, deadline_at, kill_tree, mesh_state_file, past_deadline, program_argv, time_left
 from .sshops import hk_name, recorded_host_keys
 
 TAG = "roster-mesh"
@@ -118,7 +118,8 @@ def digest(cfg, g=None):
 # ---------------------------------------------------------------- what the Box remembers (unfinished work)
 
 def state_file():
-    return user_config_dir() / "mesh.json"
+    """This run's Inventory's Mesh state: mesh.json, or mesh-NAME.json for a named Inventory (common.mesh_state_file)."""
+    return mesh_state_file()
 
 
 def load_state():
@@ -417,9 +418,9 @@ grep -qE "$T" "$AK" 2>/dev/null && echo "ERROR a roster-mesh line is still there
 def on_host(h, script, timeout=STEP_TIMEOUT):
     """Run SCRIPT on H over the Box's ssh (its key, roster's ssh config). Returns (report lines, None) or
     (None, why it didn't finish). The script goes as bytes: text mode on Windows would hand sh "\r\n" line ends."""
-    from .sshops import left_out
-    why = left_out(h["name"])
-    if why:                             # `ssh NAME` would reach another named Inventory's Host (ticket 115)
+    from .sshops import not_reached
+    why = not_reached(h["name"])
+    if why:                             # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
         return None, why
     with _ssh["lock"]:
         if _ssh["closed"]:

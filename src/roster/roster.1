@@ -18,7 +18,7 @@ roster providers [\-\-json]
 roster auth\-check [\-\-only LIST] [\-\-json]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
 roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-json] [{cut,status}] [HOST]
-roster revoke [\-\-only LIST] [\-y]
+roster revoke [\-\-only LIST] [\-\-all] [\-y]
 roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
 roster serve
 roster askpass [prompt]
@@ -264,12 +264,15 @@ with cut: don't ask first
 with status or \-\-dry\-run: print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS revoke
 .PP
-\fBroster revoke [\-\-only LIST] [\-y]\fR
+\fBroster revoke [\-\-only LIST] [\-\-all] [\-y]\fR
 .PP
-Remove this box's key from every host
+Remove this box's key from every host. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
+.TP
+\fB\-\-all\fR
+every Inventory on this box: each named one and the unnamed one, with one question and one summary
 .TP
 \fB\-y, \-\-yes\fR
 don't ask first
@@ -413,7 +416,7 @@ The named Inventories and which one is active (\fBroster inv\fR)
 What Claude reads, written next to \fBroster.yml\fR by \fBsetup\fR and \fBsync\fR
 .TP
 \fB~/.config/roster/mesh.json\fR
-What \fBroster mesh\fR couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box
+What \fBroster mesh\fR couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box (a named Inventory's: \fB~/.config/roster/mesh\-NAME.json\fR)
 .TP
 \fB~/.ssh/roster\-mesh/\fR (or the Host's \fBmesh_dir:\fR; on ESXi, \fB\&.roster\-mesh\fR on a datastore), \fB~/ROSTER.md\fR (on Hosts)
 A Mesh source's key, known hosts, ssh config and its peers for Claude, written by \fBroster mesh\fR (The Mesh)

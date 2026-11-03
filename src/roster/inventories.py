@@ -6,8 +6,9 @@ Each named Inventory gets its own generated ssh config (~/.ssh/roster-inventorie
 (~/.ssh/roster_known_hosts-NAME); ROSTER.md is written next to its roster.yml, as always. ~/.ssh/config includes
 one index (config.d/roster.inventories) that holds every Inventory's Host blocks, the active one's first; a Host name
 an earlier Inventory has already is left out of a later one, so ssh reads exactly one roster block per name (ssh adds
-up IdentityFile over every block that matches, so a second block would offer the other Inventory's key). With no named
-Inventories none of this exists and roster writes and reads exactly what it always did."""
+up IdentityFile over every block that matches, so a second block would offer the other Inventory's key). Its Mesh state
+is ~/.config/roster/mesh-NAME.json (T182). With no named Inventories none of this exists and roster writes and reads
+exactly what it always did."""
 
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from .common import (
     die,
     known_hosts_file,
     legacy_ssh_config_file,
+    mesh_state_file,
     replace_file,
     ssh_config_file,
     ssh_dir,
@@ -169,9 +171,19 @@ def name_of(path: str | Path) -> str | None:
     return next((x.name for x in load().inventories if same_file(x.path, path)), None)
 
 
-def add(name: str, path: str | Path) -> bool:
+class Added(NamedTuple):
+    """What `inv add` did besides naming: whether the Inventory became the active one, and where the Mesh state it took
+    over went (None when it took none)."""
+
+    first: bool
+    mesh_state: Path | None
+    mesh_kept: str | None = None    # why the Box's mesh.json stayed with the unnamed Inventory (when it's there)
+
+
+def add(name: str, path: str | Path) -> Added:
     """Name the roster.yml at PATH. The first one named becomes the active one. Its known_hosts starts as the one every
-    roster.yml on this Box shared before named Inventories, so no host key the Box trusted is trusted anew."""
+    roster.yml on this Box shared before named Inventories, so no host key the Box trusted is trusted anew; the Box's
+    unnamed Mesh state moves to it when it's this file's (take_mesh_state)."""
     why = name_problem(name or "")
     if why:
         die(why)
@@ -194,9 +206,61 @@ def add(name: str, path: str | Path) -> bool:
     inv = Inventories(active=name if first else inv.active, inventories=(*inv.inventories, Named(name=name, path=path)))
     save(inv)
     seed_known_hosts(name)
+    moved, kept = take_mesh_state(name, path)
     refresh_index(inv)
     refresh_roster_md(inv)
-    return first
+    return Added(first, moved, kept)
+
+
+def mesh_state_hosts(f: Path) -> set[str] | None:
+    """The Host names the Mesh state file F names (members, pending, cuts and their peers); None when it doesn't load."""
+    try:
+        data = cast("dict[str, Any]", json.loads(f.read_text()))
+        hosts = {str(h) for h in cast("list[Any]", data.get("members") or [])}
+        hosts |= {str(h) for h in cast("dict[str, Any]", data.get("pending") or {})}
+        for host, peers in cast("dict[str, list[Any]]", data.get("cut") or {}).items():
+            hosts |= {str(host), *(str(p) for p in peers)}
+        return hosts
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def take_mesh_state(name: str, path: Path) -> tuple[Path | None, str | None]:
+    """T182 (#346): the Box's one Mesh state (mesh.json, from before Mesh state was per Inventory) moves to the
+    Inventory NAME, once, only when everything says it is PATH's (#367's review, F2): roster's unnamed ssh config was
+    last written from PATH (the Mesh reaches its Hosts over it), every Host the state names is a Host of PATH, and its
+    last complete apply (when it has one) was of PATH's Mesh as it is now. The header alone only says what synced last.
+    Otherwise it stays the unnamed Inventory's. A Mesh state NAME has already is never overwritten.
+    Returns (where it went, or None; why it stayed, when it's there and didn't move)."""
+    shared, mine = mesh_state_file(None), mesh_state_file(name)
+    if not shared.is_file():
+        return None, None
+    if mine.exists():
+        return None, f"{name} has a Mesh state already ({mine})"
+    source = unnamed_source()
+    if source is None or not same_file(source, path):
+        return None, ("roster's unnamed ssh config wasn't last written from this file, so nothing says the Mesh state "
+                      "is this file's")
+    from . import mesh
+    from .config import load_config
+    try:
+        cfg = load_config(path)
+    except SystemExit:
+        return None, "this file doesn't load, so it can't be compared with the Mesh state"
+    hosts = mesh_state_hosts(shared)
+    if hosts is None or not hosts <= set(cfg["hosts"]):
+        return None, "it names Hosts this file doesn't have"
+    try:
+        applied = json.loads(shared.read_text()).get("applied")
+    except (OSError, ValueError, AttributeError):
+        applied = None
+    if applied is not None and applied != cast("Any", mesh).digest(cfg):     # mesh.py has no types yet
+        return None, "its last apply was of another Mesh than this file's"
+    try:
+        os.replace(shared, mine)
+    except FileNotFoundError:                   # another roster took it first
+        return None, None
+    return mine, None
 
 
 def seed_known_hosts(name: str) -> None:
@@ -220,10 +284,28 @@ def use(name: str) -> None:
     refresh_roster_md(inv)
 
 
-def remove(name: str) -> tuple[bool, Path | None]:
-    """Forget NAME (its roster.yml stays) and its generated ssh config. Its known_hosts is set aside (renamed
-    roster_known_hosts-NAME.removed-TIME), so a new Inventory of that name never inherits another file's keys.
-    Returns (whether it was the active one, where its known_hosts went)."""
+class Removed(NamedTuple):
+    """What `inv remove` did: whether NAME was the active one, and where its known_hosts and Mesh state went (None
+    when it had none)."""
+
+    was_active: bool
+    known_hosts: Path | None
+    mesh_state: Path | None
+
+
+def set_aside(f: Path) -> Path | None:
+    """Rename F to F.removed-TIME (None when F isn't there)."""
+    if not f.exists():
+        return None
+    kept = f.with_name(f"{f.name}.removed-{time.strftime('%Y%m%d-%H%M%S')}")
+    os.replace(f, kept)
+    return kept
+
+
+def remove(name: str) -> Removed:
+    """Forget NAME (its roster.yml stays) and its generated ssh config. Its known_hosts and Mesh state are set aside
+    (renamed roster_known_hosts-NAME.removed-TIME, mesh-NAME.json.removed-TIME), so a new Inventory of that name never
+    inherits another file's keys or Mesh."""
     inv = load()
     x = inv.get(name)
     if x is None:
@@ -235,13 +317,11 @@ def remove(name: str) -> tuple[bool, Path | None]:
     ssh_config_file(x.name).unlink(missing_ok=True)
     if generated(legacy_ssh_config_file(x.name)):
         legacy_ssh_config_file(x.name).unlink(missing_ok=True)
-    kept = None
-    if known_hosts_file(x.name).exists():
-        kept = known_hosts_file(x.name).with_name(f"{known_hosts_file(x.name).name}.removed-{time.strftime('%Y%m%d-%H%M%S')}")
-        os.replace(known_hosts_file(x.name), kept)
+    kept = set_aside(known_hosts_file(x.name))
+    mesh_kept = set_aside(mesh_state_file(x.name))
     refresh_index(inv)
     refresh_roster_md(inv)
-    return was_active, kept
+    return Removed(was_active, kept, mesh_kept)
 
 
 # ---------------------------------------------------------------- ~/.ssh/config: one include for them all
@@ -479,9 +559,27 @@ def index_hosts() -> dict[str, set[str]] | None:
     return out
 
 
+def unnamed_from_elsewhere() -> Path | None:
+    """For a run on a roster.yml that isn't named: the roster.yml roster's one unnamed ssh config (config.d/roster) was
+    written from, when it's another file, so `ssh NAME` reaches that file's Hosts, never this one's (#367's review, F1;
+    its header names it, or the file itself when it has none). None for a named run, for the file it was written from,
+    when there's no such file, or when no roster.yml was looked up."""
+    from .common import current_config_path, current_inventory
+    here = current_config_path()
+    if current_inventory() is not None or here is None or not ssh_config_file(None).is_file():
+        return None
+    source = unnamed_source()
+    if source is not None and same_file(source, here):
+        return None
+    return source or ssh_config_file(None)
+
+
 def reachable_hosts(name: Any = CURRENT) -> set[str] | None:
     """The Hosts of the Inventory NAME (default: this run's) a plain `ssh NAME` reaches through roster's ssh config:
-    from the index, or from roster's one file when ~/.ssh/config includes it; None when neither is included."""
+    from the index, or from roster's one file when ~/.ssh/config includes it; None when neither is included, and for
+    this run when it's on a roster.yml that isn't named while roster's unnamed ssh config is another file's."""
+    if name is CURRENT and unnamed_from_elsewhere() is not None:
+        return None
     ours = ssh_config_file(name)
     if not ours.is_file():
         return None
