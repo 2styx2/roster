@@ -1,7 +1,8 @@
 /* eslint-disable no-control-regex -- terminal output is made of control characters */
 import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CsiClamp, XtermPromptScreen } from "./promptScreen";
+import { CsiClamp } from "../terminal/csiClamp";
+import { XtermPromptScreen } from "./promptScreen";
 import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn, type CursorLine } from "./shellHooks";
 
 /** The Session's token in roster's own marks (ticket 120, Q131). */

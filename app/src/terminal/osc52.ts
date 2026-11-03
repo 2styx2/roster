@@ -7,6 +7,7 @@
 // (docs/app/security.md).
 import type { IDisposable, Terminal } from "@xterm/xterm";
 import type { Clipboard } from "../platform/types";
+import { CsiClamp } from "./csiClamp";
 
 /** The most a program may put on the clipboard at once, decoded: 1 MiB. Far more than anyone
  * copies from a screen (a full 10,000-line scrollback at 100 columns is about 1 MB), and small
@@ -165,13 +166,15 @@ export class HeldOsc52Filter {
 const OSC52_BYTES = [0x1b, 0x5d, 0x35, 0x32, 0x3b];
 
 /** Writes a Session's output to `t`, from the output gate (hold.ts: `held` is output that came
- * while the tab was hidden), with every OSC 52 begun in held output taken out (HeldOsc52Filter).
- * Nothing is kept per write, so a write that throws leaves nothing behind. */
+ * while the tab was hidden), with every OSC 52 begun in held output taken out (HeldOsc52Filter)
+ * and every CSI count capped (csiClamp.ts: a huge one would freeze the tab). Nothing is kept per
+ * write, so a write that throws leaves nothing behind. */
 export function screenWriter(t: Pick<Terminal, "write">): { write(data: Uint8Array, held: boolean): void } {
   const filter = new HeldOsc52Filter();
+  const clamp = new CsiClamp();
   return {
     write(data, held) {
-      const bytes = filter.filter(data, held);
+      const bytes = clamp.clamp(filter.filter(data, held));
       if (bytes.length > 0) t.write(bytes);
     },
   };
