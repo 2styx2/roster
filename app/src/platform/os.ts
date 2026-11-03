@@ -4,6 +4,7 @@
 
 interface NavigatorLike {
   userAgent?: string;
+  platform?: string;
   userAgentData?: { platform?: string };
 }
 
@@ -13,4 +14,10 @@ export function runsOnWindows(nav: NavigatorLike | undefined = globalThis.naviga
   const platform = nav.userAgentData?.platform;
   if (platform) return platform === "Windows";
   return /\bWindows\b/.test(nav.userAgent ?? "");
+}
+
+/** True on macOS, by xterm.js's own test (its `isMac`: `navigator.platform`), so roster and xterm
+ * agree on which key takes the mouse back from a program. */
+export function runsOnMac(nav: NavigatorLike | undefined = globalThis.navigator as NavigatorLike | undefined): boolean {
+  return ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(nav?.platform ?? "");
 }

@@ -89,6 +89,9 @@ export interface PluginUi {
   /** The settings a built-in Plugin gets as `roster.plugin.config` (Folders: init.lua's Folders,
    * and folders.yml's to move in once, ticket 61), read at each load. */
   builtinSettings?(name: string): Promise<Record<string, unknown> | null>;
+  /** This manager runs `:tutor`'s demo's Plugins (ticket 66): a Plugin that fails to load says
+   * "(in the demo)" after its name, so it doesn't read as a failure in your workspace (#233). */
+  demo?: boolean;
 }
 
 /** What a Plugin's function is told about what ran it (api 3, `HandlerContext`). */
@@ -1084,7 +1087,7 @@ export class PluginManager {
     } catch (e) {
       await this.unload(name);
       this.problems.set(name, e instanceof Error ? e.message : String(e));
-      this.notify(name, "error", `${name}: ${e instanceof Error ? e.message : String(e)}`);
+      this.notify(name, "error", `${this.named(name)}: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     const { manifest, reply } = result;
@@ -1096,7 +1099,7 @@ export class PluginManager {
     this.known.set(manifest.name, info);
     this.loaded.set(manifest.name, { ...info, disposers: new Map() });
     this.problems.delete(manifest.name);
-    this.apply(reply);
+    this.apply(reply, true);
     this.changed();
   }
 
@@ -1124,7 +1127,7 @@ export class PluginManager {
    * judge of what a Plugin may do: a `copy` op is in a reply only to a call the user started.
    * Notices after a copy wait for it: if it fails, they're dropped ("Copied" would be a lie) and
    * the failure is said instead (decision Q87). */
-  private apply(reply: PluginReply) {
+  private apply(reply: PluginReply, loading = false) {
     const name = reply.plugin;
     const l = this.loaded.get(name);
     if (l) {
@@ -1147,7 +1150,10 @@ export class PluginManager {
         } else this.applyOp(l, name, op);
       }
     }
-    if (reply.error) this.notify(name, "error", describeError(reply.error) + (reply.disabled ? ". It's disabled." : ""));
+    if (reply.error) {
+      const error = loading ? { ...reply.error, plugin: this.named(reply.error.plugin) } : reply.error;
+      this.notify(name, "error", describeError(error) + (reply.disabled ? ". It's disabled." : ""));
+    }
     if (reply.disabled) {
       this.problems.set(name, reply.disabled);
       if (l) {
@@ -1774,6 +1780,11 @@ export class PluginManager {
 
   private rowAction(plugin: string, a: PluginRowAction, context: HandlerContext) {
     return { label: a.label, icon: a.icon, command: this.line(plugin, a.run, context) };
+  }
+
+  /** A Plugin's name as a load failure names it: marked "(in the demo)" on `:tutor`'s demo (#233). */
+  private named(plugin: string): string {
+    return this.ui.demo ? `${plugin} (in the demo)` : plugin;
   }
 
   /** A notice; an info one is quiet (on the message line, heard but not seen) unless it has

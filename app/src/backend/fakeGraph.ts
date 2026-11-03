@@ -4,6 +4,10 @@
 // Topology Plugin (T40): only data shaped like it. Made-up names and addresses only.
 import type { FakePlugin } from "./fakePlugins";
 
+/** A button's probe ("would open …") shows whatever `ui.messages` says: it's how a dev page
+ * shows the button ran (decision Q126 quiets a plain info notice; issue #228). */
+const PROBE = { quiet: false };
+
 export const GRAPH_PATH = "~/plugins/demo-map";
 
 const WORST_NAMES = [
@@ -60,9 +64,9 @@ export function demoMapPlugin(count = 640, groups = 16, worst = false): FakePlug
           clusters,
           nodes,
           edges,
-          open: (e: Record<string, unknown>) => roster.notify(`would open a Session to ${String(e.host ?? e.node)}`),
+          open: (e: Record<string, unknown>) => roster.notify(`would open a Session to ${String(e.host ?? e.node)}`, "info", PROBE),
           actions: [
-            { label: "Check", key: "c", run: (e: Record<string, unknown>) => roster.notify(`would check ${String(e.host ?? e.node)}`) },
+            { label: "Check", key: "c", run: (e: Record<string, unknown>) => roster.notify(`would check ${String(e.host ?? e.node)}`, "info", PROBE) },
             {
               label: "Connect",
               key: "w",
@@ -74,7 +78,7 @@ export function demoMapPlugin(count = 640, groups = 16, worst = false): FakePlug
                 roster.views.update("demo-map", on ? { edges: [{ id: `live:${id}`, from: "box", to: id, tone: "live" }] } : { remove_edges: [`live:${id}`] });
               },
             },
-            { label: "Cut", key: "x", run: (e: Record<string, unknown>) => roster.notify(`would cut ${String(e.host ?? e.node)}`) },
+            { label: "Cut", key: "x", run: (e: Record<string, unknown>) => roster.notify(`would cut ${String(e.host ?? e.node)}`, "info", PROBE) },
           ],
         },
       });

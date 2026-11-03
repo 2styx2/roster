@@ -760,7 +760,7 @@ roster.o.ui.messages = "all"
 
 The terminal's font, look and behaviour.
 
-Options in it: [`font`](#terminalfont), [`size`](#terminalsize), [`weight`](#terminalweight), [`bold_weight`](#terminalbold_weight), [`bold_is_bright`](#terminalbold_is_bright), [`line_height`](#terminalline_height), [`cell_height`](#terminalcell_height), [`renderer`](#terminalrenderer), [`cursor_style`](#terminalcursor_style), [`scrollback`](#terminalscrollback), [`copy_on_select`](#terminalcopy_on_select), [`right_click_paste`](#terminalright_click_paste), [`colors`](#terminalcolors), [`shell_hooks`](#terminalshell_hooks).
+Options in it: [`font`](#terminalfont), [`size`](#terminalsize), [`weight`](#terminalweight), [`bold_weight`](#terminalbold_weight), [`bold_is_bright`](#terminalbold_is_bright), [`line_height`](#terminalline_height), [`cell_height`](#terminalcell_height), [`renderer`](#terminalrenderer), [`cursor_style`](#terminalcursor_style), [`scrollback`](#terminalscrollback), [`copy_on_select`](#terminalcopy_on_select), [`right_click_paste`](#terminalright_click_paste), [`osc52`](#terminalosc52), [`colors`](#terminalcolors), [`shell_hooks`](#terminalshell_hooks).
 
 Methods: `roster.o.terminal = { … }` · `roster.o.terminal.NAME` · `:get()` · `:reset()`.
 
@@ -924,6 +924,18 @@ Methods: `roster.o.terminal.right_click_paste = value` · `roster.o.terminal.rig
 
 ```lua
 roster.o.terminal.right_click_paste = false
+```
+
+### `terminal.osc52`
+
+`roster.o.terminal.osc52` · `boolean` · default `true`
+
+A program in the Session on screen may set the clipboard with OSC 52 (write only, at most 1 MiB), as in Windows Terminal: how Claude Code, vim or tmux copy what you select in them.
+
+Methods: `roster.o.terminal.osc52 = value` · `roster.o.terminal.osc52` · `roster.o.reset("terminal.osc52")`.
+
+```lua
+roster.o.terminal.osc52 = false
 ```
 
 ### `terminal.colors`

@@ -148,9 +148,17 @@ impl DemoHost {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         let data = scratch.join(format!("{PREFIX}{}-{stamp}-{n}", std::process::id()));
-        let mut make = std::fs::DirBuilder::new();
+        // 0700 on unix; on Windows the temp dir is the user's own, and nothing is set (no `mut`
+        // there, so its build has no unused_mut warning: issue #243).
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut make, 0o700);
+        let make = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut make = std::fs::DirBuilder::new();
+            make.mode(0o700);
+            make
+        };
+        #[cfg(not(unix))]
+        let make = std::fs::DirBuilder::new();
         make.create(&data)
             .map_err(|e| format!("couldn't make the demo's folder {}: {e}", data.display()))?;
         let host = PluginHost::new(Arc::new(DemoServe::new(hosts)), limits)

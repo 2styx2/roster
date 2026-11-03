@@ -194,7 +194,8 @@ Their types, defaults and values: [Fonts and the terminal](options.md#fonts-and-
 | `terminal.cursor_style` | `"block"`, `"bar"` or `"underline"` |
 | `terminal.scrollback` | Lines, at most 1,000,000 |
 | `terminal.copy_on_select` | |
-| `terminal.right_click_paste` | Right-click copies the selection, or pastes when there's none |
+| `terminal.right_click_paste` | Right-click copies the selection, or pastes when there's none. While a program has mouse reporting on, a right-click with nothing selected is the program's ([Copy and paste](keyboard.md#copy-and-paste)) |
+| `terminal.osc52` | A program in the Session on screen may set the clipboard with OSC 52, as in Windows Terminal: how Claude Code, vim and tmux copy what you select in them. Write only (a Host never reads the clipboard), text only, at most 1 MiB. `false` turns it off ([security.md](security.md#the-clipboard)) |
 | `terminal.colors` | Any terminal or ANSI colour, set over the Theme's |
 | `terminal.shell_hooks` | Send each Session's shell one line after login that turns on its prompt marks (OSC 133) and says its folder (OSC 7), in that shell only, never in its rc files ([Shell hooks](../plugins.md#shell-hooks-roster-sets-it-up)). Unset: a Host's `shell_hooks: true` in `roster.yml` decides. `true`: every Session, Quick Connect too, except a Host with `shell_hooks: false`. `false`: none, whatever a Host says. `:integrate` sends the line to the Session on screen whatever this says |
 

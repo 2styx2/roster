@@ -95,6 +95,8 @@ export interface Config {
     scrollback: number;
     copyOnSelect: boolean;
     rightClickPaste: boolean;
+    /** `terminal.osc52` (#293): a program may set the clipboard. */
+    osc52: boolean;
     colors: Partial<TerminalTheme>;
     /** `terminal.shell_hooks` (ticket 121): null leaves it to each Host's `shell_hooks`. */
     shellHooks: boolean | null;
