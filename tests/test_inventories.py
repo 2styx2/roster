@@ -859,11 +859,17 @@ def test_a_percent_in_a_user_is_refused_again(write_config):
 
 # ---------------------------------------------------------------- roster revoke --all (T183, #347)
 
+# On native Windows the stand-in ssh is a batch file, and roster won't hand a batch file revoke's script (it holds
+# characters cmd.exe acts on); a real ssh.exe takes it. Which Hosts --all reaches doesn't depend on the platform.
+revoke_runs = pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a batch file on Windows")
+
+
 def revoked(ssh_log):
     """The Hosts a revoke ran its script on (`ssh -o BatchMode=yes NAME sh -c ...`), in no order."""
     return sorted(ln.split()[3] for ln in ssh_log() if ln.startswith("ssh -o BatchMode=yes ") and " sh -c " in ln)
 
 
+@revoke_runs
 def test_revoke_all_revokes_every_named_inventory_and_the_unnamed_one(two, capsys, ssh_log, isolated):
     third = isolated["home"] / "lab"
     third.mkdir()
@@ -885,6 +891,7 @@ def test_revoke_all_revokes_every_named_inventory_and_the_unnamed_one(two, capsy
     assert code == 1
 
 
+@revoke_runs
 def test_revoke_all_never_reaches_a_left_out_host_by_its_name(two, capsys, ssh_log, monkeypatch):
     monkeypatch.setenv("HOMEPW", "hunter2")
     clashing(two, capsys)                                         # pi is in both; work's is the one ssh reaches
@@ -893,6 +900,7 @@ def test_revoke_all_never_reaches_a_left_out_host_by_its_name(two, capsys, ssh_l
     assert "home: pi: left out of this Box's ssh config" in out
 
 
+@revoke_runs
 def test_revoke_all_skips_an_inventory_whose_hosts_ssh_doesnt_reach_and_says_so(two, capsys, ssh_log):
     run(capsys, "inv", "add", "work", str(two["work"]))
     run(capsys, "inv", "add", "home", str(two["home"]))
@@ -914,6 +922,7 @@ def test_revoke_all_asks_once_and_no_changes_nothing(two, capsys, ssh_log, monke
     assert revoked(ssh_log) == []
 
 
+@revoke_runs
 def test_revoke_all_with_an_inventory_that_doesnt_load_says_so_without_its_words(two, capsys, ssh_log):
     run(capsys, "inv", "add", "work", str(two["work"]))
     run(capsys, "inv", "add", "home", str(two["home"]))
