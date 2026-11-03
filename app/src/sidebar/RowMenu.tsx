@@ -64,12 +64,17 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
     };
   });
   const items = () => Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  // Where the row and what holds it were scrolled to when it opened. A scroll's event comes a frame
+  // after the scroll: the App-mode cursor scrolls its row into view at once, so a menu key pressed
+  // in that frame opened the menu and then the event closed it (T173). Only a scroll from here does.
+  const scrolledAt = useRef(new Map<Element, readonly [number, number]>());
 
   // Placed before it's painted, then focused.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     back.current = document.activeElement;
+    for (let e = anchor() ?? document.scrollingElement; e; e = e.parentElement) scrolledAt.current.set(e, [e.scrollTop, e.scrollLeft]);
     const rect = anchor()?.getBoundingClientRect();
     const point = at ?? (rect ? { x: rect.left + 24, y: rect.bottom, flipY: rect.top } : { x: MARGIN, y: MARGIN });
     const { left, top } = placeMenu(point, { width: el.offsetWidth, height: el.offsetHeight }, { width: window.innerWidth, height: window.innerHeight });
@@ -91,15 +96,21 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
     const outside = (e: Event) => {
       if (!(e.target instanceof Node) || !ref.current?.contains(e.target)) dismiss();
     };
+    const scrolled = (e: Event) => {
+      const el = e.target instanceof Document ? e.target.scrollingElement : e.target;
+      const was = el instanceof Element ? scrolledAt.current.get(el) : undefined;
+      if (el instanceof Element && was?.[0] === el.scrollTop && was[1] === el.scrollLeft) return;
+      outside(e);
+    };
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("mousedown", outside, true);
-    document.addEventListener("scroll", outside, true);
+    document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", dismiss);
     window.addEventListener("blur", dismiss);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("mousedown", outside, true);
-      document.removeEventListener("scroll", outside, true);
+      document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", dismiss);
       window.removeEventListener("blur", dismiss);
     };

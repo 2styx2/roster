@@ -2,7 +2,7 @@
 #   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows,
 #        build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
-#   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste end to end in
+#   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
 #        headless Chromium (app/e2e); rustfmt, clippy and
 #        cargo test on Linux (with the WebKitGTK/D-Bus dev packages, so clippy covers the Tauri
 #        crate too); roster-core's cargo test on Windows; the JS and CSS size budget; release
@@ -165,7 +165,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - run: npm run check
-      # Copy and paste end to end (app/e2e, T158): the real terminal in headless Chromium through Vite.
+      # End to end (app/e2e): copy and paste (T158), the real terminal, and a Host row's menu in the whole app
+      # (T173), in headless Chromium through Vite.
       # The browser is the headless shell playwright-core names, so package-lock.json pins it.
       - run: npx playwright-core install --with-deps --only-shell chromium
       - run: npm run e2e
