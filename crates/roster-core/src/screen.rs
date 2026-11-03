@@ -6,20 +6,22 @@
 //! scrollback, and parses every escape sequence a terminal does, acting on the ones that move the
 //! cursor or change cells and skipping the rest (colours, titles, links, DCS and APC strings).
 //! A UTF-8 character takes one cell, kept whole with the style it was drawn with (the review of
-//! #299, #5); the prompt checks read its first byte. A wide one is therefore a column short,
-//! which can only make a comparison fail (a refusal), never pass. What it doesn't model (a
+//! #299, #5); the prompt checks read its first byte. Where it can't mirror xterm.js exactly (the
+//! terminal the user sees), it doesn't guess (the review of #318): what it doesn't model (a
 //! repeat, insert mode, scroll regions, the alignment test, other charsets, origin and wrap
-//! modes, tab stops, a style it can't name) it counts ([`Screen::matches`] then never holds).
-//! Styles are kept as a terminal shows them (ticket 155c): every form of the same SGR is one
-//! style, an erase leaves the background alone, and a space keeps only what shows on a blank, so
-//! ConPTY's repaint of blanks in its own buffer's colours is the same screen.
+//! modes, tab stops, a wide or zero-width character, invalid UTF-8, an SGR or a colour it can't
+//! read as xterm.js does, a CSI with sub-parameters or more parameters than xterm.js keeps, a
+//! palette change) it counts ([`Screen::matches`] then never holds), and a wide or zero-width
+//! character on the screen means it never matches. Styles are kept as a terminal shows them
+//! (ticket 155c): every form of the same SGR is one style, an erase leaves the background alone
+//! (as xterm.js erases), and a space keeps only what shows on a blank, so ConPTY's repaint of
+//! blanks in its own buffer's colours is the same screen.
 
-/// One cell: its character, all of its UTF-8 bytes (at most 4), and the style it was drawn with
-/// (an index into the screen's styles).
+/// One cell: its character, all of its UTF-8 bytes (at most 4), and the style it was drawn with.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Cell {
     ch: [u8; 4],
-    style: u16,
+    style: Style,
 }
 
 impl Cell {
@@ -27,24 +29,85 @@ impl Cell {
     fn byte(self) -> u8 {
         self.ch[0]
     }
+
+    /// How many columns xterm.js gives its character ([`crate::wcwidth::width`]).
+    fn width(self) -> u8 {
+        let len = self.ch.iter().position(|&b| b == 0).unwrap_or(4).max(1);
+        std::str::from_utf8(&self.ch[..len])
+            .ok()
+            .and_then(|s| s.chars().next())
+            .map_or(1, |c| crate::wcwidth::width(u32::from(c)))
+    }
 }
 
 /// A blank cell in the default style.
 const BLANK: Cell = Cell {
     ch: [b' ', 0, 0, 0],
-    style: 0,
+    style: Style::DEFAULT,
 };
-/// The most styles a screen names; one more counts as something it doesn't model.
-const STYLES_MAX: usize = 256;
 
-/// A style, as SGR sets it: for each attribute it models (its slot: 1 bold, 2 faint, 3 italic,
-/// 4 underline, 5 blink, 7 reverse, 8 hidden, 9 struck through, 53 overlined, 30 foreground, 40
-/// background, 58 underline colour), its value, sorted by slot ([`Screen::sgr`]). Values are
-/// canonical, so every form of the same SGR is the same style (ticket 155c): a colour is its code
-/// (`32`, `92`), `[5, N]` (256 colours) or `[2, R, G, B]` (true colour), whether its parameters
-/// came with `;` or `:`; an underline its kind (1 single, 2 double, 3 curly, 4 dotted, 5 dashed);
-/// a blink 5 or 6; the rest nothing.
-type Style = Vec<(u8, Vec<u16>)>;
+/// A colour as SGR sets it (ticket 155c): the default, a 16-colour SGR code (`32`, `92`, `44`,
+/// `104`), one of 256 (`38;5;N`) or a true colour (`38;2;R;G;B`), whichever form the parameters
+/// came in. The 16 and the 256 stay apart: bold in a 16-colour green draws bright, in a
+/// 256-colour one it doesn't.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Colour {
+    #[default]
+    Default,
+    Code(u8),
+    P256(u8),
+    Rgb(u8, u8, u8),
+}
+
+/// A style, as SGR sets it, the attributes xterm.js keeps: the flags (`BOLD`…), the underline's
+/// kind (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) and the three colours. A value,
+/// so every cell and every [`Snapshot`] holds its own (the review of #318, #9 and #10).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Style {
+    flags: u16,
+    underline: u8,
+    fg: Colour,
+    bg: Colour,
+    ul: Colour,
+}
+
+const BOLD: u16 = 1;
+const FAINT: u16 = 1 << 1;
+const ITALIC: u16 = 1 << 2;
+const BLINK: u16 = 1 << 3;
+const REVERSE: u16 = 1 << 4;
+const HIDDEN: u16 = 1 << 5;
+const STRIKE: u16 = 1 << 6;
+const OVERLINE: u16 = 1 << 7;
+
+impl Style {
+    const DEFAULT: Style = Style {
+        flags: 0,
+        underline: 0,
+        fg: Colour::Default,
+        bg: Colour::Default,
+        ul: Colour::Default,
+    };
+
+    /// What an erase leaves with it: the background colour alone, as xterm.js erases.
+    fn erased(self) -> Style {
+        Style {
+            bg: self.bg,
+            ..Style::DEFAULT
+        }
+    }
+
+    /// What shows on a blank drawn in it: its background, unless it draws more than its
+    /// background there (reversed, or a line through, under or over it), when all of it can.
+    fn on_blank(self) -> Style {
+        if self.underline != 0 || self.flags & (REVERSE | STRIKE | OVERLINE) != 0 {
+            self
+        } else {
+            self.erased()
+        }
+    }
+}
+
 /// The most things a [`Screen`] keeps that it doesn't model, for the log ([`ScreenDiff`]).
 const ODD_KEPT: usize = 16;
 /// The longest CSI parameter list kept; a longer sequence is parsed through and ignored.
@@ -87,27 +150,36 @@ pub(crate) struct Screen {
     col: usize,
     /// The cursor is past the last column: the next character wraps first.
     pending_wrap: bool,
-    saved: (usize, usize),
-    /// The main screen and its cursor while the alternate screen is up.
-    main: Option<(Vec<Vec<Cell>>, usize, usize)>,
+    /// What DECSC (`ESC 7`, `CSI s`) saved on the main screen, as xterm.js keeps it per screen
+    /// (the review of #318).
+    saved_main: Saved,
+    /// The same on the alternate screen; None until it's saved there since the alternate screen
+    /// came up (xterm.js keeps the last one, which this screen doesn't follow).
+    saved_alt: Option<Saved>,
+    /// How often the main screen scrolled (a line feed at its foot, `ESC[3J`): xterm.js restores
+    /// a saved cursor counting lines from the top of its scrollback, which this screen doesn't
+    /// keep, so a restore across a scroll isn't modelled.
+    scrolls: u64,
+    /// The main screen while the alternate screen is up.
+    main: Option<Vec<Vec<Cell>>>,
     parse: Parse,
     csi: Vec<u8>,
     csi_long: bool,
     /// The first intermediate byte of an escape sequence (`(` in `ESC ( B`).
     inter: u8,
-    /// The style characters are drawn (and cells erased) with: an index into `styles`.
-    style: u16,
-    /// Every style seen, the default first.
-    styles: Vec<Style>,
-    /// For each style, the one a cell an erase leaves takes (its background alone, as xterm.js
-    /// erases): an index into `styles` (ticket 155c).
-    erase: Vec<u16>,
-    /// For each style, the one a space drawn in it is kept with: what shows on a blank cell, so a
-    /// space drawn in a colour or bold is the same cell as one erased (ticket 155c).
-    space: Vec<u16>,
-    /// The cell the last character went to and how many of its bytes it has, for the rest of a
-    /// UTF-8 character.
-    last_put: Option<(usize, usize, usize)>,
+    /// The style characters are drawn with.
+    style: Style,
+    /// A UTF-8 character begun: its bytes so far, how many, and how many it takes.
+    utf8: Option<([u8; 4], usize, usize)>,
+    /// Bytes fed so far, where the last ESC (or C1 CSI) was, and where the last `ESC[2J` ended:
+    /// `ESC[3J` right after `ESC[2J` (ConPTY's `cls`) is the only one modelled (the review of #318).
+    fed: u64,
+    esc_at: u64,
+    ed2_end: u64,
+    /// The string being read: its opening byte (`]` for an OSC) and, for an OSC, its first bytes,
+    /// to tell a palette change (the review of #318).
+    str_open: u8,
+    osc_head: Vec<u8>,
     /// Resizes so far (the review of #299, #6).
     resizes: u64,
     /// Things done that this screen doesn't model (the review of #299, #5).
@@ -128,6 +200,16 @@ pub(crate) struct Screen {
     own: OwnMarks,
 }
 
+/// A saved cursor, as xterm.js's DECSC keeps it: where, the style (xterm.js restores the colours
+/// and flags, not the underline's kind or colour), and [`Screen::scrolls`] then.
+#[derive(Clone, Copy, Default)]
+struct Saved {
+    row: usize,
+    col: usize,
+    style: Style,
+    scrolls: u64,
+}
+
 /// The whole screen as a terminal shows it, and the cursor: what a fill notes as it checks the
 /// prompt and as it types its probe, so output since can be told from a repaint of the same
 /// content (ticket 155, #284, decision Q151): [`Screen::snapshot`], [`Screen::matches`].
@@ -143,6 +225,8 @@ pub(crate) struct Snapshot {
     alternate: bool,
     resizes: u64,
     odd: u64,
+    /// A wide or zero-width character was on the screen.
+    wide: bool,
 }
 
 /// How the screen now compares with a [`Snapshot`] (the review of #299, #9: one comparison for
@@ -178,6 +262,8 @@ pub struct ScreenDiff {
     resizes: u64,
     /// Whether the alternate screen is up now, if that changed.
     alternate: Option<bool>,
+    /// A wide or zero-width character is on the screen, now or at the snapshot.
+    wide: bool,
     rows: Vec<RowDiff>,
     rows_more: usize,
     odd: Vec<Seen>,
@@ -223,6 +309,9 @@ impl std::fmt::Display for ScreenDiff {
                 if up { "came up" } else { "went away" }
             ));
         }
+        if self.wide {
+            parts.push("a wide or zero-width character is on the screen".to_string());
+        }
         for r in &self.rows {
             let cols = match r.cols {
                 (a, b) if a == b => format!("column {a}"),
@@ -253,55 +342,48 @@ impl std::fmt::Display for ScreenDiff {
     }
 }
 
-/// How style `was` became `now`, attribute by attribute, as SGR parameters (`fg default -> 37,
-/// bold off -> 1`): numbers only.
-fn style_change(was: &Style, now: &Style) -> String {
-    let get = |style: &Style, slot: u8| style.iter().find(|(s, _)| *s == slot).map(|(_, v)| v.clone());
-    let mut slots: Vec<u8> = was.iter().chain(now).map(|(s, _)| *s).collect();
-    slots.sort();
-    slots.dedup();
+/// How style `was` became `now`, attribute by attribute, as SGR parameters (`bold off -> 1,
+/// fg default -> 37`): numbers only.
+fn style_change(was: Style, now: Style) -> String {
     let mut out = Vec::new();
-    for slot in slots {
-        let (a, b) = (get(was, slot), get(now, slot));
-        if a == b {
-            continue;
+    for (flag, name, code) in [
+        (BOLD, "bold", "1"),
+        (FAINT, "faint", "2"),
+        (ITALIC, "italic", "3"),
+        (BLINK, "blink", "5"),
+        (REVERSE, "reverse", "7"),
+        (HIDDEN, "hidden", "8"),
+        (STRIKE, "strike", "9"),
+        (OVERLINE, "overline", "53"),
+    ] {
+        let say = |s: Style| if s.flags & flag != 0 { code } else { "off" };
+        if say(was) != say(now) {
+            out.push(format!("{name} {} -> {}", say(was), say(now)));
         }
-        let (name, off) = match slot {
-            1 => ("bold", "off"),
-            2 => ("faint", "off"),
-            3 => ("italic", "off"),
-            4 => ("underline", "off"),
-            5 => ("blink", "off"),
-            7 => ("reverse", "off"),
-            8 => ("hidden", "off"),
-            9 => ("strike", "off"),
-            53 => ("overline", "off"),
-            30 => ("fg", "default"),
-            40 => ("bg", "default"),
-            _ => ("underline colour", "default"),
+        if flag == FAINT && was.underline != now.underline {
+            let say = |u: u8| match u {
+                0 => "off".to_string(),
+                1 => "4".to_string(),
+                2 => "21".to_string(),
+                n => format!("4:{n}"),
+            };
+            out.push(format!("underline {} -> {}", say(was.underline), say(now.underline)));
+        }
+    }
+    for (name, at, a, b) in [
+        ("fg", 38, was.fg, now.fg),
+        ("bg", 48, was.bg, now.bg),
+        ("underline colour", 58, was.ul, now.ul),
+    ] {
+        let say = |c: Colour| match c {
+            Colour::Default => "default".to_string(),
+            Colour::Code(n) => n.to_string(),
+            Colour::P256(n) => format!("{at};5;{n}"),
+            Colour::Rgb(r, g, b) => format!("{at};2;{r};{g};{b}"),
         };
-        let say = |v: Option<Vec<u16>>| -> String {
-            let Some(v) = v else { return off.to_string() };
-            let join = |v: &[u16]| v.iter().map(u16::to_string).collect::<Vec<_>>().join(";");
-            match (slot, v.as_slice()) {
-                (30 | 40 | 58, [5 | 2, ..]) => format!(
-                    "{};{}",
-                    match slot {
-                        30 => 38,
-                        40 => 48,
-                        _ => 58,
-                    },
-                    join(&v)
-                ),
-                (30 | 40, [code]) => code.to_string(),
-                (4, [1]) => "4".into(),
-                (4, [2]) => "21".into(),
-                (4, [n]) => format!("4:{n}"),
-                (5, [n]) => n.to_string(),
-                _ => slot.to_string(),
-            }
-        };
-        out.push(format!("{name} {} -> {}", say(a), say(b)));
+        if a != b {
+            out.push(format!("{name} {} -> {}", say(a), say(b)));
+        }
     }
     out.join(", ")
 }
@@ -334,10 +416,9 @@ const SEEN_PARAMS: usize = 16;
 /// `K`, `X`), inserts, deletes and scrolls (`@`, `P`, `L`, `M`, `S`, `T`, `r`), colours (`m`),
 /// a status report (`n`), and, under narrower rules in [`csi_shown`], the DEC modes (`h`, `l`,
 /// only after `?` and a number: the cursor's hide and show, the alternate screen) and the cursor's save and
-/// restore (`s`, `u`, only bare); and, for what the screen doesn't model ([`ScreenDiff`], ticket
-/// 155c), a repeat and tabs (`b`, `g`, `I`, `Z`). The rest (window ops, device queries, keyboard
-/// modes) isn't how a redraw is done.
-const CSI_SHOWN: &[u8] = b"ABCDEFGHadef`JKX@PLMSTrmnhlsubgIZ";
+/// restore (`s`, `u`, only bare). The rest (window ops, device queries, keyboard modes) isn't
+/// how a redraw is done.
+const CSI_SHOWN: &[u8] = b"ABCDEFGHadef`JKX@PLMSTrmnhlsu";
 
 /// Whether [`Drawn`] names a CSI's command `fin`, with `params` as they came.
 fn csi_shown(params: &[u8], fin: u8) -> bool {
@@ -377,8 +458,11 @@ enum Seen {
     Resize,
     /// A UTF-8 continuation byte with no character to continue (ticket 155c, unmodelled only).
     Stray,
-    /// A style past [`STYLES_MAX`] (ticket 155c, unmodelled only).
-    StylesFull,
+    /// A character xterm.js gives this many columns other than one (ticket 155c, the review of
+    /// #318; unmodelled only).
+    Width(u8),
+    /// An OSC that changes the palette (ticket 155c, the review of #318; unmodelled only).
+    Palette,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -500,7 +584,9 @@ impl std::fmt::Display for Seen {
             }
             Seen::Resize => f.write_str("resize")?,
             Seen::Stray => f.write_str("stray UTF-8 byte")?,
-            Seen::StylesFull => f.write_str("too many styles")?,
+            Seen::Width(0) => f.write_str("zero-width character")?,
+            Seen::Width(_) => f.write_str("wide character")?,
+            Seen::Palette => f.write_str("palette change")?,
         }
         Ok(())
     }
@@ -546,17 +632,21 @@ impl Screen {
             row: 0,
             col: 0,
             pending_wrap: false,
-            saved: (0, 0),
+            saved_main: Saved::default(),
+            saved_alt: None,
+            scrolls: 0,
             main: None,
             parse: Parse::Ground,
             csi: Vec::new(),
             csi_long: false,
             inter: 0,
-            style: 0,
-            styles: vec![Vec::new()],
-            erase: vec![0],
-            space: vec![0],
-            last_put: None,
+            style: Style::DEFAULT,
+            utf8: None,
+            fed: 0,
+            esc_at: u64::MAX,
+            ed2_end: u64::MAX - 1,
+            str_open: 0,
+            osc_head: Vec::new(),
             resizes: 0,
             odd: 0,
             odd_seen: std::collections::VecDeque::new(),
@@ -621,10 +711,9 @@ impl Screen {
         self.not_mask();
         self.saw(Seen::Ctl(b));
         if self.parse == Parse::Str && b == 0x9c {
-            self.osc_end();
+            self.str_end();
         }
         self.osc = None;
-        self.pending_wrap = false;
         self.parse = Parse::Ground;
         match b {
             0x9b => {
@@ -632,19 +721,53 @@ impl Screen {
                 self.csi.clear();
                 self.csi_long = false;
             }
-            0x9d => {
-                self.parse = Parse::Str;
-                self.osc = self.own.param.is_some().then(Vec::new);
+            0x9d => self.str_start(b']'),
+            0x90 => self.str_start(b'P'),
+            0x98 => self.str_start(b'X'),
+            0x9e => self.str_start(b'^'),
+            0x9f => self.str_start(b'_'),
+            0x84 => {
+                self.pending_wrap = false;
+                self.line_feed();
             }
-            0x90 | 0x98 | 0x9e | 0x9f => self.parse = Parse::Str,
-            0x84 => self.line_feed(),
             0x85 => {
+                self.pending_wrap = false;
                 self.col = 0;
                 self.line_feed();
             }
             0x9c => {}
             // Tab sets and the rest: not modelled.
             _ => self.odd(Seen::Ctl(b)),
+        }
+    }
+
+    /// An OSC, DCS, SOS, PM or APC string starts (`open` is its letter after ESC).
+    fn str_start(&mut self, open: u8) {
+        self.parse = Parse::Str;
+        self.str_open = open;
+        self.osc_head.clear();
+        self.osc = (open == b']' && self.own.param.is_some()).then(Vec::new);
+    }
+
+    /// A string ended as xterm.js ends one (an OSC at BEL, any at ST or ESC): a shell mark
+    /// counts (ticket 162), and an OSC that changes the palette (OSC 4, 5, 10 to 19, 104, 105,
+    /// 110 to 119), which changes what every cell in those colours looks like, isn't modelled
+    /// (the review of #318).
+    fn str_end(&mut self) {
+        self.osc_end();
+        if self.str_open != b']' {
+            return;
+        }
+        let head = std::mem::take(&mut self.osc_head);
+        let id = head.split(|&b| b == b';').next().unwrap_or_default();
+        let palette = !id.is_empty()
+            && id.iter().all(u8::is_ascii_digit)
+            && id
+                .iter()
+                .try_fold(0u32, |n, &d| n.checked_mul(10)?.checked_add(u32::from(d - b'0')))
+                .is_none_or(|n| matches!(n, 4 | 5 | 10..=19 | 104 | 105 | 110..=119));
+        if palette {
+            self.odd(Seen::Palette);
         }
     }
 
@@ -670,14 +793,22 @@ impl Screen {
             alternate: self.main.is_some(),
             resizes: self.resizes,
             odd: self.odd,
+            wide: self.wide(),
         }
+    }
+
+    /// Whether a character xterm.js gives other than one column is on the screen: this screen
+    /// gives each one cell, so where it is, columns after it don't line up with xterm.js's (the
+    /// review of #318).
+    fn wide(&self) -> bool {
+        self.grid.iter().flatten().any(|c| c.byte() >= 0x80 && c.width() != 1)
     }
 
     fn compare(&self, at: &Snapshot) -> Compared {
         let dims = (self.rows, self.cols, self.main.is_some()) == (at.rows, at.cols, at.alternate);
         let odd = self.odd != at.odd;
         Compared {
-            shape: dims && !odd && self.resizes == at.resizes,
+            shape: dims && !odd && self.resizes == at.resizes && !at.wide && !self.wide(),
             odd,
             cursor: (self.row, self.col, self.pending_wrap) == (at.row, at.col, at.pending_wrap),
             prompt_row: dims && self.grid.get(at.row) == at.grid.get(at.row),
@@ -712,6 +843,7 @@ impl Screen {
             size: (size.0 != size.1).then_some(size),
             resizes: self.resizes - shot.resizes,
             alternate: (self.main.is_some() != shot.alternate).then_some(self.main.is_some()),
+            wide: shot.wide || self.wide(),
             ..ScreenDiff::default()
         };
         // Rows only on the same screen of the same size.
@@ -725,10 +857,10 @@ impl Screen {
                     d.rows_more += 1;
                     continue;
                 }
-                let styles_only = changed.iter().all(|&c| now[c].ch == was[c].ch).then(|| {
-                    let style = |cell: Cell| self.styles.get(usize::from(cell.style)).cloned().unwrap_or_default();
-                    style_change(&style(was[first]), &style(now[first]))
-                });
+                let styles_only = changed
+                    .iter()
+                    .all(|&c| now[c].ch == was[c].ch)
+                    .then(|| style_change(was[first].style, now[first].style));
                 d.rows.push(RowDiff {
                     row: i + 1,
                     cols: (first + 1, last + 1),
@@ -896,8 +1028,10 @@ impl Screen {
             }
         };
         fit(&mut self.grid, &mut self.row);
-        if let Some((grid, row, _)) = &mut self.main {
-            fit(grid, row);
+        if let Some(grid) = &mut self.main {
+            // Its own cursor isn't kept; a resize never matches anyway.
+            let mut row = self.row;
+            fit(grid, &mut row);
         }
         self.rows = rows;
         self.cols = cols;
@@ -932,10 +1066,13 @@ impl Screen {
     }
 
     fn byte(&mut self, b: u8) {
+        self.fed += 1;
         if self.c1 {
             self.c1 = false;
             if (0x80..=0x9f).contains(&b) {
-                self.last_put = None;
+                if self.utf8.take().is_some() {
+                    self.odd(Seen::Stray);
+                }
                 self.c1_control(b);
                 return;
             }
@@ -946,8 +1083,10 @@ impl Screen {
                 _ => {}
             }
         }
-        if !(self.parse == Parse::Ground && (0x80..0xc0).contains(&b)) {
-            self.last_put = None;
+        // A UTF-8 character cut short isn't modelled (the review of #318, #7).
+        if self.utf8.is_some() && !(self.parse == Parse::Ground && (0x80..0xc0).contains(&b)) {
+            self.utf8 = None;
+            self.odd(Seen::Stray);
         }
         match self.parse {
             Parse::Ground => self.ground(b),
@@ -979,20 +1118,30 @@ impl Screen {
                     } else {
                         self.csi_long = true;
                     }
-                } else {
-                    // A control inside the sequence, which a terminal would act on.
+                } else if b == 0x18 || b == 0x1a {
+                    // CAN and SUB abort it (xterm.js).
                     self.not_mask();
                     self.saw(Seen::Ctl(b));
+                    self.parse = Parse::Ground;
+                } else if b < 0x20 {
+                    // A control inside the sequence: xterm.js acts on it there.
+                    self.control(b);
+                } else if b != 0x7f {
+                    // Past ASCII inside a sequence: not modelled.
+                    self.not_mask();
+                    self.saw(Seen::Ctl(b));
+                    self.odd(Seen::Ctl(b));
                 }
             }
             Parse::Str => {
-                if b == 0x07 {
+                if b == 0x07 && self.str_open == b']' {
+                    // BEL ends an OSC; xterm.js ignores it in the other strings.
                     self.parse = Parse::Ground;
-                    self.osc_end();
+                    self.str_end();
                 } else if b == 0x1b {
-                    // A terminal (xterm.js) ends the OSC here, whatever follows the ESC.
+                    // A terminal (xterm.js) ends the string here, whatever follows the ESC.
                     self.parse = Parse::StrEsc;
-                    self.osc_end();
+                    self.str_end();
                 } else if b == 0x18 || b == 0x1a {
                     // CAN and SUB abort it, and what follows is text again (xterm.js).
                     self.osc = None;
@@ -1017,9 +1166,10 @@ impl Screen {
                 }
                 if !(0x20..=0x2f).contains(&b) {
                     self.parse = if b == 0x1b { Parse::Esc } else { Parse::Ground };
-                    // The alignment test and double-size lines (`ESC #`), and any charset but
-                    // ASCII: not modelled.
-                    if self.inter == b'#' || (b"()*+-./".contains(&self.inter) && b != b'B') {
+                    // The alignment test and double-size lines (`ESC #`), any charset but ASCII,
+                    // and a control inside (xterm.js acts on it and goes on): not modelled.
+                    if self.inter == b'#' || (b"()*+-./".contains(&self.inter) && b != b'B') || (b < 0x20 && b != 0x1b)
+                    {
                         self.odd(Seen::Esc(vec![self.inter, b]));
                     }
                 }
@@ -1028,7 +1178,7 @@ impl Screen {
     }
 
     /// A byte of a string's contents: an OSC that may be a mark keeps it, but the C0 controls
-    /// xterm.js ignores there.
+    /// xterm.js ignores there; an OSC's first bytes are kept for its id.
     fn str_char(&mut self, b: u8) {
         if let Some(osc) = &mut self.osc {
             if osc.len() >= OSC_MAX {
@@ -1036,6 +1186,9 @@ impl Screen {
             } else if b >= 0x20 {
                 osc.push(b);
             }
+        }
+        if self.str_open == b']' && b >= 0x20 && self.osc_head.len() < 16 {
+            self.osc_head.push(b);
         }
         self.saw_more(Kind::Str, b);
     }
@@ -1060,12 +1213,8 @@ impl Screen {
                 }
                 // A space draws a blank: how sudo takes a `*` back.
                 b' ' => self.saw(Seen::Space),
-                0x1b => {}
-                b'\r' | 0x08 => self.saw(Seen::Ctl(b)),
-                0x00..=0x1f | 0x7f => {
-                    self.not_mask();
-                    self.saw(Seen::Ctl(b));
-                }
+                // Controls note themselves.
+                0x00..=0x1f | 0x7f => {}
                 _ => {
                     self.not_mask();
                     self.saw_text(b);
@@ -1073,7 +1222,37 @@ impl Screen {
             }
         }
         match b {
-            0x1b => self.parse = Parse::Esc,
+            0x1b => {
+                self.parse = Parse::Esc;
+                self.esc_at = self.fed - 1;
+            }
+            0x00..=0x1f | 0x7f => self.control(b),
+            0x80..=0xbf => self.utf8_more(b),
+            0xc2..=0xf4 => {
+                let need = if b < 0xe0 {
+                    2
+                } else if b < 0xf0 {
+                    3
+                } else {
+                    4
+                };
+                self.utf8 = Some(([b, 0, 0, 0], 1, need));
+            }
+            // Never in UTF-8: not modelled.
+            0xc0 | 0xc1 | 0xf5..=0xff => self.odd(Seen::Stray),
+            _ => self.put([b, 0, 0, 0], u32::from(b)),
+        }
+    }
+
+    /// A C0 control, as xterm.js acts on it, in the text or inside a CSI.
+    fn control(&mut self, b: u8) {
+        if self.mask.is_some() {
+            if !(b == b'\r' || b == 0x08) {
+                self.not_mask();
+            }
+            self.saw(Seen::Ctl(b));
+        }
+        match b {
             b'\r' => {
                 self.col = 0;
                 self.pending_wrap = false;
@@ -1086,16 +1265,29 @@ impl Screen {
                 self.pending_wrap = false;
                 self.col = self.col.saturating_sub(1);
             }
-            b'\t' => {
-                self.pending_wrap = false;
-                self.col = ((self.col / 8 + 1) * 8).min(self.cols - 1);
-            }
+            // Past the last column (a wrap pending), xterm.js's tab does nothing.
+            b'\t' if !self.pending_wrap => self.col = ((self.col / 8 + 1) * 8).min(self.cols - 1),
             // Shift Out and In switch charsets: not modelled.
             0x0e | 0x0f => self.odd(Seen::Ctl(b)),
-            0x00..=0x1f | 0x7f => {}
-            // A UTF-8 continuation byte: the rest of the character in the last cell drawn.
-            0x80..=0xbf => self.put_more(b),
-            _ => self.put(b),
+            _ => {}
+        }
+    }
+
+    /// The next byte of a UTF-8 character; when it's whole, it's drawn. A stray byte, or a
+    /// character UTF-8 doesn't allow (overlong, a surrogate, past U+10FFFF), isn't modelled.
+    fn utf8_more(&mut self, b: u8) {
+        let Some((mut ch, n, need)) = self.utf8.take() else {
+            self.odd(Seen::Stray);
+            return;
+        };
+        ch[n] = b;
+        if n + 1 < need {
+            self.utf8 = Some((ch, n + 1, need));
+            return;
+        }
+        match std::str::from_utf8(&ch[..need]).ok().and_then(|s| s.chars().next()) {
+            Some(c) => self.put(ch, u32::from(c)),
+            None => self.odd(Seen::Stray),
         }
     }
 
@@ -1119,23 +1311,25 @@ impl Screen {
                 self.csi.clear();
                 self.csi_long = false;
             }
-            b']' | b'P' | b'_' | b'^' | b'X' => {
-                self.parse = Parse::Str;
-                self.osc = (b == b']' && self.own.param.is_some()).then(Vec::new);
-            }
+            b']' | b'P' | b'_' | b'^' | b'X' => self.str_start(b),
             0x20..=0x2f => {
                 self.parse = Parse::Inter;
                 self.inter = b;
             }
             0x1b => self.parse = Parse::Esc,
-            b'7' => self.saved = (self.row, self.col),
+            b'7' => self.save(),
             b'8' => self.restore(),
-            b'D' => self.line_feed(),
+            b'D' => {
+                self.pending_wrap = false;
+                self.line_feed();
+            }
             b'E' => {
+                self.pending_wrap = false;
                 self.col = 0;
                 self.line_feed();
             }
             b'M' => {
+                self.pending_wrap = false;
                 if self.row == 0 {
                     let blank = self.blank();
                     self.grid.pop();
@@ -1148,8 +1342,9 @@ impl Screen {
                 let (resizes, odd) = (self.resizes, self.odd);
                 let own = std::mem::take(&mut self.own);
                 let odd_seen = std::mem::take(&mut self.odd_seen);
+                let fed = self.fed;
                 *self = Screen::new(self.rows as u16, self.cols as u16);
-                (self.resizes, self.odd, self.own, self.odd_seen) = (resizes, odd, own, odd_seen);
+                (self.resizes, self.odd, self.own, self.odd_seen, self.fed) = (resizes, odd, own, odd_seen, fed);
                 self.odd(Seen::Esc(vec![b'c']));
             }
             // The keypad modes and a string's end draw nothing.
@@ -1157,44 +1352,32 @@ impl Screen {
             // Tab sets, single shifts and the rest: not modelled.
             _ => self.odd(Seen::Esc(vec![b])),
         }
-        if b != b'[' {
-            self.pending_wrap = false;
-        }
     }
 
-    fn put(&mut self, b: u8) {
+    /// Draws a whole character (`ch`, its UTF-8 bytes; `c`, its code point) at the cursor.
+    /// xterm.js gives a few characters other than one column; this screen gives each one cell, so
+    /// such a character isn't modelled (the review of #318).
+    fn put(&mut self, ch: [u8; 4], c: u32) {
+        let width = crate::wcwidth::width(c);
+        if width != 1 {
+            self.odd(Seen::Width(width));
+        }
         if self.pending_wrap {
             self.pending_wrap = false;
             self.col = 0;
             self.line_feed();
         }
         // A space shows only what a blank does (ticket 155c).
-        let style = if b == b' ' {
-            self.space[usize::from(self.style)]
+        let style = if ch == [b' ', 0, 0, 0] {
+            self.style.on_blank()
         } else {
             self.style
         };
-        self.grid[self.row][self.col] = Cell {
-            ch: [b, 0, 0, 0],
-            style,
-        };
-        self.last_put = Some((self.row, self.col, 1));
+        self.grid[self.row][self.col] = Cell { ch, style };
         if self.col + 1 == self.cols {
             self.pending_wrap = true;
         } else {
             self.col += 1;
-        }
-    }
-
-    /// The rest of a UTF-8 character, into the cell its first byte went to; a stray one isn't
-    /// modelled.
-    fn put_more(&mut self, b: u8) {
-        match self.last_put {
-            Some((row, col, n)) if n < 4 => {
-                self.grid[row][col].ch[n] = b;
-                self.last_put = Some((row, col, n + 1));
-            }
-            _ => self.odd(Seen::Stray),
         }
     }
 
@@ -1203,155 +1386,131 @@ impl Screen {
     fn blank(&self) -> Cell {
         Cell {
             ch: [b' ', 0, 0, 0],
-            style: self.erase[usize::from(self.style)],
+            style: self.style.erased(),
         }
     }
 
-    /// SGR: the style from here on (the review of #299, #5). Each attribute it models is set or
-    /// cleared by its parameters, in whichever form (`;` or `:` between a colour's parameters,
-    /// `01` for `1`), as xterm.js reads them (ticket 155c); one it doesn't, a colour out of range
-    /// or cut short, or a style past [`STYLES_MAX`], isn't modelled.
+    /// SGR: the style from here on (the review of #299, #5), read as xterm.js reads it
+    /// (`charAttributes`, ticket 155c and the review of #318): a parameter's sub-parameters
+    /// (after `:`) count only for an underline (`4:3`, an empty or unknown kind single) and the
+    /// colours. What xterm.js reads otherwise or ignores (an unknown attribute, sub-parameters
+    /// elsewhere, a colour's form it reads otherwise, out of range or cut short) isn't modelled.
     fn sgr(&mut self) {
-        let mut style = self.styles[usize::from(self.style)].clone();
-        // Each parameter's sub-parameters: None when empty, a number, or `Err` for anything else.
-        let params: Vec<Vec<Result<Option<u16>, ()>>> = self
+        // Each parameter's sub-parameters: None when empty.
+        let mut bad = false;
+        let params: Vec<Vec<Option<u32>>> = self
             .csi
             .split(|&c| c == b';')
             .map(|p| {
                 p.split(|&c| c == b':')
-                    .map(|q| match q {
-                        [] => Ok(None),
-                        _ if q.iter().all(u8::is_ascii_digit) => std::str::from_utf8(q)
-                            .ok()
-                            .and_then(|q| q.parse().ok())
-                            .map(Some)
-                            .ok_or(()),
-                        _ => Err(()),
+                    .map(|q| {
+                        if q.is_empty() {
+                            return None;
+                        }
+                        let n = std::str::from_utf8(q).ok().and_then(|q| q.parse::<u32>().ok());
+                        bad |= n.is_none();
+                        n
                     })
                     .collect()
             })
             .collect();
-        let set = |style: &mut Style, slot: u8, value: Option<Vec<u16>>| {
-            style.retain(|(s, _)| *s != slot);
-            if let Some(v) = value {
-                style.push((slot, v));
-                style.sort();
-            }
-        };
-        let mut odd = false;
+        let mut style = self.style;
         let mut i = 0;
-        while i < params.len() && !odd {
+        while i < params.len() && !bad {
             let p = &params[i];
-            let Ok(code) = p[0].map(|c| c.unwrap_or(0)) else {
-                odd = true;
-                break;
-            };
+            let code = p[0].unwrap_or(0);
             let subs = &p[1..];
-            match (code, subs.is_empty()) {
-                (0, true) => style.clear(),
-                (1 | 2 | 3 | 7 | 8 | 9 | 53, true) => set(&mut style, code as u8, Some(Vec::new())),
-                (22, true) => {
-                    set(&mut style, 1, None);
-                    set(&mut style, 2, None);
+            if !subs.is_empty() && !matches!(code, 4 | 38 | 48 | 58) {
+                bad = true;
+                break;
+            }
+            let flag = |style: &mut Style, f: u16, on: bool| {
+                if on {
+                    style.flags |= f;
+                } else {
+                    style.flags &= !f;
                 }
-                (23 | 27 | 28 | 29, true) => set(&mut style, (code - 20) as u8, None),
-                (55, true) => set(&mut style, 53, None),
-                (4, true) => set(&mut style, 4, Some(vec![1])),
-                (4, false) => match subs {
-                    [Ok(None | Some(0))] => set(&mut style, 4, None),
-                    [Ok(Some(n @ 1..=5))] => set(&mut style, 4, Some(vec![*n])),
-                    _ => odd = true,
-                },
-                (21, true) => set(&mut style, 4, Some(vec![2])),
-                (24, true) => set(&mut style, 4, None),
-                (5 | 6, true) => set(&mut style, 5, Some(vec![code])),
-                (25, true) => set(&mut style, 5, None),
-                (30..=37 | 90..=97, true) => set(&mut style, 30, Some(vec![code])),
-                (40..=47 | 100..=107, true) => set(&mut style, 40, Some(vec![code])),
-                (39, true) => set(&mut style, 30, None),
-                (49, true) => set(&mut style, 40, None),
-                (59, true) => set(&mut style, 58, None),
-                (38 | 48 | 58, _) => {
-                    // `38:5:N`, `38:2:R:G:B`, `38:2:CS:R:G:B` (the colour space ignored, as
-                    // xterm.js does), or the same with `;` and no sub-parameters.
+            };
+            match code {
+                0 => style = Style::DEFAULT,
+                1 => flag(&mut style, BOLD, true),
+                2 => flag(&mut style, FAINT, true),
+                3 => flag(&mut style, ITALIC, true),
+                4 => {
+                    style.underline = match subs.first() {
+                        None | Some(None) => 1,
+                        Some(Some(n)) if *n > 5 => 1,
+                        Some(Some(n)) => *n as u8,
+                    }
+                }
+                5 => flag(&mut style, BLINK, true),
+                7 => flag(&mut style, REVERSE, true),
+                8 => flag(&mut style, HIDDEN, true),
+                9 => flag(&mut style, STRIKE, true),
+                21 => style.underline = 2,
+                22 => flag(&mut style, BOLD | FAINT, false),
+                23 => flag(&mut style, ITALIC, false),
+                24 => style.underline = 0,
+                25 => flag(&mut style, BLINK, false),
+                27 => flag(&mut style, REVERSE, false),
+                28 => flag(&mut style, HIDDEN, false),
+                29 => flag(&mut style, STRIKE, false),
+                53 => flag(&mut style, OVERLINE, true),
+                55 => flag(&mut style, OVERLINE, false),
+                30..=37 | 90..=97 => style.fg = Colour::Code(code as u8),
+                40..=47 | 100..=107 => style.bg = Colour::Code(code as u8),
+                39 => style.fg = Colour::Default,
+                49 => style.bg = Colour::Default,
+                59 => style.ul = Colour::Default,
+                38 | 48 | 58 => {
+                    // xterm.js's `_extractColor`, only where its reading is plain: `38;5;N`,
+                    // `38;2;R;G;B`, `38:5:N` and `38:2:CS:R:G:B` (the colour space ignored, empty
+                    // or not). `38:2:R:G:B` it reads as R the colour space: not modelled.
+                    let byte = |n: Option<u32>| n.and_then(|n| u8::try_from(n).ok());
                     let colour = if subs.is_empty() {
                         let next = |k: usize| match params.get(i + k).map(Vec::as_slice) {
-                            Some([Ok(Some(n))]) => Some(*n),
+                            Some([n]) => byte(*n),
                             _ => None,
                         };
-                        match next(1) {
-                            Some(5) => next(2).map(|n| (vec![5, n], 2)),
-                            Some(2) => match (next(2), next(3), next(4)) {
-                                (Some(r), Some(g), Some(b)) => Some((vec![2, r, g, b], 4)),
+                        match params.get(i + 1).map(Vec::as_slice) {
+                            Some([Some(5)]) => next(2).map(|n| (Colour::P256(n), 2)),
+                            Some([Some(2)]) => match (next(2), next(3), next(4)) {
+                                (Some(r), Some(g), Some(b)) => Some((Colour::Rgb(r, g, b), 4)),
                                 _ => None,
                             },
                             _ => None,
                         }
                     } else {
-                        let n: Option<Vec<u16>> = subs.iter().map(|q| q.ok().flatten()).collect();
                         match subs {
-                            [Ok(Some(5)), Ok(Some(n))] => Some((vec![5, *n], 0)),
-                            [Ok(Some(2)), _, _, _] => n.map(|n| (n, 0)),
-                            [Ok(Some(2)), Ok(_), r, g, b] => [r, g, b]
-                                .iter()
-                                .map(|q| q.ok().flatten())
-                                .collect::<Option<Vec<u16>>>()
-                                .map(|rgb| ([vec![2], rgb].concat(), 0)),
+                            [Some(5), n] => byte(*n).map(|n| (Colour::P256(n), 0)),
+                            [Some(2), _, r, g, b] => match (byte(*r), byte(*g), byte(*b)) {
+                                (Some(r), Some(g), Some(b)) => Some((Colour::Rgb(r, g, b), 0)),
+                                _ => None,
+                            },
                             _ => None,
                         }
                     };
                     match colour {
-                        Some((value, take)) if value[1..].iter().all(|&v| v <= 255) => {
-                            let slot = match code {
-                                38 => 30,
-                                48 => 40,
-                                _ => 58,
-                            };
-                            set(&mut style, slot, Some(value));
+                        Some((colour, take)) => {
+                            match code {
+                                38 => style.fg = colour,
+                                48 => style.bg = colour,
+                                _ => style.ul = colour,
+                            }
                             i += take;
                         }
-                        _ => odd = true,
+                        None => bad = true,
                     }
                 }
-                _ => odd = true,
+                _ => bad = true,
             }
             i += 1;
         }
-        if odd {
+        if bad {
             let params = self.csi.clone();
             self.odd(Seen::Csi(Some(params), Some(b'm')));
         }
-        match self.intern(style) {
-            Some(at) => self.style = at,
-            None => self.odd(Seen::StylesFull),
-        }
-    }
-
-    /// The index of `style` in [`Screen::styles`], added if it's new with the styles a blank
-    /// takes from it ([`Screen::erase`], [`Screen::space`]); None past [`STYLES_MAX`].
-    fn intern(&mut self, style: Style) -> Option<u16> {
-        if let Some(at) = self.styles.iter().position(|s| *s == style) {
-            return Some(at as u16);
-        }
-        if self.styles.len() >= STYLES_MAX {
-            return None;
-        }
-        let at = self.styles.len() as u16;
-        // What a terminal (xterm.js) erases with: the background colour alone.
-        let erase: Style = style.iter().filter(|(slot, _)| *slot == 40).cloned().collect();
-        // What shows on a blank: the background, unless the cell draws more than its background
-        // (reversed, or a line through or under it), when all of it can.
-        let shows_more = style.iter().any(|(slot, _)| [4, 7, 9, 53].contains(slot));
-        let space = if shows_more { style.clone() } else { erase.clone() };
-        self.styles.push(style);
-        // Until they're known, a blank keeps the whole style (which can only refuse).
-        self.erase.push(at);
-        self.space.push(at);
-        let erase = self.intern(erase).unwrap_or(at);
-        let space = self.intern(space).unwrap_or(at);
-        self.erase[usize::from(at)] = erase;
-        self.space[usize::from(at)] = space;
-        Some(at)
+        self.style = style;
     }
 
     fn line_feed(&mut self) {
@@ -1359,26 +1518,82 @@ impl Screen {
             let blank = self.blank();
             self.grid.remove(0);
             self.grid.push(vec![blank; self.cols]);
+            if self.main.is_none() {
+                self.scrolls += 1;
+            }
         } else {
             self.row += 1;
         }
     }
 
+    /// DECSC (`ESC 7`, `CSI s`): the cursor and the style, saved for the screen that's up.
+    fn save(&mut self) {
+        let saved = Saved {
+            row: self.row,
+            col: self.col,
+            style: self.style,
+            scrolls: self.scrolls,
+        };
+        if self.main.is_some() {
+            self.saved_alt = Some(saved);
+        } else {
+            self.saved_main = saved;
+        }
+    }
+
+    /// DECRC (`ESC 8`, `CSI u`), as xterm.js restores: the cursor (back in the last column) and
+    /// the colours and flags. Not modelled: a restore on the main screen after it scrolled (xterm.js
+    /// counts from its scrollback's top), one on the alternate screen of what this screen didn't
+    /// see saved there, and an underline or its colour in either style (xterm.js keeps the kind
+    /// and colour set now).
     fn restore(&mut self) {
-        (self.row, self.col) = (self.saved.0.min(self.rows - 1), self.saved.1.min(self.cols - 1));
+        self.pending_wrap = false;
+        let saved = match self.main {
+            Some(_) => self.saved_alt,
+            None => Some(self.saved_main).filter(|s| s.scrolls == self.scrolls),
+        };
+        let lined = |s: Style| s.underline != 0 || s.ul != Colour::Default;
+        match saved {
+            Some(s) if !lined(s.style) && !lined(self.style) => {
+                self.row = s.row.min(self.rows - 1);
+                self.col = s.col.min(self.cols - 1);
+                self.style = s.style;
+            }
+            _ => self.odd(Seen::Esc(vec![b'8'])),
+        }
     }
 
     fn csi_exec(&mut self, fin: u8) {
         if self.mask.is_some() && !self.csi_draws_nothing(fin) {
             self.not_mask();
         }
-        let private = self.csi.first() == Some(&b'?');
-        // `<`, `=`, `>` and `?` mark a private sequence; intermediates (` q`) another command.
-        let marked = self.csi.first().is_some_and(|b| b"<=>?".contains(b));
-        let plain = !marked && !self.csi.iter().any(|b| (0x20..=0x2f).contains(b));
+        // Reports, device attributes, window ops and the cursor's shape and protection draw
+        // nothing, in any form.
+        if matches!(fin, b'n' | b'c' | b't' | b'q') {
+            return;
+        }
+        let (marker, body) = match self.csi.split_first() {
+            Some((&m, rest)) if b"<=>?".contains(&m) => (Some(m), rest),
+            _ => (None, &self.csi[..]),
+        };
+        // Parameters as xterm.js keeps them: at most 32, and 32 sub-parameters; sub-parameters
+        // (`:`) only in an SGR; numbers and `;` only, after a `?` only for a DEC mode. Anything
+        // else xterm.js reads otherwise or not at all: not modelled (the review of #318, #2, #5).
+        let digits = |extra: u8| body.iter().all(|&c| c.is_ascii_digit() || c == b';' || c == extra);
+        let plain = if fin == b'm' && marker.is_none() {
+            digits(b':')
+        } else {
+            digits(b';')
+        };
+        let many = self.csi.split(|&c| c == b';').count() > 32 || self.csi.iter().filter(|&&c| c == b':').count() > 32;
+        let marked_ok = marker.is_none() || (marker == Some(b'?') && matches!(fin, b'h' | b'l'));
+        if !plain || many || !marked_ok {
+            self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin)));
+            return;
+        }
+        let pending = self.pending_wrap;
         let blank = self.blank();
-        let params: Vec<usize> = self
-            .csi
+        let params: Vec<usize> = body
             .split(|&c| c == b';')
             .map(|p| {
                 p.iter().filter(|c| c.is_ascii_digit()).fold(0usize, |n, &c| {
@@ -1389,7 +1604,13 @@ impl Screen {
         let arg = |i: usize| params.get(i).copied().unwrap_or(0);
         let n = arg(0).max(1);
         let (rows, cols) = (self.rows, self.cols);
-        self.pending_wrap = false;
+        // A cursor move, an insert or delete and DECRC put the cursor back in the last column;
+        // an erase, SGR, a scroll, a mode and DECSC leave a pending wrap as it is (xterm.js).
+        if b"ABCDEFGHadef`LMPX@u".contains(&fin) {
+            self.pending_wrap = false;
+        }
+        // An erase to the end from past the last column (a wrap pending) erases nothing there.
+        let from = if pending { cols } else { self.col };
         match fin {
             b'A' => self.row = self.row.saturating_sub(n),
             b'B' | b'e' => self.row = (self.row + n).min(rows - 1),
@@ -1403,9 +1624,9 @@ impl Screen {
                 self.row = (arg(0).max(1) - 1).min(rows - 1);
                 self.col = (arg(1).max(1) - 1).min(cols - 1);
             }
-            b'J' if !private => match arg(0) {
+            b'J' => match arg(0) {
                 0 => {
-                    self.grid[self.row][self.col..].fill(blank);
+                    self.grid[self.row][from..].fill(blank);
                     for line in &mut self.grid[self.row + 1..] {
                         line.fill(blank);
                     }
@@ -1420,18 +1641,25 @@ impl Screen {
                     for line in &mut self.grid {
                         line.fill(blank);
                     }
+                    self.ed2_end = self.fed;
                 }
-                // 3 clears the scrollback alone, which this screen doesn't keep (ConPTY sends it
-                // with `cls`; ticket 155c).
-                3 => {}
-                _ => self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin))),
+                // The scrollback cleared: right after `ESC[2J` (ConPTY's `cls`), the screen shows
+                // what it did; anywhere else xterm.js may move what's shown: not modelled (the
+                // review of #318, #6).
+                3 if self.esc_at == self.ed2_end && self.main.is_none() => self.scrolls += 1,
+                3 if self.esc_at == self.ed2_end => {}
+                3 => self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin))),
+                // xterm.js does nothing for the rest.
+                _ => {}
             },
-            b'K' if !private => {
+            b'K' => {
                 let line = &mut self.grid[self.row];
                 match arg(0) {
-                    0 => line[self.col..].fill(blank),
+                    0 => line[from..].fill(blank),
                     1 => line[..=self.col].fill(blank),
-                    _ => line.fill(blank),
+                    2 => line.fill(blank),
+                    // xterm.js does nothing for the rest (the review of #318, #1).
+                    _ => {}
                 }
             }
             b'X' => {
@@ -1452,17 +1680,20 @@ impl Screen {
                 }
                 line.truncate(cols);
             }
+            // Lines inserted or deleted put the cursor at the line's start (xterm.js).
             b'L' => {
                 for _ in 0..n.min(rows - self.row) {
                     self.grid.pop();
                     self.grid.insert(self.row, vec![blank; cols]);
                 }
+                self.col = 0;
             }
             b'M' => {
                 for _ in 0..n.min(rows - self.row) {
                     self.grid.remove(self.row);
                     self.grid.push(vec![blank; cols]);
                 }
+                self.col = 0;
             }
             b'S' => {
                 for _ in 0..n.min(rows) {
@@ -1470,27 +1701,46 @@ impl Screen {
                     self.grid.push(vec![blank; cols]);
                 }
             }
+            // xterm.js scrolls down in blank lines of the default style.
             b'T' => {
                 for _ in 0..n.min(rows) {
                     self.grid.pop();
-                    self.grid.insert(0, vec![blank; cols]);
+                    self.grid.insert(0, vec![BLANK; cols]);
                 }
             }
-            b's' if !private => self.saved = (self.row, self.col),
-            b'u' if !private => self.restore(),
-            b'h' | b'l' if private => {
-                let alt = params.iter().any(|&p| p == 1049 || p == 1047 || p == 47);
-                if alt {
-                    self.alternate(fin == b'h');
-                }
-                // 132 columns, reverse video, origin and wrap modes, side margins: not modelled.
-                if params.iter().any(|p| [3, 5, 6, 7, 69].contains(p)) {
-                    self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin)));
+            b's' if marker.is_none() => self.save(),
+            b'u' if marker.is_none() => self.restore(),
+            b'h' | b'l' if marker.is_some() => {
+                let on = fin == b'h';
+                for p in params {
+                    match p {
+                        // The alternate screen, as xterm.js does it: DECSC and in (filled with
+                        // the erase's background), or out (the cursor where it was there) and
+                        // DECRC.
+                        1049 if on => {
+                            self.save();
+                            if self.main.is_none() {
+                                let fill = vec![vec![self.blank(); cols]; rows];
+                                self.main = Some(std::mem::replace(&mut self.grid, fill));
+                                self.saved_alt = None;
+                            }
+                        }
+                        1049 => {
+                            if let Some(grid) = self.main.take() {
+                                self.grid = grid;
+                            }
+                            self.restore();
+                        }
+                        // The other alternate screens and DECSC with them, 132 columns, reverse
+                        // video, origin, wrap and reverse-wrap modes, side margins: not modelled.
+                        3 | 5 | 6 | 7 | 45 | 47 | 69 | 1047 | 1048 => {
+                            self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin)));
+                        }
+                        _ => {}
+                    }
                 }
             }
-            b'm' if plain => self.sgr(),
-            // Reports, device attributes, window ops and the cursor's shape draw nothing.
-            b'n' | b'c' | b't' | b'q' => {}
+            b'm' if marker.is_none() => self.sgr(),
             // Insert and newline modes, scroll regions, repeats, tab stops and the rest: not
             // modelled.
             _ => self.odd(Seen::Csi(Some(self.csi.clone()), Some(fin))),
@@ -1507,18 +1757,6 @@ impl Screen {
             }
             b'h' | b'l' => self.csi == b"?25",
             _ => false,
-        }
-    }
-
-    /// Into the alternate screen (a blank one, the main one kept) or back to the main one.
-    fn alternate(&mut self, on: bool) {
-        if on && self.main.is_none() {
-            let blank = vec![vec![BLANK; self.cols]; self.rows];
-            let grid = std::mem::replace(&mut self.grid, blank);
-            self.main = Some((grid, self.row, self.col));
-        } else if !on && let Some((grid, row, col)) = self.main.take() {
-            self.grid = grid;
-            (self.row, self.col) = (row.min(self.rows - 1), col.min(self.cols - 1));
         }
     }
 }
@@ -1563,6 +1801,95 @@ mod tests {
             }
             assert_eq!(s.own_run(), case["run"].as_u64(), "{}", case["name"]);
         }
+    }
+
+    /// Ticket 155c, the review of #318: the core's screen takes a repaint as the same screen only
+    /// where xterm.js draws the same, on one shared table that repaints.test.ts runs through a
+    /// real xterm.js.
+    #[test]
+    fn repaints_match_the_shared_cases() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/repaints.json")).unwrap();
+        let mut wrong = Vec::new();
+        for case in fixture["cases"].as_array().unwrap() {
+            let mut s = Screen::new(24, 80);
+            s.feed(case["before"].as_str().unwrap().as_bytes());
+            let shot = s.snapshot();
+            s.feed(case["after"].as_str().unwrap().as_bytes());
+            if s.matches(&shot) != (case["kind"] == "same") {
+                wrong.push(format!("{} ({})", case["name"], case["kind"]));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Ticket 155c, the review of #318: the core's verdicts on random repaints are the ones
+    /// recorded, which repaints.test.ts checks against a real xterm.js (wherever the core says
+    /// "the same", xterm.js must show the same). After a change to this screen, regenerate them:
+    /// `ROSTER_WRITE_REPAINT_FUZZ=1 cargo test -p roster-core --lib repaint_fuzz`.
+    #[test]
+    fn repaint_fuzz_verdicts_are_the_recorded_ones() {
+        const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/repaint-fuzz.json");
+        let mut fixture: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(PATH).unwrap()).unwrap();
+        let before = fixture["before"].as_str().unwrap().to_string();
+        let mut differ = Vec::new();
+        for case in fixture["cases"].as_array_mut().unwrap() {
+            let mut s = Screen::new(24, 80);
+            s.feed(before.as_bytes());
+            let shot = s.snapshot();
+            s.feed(case["after"].as_str().unwrap().as_bytes());
+            let same = s.matches(&shot);
+            if case["same"].as_bool() != Some(same) {
+                differ.push(case["after"].clone());
+                case["same"] = same.into();
+            }
+        }
+        if std::env::var_os("ROSTER_WRITE_REPAINT_FUZZ").is_some() {
+            std::fs::write(PATH, serde_json::to_string_pretty(&fixture).unwrap() + "\n").unwrap();
+        } else {
+            assert!(
+                differ.is_empty(),
+                "{} verdicts differ, first {:?}",
+                differ.len(),
+                differ.first()
+            );
+        }
+    }
+
+    /// The review of #318 (#9): styles are values, with no table to fill: a long true-colour
+    /// session (more colours than any table roster kept) still compares a repaint as the same.
+    #[test]
+    fn a_long_true_colour_session_still_matches() {
+        let mut s = Screen::new(24, 80);
+        for i in 0..20_000u32 {
+            s.feed(format!("\x1b[38;2;{};{};{}mx", i % 256, (i / 256) % 256, i % 7).as_bytes());
+            if i % 80 == 79 {
+                s.feed(b"\r\n");
+            }
+        }
+        s.feed(b"\x1b[m\r\n[sudo] password for ops: ");
+        let shot = s.snapshot();
+        s.feed(b"\x1b[?25l\x1b[38;2;9;9;9m\x1b[30X\x1b[m\x1b[24;26H\x1b[?25h");
+        assert!(s.matches(&shot), "{}", s.diff(&shot));
+    }
+
+    /// The review of #318 (#10): the log describes the styles the snapshot's cells had, after a
+    /// full reset too.
+    #[test]
+    fn a_diff_names_the_snapshots_own_styles() {
+        let mut s = screen(b"\x1b[H\x1b[92mx\x1b[m\x1b[1;2H");
+        let shot = s.snapshot();
+        s.feed(b"\x1bc\x1b[31mx\x1b[m\x1b[1;2H");
+        assert_eq!(
+            s.diff(&shot).to_string(),
+            "row 1 styles only (column 1: fg 92 -> 31); unmodelled: ESCc"
+        );
+        let mut s = screen(b"\x1b[2;1H");
+        let shot = s.snapshot();
+        s.feed("\u{4e2d}\x1b[2;1H".as_bytes());
+        assert_eq!(
+            s.diff(&shot).to_string(),
+            "a wide or zero-width character is on the screen; row 2 characters (column 1); unmodelled: wide character"
+        );
     }
 
     /// The review of #308 (#4): a string CAN or SUB aborts is over, and what follows is drawn.
@@ -1816,7 +2143,7 @@ mod tests {
     /// hidden and shown, `CSI H`, `CR LF`, `CUF`, `BS`, `ECH`, `EL`, `SGR` as `ESC[m`, `ESC[3Xm`,
     /// `ESC[9Xm`, `ESC[38;5;Nm`, `ESC[38;2;R;G;Bm`, `ESC[39m`, `ESC[49m`, `ESC[22m`, curly
     /// underlines and their colour as `4:3` and `58:5:N`, the window title, hyperlinks, the
-    /// cursor's blink and shape, `ESC[3J`), leaves the screen as it was; the same forms drawing
+    /// cursor's blink and shape), leaves the screen as it was; the same forms drawing
     /// something else don't.
     #[test]
     fn a_conpty_repaint_of_the_same_screen_leaves_it_as_it_was() {
@@ -1832,9 +2159,9 @@ mod tests {
             // The same colours in other forms of the same SGR.
             b"\x1b[?25l\x1b[1;1H\x1b[01;92mops@esx-02\x1b[0m:~$ sudo -v\x1b[2;26H\x1b[?25h",
             b"\x1b[H\x1b[92;1mops@esx-02\x1b[39;49;22m:~$\x1b[2;26H",
-            // A title, a hyperlink's end, the cursor's blink and shape, the scrollback cleared,
-            // the cursor moved back by BS and CUF.
-            b"\x1b]0;sudo\x07\x1b]8;;\x1b\\\x1b[?12l\x1b[?12h\x1b[2 q\x1b[3J\x1b[2;27H\x08",
+            // A title, a hyperlink's end, the cursor's blink and shape, the cursor moved back by
+            // BS and CUF.
+            b"\x1b]0;sudo\x07\x1b]8;;\x1b\\\x1b[?12l\x1b[?12h\x1b[2 q\x1b[2;27H\x08",
             b"\x1b[2;1H\x1b[25C",
             // 256 colours and true colour, set and back.
             b"\x1b[38;5;196m\x1b[48;2;1;2;3m\x1b[58:5:4m\x1b[4:3m\x1b[m\x1b[2;26H",
@@ -1898,7 +2225,7 @@ mod tests {
         );
         assert_eq!(
             diff(b"\x1b[3g\x1b[1;2;3;4;5;6;7;8;9;10;11b\x1bH\x1b(0\x1b(B\x1b[2;26H"),
-            "unmodelled: CSI[3g CSI[1;2;3;4;5;6;7;8;…b ESCH ESC(0"
+            "unmodelled: CSI[3? CSI[1;2;3;4;5;6;7;8;…? ESCH ESC(0"
         );
         assert_eq!(diff(b"\x1b[?1049h"), "the alternate screen came up");
         let mut s = screen(PROMPT);
@@ -1912,9 +2239,9 @@ mod tests {
         );
         // At most 8 rows, and the last 16 unmodelled things, then how many more.
         let many = diff(&[&b"\x1b[3g".repeat(20)[..], b"\x1b[3;1H", &b"x\r\n".repeat(12)].concat());
-        assert!(many.contains("; and 4 more rows changed; unmodelled: CSI[3g"), "{many}");
-        assert!(many.ends_with("CSI[3g and 4 more"), "{many}");
-        assert_eq!(many.matches("CSI[3g").count(), 16, "{many}");
+        assert!(many.contains("; and 4 more rows changed; unmodelled: CSI[3?"), "{many}");
+        assert!(many.ends_with("CSI[3? and 4 more"), "{many}");
+        assert_eq!(many.matches("CSI[3?").count(), 16, "{many}");
         // No printed text, wherever it went.
         for out in [
             &b"\x1b[2;1Hhunter2"[..],
@@ -2048,7 +2375,11 @@ mod tests {
             said(b"\x1b[2 q\x1b[>1x"),
             "CSI[params(2)? CSI[params(2)?; something roster's screen doesn't model"
         );
-        assert_eq!(said(b"\x1b[?h\x1b[?1049l"), "CSI[?? CSI[?1049l");
+        // DECRC as xterm.js does it, the alternate screen up or not.
+        assert_eq!(
+            said(b"\x1b[?h\x1b[?1049l"),
+            "CSI[?? CSI[?1049l; the cursor moved from 1:26 to 1:1"
+        );
     }
 
     /// Whether every word of a [`Drawn`] is one of its own: a thing it names (`'*'`, a control's

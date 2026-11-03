@@ -1,0 +1,269 @@
+{
+ "about": "Repaints fed to the core's screen (screen.rs) and to xterm.js (app/src/terminal/repaints.test.ts), from scripts/gen-repaint-cases.py: 'same' leaves both as they were; 'changed' changes both; 'refused' changes what xterm.js shows and the core refuses it; 'refused anyway' the core refuses, whatever xterm.js shows (ticket 155c, the review of #318).",
+ "cases": [
+  {
+   "name": "every row, blanks erased in their buffer colour",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[?25l\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\u001b[37m\u001b[60X\r\n\u001b[m[sudo] password for ops:\u001b[1m\u001b[55X\u001b[22m\r\n\u001b[37m\u001b[K\r\n\u001b[K\u001b[m\u001b[2;26H\u001b[?25h",
+   "kind": "same"
+  },
+  {
+   "name": "trailing blanks written as coloured, italic spaces",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[?25l\u001b[2;1H\u001b[39m[sudo] password for ops:\u001b[93m\u001b[3m    \u001b[23m\u001b[39m\u001b[2;26H\u001b[?25h",
+   "kind": "same"
+  },
+  {
+   "name": "01 for 1, 0 for nothing",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[?25l\u001b[1;1H\u001b[01;92mops@esx-02\u001b[0m:~$ sudo -v\u001b[2;26H\u001b[?25h",
+   "kind": "same"
+  },
+  {
+   "name": "39, 49 and 22 for a reset",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[H\u001b[92;1mops@esx-02\u001b[39;49;22m:~$ \u001b[2;26H",
+   "kind": "same"
+  },
+  {
+   "name": "a title, a hyperlink's end, the cursor's blink and shape, BS",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b]0;sudo\u0007\u001b]8;;\u001b\\\u001b[?12l\u001b[?12h\u001b[2 q\u001b[2;27H\b",
+   "kind": "same"
+  },
+  {
+   "name": "CUF",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;1H\u001b[25C",
+   "kind": "same"
+  },
+  {
+   "name": "256 colours, true colour, curly underline and its colour, set and back",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[38;5;196m\u001b[48;2;1;2;3m\u001b[58:5:4m\u001b[4:3m\u001b[m\u001b[2;26H",
+   "kind": "same"
+  },
+  {
+   "name": "ESC[3J right after ESC[2J, then the screen redrawn",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2J\u001b[3J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "kind": "same"
+  },
+  {
+   "name": "true colour with an empty colour space, as with semicolons",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n\u001b[38;2;1;2;3m[sudo]\u001b[m password for ops: ",
+   "after": "\u001b[2;1H\u001b[38:2::1:2:3m[sudo]\u001b[m\u001b[2;26H",
+   "kind": "same"
+  },
+  {
+   "name": "4: is a single underline, as 4",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n\u001b[4m[sudo]\u001b[m password for ops: ",
+   "after": "\u001b[2;1H\u001b[4:m[sudo]\u001b[m\u001b[2;26H",
+   "kind": "same"
+  },
+  {
+   "name": "blanks erased with a background",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H\u001b[44m\u001b[55X\u001b[m",
+   "kind": "changed"
+  },
+  {
+   "name": "a row erased with a 256-colour background",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[3;1H\u001b[48;5;4m\u001b[K\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "blanks underlined",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H\u001b[4m   \u001b[24m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "a blank reversed",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H\u001b[7m \u001b[27m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "a blank struck through",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H\u001b[9m \u001b[29m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "a blank overlined",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;26H\u001b[53m \u001b[55m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "bold text in 16-colour green, not bright green",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[H\u001b[32m\u001b[1mops@esx-02\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "bold text in true-colour green",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[H\u001b[38;2;0;255;0m\u001b[1mops@esx-02\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "the screen cleared",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2J\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "4: underlines (#318 review, 3)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;1H\u001b[4:m[sudo]\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "4:9 underlines (#318 review, 3)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;1H\u001b[4:9m[sudo]\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "EL 5 leaves the line as it is (#318 review, 1)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[4;1Hevil\u001b[4;1H\u001b[5K\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "ED with a sub-parameter (#318 review, 2)",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n[sudo] password for ops: \r\nmotd\u001b[2;26H",
+   "after": "\u001b[3;1H\u001b[0:3J\u001b[2;26H",
+   "kind": "refused"
+  },
+  {
+   "name": "EL with a sub-parameter (#318 review, 2)",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n[sudo] password for ops: \r\nmotd\u001b[2;26H",
+   "after": "\u001b[3;1H\u001b[0:2K\u001b[2;26H",
+   "kind": "refused"
+  },
+  {
+   "name": "CUP with sub-parameters (#318 review, 2)",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n[sudo] password for ops: \r\nmotd\u001b[2;26H",
+   "after": "\u001b[0:2;2:6H",
+   "kind": "refused"
+  },
+  {
+   "name": "38:2:R:G:B, four sub-parameters (#318 review, 4)",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n\u001b[38;2;1;2;3m[sudo]\u001b[m password for ops: ",
+   "after": "\u001b[2;1H\u001b[38:2:1:2:3m[sudo]\u001b[m\u001b[2;26H",
+   "kind": "refused"
+  },
+  {
+   "name": "past 32 parameters (#318 review, 5)",
+   "before": "\u001b[2J\u001b[H$ sudo -v\r\n\u001b[1m[sudo]\u001b[m password for ops: ",
+   "after": "\u001b[2;1H\u001b[;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;1m[sudo]\u001b[m\u001b[2;26H",
+   "kind": "refused"
+  },
+  {
+   "name": "an SGR keeps a pending wrap",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: \u001b[3;79Ha\u001b[1mc\u001b[m\u001b[2;26H",
+   "after": "\u001b[3;79Hab\u001b[1mc\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "an OSC keeps a pending wrap",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: \u001b[3;79Ha\u001b[1mc\u001b[m\u001b[2;26H",
+   "after": "\u001b[3;79Hab\u001b]0;t\u0007\u001b[1mc\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "a tab keeps a pending wrap",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: \u001b[3;79Ha\u001b[1mc\u001b[m\u001b[2;26H",
+   "after": "\u001b[3;79Hab\t\u001b[1mc\u001b[m\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "an erase to the end from a pending wrap erases nothing there",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[3;80Hx\u001b[K\u001b[2;26H",
+   "kind": "changed"
+  },
+  {
+   "name": "a CR inside a CSI acts",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;20H\u001b[\r6C",
+   "kind": "changed"
+  },
+  {
+   "name": "DECRC restores the colour",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: \u001b[3;1H\u001b[31mx\u001b[m\u001b[2;26H",
+   "after": "\u001b[31m\u001b7\u001b[m\u001b8\u001b[3;1Hx\u001b[m\u001b[2;26H",
+   "kind": "same"
+  },
+  {
+   "name": "the alternate screen and back",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[?1049h\u001b[5;5Hvim\u001b[?1049l",
+   "kind": "same"
+  },
+  {
+   "name": "an inserted line puts the cursor at the line's start",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: \u001b[24;1Hx\u001b[2;26H",
+   "after": "\u001b[24;5H\u001b[Lx\u001b[2;26H",
+   "kind": "same"
+  },
+  {
+   "name": "a scroll down brings in default blanks",
+   "before": "\u001b[2J\u001b[5;1Hx\u001b[5;2H",
+   "after": "\u001b[44m\u001b[S\u001b[T\u001b[m",
+   "kind": "same"
+  },
+  {
+   "name": "BEL doesn't end a DCS",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001bP\u0007abc\u001b\\",
+   "kind": "same"
+  },
+  {
+   "name": "ESC[3J alone (#318 review, 6)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[3J",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a stray UTF-8 continuation after a space (#318 review, 7)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[2;25H \u0080\u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a palette change (OSC 4)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b]4;1;rgb:ff/00/00\u0007",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a wide character",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[3;1H\u4e2d\u001b[3;1H  \u001b[2;26H",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a private CUU",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[?5A",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "SGR 6, which xterm.js ignores",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[6m\u001b[m",
+   "kind": "refused anyway"
+  },
+  {
+   "name": "a CSI with an intermediate (SR)",
+   "before": "\u001b[2J\u001b[H\u001b[92m\u001b[1mops@esx-02\u001b[m:~$ sudo -v\r\n[sudo] password for ops: ",
+   "after": "\u001b[1 A",
+   "kind": "refused anyway"
+  }
+ ]
+}
