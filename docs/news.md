@@ -6,6 +6,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### New
+
+**App**
+
+- **A collapsed cluster on a graph moves whole** (#237): `m` on it, then `h` `j` `k` `l` until Enter keeps the place (Esc puts it back), or drag it. Its nodes go with it and keep their places in it, so it opens looking as it did. It stays where you put it and is remembered as yours: a cluster you put it on moves to the nearest free place, and nothing else does. Before, `m` there said to open the cluster first. See [Graphs](plugins.md#graphs).
+
 ### Changed
 
 **CLI**
