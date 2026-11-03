@@ -6,11 +6,15 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
-### Added
+### New
 
 **CLI**
 
 - **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (the active one wins a name clash). `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
+
+**App**
+
+- **A collapsed cluster on a graph moves whole** (#237): `m` on it, then `h` `j` `k` `l` until Enter keeps the place (Esc puts it back), or drag it. Its nodes go with it and keep their places in it, so it opens looking as it did. It stays where you put it and is remembered as yours: a cluster you put it on moves to the nearest free place, and nothing else does. Before, `m` there said to open the cluster first. See [Graphs](plugins.md#graphs).
 
 ### Changed
 
