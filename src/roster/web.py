@@ -29,6 +29,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def http_request(url, **kw):
+    """A urllib Request, for an http(s) URL only: urlopen would read file: and ftp: URLs too (ruff S310)."""
+    if urlparse(url).scheme not in ("http", "https"):
+        die(f"{url!r} isn't an http(s) URL")
+    return urllib.request.Request(url, **kw)  # noqa: S310 - the scheme is checked above
+
+
 def pick_service(h, name):
     if name:
         s = h["services"].get(name)
@@ -93,13 +100,13 @@ def _open(opener, req, timeout):
 
 def soap_action(opener, base, timeout):
     """'urn:vim25/8.0.3.0' - the newest API version the server speaks (no login needed)."""
-    with _open(opener, urllib.request.Request(base + "/sdk/vimServiceVersions.xml"), timeout) as r:
+    with _open(opener, http_request(base + "/sdk/vimServiceVersions.xml"), timeout) as r:
         m = re.search(r"<name>urn:vim25</name>\s*<version>([^<]+)</version>", r.read().decode(errors="replace"))
     return f"urn:vim25/{m.group(1)}" if m else "urn:vim25"
 
 
 def soap(opener, base, action, body, timeout, cookie=None):
-    req = urllib.request.Request(base + "/sdk", method="POST", data=SOAP.format(body).encode(),
+    req = http_request(base + "/sdk", method="POST", data=SOAP.format(body).encode(),
                                  headers={"Content-Type": "text/xml; charset=utf-8", "SOAPAction": action})
     if cookie:
         req.add_unredirected_header("Cookie", cookie)
@@ -137,7 +144,7 @@ def vsphere_login(opener, base, user, secret, timeout):
 
 def unifi_login(opener, base, user, secret, timeout):
     """Log in through /api/auth/login; returns (cookie header, CSRF token)."""
-    req = urllib.request.Request(base + "/api/auth/login", method="POST",
+    req = http_request(base + "/api/auth/login", method="POST",
                                  data=json.dumps({"username": user, "password": secret, "rememberMe": False}).encode(),
                                  headers={"Content-Type": "application/json"})
     with _open(opener, req, timeout) as r:
@@ -218,7 +225,7 @@ def unifi_session(opener, base, h, name, s, secret, timeout, fresh=False):
 def openvpnas_login(opener, base, user, secret, timeout):
     """Log in through /api/auth/login/userpassword; returns the auth token for X-OpenVPN-As-AuthToken.
     Access Server has no logout call - the token simply expires."""
-    req = urllib.request.Request(base + "/api/auth/login/userpassword", method="POST",
+    req = http_request(base + "/api/auth/login/userpassword", method="POST",
                                  data=json.dumps({"username": user, "password": secret,
                                                   "request_admin": True}).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -240,7 +247,7 @@ def openvpnas_login(opener, base, user, secret, timeout):
 def hub_login(opener, base, user, secret, timeout):
     """Log in through /api/auth/login; returns the bearer access token. The token expires after an hour,
     and there is no logout call. Send JSON: a form body makes HUB echo the password back in its 422 error."""
-    req = urllib.request.Request(base + "/api/auth/login", method="POST",
+    req = http_request(base + "/api/auth/login", method="POST",
                                  data=json.dumps({"username": user, "password": secret}).encode(),
                                  headers={"Content-Type": "application/json"})
     with _open(opener, req, timeout) as r:
@@ -276,7 +283,7 @@ def request(h, service, method, path, data=None, headers=(), insecure=False, tim
         data = Path(data[1:]).expanduser().read_text()
     if s["login"] == "vsphere" and data and urlparse(url).path.startswith("/sdk") and ":Envelope" not in data:
         data = SOAP.format(data.strip())             # bare <urn:Call>...</urn:Call> -> full SOAP request
-    req = urllib.request.Request(url, method=method, data=None if data is None else data.encode())
+    req = http_request(url, method=method, data=None if data is None else data.encode())
     for hd in headers:
         k, sep, v = hd.partition(":")
         if not sep or not k.strip():

@@ -93,7 +93,7 @@ class Repo:
                           fix="keep roster.yml in the infra repo (a git clone), or edit it by hand")
         self.top = Path(top).resolve()
         self.rel = self.path.relative_to(self.top).as_posix()
-        self.git_dir = Path(out(self.top, "rev-parse", "--absolute-git-dir"))
+        self.git_dir = Path(out(self.top, "rev-parse", "--absolute-git-dir") or self.top / ".git")
         if git(self.top, "ls-files", "--error-unmatch", "--", self.rel).returncode != 0:
             raise Problem(NOT_A_REPO, f"{self.rel} isn't committed in {self.top} yet, so it can't have Pending "
                                       "changes", {"path": str(self.path)},

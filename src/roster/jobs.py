@@ -65,7 +65,7 @@ class Job:
         self.on_stop, self.on_close = on_stop, on_close   # on_close: also run when serve closes (end it now)
         self.lock = threading.Lock()
         self.changed = threading.Condition(self.lock)   # notified when it ends, and by wake()
-        self.thread = None
+        self.thread: threading.Thread | None = None
         self.pushed = 0.0
         self.push_lock = threading.Lock()
         self.later = None                       # the Timer that sends progress held back by PUSH_EVERY
@@ -214,12 +214,13 @@ class Jobs:
             self.counts[kind] = self.counts.get(kind, 0) + 1
             new = Job(self, kind, job if job is not None else f"{job_prefix}{self.counts[kind]}" if job_prefix
                       else self.counts[kind], action, total, host, on_stop, on_close)
-            new.thread = threading.Thread(target=new.run, args=(work,), name=f"job-{kind}-{new.job}", daemon=True)
+            thread = new.thread = threading.Thread(target=new.run, args=(work,), name=f"job-{kind}-{new.job}",
+                                                   daemon=True)
             self.latest_of[slot] = new
             # Started before anyone can see it (close() joins it), and its start told before anything it pushes.
             with new.push_lock:
                 first = new.view()              # as it starts: its work may move on before this goes out
-                new.thread.start()
+                thread.start()
                 if self.notify is not None:
                     self.notify("job.progress", first)
         return new
