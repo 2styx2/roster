@@ -323,10 +323,12 @@ def cmd_discover(args):
     group = args.group or f"discovered-{today.replace('-', '')}"
     group = unique(group, set(cfg["groups"]) if cfg else set())
     if args.json:
-        jsonout.emit({"targets": [str(n) if n.num_addresses > 1 else str(n.network_address) for n in nets],
-                      "addresses": total, "ports": args.top_ports or len([p for p in args.ports.split(",") if p.strip()]),
-                      "scanner": "nmap" if use_nmap else "built-in", "count": len(found), "quiet": len(quiet),
-                      "found": [found_record(r, known, taken, today) for r in found], "group": group})
+        from . import jsondocs
+        doc = {"targets": [str(n) if n.num_addresses > 1 else str(n.network_address) for n in nets],
+               "addresses": total, "ports": args.top_ports or len([p for p in args.ports.split(",") if p.strip()]),
+               "scanner": "nmap" if use_nmap else "built-in", "count": len(found), "quiet": len(quiet),
+               "found": [found_record(r, known, taken, today) for r in found], "group": group}
+        jsonout.emit(jsondocs.DiscoverDoc.model_validate(doc))
         return 0
     entries = [scan_entry(r, taken, today) for r in new]
     say(f"\nfound        {len(found)} hosts with open ports: {len(new)} new, {len(already)} already in roster.yml"
