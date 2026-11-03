@@ -65,8 +65,9 @@ const EXIT = /^\s*(exit|logout)(\s+\S+)?\s*$/;
 
 export class CommittedLines {
   private readonly term: Terminal;
-  /** A huge CSI count capped before the terminal reads it (csiClamp.ts). */
-  private readonly clamp = new CsiClamp();
+  /** A huge CSI count capped before the terminal reads it, and ED 1 drawn without throwing
+   * (csiClamp.ts). */
+  private readonly clamp: CsiClamp;
   /** Per row of the screen: the text taken from the line that starts there. */
   private taken: (string | undefined)[];
   private runs: Run[] = [];
@@ -90,6 +91,7 @@ export class CommittedLines {
 
   constructor(size: ScreenSize) {
     this.term = new Terminal({ cols: size.cols, rows: size.rows, scrollback: 0, allowProposedApi: false });
+    this.clamp = new CsiClamp(this.term);
     this.taken = new Array<string | undefined>(size.rows).fill(undefined);
     // A scroll moves every row up one: so does what was taken from them.
     this.term.onScroll(() => {

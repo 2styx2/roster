@@ -5,6 +5,12 @@
 // feeds a Session's output to (the tab's own, PromptWatch's, CommittedLines', the shell hooks'
 // prompt screen) takes it through a CsiClamp first. First written for the prompt screen (ticket
 // 159, #298), shared from here.
+//
+// Bound to its xterm, a CsiClamp also writes each ED 1 so that xterm.js 6.0.0 doesn't throw on it
+// (ticket 172, #323; decision Q158; xtermGuard.ts).
+
+import type { Terminal } from "@xterm/xterm";
+import { ed1Pair, guardXterm } from "./xtermGuard";
 
 /** The largest CSI parameter an xterm is given: more than any screen's rows or columns, so a
  * move, an erase, an insert, a scroll or a tab stop draws the same as with the count sent. Only
@@ -28,6 +34,10 @@ const C2 = 0xc2;
 /** U+009B, the C1 form of `ESC [` (UTF-8 C2 9B), which xterm.js parses as a CSI. */
 const C1_CSI = 0x9b;
 const ZERO = 0x30;
+const ONE = 0x31;
+const QUESTION = 0x3f;
+/** ED's final byte (`ESC[nJ`, erase in display). */
+const ED = 0x4a;
 const NINE = 0x39;
 
 const enum St {
@@ -54,6 +64,8 @@ const runsInPlace = (c: number) => c < 0x20 && c !== ESC && c !== CAN && c !== S
  * backspace, a line feed), and between `ESC` and `[`, come out where they are, as a terminal runs
  * them there. Everything else, OSC and DCS strings included, passes as it came. */
 export class CsiClamp {
+  /** Bound to an xterm: each ED 1 goes out as xtermGuard.ts's tagged pair (ticket 172). */
+  private readonly ed1: boolean;
   private state: St = St.Text;
   /** The CSI's introducer as it came (`ESC [` or `C2 9B`). */
   private intro: number[] = [];
@@ -63,6 +75,14 @@ export class CsiClamp {
   private digits: number[] = [];
   private params = 0;
   private intermediates = 0;
+
+  /** A clamp for the output fed to `term`, if given: then `term` is guarded (xtermGuard.ts) and
+   * every ED 1 (`ESC[1J`, DECSED `ESC[?1J`) is written so that xterm.js 6.0.0 draws it as a correct
+   * terminal does instead of throwing, which stops the xterm's writes for good (ticket 172, #323). */
+  constructor(term?: Terminal) {
+    this.ed1 = term !== undefined;
+    if (term) guardXterm(term);
+  }
 
   /** `data` with every CSI count capped; `data` itself when it comes out as it came. */
   clamp(data: Uint8Array): Uint8Array;
@@ -169,7 +189,9 @@ export class CsiClamp {
       this.intermediates++;
       this.seq.push(c);
     } else if (c >= 0x40 && c <= 0x7e) {
-      out.push(...this.intro, ...this.seq, c);
+      if (this.ed1 && c === ED && isEd1(this.seq)) {
+        out.push(...new TextEncoder().encode(ed1Pair(this.seq[0] === QUESTION ? "?" : "")));
+      } else out.push(...this.intro, ...this.seq, c);
       this.state = St.Text;
     } else if (c === ESC) {
       this.unfinished(out);
@@ -187,6 +209,21 @@ export class CsiClamp {
       this.state = St.Text;
     }
   }
+}
+
+/** Whether a CSI's parameter bytes, ending in `J`, make an ED 1 as xterm.js reads it: an optional
+ * `?`, then a first parameter of 1 (leading zeros already gone), anything after it only more
+ * parameters and sub-parameters, which ED ignores. */
+function isEd1(seq: number[]): boolean {
+  const at = seq[0] === QUESTION ? 1 : 0;
+  if (seq[at] !== ONE) return false;
+  const next = seq[at + 1];
+  if (next !== undefined && next !== 0x3a && next !== 0x3b) return false;
+  for (let i = at + 1; i < seq.length; i++) {
+    const c = seq[i] ?? 0;
+    if (c < ZERO || c > 0x3b) return false;
+  }
+  return true;
 }
 
 function same(out: number[], data: Uint8Array): boolean {

@@ -117,8 +117,9 @@ interface HopState {
 
 export class PromptWatch {
   private readonly term: Terminal;
-  /** A huge CSI count capped before the terminal reads it (csiClamp.ts). */
-  private readonly clamp = new CsiClamp();
+  /** A huge CSI count capped before the terminal reads it, and ED 1 drawn without throwing
+   * (csiClamp.ts). */
+  private readonly clamp: CsiClamp;
   private readonly user: string;
   private readonly hops: HopSource | null;
   /** The Session's token in roster's own marks (the hook line's), if it has one. */
@@ -165,6 +166,7 @@ export class PromptWatch {
     this.hops = hops;
     this.nonce = nonce;
     this.term = new Terminal({ cols: size.cols, rows: size.rows, scrollback: SCROLLBACK, allowProposedApi: false });
+    this.clamp = new CsiClamp(this.term);
     this.term.onLineFeed(() => this.lineFeed());
     this.term.parser.registerOscHandler(133, (data) => {
       this.mark(data);

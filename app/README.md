@@ -205,7 +205,8 @@ app/scripts/linux-run.sh  the Linux build (ticket 20, docs/app/dev/linux.md): `b
 app/e2e/              copy and paste end to end (T158): TerminalView in headless Chromium through Vite, a fake
                       Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md)
 app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it's shown (questions go through)
-app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153)
+app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153); draws ED 1 safely (T172, Q158)
+app/src/terminal/xtermGuard.ts  what keeps an xterm fed a Session's output going when xterm.js throws: ED 1's tagged pair, handlers that throw skipped (T172, Q158)
 ```
 
 **Checks** (run all before a commit):
