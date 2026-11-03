@@ -20,6 +20,7 @@ from .sshops import (
     fingerprint,
     host_block,
     in_ssh_config,
+    left_out,
     offered_host_key,
     recorded_host_keys,
     start_transport,
@@ -184,6 +185,10 @@ def step_ssh_config(ctx):
                       fix="install OpenSSH (openssh-client)")
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
     if not in_ssh_config(h["name"]):
+        why = left_out(h["name"])
+        if why:
+            raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
+                                                       "Inventory the active one (`roster inv use`)")
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
     want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
     if have != want:

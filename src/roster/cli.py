@@ -799,9 +799,13 @@ def cmd_inv(args):
             say(f"note: ROSTER_CONFIG is set ({os.environ['ROSTER_CONFIG']}), and it comes before the active "
                 "Inventory: unset it for roster to use this one")
         return 0
-    was_active = inventories.remove(args.name)
+    was_active, kept = inventories.remove(args.name)
     say(f"forgot {args.name} (its roster.yml stays where it is)"
         + ("; no Inventory is active now (`roster inv use NAME` picks one)" if was_active else ""))
+    if kept:
+        say(f"its host keys are in {kept} now, so another Inventory named {args.name} starts without them")
+    if not inventories.load().inventories:
+        say("note: no named Inventories are left: run `roster sync` so ~/.ssh/config reaches this Box's Hosts again")
     return 0
 
 

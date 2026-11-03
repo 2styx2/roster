@@ -10,7 +10,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (the active one wins a name clash). `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
+- **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (on a name clash only the active one's is there). Each one starts with the host keys this Box already recorded, so nothing is trusted anew. `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
 
 **App**
 
@@ -26,6 +26,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`init.lua` has a version of its own:** `roster.config_version` (read-only, `4` for v0.3.0's `roster.o` shape) rises only when a name in `init.lua`'s `roster` table or an option is removed, renamed or changes what it does, so a Config can tell what a name can't. `roster.api_version` is the Plugin API's version, which rises with Plugin-only changes too; it's no longer the way to tell what `init.lua` has (decision Q165). See [Feature detection](app/config.md#feature-detection) and `:help roster.config_version`.
 - **A Host's row in the Sidebar has a menu instead of buttons** (#314): selecting a Host no longer shows ⓘ, ✓, ✎ and × on its row. Right-click it, or press the Menu key or Shift+F10 on it in App mode (`menu`), for Open, New Session, Details, Check, Edit, Rename, Move to another group, Add to a Folder, Remove from the Inventory and any Plugin's own actions on that row (a Folder's "Remove from Lab"), each running the same command its button or key did, with the keys shown beside it. It's a keyboard and screen-reader menu: arrows, Home/End, a letter, Enter, Esc (decision Q156). Groups, Folders and Sessions keep their buttons. See [The Sidebar](app/keyboard.md#the-sidebar).
+
+### Security
+
+**CLI**
+
+- **`key_path:` in roster.yml can no longer add lines to this Box's ssh config** (security): a `key_path` with a quote or a newline in it could add directives, such as `ProxyCommand`, for every `ssh` on every Box that synced that roster.yml. roster now refuses such a `key_path` when it loads, and every path it writes into an ssh config goes through one check that refuses quotes and control characters (and writes a `%` as `%%` where ssh expands tokens). Host and group names with a trailing newline are refused too.
 
 ### Fixed
 

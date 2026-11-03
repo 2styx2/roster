@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, die, oneline, use_inventory, user_config_dir
+from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, SSH_UNSAFE, die, oneline, use_inventory, user_config_dir
 from .providers import NO_PASSWORD
 from .resources import load_resources
 
@@ -35,7 +35,7 @@ def find_config(arg, inv=None):
     this run reads and writes: the named Inventory's own when the file is one (common.use_inventory)."""
     from . import inventories  # Pydantic: only once a roster.yml is looked for
     path = locate_config(arg, inv)
-    use_inventory(inv if inv and not arg else inventories.name_of(path))
+    use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path))
     return path
 
 
@@ -150,7 +150,10 @@ def parse_inventory(text, path):
     if not hosts:
         die(f"{path} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
-    key = Path(os.path.expanduser(str(raw.get("key_path") or "~/.ssh/roster_ed25519")))
+    key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
+    if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
+        die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
+    key = Path(os.path.expanduser(key_path))
     # matches this box's key line in authorized_keys, including tags from older versions
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
     try:

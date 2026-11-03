@@ -718,3 +718,69 @@ fn windows_roster_is_asked_which_inventory_it_uses_from_the_home_folder() {
     );
     assert_eq!(r.dirs.borrow().as_slice(), &[r"C:\Users\you".to_string()]);
 }
+
+/// The real probe holds `roster inv which` to a timeout (15 s; `ROSTER_PROBE_SECS` here) and then
+/// looks where the app used to: a roster that hangs never leaves the app connecting forever.
+#[cfg(unix)]
+#[test]
+fn the_real_probe_gives_up_on_a_roster_that_hangs() {
+    use std::os::unix::fs::PermissionsExt;
+    if std::process::Command::new("timeout").arg("--help").output().is_err() {
+        return; // no coreutils timeout here: the probe then waits, as before
+    }
+    let tmp = common::temp("detect-hangs");
+    let home = tmp.to_path_buf();
+    let h = home.to_str().unwrap().to_string();
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    std::fs::create_dir_all(home.join("infra")).unwrap();
+    std::fs::write(home.join("infra/roster.yml"), "hosts: []\n").unwrap();
+    let program = home.join("bin/roster");
+    std::fs::write(&program, "#!/bin/sh\nexec sleep 30\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    struct Quick(std::path::PathBuf);
+    impl Runner for Quick {
+        fn run(&self, argv: &[String], env: &[(&str, &str)]) -> std::io::Result<Output> {
+            let mut all = env.to_vec();
+            all.extend([
+                ("HOME", self.0.to_str().unwrap()),
+                ("ROSTER_CONFIG", ""),
+                ("ROSTER_PROBE_SECS", "1"),
+            ]);
+            roster_core::detect::SystemRunner.run(argv, &all)
+        }
+    }
+    let start = std::time::Instant::now();
+    let c = detect(
+        &Quick(home.clone()),
+        Platform::Linux,
+        &roster_command(Some("~/bin/roster")),
+        None,
+    )
+    .unwrap();
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(20),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(c.serve_argv[c.serve_argv.len() - 2], format!("{h}/infra/roster.yml"));
+}
+
+#[cfg(unix)]
+#[test]
+fn asking_native_roster_is_held_to_a_timeout() {
+    let start = std::time::Instant::now();
+    let e = roster_core::detect::run_with_timeout(
+        &s(&["sh", "-c", "sleep 30"]),
+        &[],
+        "/",
+        std::time::Duration::from_millis(500),
+    )
+    .unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    let o =
+        roster_core::detect::run_with_timeout(&s(&["sh", "-c", "pwd"]), &[], "/", std::time::Duration::from_secs(10))
+            .unwrap();
+    assert_eq!((o.code, o.stdout.trim()), (Some(0), "/"));
+}

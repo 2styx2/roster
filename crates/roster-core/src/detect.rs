@@ -121,6 +121,66 @@ pub trait Runner {
     }
 }
 
+/// How long native Windows roster may take to say which Inventory it uses (`roster inv which`)
+/// before detection gives up on it and looks where it used to: a roster that hangs (an antivirus
+/// scan, a home folder on a network drive) must not leave the app connecting forever. The WSL
+/// probe holds `roster inv which` to the same, with `timeout`.
+pub const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Run `argv` in `dir` and wait at most `limit`: past it the process is killed and the answer is
+/// a `TimedOut` error. Its output is read as it comes, so a chatty process can't block on a full pipe.
+pub fn run_with_timeout(
+    argv: &[String],
+    env: &[(&str, &str)],
+    dir: &str,
+    limit: std::time::Duration,
+) -> std::io::Result<Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut c = Command::new(&argv[0]);
+    c.args(&argv[1..])
+        .envs(env.iter().copied())
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::rpc::no_console_window(&mut c);
+    let mut child = c.spawn()?;
+    let reader = |r: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut r) = r {
+                let _ = r.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = reader(child.stdout.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
+    let err = reader(child.stderr.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait()? {
+            break st;
+        }
+        if start.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("{} didn't answer within {} s", argv[0], limit.as_secs()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    Ok(Output {
+        code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    })
+}
+
 /// Runs commands for real (with no console window on Windows).
 pub struct SystemRunner;
 
@@ -140,18 +200,7 @@ impl Runner for SystemRunner {
     }
 
     fn run_in(&self, argv: &[String], env: &[(&str, &str)], dir: &str) -> std::io::Result<Output> {
-        let mut c = Command::new(&argv[0]);
-        c.args(&argv[1..])
-            .envs(env.iter().copied())
-            .current_dir(dir)
-            .stdin(std::process::Stdio::null());
-        crate::rpc::no_console_window(&mut c);
-        let o = c.output()?;
-        Ok(Output {
-            code: o.status.code(),
-            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        })
+        run_with_timeout(argv, env, dir, ASK_TIMEOUT)
     }
 
     fn var(&self, name: &str) -> Option<String> {
@@ -177,9 +226,9 @@ pub fn roster_command(override_value: Option<&str>) -> Vec<String> {
 /// program resolves (a leading `~` means the target's home: no shell expands it, as the program
 /// comes in quoted), then `home=$HOME`, `path=<the login PATH>` and `inventory=<path>` (empty when
 /// there's none). The Inventory is the one roster itself says it uses (`roster inv which`, run from
-/// `$HOME` as serve is), so the app and the CLI agree on the file (ticket 115). Only a roster too old
-/// to answer, or one that finds none, falls back to the places the app looked before: those, plus
-/// `~/infra/roster.yml`.
+/// `$HOME` as serve is, for at most 15 s), so the app and the CLI agree on the file (ticket 115).
+/// Only a roster too old to answer, one that hangs, or one that finds none, falls back to the
+/// places the app looked before: those, plus `~/infra/roster.yml`.
 const PROBE: &str = r#"PATH="$HOME/.local/bin:$PATH"
 case $1 in "~" | "~/"*) set -- "$HOME${1#"~"}" "${@:2}" ;; esac
 p=$(command -v -- "$1") || exit 0
@@ -193,7 +242,9 @@ while [ "$n" -gt 0 ]; do
   case $a in "~" | "~/"*) a="$HOME${a#"~"}" ;; esac
   set -- "$@" "$a"
 done
-f=$(cd "$HOME" && "$p" "$@" inv which 2>/dev/null)
+t=
+if command -v timeout >/dev/null 2>&1; then t="timeout ${ROSTER_PROBE_SECS:-15}"; fi
+f=$(cd "$HOME" && $t "$p" "$@" inv which 2>/dev/null)
 case $f in /*) if [ -e "$f" ]; then echo "inventory=$f"; exit 0; fi ;; esac
 for f in "$ROSTER_CONFIG" "$HOME/roster.yml" "$HOME/.config/roster/roster.yml" "$HOME/infra/roster.yml"; do
   if [ -n "$f" ] && [ -e "${f/#\~/$HOME}" ]; then echo "inventory=${f/#\~/$HOME}"; exit 0; fi

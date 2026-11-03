@@ -15,7 +15,7 @@ from typing import Any, NoReturn
 
 KEY_TAG = "roster-managed"
 LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 WINDOWS = os.name == "nt"                  # roster running natively on Windows (not in WSL)
 
 
@@ -67,6 +67,33 @@ def user_config_dir() -> Path:
     if WINDOWS:
         return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "roster"
     return Path.home() / ".config" / "roster"
+
+
+# What may never go into a value roster writes into an ssh config file: a quote would end the value and a control
+# character (a newline above all) the line, so the rest would be read as directives of its own (PR #335's review, P1).
+SSH_UNSAFE = re.compile(r'["\x00-\x1f\x7f]')
+
+
+def replace_file(path: Path, text: str, mode: int = 0o600) -> None:
+    """Write TEXT to PATH whole or not at all: a new file beside it (a name of its own, so two writers can't take each
+    other's), then renamed over it. A symlink is followed, so its target is what changes; the file keeps the mode it
+    has (MODE for a new one)."""
+    import tempfile
+    target = Path(os.path.realpath(path))
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        keep = target.stat().st_mode & 0o7777
+    except FileNotFoundError:
+        keep = mode
+    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".new", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.chmod(tmp, keep)
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def ssh_path(path: str | Path) -> str:

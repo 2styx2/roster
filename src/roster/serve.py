@@ -109,7 +109,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     write_problem,
 )
 from .providers import PROVIDERS, setup_providers
-from .sshops import fingerprint, in_ssh_config, record_host_key, recorded_host_keys
+from .sshops import fingerprint, in_ssh_config, left_out, record_host_key, recorded_host_keys
 
 API_VERSION = 27            # bump when a method or result changes in a way the app has to know about
 
@@ -324,6 +324,10 @@ def session_prepare(state, params):
     if ssh is None:
         raise RpcError(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
     if not in_ssh_config(h["name"]):
+        why = left_out(h["name"])
+        if why:
+            raise RpcError(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
+                                                "active one (`roster inv use`)")
         raise RpcError(NOT_SET_UP, f"{h['name']} isn't in this box's ssh config ({ssh_config_file()}) - "
                                    "run `roster sync`, or `roster setup` if this box isn't set up yet")
     # What the Session connects to (API 25): the core sends it back with a prompt fill, so a Host edited since isn't

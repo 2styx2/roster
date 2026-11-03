@@ -101,8 +101,9 @@ def test_each_inventory_has_its_own_files_and_syncing_one_leaves_the_other_alone
     assert {f: f.read_bytes() for f in work_files} == work_files            # untouched
     assert not (d / "config.d/roster").exists()                              # no unnamed file was written
     index = (d / "config.d/roster.inventories").read_text().splitlines()
-    assert [ln for ln in index if ln.startswith("Include")] == [
-        inc(d / "config.d/roster-work"), inc(d / "config.d/roster-home")]
+    assert [ln for ln in index if ln.startswith("# from ")] == [
+        f"# from {ssh_path(d / 'config.d/roster-work')}", f"# from {ssh_path(d / 'config.d/roster-home')}"]
+    assert [ln for ln in index if ln.startswith("Host ")] == ["Host build-pi", "Host esx", "Host pi"]
     main_config = (d / "config").read_text()
     assert inc(d / "config.d/roster.inventories") in main_config and "config.d/roster-" not in main_config
     # each Inventory's Hosts check their keys in its own known_hosts
@@ -110,7 +111,7 @@ def test_each_inventory_has_its_own_files_and_syncing_one_leaves_the_other_alone
 
     run(capsys, "inv", "use", "home")                     # the active one comes first: it wins a name clash
     index = (d / "config.d/roster.inventories").read_text().splitlines()
-    assert [ln for ln in index if ln.startswith("Include")][0] == inc(d / "config.d/roster-home")
+    assert [ln for ln in index if ln.startswith("# from ")][0] == f"# from {ssh_path(d / 'config.d/roster-home')}"
 
 
 def test_inv_runs_one_command_against_another_inventory(two, capsys):
@@ -195,7 +196,8 @@ def test_the_same_host_name_or_address_with_other_keys_is_a_warning(two, capsys,
     known(isolated, "work", f"10.0.0.5 ssh-ed25519 {KEY_A}")
     known(isolated, "home", f"10.0.0.5 ssh-ed25519 {KEY_B}")
     messages = {c["topic"]: c["message"] for c in box_warnings(capsys) if c["level"] == "warn"}
-    assert messages["E194"] == "`esx` is a Host in both work and home: `ssh esx` reaches work's (the active Inventory)"
+    assert messages["E194"] == ("`esx` is a Host in both work and home: `ssh esx` reaches work's (the active "
+                                "Inventory); home's `esx` is left out of this Box's ssh config")
     assert messages["E195"] == ("`build-pi` in work and `nas` in home are both 10.0.0.5:22, with different host "
                                 "keys: two networks with the same addresses?")
 
@@ -270,3 +272,240 @@ def test_the_apps_probe_finds_the_file_the_cli_uses(two, capsys, isolated):
     out = subprocess.run(["bash", "-c", probe, "probe", sys.executable, "-m", "roster"], env=env,
                          capture_output=True, text=True, timeout=60).stdout
     assert f"inventory={two['home'].resolve()}" in out.splitlines()
+
+
+# ---------------------------------------------------------------- PR #335's review: trust, injection, clashes, cleanup
+
+import os  # noqa: E402
+import shutil  # noqa: E402
+import stat  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+REAL_SSH = shutil.which("ssh")
+needs_ssh = pytest.mark.skipif(REAL_SSH is None or os.name == "nt", reason="asks the real ssh what it resolves (ssh -G)")
+posix_modes = pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+
+
+def resolved(isolated, host):
+    """What the real ssh makes of HOST with this Box's ~/.ssh/config: {option: [values]} (ssh -G, no connection)."""
+    r = subprocess.run([REAL_SSH, "-F", str(ssh(isolated) / "config"), "-G", host], capture_output=True, text=True,
+                       timeout=30, check=True)
+    out = {}
+    for line in r.stdout.splitlines():
+        k, _, v = line.partition(" ")
+        out.setdefault(k, []).append(v)
+    return out
+
+
+def test_every_named_inventory_keeps_the_host_keys_the_box_had(two, capsys, isolated):
+    """Review 1: before named Inventories every roster.yml shared ~/.ssh/roster_known_hosts, so each new named one starts
+    with all of it, whichever file the unnamed ssh config was last written from."""
+    run(capsys, "-c", str(two["work"]), "sync")
+    run(capsys, "-c", str(two["home"]), "sync")              # the unnamed config now names home's file
+    shared = f"10.0.0.5 ssh-ed25519 {KEY_A}\n192.168.1.20 ssh-ed25519 {KEY_B}\n"
+    (ssh(isolated) / "roster_known_hosts").write_text(shared)
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    for name in ("work", "home"):
+        assert (ssh(isolated) / f"roster_known_hosts-{name}").read_text() == shared
+
+
+@needs_ssh
+def test_after_naming_both_plain_ssh_checks_each_host_against_its_recorded_key(two, capsys, isolated):
+    run(capsys, "-c", str(two["work"]), "sync")
+    run(capsys, "-c", str(two["home"]), "sync")
+    (ssh(isolated) / "roster_known_hosts").write_text(f"10.0.0.5 ssh-ed25519 {KEY_A}\n")
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    files = resolved(isolated, "build-pi")["userknownhostsfile"][0].split()
+    assert any(f"10.0.0.5 ssh-ed25519 {KEY_A}" in Path(f).read_text() for f in files if Path(f).exists())
+
+
+@pytest.mark.parametrize("name", ['x"\nProxyCommand touch pwned\n#', "work\n", "../up", "work.", "a b"])
+def test_a_hand_edited_name_in_the_list_is_refused_when_it_loads(two, capsys, isolated, name):
+    """Review 2: a name from inventories.json reaches ssh config lines and file names: checked as add checks it."""
+    lst = isolated["home"] / ".config/roster/inventories.json"
+    lst.parent.mkdir(parents=True)
+    lst.write_text(json.dumps({"active": name, "inventories": [{"name": name, "path": str(two["work"])}]}))
+    with pytest.raises(SystemExit, match="inventories.json doesn't load"):
+        main(["inv", "list"])
+    assert not (ssh(isolated) / "config.d").exists()
+
+
+def test_a_relative_path_in_the_list_is_refused(two, isolated):
+    lst = isolated["home"] / ".config/roster/inventories.json"
+    lst.parent.mkdir(parents=True)
+    lst.write_text(json.dumps({"active": None, "inventories": [{"name": "w", "path": "work/roster.yml"}]}))
+    with pytest.raises(SystemExit, match="inventories.json doesn't load"):
+        main(["inv", "list"])
+
+
+@pytest.mark.parametrize("name", ["work\n", "work.", "Work"])
+def test_inv_add_refuses_a_trailing_newline_or_dot_and_a_name_that_differs_only_in_case(two, capsys, name):
+    """Review 3 and 5: `$'work\\n'` broke every ssh on the Box; `Work` and `work.` are `work`'s files on Windows."""
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    with pytest.raises(SystemExit, match="bad Inventory name|already an Inventory named"):
+        main(["inv", "add", name, str(two["home"])])
+
+
+def test_names_with_a_trailing_newline_are_refused_everywhere():
+    """Review 3: the one name rule (Hosts, groups, resources, Inventories) matches the whole name."""
+    from roster.common import NAME_RE
+    assert NAME_RE.match("pi") and not NAME_RE.match("pi\n") and not NAME_RE.match("pi\nx")
+
+
+@needs_ssh
+def test_on_a_name_clash_ssh_sees_only_the_active_inventorys_host(two, capsys, isolated):
+    """Review 4: IdentityFile adds up over every matching block, so the other Inventory's block for the same name must
+    not be there at all: the active one's is the only `Host pi` ssh reads."""
+    two["work"].write_text(WORK + "      pi: {ip: 10.0.0.9}\n")
+    two["home"].write_text("key_path: ~/.ssh/home_key\n" + HOME.replace("auth: agent", "auth: env:HOME_PW"))
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    pi = resolved(isolated, "pi")
+    assert pi["hostname"] == ["10.0.0.9"]
+    assert [Path(f).name for f in pi["identityfile"]] == ["roster_ed25519"]
+    run(capsys, "inv", "use", "home")                      # now home's pi, and only home's key
+    pi = resolved(isolated, "pi")
+    assert pi["hostname"] == ["192.168.1.20"]
+    assert [Path(f).name for f in pi["identityfile"]] == ["home_key"]
+    assert resolved(isolated, "build-pi")["hostname"] == ["10.0.0.5"]       # no clash: still there
+
+
+def test_a_left_out_host_isnt_reported_missing_and_the_warning_says_why(two, capsys, isolated):
+    two["work"].write_text(WORK + "      pi: {ip: 10.0.0.9}\n")
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    main(["--inv", "home", "check", "--box", "--json"])
+    checks = json.loads(capsys.readouterr().out)["checks"]
+    clash = next(c for c in checks if c.get("topic") == "E194")
+    assert clash["message"] == ("`pi` is a Host in both home and work: `ssh pi` reaches work's (the active Inventory); "
+                                "home's `pi` is left out of this Box's ssh config")
+    assert not [c for c in checks if c["section"] == "ssh" and "not in roster's ssh config" in c["message"]]
+
+
+@needs_ssh
+def test_deleting_the_list_by_hand_means_none_are_named(two, capsys, isolated):
+    """Review 6: roster's own fix text says to delete inventories.json; then the next sync is roster's one file again,
+    and the stale index can't win."""
+    two["work"].write_text(WORK + "      pi: {ip: 10.0.0.9}\n")
+    run(capsys, "inv", "add", "h", str(two["home"]))
+    run(capsys, "sync")
+    (isolated["home"] / ".config/roster/inventories.json").unlink()
+    run(capsys, "-c", str(two["work"]), "sync")
+    assert resolved(isolated, "pi")["hostname"] == ["10.0.0.9"]
+    assert not (ssh(isolated) / "config.d/roster.inventories").exists()
+    assert (ssh(isolated) / "config").read_text().count("Include") == 1
+
+
+def test_a_users_own_include_of_the_index_isnt_doubled(two, capsys, isolated):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    cfg = ssh(isolated) / "config"
+    cfg.write_text("Include ~/.ssh/config.d/roster.inventories\n\nHost *\n    ServerAliveInterval 60\n")
+    run(capsys, "sync")
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    assert cfg.read_text() == "Include ~/.ssh/config.d/roster.inventories\n\nHost *\n    ServerAliveInterval 60\n"
+
+
+def test_another_inventorys_load_error_isnt_repeated_here(two, capsys, isolated):
+    """Review 7: home's broken line could hold anything; work's output only says where to look."""
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    two["home"].write_text("groups: [oops-s3cr3t-token\n")
+    main(["check", "--box", "--json"])
+    out = capsys.readouterr().out
+    bad = next(c for c in json.loads(out)["checks"] if c.get("topic") == "E192")
+    assert bad["message"] == "home's roster.yml doesn't load, so it isn't compared with this one"
+    assert "roster --inv home check --box" in bad["fix"]
+    assert "s3cr3t" not in out
+    _, out, err = run(capsys, "sync")
+    assert "s3cr3t" not in out + err
+
+
+@posix_modes
+def test_file_modes(two, capsys, isolated):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    d = ssh(isolated)
+    mode = lambda p: stat.S_IMODE(p.stat().st_mode)  # noqa: E731
+    assert mode(isolated["home"] / ".config/roster/inventories.json") == 0o600
+    assert mode(d / "config") == 0o600 and mode(d / "config.d/roster.inventories") == 0o600
+    assert mode(d / "config.d") == 0o700 and mode(d / "config.d/roster-work") == 0o600
+    (d / "config").chmod(0o640)                            # a mode the user chose is kept
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    assert mode(d / "config") == 0o640
+    assert not list((isolated["home"] / ".config/roster").glob("*.new*"))       # no temp file left behind
+
+
+def test_removing_the_last_one_says_to_sync(two, capsys, isolated):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    _, out, _ = run(capsys, "inv", "remove", "work")
+    assert "run `roster sync`" in out
+
+
+def test_a_removed_names_host_keys_dont_go_to_a_new_file_of_the_same_name(two, capsys, isolated):
+    """Review 10: `inv remove work; inv add work other.yml` must not hand the old file's keys to the new one."""
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    kh = ssh(isolated) / "roster_known_hosts-work"
+    kh.parent.mkdir(exist_ok=True)
+    kh.write_text(f"10.0.0.5 ssh-ed25519 {KEY_A}\n")
+    _, out, _ = run(capsys, "inv", "remove", "work")
+    assert "roster_known_hosts-work" in out                 # says where the old keys went
+    run(capsys, "inv", "add", "work", str(two["home"]))
+    assert not kh.exists() or KEY_A not in kh.read_text()
+    assert list(ssh(isolated).glob("roster_known_hosts-work.removed*"))
+
+
+@needs_ssh
+def test_key_path_cant_inject_ssh_config_lines(write_config, capsys, isolated):
+    """P1 (before named Inventories too): a value roster writes into ssh config can't end its line or its quotes."""
+    write_config('key_path: "~/.ssh/k\\"\\nMatch all\\nProxyCommand touch pwned\\n#"\n' + WORK)
+    with pytest.raises(SystemExit, match="key_path"):
+        main(["sync"])
+    d = ssh(isolated)
+    assert "ProxyCommand" not in "".join(p.read_text() for p in d.rglob("*") if p.is_file()) if d.exists() else True
+
+
+@pytest.mark.parametrize("value", ['/x/"y', "/x/y\nProxyCommand z", "/x/\ty", "/x/\x7fy"])
+def test_the_ssh_config_quoting_refuses_quotes_and_control_characters(value):
+    from roster.sshops import ssh_quote
+    with pytest.raises(ValueError):
+        ssh_quote(value)
+
+
+def test_the_ssh_config_quoting_escapes_percent_for_token_options():
+    from roster.sshops import ssh_quote
+    assert ssh_quote("/home/50%/k", tokens=True) == '"/home/50%%/k"'
+    assert ssh_quote("/home/50%/k") == '"/home/50%/k"'
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the vector was made on Linux (ControlMaster, paths)")
+def test_without_named_inventories_sync_is_byte_for_byte_what_dev_wrote(tmp_path):
+    """tests/vectors/sync-unnamed.json: `roster sync` twice in a temp HOME, made with dev's roster before ticket 115.
+    The ssh config, ~/.ssh/config, the files written and the output are the same, byte for byte."""
+    vectors = Path(__file__).parent / "vectors"
+    want = json.loads((vectors / "sync-unnamed.json").read_text())
+    home = tmp_path / "golden"
+    (home / "inv").mkdir(parents=True)
+    (home / ".ssh").mkdir(mode=0o700)
+    (home / ".ssh/config").write_text("Host *\n    ServerAliveInterval 60\n")
+    yml = home / "inv/roster.yml"
+    yml.write_text((vectors / "sync-unnamed.yml").read_text())
+    env = {k: v for k, v in os.environ.items() if k != "ROSTER_CONFIG"}
+    env.update(HOME=str(home), PYTHONPATH=str(Path(__file__).parent.parent / "src"))
+    outs = [subprocess.run([sys.executable, "-m", "roster", "-c", str(yml), "sync"], env=env, cwd=home,
+                           capture_output=True, text=True, check=True).stdout for _ in range(2)]
+    sub = lambda s: s.replace(str(home), "{HOME}")  # noqa: E731
+    assert [sub(o) for o in outs] == want["stdout"]
+    assert {k: sub((home / k).read_text()) for k in want["files"]} == want["files"]
+    assert sorted(str(p.relative_to(home)) for p in home.rglob("*")) == want["listing"]

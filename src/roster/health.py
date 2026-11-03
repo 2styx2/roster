@@ -136,7 +136,9 @@ def ssh(cfg):
         out.append(check("ssh", "error", f"roster's ssh config ({ours}) isn't written, or ~/.ssh/config doesn't "
                                          "include it", "run `roster sync` (or `roster setup` on a new Box)", "E2"))
     else:
-        missing = [h["name"] for h in hosts if h["name"] not in written]
+        from .inventories import left_out_hosts
+        shadowed = left_out_hosts()         # another named Inventory's Host has the name: warning 146 says so
+        missing = [h["name"] for h in hosts if h["name"] not in written and h["name"] not in shadowed]
         if missing:
             out.append(check("ssh", "warn", f"{count(len(missing), 'Host')} not in roster's ssh config yet: "
                                             f"{names(missing)}", "run `roster sync`", "E2"))
