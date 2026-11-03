@@ -392,6 +392,19 @@ fn version_and_config_dir_are_read_only_fields() {
     assert!(e.message.contains("read-only"), "{e}");
 }
 
+#[test]
+fn config_version_is_init_luas_own_read_only_integer() {
+    // 4 marks v0.3.0's shape (roster.o, the collections' functions); it doesn't follow the
+    // Plugin API's roster.api_version.
+    assert_eq!(
+        says("return { theme = math.type(roster.config_version) .. \"|\" .. roster.config_version }\n"),
+        "integer|4"
+    );
+    let e = err("\n\nroster.config_version = 9\n");
+    assert!(e.message.contains("roster.config_version is read-only"), "{e}");
+    assert_eq!((e.file.as_str(), e.line), ("init.lua", Some(3)), "{e}");
+}
+
 // ---------------------------------------------------------------- roster.packages
 
 #[test]

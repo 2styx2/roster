@@ -12,7 +12,16 @@ end
 
 -- roster.api_version
 do
-  if roster.api_version >= 4 then roster.o.vim = false end
+  print("Plugin API " .. roster.api_version)
+end
+
+-- roster.config_version
+do
+  if (roster.config_version or 0) >= 4 then
+    roster.o.terminal.size = "16pt"
+  else
+    roster.set("terminal.size", "16pt")
+  end
 end
 
 -- roster.version
