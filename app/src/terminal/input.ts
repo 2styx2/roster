@@ -5,7 +5,7 @@
 import type { Terminal } from "@xterm/xterm";
 import { chordOf, type Action, type KeyLike } from "../keymap";
 import type { Clipboard } from "../platform/types";
-import { copyIfSelected, copySelection, pasteClipboard } from "./clipboard";
+import { copiedText, copyIfSelected, copySelection, pasteClipboard, pasteText } from "./clipboard";
 import { isLeaderKey } from "./keys";
 import type { ZoomAction } from "./options";
 
@@ -52,8 +52,8 @@ export const LATE_PASTE_MS = 1000;
 export function wireInput(t: Terminal, host: HTMLElement, deps: InputDeps): () => void {
   // Ctrl+V (`terminal.pasteIfText`): the WebView pastes, as for any text field. Its keydown isn't
   // prevented, so the WebView fires a paste event (before the keyup) with the clipboard as it is
-  // at the key: with text, xterm's own paste listener pastes it (line ends as Enter,
-  // bracketed-paste marks when the program asked for them); with none (empty, an image only),
+  // at the key: with text, it's pasted through xterm's paste (line ends as Enter, bracketed-paste
+  // marks when the program asked for them), control characters taken out; with none (empty, an image only),
   // the program gets ^V. Nothing reads the clipboard later, so nothing waits and a clipboard put
   // back right after the key isn't what's pasted. No paste event by the keyup (the WebView
   // refused), or by PASTE_WAIT_MS without a keyup: ^V, and a paste event that still comes for
@@ -82,10 +82,14 @@ export function wireInput(t: Terminal, host: HTMLElement, deps: InputDeps): () =
       e.stopPropagation();
       return;
     }
-    if (e.clipboardData?.getData("text/plain")) {
-      // xterm's own listener pastes it; the WebView mustn't also put it in xterm's hidden text
-      // field, where it would stay (it may be a password).
+    const text = e.clipboardData?.getData("text/plain");
+    if (text) {
+      // Pasted here, filtered as every paste is (clipboard.ts pasteText), rather than by xterm's
+      // own listener, which would paste ESC and all. The WebView mustn't also put it in xterm's
+      // hidden text field, where it would stay (it may be a password).
       e.preventDefault();
+      e.stopPropagation();
+      pasteText(t, text);
       return;
     }
     if (!p) return; // a paste with no text, without the key: as before
@@ -94,6 +98,16 @@ export function wireInput(t: Terminal, host: HTMLElement, deps: InputDeps): () =
     deps.send(CTRL_V);
   };
   host.addEventListener("paste", onPaste, true);
+
+  // The WebView's own copy (Cmd+C, Edit > Copy): xterm's listener would copy the selection as it
+  // is; here it's trimmed as every copy is (clipboard.ts copiedText).
+  const onCopy = (e: ClipboardEvent) => {
+    if (!t.hasSelection() || !e.clipboardData) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.clipboardData.setData("text/plain", copiedText(t.getSelection()));
+  };
+  host.addEventListener("copy", onCopy, true);
 
   // The Leader never reaches the shell (Ctrl+Space would send NUL); App's keymap acts on it.
   // The keymap's terminal chords don't either; they act on keydown only.
@@ -154,6 +168,7 @@ export function wireInput(t: Terminal, host: HTMLElement, deps: InputDeps): () =
     settle();
     data.dispose();
     host.removeEventListener("paste", onPaste, true);
+    host.removeEventListener("copy", onCopy, true);
     t.attachCustomKeyEventHandler(() => true);
   };
 }

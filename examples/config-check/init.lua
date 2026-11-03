@@ -374,6 +374,11 @@ do
   roster.o.terminal.right_click_paste = false
 end
 
+-- terminal.osc52
+do
+  roster.o.terminal.osc52 = false
+end
+
 -- terminal.colors
 do
   roster.o.terminal.colors = { background = "#101418", red = "#e06c75" }

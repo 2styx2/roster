@@ -67,11 +67,25 @@ const CUP = new RegExp(`${ESC}\\[\\d*(?:;\\d*)?[Hf]`, "g");
 /** Every other CSI sequence, and two-character escapes. */
 const CSI = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]|${ESC}[@-Z\\\\-_]|${ESC}[()][0-9A-Za-z]`, "g");
 
+/** What's left of an OSC whose start the tail cut off: a payload-shaped run at its very start
+ * (OSC 52's `Pc;` and base64, 16 characters at least, nothing else) up to a BEL or ST. A shell's
+ * bell after a prompt or a word isn't one. And one cut off at the end: from its `ESC ]` on. */
+const CUT_OSC_START = new RegExp(`^(?:\\d*;)?(?:[cpqs0-7]*;)?[A-Za-z0-9+/]{16,}={0,2}(?:\\x07|${ESC}\\\\)`);
+const CUT_OSC_END = new RegExp(`${ESC}\\][^\\x07${ESC}]*$`);
+/** A long base64-looking run (an encoded payload, a copied blob): never worth showing in a
+ * Problem, and it may be copied text (#295 review). A host key fingerprint (43) is shorter. */
+const BASE64_RUN = /[A-Za-z0-9+/]{64,}={0,2}/g;
+
 /** The last `lines` non-empty lines of terminal output as plain text: escape sequences gone, a
- * carriage return keeping what was written after it. */
-export function terminalTail(output: string, lines = 30): string {
+ * carriage return keeping what was written after it. `strippedAtCapture`: OSC 52 was taken out
+ * as the output came (tabs.ts `preAuth` and `late`), so a cut-off one isn't looked for. */
+export function terminalTail(output: string, lines = 30, { strippedAtCapture = false }: { strippedAtCapture?: boolean } = {}): string {
   const plain = output
     .replace(OSC, "")
+    // Output stripped of OSC 52 as it came (tabs.ts) has no cut-off payload to find.
+    .replace(strippedAtCapture ? /(?!)/ : CUT_OSC_START, "")
+    .replace(CUT_OSC_END, "")
+    .replace(BASE64_RUN, "")
     .replace(CUP, "\n")
     .replace(CSI, "")
     // eslint-disable-next-line no-control-regex -- stripping the remaining control characters
