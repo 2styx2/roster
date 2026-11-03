@@ -40,7 +40,8 @@ rustls-platform-verifier = "0.7"
 libc = "0.2"
 
 [features]
-# Lets tests stand in for this computer's resolver (`PluginHost::with_lookup`); never on in the app.
+# Lets tests stand in for this computer's resolver (`PluginHost::with_lookup`) and hold the Config
+# watcher's clock (`config::watch_held`); never on in the app.
 test-hooks = []
 
 [dev-dependencies]

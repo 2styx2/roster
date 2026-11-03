@@ -627,17 +627,19 @@ fn each_hop_is_counted_by_its_site() {
     assert_eq!(row(b.port), (2, 1));
 }
 
-/// A server that keeps its connections open and counts them: `/r` redirects (with a body) to
-/// `/ok`, which answers.
-fn keep_alive_server() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+/// A server that keeps open only the connection `/r` came on: `/r` redirects (with a body longer
+/// than one read) to `/ok`, which answers `same` on that connection and `other` on any other,
+/// closed after its answer. So the client's pool can hold no connection but the redirect's. A
+/// connection is known by what it carried, not by its number: on a busy machine another test's
+/// client can reach this port first, having been given it after the test let it go.
+fn keep_alive_server() -> u16 {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let connections = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&connections);
+    let redirected_on = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            counted.fetch_add(1, Ordering::SeqCst);
+        for (n, mut stream) in (1..).zip(listener.incoming().flatten()) {
+            let redirected_on = Arc::clone(&redirected_on);
             std::thread::spawn(move || {
                 loop {
                     let mut head = Vec::new();
@@ -648,6 +650,11 @@ fn keep_alive_server() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
                             _ => return,
                         }
                     }
+                    if head.starts_with(b"GET /r ") {
+                        redirected_on.store(n, Ordering::SeqCst);
+                    }
+                    let same = redirected_on.load(Ordering::SeqCst) == n;
+                    let close = if same { "" } else { "Connection: close\r\n" };
                     let out = if head.starts_with(b"GET /r ") {
                         // A page saying where it moved, longer than one read.
                         let page = "moved ".repeat(5000);
@@ -656,29 +663,61 @@ fn keep_alive_server() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
                             page.len()
                         )
                     } else {
-                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string()
+                        let body = if same { "same" } else { "other" };
+                        format!("HTTP/1.1 200 OK\r\n{close}Content-Length: {}\r\n\r\n{body}", body.len())
                     };
-                    if stream.write_all(out.as_bytes()).is_err() {
+                    if stream.write_all(out.as_bytes()).is_err() || !same {
                         return;
                     }
                 }
             });
         }
     });
-    (port, connections)
+    port
 }
 
-/// A redirect's own short body is read before the next hop, so the connection is used again.
+/// A redirect's own short body is read before the next hop, so its connection can be used
+/// again. Whether the next hop does use it isn't the core's to say: hyper puts a connection back
+/// in its pool from a task of its own once it's idle, and a request that finds the pool empty
+/// opens another, so on a busy machine the hop after a redirect can come on a second connection
+/// (T184: CI failed once counting connections). So the Plugin asks for `/ok` again until an
+/// answer comes on the redirect's connection, which it can only once that was read to its end.
 #[test]
 fn a_redirect_on_the_same_site_reuses_its_connection() {
-    let (port, connections) = keep_alive_server();
-    let out = fetch_from(
+    let port = keep_alive_server();
+    let init = r#"
+      local c = roster.plugin.config
+      local first
+      local function answered(res, err)
+        if not res then return roster.notify("failed: " .. err) end
+        first = first or (res.status .. " " .. res.body)
+        if res.body == "same" then
+          roster.notify(first .. ", then the redirect's connection")
+        else
+          roster.http.get(c.again, answered)
+        end
+      end
+      roster.http.get(c.url, answered)
+    "#;
+    let (_host, reply, rx, _folder) = load(
         "redir-reuse",
-        &format!("network:http://127.0.0.1:{port}"),
-        &format!("http://127.0.0.1:{port}/r"),
+        &[&format!("network:http://127.0.0.1:{port}")],
+        json!({
+            "url": format!("http://127.0.0.1:{port}/r"),
+            "again": format!("http://127.0.0.1:{port}/ok"),
+        }),
+        init,
     );
-    assert!(out.starts_with("200 2 ok"), "{out}");
-    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    let got = notices(&rx, 1, common::CEILING.as_secs());
+    assert_eq!(got.len(), 1, "no request came on the redirect's connection");
+    // Followed to /ok, on the redirect's connection (usually) or another one.
+    assert!(
+        got[0].starts_with("200 same") || got[0].starts_with("200 other"),
+        "{}",
+        got[0]
+    );
+    assert!(got[0].ends_with(", then the redirect's connection"), "{}", got[0]);
 }
 
 #[test]

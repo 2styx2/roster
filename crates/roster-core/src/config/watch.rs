@@ -7,6 +7,9 @@
 //! into another folder, where saves happen. So the watcher also watches where each symlink
 //! points: a linked file's folder (for that file only), and a linked folder (for its `.lua`
 //! files). Symlinks are looked for again after every reload, so a new one is picked up.
+//!
+//! Tests (the `test-hooks` feature) can run the watcher on a clock they hold ([`watch_held`]),
+//! so "one save is one call" and "this is ignored" don't hang on how fast the machine is (T184).
 
 use notify::{RecursiveMode, Watcher as _};
 use std::collections::HashSet;
@@ -54,11 +57,64 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Watches `dir` (created if missing, so a first `init.lua` is seen) and calls `on_change` on
 /// its own thread after each save of a `.lua` file of the Config.
 pub fn watch(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<Watcher> {
+    start(dir, on_change, Clock::Real(Instant::now()), |_| {}).map(|(w, _)| w)
+}
+
+/// What the debounce thread is told: an event that counts, or (a test's held clock) time passing.
+enum Msg {
+    Event,
+    /// The held clock moved on by this much; the sender hears once the thread has acted on it.
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
+    Pass(Duration, mpsc::Sender<()>),
+}
+
+/// The debounce's time: the real one, or one only a test's [`HeldClock`] moves.
+enum Clock {
+    /// Since this instant.
+    Real(Instant),
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
+    Held(Duration),
+}
+
+impl Clock {
+    fn now(&self) -> Duration {
+        match self {
+            Clock::Real(start) => start.elapsed(),
+            Clock::Held(at) => *at,
+        }
+    }
+
+    /// The next message within `left` of real time; a held clock waits for the test's.
+    fn next(&self, rx: &mpsc::Receiver<Msg>, left: Duration) -> Option<Msg> {
+        match self {
+            Clock::Real(_) => rx.recv_timeout(left).ok(),
+            Clock::Held(_) => rx.recv().ok(),
+        }
+    }
+
+    /// A held clock moved on by `by`; the real one moves by itself.
+    fn moved(self, by: Duration) -> Clock {
+        match self {
+            Clock::Held(at) => Clock::Held(at + by),
+            real => real,
+        }
+    }
+}
+
+/// [`watch`] on `clock`, telling `seen` the paths of every event it has taken in, counted or
+/// not, after any it counts has gone to the debounce thread. Returns a sender to that thread too.
+fn start(
+    dir: &Path,
+    on_change: impl Fn() + Send + 'static,
+    mut clock: Clock,
+    seen: impl Fn(&[PathBuf]) + Send + 'static,
+) -> notify::Result<(Watcher, mpsc::Sender<Msg>)> {
     std::fs::create_dir_all(dir).map_err(notify::Error::io)?;
     let root = dir.canonicalize().map_err(notify::Error::io)?;
     let targets = Arc::new(Mutex::new(Targets::default()));
-    let (tx, rx) = mpsc::channel::<()>();
-    let seen = Arc::clone(&targets);
+    let (tx, rx) = mpsc::channel::<Msg>();
+    let events = tx.clone();
+    let looked = Arc::clone(&targets);
     // Events may name the dir as given or as resolved.
     let roots = vec![root.clone(), dir.to_path_buf()];
     let inner = notify::RecommendedWatcher::new(
@@ -67,10 +123,14 @@ pub fn watch(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Resul
             if event.kind.is_access() {
                 return;
             }
-            let t = lock(&seen);
-            if event.paths.iter().any(|p| t.counts(&roots, p)) {
-                let _ = tx.send(());
+            let counts = {
+                let t = lock(&looked);
+                event.paths.iter().any(|p| t.counts(&roots, p))
+            };
+            if counts {
+                let _ = events.send(Msg::Event);
             }
+            seen(&event.paths);
         },
         // Symlinked folders are watched at their targets (below), the same way on every OS.
         notify::Config::default().with_follow_symlinks(false),
@@ -82,20 +142,88 @@ pub fn watch(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Resul
 
     let weak = Arc::downgrade(&inner);
     std::thread::spawn(move || {
-        // Ends when the watcher (and with it the sender) is dropped.
-        while rx.recv().is_ok() {
-            let first = Instant::now();
+        // Ends once the watcher (and with it the event sender) and any held clock are dropped.
+        while let Ok(msg) = rx.recv() {
+            if let Msg::Pass(by, done) = msg {
+                // Time passing with no save under way: nothing to do.
+                clock = clock.moved(by);
+                let _ = done.send(());
+                continue;
+            }
+            let (first, mut last) = (clock.now(), clock.now());
+            let mut told = Vec::new();
             loop {
-                let left = MAX_WAIT.saturating_sub(first.elapsed());
-                if left.is_zero() || rx.recv_timeout(QUIET.min(left)).is_err() {
+                let now = clock.now();
+                let left = QUIET
+                    .saturating_sub(now - last)
+                    .min(MAX_WAIT.saturating_sub(now - first));
+                if left.is_zero() {
                     break;
+                }
+                match clock.next(&rx, left) {
+                    Some(Msg::Event) => last = clock.now(),
+                    Some(Msg::Pass(by, done)) => {
+                        clock = clock.moved(by);
+                        told.push(done);
+                    }
+                    // Quiet for `left`, or the watcher is gone.
+                    None => break,
                 }
             }
             follow_links(&root, &targets, &weak, &mut watched);
             on_change();
+            for done in told {
+                let _ = done.send(());
+            }
         }
     });
-    Ok(Watcher { _inner: inner })
+    Ok((Watcher { _inner: inner }, tx))
+}
+
+/// The clock of a watcher from [`watch_held`]: no time passes for it until the test says.
+#[cfg(feature = "test-hooks")]
+pub struct HeldClock {
+    tx: mpsc::Sender<Msg>,
+    seen: mpsc::Receiver<std::ffi::OsString>,
+}
+
+#[cfg(feature = "test-hooks")]
+impl HeldClock {
+    /// Waits (at most `ceiling`) until the watcher has taken in an event on a file named
+    /// `name`, and so every event before it: inotify keeps one queue in order. False if not.
+    pub fn seen(&self, name: &str, ceiling: Duration) -> bool {
+        let deadline = Instant::now() + ceiling;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.seen.recv_timeout(left) {
+                Ok(n) if n == name => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+    }
+
+    /// Moves the clock on by `by`, and returns once the watcher has acted on it: a save whose
+    /// quiet (or longest wait) that ends has been called back for.
+    pub fn pass(&self, by: Duration) {
+        let (done, wait) = mpsc::channel();
+        if self.tx.send(Msg::Pass(by, done)).is_ok() {
+            let _ = wait.recv();
+        }
+    }
+}
+
+/// [`watch`] on a clock the test holds ([`HeldClock`]): a save is called back for only once
+/// the test moves the clock past its quiet. Only with the `test-hooks` feature, never in the app.
+#[cfg(feature = "test-hooks")]
+pub fn watch_held(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<(Watcher, HeldClock)> {
+    let (names, seen) = mpsc::channel();
+    let (watcher, tx) = start(dir, on_change, Clock::Held(Duration::ZERO), move |paths| {
+        for name in paths.iter().filter_map(|p| p.file_name()) {
+            let _ = names.send(name.to_os_string());
+        }
+    })?;
+    Ok((watcher, HeldClock { tx, seen }))
 }
 
 /// Finds the symlinks in the config dir that point outside it, and watches their targets
