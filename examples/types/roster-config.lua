@@ -522,14 +522,27 @@ roster = {}
 ---@type "windows"|"linux"|"macos"
 roster.os = nil
 
---- The version of this table, raised when it changes.
---- Read-only. The Plugin API's version too: it rises with that.
+--- The Plugin API's version, which init.lua's table shows too.
+--- Read-only. It rises when only the Plugin API changes, so it doesn't tell what init.lua has: roster.config_version does.
 ---
 --- ```lua
---- if roster.api_version >= 4 then roster.o.vim = false end
+--- print("Plugin API " .. roster.api_version)
 --- ```
 ---@type integer
 roster.api_version = nil
+
+--- init.lua's own version: 4 is v0.3.0's (roster.o and the collections' functions).
+--- Read-only. It rises when a name is removed or renamed, or keeps its name but takes, gives or does something else; not for a new name (check that it isn't nil) and not for a Plugin API change. For the rare case a name can't tell. An app from before it (v0.4.0 and older) reads it as nil.
+---
+--- ```lua
+--- if (roster.config_version or 0) >= 4 then
+---   roster.o.terminal.size = "16pt"
+--- else
+---   roster.set("terminal.size", "16pt")
+--- end
+--- ```
+---@type integer
+roster.config_version = nil
 
 --- The app's version.
 --- Read-only.
