@@ -41,13 +41,34 @@ fn no_proxy_env() {
     });
 }
 
-/// A tiny HTTP/1.1 server: what each request's head was, and answers by path.
+/// A tiny HTTP/1.1 server: what each request's head was, and answers by path. `/held` answers
+/// only once the test lets it go ([`Server::release`]).
 struct Server {
     port: u16,
     heads: Arc<Mutex<Vec<String>>>,
+    gate: Arc<Gate>,
 }
 
-fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
+/// Shut until [`Gate::open`]; then open for good.
+#[derive(Default)]
+struct Gate {
+    open: Mutex<bool>,
+    opened: std::sync::Condvar,
+}
+
+impl Gate {
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.opened.notify_all();
+    }
+
+    fn wait(&self) {
+        let open = self.open.lock().unwrap();
+        drop(self.opened.wait_while(open, |open| !*open).unwrap());
+    }
+}
+
+fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>, gate: &Gate) {
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
@@ -149,6 +170,10 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
             b"",
         ),
         "/binary" => reply("200 OK", "", &[0, 159, 146, 150, 255]),
+        "/held" => {
+            gate.wait();
+            reply("200 OK", "", b"let go")
+        }
         "/slow" => {
             std::thread::sleep(Duration::from_secs(5));
             reply("200 OK", "", b"late")
@@ -164,14 +189,42 @@ impl Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let heads = Arc::new(Mutex::new(Vec::new()));
-        let h = Arc::clone(&heads);
+        let gate = Arc::new(Gate::default());
+        let (h, g) = (Arc::clone(&heads), Arc::clone(&gate));
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let h = Arc::clone(&h);
-                std::thread::spawn(move || serve_one(stream, &h));
+                let (h, g) = (Arc::clone(&h), Arc::clone(&g));
+                std::thread::spawn(move || serve_one(stream, &h, &g));
             }
         });
-        Server { port, heads }
+        Server { port, heads, gate }
+    }
+
+    /// The heads of the requests for `path`. A test asks about the requests it made, by what they
+    /// carried: on a busy machine a port can be handed out again, so a client meant for another
+    /// test's server (or another process's) can reach this one.
+    fn asked(&self, path: &str) -> Vec<String> {
+        self.heads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.split(' ').nth(1) == Some(path))
+            .cloned()
+            .collect()
+    }
+
+    /// Returns once a request for `path` has come (its head is kept before it's answered).
+    fn wait_for(&self, path: &str) {
+        let deadline = std::time::Instant::now() + common::CEILING;
+        while self.asked(path).is_empty() {
+            assert!(std::time::Instant::now() < deadline, "no request for {path} came");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Lets `/held` answer.
+    fn release(&self) {
+        self.gate.open();
     }
 
     fn site(&self) -> String {
@@ -181,6 +234,22 @@ impl Server {
     fn url(&self, path: &str) -> String {
         format!("http://127.0.0.1:{}{path}", self.port)
     }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// A port on 127.0.0.1 where nothing listens, held for as long as the socket is: it's bound but
+/// never listening, so a connection to it is refused and the OS can't hand the port to another
+/// test's server meanwhile (as it could a port bound and let go).
+fn refused_port() -> (tokio::net::TcpSocket, u16) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    (socket, port)
 }
 
 fn plugin_dir(test: &str, permissions: &[&str], init: &str) -> common::Temp {
@@ -353,7 +422,7 @@ fn nothing_of_roster_goes_along() {
         assert!(!head.contains(h), "{h} was sent: {echoed}");
     }
     // The proxy in the environment (port 9, with a password) wasn't used: the server saw them.
-    assert_eq!(server.heads.lock().unwrap().len(), 2);
+    assert_eq!((server.asked("/hello").len(), server.asked("/echo").len()), (1, 1));
 }
 
 #[test]
@@ -408,13 +477,13 @@ fn a_site_it_wasnt_granted_is_refused_before_anything_is_sent() {
         roster.notify(ok and "sent" or err)
       end
     "#;
-    let other = format!("http://127.0.0.1:{}/hello", server.port + 1);
+    let other = format!("http://127.0.0.1:{}/not-sent", server.port + 1);
     let urls = json!([
-        format!("https://127.0.0.1:{}/hello", server.port),
+        format!("https://127.0.0.1:{}/not-sent", server.port),
         other,
-        format!("http://localhost:{}/hello", server.port),
+        format!("http://localhost:{}/not-sent", server.port),
         "https://elsewhere.example/",
-        format!("http://user:pw@127.0.0.1:{}/hello", server.port),
+        format!("http://user:pw@127.0.0.1:{}/not-sent", server.port),
         "file:///etc/passwd",
         "not a url",
     ]);
@@ -427,7 +496,7 @@ fn a_site_it_wasnt_granted_is_refused_before_anything_is_sent() {
     assert!(texts[4].contains("user or password"), "{}", texts[4]);
     assert!(texts[5].contains("isn't a site"), "{}", texts[5]);
     assert!(texts[6].contains("isn't a URL"), "{}", texts[6]);
-    assert!(server.heads.lock().unwrap().is_empty());
+    assert!(server.asked("/not-sent").is_empty());
 }
 
 #[test]
@@ -458,7 +527,7 @@ fn headers_that_steer_the_connection_are_refused() {
     assert!(texts[5].contains("isn't one HTTP can carry"), "{}", texts[5]);
     assert!(texts[6].contains("isn't a method"), "{}", texts[6]);
     assert!(texts[7].contains("isn't a key of a request"), "{}", texts[7]);
-    assert!(server.heads.lock().unwrap().is_empty());
+    assert!(server.asked("/hello").is_empty());
 }
 
 #[test]
@@ -514,7 +583,7 @@ fn a_token_isnt_carried_to_another_site_by_a_redirect() {
     let got = notices(&rx, 1, 20);
     assert!(got[0].starts_with("200 ") && got[0].contains("GET /echo"), "{got:?}");
     assert!(!got[0].to_ascii_lowercase().contains("authorization"), "{got:?}");
-    assert!(a.heads.lock().unwrap()[0].contains("authorization: Bearer t0ken"));
+    assert!(a.asked(&format!("/to/{}", b.port))[0].contains("authorization: Bearer t0ken"));
 }
 
 #[test]
@@ -539,17 +608,18 @@ fn a_redirect_to_another_site_takes_none_of_the_plugins_own_credentials_along() 
         "Accept": "application/json",
         "Accept-Language": "en",
     });
+    let first = format!("/hop/{}/hop/{}/echo", b.port, a.port);
     let (_h, _, rx, _folder) = load(
         "redir-own-headers",
         &[&a.site(), &b.site()],
-        json!({ "url": a.url(&format!("/hop/{}/hop/{}/echo", b.port, a.port)), "req": { "headers": headers } }),
+        json!({ "url": a.url(&first), "req": { "headers": headers } }),
         FETCH,
     );
     let got = notices(&rx, 1, 20);
     assert!(got[0].starts_with("200 ") && got[0].contains("GET /echo"), "{got:?}");
     let seen = [
         got[0].to_ascii_lowercase(),
-        b.heads.lock().unwrap()[0].to_ascii_lowercase(),
+        b.asked(&format!("/hop/{}/echo", a.port))[0].to_ascii_lowercase(),
     ];
     for head in &seen {
         for secret in ["t0ken", "k3y", "pr1v", "au7h"] {
@@ -559,7 +629,7 @@ fn a_redirect_to_another_site_takes_none_of_the_plugins_own_credentials_along() 
         assert!(head.contains("accept-language: en"), "{head}");
     }
     // The first site got them all.
-    assert!(a.heads.lock().unwrap()[0].contains("x-api-key: k3y"));
+    assert!(a.asked(&first)[0].contains("x-api-key: k3y"));
 }
 
 #[test]
@@ -732,33 +802,77 @@ fn a_response_over_the_cap_fails() {
     );
 }
 
+/// The server holds its answer until the test lets it go, which is after the Plugin's answer: so
+/// that answer can only be the request's own timeout. How soon it comes is
+/// [`a_slow_answer_times_out_soon`].
 #[test]
 fn a_slow_answer_times_out() {
     let server = Server::start();
-    let started = std::time::Instant::now();
-    let slow = fetch("slow", &server, "/slow", json!({ "timeout": 0.5 }));
+    let slow = fetch("slow", &server, "/held", json!({ "timeout": 0.5 }));
     assert_eq!(slow, "failed: no answer within 0.5 s");
-    assert!(started.elapsed() < Duration::from_secs(4));
+    assert_eq!(server.asked("/held").len(), 1, "the request was sent");
 }
 
+/// Times the machine as much as the timeout: `cargo test -p roster-core --test network --
+/// --ignored` on an idle one (and perf.yml, weekly).
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn a_slow_answer_times_out_soon() {
+    let server = Server::start();
+    let started = std::time::Instant::now();
+    let slow = fetch("slow-soon", &server, "/held", json!({ "timeout": 0.5 }));
+    assert_eq!(slow, "failed: no answer within 0.5 s");
+    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
+}
+
+const UNBLOCKED: &str = r#"
+  roster.http.get(roster.plugin.config.url, function(res, err) roster.notify(res and res.body or err) end)
+  roster.commands.add("ping", { run = function() roster.notify("pong") end })
+"#;
+
+/// A command answers while the Plugin's request is held at the server, so before the request's
+/// answer, and the answer still comes once the server lets it go. How soon the command answers is
+/// [`the_plugin_answers_soon_while_a_request_runs`].
 #[test]
 fn the_plugin_isnt_blocked_while_a_request_runs() {
     let server = Server::start();
-    let init = r#"
-      roster.http.get(roster.plugin.config.url, function(res, err) roster.notify("answered") end)
-      roster.commands.add("ping", { run = function() roster.notify("pong") end })
-    "#;
-    let (host, reply, _, _folder) = load(
+    let (host, reply, rx, _folder) = load(
         "unblocked",
         &[&server.site()],
-        json!({ "url": server.url("/slow") }),
-        init,
+        json!({ "url": server.url("/held") }),
+        UNBLOCKED,
     );
+    server.wait_for("/held");
+    let handler = reply.ops[0]["run"]["handler"].as_u64().unwrap();
+    let host = Arc::new(host);
+    let h = Arc::clone(&host);
+    let r = common::within_ceiling("the command's answer while a request runs", move || {
+        h.call("fetcher", handler, json!({}))
+    });
+    assert_eq!(r.ops[0]["text"], "pong");
+    assert!(rx.try_recv().is_err(), "the request answered while the server held it");
+    server.release();
+    assert_eq!(notices(&rx, 1, 60), ["let go"]);
+}
+
+/// Times the machine as much as the host: `cargo test -p roster-core --test network --
+/// --ignored` on an idle one (and perf.yml, weekly).
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn the_plugin_answers_soon_while_a_request_runs() {
+    let server = Server::start();
+    let (host, reply, _, _folder) = load(
+        "unblocked-soon",
+        &[&server.site()],
+        json!({ "url": server.url("/held") }),
+        UNBLOCKED,
+    );
+    server.wait_for("/held");
     let handler = reply.ops[0]["run"]["handler"].as_u64().unwrap();
     let started = std::time::Instant::now();
     let r = host.call("fetcher", handler, json!({}));
     assert_eq!(r.ops[0]["text"], "pong");
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
 }
 
 #[test]
@@ -1080,7 +1194,7 @@ fn a_pinned_site_is_redirected_only_to_itself() {
     );
     let got = notices(&rx, 1, 20);
     assert!(got[0].contains("pinned certificate"), "{got:?}");
-    assert!(server.heads.lock().unwrap().is_empty());
+    assert!(server.asked("/hello").is_empty());
 }
 
 /// This computer's resolver in the proxy tests: `api.example.com` and `appliance.example` are at
@@ -1449,10 +1563,25 @@ fn bytes_a_proxy_sends_after_its_200_dont_pass_for_the_site() {
     assert!(!got.contains("forged"), "{got}");
 }
 
+/// [`refused_port`]'s port stays refused while it's held: the OS can't give it to a server, as it
+/// could a port bound and let go.
+#[test]
+fn a_refused_port_is_held_while_the_test_runs() {
+    let (_held, port) = refused_port();
+    assert!(
+        TcpListener::bind(("127.0.0.1", port)).is_err(),
+        "port {port} was handed out again"
+    );
+    assert_eq!(
+        TcpStream::connect(("127.0.0.1", port)).unwrap_err().kind(),
+        std::io::ErrorKind::ConnectionRefused
+    );
+}
+
 /// A proxy that can't be reached is said plainly, without its address.
 #[test]
 fn a_proxy_that_cant_be_reached_isnt_named_to_the_plugin() {
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (_held, port) = refused_port();
     let (_r, rx, _h, _f) = load_proxied(
         "unreachable",
         &format!("http://127.0.0.1:{port}"),

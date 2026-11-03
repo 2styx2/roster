@@ -70,6 +70,8 @@ scripts/            gen-serve-api.py: docs/serve-api.md's method tables from ser
                     LICENSE and THIRD-PARTY-NOTICES (docs/releasing.md)
                     gen-repaint-cases.py: the repaints the core's screen and xterm.js are both checked on
                     (crates/roster-core/tests/fixtures/repaints.json, repaint-fuzz.json; Q151 (l))
+                    stress.sh: one roster-core test binary many times at once beside busy loops, to find the
+                    tests that fail only under load (docs/app/dev/testing.md)
 docs/               team guides: setting up a new box, adding hosts; docs/app/ for the app, docs/adr/ for decisions
 tests/              pytest suite + fake password-manager CLIs
 app/                the roster app (frontend + app/src-tauri); its Rust core is crates/roster-core (app/README.md)
