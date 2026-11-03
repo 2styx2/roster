@@ -1,6 +1,6 @@
 /* eslint-disable no-control-regex -- terminal output is made of control characters */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn } from "./shellHooks";
+import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, lastLine, newNonce, promptShell, shellHooksOn } from "./shellHooks";
 
 /** The Session's token in roster's own marks (ticket 120, Q131). */
 const NONCE = "0123456789abcdef01234567";
@@ -73,8 +73,16 @@ describe("promptShell reads the prompt line as a terminal draws it (ticket 159, 
     ["\x1b[2J\x1b[H\x1b[1Guser@web-01:~$ ", "a prompt after a cleared screen", "posix"],
     ["PS /home/admin> \x1b[K\r\x1b[16C", "PowerShell moving the cursor back to its prompt's end", "pwsh"],
     ["PS C:\\Users\\admin> \x1b[?25l\x1b[?25h", "PowerShell hiding and showing the cursor", "pwsh"],
+    ["PS /home/admin> \x1b[?25l\x1b[12;17H\x1b[?25h", "PowerShell putting the cursor back on its prompt by row", "pwsh"],
+    ["\x1b[?25l\x1b[1;1HPS /tmp> ls\x1b[2;1H\x1b[2;10H\x1b[1;10H\x1b[K\x1b[1;10H", "PowerShell erasing a line it drew over two rows", "pwsh"],
   ])("%j (%s) is %s", (out, _, shell) => {
     expect(promptShell(out)).toBe(shell);
+  });
+
+  it("reads PSReadLine's next line of an unfinished command, put back by row (real pwsh output on CI)", () => {
+    const line = "\x1b[?25l\x1b[1;1H\x1b[0m\x1b[92mif\x1b[0m \x1b[37m{\x1b[39;49m\x1b[0m\x1b[1;5H\x1b[?12l\x1b[?25h";
+    const next = "\x1b[?25l\x1b[2;1H\x1b[0m\x1b[37m>> \x1b[39;49m\x1b[0m\x1b[2;4H\x1b[?12l\x1b[?25h";
+    expect(lastLine("PS /home/admin> \x1b[6n" + line + next)).toBe(">> ");
   });
 
   // The hook line is a write into the user's shell, with the Session's token: never at a password
@@ -94,7 +102,11 @@ describe("promptShell reads the prompt line as a terminal draws it (ticket 159, 
     ["user@web-01:~$ ls\x1b[2D", "a prompt with text after the cursor"],
     ["user@web-01:~$ \x1b[3D", "the cursor moved back into the prompt"],
     ["user@web-01:~$ \x1b[1A", "the cursor moved up off the prompt"],
-    ["user@web-01:~$ \x1b[5;1H", "the cursor moved somewhere it can't tell"],
+    ["user@web-01:~$ \x1b[5;1H", "the cursor moved by row to the start of the line"],
+    ["user@web-01:~$ \x1b[3;1H\x1b[4;1H", "the cursor moved by row to a line it hasn't seen"],
+    ["user@web-01:~$ \r\n\x1b[7;16H", "the cursor moved by row after a line feed"],
+    ["\x1b[1;1Huser@web-01:~$ \x1b[2;1HPassword: \x1b[1;16H", "a password prompt drawn below the prompt"],
+    ["user@web-01:~$ \x1b7\r\nPassword: \x1b8", "a password prompt drawn below, the cursor restored"],
     ["user@web-01:~$ \r\x1b[K", "a cleared line"],
     ["user@web-01:~$ \x1b[2K", "a line erased under the cursor"],
     ["user@web-01 ~ (main> ", "fish's prompt with a parenthesis that isn't closed"],

@@ -25,15 +25,20 @@ const TOKENS = /\x1b\[([0-?]*)[ -/]*([@-~])|\x1b[\]P_^X][^\x07\x1b]*(?:\x07|\x1b
  * backspaces, tabs, moves left and right, and erases within the line applied, so a prompt a shell
  * draws and then moves the cursor back to (fish's `ESC[K \r ESC[<n>C`) reads as its text. `text`
  * is the line up to the cursor; `rest`, what's on it after the cursor. Only the tail of the output
- * is known, not the screen around it: after a move up or down, or to a place it can't tell (an
- * absolute row, a restored cursor), the line's text isn't known and reads as blank but for what is
- * drawn on it after the move, so no prompt drawn before the move is seen (it fails toward sending
- * nothing). A line feed starts a new line. The line doesn't wrap. */
-function drawnLine(out: string): { text: string; rest: string } {
+ * is known, not the screen around it. A move to a row (`ESC[r;cH`) with none known yet stays on the
+ * cursor's line (PowerShell puts the cursor back on its prompt so), and rows map from it until a
+ * line feed, which may scroll the screen. After a move up or down, a move to a row it can't map,
+ * or a restored cursor, the line's text isn't known and reads as blank but for what is drawn on it
+ * after the move, so no prompt drawn before the move is seen (it fails toward sending nothing).
+ * `below`: the lines it knows below the cursor's. The line doesn't wrap. */
+function drawnLine(out: string): { text: string; rest: string; below: string } {
   /** Lines from the first one the output has drawn; `null`: a line whose text isn't known. */
   let lines: (string[] | null)[] = [[]];
   let row = 0;
   let col = 0;
+  /** The screen row of `lines[0]`, once a move to a row (`ESC[r;cH`) has told it; null after a
+   * line feed (which may scroll the screen) or a move it can't follow. */
+  let top: number | null = null;
   const line = (): string[] => {
     let l = lines[row];
     if (!l) {
@@ -45,6 +50,17 @@ function drawnLine(out: string): { text: string; rest: string } {
   const lost = () => {
     lines = [null];
     row = 0;
+    top = null;
+  };
+  /** To screen row `r` (from 0): a row it knows since the last line feed, or, with none known, the
+   * row it's on (as a shell puts the cursor back on its prompt line: PowerShell's `ESC[r;cH`). */
+  const toRow = (r: number) => {
+    if (top === null) top = r - row;
+    const at = r - top;
+    if (at < 0 || at > lines.length) {
+      lost();
+      top = r;
+    } else row = at;
   };
   const put = (ch: string) => {
     const l = line();
@@ -95,18 +111,22 @@ function drawnLine(out: string): { text: string; rest: string } {
             for (let r = 0; r < row; r++) lines[r] = [];
           } else lines = lines.map(() => []);
           break;
+        case "H":
+        case "f":
+          toRow(n - 1);
+          col = Math.max(1, Number.parseInt(params.split(";")[1] ?? "", 10) || 1) - 1;
+          break;
+        case "d":
+          toRow(n - 1);
+          break;
         case "A":
         case "B":
         case "E":
         case "F":
-        case "H":
-        case "f":
-        case "d":
         case "u":
-          // Another line, or a place only the whole screen tells: its text isn't known.
+          // Another line, or a place it can't tell: its text isn't known.
           lost();
-          if (m[2] === "H" || m[2] === "f") col = Math.max(1, Number.parseInt(params.split(";")[1] ?? "", 10) || 1) - 1;
-          else if (m[2] === "E" || m[2] === "F" || m[2] === "u") col = 0;
+          if (m[2] !== "A" && m[2] !== "B") col = 0;
           break;
         default:
         // Colours, modes, reports and the rest draw nothing.
@@ -115,22 +135,32 @@ function drawnLine(out: string): { text: string; rest: string } {
       const esc = m[3] ?? "";
       // Index and next line go down a line, as a line feed does; reverse index (up) and a restored
       // cursor go where it can't tell. Charset designators and the rest draw nothing.
-      if (esc === "D" || esc === "E") row++;
+      if (esc === "D" || esc === "E") {
+        row++;
+        top = null;
+      }
       if (esc === "E") col = 0;
       if (esc === "M" || esc === "8") {
         lost();
         col = 0;
       }
     } else if (t === "\r") col = 0;
-    else if (t === "\n" || t === "\x0b" || t === "\x0c") row++;
+    else if (t === "\n" || t === "\x0b" || t === "\x0c") {
+      row++;
+      top = null;
+    }
     else if (t === "\b") col = Math.max(0, col - 1);
     else if (t === "\t") col = (Math.floor(col / 8) + 1) * 8;
     else if (t >= " " && t !== "\x7f") put(t);
   }
+  const below = lines
+    .slice(row + 1)
+    .map((b) => (b ?? []).join(""))
+    .join("\n");
   const l = lines[row] ?? (row < lines.length ? null : []);
-  if (!l) return { text: " ".repeat(col), rest: "" };
+  if (!l) return { text: " ".repeat(col), rest: "", below };
   const drawn = Array.from({ length: Math.max(col, l.length) }, (_, i) => l[i] ?? " ");
-  return { text: drawn.slice(0, col).join(""), rest: drawn.slice(col).join("") };
+  return { text: drawn.slice(0, col).join(""), rest: drawn.slice(col).join(""), below };
 }
 
 /** The line the cursor is on, as a terminal draws it: its text up to the cursor, then whatever is
@@ -211,9 +241,10 @@ export function newNonce(): string {
 
 /** The shell whose idle prompt ends `out`, or null when it isn't a prompt roster knows. */
 export function promptShell(out: string): ShellKind | null {
-  const { text: line, rest } = drawnLine(out);
-  // Something after the cursor (typed-ahead text, a prompt drawn over another) isn't an idle prompt.
-  if (rest.trim() !== "" || SECRET.test(line + rest)) return null;
+  const { text: line, rest, below } = drawnLine(out);
+  // Something after the cursor (typed-ahead text, a prompt drawn over another) isn't an idle
+  // prompt; nor is one with a line asking for a secret on it or drawn below it.
+  if (rest.trim() !== "" || SECRET.test(line + rest + "\n" + below)) return null;
   if (PWSH.test(line)) return "pwsh";
   if (FISH.test(line)) return "fish";
   if (POSIX.test(line)) return "posix";
