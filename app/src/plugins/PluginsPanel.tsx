@@ -3,7 +3,7 @@
 // with roster's own tokens and keycaps, so a Plugin looks native and can't draw anything else.
 // They open from a key or a command, so none of them animates (taste.md: motion confirms; a key
 // confirms itself), like the other side panels.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
@@ -184,8 +184,75 @@ export function dataLine(d: PluginData): string {
   return `Data: ${size(d.bytes)} in ${files} (of 10 MB, 1,000 files)`;
 }
 
-function PluginRow({ p, onGrant, now }: { p: PluginStatus; onGrant(name: string, permission: string, on: boolean): void; now: number }) {
+/** A row's Fix button (errors.md rows 116-121): it runs a command line, the one its tooltip shows,
+ * as typing it would, so whatever that command asks first (the install prompt) still asks. Its
+ * name says whose row it's on, starting with the words it shows. */
+export interface RowAction {
+  label: string;
+  line: string;
+  /** Whose it is, for its name: the Plugin or the Package. */
+  whose: string;
+}
+
+function RowActions({ actions, onRun }: { actions: readonly RowAction[]; onRun: ((line: string) => void) | undefined }) {
+  if (!onRun || actions.length === 0) return null;
+  return (
+    <div className="plugin-actions">
+      {actions.map((a) => (
+        <button key={a.line} type="button" aria-label={`${a.label} (${a.whose})`} title={`:${a.line}`} onClick={() => onRun(a.line)}>
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The `:help` topic of the Plugin authors' note on what changed at api 4 (issue #228). */
+export const UPGRADE_TOPIC = "plugins#upgrading-a-plugin-written-before-api-4";
+
+/** Since api 4 a Plugin's info notices are quiet (decision Q126), whatever `api` it says. */
+const QUIET_NOTICES_API = 4;
+
+/** Whether a Plugin's problem is one `:plugins reload` can fix: not a Package init.lua no longer
+ * names, which `:packages clean` removes. */
+function reloads(p: PluginStatus, packages: readonly PackageStatus[]): boolean {
+  if (!p.problem || p.waiting) return false;
+  const pkg = p.path.startsWith(PACKAGE_PREFIX) ? p.path.slice(PACKAGE_PREFIX.length) : null;
+  return pkg === null || packages.some((x) => x.name === pkg);
+}
+
+/** After a Fix button runs, the row can change under it (a reload that works takes Reload away):
+ * the keys go back to the panel rather than to nowhere. */
+function useKeysBack(panel: RefObject<HTMLElement | null>) {
+  const ran = useRef(false);
+  useEffect(() => {
+    if (!ran.current) return;
+    ran.current = false;
+    if (document.activeElement === document.body || document.activeElement === null) panel.current?.focus();
+  });
+  return (onRun: ((line: string) => void) | undefined) =>
+    onRun &&
+    ((line: string) => {
+      ran.current = true;
+      onRun(line);
+    });
+}
+
+function PluginRow({
+  p,
+  onGrant,
+  now,
+  reload,
+  onRun,
+}: {
+  p: PluginStatus;
+  onGrant(name: string, permission: string, on: boolean): void;
+  now: number;
+  reload: boolean;
+  onRun: ((line: string) => void) | undefined;
+}) {
   const state = p.waiting ? "waiting for you" : p.problem ? "stopped" : "running";
+  const older = !p.builtin && p.manifest !== null && p.manifest.api < QUIET_NOTICES_API;
   // A line each about the Plugin as a whole, under its permissions.
   const facts: string[] = [];
   if (p.data) facts.push(dataLine(p.data));
@@ -201,6 +268,7 @@ function PluginRow({ p, onGrant, now }: { p: PluginStatus; onGrant(name: string,
         {p.builtin ? "built into roster" : p.path.startsWith(PACKAGE_PREFIX) ? `Package ${p.path.slice(PACKAGE_PREFIX.length)}` : p.path}
       </div>
       {p.problem && <div className="plugin-problem">{p.problem}</div>}
+      <RowActions actions={reload ? [{ label: "Reload", line: `plugins reload ${p.name}`, whose: p.name }] : []} onRun={onRun} />
       {p.manifest && p.manifest.permissions.length > 0 ? (
         <ul className="plugin-permissions">
           {p.manifest.permissions.map((perm) => {
@@ -226,6 +294,13 @@ function PluginRow({ p, onGrant, now }: { p: PluginStatus; onGrant(name: string,
           {f}
         </div>
       ))}
+      {older && p.manifest && (
+        <div className="plugin-uses muted">
+          Written for api {p.manifest.api}: its info notices are quiet now unless it marks them <code>quiet = false</code>, and{" "}
+          <code>:messages</code> keeps them.
+          <RowActions actions={[{ label: "What changed", line: `help ${UPGRADE_TOPIC}`, whose: p.name }]} onRun={onRun} />
+        </div>
+      )}
     </li>
   );
 }
@@ -240,10 +315,13 @@ export function PluginsPanel({
   onClose,
   onRefresh,
   onOpen,
+  onRun,
 }: {
   snapshot: Snapshot;
   onGrant(name: string, permission: string, on: boolean): void;
   onClose(): void;
+  /** Runs a row's Fix button's command line (`plugins reload NAME`, `help …`), as typed. */
+  onRun?(line: string): void;
   /** Asks the core for each site's request counts (decision Q116): when it opens, then every
    * REFRESH_MS while it's open. */
   onRefresh?(): void;
@@ -252,6 +330,7 @@ export function PluginsPanel({
 }) {
   const panel = useRef<HTMLElement>(null);
   useEffect(() => panel.current?.focus(), []);
+  const run = useKeysBack(panel)(onRun);
   // "2m ago" is counted from the last refresh; the text just changes, nothing moves.
   const [now, setNow] = useState(() => Date.now());
   const refresh = useRef(onRefresh);
@@ -302,7 +381,7 @@ export function PluginsPanel({
       ) : (
         <ul className="plugin-list">
           {snapshot.plugins.map((p) => (
-            <PluginRow key={p.name} p={p} onGrant={onGrant} now={now} />
+            <PluginRow key={p.name} p={p} onGrant={onGrant} now={now} reload={reloads(p, snapshot.packages)} onRun={run} />
           ))}
         </ul>
       )}
@@ -589,9 +668,26 @@ function packageState(p: PackageStatus, plugin: PluginStatus | undefined, declin
 }
 
 /** `:packages`: what init.lua names, the commit each is at, and whether it runs. */
-export function PackagesPanel({ snapshot, onClose }: { snapshot: Snapshot; onClose(): void }) {
+/** A Package row's Fix buttons (errors.md rows 116-121, issue #213). Each runs a command that asks
+ * before anything installs: `:packages install NAME` fetches it again, then shows the install
+ * prompt for one that isn't installed. */
+function packageActions(p: PackageStatus, plugin: PluginStatus | undefined): RowAction[] {
+  const install = `packages install ${p.name}`;
+  if (p.error) return [{ label: "Try again", line: install, whose: p.name }];
+  if (!p.pinned) return [{ label: "Install…", line: install, whose: p.name }];
+  if (plugin?.problem && !plugin.waiting) {
+    return [
+      { label: "Reload", line: `plugins reload ${plugin.name}`, whose: plugin.name },
+      { label: "Check for an update", line: `packages update ${p.name}`, whose: p.name },
+    ];
+  }
+  return [];
+}
+
+export function PackagesPanel({ snapshot, onClose, onRun }: { snapshot: Snapshot; onClose(): void; onRun?(line: string): void }) {
   const panel = useRef<HTMLElement>(null);
   useEffect(() => panel.current?.focus(), []);
+  const run = useKeysBack(panel)(onRun);
   return (
     <section
       ref={panel}
@@ -645,6 +741,7 @@ export function PackagesPanel({ snapshot, onClose }: { snapshot: Snapshot; onClo
                   </div>
                 )}
                 {(p.error ?? plugin?.problem) && <div className="plugin-problem">{p.error ?? plugin?.problem}</div>}
+                <RowActions actions={packageActions(p, plugin)} onRun={run} />
               </li>
             );
           })}
