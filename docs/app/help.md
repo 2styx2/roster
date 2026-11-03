@@ -64,7 +64,7 @@ The [index](index) groups them, like Neovim's `help.txt`:
 - **Make it yours:** [Your init.lua](config.md), [Recipes](recipes.md), [Keyboard](keyboard.md), [Themes](themes.md).
 - **Reference**, mostly generated from what the app has now, every time it's shown, so it can't go stale: `quickref` (the commands you'll use most, with their keys now), `commands`, `keys`, `options` (each with the value in effect and where it came from), `themes`, `finders`, `errors`, `health` (this Box's health, as the last `:check` with no Host found it), `all` (every topic, A to Z), and the guides [Connection errors](errors.md), [The roster command](../cli-reference.md) and [The roster serve API](../serve-api.md).
 - **Extending:** [How far roster bends](extending.md).
-- **What's new:** [What's new](../news.md), the changes in each Release, and [Deprecated names](../deprecated.md), every old name that still works and what replaces it. `:help` on an old name (`:help ROSTER_DESK_ROSTER`) lands on its row there.
+- **What's new:** `version` (`:version`: this build's version, roster's licence and the third-party notices, and where they're installed), [What's new](../news.md), the changes in each Release, and [Deprecated names](../deprecated.md), every old name that still works and what replaces it. `:help` on an old name (`:help ROSTER_DESK_ROSTER`) lands on its row there.
 
 ### Where an option's value came from
 

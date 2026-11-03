@@ -61,6 +61,8 @@ scripts/            gen-serve-api.py: docs/serve-api.md's method tables from ser
                     bump-version.sh: one version everywhere;
                     news_check.py and news_section.py: the news reminder on pull requests and a Release's notes;
                     check-bundle-size.py: the app's JS/CSS budget
+                    check-release-notices.py: every app download (archives, installers, the bundle config) carries
+                    LICENSE and THIRD-PARTY-NOTICES (docs/releasing.md)
                     gen-repaint-cases.py: the repaints the core's screen and xterm.js are both checked on
                     (crates/roster-core/tests/fixtures/repaints.json, repaint-fuzz.json; Q151 (l))
 docs/               team guides: setting up a new box, adding hosts; docs/app/ for the app, docs/adr/ for decisions

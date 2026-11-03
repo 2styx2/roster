@@ -21,6 +21,8 @@ import pluginApi from "../../../docs/plugin-api.md?raw";
 import pluginStubs from "../../../examples/plugins/types/roster.lua?raw";
 import pluginApiData from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
 import serveApi from "../../../docs/serve-api.md?raw";
+import notices from "virtual:third-party-notices";
+import { version as APP_VERSION } from "../../package.json";
 
 /** Where a page sits on the index, in this order (Neovim's help.txt groups its files the same way,
  * and ends with news.txt and deprecated.txt as roster ends with What's new). */
@@ -227,6 +229,38 @@ export const guides: readonly Guide[] = [
     order: 83,
     aliases: { "roster.lua": "plugin-types", luals: "plugin-types", "lua-language-server": "plugin-types" },
     markdown: `# roster.lua: the Plugin API's types\n\nThe whole [Plugin API](../../../docs/plugin-api.md) as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations. \`:plugins types PATH\` writes it as \`types/roster.lua\` in your Plugin's folder (or save it there yourself); point lua-language-server at it: [Editor support](../../../docs/plugin-api.md#editor-support). It's the copy this app was built with, so it matches this app's API.\n\n\`\`\`lua\n${pluginStubs}\n\`\`\`\n`,
+  },
+  {
+    // `:version` (T180): the licences every copy of the app must carry, and where the installers put them.
+    id: "version",
+    path: "THIRD-PARTY-NOTICES",
+    title: `roster ${APP_VERSION}`,
+    summary: "This build's version, roster's licence and the third-party notices, and where they're installed",
+    part: "What's new",
+    order: 94,
+    aliases: { license: "version", licence: "version", notices: "version", "third-party-notices": "version", about: "version" },
+    markdown: `# roster ${APP_VERSION}
+
+roster is free software under the GNU General Public License, version 3 or later (GPL-3.0-or-later): \`LICENSE\` has its text. Some of the app's code comes from other projects, under their own licences: \`THIRD-PARTY-NOTICES\`, below, lists each part with its copyright and licence. What changed in this version: [What's new](docs/news.md).
+
+## Where they're installed
+
+Every download carries \`LICENSE\` and \`THIRD-PARTY-NOTICES\`, side by side:
+
+| Download | Where |
+|---|---|
+| Windows \`-setup.exe\` and \`.msi\` | In the folder the app is installed in, next to \`roster-app.exe\` |
+| Linux \`.deb\` | \`/usr/lib/Roster/\` |
+| Linux \`.AppImage\` | Inside the image, at \`usr/lib/Roster/\` (\`--appimage-extract\` unpacks it) |
+| macOS \`.dmg\` | \`Roster.app/Contents/Resources/\` |
+| The \`.zip\` and \`.tar.gz\` | Next to the app |
+
+## Third-party notices
+
+\`\`\`text
+${notices.trimEnd()}
+\`\`\`
+`,
   },
   {
     id: "news",
