@@ -1,4 +1,5 @@
 /* eslint-disable no-control-regex -- terminal output is made of control characters */
+import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CsiClamp, XtermPromptScreen } from "./promptScreen";
 import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn, type CursorLine } from "./shellHooks";
@@ -192,8 +193,67 @@ describe("CsiClamp: the prompt screen's bound on CSI counts", () => {
     expect(dec.decode(clamp.clamp(enc.encode("\x1b[123")))).toBe("");
     expect(dec.decode(clamp.clamp(enc.encode("45678L\x1b")))).toBe("\x1b[9999L");
     expect(dec.decode(clamp.clamp(enc.encode("]0;t\x07")))).toBe("\x1b]0;t\x07");
-    // A control inside a CSI still runs inside it, as in a terminal; ESC, CAN and SUB end it.
-    expect(dec.decode(clamp.clamp(enc.encode("\x1b[99\b999999C\x1b[5\x18x")))).toBe("\x1b[99\b99C\x1b[5\x18x");
+    // A control inside a CSI runs where it is, the CSI still going, as in a terminal; ESC, CAN
+    // and SUB end it.
+    expect(dec.decode(clamp.clamp(enc.encode("\x1b[99\b999999C\x1b[5\x18x")))).toBe("\b\x1b[9999C\x1b[5\x18x");
+    // Leading zeros change nothing: 0005 is 5.
+    expect(dec.decode(clamp.clamp(enc.encode("\x1b[" + "0".repeat(20) + "5;00D")))).toBe("\x1b[5;0D");
+  });
+});
+
+describe("CsiClamp: what the prompt screen draws is what the tab's terminal draws (security pass on #298)", () => {
+  /** The cursor's line once a plain xterm, with no clamp, has drawn `out`: the tab's own. */
+  async function plain(out: string): Promise<{ text: string; rest: string }> {
+    const term = new Terminal({ cols: 80, rows: 24, scrollback: 50, allowProposedApi: false });
+    await new Promise<void>((resolve) => term.write(out, resolve));
+    const b = term.buffer.active;
+    const row = b.getLine(b.baseY + b.cursorY);
+    const line = { text: row?.translateToString(false, 0, b.cursorX) ?? "", rest: row?.translateToString(true, b.cursorX) ?? "" };
+    term.dispose();
+    return line;
+  }
+
+  it("clamps a CSI begun with the C1 introducer (U+009B) as one begun with ESC [", () => {
+    const clamp = new CsiClamp();
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    expect(dec.decode(clamp.clamp(enc.encode("a\u009b99999999M\u009b5;123456Hb")))).toBe("a\u009b9999M\u009b5;9999Hb");
+    // Split between reads, between the introducer's two bytes too.
+    const bytes = enc.encode("\u009b99999999L");
+    const out = [...clamp.clamp(bytes.subarray(0, 1)), ...clamp.clamp(bytes.subarray(1, 4)), ...clamp.clamp(bytes.subarray(4))];
+    expect(dec.decode(Uint8Array.from(out))).toBe("\u009b9999L");
+  });
+
+  it("takes huge counts after the C1 introducer in bounded time", async () => {
+    const from = performance.now();
+    for (const seq of ["\u009b99999999M", "\u009b99999999L", "\u009b99999999@"]) await at("user@web-01:~$ " + seq);
+    expect(performance.now() - from).toBeLessThan(5_000);
+  });
+
+  // A CSI past 256 bytes: the tab draws nothing of it until its final byte, so nor may the screen.
+  it.each([
+    ["\x1b[" + ";".repeat(300) + "1$ ", "ESC ["],
+    ["\u009b" + ";".repeat(300) + "1$ ", "the C1 introducer"],
+    ["\x1b[" + "1;".repeat(150) + "1$ ", "parameters, then intermediates that look like a prompt"],
+  ])("reads no prompt from the tail of a CSI longer than 256 bytes (%#, %s)", async (out) => {
+    expect(promptShell(await at(out))).toBeNull();
+  });
+
+  it.each([
+    "\x1b[" + ";".repeat(300) + "1$ ",
+    "\x1b[" + ";".repeat(300) + "user@web-01 ~> ",
+    "user@web-01:~$ \x1b[" + "0".repeat(300) + "5D",
+    "user@web-01:~$ \x1b[" + "1;".repeat(200) + "5D",
+    "user@web-01:~$ \u009b" + "0".repeat(300) + "3D",
+    "user@web-01:~$ \x1b[12\b345678D",
+    "user@web-01:~$ \x1b[" + ";".repeat(300),
+    "user@web-01:~$ \x1b[1\x1b[2Dx",
+    "user@web-01:~$ \u009b1\u009b2Dx",
+    "user@web-01:~$ \x1b[3\x18Dx",
+    fish3("user", "web-01", "~") + "\x1b[" + ";".repeat(300) + " ",
+  ])("draws %j as a plain xterm does", async (out) => {
+    const at1 = await at(out);
+    expect({ text: at1.text, rest: at1.rest.trimEnd() }).toEqual(await plain(out).then((p) => ({ text: p.text, rest: p.rest.trimEnd() })));
   });
 });
 
