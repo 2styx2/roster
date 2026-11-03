@@ -14,6 +14,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **roster never reaches a Host by a name this Box's ssh config gives to another Inventory** (#367): with named Inventories, `roster --inv home …` or `-c PATH` on an Inventory not synced here (or a Host added since its last `sync`) no longer runs `ssh NAME` from `run`, `check`, `revoke` or the Mesh, where that name could reach another Inventory's Host; each says to run `sync` first. The same holds for a `roster.yml` that isn't named while roster's one unnamed ssh config is another file's (`roster -c B.yml run pi` reached the other file's `pi`), there and in the app's Sessions and `:check HOST`. A `revoke` with an ssh that is a batch file stops before it asks, with error 149, instead of a traceback part way through.
 - **`roster revoke --all`** (#347): removes this Box's key from every Inventory's Hosts at once, each named one and the unnamed one, with one question and one summary. A Host `ssh NAME` doesn't reach (left out on a name clash, or its Inventory not synced here) is skipped and said. See [Named Inventories](cli-reference.md#named-inventories).
+- **The Mesh with roster installed or not** (#365): a Box with no Mesh record (new, or roster removed and installed again) finds an earlier install's Mesh entries on every Host it logs in to, by roster's own tag, and keeps what `roster.yml` still asks for and removes the rest, saying which; `roster mesh status` says it has no record. `roster mesh cut --all` takes every Mesh entry off every Host, `roster.yml` unchanged, before you remove roster. A meshed Host that runs roster itself keeps both writers' lines in its `~/.ssh/config`, once each, and neither overwrites the other's `ROSTER.md`. See [roster installed or not](mesh.md#roster-installed-or-not) and [Uninstalling roster](mesh.md#uninstalling-roster).
 
 **App**
 
@@ -49,6 +50,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **`roster revoke` and `roster check` with every Host skipped exit 1** (#371), instead of `removed from 0/0 hosts` or `0/0 hosts fully reachable` and 0; any skipped Host fails them. `roster revoke` names this Box's files to delete only once every Host of its `roster.yml` has lost the key (not with `--only`), and never another `roster.yml`'s `config.d/roster`; `roster revoke --all` with a left-out Host skipped exits 1 too.
+- **`roster mesh` says when the `Include` it relies on names a missing file** (#365), and writes it again.
 - **`roster discover --write` and `roster mesh cut` sync this Box** after they change `roster.yml`, as the app's changes do: its ssh config and Claude files follow, so a Host they wrote needs no `roster sync` by hand. If the sync fails, the edit stays, and a `warning:` on stderr says why and to run `roster sync`; the command's exit status is the edit's. See [Commands](cli-reference.md#commands).
 
 - **Quitting mid-Mesh run records what it didn't finish on a busy computer too:** closing `roster serve` (quitting the app) during a Mesh plan or apply gives the job a moment to note in `mesh.json` which Hosts are left; on a loaded or slow machine that moment was spent loading the SSH library, so serve could exit with nothing noted and `mesh.status` didn't say those Hosts were pending. The library now loads when the run starts.

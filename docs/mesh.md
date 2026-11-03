@@ -70,6 +70,7 @@ roster mesh                  # apply it, one Host at a time
 roster mesh --rotate esx-02  # replace esx-02's Mesh key everywhere
 roster mesh status           # who reaches whom and what's unfinished, without connecting
 roster mesh cut orion-2      # take orion-2 out of the Mesh now, everywhere
+roster mesh cut --all        # every Mesh entry off every Host (before removing roster)
 roster mesh status --json    # the same as status, as JSON for scripts
 roster mesh --dry-run --json # the plan, as JSON
 ```
@@ -117,6 +118,8 @@ from="10.0.0.2",no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA… roster
 It then writes `mesh: false` for HOST in `roster.yml` as a Pending change, so the cut survives the next Publish. (When `roster.yml` isn't in a git repo, it's written straight to the file.)
 
 Every Host is confirmed. One that's down or doesn't answer gets a loud warning, `CUT PENDING ON 2 HOSTS`, on every `roster mesh` run until the cut is finished there, by `roster mesh cut HOST` again or by the next `roster mesh`.
+
+`roster mesh cut --all` takes the whole Mesh off every Host `roster.yml` has that roster logs in to, at once: every `roster-mesh:` line in each `authorized_keys`, and each source's Mesh files, as a cut does on the cut Host. It doesn't change `roster.yml` (it's for [uninstalling roster](#uninstalling-roster)), so the next `roster mesh` puts the Mesh back. A Host that doesn't answer is listed, the command exits 1, and running it again finishes it.
 
 HOST's own Mesh files go from the directory its `mesh_dir:` names now, and from roster's own default directory. An earlier `mesh_dir:` that still holds a Mesh key (you changed or removed `mesh_dir:` since the last apply) is never removed: the cut ends with a warning naming it, so you can delete it by hand. `:mesh cut HOST` in the app shows the same warning (serve API 24).
 
@@ -166,4 +169,41 @@ To see who reaches whom as a map, add the Topology Plugin, [`plugins/topology`](
 
 ## Where it's kept on this Box
 
-`~/.config/roster/mesh.json` (a named Inventory's: `mesh-NAME.json`, so two Inventories never share it; see [Named Inventories](cli-reference.md#named-inventories)) remembers what an apply or a cut couldn't finish (pending Hosts, cuts pending), the Hosts it wrote on, and what `roster.yml` looked like at the last complete apply (for `mesh out of date`). It's only bookkeeping: delete it and the next `roster mesh` still makes the Mesh what `roster.yml` says.
+`~/.config/roster/mesh.json` (a named Inventory's: `mesh-NAME.json`, so two Inventories never share it; see [Named Inventories](cli-reference.md#named-inventories)) remembers what an apply or a cut couldn't finish (pending Hosts, cuts pending), the Hosts it wrote on, and what `roster.yml` looked like at the last complete apply (for `mesh out of date`). It's only bookkeeping: delete it and the next `roster mesh` still makes the Mesh what `roster.yml` says (see [A Box with no Mesh record](#a-box-with-no-mesh-record)).
+
+## roster installed or not
+
+The Mesh needs nothing on a Host, so a Host without roster is the normal case. These are the cases where roster is, or was, installed somewhere.
+
+### A Box with no Mesh record
+
+A Box with no Mesh state at all (no `mesh.json` or `mesh-NAME.json`: a new Box, or roster removed and installed again without `roster mesh cut --all` first) doesn't know which Hosts hold Mesh entries. Its first `roster mesh` (and `--dry-run`, and `roster check` when `roster.yml` has a Mesh) logs in to **every** Host in `roster.yml` it can (key Hosts, reviewed), one at a time, not only the Mesh's, and finds an earlier install's entries by roster's own tag and mark, never by guessing: the `roster-mesh:SOURCE` lines in `authorized_keys`, a Mesh key and files in the Mesh's directory, the two lines after roster's mark in `~/.ssh/config`. What `roster.yml` still asks for is kept (adopted: the same key, the same lines, nothing rewritten), and the rest is removed as any removal is. Each Host says which:
+
+```text
+warning: orion-2: Mesh entries from an earlier roster on this Box (it has no record of them): kept, as roster.yml still asks for them: its Mesh key, its Include, key from orion-3
+warning: nas-1: Mesh entries from an earlier roster on this Box (it has no record of them): roster.yml no longer asks for them, so roster mesh removes them: remove key from orion-2
+```
+
+`roster mesh status` doesn't connect, so it can't see them; it says `no Mesh record on this Box` and points at `roster mesh --dry-run`. Once an apply has run, the Box has its record and visits only the Mesh's Hosts again. While another Inventory's Mesh state is on this Box, an Inventory without its own doesn't look beyond its Mesh: a `roster-mesh:` line its `roster.yml` doesn't name could be that Inventory's. A Host that doesn't answer that first time is pending like any other, and the next `roster mesh` looks at it.
+
+### A Host that runs roster itself
+
+A meshed Host can be a roster Box too. Both write its `~/.ssh/config`, each with its own lines and never the other's: the Mesh its mark and the `Include` of its config (above), the Host's own roster its `Include` of `~/.ssh/config.d/roster` (or, with named Inventories, `config.d/roster.inventories`). Each looks for its own line wherever it is, so neither adds it twice, moves the other's, or changes anything on a second run in either order. Their files are apart too: the Mesh's are in `~/.ssh/roster-mesh/` (or its `mesh_dir:`), the Host's roster's in `~/.ssh/config.d/`, `~/.ssh/roster-inventories/` and `~/.ssh/roster_known_hosts*`, and their keys have different tags (`roster-mesh:SOURCE`, `roster-managed:BOX`), so neither one's `revoke` or cut touches the other's. When both name the same Host, ssh takes each setting from the first `Include` that sets it, which is whichever was added last.
+
+`ROSTER.md` is the one file they could share: the Mesh writes `~/ROSTER.md`, and the Host's roster writes `ROSTER.md` next to its `roster.yml`. When that `roster.yml` is in the home folder, neither writer overwrites the other's: `roster mesh` leaves the Host's roster's and warns (`orion-2: …/ROSTER.md is that Host's own roster's …`), and the Host's `roster sync` leaves the Mesh's and warns. Keep the Host's `roster.yml` in a folder of its own.
+
+### A Host roster was removed from
+
+roster removed from a Host leaves its files there: an `Include` of a `config.d/roster` that's gone, an old `ROSTER.md`, its known hosts. None of them stops the Mesh: ssh skips an `Include` of a file that isn't there, the Mesh's ssh config checks host keys against its own `known_hosts` only, and the Mesh's test is a port test (`nc -z`), not an ssh login. roster never deletes them (they're yours now); an old `~/ROSTER.md` of that roster's is warned about as above until you delete it.
+
+The `Include` the Mesh relies on is checked: when `~/.ssh/config` includes the Mesh's config and that file isn't there (deleted by hand, a datastore gone), `roster mesh --dry-run` says so (`orion-2: ~/.ssh/config includes …/roster-mesh/config, which isn't there`), `roster check` lists it as drift, and `roster mesh` writes it again.
+
+## Uninstalling roster
+
+Before removing roster from this Box, take off the Hosts what it put there, while it can still log in to them:
+
+1. `roster mesh cut --all`: every Mesh key, line and file off every Host. Run it again until it exits 0 (a Host that was down).
+2. `roster revoke` (`roster revoke --all` with named Inventories): this Box's own key off every Host. It names this Box's files to delete once every Host has lost the key.
+3. Delete those files, and roster.
+
+Skipping step 1 leaves the Mesh working between the Hosts, with nothing on this Box that knows about it. Installing roster again finds it ([A Box with no Mesh record](#a-box-with-no-mesh-record)); to take it off then, run `roster mesh cut --all` from the new install.
