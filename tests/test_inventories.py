@@ -883,12 +883,31 @@ def test_revoke_all_revokes_every_named_inventory_and_the_unnamed_one(two, capsy
     assert revoked(ssh_log) == ["build-pi", "nas-1", "pi"]        # esx has no key (enroll: false)
     assert out.count("\nremoved from ") == 1                      # one summary
     assert "removed from 0/3 hosts in 3 Inventories" in out       # the stand-in ssh reaches nothing
-    for label in ("work", "home", "unnamed"):
+    for label in ("work: build-pi", "home: pi", "(unnamed): nas-1"):
         assert label in out
+    assert "Not finished" in out and "To finish, delete" not in out and code == 1
+
+
+def test_revoke_all_names_every_file_to_delete_once_every_host_is_done(two, capsys, isolated, monkeypatch):
+    """The stand-in Hosts' ssh step answers ROSTER_OK (the key came off): what's left is this box's files."""
+    third = isolated["home"] / "lab"
+    third.mkdir()
+    (third / "roster.yml").write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      nas-1: {ip: 10.0.0.30}\n")
+    run(capsys, "-c", str(third / "roster.yml"), "sync")
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    done = []
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, script: done.append(h["name"]) or True)
+    code, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert sorted(done) == ["build-pi", "nas-1", "pi"] and code == 0
+    summary = out.split("\nremoved from ")[1]
+    assert summary.startswith("3/3 hosts in 3 Inventories. To finish, delete ")
     d = ssh(isolated)
-    for f in (d / "roster-inventories/work", d / "roster-inventories/home", d / "config.d/roster"):
-        assert str(f) in out.split("\nremoved from ")[1]
-    assert code == 1
+    for f in (d / "roster_ed25519", d / "roster-inventories/work", d / "roster-inventories/home", d / "config.d/roster",
+              d / "config.d/roster.inventories"):
+        assert str(f) in summary
 
 
 @revoke_runs
@@ -910,6 +929,7 @@ def test_revoke_all_skips_an_inventory_whose_hosts_ssh_doesnt_reach_and_says_so(
     assert "home: not in this Box's ssh config" in out and code == 1
 
 
+@revoke_runs
 def test_revoke_all_asks_once_and_no_changes_nothing(two, capsys, ssh_log, monkeypatch):
     run(capsys, "inv", "add", "work", str(two["work"]))
     run(capsys, "inv", "add", "home", str(two["home"]))
@@ -958,14 +978,14 @@ def test_revoke_never_reaches_a_host_of_an_inventory_not_synced_here(two, capsys
     which = [str(two["home"]) if w == "HOME" else w for w in which]
     code, out, _ = run(capsys, *which, "revoke", "-y")
     assert ssh_log() == []
-    assert "pi: not in this Box's ssh config" in out
+    assert "pi is not in this Box's ssh config" in out
 
 
 def test_check_never_reaches_a_host_of_an_inventory_not_synced_here(two, capsys, ssh_log):
     home_not_synced(two, capsys)
     _, out, _ = run(capsys, "--inv", "home", "check")
     assert ssh_log() == []
-    assert "pi: not in this Box's ssh config" in out
+    assert "pi is not in this Box's ssh config" in out
 
 
 @pytest.mark.parametrize("argv", [["run", "pi", "--", "id"], ["run", "--sudo", "pi", "--", "id"]])
@@ -995,3 +1015,77 @@ def test_an_ssh_roster_wont_hand_the_script_is_a_clean_error(two, capsys, monkey
     with pytest.raises(SystemExit) as e:
         main([*argv, "-y"])
     assert "[149]" in str(e.value.code) and "batch file" in str(e.value.code)
+
+
+# ---------------------------------------------------------------- two unnamed roster.yml files (#367's review, F1)
+
+A_YML = "groups:\n  lab:\n    user: alice\n    hosts:\n      pi: {ip: 10.0.0.21}\n"
+B_YML = "groups:\n  house:\n    user: bob\n    auth: env:HOMEPW\n    hosts:\n      pi: {ip: 192.168.1.21}\n"
+
+
+@pytest.fixture
+def a_synced_b_not(isolated, capsys, monkeypatch):
+    """A and B are roster.yml files nobody named, each with a Host `pi`. Only A is synced, so roster's one unnamed ssh
+    config is A's: `ssh pi` reaches A's pi. {name: path}."""
+    monkeypatch.setenv("HOMEPW", "hunter2")
+    out = {}
+    for name, text in (("a", A_YML), ("b", B_YML)):
+        d = isolated["home"] / name
+        d.mkdir()
+        (d / "roster.yml").write_text(text)
+        out[name] = d / "roster.yml"
+    run(capsys, "-c", str(out["a"]), "sync")
+    return out
+
+
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("argv", [["run", "pi", "--", "id"], ["run", "--sudo", "pi", "--", "id"]])
+def test_run_never_reaches_another_unnamed_files_host(a_synced_b_not, two, capsys, ssh_log, argv, named):
+    if named:                                   # with the index in ~/.ssh/config too
+        run(capsys, "inv", "add", "work", str(two["work"]))
+        run(capsys, "sync")
+    with pytest.raises(SystemExit, match="not in this Box's ssh config for this roster.yml"):
+        main(["-c", str(a_synced_b_not["b"]), *argv])
+    assert ssh_log() == []
+
+
+@pytest.mark.parametrize("argv", [["revoke", "-y"], ["check"], ["check", "pi"]])
+def test_check_and_revoke_never_reach_another_unnamed_files_host(a_synced_b_not, capsys, ssh_log, argv):
+    code, out, err = run(capsys, "-c", str(a_synced_b_not["b"]), *argv)
+    assert [ln for ln in ssh_log() if " pi" in ln] == []
+    assert "not in this Box's ssh config for this roster.yml" in out + err
+
+
+def test_the_file_the_unnamed_ssh_config_is_from_still_reaches_its_hosts(a_synced_b_not, capsys, ssh_log):
+    run(capsys, "-c", str(a_synced_b_not["a"]), "check")
+    assert any(ln.split()[-2:] == ["pi", "true"] for ln in ssh_log())
+
+
+def test_serve_on_another_unnamed_file_wont_prepare_a_session_by_that_name(a_synced_b_not, serve):
+    app = serve("-c", str(a_synced_b_not["b"]))
+    r = app.call("session.prepare", {"host": "pi"})
+    assert r["error"]["code"] == 21 and "for this roster.yml" in r["error"]["message"]
+
+
+@revoke_runs
+def test_revoke_all_with_skipped_hosts_says_whats_left_before_deleting(two, capsys, ssh_log, monkeypatch):
+    """#367's review, F3: deleting the key while a skipped Host still has it leaves it there for good."""
+    monkeypatch.setenv("HOMEPW", "hunter2")
+    clashing(two, capsys)
+    _, out, _ = run(capsys, "revoke", "--all", "-y")
+    summary = out.split("\nremoved from ")[1]
+    assert "Not finished" in summary and "skipped" in summary
+    assert "To finish, delete" not in summary
+
+
+@revoke_runs
+def test_revoke_all_labels_the_unnamed_one_so_no_named_one_reads_the_same(two, capsys, ssh_log, isolated):
+    """F4: a named Inventory may be called `unnamed`."""
+    third = isolated["home"] / "lab"
+    third.mkdir()
+    (third / "roster.yml").write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      nas-1: {ip: 10.0.0.30}\n")
+    run(capsys, "-c", str(third / "roster.yml"), "sync")
+    run(capsys, "inv", "add", "unnamed", str(two["work"]))
+    run(capsys, "sync")
+    _, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert "(unnamed): nas-1" in out and "(unnamed): build-pi" not in out

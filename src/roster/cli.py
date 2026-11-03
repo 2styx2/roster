@@ -44,28 +44,20 @@ def cmd_init(args):
 
 LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
             "so `ssh {name}` reaches that one; skipped (`roster inv use` this Inventory to reach it)")
-NOT_SYNCED = ("not in this Box's ssh config for this Inventory, so `ssh {name}` wouldn't reach it; skipped "
-              "(`roster{again} sync` writes it)")
-
-
-def again():
-    """How to run roster on this run's Inventory again, for a fix: ` --inv NAME`, or nothing for the unnamed one."""
-    from .common import current_inventory
-    name = current_inventory()
-    return f" --inv {name}" if name else ""
 
 
 def skip_left_out(hosts, to_stderr=False):
     """HOSTS without the key Hosts a plain `ssh NAME` wouldn't reach (ticket 115): another named Inventory's Host by
     that name is the one in this Box's ssh config, or this Inventory's part of it doesn't have NAME (not synced here),
     so roster must never ssh to it by name. Each skipped one is said."""
-    from .sshops import left_out, not_reached
+    from .sshops import left_out, not_reached, sync_fix
     keep = []
     for h in hosts:
-        if h["enroll"] and not_reached(h["name"]):
-            words = LEFT_OUT if left_out(h["name"]) else NOT_SYNCED
-            print(f"  {h['name']}: " + words.format(name=h["name"], again=again()),
-                  file=sys.stderr if to_stderr else sys.stdout, flush=True)
+        why = not_reached(h["name"]) if h["enroll"] else None
+        if why:
+            words = f"{h['name']}: " + LEFT_OUT.format(name=h["name"]) if left_out(h["name"]) else \
+                f"{why}; skipped ({sync_fix()})"
+            print(f"  {words}", file=sys.stderr if to_stderr else sys.stdout, flush=True)
         else:
             keep.append(h)
     return keep
@@ -74,11 +66,11 @@ def skip_left_out(hosts, to_stderr=False):
 def refuse_left_out(h):
     """`roster run` (and --sudo) over ssh: never by a name that reaches another Inventory's Host (its sudo password
     would go there), or that this Inventory's part of this Box's ssh config doesn't have."""
-    from .sshops import left_out, not_reached
+    from .sshops import left_out, not_reached, sync_fix
     why = not_reached(h["name"])
     if why:
         fix = ("make this Inventory the active one (`roster inv use`), or rename one of the two in its roster.yml"
-               if left_out(h["name"]) else f"`roster{again()} sync` writes this Inventory's ssh config here")
+               if left_out(h["name"]) else sync_fix())
         die(f"{why} - not running anything: {fix}")
 
 
@@ -700,7 +692,7 @@ def revoke_targets():
     unnamed = inventories.unnamed_source()
     if unnamed is not None and not any(inventories.same_file(x.path, unnamed) for x in inv.inventories
                                        if x.path.exists()):
-        out.append(("unnamed", None, unnamed))
+        out.append(("(unnamed)", None, unnamed))     # in brackets: no named Inventory's name can have one
     return out
 
 
@@ -717,6 +709,7 @@ def cmd_revoke_all(args):
         return 1
     plan: list[tuple[str, dict[str, Any], list[dict[str, Any]]]] = []
     problems = 0
+    left_alone = 0                          # left-out Hosts: skipped, not a failure (as plain revoke)
     for label, name, path in targets:
         again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(str(path))}"
         try:
@@ -741,6 +734,7 @@ def cmd_revoke_all(args):
                 hosts.append(h)
             elif h["name"] in left:
                 say(f"  {label}: {h['name']}: " + LEFT_OUT.format(name=h["name"]))
+                left_alone += 1
             else:
                 say(f"  {label}: {h['name']}: not in this Box's ssh config yet - not revoked (`{again} sync`, then "
                     f"`{again} revoke`)")
@@ -772,9 +766,17 @@ def cmd_revoke_all(args):
     if ssh_index_file().is_file():
         files.append(str(ssh_index_file()))
     files = list(dict.fromkeys(files))
-    say(f"\nremoved from {total - bad}/{total} hosts in {len(plan)} Inventories. "
-        f"To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box." if files else
-        f"\nremoved from {total - bad}/{total} hosts in {len(plan)} Inventories.")
+    done = f"\nremoved from {total - bad}/{total} hosts in {len(plan)} Inventories."
+    if bad or problems or left_alone:
+        # #367's review, F3: with the key files gone, roster could never take this box's key off what was skipped
+        say(f"{done} Not finished: hosts or Inventories above were skipped or failed. Revoke those first (each line "
+            "above says how); only then delete this box's key and ssh config files (plain `roster revoke` names "
+            "them).")
+    elif files:
+        say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box." if len(files) > 1 else
+            f"{done} To finish, delete {files[0]} on this box.")
+    else:
+        say(done)
     return 1 if bad or problems else 0
 
 
@@ -934,6 +936,9 @@ def cmd_inv(args):
                "the active one)"))
         if added.mesh_state:
             say(f"its Mesh state (from this file's `roster mesh` before it was named) is in {added.mesh_state} now")
+        if added.mesh_kept:
+            say(f"note: {inventories.mesh_state_file(None)} stays with the unnamed Inventory: {added.mesh_kept} "
+                f"(move it to {inventories.mesh_state_file(args.name)} by hand if it is)")
         say(f"note: `roster --inv {args.name} sync` writes its ssh config and ROSTER.md here "
             f"(`roster --inv {args.name} setup` on a new Box)")
         return 0

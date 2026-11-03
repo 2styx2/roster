@@ -142,13 +142,26 @@ def not_reached(name):
     one left out (left_out) reaches another Inventory's Host, and one not there at all (this Inventory isn't synced on
     this Box, or the Host is new since) reaches another's or nothing roster wrote (#367's review, as #335's N1).
     Without the index, nothing changes: as before named Inventories."""
-    from .inventories import index_hosts
+    from .inventories import index_hosts, unnamed_from_elsewhere
+    other = unnamed_from_elsewhere()
+    if other is not None:               # with or without the index: roster's one unnamed file is another roster.yml's
+        return (f"{name} is not in this Box's ssh config for this roster.yml: roster's unnamed ssh config was written "
+                f"from {other}, so `ssh {name}` would reach that file's {name}")
     by_file = index_hosts()
     if by_file is None or name in by_file.get(ssh_path(ssh_config_file()), set()):
         return None
     return left_out(name) or (f"{name} is not in this Box's ssh config for this Inventory ({ssh_config_file().name} "
                               f"has no Host {name} in it, or this Inventory isn't synced here), so `ssh {name}` "
                               "wouldn't reach it")
+
+
+def sync_fix():
+    """The command that writes this run's ssh config: `roster sync` with what picks this run's roster.yml."""
+    from .common import current_config_path
+    if current_inventory() is not None:
+        return f"`roster --inv {current_inventory()} sync` writes it"
+    here = current_config_path()
+    return f"`roster -c {shlex.quote(str(here))} sync` writes it" if here is not None else "`roster sync` writes it"
 
 
 def in_ssh_config(name):

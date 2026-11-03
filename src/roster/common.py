@@ -27,17 +27,24 @@ def ssh_dir() -> Path:
 # wipes another's. None (no named Inventories, or a roster.yml that isn't one of them): the files roster always wrote.
 # config.find_config sets it as it finds roster.yml; one process uses one Inventory (serve restarts to switch).
 _inventory: str | None = None
+_config_path: Path | None = None       # the roster.yml this run uses, set with _inventory (None: not looked up)
 _CURRENT = object()
 CURRENT = _CURRENT          # "this run's Inventory", for a function that takes an Inventory's name or this default
 
 
-def use_inventory(name: str | None) -> None:
-    global _inventory
+def use_inventory(name: str | None, path: Path | None = None) -> None:
+    global _inventory, _config_path
     _inventory = name
+    _config_path = Path(path) if path is not None else None
 
 
 def current_inventory() -> str | None:
     return _inventory
+
+
+def current_config_path() -> Path | None:
+    """The roster.yml this run uses, as config.find_config found it (None when nothing looked one up)."""
+    return _config_path
 
 
 def ssh_config_file(name: Any = _CURRENT) -> Path:

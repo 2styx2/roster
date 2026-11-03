@@ -1475,20 +1475,39 @@ def test_another_files_mesh_state_stays_with_the_unnamed_inventory(net, isolated
     (other / "roster.yml").write_text(CONFIG)
     unnamed_ssh_config_from(isolated, net.cfg_path)
     assert main(["inv", "add", "other", str(other / "roster.yml")]) == 0
-    assert "Mesh state" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Mesh state (from" not in out and "mesh.json stays with the unnamed Inventory" in out
     assert (config_dir() / "mesh.json").read_bytes() == before
     assert not (config_dir() / "mesh-other.json").exists()
 
 
-def test_without_an_unnamed_ssh_config_the_state_moves_only_when_its_hosts_are_all_in_the_file(net, isolated, capsys):
+def test_without_an_unnamed_ssh_config_the_state_isnt_moved_and_that_is_said(net, capsys):
+    """#367's review, F2: with nothing to say which file the Box's Mesh state is from, it stays the unnamed one's."""
     mesh.run(net.cfg(), apply=True)
-    small = isolated["home"] / "small"
-    small.mkdir()
-    (small / "roster.yml").write_text("groups:\n  lab:\n    hosts:\n      orion-2: 10.0.0.2\n")
-    assert main(["inv", "add", "small", str(small / "roster.yml")]) == 0       # not all its Hosts: not this one's
-    assert (config_dir() / "mesh.json").exists() and not (config_dir() / "mesh-small.json").exists()
     assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
-    assert (config_dir() / "mesh-lab.json").exists() and not (config_dir() / "mesh.json").exists()
+    assert "mesh.json stays with the unnamed Inventory" in capsys.readouterr().out
+    assert (config_dir() / "mesh.json").exists() and not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_a_state_naming_a_host_the_file_doesnt_have_isnt_moved_though_the_header_matches(net, isolated, capsys):
+    """F2's case: mesh.json is another file's Mesh (`hbox` isn't a Host here); the unnamed ssh config being this
+    file's only says what synced last."""
+    mesh.run(net.cfg(), apply=True)
+    st = json.loads((config_dir() / "mesh.json").read_text())
+    (config_dir() / "mesh.json").write_text(json.dumps({**st, "members": [*st["members"], "hbox"]}))
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert "mesh.json stays with the unnamed Inventory" in capsys.readouterr().out
+    assert (config_dir() / "mesh.json").exists() and not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_a_state_applied_from_another_version_of_the_mesh_isnt_moved(net, isolated, capsys):
+    mesh.run(net.cfg(), apply=True)
+    net.cfg_path.write_text(CONFIG.replace("  - { from: orion-3, to: db-9, both: true }\n", ""))
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert "mesh.json stays with the unnamed Inventory" in capsys.readouterr().out
+    assert not (config_dir() / "mesh-lab.json").exists()
 
 
 def test_a_named_inventorys_own_mesh_state_is_never_overwritten_by_the_move(net, isolated, capsys):

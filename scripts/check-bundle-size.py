@@ -46,9 +46,13 @@ KB = 1000
 # already replaced) and merged rules repeated for one selector, with every element's computed style
 # and a screenshot of 44 fixture states unchanged. That's 653 B raw, 49 B gzipped: the stylesheet
 # has no dead rules worth 1 KB gzipped, so the gzipped budget stays 71 bytes away. Not raised.
+# JS 745 -> 755 gzipped on 2026-11-03 (T182/T183, #346/#347, PR #367): dev was 744.6 gzipped, and the
+# CLI reference's Mesh-state and revoke --all text, error 149's rows and the news bullets (all bundled for
+# :help) took it to 747.7. Text :help reads, not a dependency or code, so the budget follows it with room
+# for the next small feature, as for ticket 166. JS raw stays 2,550 (2,544.8).
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2550, "gzip": 745},
+    "js": {"raw": 2550, "gzip": 755},
     "css": {"raw": 85, "gzip": 15.5},
 }
 

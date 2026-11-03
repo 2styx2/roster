@@ -36,7 +36,7 @@ def find_config(arg, inv=None):
     this run reads and writes: the named Inventory's own when the file is one (common.use_inventory)."""
     from . import inventories  # Pydantic: only once a roster.yml is looked for
     path = locate_config(arg, inv)
-    use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path))
+    use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path), path)
     inventories.rebuild_if_stale()
     return path
 
