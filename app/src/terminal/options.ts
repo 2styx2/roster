@@ -60,6 +60,8 @@ export interface TerminalOptions {
   copyOnSelect: boolean;
   /** Right-click copies the selection, or pastes when nothing is selected (as Windows Terminal). */
   rightClickCopyPaste: boolean;
+  /** A program may set the clipboard with OSC 52 (write only; osc52.ts, decision Q149). */
+  osc52: boolean;
   /** Colours set over the Theme's (the Config's `terminal.colors`). */
   colors?: Partial<TerminalTheme>;
 }
@@ -104,6 +106,7 @@ export const defaultTerminalOptions: TerminalOptions = {
   scrollback: 10000,
   copyOnSelect: true,
   rightClickCopyPaste: true,
+  osc52: true,
 };
 
 import { terminalFontStack } from "./fonts";

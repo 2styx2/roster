@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { resolveKeymap } from "../keymap";
 import { memoryPlatform } from "../platform/memory";
-import { copyIfSelected, copySelection, pasteClipboard, rightClick, type Selectable } from "./clipboard";
+import { copyIfSelected, copySelection, pasteClipboard, programHasMouse, rightClick, type Selectable } from "./clipboard";
 
 /** A terminal's selection and what it sends to the shell, without a screen. */
 function fakeTerm(selection = ""): Selectable & { sent: string[]; selection: string } {
@@ -101,6 +101,44 @@ describe("Copying and pasting", () => {
     expect(term.sent).toEqual(["10.19.1.2"]);
   });
 
+  // Windows Terminal (ControlInteractivity.cpp, PointerPressed): while a program has mouse
+  // reporting on, a click without Shift is the program's (_canSendVTMouseInput), right-click too.
+  it("with mouse reporting on and nothing selected, right-click is the program's: no paste (Windows Terminal)", async () => {
+    const platform = memoryPlatform({ clipboard: "rm -rf ~" });
+    const term = fakeTerm("");
+    await rightClick(term, platform.clipboard, { programHasMouse: true });
+    expect(term.sent).toEqual([]);
+    expect(platform.clipboardText()).toBe("rm -rf ~");
+  });
+
+  it("Shift+right-click under mouse reporting pastes as without it (the program never sees it)", async () => {
+    const term = fakeTerm("");
+    await rightClick(term, memoryPlatform({ clipboard: "uptime" }).clipboard, { programHasMouse: false });
+    expect(term.sent).toEqual(["uptime"]);
+  });
+
+  it("a Shift+drag selection under mouse reporting: right-click copies it and clears it", async () => {
+    const platform = memoryPlatform({ clipboard: "old" });
+    const term = fakeTerm("10.0.0.5 esx-02");
+    await rightClick(term, platform.clipboard, { programHasMouse: true });
+    expect(platform.clipboardText()).toBe("10.0.0.5 esx-02");
+    expect(term.hasSelection()).toBe(false);
+    expect(term.sent).toEqual([]);
+  });
+
+  it("copies each line without the spaces after its end, as Windows Terminal trims them", async () => {
+    const platform = memoryPlatform({ clipboard: "" });
+    expect(copySelection(fakeTerm("ab        \nxy     z   \n  indented  "), platform.clipboard)).toBe(true);
+    await Promise.resolve();
+    expect(platform.clipboardText()).toBe("ab\nxy     z\n  indented");
+  });
+
+  it("a selection of nothing but spaces copies nothing", () => {
+    const platform = memoryPlatform({ clipboard: "kept" });
+    expect(copySelection(fakeTerm("     "), platform.clipboard)).toBe(false);
+    expect(platform.clipboardText()).toBe("kept");
+  });
+
   it("a failing clipboard doesn't throw (the WebView can refuse it)", async () => {
     const broken = { readText: () => Promise.reject(new Error("denied")), writeText: () => Promise.reject(new Error("denied")) };
     expect(copySelection(fakeTerm("x"), broken)).toBe(true);
@@ -123,7 +161,46 @@ describe("What a paste sends to the shell (xterm.js)", () => {
     expect(await sent("echo one\necho two\r\necho three", false)).toBe("echo one\recho two\recho three");
   });
 
+  it("takes control characters out of it, so the end mark in a paste can't end it early (right-click too)", async () => {
+    const out = await sent("safe\x1b[201~rm -rf /tmp/x\n", true);
+    expect(out).toBe("\x1b[200~safe[201~rm -rf /tmp/x\r\x1b[201~");
+    const term = fakeTerm();
+    await rightClick(term, memoryPlatform({ clipboard: "x\x1b[201~y" }).clipboard);
+    expect(term.sent).toEqual(["x[201~y"]);
+  });
+
   it("wraps it in bracketed-paste marks when the shell asked for them, so it doesn't run line by line", async () => {
     expect(await sent("echo one\necho two\n", true)).toBe("\x1b[200~echo one\recho two\r\x1b[201~");
+  });
+});
+
+// #295 review: whose a right-click is, with xterm.js's own rule for the key that takes the mouse
+// back (shouldForceSelection: Shift, or Option on macOS when macOptionClickForcesSelection).
+describe("Whose right-click it is while a program has mouse reporting on", () => {
+  const click = (mods: { shiftKey?: boolean; altKey?: boolean; button?: number } = {}) => ({ shiftKey: false, altKey: false, button: 2, ...mods });
+  const win = { mac: false, macOptionClickForcesSelection: false };
+  const mac = { mac: true, macOptionClickForcesSelection: true };
+
+  it("no mouse reporting: never the program's", () => {
+    expect(programHasMouse(click(), "none", win)).toBe(false);
+  });
+
+  it.each(["x10", "vt200", "drag", "any"] as const)("mouse reporting %s: the program's, but not with Shift (Windows, Linux)", (mode) => {
+    expect(programHasMouse(click(), mode, win)).toBe(true);
+    expect(programHasMouse(click({ shiftKey: true }), mode, win)).toBe(false);
+    expect(programHasMouse(click({ altKey: true }), mode, win)).toBe(true);
+  });
+
+  it("macOS: Option takes it back when macOptionClickForcesSelection is on; Shift doesn't", () => {
+    expect(programHasMouse(click(), "vt200", mac)).toBe(true);
+    expect(programHasMouse(click({ altKey: true }), "vt200", mac)).toBe(false);
+    expect(programHasMouse(click({ shiftKey: true }), "vt200", mac)).toBe(true);
+    // xterm's default: nothing takes it back on macOS.
+    expect(programHasMouse(click({ altKey: true }), "vt200", { mac: true, macOptionClickForcesSelection: false })).toBe(true);
+  });
+
+  it("a context menu from the keyboard (the Menu key, Shift+F10) is never the program's: it pastes as before", () => {
+    expect(programHasMouse(click({ button: 0 }), "vt200", win)).toBe(false);
+    expect(programHasMouse(click({ button: 0 }), "vt200", mac)).toBe(false);
   });
 });

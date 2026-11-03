@@ -24,6 +24,7 @@ import { formatQuickTarget, type QuickTarget } from "../quick/target";
 import type { Breadcrumb, PasswordPrompt, PromptWatch } from "./prompt";
 import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult, type PromptScreen } from "./shellHooks";
 import { hopWords } from "./breadcrumb";
+import { Osc52Stripper } from "../terminal/osc52";
 
 export type TabStatus =
   | { state: "connecting" }
@@ -158,6 +159,8 @@ interface Entry {
   /** Decodes this tab's output for `preAuth`, `late` and `saveScan`. Its own, and new each attempt: a streaming decoder
    * holds a character split across chunks, which must not end up in another tab's text. */
   decoder: TextDecoder;
+  /** Takes copied text (OSC 52) out of `preAuth` and `late` as it comes: new each attempt. */
+  tailStrip: Osc52Stripper;
   sink: Sink | null;
   wiring: TerminalWiring;
   /** The tab as it was before a reconnect, put back if the user cancels a host key question. */
@@ -367,13 +370,15 @@ export class Tabs {
    * streaming decoder, so a character split across chunks comes out whole). */
   private keepTail(entry: Entry, data: Uint8Array): string {
     const text = entry.decoder.decode(data, { stream: true });
+    // What a program copied (OSC 52) is never kept: a Problem's tail reaches messages and the State.
+    const kept = entry.tailStrip.strip(text);
     if (this.windowOpen(entry) && entry.preAuthBytes + data.length <= PRE_AUTH_BYTES) {
-      entry.preAuth += text;
+      entry.preAuth += kept;
       entry.preAuthBytes += data.length;
       return text;
     }
     entry.windowFrom = null;
-    entry.late += text;
+    entry.late += kept;
     if (entry.late.length > LATE_LIMIT) entry.late = entry.late.slice(-LATE_LIMIT);
     return text;
   }
@@ -393,9 +398,9 @@ export class Tabs {
     if (exit.closed) return null;
     const host = entry.tab.host;
     if (!this.windowOpen(entry)) {
-      return exit.code === 255 ? classifyDrop({ host, tail: terminalTail(entry.late) }) : null;
+      return exit.code === 255 ? classifyDrop({ host, tail: terminalTail(entry.late, 30, { strippedAtCapture: true }) }) : null;
     }
-    return classifyExit({ exitCode: exit.code, tail: terminalTail(entry.preAuth), host, auth: entry.tab.auth });
+    return classifyExit({ exitCode: exit.code, tail: terminalTail(entry.preAuth, 30, { strippedAtCapture: true }), host, auth: entry.tab.auth });
   }
 
   /** "host", or "host (n)" with the smallest n no other tab to `host` uses. */
@@ -444,6 +449,7 @@ export class Tabs {
       windowFrom: null,
       late: "",
       decoder: new TextDecoder(),
+      tailStrip: new Osc52Stripper(),
       sink: null,
       before: null,
       keyAsked: false,
@@ -517,6 +523,7 @@ export class Tabs {
     entry.windowFrom = this.now();
     entry.late = "";
     entry.decoder = new TextDecoder();
+    entry.tailStrip = new Osc52Stripper();
     entry.saveScan = "";
     entry.fillWindow = null;
     entry.watch?.dispose();

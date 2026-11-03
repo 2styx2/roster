@@ -104,6 +104,7 @@
         "Iosevka"
       ],
       "lineHeight": 1.0,
+      "osc52": true,
       "renderer": "webgl",
       "rightClickPaste": true,
       "scrollback": 10000,

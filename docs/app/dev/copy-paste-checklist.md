@@ -31,14 +31,14 @@ Tick each box; write down anything that differs with the build number and what y
 - [ ] **Right-click with a selection** copies it and clears it; nothing is pasted.
 - [ ] **A wrapped line**: `printf 'x%.0s' {1..300}; echo`, then select the whole wrapped line. Pasted in Notepad it's one line of 300 `x`, with no line break where it wrapped.
 - [ ] **Full-width text**: `echo 日本語x`, select it; Notepad gets `日本語x` with no spaces in it.
-- [ ] **Trailing blanks**: `printf 'one\ntwo\n'`, select both lines and past the end; Notepad gets `one`, `two` without padding. (Spaces a program printed at a line's end are copied as they are; Windows Terminal trims them. Open question for the owner, see T158's pull request.)
+- [ ] **Trailing blanks**: `printf 'one\ntwo\n'`, select both lines and past the end; Notepad gets `one`, `two` without padding. Spaces a program printed at a line's end are trimmed too, as in Windows Terminal (`printf 'one   \ntwo\n'` copies `one`, `two`).
 - [ ] **Unicode out**: `echo '👍🏽 é שלום'`, select and copy; Notepad shows the same.
 
 ## Programs
 
 - [ ] **A full-screen program with mouse reporting** (vim with `:set mouse=a`, htop, tmux with `set -g mouse on`, Claude Code): a drag goes to the program (vim moves its visual selection, tmux selects in its own copy mode). **Shift+drag** makes roster's own selection; Ctrl+C or right-click then copies it.
-- [ ] **The same program, right-click with no selection**: today it pastes (#293). After T157 it goes to the program, as in Windows Terminal, and **Shift+right-click** pastes.
-- [ ] **OSC 52 from a program** (T157, #293): in tmux with `set -g set-clipboard on`, copy in copy mode; in Claude Code, its copy. The text lands on the Windows clipboard. A program asking to read the clipboard (`printf '\e]52;c;?\a'`) gets no answer: nothing appears at the prompt.
+- [ ] **The same program, right-click with no selection**: it goes to the program, as in Windows Terminal, and nothing is pasted; **Shift+right-click** pastes (#293).
+- [ ] **OSC 52 from a program** (T157, #293): in tmux with `set -g set-clipboard on`, copy in copy mode; in Claude Code, a plain drag (no Shift) copies when you let go. The text lands on the Windows clipboard. A program asking to read the clipboard (`printf '\e]52;c;?\a'`) gets no answer: nothing appears at the prompt.
 - [ ] **The alternate screen** (vim, less): paste in vim's insert mode goes in as one paste (no auto-indent staircase with `:set paste` off, since vim asks for bracketed paste); Shift+drag and Ctrl+C copy from the screen.
 - [ ] **A password prompt** (`sudo -k; sudo true` on the test Host, with a throwaway password copied in Notepad): Ctrl+V then Enter signs in. The password isn't on screen, and isn't in `:messages` or the State file. Then copy something else, so the password isn't left on the clipboard.
 

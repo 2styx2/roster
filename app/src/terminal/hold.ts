@@ -57,7 +57,9 @@ export function asksForAnswer(data: Uint8Array): boolean {
   return false;
 }
 
-export function holdWhileHidden(write: (data: Uint8Array) => void, { limit = LIMIT }: { limit?: number } = {}): OutputGate {
+/** `write` hears whether the output was held: it arrived while the terminal was off screen (OSC 52
+ * from a background tab sets nothing, osc52.ts). */
+export function holdWhileHidden(write: (data: Uint8Array, held: boolean) => void, { limit = LIMIT }: { limit?: number } = {}): OutputGate {
   let hidden = false;
   let held: Uint8Array[] = [];
   let heldBytes = 0;
@@ -72,12 +74,12 @@ export function holdWhileHidden(write: (data: Uint8Array) => void, { limit = LIM
     }
     held = [];
     heldBytes = 0;
-    write(all);
+    write(all, true);
   };
 
   return {
     write(data) {
-      if (!hidden) return write(data);
+      if (!hidden) return write(data, false);
       held.push(data);
       heldBytes += data.length;
       if (heldBytes >= limit || asksForAnswer(data)) flush();

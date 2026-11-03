@@ -13,12 +13,14 @@ import "@xterm/xterm/css/xterm.css";
 import type { TermSize } from "../backend/types";
 import type { Action } from "../keymap";
 import type { Clipboard } from "../platform/types";
-import { copySelection, rightClick } from "./clipboard";
+import { copySelection, programHasMouse, rightClick } from "./clipboard";
+import { runsOnMac } from "../platform/os";
 import { wireInput } from "./input";
 import { deviceAdvance, lineHeightFor, roundedCellSpacing } from "./fonts";
 import type { TerminalOptions, TerminalTheme, ZoomAction } from "./options";
 import { SearchBar, type SearchResults } from "./SearchBar";
 import { holdWhileHidden, type OutputGate } from "./hold";
+import { screenWriter, wireOsc52 } from "./osc52";
 import { showRenderer, type RendererInUse, type RendererMemo } from "./renderer";
 
 /** What every terminal shares: options, keys and the machine's services. One object, so the
@@ -100,9 +102,9 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResults | null>(null);
   // Latest props, read by handlers registered once.
-  const cb = useRef({ leader, onData, onResize, env, openSearch: () => {} });
+  const cb = useRef({ active, leader, onData, onResize, env, openSearch: () => {} });
   useEffect(() => {
-    cb.current = { leader, onData, onResize, env, openSearch: () => setSearching(true) };
+    cb.current = { active, leader, onData, onResize, env, openSearch: () => setSearching(true) };
   });
 
   useEffect(() => {
@@ -112,6 +114,9 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
     const t = new Terminal({
       scrollback: options.scrollback,
       allowProposedApi: true,
+      // A right-click never selects a word first (xterm's default on macOS), as in Windows
+      // Terminal: under mouse reporting it's the program's, and otherwise it copies or pastes.
+      rightClickSelectsWord: false,
       fontFamily: options.fontFamily,
       fontSize: cb.current.env.fontSize,
       fontWeight: options.fontWeight,
@@ -149,11 +154,14 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       clearTimeout(copyTimer);
       copyTimer = setTimeout(copy, 120);
     });
-    // Right-click: copy the selection, or paste when there's none (as Windows Terminal).
+    // Right-click: copy the selection, or paste when there's none (as Windows Terminal). While a
+    // program has mouse reporting on, a right-click without Shift is the program's (xterm sent it
+    // the click), unless there's a selection to copy (decision Q149).
     const onContextMenu = (e: MouseEvent) => {
       if (!cb.current.env.options.rightClickCopyPaste) return;
       e.preventDefault();
-      void rightClick(t, cb.current.env.clipboard);
+      const mac = { mac: runsOnMac(), macOptionClickForcesSelection: t.options.macOptionClickForcesSelection ?? false };
+      void rightClick(t, cb.current.env.clipboard, { programHasMouse: programHasMouse(e, t.modes.mouseTrackingMode, mac) });
       t.focus();
     };
     // Ctrl+wheel zooms the terminal, not the page.
@@ -171,8 +179,16 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       t.onResize(({ cols, rows }) => cb.current.onResize({ cols, rows })),
       s.onDidChangeResults(({ resultIndex, resultCount }) => setResults({ index: resultIndex, count: resultCount })),
     ];
+    // A program's OSC 52 sets the clipboard, from the Session on screen only (osc52.ts, Q149):
+    // one begun in output held while the tab was hidden is taken out before xterm reads it.
+    const screen = screenWriter(t);
+    const unwireOsc52 = wireOsc52(t, {
+      enabled: () => cb.current.env.options.osc52,
+      onScreen: () => cb.current.active,
+      clipboard: () => cb.current.env.clipboard,
+    });
     // Off screen, the Session's output waits (hold.ts): xterm would redraw the hidden rows anyway.
-    const g = holdWhileHidden((d) => t.write(d));
+    const g = holdWhileHidden(screen.write);
     gate.current = g;
     const detach = attach((d) => g.write(d));
     term.current = t;
@@ -195,6 +211,7 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       host.removeEventListener("wheel", onWheel, { capture: true });
       detach();
       unwire();
+      unwireOsc52();
       for (const sub of subs) sub.dispose();
       t.dispose();
       term.current = null;
