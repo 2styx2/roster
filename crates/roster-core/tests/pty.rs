@@ -27,9 +27,13 @@ fn open(m: &SessionManager, cmd: SessionCommand) -> (u32, Receiver<SessionEvent>
     (id, rx)
 }
 
-/// Collects output until `needle` shows up (or panics after 10 s).
+/// How long a broken test waits before it says so (T164): never how long anything is expected to
+/// take. A loaded machine pauses a process for seconds.
+const CEILING: Duration = Duration::from_secs(60);
+
+/// Collects output until `needle` shows up (or panics after [`CEILING`]).
 fn output_until(rx: &Receiver<SessionEvent>, needle: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + CEILING;
     let mut seen = Vec::new();
     while Instant::now() < deadline {
         match rx.recv_timeout(Duration::from_millis(100)) {
@@ -47,14 +51,17 @@ fn output_until(rx: &Receiver<SessionEvent>, needle: &str) -> String {
             Err(_) => {}
         }
     }
-    panic!("no {needle:?} within 10 s; saw {:?}", String::from_utf8_lossy(&seen));
+    panic!(
+        "no {needle:?} within {CEILING:?}; saw {:?}",
+        String::from_utf8_lossy(&seen)
+    );
 }
 
 /// Waits for the Exit event, skipping output; returns it with the output seen on the way.
 fn exit_of(rx: &Receiver<SessionEvent>) -> (Exit, String) {
     let mut seen = Vec::new();
     loop {
-        match rx.recv_timeout(Duration::from_secs(10)).expect("an Exit within 10 s") {
+        match rx.recv_timeout(CEILING).expect("an Exit") {
             SessionEvent::Output(b) => seen.extend_from_slice(&b),
             SessionEvent::Exit(e) => return (e, String::from_utf8_lossy(&seen).into_owned()),
         }

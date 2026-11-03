@@ -10,8 +10,14 @@ use roster_core::session::{
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+mod common;
+
 const SIZE: Size = Size { cols: 80, rows: 24 };
-const WAIT: Duration = Duration::from_millis(300);
+/// The fill's wait: how long its probe gives the prompt to echo, or draw anything (the app's is
+/// 800 ms). Generous (T164): the stand-ins echo and draw from `sh`, a process or two per key, which
+/// a loaded machine can hold up for longer than that, and a key or resize a test sends once the
+/// stand-in has read the probe's first key must still land inside it.
+const WAIT: Duration = Duration::from_secs(2);
 const SECRET: &str = "s3cret-pw";
 /// The token on roster's own shell marks for every stand-in Session (decision Q131 (a)).
 const TOKEN: &str = "0123456789abcdef01234567";
@@ -43,32 +49,98 @@ fn open(m: &SessionManager, cmd: SessionCommand) -> (u32, Receiver<SessionEvent>
     (id, rx)
 }
 
-/// Everything printed until `needle` (panics after 10 s).
+/// How long a broken test waits before it says so (T146, T164): never how long anything is
+/// expected to take. A loaded machine pauses a process for seconds.
+const CEILING: Duration = Duration::from_secs(60);
+
+/// Everything printed from now until it holds `needle` (panics after [`CEILING`]).
 fn until(rx: &Receiver<SessionEvent>, needle: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut seen = Vec::new();
-    while Instant::now() < deadline {
-        if let Ok(SessionEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(50)) {
-            seen.extend_from_slice(&b);
-            let s = String::from_utf8_lossy(&seen).into_owned();
-            if s.contains(needle) {
-                return s;
-            }
-        }
-    }
-    panic!("no {needle:?} within 10 s; saw {:?}", String::from_utf8_lossy(&seen));
+    seen_until(rx, needle, |s| s.contains(needle))
 }
 
-/// What's printed in the next `d`.
-fn quiet_for(rx: &Receiver<SessionEvent>, d: Duration) -> String {
-    let deadline = Instant::now() + d;
+/// Everything printed from now until it ends with `tail`, the last thing the stand-in prints
+/// before it waits for a key (T164). The core's screen takes in each chunk before the Session's
+/// sink gets it, so from here the fill sees all of it: no sleep for the rest of a prompt to come.
+fn shown(rx: &Receiver<SessionEvent>, tail: &str) -> String {
+    seen_until(rx, tail, |s| s.ends_with(tail))
+}
+
+/// Everything printed from now through the stand-in's own report, `got:[…]` and its line end: all
+/// it echoed or drew for what it read comes before it, so nothing more needs waiting for (T161's
+/// marker, not a quiet spell).
+fn report(rx: &Receiver<SessionEvent>) -> String {
+    seen_until(rx, "got:[…]", |s| {
+        s.rfind("got:[")
+            .and_then(|at| s[at..].find(']').map(|end| at + end))
+            .is_some_and(|end| s[end..].contains('\n'))
+    })
+}
+
+fn seen_until(rx: &Receiver<SessionEvent>, what: &str, done: impl Fn(&str) -> bool) -> String {
+    let deadline = Instant::now() + CEILING;
     let mut seen = Vec::new();
-    while Instant::now() < deadline {
-        if let Ok(SessionEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(20)) {
-            seen.extend_from_slice(&b);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(SessionEvent::Output(b)) => {
+                seen.extend_from_slice(&b);
+                let s = String::from_utf8_lossy(&seen).into_owned();
+                if done(&s) {
+                    return s;
+                }
+            }
+            Ok(_) => {}
+            Err(_) => panic!(
+                "no {what:?} within {CEILING:?}; saw {:?}",
+                String::from_utf8_lossy(&seen)
+            ),
         }
     }
-    String::from_utf8_lossy(&seen).into_owned()
+}
+
+/// What `printf` prints for a stand-in's format (`\033`, `\r`, `\n`, `\b`), to wait for it.
+fn printed_by(format: &str) -> String {
+    format
+        .replace("\\033", "\x1b")
+        .replace("\\r", "\r")
+        .replace("\\n", "\n")
+        .replace("\\b", "\x08")
+}
+
+/// A folder a stand-in and its test signal each other through (T164), in place of sleeps: the
+/// stand-in waits for the test's `go` ([`GO`]), and says it has read a key with `$SIG/read`
+/// ([`READ`]). Its path goes to the stand-in as `$SIG`.
+struct Sig(common::Temp);
+
+/// In a stand-in: wait until the test says go.
+const GO: &str = "while [ ! -e \"$SIG/go\" ]; do sleep 0.01; done";
+/// In a stand-in: say a key was read (nothing if the stand-in has no `$SIG`). A builtin, not
+/// `touch`: a stand-in that draws for each key mustn't be slowed by another process per key.
+const READ: &str = "[ -z \"$SIG\" ] || true 2>/dev/null >\"$SIG/read\"";
+
+impl Sig {
+    fn new() -> Sig {
+        Sig(common::temp("pty-fill-sig"))
+    }
+
+    /// `cmd` with this folder as its `$SIG`.
+    fn on(&self, mut cmd: SessionCommand) -> SessionCommand {
+        cmd.env.push(("SIG".into(), self.0.to_string_lossy().into_owned()));
+        cmd
+    }
+
+    fn go(&self) {
+        std::fs::write(self.0.join("go"), "").unwrap();
+    }
+
+    /// Returns once the stand-in has read a key (panics after [`CEILING`]).
+    fn read(&self) {
+        let deadline = Instant::now() + CEILING;
+        while !self.0.join("read").exists() {
+            assert!(Instant::now() < deadline, "the stand-in read no key within {CEILING:?}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 }
 
 /// A nested ssh's Host, as the frontend resolved it at the Session's own `run`th command.
@@ -87,7 +159,7 @@ const NO_ECHO: &str = "stty -echo; printf 'Password: '; read -r pw; stty echo; e
 fn a_no_echo_prompt_gets_the_secret_and_enter() {
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(NO_ECHO));
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
     let mut asked = None;
     let host = m
         .fill(id, WAIT, "Password:", None, |h| {
@@ -102,8 +174,7 @@ fn a_no_echo_prompt_gets_the_secret_and_enter() {
         (host.as_str(), asked.as_deref()),
         ("esx", Some("ops@10.0.0.6:22 (esx)"))
     );
-    let out = until(&rx, "got:");
-    let out = out + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     // The secret came back only in the stand-in's own report, never as an echo of the fill.
     assert_eq!(out.matches(SECRET).count(), 1, "{out:?}");
@@ -114,11 +185,11 @@ fn a_no_echo_prompt_gets_the_secret_and_enter() {
 fn what_was_typed_at_the_prompt_before_is_cleared_first() {
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(NO_ECHO));
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
+    // Written to the PTY before the fill starts, so it's there before the probe.
     m.write(id, b"half-typ").unwrap();
-    std::thread::sleep(Duration::from_millis(100));
     m.fill(id, WAIT, "Password:", None, |_| secret()).expect("filled");
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     m.close(id).unwrap();
 }
@@ -130,12 +201,12 @@ fn an_echoing_prompt_is_refused_and_the_secret_never_typed() {
         &m,
         host_sh("printf 'Password: '; read -r pw; echo \"got:[$pw]\"; sleep 5"),
     );
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
     let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
     assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
     // The probe's letter was echoed and taken back; nothing else reached the prompt.
     m.write(id, b"\r").unwrap();
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains("got:[]"), "{out:?}");
     assert!(!out.contains(SECRET), "{out:?}");
     m.close(id).unwrap();
@@ -144,10 +215,11 @@ fn an_echoing_prompt_is_refused_and_the_secret_never_typed() {
 #[test]
 fn output_while_it_checks_refuses_too() {
     let m = SessionManager::new();
-    let script =
-        "stty -echo; printf 'Password: '; (sleep 0.2; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5";
+    // Output that comes once the probe's first key is in (T164: not 0.2 s after the prompt,
+    // which a loaded machine can bring before the fill starts or after it ends).
+    let script = "stty -echo -icanon min 1 time 0; printf 'Password: '; dd bs=1 count=1 >/dev/null 2>&1; echo late output; sleep 5";
     let (id, rx) = open(&m, host_sh(script));
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
     let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
     assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
     m.close(id).unwrap();
@@ -156,12 +228,20 @@ fn output_while_it_checks_refuses_too() {
 #[test]
 fn keys_typed_while_it_checks_refuse() {
     let m = std::sync::Arc::new(SessionManager::new());
-    let (id, rx) = open(&m, host_sh(NO_ECHO));
-    until(&rx, "Password: ");
+    let sig = std::sync::Arc::new(Sig::new());
+    // It reads the probe's keys one by one, quietly, and says when it has one.
+    let script = format!(
+        "stty -echo -icanon min 1 time 0; printf 'Password: '; \
+         while :; do dd bs=1 count=1 >/dev/null 2>&1; {READ}; done"
+    );
+    let (id, rx) = open(&m, sig.on(host_sh(&script)));
+    shown(&rx, "Password: ");
+    // The key goes once the probe is in, so it's typed while the fill checks.
     let typer = {
         let m = std::sync::Arc::clone(&m);
+        let sig = std::sync::Arc::clone(&sig);
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
+            sig.read();
             m.write(id, b"a").unwrap();
         })
     };
@@ -178,13 +258,14 @@ fn a_refused_lookup_types_nothing() {
         &m,
         host_sh("printf 'Password: '; read -r pw; echo \"got:[$pw]\"; sleep 5"),
     );
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
     let err = m
         .fill(id, WAIT, "Password:", None, |_| Err::<Secret, _>("locked".to_string()))
         .unwrap_err();
     assert!(matches!(&err, FillError::Lookup(e) if e == "locked"), "{err:?}");
-    // Not even the probe: an echoing prompt shows nothing.
-    assert_eq!(quiet_for(&rx, Duration::from_millis(200)), "");
+    // Not even the probe: an echoing prompt shows only the Enter sent after, and read nothing.
+    m.write(id, b"\r").unwrap();
+    assert_eq!(report(&rx), "\r\ngot:[]\r\n");
     m.close(id).unwrap();
 }
 
@@ -193,7 +274,7 @@ fn a_session_with_no_host_is_never_filled() {
     let m = SessionManager::new();
     let cmd = SessionCommand::new(vec!["sh".into(), "-c".into(), NO_ECHO.into()], vec![]);
     let (id, rx) = open(&m, cmd);
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
     let mut asked = false;
     let err = m
         .fill(id, WAIT, "Password:", None, |_| {
@@ -227,12 +308,11 @@ fn keys_sent_while_the_vault_answers_refuse() {
         &m,
         host_sh("stty -echo; printf 'Password: '; read -r pw; echo \"got:[$pw]\"; sleep 5"),
     );
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
     let err = m
         .fill(id, WAIT, "Password:", None, |_| {
             // A key goes to the Session while the lookup waits on the vault.
             m.write(id, b"").ok();
-            std::thread::sleep(Duration::from_millis(50));
             secret()
         })
         .unwrap_err();
@@ -243,14 +323,16 @@ fn keys_sent_while_the_vault_answers_refuse() {
 #[test]
 fn output_while_the_vault_answers_refuses_too() {
     let m = SessionManager::new();
+    let sig = Sig::new();
     let script =
-        "stty -echo; printf 'Password: '; (sleep 0.2; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5";
-    let (id, rx) = open(&m, host_sh(script));
-    until(&rx, "Password: ");
-    // The lookup outlasts the late output, which is over before the probe goes.
+        format!("stty -echo; printf 'Password: '; ({GO}; echo late output) & read -r pw; echo \"got:[$pw]\"; sleep 5");
+    let (id, rx) = open(&m, sig.on(host_sh(&script)));
+    shown(&rx, "Password: ");
+    // The lookup lets the late output go and answers once the core has it, before the probe.
     let err = m
         .fill(id, WAIT, "Password:", None, |_| {
-            std::thread::sleep(Duration::from_millis(400));
+            sig.go();
+            until(&rx, "late output");
             secret()
         })
         .unwrap_err();
@@ -266,8 +348,7 @@ fn an_own_host_fill_types_only_at_a_prompt_the_session_ends_with() {
     // The prompt went by, then other output: the cursor isn't at it any more.
     let script = "stty -echo; printf '[sudo] password for ops: \\nsudo: 1 incorrect password attempt\\n$ '; read -r pw; echo \"got:[$pw]\"; sleep 5";
     let (id, rx) = open(&m, host_sh(script));
-    until(&rx, "attempt");
-    std::thread::sleep(Duration::from_millis(100));
+    shown(&rx, "attempt\r\n$ ");
     for prompt in ["[sudo] password for ops:", "[sudo] password for root:", "", "   "] {
         let mut asked = false;
         match m.fill(id, WAIT, prompt, None, |_| {
@@ -281,7 +362,7 @@ fn an_own_host_fill_types_only_at_a_prompt_the_session_ends_with() {
     }
     // Nothing was typed: not the probe, not the secret.
     m.write(id, b"\r").unwrap();
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains("got:[]"), "{out:?}");
     m.close(id).unwrap();
 }
@@ -291,13 +372,12 @@ fn an_own_host_fill_types_at_sudos_prompt_when_the_output_ends_with_it() {
     let m = SessionManager::new();
     let script = "printf 'motd\\n$ sudo ls\\n'; stty -echo; printf '\\033[1m[sudo] password for ops:\\033[m '; read -r pw; stty echo; echo; echo \"got:[$pw]\"; sleep 5";
     let (id, rx) = open(&m, host_sh(script));
-    until(&rx, "ops:");
-    std::thread::sleep(Duration::from_millis(100));
+    shown(&rx, "ops:\x1b[m ");
     let host = m
         .fill(id, WAIT, "[sudo] password for ops:", None, |_| secret())
         .expect("filled");
     assert_eq!(host, "esx");
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     m.close(id).unwrap();
 }
@@ -310,7 +390,7 @@ const NESTED: &str =
 fn a_nested_fill_types_only_at_a_prompt_the_session_printed() {
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(&format!("{RUN}{NESTED}")));
-    until(&rx, "password: ");
+    shown(&rx, "password: ");
     // A prompt the Session never printed (the frontend's word alone) is refused before the vault.
     let mut asked = false;
     let hop = at_run(
@@ -334,7 +414,7 @@ fn a_nested_fill_types_only_at_a_prompt_the_session_printed() {
     assert!(!asked);
     m.fill(id, WAIT, "ops@esx-02's password:", Some(&hop), |_| secret())
         .expect("filled");
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     m.close(id).unwrap();
 }
@@ -349,12 +429,11 @@ fn passes_check(m: &SessionManager, id: u32, prompt: &str) -> bool {
     }
 }
 
-/// A Session that prints `script`'s output and waits, once it has printed `last`.
+/// A Session that prints `script`'s output and waits, once the core has all of it: it ends with
+/// `last`.
 fn printed(m: &SessionManager, script: &str, last: &str) -> u32 {
     let (id, rx) = open(m, host_sh(&format!("{script}; sleep 5")));
-    until(&rx, last);
-    std::thread::sleep(Duration::from_millis(150));
-    let _ = quiet_for(&rx, Duration::from_millis(50));
+    shown(&rx, last);
     id
 }
 
@@ -393,7 +472,7 @@ fn a_nested_fill_reads_the_prompt_through_a_conpty_style_redraw() {
     let id = printed(
         &m,
         "printf '\\033[2J\\033[1;1H\\033[1mops\\033[0m@esx-02'\"'\"'s\\033[1Cpassword:\\033[m\\033[1;24H'",
-        "password:",
+        "password:\x1b[m\x1b[1;24H",
     );
     assert!(passes_check(&m, id, "ops@esx-02's password:"));
     assert!(!passes_check(&m, id, "ops@esx-03's password:"));
@@ -428,7 +507,7 @@ fn an_own_host_fill_reads_its_prompt_through_conpty_redraws() {
         (
             "a carriage return over a longer line, erased",
             "printf 'Last login: Mon from 10.0.0.9 on pts/0\\r[sudo] password for ops: \\033[K'",
-            "ops: ",
+            "ops: \x1b[K",
             true,
         ),
         (
@@ -474,7 +553,7 @@ fn an_own_host_fill_reads_its_prompt_through_conpty_redraws() {
 fn a_nested_fill_says_the_host_whose_password_it_typed() {
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(&format!("{RUN}{NESTED}")));
-    until(&rx, "password: ");
+    shown(&rx, "password: ");
     let hop = at_run(
         1,
         FillTarget {
@@ -552,7 +631,7 @@ fn a_nested_fill_goes_only_to_the_ssh_the_sessions_own_shell_still_runs() {
         ("no token of its own", format!("{c}{SUDO}"), false, 1, false),
         (
             "a mark split across reads",
-            format!("printf '\\033]133;C;rost'; sleep 0.2; printf 'er={TOKEN}\\007'; {SUDO}"),
+            format!("printf '\\033]133;C;rost'; {GO}; printf 'er={TOKEN}\\007'; {SUDO}"),
             true,
             1,
             true,
@@ -564,9 +643,14 @@ fn a_nested_fill_goes_only_to_the_ssh_the_sessions_own_shell_still_runs() {
         if !token {
             cmd.marks = None;
         }
-        let (id, rx) = open(&m, cmd);
-        until(&rx, "ops: ");
-        std::thread::sleep(Duration::from_millis(100));
+        let sig = Sig::new();
+        let (id, rx) = open(&m, sig.on(cmd));
+        if script.contains(GO) {
+            // The mark's second half goes once the core has read its first.
+            until(&rx, "\x1b]133;C;rost");
+            sig.go();
+        }
+        shown(&rx, "ops: ");
         let mut asked = false;
         let got = m.fill(
             id,
@@ -585,7 +669,7 @@ fn a_nested_fill_goes_only_to_the_ssh_the_sessions_own_shell_still_runs() {
             assert!(!asked, "{name}: the vault was asked");
             m.write(id, b"\r").unwrap();
         }
-        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+        let out = report(&rx);
         assert_eq!(out.contains(SECRET), filled, "{name}: {out:?}");
         m.close(id).unwrap();
     }
@@ -616,8 +700,7 @@ fn a_nested_fill_needs_a_real_token_and_the_hops_run() {
         let mut cmd = host_sh(&format!("{}{SUDO}", mark("C", token.unwrap_or(""))));
         cmd.marks = token.map(String::from);
         let (id, rx) = open(&m, cmd);
-        until(&rx, "ops: ");
-        std::thread::sleep(Duration::from_millis(100));
+        shown(&rx, "ops: ");
         let mut asked = false;
         let hop = Hop { to: esx_02(), run };
         let got = m.fill(id, WAIT, "[sudo] password for ops:", Some(&hop), |_| {
@@ -642,8 +725,7 @@ fn a_fill_whose_session_closes_meanwhile_leaves_nothing_set() {
     let script = format!("trap '' HUP; {}", pwfeedback(SUDO_OPS, "", "*", ":"));
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(&script));
-    until(&rx, "ops: ");
-    std::thread::sleep(Duration::from_millis(150));
+    shown(&rx, "ops: ");
     let got = m.fill(id, WAIT, "[sudo] password for ops:", None, |_| {
         m.close(id).unwrap();
         secret()
@@ -696,7 +778,7 @@ fn pwfeedback(prompt: &str, kill_tail: &str, mask: &str, before: &str) -> String
 fn erasing(prompt: &str, erase: &str, kill_tail: &str, mask: &str, before: &str) -> String {
     format!(
         "U=$(printf '\\025'); stty -echo -icanon min 1 time 0; printf '%s' '{prompt}'; {before}; pw=''; n=0; \
-         while :; do c=$(dd bs=1 count=1 2>/dev/null); \
+         while :; do c=$(dd bs=1 count=1 2>/dev/null); {READ}; \
          if [ \"$c\" = \"$U\" ]; then while [ $n -gt 0 ]; do printf '{erase}'; n=$((n-1)); done; printf '{kill_tail}'; pw=''; \
          elif [ -z \"$c\" ]; then break; \
          else pw=\"$pw$c\"; n=$((n+1)); printf '{mask}'; fi; done; \
@@ -710,24 +792,33 @@ const SUDO_OPS: &str = "[sudo] password for ops: ";
 const ERASE_LINE: &str = "\\033[K";
 
 /// Fills the stand-in at `prompt` (as the frontend names it), with `hop` for a nested ssh's Host.
+/// Once the fill has ended, it says go ([`Sig`]), for a stand-in that holds something back until
+/// then.
 fn fill_pwfeedback(script: &str, prompt: &str, hop: Option<&Hop>) -> (Result<String, FillError<String>>, String) {
     let m = SessionManager::new();
+    let sig = Sig::new();
     // A hop's fill is for the nested ssh the Session's own shell runs now (ticket 162).
     let script = if hop.is_some() {
         format!("{RUN}{script}")
     } else {
         script.to_string()
     };
-    let (id, rx) = open(&m, host_sh(&script));
-    until(&rx, prompt.trim_end());
-    std::thread::sleep(Duration::from_millis(150));
-    let _ = quiet_for(&rx, Duration::from_millis(50));
+    let (id, rx) = open(&m, sig.on(host_sh(&script)));
+    // What the stand-in prints last: the prompt, and the space after it if it prints one.
+    let spaced = format!("{prompt} ");
+    let tail = if script.contains(&format!("{} '", prompt.replace('\'', "'\"'\"'"))) {
+        spaced.as_str()
+    } else {
+        prompt
+    };
+    shown(&rx, tail);
     let got = m.fill(id, WAIT, prompt, hop, |_| secret());
+    sig.go();
     if got.is_err() {
         // Nothing but the probe was typed: Enter shows what the prompt holds.
         m.write(id, b"\r").unwrap();
     }
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     m.close(id).unwrap();
     (got, out)
 }
@@ -797,16 +888,27 @@ fn sudo_with_pwfeedback_is_filled_through_conpty_style_redraws() {
 
 /// Ticket 155 (#284), from the owner's Windows build: ConPTY sends only what changed on its
 /// screen, so sudo's `*` and its erasure reach the core as nothing, and it repaints regions it
-/// already drew (here 0.2 s into the fill, while the vault answers). Each stand-in clears the
+/// already drew (here while the vault answers: the lookup says go, T164). Each stand-in clears the
 /// screen, draws `$ sudo -v` and its prompt, then repaints the same content as ConPTY may
 /// (cursor addressing, erases, erased characters, the cursor hidden and shown) and draws
 /// nothing for the probe's keys.
 fn conpty(prompt: &str, repaint: &str) -> String {
-    erasing(prompt, "", "", "", &format!("(sleep 0.2; printf '{repaint}') & :")).replacen(
-        "printf '%s'",
-        "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'",
-        1,
-    )
+    erasing(prompt, "", "", "", &later(repaint)).replacen("printf '%s'", "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'", 1)
+}
+
+/// A stand-in's `before`: print `what` in the background once the test says go ([`Sig`]).
+fn later(what: &str) -> String {
+    format!("({GO}; printf '{what}') & :")
+}
+
+/// A lookup that lets a stand-in's [`later`] output go and answers once the core has all of it
+/// (its last line: the tty may add a `\r` before a line end): output while the vault answers,
+/// between the prompt check and the probe, whatever the machine.
+fn after_output(sig: &Sig, rx: &Receiver<SessionEvent>, what: &str) -> Result<Secret, String> {
+    sig.go();
+    let what = printed_by(what);
+    shown(rx, what.rsplit('\n').next().unwrap_or_default());
+    secret()
 }
 
 /// ConPTY's repaints of the unchanged screen, with the cursor parked after the prompt on row 2.
@@ -837,36 +939,42 @@ fn conpty_rules() -> SessionManager {
 fn sudo_with_pwfeedback_is_filled_through_a_conpty_repaint_before_the_probe() {
     for (name, repaint) in same_screen_repaints(SUDO_OPS) {
         let m = conpty_rules();
-        let (id, rx) = open(&m, host_sh(&conpty(SUDO_OPS, &repaint)));
-        until(&rx, "ops: ");
+        let sig = Sig::new();
+        let (id, rx) = open(&m, sig.on(host_sh(&conpty(SUDO_OPS, &repaint))));
+        shown(&rx, "ops: ");
         let got = m.fill(id, WAIT, "[sudo] password for ops:", None, |_| {
-            std::thread::sleep(Duration::from_millis(400));
-            secret()
+            after_output(&sig, &rx, &repaint)
         });
         assert_eq!(got.as_ref().ok().map(String::as_str), Some("esx"), "{name}: {got:?}");
-        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        let out = report(&rx);
         assert!(out.contains(&format!("got:[{SECRET}]")), "{name}: {out:?}");
         m.close(id).unwrap();
     }
 }
 
-/// A stand-in that keeps every byte it reads, raw (no line discipline in the way), and reports
-/// them in hex once its input has been quiet for 2 s: nobody presses Enter here, so whatever it
-/// read came from the fill (or a key the test sent). It clears the screen and draws `$ sudo -v`
-/// and `prompt`, then runs `before`.
+/// A stand-in that keeps every byte it reads, raw (no line discipline in the way), says each one
+/// ([`READ`]), and reports them in hex once it reads [`DONE`], which the test sends when the fill
+/// is over (T164: not after its input has been quiet a while, which a loaded machine can bring
+/// before the fill types). Nobody presses Enter here, so whatever it read came from the fill (or
+/// a key the test sent). It clears the screen and draws `$ sudo -v` and `prompt`, then runs
+/// `before`.
 fn recording(prompt: &str, before: &str) -> String {
     format!(
-        "stty raw -echo min 0 time 20; printf '\\033[2J\\033[H$ sudo -v\\r\\n%s' '{prompt}'; {before}; all=''; \
-         while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
-         [ -z \"$c\" ] && break; all=\"$all $c\"; done; \
+        "stty raw -echo min 1 time 0; printf '\\033[2J\\033[H$ sudo -v\\r\\n%s' '{prompt}'; {before}; all=''; \
+         while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); {READ}; \
+         [ -z \"$c\" ] || [ \"$c\" = 04 ] && break; all=\"$all $c\"; done; \
          stty sane; echo; echo \"got:[$all ]\"; sleep 5",
         prompt = prompt.replace('\'', "'\"'\"'")
     )
 }
 
-/// The bytes a [`recording`] stand-in read.
-fn recorded(rx: &Receiver<SessionEvent>) -> String {
-    let out = until(rx, "got:") + &quiet_for(rx, Duration::from_millis(100));
+/// The key that ends a [`recording`] (Ctrl+D, which no fill sends).
+const DONE: &[u8] = b"\x04";
+
+/// The bytes a [`recording`] stand-in read, once the fill is over.
+fn recorded(m: &SessionManager, id: u32, rx: &Receiver<SessionEvent>) -> String {
+    m.write(id, DONE).unwrap();
+    let out = report(rx);
     out.split("got:[")
         .nth(1)
         .and_then(|r| r.split(']').next())
@@ -900,8 +1008,7 @@ fn under_conpty_only_sudos_own_prompt_for_the_own_host_is_filled() {
     ] {
         let m = conpty_rules();
         let (id, rx) = open(&m, host_sh(&recording(prompt, ":")));
-        until(&rx, prompt.trim_end());
-        std::thread::sleep(Duration::from_millis(150));
+        shown(&rx, prompt);
         let mut asked = false;
         let got = m.fill(id, WAIT, line, hop, |_| {
             asked = true;
@@ -911,7 +1018,7 @@ fn under_conpty_only_sudos_own_prompt_for_the_own_host_is_filled() {
         assert!(matches!(err, FillError::ConPty), "{line}: {err:?}");
         assert!(!asked, "{line}: the vault was asked");
         assert!(err.to_string().contains("Windows"), "{err}");
-        assert_eq!(recorded(&rx), "", "{line}: something was typed");
+        assert_eq!(recorded(&m, id, &rx), "", "{line}: something was typed");
         m.close(id).unwrap();
     }
     // Its refusal has no code: pressing again can't fill it.
@@ -961,14 +1068,11 @@ fn output_before_the_probe_refuses_before_anything_is_typed() {
     for (name, rules, line, repaint) in cases {
         let prompt = format!("{line} ");
         let m = SessionManager::with_conpty_rules(rules);
-        let before = format!("(sleep 0.2; printf '{repaint}') & :");
-        let (id, rx) = open(&m, host_sh(&recording(&prompt, &before)));
-        until(&rx, line);
+        let sig = Sig::new();
+        let (id, rx) = open(&m, sig.on(host_sh(&recording(&prompt, &later(&repaint)))));
+        shown(&rx, &prompt);
         let err = m
-            .fill(id, WAIT, line, None, |_| {
-                std::thread::sleep(Duration::from_millis(400));
-                secret()
-            })
+            .fill(id, WAIT, line, None, |_| after_output(&sig, &rx, &repaint))
             .unwrap_err();
         assert!(matches!(err, FillError::Changed { .. }), "{name}: {err:?}");
         let log = err.log_line().unwrap_or_default();
@@ -987,7 +1091,7 @@ fn output_before_the_probe_refuses_before_anything_is_typed() {
             roster_core::backend::fill_refusal(FillError::Changed { before })
         );
         assert!(refusal.contains("130"), "{name}: {refusal}");
-        assert_eq!(recorded(&rx), "", "{name}: something was typed");
+        assert_eq!(recorded(&m, id, &rx), "", "{name}: something was typed");
         m.close(id).unwrap();
     }
 }
@@ -999,20 +1103,22 @@ fn output_before_the_probe_refuses_before_anything_is_typed() {
 fn keys_sent_during_a_fill_wait_until_it_ends() {
     for (rules, prompt) in [(false, "Password: "), (false, SUDO_OPS), (true, SUDO_OPS)] {
         let m = std::sync::Arc::new(SessionManager::with_conpty_rules(rules));
-        let (id, rx) = open(&m, host_sh(&recording(prompt, ":")));
-        until(&rx, prompt.trim_end());
-        std::thread::sleep(Duration::from_millis(150));
+        let sig = std::sync::Arc::new(Sig::new());
+        let (id, rx) = open(&m, sig.on(host_sh(&recording(prompt, ":"))));
+        shown(&rx, prompt);
+        // The keys go once the probe's first is in, so they're typed while the fill waits.
         let typer = {
             let m = std::sync::Arc::clone(&m);
+            let sig = std::sync::Arc::clone(&sig);
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(100));
+                sig.read();
                 m.write(id, b"a\r").unwrap();
             })
         };
         let err = m.fill(id, WAIT, prompt.trim_end(), None, |_| secret()).unwrap_err();
         typer.join().unwrap();
         assert!(matches!(err, FillError::Typed), "{prompt} {rules}: {err:?}");
-        assert_eq!(recorded(&rx), "15 78 15 61 0d", "{prompt} {rules}");
+        assert_eq!(recorded(&m, id, &rx), "15 78 15 61 0d", "{prompt} {rules}");
         m.close(id).unwrap();
     }
 }
@@ -1023,8 +1129,7 @@ fn a_resize_during_a_fill_refuses() {
     // While the vault answers: before the probe, so nothing is typed.
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(&recording("Password: ", ":")));
-    until(&rx, "Password: ");
-    std::thread::sleep(Duration::from_millis(150));
+    shown(&rx, "Password: ");
     let err = m
         .fill(id, WAIT, "Password:", None, |_| {
             m.resize(id, Size { cols: 100, rows: 24 }).unwrap();
@@ -1033,16 +1138,18 @@ fn a_resize_during_a_fill_refuses() {
         })
         .unwrap_err();
     assert!(matches!(err, FillError::Changed { .. }), "{err:?}");
-    assert_eq!(recorded(&rx), "");
+    assert_eq!(recorded(&m, id, &rx), "");
     m.close(id).unwrap();
-    // While the probe waits.
+    // While the probe waits: once its first key is in.
     let m = std::sync::Arc::new(SessionManager::new());
-    let (id, rx) = open(&m, host_sh(NO_ECHO));
-    until(&rx, "Password: ");
+    let sig = std::sync::Arc::new(Sig::new());
+    let (id, rx) = open(&m, sig.on(host_sh(&recording("Password: ", ":"))));
+    shown(&rx, "Password: ");
     let resizer = {
         let m = std::sync::Arc::clone(&m);
+        let sig = std::sync::Arc::clone(&sig);
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
+            sig.read();
             m.resize(id, Size { cols: 100, rows: 24 }).unwrap();
             m.resize(id, SIZE).unwrap();
         })
@@ -1050,9 +1157,8 @@ fn a_resize_during_a_fill_refuses() {
     let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
     resizer.join().unwrap();
     assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
-    m.write(id, b"\r").unwrap();
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
-    assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
+    // The probe and nothing else: no secret, no Enter.
+    assert_eq!(recorded(&m, id, &rx), "15 78 15");
     m.close(id).unwrap();
 }
 
@@ -1062,21 +1168,26 @@ fn a_resize_during_a_fill_refuses() {
 fn a_second_fill_while_one_checks_is_refused() {
     let m = std::sync::Arc::new(SessionManager::new());
     let (id, rx) = open(&m, host_sh(NO_ECHO));
-    until(&rx, "Password: ");
+    shown(&rx, "Password: ");
+    // The first fill's lookup says it's waiting on the vault, and answers when the test lets it.
+    let (asking, asked) = channel();
+    let (answer, answered) = channel::<()>();
     let first = {
         let m = std::sync::Arc::clone(&m);
         std::thread::spawn(move || {
             m.fill(id, WAIT, "Password:", None, |_| {
-                std::thread::sleep(Duration::from_millis(300));
+                asking.send(()).unwrap();
+                answered.recv().unwrap();
                 secret()
             })
         })
     };
-    std::thread::sleep(Duration::from_millis(100));
+    asked.recv_timeout(CEILING).expect("the first fill's lookup");
     let second = m.fill(id, WAIT, "Password:", None, |_| secret());
+    answer.send(()).unwrap();
     assert!(matches!(second, Err(FillError::Busy)), "{second:?}");
     assert_eq!(first.join().unwrap().ok().as_deref(), Some("esx"));
-    let out = until(&rx, "got:");
+    let out = report(&rx);
     assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
     m.close(id).unwrap();
 }
@@ -1095,21 +1206,18 @@ fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
         ("a colour", "\\033[1m*\\033[0m", "\\b \\b", PENDING),
         ("a colour in the erase", "*", "\\b \\b\\033[1m", PROBED),
     ] {
-        let script = erasing(
-            SUDO_OPS,
-            erase,
-            "",
-            mask,
-            &format!("(sleep 0.2; printf '{repaint}') & :"),
-        )
-        .replacen("printf '%s'", "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'", 1);
+        let script = erasing(SUDO_OPS, erase, "", mask, &later(&repaint)).replacen(
+            "printf '%s'",
+            "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'",
+            1,
+        );
         let m = conpty_rules();
-        let (id, rx) = open(&m, host_sh(&script));
-        until(&rx, "ops: ");
+        let sig = Sig::new();
+        let (id, rx) = open(&m, sig.on(host_sh(&script)));
+        shown(&rx, "ops: ");
         let err = m
             .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
-                std::thread::sleep(Duration::from_millis(400));
-                secret()
+                after_output(&sig, &rx, &repaint)
             })
             .unwrap_err();
         let log = err.log_line().unwrap_or_default();
@@ -1120,7 +1228,7 @@ fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
             "{name}: {log}"
         );
         m.write(id, b"\r").unwrap();
-        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        let out = report(&rx);
         assert!(!out.contains(SECRET), "{name}: {out:?}");
         m.close(id).unwrap();
     }
@@ -1192,8 +1300,7 @@ fn an_echo_cant_hide_inside_one_frame_of_a_diff_only_terminal() {
     ] {
         let m = SessionManager::with_conpty_rules(rules);
         let (id, rx) = open(&m, frames(prompt, mode));
-        until(&rx, prompt.trim_end());
-        std::thread::sleep(Duration::from_millis(200));
+        shown(&rx, prompt);
         let got = m.fill(id, WAIT, line, None, |_| secret());
         if fills {
             assert_eq!(got.as_deref().ok(), Some("esx"), "{line} {mode} {rules}: {got:?}");
@@ -1204,7 +1311,7 @@ fn an_echo_cant_hide_inside_one_frame_of_a_diff_only_terminal() {
             );
             m.write(id, b"\r").unwrap();
         }
-        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        let out = report(&rx);
         m.close(id).unwrap();
         let want = if fills {
             format!("got:[{SECRET}]")
@@ -1225,16 +1332,15 @@ fn an_echo_cant_hide_inside_one_frame_of_a_diff_only_terminal() {
 /// loaded machine that ran it late saw them closer together than they were written (T161).
 #[test]
 fn the_probe_goes_in_two_steps_with_a_wait_between() {
-    let script = "stty raw -echo min 0 time 20; printf 'Password: '; \
+    let script = "stty raw -echo min 1 time 0; printf 'Password: '; \
                   a=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
                   b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
                   stty sane; echo; echo \"got:[$a $b]\"; sleep 5";
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(script));
-    until(&rx, "Password: ");
-    std::thread::sleep(Duration::from_millis(150));
+    shown(&rx, "Password: ");
     let _ = m.fill(id, WAIT, "Password:", None, |_| secret());
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+    let out = report(&rx);
     m.close(id).unwrap();
     let got = out
         .split("got:[")
@@ -1353,7 +1459,7 @@ fn a_mask_anywhere_else_or_with_anything_more_still_refuses() {
             "the erasure after the window",
             pwfeedback(SUDO_OPS, "", "*", ":").replacen(
                 "while [ $n -gt 0 ]; do printf '\\b \\b'",
-                "[ $n -gt 0 ] && sleep 0.6; while [ $n -gt 0 ]; do printf '\\b \\b'",
+                &format!("[ $n -gt 0 ] && {{ {GO}; }}; while [ $n -gt 0 ]; do printf '\\b \\b'"),
                 1,
             ),
             "[sudo] password for ops:",
@@ -1370,19 +1476,19 @@ fn a_mask_anywhere_else_or_with_anything_more_still_refuses() {
 #[test]
 fn output_while_the_vault_answers_then_the_mask_refuses() {
     let m = SessionManager::new();
-    // A dot 0.4 s after the prompt: while the lookup below waits on the vault.
-    let script = pwfeedback(SUDO_OPS, "", "*", "(sleep 0.4; printf .) & :");
-    let (id, rx) = open(&m, host_sh(&script));
-    until(&rx, "ops: ");
+    // A dot while the lookup below waits on the vault.
+    let sig = Sig::new();
+    let script = pwfeedback(SUDO_OPS, "", "*", &later("."));
+    let (id, rx) = open(&m, sig.on(host_sh(&script)));
+    shown(&rx, "ops: ");
     let err = m
         .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
-            std::thread::sleep(Duration::from_millis(600));
-            secret()
+            after_output(&sig, &rx, ".")
         })
         .unwrap_err();
     assert!(matches!(err, FillError::Changed { .. }), "{err:?}");
     m.write(id, b"\r").unwrap();
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
     m.close(id).unwrap();
 }
@@ -1390,13 +1496,15 @@ fn output_while_the_vault_answers_then_the_mask_refuses() {
 #[test]
 fn a_key_typed_while_sudo_masks_the_probe_refuses() {
     let m = std::sync::Arc::new(SessionManager::new());
-    let (id, rx) = open(&m, host_sh(&pwfeedback(SUDO_OPS, "", "*", ":")));
-    until(&rx, "ops: ");
-    std::thread::sleep(Duration::from_millis(100));
+    let sig = std::sync::Arc::new(Sig::new());
+    let (id, rx) = open(&m, sig.on(host_sh(&pwfeedback(SUDO_OPS, "", "*", ":"))));
+    shown(&rx, "ops: ");
+    // The key goes once the probe's first is in, so it's typed while sudo masks the probe.
     let typer = {
         let m = std::sync::Arc::clone(&m);
+        let sig = std::sync::Arc::clone(&sig);
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
+            sig.read();
             m.write(id, b"\x15").unwrap();
         })
     };
@@ -1406,7 +1514,7 @@ fn a_key_typed_while_sudo_masks_the_probe_refuses() {
     typer.join().unwrap();
     assert!(matches!(err, FillError::Typed), "{err:?}");
     m.write(id, b"\r").unwrap();
-    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    let out = report(&rx);
     assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
     m.close(id).unwrap();
 }
@@ -1427,8 +1535,8 @@ fn a_mask_that_leaves_the_cursor_off_the_prompt_refuses() {
 
 /// Ticket 155 (#284): a refused fill types nothing but its probe, and the probe holds no Enter,
 /// so a refusal can never be taken by sudo as a password attempt. The stand-in keeps every byte
-/// it reads, raw (no line discipline in the way), and reports them in hex once the input has been
-/// quiet for 1.5 s: nobody presses Enter here, so whatever it read came from the fill.
+/// it reads, raw (no line discipline in the way), and reports them in hex once it reads [`DONE`],
+/// sent when the fill is over: nobody presses Enter here, so whatever it read came from the fill.
 #[test]
 fn a_refused_fill_types_only_its_probe_and_no_enter() {
     assert!(!PROBE.iter().any(|&b| b == b'\r' || b == b'\n'), "{PROBE:?}");
@@ -1440,19 +1548,19 @@ fn a_refused_fill_types_only_its_probe_and_no_enter() {
         ("another prompt's mask", "*", "Password: "),
     ] {
         let script = format!(
-            "stty raw -echo min 0 time 15; printf '%s' '{prompt}'; all=''; \
+            "stty raw -echo min 1 time 0; printf '%s' '{prompt}'; all=''; \
              while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
-             [ -z \"$c\" ] && break; all=\"$all $c\"; \
+             [ -z \"$c\" ] || [ \"$c\" = 04 ] && break; all=\"$all $c\"; \
              if [ \"$c\" = 15 ]; then printf '\\b \\b'; else printf '{mask}'; fi; done; \
              stty sane; echo; echo \"got:[$all ]\"; sleep 5"
         );
         let m = SessionManager::new();
         let (id, rx) = open(&m, host_sh(&script));
-        until(&rx, prompt.trim_end());
-        std::thread::sleep(Duration::from_millis(150));
+        shown(&rx, prompt);
         let got = m.fill(id, WAIT, prompt.trim_end(), None, |_| secret());
         assert!(matches!(got, Err(FillError::Echoes(_))), "{name}: {got:?}");
-        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+        m.write(id, DONE).unwrap();
+        let out = report(&rx);
         m.close(id).unwrap();
         assert!(out.contains("got:[ 15 78 15 ]"), "{name}: {out:?}");
     }

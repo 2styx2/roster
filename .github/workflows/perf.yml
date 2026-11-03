@@ -48,6 +48,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Every #[ignore]d test of roster-core's is a budget (the Topology and Mesh Plugins'); their limits
-      # are set for this debug build, as docs/app/dev/testing.md runs them.
+      # Every #[ignore]d test of roster-core's is a budget (the Topology and Mesh Plugins', init.lua's
+      # big loads); their limits are set for this debug build, as docs/app/dev/testing.md runs them.
       - run: cargo test -p roster-core -- --ignored
