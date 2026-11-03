@@ -119,11 +119,69 @@ describe("Copying and pasting", () => {
     expect(term.sent).toEqual(["uptime"]);
   });
 
-  it("a Shift+drag selection under mouse reporting: right-click copies it and clears it", async () => {
+  // Windows Terminal checks _canSendVTMouseInput before its copy-or-paste rule, selection or not
+  // (owner, 2026-11-03, #302 item 2; decision Q166).
+  it("a Shift+drag selection under mouse reporting: a plain right-click is the program's, not a copy", async () => {
     const platform = memoryPlatform({ clipboard: "old" });
     const term = fakeTerm("10.0.0.5 esx-02");
     await rightClick(term, platform.clipboard, { programHasMouse: true });
+    expect(platform.clipboardText()).toBe("old");
+    expect(term.hasSelection()).toBe(true);
+    expect(term.sent).toEqual([]);
+  });
+
+  it("the same with copy-on-select on: the program's, nothing copied or pasted", async () => {
+    const platform = memoryPlatform({ clipboard: "old" });
+    const term = fakeTerm("10.0.0.5 esx-02");
+    await rightClick(term, platform.clipboard, { programHasMouse: true, copyOnSelect: true });
+    expect(platform.clipboardText()).toBe("old");
+    expect(term.sent).toEqual([]);
+  });
+
+  // Windows Terminal (ControlInteractivity.cpp, PointerPressed): it copies the selection, clears
+  // it, and then pastes when copyOnSelect is on ("CopyOnSelect: right click always pastes")
+  // (owner, 2026-11-03, #302 item 1; decision Q166).
+  it("with copy-on-select on, right-click with a selection copies it, clears it, then pastes it", async () => {
+    const platform = memoryPlatform({ clipboard: "old" });
+    const term = fakeTerm("10.0.0.5 esx-02");
+    await rightClick(term, platform.clipboard, { copyOnSelect: true });
     expect(platform.clipboardText()).toBe("10.0.0.5 esx-02");
+    expect(term.hasSelection()).toBe(false);
+    expect(term.sent).toEqual(["10.0.0.5 esx-02"]);
+  });
+
+  it("with copy-on-select on, the paste after the copy is filtered like every paste", async () => {
+    const platform = memoryPlatform({ clipboard: "old" });
+    const term = fakeTerm("x\x1b[201~y");
+    await rightClick(term, platform.clipboard, { copyOnSelect: true });
+    expect(term.sent).toEqual(["x[201~y"]);
+  });
+
+  // Fails closed (coordinator's review of #338): a paste after a failed copy would type whatever
+  // the clipboard held before (a password copied earlier, say) instead of the selection.
+  it("with copy-on-select on, a copy the clipboard refuses pastes nothing (never the old clipboard)", async () => {
+    const term = fakeTerm("10.0.0.5 esx-02");
+    const clipboard = {
+      readText: async () => "an old password",
+      writeText: async () => {
+        throw new Error("refused");
+      },
+    };
+    await rightClick(term, clipboard, { copyOnSelect: true });
+    expect(term.hasSelection()).toBe(false);
+    expect(term.sent).toEqual([]);
+  });
+
+  it("with copy-on-select on and nothing selected, right-click pastes as before", async () => {
+    const term = fakeTerm("");
+    await rightClick(term, memoryPlatform({ clipboard: "uptime" }).clipboard, { copyOnSelect: true });
+    expect(term.sent).toEqual(["uptime"]);
+  });
+
+  it("with copy-on-select on and a selection of only spaces (nothing to copy), right-click clears it and pastes nothing", async () => {
+    const platform = memoryPlatform({ clipboard: "an old password" });
+    const term = fakeTerm("   ");
+    await rightClick(term, platform.clipboard, { copyOnSelect: true });
     expect(term.hasSelection()).toBe(false);
     expect(term.sent).toEqual([]);
   });

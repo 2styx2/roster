@@ -127,7 +127,7 @@
 ---@field cursor_style? "block"|"bar"|"underline" The cursor's shape. Default: `"block"`.
 ---@field scrollback? integer How many lines the terminal keeps above the screen. Default: `10000`. Takes 0 to 1000000 lines.
 ---@field copy_on_select? boolean Selecting text copies it. Default: `true`.
----@field right_click_paste? boolean Right-click copies the selection, or pastes when there's none. Default: `true`.
+---@field right_click_paste? boolean Right-click copies the selection, or pastes when there's none; with copy_on_select on, it copies and then pastes. Default: `true`.
 ---@field osc52? boolean A program in the Session on screen may set the clipboard with OSC 52 (write only, at most 1 MiB), as in Windows Terminal: how Claude Code, vim or tmux copy what you select in them. Default: `true`.
 ---@field colors? roster.config.TerminalColors Any terminal or ANSI colour, set over the Theme's.
 ---@field shell_hooks? boolean Send each Session's shell the line that turns on prompt marks (OSC 133) and its folder (OSC 7). Unset, a Host's shell_hooks in roster.yml decides.

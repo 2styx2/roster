@@ -158,14 +158,17 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       clearTimeout(copyTimer);
       copyTimer = setTimeout(copy, 120);
     });
-    // Right-click: copy the selection, or paste when there's none (as Windows Terminal). While a
-    // program has mouse reporting on, a right-click without Shift is the program's (xterm sent it
-    // the click), unless there's a selection to copy (decision Q149).
+    // Right-click: copy the selection, or paste when there's none; with copy-on-select on, copy
+    // and then paste (as Windows Terminal). While a program has mouse reporting on, a right-click
+    // without Shift is the program's (xterm sent it the click), selection or not (Q149, Q166).
     const onContextMenu = (e: MouseEvent) => {
       if (!cb.current.env.options.rightClickCopyPaste) return;
       e.preventDefault();
       const mac = { mac: runsOnMac(), macOptionClickForcesSelection: t.options.macOptionClickForcesSelection ?? false };
-      void rightClick(t, cb.current.env.clipboard, { programHasMouse: programHasMouse(e, t.modes.mouseTrackingMode, mac) });
+      void rightClick(t, cb.current.env.clipboard, {
+        programHasMouse: programHasMouse(e, t.modes.mouseTrackingMode, mac),
+        copyOnSelect: cb.current.env.options.copyOnSelect,
+      });
       t.focus();
     };
     // Ctrl+wheel zooms the terminal, not the page.
