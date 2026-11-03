@@ -202,8 +202,9 @@ struct FakeServe {
     mesh: Mutex<Value>,
     /// What `mesh.status { grouped = true }` answers; Null: a serve before API 19, which ignores it.
     grouped: Value,
-    /// A `host.check_job` it answers 300 ms late, so a later one answers first.
-    slow_check: Mutex<Option<String>>,
+    /// A `host.check_job` it holds until the test sends a word on the gate (at most
+    /// [`common::CEILING`]), so a later one answers first.
+    held_check: Mutex<Option<(String, Receiver<()>)>>,
     /// The `roster sync` after a cut wrote `mesh: false` (T150).
     cut_sync: Mutex<Value>,
 }
@@ -216,7 +217,7 @@ impl FakeServe {
             hosts_gate: Mutex::new(None),
             mesh: Mutex::new(mesh),
             grouped: Value::Null,
-            slow_check: Mutex::new(None),
+            held_check: Mutex::new(None),
             cut_sync: Mutex::new(json!({ "ok": true })),
         }
     }
@@ -251,8 +252,9 @@ impl Serve for FakeServe {
             // check-3 failed nas-01 at tcp, check-5 passed it later; any other passed web-1.
             "host.check_job" => {
                 let job = params["job"].as_str().unwrap_or("");
-                if self.slow_check.lock().unwrap().as_deref() == Some(job) {
-                    std::thread::sleep(Duration::from_millis(300));
+                let held = self.held_check.lock().unwrap().take_if(|(held, _)| held == job);
+                if let Some((_, gate)) = held {
+                    let _ = gate.recv_timeout(common::CEILING);
                 }
                 let host = if job == "check-3" || job == "check-5" {
                     "nas-01"
@@ -735,13 +737,30 @@ fn only_a_finished_check_is_asked_about_and_an_older_result_never_overrides_a_ne
     end("check-2", "stopped");
     assert!(w.serve.called("host.check_job").is_empty());
     // check-3 (failed) ended, then check-5 (passed); check-3's answer comes back last and changes
-    // nothing: only the latest check of a Host to end counts.
-    *w.serve.slow_check.lock().unwrap() = Some("check-3".into());
-    w.host.event(Event {
+    // nothing: only the latest check of a Host to end counts. Serve holds check-3's answer until
+    // check-5's has come and run (T184: it was a 300 ms sleep).
+    let (release, gate) = channel();
+    *w.serve.held_check.lock().unwrap() = Some(("check-3".into(), gate));
+    let check = |job: &str| Event {
         name: "job_progress".into(),
-        payload: json!({ "kind": "check", "job": "check-3", "action": "check", "state": "done", "done": 8, "total": 8, "host": "nas-01" }),
-    });
-    let r = end("check-5", "done");
+        payload: json!({ "kind": "check", "job": job, "action": "check", "state": "done", "done": 8, "total": 8, "host": "nas-01" }),
+    };
+    let mut r = w.host.event(check("check-3"));
+    r.extend(w.host.event(check("check-5")));
+    // Both asked, and one of the two answered and ran: check-5's, as check-3's is held.
+    let started = Instant::now();
+    while w.serve.called("host.check_job").len() < 2 || w.host.requests(NAME) > 1 {
+        assert!(started.elapsed() < common::CEILING, "check-5's answer didn't come");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    release.send(()).unwrap();
+    r.push(w.settle(Reply {
+        plugin: NAME.into(),
+        result: Value::Null,
+        ops: Vec::new(),
+        error: None,
+        disabled: None,
+    }));
     assert_eq!(w.serve.called("host.check_job").len(), 2);
     assert!(
         r.iter().all(|r| find(&r.ops, "view_update").is_empty()),
