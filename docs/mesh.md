@@ -71,6 +71,7 @@ roster mesh --rotate esx-02  # replace esx-02's Mesh key everywhere
 roster mesh status           # who reaches whom and what's unfinished, without connecting
 roster mesh cut orion-2      # take orion-2 out of the Mesh now, everywhere
 roster mesh cut --all        # every Mesh entry off every Host (before removing roster)
+roster mesh --find-leftovers # Mesh entries on the Hosts this roster.yml doesn't ask for (changes nothing)
 roster mesh status --json    # the same as status, as JSON for scripts
 roster mesh --dry-run --json # the plan, as JSON
 ```
@@ -119,7 +120,7 @@ It then writes `mesh: false` for HOST in `roster.yml` as a Pending change, so th
 
 Every Host is confirmed. One that's down or doesn't answer gets a loud warning, `CUT PENDING ON 2 HOSTS`, on every `roster mesh` run until the cut is finished there, by `roster mesh cut HOST` again or by the next `roster mesh`.
 
-`roster mesh cut --all` takes the whole Mesh off every Host `roster.yml` has that roster logs in to, at once: every `roster-mesh:` line in each `authorized_keys`, and each source's Mesh files, as a cut does on the cut Host. It doesn't change `roster.yml` (it's for [uninstalling roster](#uninstalling-roster)), so the next `roster mesh` puts the Mesh back. A Host that doesn't answer is listed, the command exits 1, and running it again finishes it.
+`roster mesh cut --all` takes the whole Mesh off every Host `roster.yml` has that roster logs in to, at once: every `roster-mesh:` line in each `authorized_keys`, and each source's Mesh files, as a cut does on the cut Host. `roster-mesh:` lines name only their source Host, not the Box or Inventory that wrote them, so it also takes off any other Box's or other Inventory's Mesh entries on those Hosts, and its question says so. It doesn't change `roster.yml` (it's for [uninstalling roster](#uninstalling-roster)), so the next `roster mesh` puts the Mesh back. A Host that doesn't answer is listed, the command exits 1, and running it again finishes it.
 
 HOST's own Mesh files go from the directory its `mesh_dir:` names now, and from roster's own default directory. An earlier `mesh_dir:` that still holds a Mesh key (you changed or removed `mesh_dir:` since the last apply) is never removed: the cut ends with a warning naming it, so you can delete it by hand. `:mesh cut HOST` in the app shows the same warning (serve API 24).
 
@@ -177,14 +178,23 @@ The Mesh needs nothing on a Host, so a Host without roster is the normal case. T
 
 ### A Box with no Mesh record
 
-A Box with no Mesh state at all (no `mesh.json` or `mesh-NAME.json`: a new Box, or roster removed and installed again without `roster mesh cut --all` first) doesn't know which Hosts hold Mesh entries. Its first `roster mesh` (and `--dry-run`, and `roster check` when `roster.yml` has a Mesh) logs in to **every** Host in `roster.yml` it can (key Hosts, reviewed), one at a time, not only the Mesh's, and finds an earlier install's entries by roster's own tag and mark, never by guessing: the `roster-mesh:SOURCE` lines in `authorized_keys`, a Mesh key and files in the Mesh's directory, the two lines after roster's mark in `~/.ssh/config`. What `roster.yml` still asks for is kept (adopted: the same key, the same lines, nothing rewritten), and the rest is removed as any removal is. Each Host says which:
+A Box with no Mesh state at all (no `mesh.json` or `mesh-NAME.json`: a new Box, or roster removed and installed again without `roster mesh cut --all` first) doesn't know which Hosts hold Mesh entries, and `roster mesh status` says `no Mesh record on this Box`. `roster mesh`, `--dry-run`, `roster check` and `roster setup` work as they always do: they visit the Mesh's own Hosts only, where the same `roster.yml` finds its earlier keys and lines and keeps them as they are (nothing rewritten), and they never go looking anywhere else.
 
-```text
-warning: orion-2: Mesh entries from an earlier roster on this Box (it has no record of them): kept, as roster.yml still asks for them: its Mesh key, its Include, key from orion-3
-warning: nas-1: Mesh entries from an earlier roster on this Box (it has no record of them): roster.yml no longer asks for them, so roster mesh removes them: remove key from orion-2
+That's on purpose: a `roster-mesh:SOURCE` line names only its source Host, not the Box or Inventory that wrote it. Another Box (a teammate's, or your laptop) with a `roster.yml` that lists the same NAS can't tell its own leftovers from that Box's Mesh, which is still in use. So looking further is a command you run:
+
+```sh
+roster mesh --find-leftovers     # every Host, once, one at a time: what this roster.yml doesn't ask for; changes nothing
+roster mesh --remove-leftovers   # the same, then removes them after a question (-y doesn't ask)
 ```
 
-`roster mesh status` doesn't connect, so it can't see them; it says `no Mesh record on this Box` and points at `roster mesh --dry-run`. Once an apply has run, the Box has its record and visits only the Mesh's Hosts again. While another Inventory's Mesh state is on this Box, an Inventory without its own doesn't look beyond its Mesh: a `roster-mesh:` line its `roster.yml` doesn't name could be that Inventory's. A Host that doesn't answer that first time is pending like any other, and the next `roster mesh` looks at it.
+```text
+nas-1: key from orion-2 (from=10.0.0.2)
+orion-2: Mesh key and files in /home/admin/.ssh/roster-mesh, the Include in ~/.ssh/config, /home/admin/ROSTER.md
+
+Mesh entries this roster.yml doesn't ask for, on 2 Hosts. roster's tag names only the source Host, not the Box or Inventory that wrote it, so these may be another Box's or another Inventory's Mesh, still in use.
+```
+
+They're found by roster's own tag and mark, never by guessing: the `roster-mesh:SOURCE` lines in `authorized_keys` (with their `from=` address, so you can tell whose they are), and, on a Host that isn't a source in this `roster.yml`, a Mesh key and files roster wrote, the two lines after roster's mark in `~/.ssh/config` and the Mesh's `ROSTER.md`. Remove them only when you know they're leftovers: the question says that another Box's Mesh stops working where it still used them. `--remove-leftovers` takes exactly what it found and nothing else (the Box's own `roster-managed` key and your lines stay), and refuses while another Inventory's Mesh state is on this Box (one of its lines would look the same). A Host that doesn't answer is listed, and the command exits 1.
 
 ### A Host that runs roster itself
 
@@ -202,8 +212,8 @@ The `Include` the Mesh relies on is checked: when `~/.ssh/config` includes the M
 
 Before removing roster from this Box, take off the Hosts what it put there, while it can still log in to them:
 
-1. `roster mesh cut --all`: every Mesh key, line and file off every Host. Run it again until it exits 0 (a Host that was down).
+1. `roster mesh cut --all`: every Mesh key, line and file off every Host, including any other Box's or Inventory's Mesh entries on them (roster's tag doesn't say whose; the question says so). Run it again until it exits 0 (a Host that was down).
 2. `roster revoke` (`roster revoke --all` with named Inventories): this Box's own key off every Host. It names this Box's files to delete once every Host has lost the key.
 3. Delete those files, and roster.
 
-Skipping step 1 leaves the Mesh working between the Hosts, with nothing on this Box that knows about it. Installing roster again finds it ([A Box with no Mesh record](#a-box-with-no-mesh-record)); to take it off then, run `roster mesh cut --all` from the new install.
+Skipping step 1 leaves the Mesh working between the Hosts, with nothing on this Box that knows about it. Installed again with the same `roster.yml`, roster takes it as it is; to take it off then, run `roster mesh cut --all` from the new install, or `roster mesh --find-leftovers` to see what a changed `roster.yml` no longer asks for ([A Box with no Mesh record](#a-box-with-no-mesh-record)).

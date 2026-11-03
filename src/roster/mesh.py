@@ -125,9 +125,9 @@ def state_file():
 def load_state():
     """{members: [hosts roster wrote Mesh entries on], pending: {host: why}, cut: {host: [peers not confirmed]},
     applied: digest of the last complete apply, known: whether this Box has any Mesh record (this Inventory's or
-    another's)}. Only bookkeeping: the
-    Mesh itself comes from roster.yml. known is False on a new Box, or one where roster was removed and installed
-    again without `roster mesh cut` first (T193): the Hosts may hold Mesh entries this Box knows nothing of."""
+    another's)}. Only bookkeeping: the Mesh itself comes from roster.yml. known is False on a new Box, or one where
+    roster was removed and installed again without `roster mesh cut --all` first (T193): the Hosts may hold Mesh
+    entries this Box knows nothing of, and `roster mesh --find-leftovers` looks for them."""
     f = state_file()
     try:
         data = json.loads(f.read_text())
@@ -135,8 +135,8 @@ def load_state():
         data = {}
     return {"members": list(data.get("members") or []), "pending": dict(data.get("pending") or {}),
             "cut": dict(data.get("cut") or {}), "applied": data.get("applied"),
-            # another Inventory's Mesh state here: this Box has a record, and a roster-mesh line roster.yml doesn't
-            # name could be that Inventory's (Q172 (b)), so nothing beyond this file's Mesh is looked at
+            # another Inventory's Mesh state here: a roster-mesh line roster.yml doesn't name could be that
+            # Inventory's (Q172 (b)), so --remove-leftovers refuses (others_here)
             "known": f.exists() or any(f.parent.glob("mesh*.json"))}
 
 
@@ -271,7 +271,7 @@ drop() {  # drop PATH LABEL: remove it if it's there
   [ -e "$1" ] || return 0
   echo "CHANGE $2"; [ "$MODE" = apply ] && rm -f "$1"
 }
-ours() { [ -f "$1" ] && head -n 1 "$1" | grep -q 'roster-mesh'; }
+ours() { [ -f "$1" ] && head -n 1 "$1" | grep -q '^<!-- roster-mesh: written by roster for '; }
 C=$HOME/.ssh/config; INC="Include $P/config"
 """
 
@@ -349,7 +349,6 @@ H=$(mktemp); grep -E "$TAGS" "$AK" 2>/dev/null > "$H"
 [ -n "$KEEP" ] && grep -E " roster-mesh:($KEEP)\$" "$H" >> "$W"
 grep -vxFf "$W" "$H" | while read -r l; do echo "DROP ${l##*:}"; done
 grep -vxFf "$H" "$W" | while read -r l; do echo "ADD ${l##*:}"; done
-grep -xFf "$W" "$H" | while read -r l; do echo "HAVE ${l##*:}"; done
 S1=$(mktemp); S2=$(mktemp); sort "$H" > "$S1"; sort "$W" > "$S2"
 if [ "$MODE" = apply ] && ! cmp -s "$S1" "$S2"; then
   d=${AK%/*}; mkdir -p "$d"; [ -z "$ESXI" ] && chmod 700 "$d"
@@ -554,11 +553,8 @@ def visits_of(cfg, hosts):
     {jump Host: {peer: Host}} for the hops, jump Hosts that aren't sources, every Host of phase 2)."""
     g = graph(cfg)
     st = load_state()
-    # Hosts roster wrote on before and still knows how to reach: visited too, so what's no longer asked for goes.
-    # With no record on this Box at all (new, or roster removed and installed again: T193), that's every Host roster
-    # can log in to, once: an earlier install's tagged entries are found by their tag and removed.
-    before = set(st["members"]) | set(st["pending"]) if st["known"] else set(hosts)
-    ex = sorted(n for n in before if n not in g["visit"] and n in hosts
+    # Hosts roster wrote on before and still knows how to reach: visited too, so what's no longer asked for goes
+    ex = sorted(n for n in set(st["members"]) | set(st["pending"]) if n not in g["visit"] and n in hosts
                 and hosts[n]["enroll"] and hosts[n]["reviewed"])
     links = [dict(x) for x in g["links"]]
     live = {(x["from"], x["to"]) for x in links if "skip" not in x}
@@ -721,8 +717,6 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
         changes += [f"replace key from {s}" for s in sorted(added & dropped)]
         changes += [f"add key from {s}" for s in sorted(added - dropped)]
         changes += [f"remove key from {s}" for s in sorted(dropped - added)]
-        if not st["known"]:
-            found(out, name, lines, changes, apply)
         changes = [c.replace("write include", "write Include in ~/.ssh/config")
                    .replace("write claude", "write the import in ~/.claude/CLAUDE.md")
                    .replace("remove include", "remove the Include from ~/.ssh/config")
@@ -748,28 +742,6 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
         record(cfg, g, st, result, ex)
     result["cut_pending"] = load_state()["cut"] if apply else st["cut"]
     return result
-
-
-FOUND = "{name}: Mesh entries from an earlier roster on this Box (it has no record of them)"
-
-
-def found(out, name, lines, changes, apply):
-    """With no Mesh record on this Box (T193): what NAME held from an earlier install, found by roster's own tag and
-    mark, never by guessing. What roster.yml still asks for is kept (adopted); the rest goes as any removal does."""
-    kept = [f"key from {s}" for s in report(lines, "HAVE ")]
-    if "SAME include" in lines:
-        kept.insert(0, "its Include")
-    probe = out["probe"].get(name) or {}
-    if probe.get("pub") and not probe.get("key"):
-        kept.insert(0, "its Mesh key")
-    gone = [c for c in changes if c.startswith("remove")]
-    if kept:
-        out.setdefault("warnings", []).append(FOUND.format(name=name) + ": kept, as roster.yml still asks for them: "
-                                              + ", ".join(kept))
-    if gone:
-        out.setdefault("warnings", []).append(
-            FOUND.format(name=name) + ": roster.yml no longer asks for them, so "
-            + ("roster removed them: " if apply else "roster mesh removes them: ") + ", ".join(gone))
 
 
 def stale(out, name, lines):
@@ -978,6 +950,106 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
     st["applied"] = None
     save_state(st)
     return {"confirmed": confirmed, "pending": pending, "warnings": out.get("warnings", [])}
+
+
+# ---------------------------------------------------------------- leftovers (T193, #372's review B1)
+
+LOOK = r"""
+T=' roster-mesh:[A-Za-z0-9][A-Za-z0-9._-]*$'
+grep -E "$T" "$AK" 2>/dev/null | while read -r l; do
+  f=$(printf '%s\n' "$l" | sed -n 's/^from="\([^"]*\)".*/\1/p'); echo "LINE ${l##*:} $f"
+done
+seen=
+for d in "$P" "$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$HOME/.ssh/config" 2>/dev/null | sed -n 's/^Include \(\/.*\)\/config$/\1/p')"; do
+  [ -n "$d" ] && [ -f "$d/id_ed25519.pub" ] && mine "$d" || continue
+  r=$(cd "$d" && pwd -P); case " $seen " in *" $r "*) continue;; esac; seen="$seen $r"; echo "FILES $d"
+done
+grep -qxF "$MARK" "$HOME/.ssh/config" 2>/dev/null && echo "INCLUDE"
+[ -z "$ESXI" ] && [ -f "$R" ] && head -n 1 "$R" | grep -q '^<!-- roster-mesh: written by roster for ' && echo "MD $R"
+echo ROSTER_DONE
+"""
+
+LEFTOVERS_WHOSE = ("roster's tag names only the source Host, not the Box or Inventory that wrote it, so these may be "
+                   "another Box's or another Inventory's Mesh, still in use")
+
+
+def others_here():
+    """Another Inventory's Mesh state on this Box (Q172 (b)): a roster-mesh line this roster.yml doesn't name could be
+    that Inventory's."""
+    f = state_file()
+    return sorted(x.name for x in f.parent.glob("mesh*.json") if x != f)
+
+
+def find_leftovers(cfg, say=None):
+    """`roster mesh --find-leftovers`: on every key, reviewed Host of roster.yml, once each, one at a time, the Mesh
+    entries this roster.yml doesn't ask for, found by roster's own tag and mark (read-only). Returns {hosts: {host:
+    {lines: [(source, from)], files: [dir], include, md}}, pending: {host: why}}: only Hosts holding any."""
+    say = say or (lambda msg: None)
+    hosts = with_mesh_dirs(cfg)
+    g = graph(cfg)
+    wanted = {}
+    for x in g["links"]:
+        if x["kind"] == "key" and "skip" not in x:
+            wanted.setdefault(x["to"], set()).add(x["from"])
+    out: dict[str, Any] = {"hosts": {}, "pending": {}}
+    for name in sorted(n for n, h in hosts.items() if h["enroll"] and h["reviewed"]):
+        say(f"  look   {name}")
+        lines, err = on_host(hosts[name], preamble(hosts[name], "check") + LOOK)
+        if err or lines is None:
+            out["pending"][name] = err
+            continue
+        found: dict[str, Any] = {}
+        extra = [tuple((x.split(" ", 1) + [""])[:2]) for x in report(lines, "LINE ")]
+        extra = [(src, frm) for src, frm in extra if src not in wanted.get(name, set())]
+        if extra:
+            found["lines"] = extra
+        if name not in g["sources"]:
+            files = report(lines, "FILES ")
+            if files:
+                found["files"] = files
+            if "INCLUDE" in lines:
+                found["include"] = True
+            if report(lines, "MD "):
+                found["md"] = report(lines, "MD ")[0]
+        if found:
+            out["hosts"][name] = found
+    return out
+
+
+def leftover_words(found):
+    """What --find-leftovers found on one Host, as words."""
+    words = [f"key from {src} (from={frm or '?'})" for src, frm in found.get("lines", [])]
+    words += [f"Mesh key and files in {d}" for d in found.get("files", [])]
+    words += ["the Include in ~/.ssh/config"] if found.get("include") else []
+    words += [found["md"]] if found.get("md") else []
+    return words
+
+
+def remove_leftovers(cfg, found):
+    """Remove exactly what find_leftovers FOUND, one Host at a time: the roster-mesh lines it named, and a former
+    source's Mesh files and Include (as when a Host stops being a source). {removed: [hosts], pending: {host: why}}."""
+    hosts = with_mesh_dirs(cfg)
+    out: dict[str, Any] = {"removed": [], "pending": {}}
+    for name, f in sorted(found["hosts"].items()):
+        h = hosts[name]
+        s = [preamble(h, "apply"), WRITE]
+        if f.get("files") or f.get("include") or f.get("md"):
+            s.append(NOT_SOURCE)
+        tags = sorted({src for src, _ in f.get("lines", [])})
+        if tags:
+            s.append(f"""T=' roster-mesh:({'|'.join(ere(t) for t in tags)})$'
+if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
+  t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"
+  [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
+fi
+grep -qE "$T" "$AK" 2>/dev/null && {{ echo "ERROR a roster-mesh line is still there"; exit 0; }}
+""")
+        lines, err = on_host(h, "".join(s) + "echo ROSTER_DONE\n", timeout=CUT_TIMEOUT)
+        if err:
+            out["pending"][name] = err
+        else:
+            out["removed"].append(name)
+    return out
 
 
 def write_cut(cfg, name):

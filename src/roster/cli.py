@@ -226,8 +226,9 @@ def mesh_cut_all(cfg, args):
     """`roster mesh cut --all` (T193): every Mesh entry off every Host, before removing roster from this Box."""
     n = sum(1 for h in cfg["hosts"].values() if h["enroll"] and h["reviewed"])
     if not args.yes:
-        ans = input(f"Take every Mesh key and file off all {plural(n, 'Host')} now, at once? roster.yml isn't "
-                    "changed: the next `roster mesh` puts the Mesh back. [y/N] ")
+        ans = input(f"Take every Mesh key and file off all {plural(n, 'Host')} now, at once, including any other "
+                    "Box's or other Inventory's Mesh entries on them (roster's tag doesn't say whose they are)? "
+                    "roster.yml isn't changed: the next `roster mesh` puts this one's Mesh back. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
     r = mesh.cut_all(cfg, cfg["workers"])
@@ -240,6 +241,37 @@ def mesh_cut_all(cfg, args):
         say(f"not finished on {plural(len(r['pending']), 'Host')}: `roster mesh cut --all` again once they answer, "
             "before removing roster from this Box")
     return 1 if r["pending"] else 0
+
+
+def mesh_leftovers(cfg, args):
+    """`roster mesh --find-leftovers` / `--remove-leftovers` (T193, #372's review B1): Mesh entries on the Hosts that
+    this roster.yml doesn't ask for. Never automatic: they may be another Box's Mesh."""
+    if args.remove_leftovers and (others := mesh.others_here()):
+        die(f"another Inventory's Mesh state is on this Box ({', '.join(others)}), and roster's tag doesn't say which "
+            "Inventory a line is from, so --remove-leftovers could take that Inventory's Mesh: remove them by hand, or "
+            "`roster mesh cut --all` from each Inventory when uninstalling")
+    r = mesh.find_leftovers(cfg, say=say)
+    for host, found in r["hosts"].items():
+        say(f"{host}: {', '.join(mesh.leftover_words(found))}")
+    for host, why in r["pending"].items():
+        say(f"  not looked at  {host}: {why}")
+    if not r["hosts"]:
+        say("no Mesh entries this roster.yml doesn't ask for" + (" on the Hosts that answered" if r["pending"] else ""))
+        return 1 if r["pending"] else 0
+    say(f"\nMesh entries this roster.yml doesn't ask for, on {plural(len(r['hosts']), 'Host')}. {mesh.LEFTOVERS_WHOSE}.")
+    if not args.remove_leftovers:
+        say("`roster mesh --remove-leftovers` removes them, once you know they're leftovers (it asks first)")
+        return 1 if r["pending"] else 0
+    if not args.yes:
+        ans = input(f"Remove them from {plural(len(r['hosts']), 'Host')}? If another Box or Inventory still uses them, "
+                    "its Mesh stops working there. [y/N] ")
+        if ans.strip().lower() != "y":
+            return 1
+    done = mesh.remove_leftovers(cfg, r)
+    say(f"removed on {', '.join(done['removed']) or 'no Host'}")
+    for host, why in done["pending"].items():
+        say(f"  not removed  {host}: {why}")
+    return 1 if done["pending"] or r["pending"] else 0
 
 
 def cmd_mesh(cfg, args):
@@ -257,8 +289,8 @@ def cmd_mesh(cfg, args):
         warn_cut(st["cut_pending"])
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
         if not mesh.load_state()["known"]:         # T193: new here, or roster removed and installed again
-            say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left; `roster mesh "
-                "--dry-run` looks for them on every Host it can log in to, and `roster mesh` adopts or removes them")
+            say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "
+                "Box's); `roster mesh --find-leftovers` looks on every Host and changes nothing")
         return 0
     if args.action == "cut" and args.all:
         if args.target:
@@ -266,6 +298,10 @@ def cmd_mesh(cfg, args):
         return mesh_cut_all(cfg, args)
     if args.all:
         die("--all goes with cut: roster mesh cut --all")
+    if args.find_leftovers or args.remove_leftovers:
+        if args.action or args.target or args.dry_run or args.rotate:
+            die("--find-leftovers and --remove-leftovers go alone: roster mesh --find-leftovers")
+        return mesh_leftovers(cfg, args)
     if args.action == "cut":
         if not args.target:
             die("usage: roster mesh cut HOST, or roster mesh cut --all")
@@ -1149,6 +1185,10 @@ def build_parser():
     s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
     s.add_argument("--all", action="store_true", help="with cut: every Mesh entry off every Host, roster.yml "
                    "unchanged (before removing roster from this Box)")
+    s.add_argument("--find-leftovers", action="store_true", help="look on every Host, once, for Mesh entries this "
+                   "roster.yml doesn't ask for (an earlier install's, or another Box's); changes nothing")
+    s.add_argument("--remove-leftovers", action="store_true", help="the same, then remove them after a question "
+                   "(-y doesn't ask): they may be another Box's Mesh")
     s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
