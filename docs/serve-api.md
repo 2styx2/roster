@@ -69,7 +69,88 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 
 <!-- END generated:methods -->
 
-A Host has `name`, `group`, `ip`, `ssh: {user, port, auth}`, `login: {user, auth}` (the default for its services), `services: {name: {port, url, scheme, user, auth, verify, login, override}}` (`login` is the resolved type, never a `web_login_names` alias), `problems: [{service, message, fix}]` (service entries left out because roster can't use them; empty when there are none), `web`, `enroll`, `reviewed`, `title`, `description`, `type`, `product`, `mac`, plus the older flat `user`, `port` and `auth`.
+The objects these answer with are generated from their models (`src/roster/models.py`, `servemodels.py`; ticket T174): every value is resolved (what the Host doesn't set comes from its group, then `defaults:`), and no field ever holds a password: `auth` is a Login reference. A Host also carries any other key `roster.yml` gives it, its group or `defaults:`, as `roster.yml` has it, after these.
+
+<!-- BEGIN generated:models Host SshLogin Login Service ServiceProblem Group InventoryError -->
+
+**Host**: one Host. Keys roster doesn't know (shell_hooks, a team's own) stay on it as they were written.
+
+| Field | Type | What |
+|---|---|---|
+| `user` | `string \| null` | The same as `ssh.user` (kept for older code). |
+| `port` | `integer` | The same as `ssh.port`. |
+| `enroll` | `boolean` | Whether `roster setup` puts this Box's key on it (`false`: password Sessions). |
+| `auth` | `string \| null` | The same as `ssh.auth`. |
+| `web` | `string \| null` | Its web UI's URL: the `web` service's, else the first service given a URL. |
+| `services` | `{string: Service}` | Its services by name (`web`, `postgres`); `{}` when none. |
+| `notes` | `any` | The older name for `description`, as roster.yml has it. |
+| `title` | `string` | One line; `""` if unset. |
+| `description` | `string` | One line; `""` if unset. |
+| `type` | `string` | What it is (`esxi`, `linux`); `""` if unset. |
+| `product` | `string` | Its product; `""` if unset. |
+| `reviewed` | `boolean` | `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is. |
+| `mac` | `any` | Its MAC address; `""` if unset. |
+| `mesh` | `boolean \| null` | `mesh:` as roster.yml sets it; `null` if nothing does. |
+| `ip` | `string` | Its address (an IP or a DNS name). |
+| `name` | `string` | Its name in the Inventory, unique. |
+| `group` | `string` | The group it's in. |
+| `ssh` | `SshLogin` | How roster logs in to it over ssh: the most specific of the Host's, its group's and `defaults:`. |
+| `login` | `Login` | The default Login for its services. |
+| `problems` | `ServiceProblem[]` | Service entries roster left out because it can't use them; `[]` when there are none. |
+
+**SshLogin**: how `ssh NAME` logs in: the most specific of the Host's, its group's and the defaults' ssh: block or plain user/port/auth.
+
+| Field | Type | What |
+|---|---|---|
+| `port` | `integer` | The port (22 unless set). |
+| `user` | `string \| null` | The user. |
+| `auth` | `string \| null` | Its Login reference (`prompt` unless set). |
+
+**Login**: the Host's default Login for its services (user and auth, unresolved).
+
+| Field | Type | What |
+|---|---|---|
+| `user` | `string \| null` | The user; `null` if unset. |
+| `auth` | `string \| null` | The Login reference; `null` if unset. |
+
+**Service**: one of a Host's services, merged defaults <- group <- host. `override`: it sets its own user or auth.
+
+| Field | Type | What |
+|---|---|---|
+| `port` | `integer` | Its port. |
+| `url` | `string \| null` | Its URL, for http and https services. |
+| `scheme` | `string \| null` | `http`, `https`, or `null` when roster can't tell. |
+| `user` | `string \| null` | Its user: its own, else the Host's `login.user`. |
+| `auth` | `string \| null` | Its Login reference: its own, else the Host's `login.auth`. |
+| `verify` | `boolean` | Whether its TLS certificate is checked. |
+| `login` | `string` | How `roster web` signs in, resolved (never a `web_login_names` alias): `basic`, `bearer`, `vsphere`, `unifi`, `openvpnas`, `hub` or `none`. |
+| `override` | `boolean` | `true` when it has a Login of its own; `false` when it uses the Host's. |
+
+**ServiceProblem**: a service entry roster left out of the Inventory, and why: the rest of the Host still loads.
+
+| Field | Type | What |
+|---|---|---|
+| `service` | `string` | The service's name. |
+| `message` | `string` | What's wrong, naming the service. |
+| `fix` | `string` | What to change. |
+
+**Group**: a group of Hosts, by its name in `hosts.list`'s `groups`.
+
+| Field | Type | What |
+|---|---|---|
+| `title` | `string` | One line; `""` if unset. |
+| `description` | `string` | One line; `""` if unset. |
+
+**InventoryError**: `hosts.list`'s `error` (API 8): why roster.yml as it is now doesn't load, while the last good Inventory is shown (catalog row 1).
+
+| Field | Type | What |
+|---|---|---|
+| `message` | `string` | What's wrong, with the line for a YAML error. |
+| `path` | `string \| null` | The `roster.yml` that doesn't load. |
+| `line` | `integer \| null` | The line a YAML error is at; left out when there's none. |
+| `fix` | `string \| null` | What to do about it. |
+
+<!-- END generated:models -->
 
 ## Sessions: `session.prepare`
 

@@ -25,6 +25,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **CLI**
 
 - **roster.yml is checked by type as it loads** (decision Q113): a value of the wrong kind that roster used to trip over later now stops the load with roster's usual error, naming the key and never the value, e.g. `workers: lots` gives `error: roster.yml: workers: input should be a valid integer…` (code 1 in `roster serve` and `--json`) instead of a Python traceback. What loaded before still loads, except a `workers:` or `claude_inline_limit:` below 1 or with a fraction, and a `provider_dirs:` entry that isn't a path; `--json` and serve's results keep their shape (a Host's default `login` user written as a number now comes out as text, as its ssh user always did). roster now needs Pydantic 2 (installed with it). See [Development](development.md#languages-and-types).
+- **Every `--json` document, and `roster serve`'s `hosts.list` and `host.get`, are checked against a model before they're sent** (#332, #334, decision Q113): the output is byte for byte what it was. The Host, its Logins, services and group in [the serve API](serve-api.md) are now documented from those models.
 
 **App**
 
