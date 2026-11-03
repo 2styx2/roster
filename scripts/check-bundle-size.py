@@ -46,9 +46,13 @@ KB = 1000
 # already replaced) and merged rules repeated for one selector, with every element's computed style
 # and a screenshot of 44 fixture states unchanged. That's 653 B raw, 49 B gzipped: the stylesheet
 # has no dead rules worth 1 KB gzipped, so the gzipped budget stays 71 bytes away. Not raised.
+# JS gzipped 745 -> 760 on 2026-11-03: the Plugin network's proxy tunnel (#225 item 5, #342: errors.md
+# rows 200-202, the proxy's lines in config.md, plugins.md and the roster.http reference, all bundled
+# for :help) took it from dev's 744.6 to 745.8 in CI (747.4 in a local build). Text :help reads, not a
+# dependency, so the budget follows it with room for the next small feature. Raw stays: 2,543.4.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2550, "gzip": 745},
+    "js": {"raw": 2550, "gzip": 760},
     "css": {"raw": 85, "gzip": 15.5},
 }
 
