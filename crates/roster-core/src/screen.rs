@@ -557,8 +557,13 @@ impl std::fmt::Display for Seen {
             Seen::Csi(params, fin) => {
                 f.write_str("CSI[")?;
                 match params {
+                    // A CSI's parameters are only the bytes between `ESC [` and its final byte
+                    // (0x20 to 0x3f); a string's contents (an OSC's title, palette or link) never
+                    // reach them. Shown only when they're digits and `;` after an optional `?`.
                     Some(p) if params_shown(p) => {
-                        f.write_str(&String::from_utf8_lossy(&p[..p.len().min(SEEN_PARAMS)]))?;
+                        for &b in &p[..p.len().min(SEEN_PARAMS)] {
+                            write!(f, "{}", char::from(b))?;
+                        }
                         if p.len() > SEEN_PARAMS {
                             f.write_str("…")?;
                         }

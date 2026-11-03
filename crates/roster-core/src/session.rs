@@ -1009,6 +1009,33 @@ mod tests {
     #[cfg(unix)]
     use std::time::Instant;
 
+    /// Ticket 155c: what a Session prints in strings (an OSC 0 title, an OSC 8 hyperlink, an
+    /// OSC 4 palette change, a DCS) and in text never reaches the log line of a refusal before
+    /// the probe: only counts, positions, SGR numbers and sequences' names.
+    #[test]
+    fn a_changed_log_line_never_holds_a_strings_text() {
+        let mut screen = Screen::new(24, 80);
+        screen.feed(b"$ sudo -v\r\n[sudo] password for ops: ");
+        let shot = screen.snapshot();
+        screen.feed(
+            b"\x1b]0;hunter2 s3cr3t title\x07\x1b]8;id=tok3n;https://vault.example/?token=s3cr3t\x1b\\hunter2 link\x1b]8;;\x1b\\\x1b]4;1;rgb:hu/nt/er\x07\x1bPq;s3cr3t\x1b\\\x1b[3;1Hhunter2\x1b[2;26H",
+        );
+        let err: FillError<()> = FillError::Changed {
+            before: 9,
+            diff: Box::new(screen.diff(&shot)),
+        };
+        let line = err.log_line().unwrap();
+        for word in [
+            "hunter", "s3cr3t", "secret", "title", "vault", "example", "token", "tok3n", "link", "rgb", "id=",
+        ] {
+            assert!(!line.contains(word), "{word} in {line}");
+        }
+        assert_eq!(
+            line,
+            "prompt fill refused before the probe: what was printed after the prompt check (9 bytes) changed the screen: row 2 characters (columns 26-37); row 3 characters (columns 1-7); unmodelled: palette change"
+        );
+    }
+
     /// Ticket 155c: a refusal's log line is at most [`LOG_MAX`] bytes and says when it was cut.
     #[test]
     fn a_long_log_line_is_cut_and_says_so() {
