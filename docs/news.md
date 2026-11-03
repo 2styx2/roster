@@ -14,6 +14,10 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ### Changed
 
+**CLI**
+
+- **roster.yml is checked by type as it loads** (decision Q113): a value of the wrong kind that roster used to trip over later now stops the load with roster's usual error, naming the key and never the value, e.g. `workers: lots` gives `error: roster.yml: workers: input should be a valid integer…` (code 1 in `roster serve` and `--json`) instead of a Python traceback. What loaded before still loads, except a `workers:` or `claude_inline_limit:` below 1 or with a fraction, and a `provider_dirs:` entry that isn't a path; `--json` and serve's results keep their shape (a Host's default `login` user written as a number now comes out as text, as its ssh user always did). roster now needs Pydantic 2 (installed with it). See [Development](development.md#languages-and-types).
+
 **App**
 
 - **A Host's row in the Sidebar has a menu instead of buttons** (#314): selecting a Host no longer shows ⓘ, ✓, ✎ and × on its row. Right-click it, or press the Menu key or Shift+F10 on it in App mode (`menu`), for Open, New Session, Details, Check, Edit, Rename, Move to another group, Add to a Folder, Remove from the Inventory and any Plugin's own actions on that row (a Folder's "Remove from Lab"), each running the same command its button or key did, with the keys shown beside it. It's a keyboard and screen-reader menu: arrows, Home/End, a letter, Enter, Esc (decision Q156). Groups, Folders and Sessions keep their buttons. See [The Sidebar](app/keyboard.md#the-sidebar).

@@ -88,9 +88,9 @@ def fetch(url):
     except (UnicodeError, ValueError) as e:  # a name IDNA refuses: no site has it
         return str(e) or type(e).__name__
     for method in ("HEAD", "GET"):          # some sites refuse HEAD: ask again with GET
-        req = urllib.request.Request(url, method=method, headers={"User-Agent": AGENT, "Accept": "*/*"})
+        req = urllib.request.Request(url, method=method, headers={"User-Agent": AGENT, "Accept": "*/*"})  # noqa: S310
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # noqa: S310 - only http(s) (URL above)
                 return r.status
         except urllib.error.HTTPError as e:
             if method == "HEAD" and e.code in (403, 404, 405, 501):

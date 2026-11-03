@@ -194,7 +194,7 @@ The details: [the CLI's security model](docs/cli-reference.md#security-model) an
 Work happens on branches cut from `dev` and lands through pull requests that the maintainer reviews and merges; [CONTRIBUTING.md](CONTRIBUTING.md) has the branch model and the commit rules. Tickets are [GitHub issues](https://github.com/2styx2/roster/issues), one milestone per iteration. The checks CI runs:
 
 ```bash
-uv run ruff check src tests && uv run pytest     # the CLI
+uv run ruff check src tests && uv run pyright && uv run pytest     # the CLI
 cd app && npm ci && npm run check               # the app's frontend
 cargo test && cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check
 ```
