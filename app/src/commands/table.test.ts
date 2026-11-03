@@ -45,6 +45,7 @@ function recorder(mode: ViewMode = "standard") {
     edit: (h) => calls.push(`edit ${h ?? "selected"}`),
     showChanges: (then) => calls.push(then ? `changes ${then}` : "changes"),
     pull: () => calls.push("pull"),
+    switchInventory: (name) => calls.push(`inventory ${name ?? ""}`),
     addHost: (g) => calls.push(g ? `add ${g}` : "add"),
     saveSession: () => calls.push("save"),
     fillPrompt: () => calls.push("fill"),

@@ -6,6 +6,7 @@
 // A command acts through CommandContext, which App provides.
 
 import { groupCommand, hostCommand, type InventoryOp } from "../inventory/commands";
+import { inventoryCommand } from "../inventory/switch";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { SidebarRow } from "../sidebar/Sidebar";
 import { VIEW_MODES, type ViewMode } from "../view/layout";
@@ -102,6 +103,9 @@ export interface CommandContext {
   showChanges(then?: "discard" | "publish"): void;
   /** Pulls the infra repo (fast-forward only) and says what happened. */
   pull(): void;
+  /** `:inventory NAME` (ticket 115): asks before switching roster to that named Inventory, or
+   * says why it can't; null starts the command line, or says there are none. */
+  switchInventory(name: string | null): void;
   /** `:config` (ticket 32): opens init.lua (making it first if there's none), reads it again,
    * or says where it is. */
   config(what: ConfigAction): void;
@@ -154,6 +158,8 @@ export interface CompletionContext {
   /** The web services of a Host, or (null) of the current one: Host details', else the selected
    * Host's (`:open`, ticket 18). */
   webServices?(host: string | null): readonly string[];
+  /** The named Inventories, as serve last listed them (`:inventory`, ticket 115). */
+  inventoryNames?: readonly string[];
 }
 
 /** Names that start with `word` first, then the rest that contain it, without case. */
@@ -301,6 +307,7 @@ export const builtinCommands: readonly CommandDef[] = [
   },
   hostCommand,
   groupCommand,
+  inventoryCommand,
   {
     id: "review",
     source: BUILTIN,

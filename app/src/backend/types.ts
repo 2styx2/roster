@@ -495,6 +495,42 @@ export const JOBS_API_VERSION = 20;
 /** serve API 21 (ticket 108): a Host's check is a job, with `job.progress` and in `jobs.list`. */
 export const CHECK_JOBS_API_VERSION = 21;
 
+/** serve API 27 (ticket 115): named Inventories, `inventories.list` and `inventories.use`. */
+export const INVENTORIES_API_VERSION = 27;
+
+/** One named Inventory (`inventories.list`): its name, its `roster.yml`, whether it's the active
+ * one, and whether its file is there. */
+export interface NamedInventory {
+  name: string;
+  path: string;
+  active: boolean;
+  exists: boolean;
+}
+
+/** `inventories.list`: the named Inventories, the active one's name, and the Inventory (`name`,
+ * null when its file isn't a named one) and file (`path`) this serve runs on. */
+export interface Inventories {
+  inventories: NamedInventory[];
+  active: string | null;
+  name: string | null;
+  path: string | null;
+}
+
+/** `inventories.use`: the Inventory now active. serve keeps running on its own: the app restarts it. */
+export interface InventoryUsed {
+  active: string;
+  path: string;
+  restart: true;
+}
+
+/** roster's codes for `inventories.list` and `inventories.use`. */
+export const InventoriesError = {
+  /** No named Inventory by that name; `data.names` has the ones there are. */
+  unknown: 140,
+  /** roster's list of named Inventories (`inventories.json`) doesn't load. */
+  unreadable: 143,
+} as const;
+
 /** serve's `job.progress` notification: a job started, moved on or ended. Never its result. */
 export type JobProgress = {
   kind: string;
@@ -963,6 +999,13 @@ export interface Backend {
   /** `jobs.list` (serve API 20): each kind's latest job, each Host's latest check (API 21), in the
    * shape of `job.progress`. `:check` asks it once on joining a check already running (#221). */
   listJobs(): Promise<JobProgress[]>;
+  /** `inventories.list` (serve API 27, ticket 115): the named Inventories, the active one, and
+   * which one this serve runs on. Rejects with BackendCallError (143). */
+  listInventories(): Promise<Inventories>;
+  /** `inventories.use` (serve API 27): makes `name` the active Inventory. This serve keeps running on
+   * its own; the app locks the vault first and restarts serve after. Rejects with BackendCallError
+   * (140, 143). */
+  useInventory(name: string): Promise<InventoryUsed>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host

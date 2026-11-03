@@ -72,7 +72,23 @@ export interface Tab {
   /** Where a nested ssh took the Session (ticket 120): the Inventory Host it's on now, or a target
    * roster can't resolve, until that ssh ends. Absent or null on the Session's own Host. */
   hop?: Breadcrumb | null;
+  /** The Inventory roster ran on when this Session opened (ticket 115), set only while roster may
+   * run on another now (or hasn't said which yet): its name, else its file, else "another
+   * Inventory". `label` then ends with " · " and that, and the Session is never filled, started
+   * again or sent the shell hook line, since serve would answer for a Host of the same name in
+   * another Inventory. */
+  from?: string | null;
 }
+
+/** Where a serve runs (ticket 115): `inventories.list`'s `name` and `path` (`inventory.info`'s path
+ * before API 27). Two are the same Inventory only when both match. */
+export interface InventoryAt {
+  name: string | null;
+  path: string | null;
+}
+
+/** A tab opened on a serve that never said where it runs, before serve started again. */
+const LOST = "lost";
 
 export type { Breadcrumb, PasswordPrompt };
 
@@ -211,6 +227,11 @@ export class Tabs {
   private outputTap: OutputTap | null = null;
   private asksAboutKeys = true;
   private fillPrompts: FillPrompts | null = null;
+  /** Where the serve now running runs (ticket 115): null until it has said (fail closed). */
+  private here: InventoryAt | null = null;
+  /** Each tab's Inventory by its id, where its Session opened (or last started again): null while
+   * the serve it opened on hasn't said, LOST once that serve was replaced before it did. */
+  private readonly opened = new Map<number, InventoryAt | null | typeof LOST>();
   /** Whether roster sends the shell hook line to a tab's Session by itself (ticket 121). */
   private shellHooksOn: (tab: Tab) => boolean = () => false;
   /** Makes the screen a Session's shell hooks read its prompt off (promptScreen.ts); null: none,
@@ -338,8 +359,39 @@ export class Tabs {
   snapshot = (): TabsSnapshot => this.snap;
 
   private changed() {
-    this.snap = { tabs: this.entries.map((e) => e.tab), active: this.active, previous: this.previous };
+    this.snap = { tabs: this.entries.map((e) => this.marked(e.tab)), active: this.active, previous: this.previous };
     for (const l of this.listeners) l();
+  }
+
+  /** serve is starting again (ticket 115): every tab opened so far counts as another Inventory's
+   * until the new serve says where it runs (`setInventory`), and for good if it never does. */
+  serveStarting() {
+    for (const [id, where] of this.opened) if (where === null) this.opened.set(id, LOST);
+    this.here = null;
+    this.changed();
+  }
+
+  /** Where the serve now running runs (`inventories.list`'s `name` and `path`). Tabs opened on it
+   * before it said count as opened there; the others stay marked until it's theirs. */
+  setInventory(at: InventoryAt) {
+    for (const [id, where] of this.opened) if (where === null) this.opened.set(id, at);
+    this.here = at;
+    this.changed();
+  }
+
+  /** The Inventory the tab's Session came from, while roster may run on another now; else null. */
+  elsewhere(id: number): string | null {
+    const where = this.opened.get(id);
+    if (where === undefined || where === null) return null;
+    if (where === LOST) return "another Inventory";
+    if (this.here && this.here.name === where.name && this.here.path === where.path) return null;
+    return where.name ?? where.path ?? "another Inventory";
+  }
+
+  /** The tab as the snapshot shows it: marked with its Inventory while that isn't roster's now. */
+  private marked(tab: Tab): Tab {
+    const from = this.elsewhere(tab.id);
+    return from === null ? tab : { ...tab, label: `${tab.label} · ${from}`, from, prompt: null };
   }
 
   private find(id: number): Entry | undefined {
@@ -467,6 +519,7 @@ export class Tabs {
       },
     };
     this.entries.push(entry);
+    this.opened.set(id, this.here);
     this.activate(id);
     this.changed();
     return entry;
@@ -491,6 +544,9 @@ export class Tabs {
     const entry = this.find(id);
     const state = entry?.tab.status.state;
     if (!entry || (state !== "ended" && state !== "failed")) return false;
+    // A Session from another Inventory (ticket 115): its Host's name means another Host here.
+    if (host === undefined && this.elsewhere(id) !== null) return false;
+    this.opened.set(id, this.here);
     const to = host ?? entry.tab.host;
     const label = to === entry.tab.host ? entry.tab.label : this.label(to, id);
     this.dropSave(entry);
@@ -514,6 +570,14 @@ export class Tabs {
     open: (size: TermSize, events: SessionEvents, marks: string) => Promise<SessionHandle> = (size, events, marks) =>
       this.backend.openSession(entry.tab.host, size, events, undefined, marks),
   ) {
+    // A Session from another Inventory (ticket 115) is never started again here: serve would start
+    // one to its own Host of that name.
+    const from = this.elsewhere(entry.tab.id);
+    if (from !== null) {
+      const message = `${entry.tab.host} came from ${from}: roster may run on another Inventory now, so it isn't started again here`;
+      this.setStatus(entry, { state: "failed", message, code: null, problem: this.mark(entry, problemFromCallError(entry.tab.host, new Error(message))) });
+      return;
+    }
     const attempt = ++entry.attempt;
     const current = () => entry.attempt === attempt && !entry.closing;
     const { id } = entry.tab;
@@ -635,6 +699,8 @@ export class Tabs {
         // Never while a password prompt is up or being filled (ticket 119): the hook line would
         // be taken for the password. The hooks try again at their next idle prompt.
         if (!current() || !entry.session || entry.tab.prompt !== null || entry.filling) return false;
+        // Nor to a Session from another Inventory (ticket 115).
+        if (this.elsewhere(entry.tab.id) !== null) return false;
         // Its token proves the Session's own shell only if the line can only have gone there.
         entry.watch?.hookSent();
         entry.watch?.typed(line);
@@ -650,7 +716,7 @@ export class Tabs {
         entry.tab = { ...entry.tab, cwd: path };
         this.changed();
       },
-      enabled: () => this.shellHooksOn(entry.tab),
+      enabled: () => this.shellHooksOn(entry.tab) && this.elsewhere(entry.tab.id) === null,
       // No marked prompt came: what was printed meanwhile stays out of Plugins' sight (it held the
       // echo); what comes next goes to them.
       settled: () => {
@@ -807,6 +873,7 @@ export class Tabs {
     void entry.session?.close().catch(() => {});
     entry.session = null;
     this.entries.splice(i, 1);
+    this.opened.delete(id);
     if (this.previous === id) this.previous = null;
     if (this.active === id) {
       const next = this.entries[Math.min(i, this.entries.length - 1)];
@@ -873,6 +940,10 @@ export class Tabs {
   async fill(id: number): Promise<string> {
     const entry = this.find(id);
     if (!entry) throw new Error("No Session to fill");
+    const from = this.elsewhere(id);
+    if (from !== null) {
+      throw new Error(`Won't fill: ${entry.tab.label}'s Session came from ${from}, and roster may run on another Inventory now. Type that password yourself.`);
+    }
     const { session } = entry;
     // What the watch says now, not what the tab last showed: a key typed since may have changed it.
     if (entry.watch) this.promptChanged(entry, entry.watch);
