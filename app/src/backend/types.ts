@@ -680,6 +680,9 @@ export interface SessionHandle {
   resize(size: TermSize): Promise<void>;
   /** Ends it (kills ssh). The exit event still follows, with `closed: true`. */
   close(): Promise<void>;
+  /** Its PTY is Windows' ConPTY: the core fills only sudo's own prompt for the Session's own Host
+   * there (decision Q151 (i)), so the app offers no other (ticket 162). Absent: it isn't. */
+  readonly conpty?: boolean;
   /** Fills the password prompt the Session shows from the vault (serve API 25, ticket 119,
    * decision Q129), for the line at its cursor (`prompt`, the Host's text). The core asks serve for
    * the password of the Host the Session was opened to and types it only if the prompt doesn't
@@ -759,6 +762,10 @@ export interface NestedHost {
   address: string;
   port: number;
   user: string;
+  /** Which of the Session's own commands that ssh is: the `run`th its own shell marked with the
+   * Session's token (ticket 162). The core fills only while that's still the last of those marks;
+   * serve never gets it. */
+  run: number;
 }
 
 /** `session.fill`'s codes (docs/serve-api.md): rows 143 and 144 in docs/app/errors.md. */
@@ -865,8 +872,10 @@ export interface Backend {
   /** Open a Session to a Host in a PTY of `size`. Rejects with BackendCallError (a
    * `SessionRefusal` code) when roster won't open it; a failed login is ssh's own output.
    * Every call asks roster afresh (`session.prepare` right before the spawn), so a password
-   * Session always gets a new one-time askpass token: call it again to reconnect. */
-  openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword): Promise<SessionHandle>;
+   * Session always gets a new one-time askpass token: call it again to reconnect. `marks` is the
+   * token roster's shell hooks put on this attempt's marks (decision Q131 (a)): the core follows
+   * them so a nested ssh's fill goes only while that ssh runs (ticket 162). */
+  openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword, marks?: string): Promise<SessionHandle>;
   /** `quick.prepare` (API 12, ticket 14), then the command in a PTY: a Session to a box that isn't
    * in the Inventory. roster fetches the key again and refuses (23) one that isn't `to.fingerprint`,
    * or (43) one that differs from a key it recorded. A typed `password` goes once to serve, which

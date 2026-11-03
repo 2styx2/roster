@@ -8,7 +8,7 @@ use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detec
 use roster_core::package::{self, Packages};
 use roster_core::plugin::{self, Permission, PluginHost};
 use roster_core::rpc::{CallError, Notify};
-use roster_core::session::{FillTarget, SessionError, SessionEvent, SessionId, SessionManager, Size};
+use roster_core::session::{Hop, SessionError, SessionEvent, SessionId, SessionManager, Size};
 use roster_core::slot::Slot;
 use roster_core::state::StateFile;
 use serde_json::{Value, json};
@@ -953,6 +953,9 @@ struct OpenedSession {
     /// The id serve holds a typed password under for "Save to vault" (tickets 15, 16), when asked.
     #[serde(skip_serializing_if = "Option::is_none")]
     held: Option<String>,
+    /// Its PTY is Windows' ConPTY: the app offers only the fills the core makes there (decision
+    /// Q151 (i), ticket 162).
+    conpty: bool,
 }
 
 /// Open a Session to `host`: `session.prepare`, then the command in a PTY of `cols`×`rows`.
@@ -962,6 +965,8 @@ struct OpenedSession {
 /// token lives 60 s, so every open (and every reconnect) gets a fresh one. For an `auth: prompt`
 /// Host (ticket 16) the app sends the `password` the user typed (moved into serve's request and
 /// dropped with it, as `vault_unlock`'s), and `save` asks serve to hold it for "Save to vault".
+/// `marks` is the token roster's shell hooks put on this attempt's marks (decision Q131 (a)); the
+/// core follows them for a nested ssh's fill (ticket 162).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri fills each argument from the call or its state
 async fn session_open(
@@ -970,6 +975,7 @@ async fn session_open(
     host: String,
     password: Option<String>,
     save: Option<bool>,
+    marks: Option<String>,
     cols: u16,
     rows: u16,
     events: Channel<InvokeResponseBody>,
@@ -977,13 +983,16 @@ async fn session_open(
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
-        let (cmd, held) = match password {
+        let (mut cmd, held) = match password {
             Some(password) => {
                 let s = backend.typed_session_command(&host, password, save.unwrap_or(false))?;
                 (s.command, s.held)
             }
             None => (backend.session_command(&host)?, None),
         };
+        // The token on roster's own shell marks for this attempt (ticket 162): the core follows
+        // them, so a nested ssh's fill goes only while that ssh runs.
+        cmd.marks = marks;
         let id = sessions
             .open(&cmd, Size { cols, rows }, move |event| {
                 let body = match event {
@@ -998,6 +1007,7 @@ async fn session_open(
             auth: cmd.auth,
             quick: None,
             held,
+            conpty: sessions.conpty(),
         })
     })
     .await
@@ -1038,6 +1048,7 @@ async fn quick_session_open(
             auth: q.command.auth,
             quick: Some(q.quick),
             held: q.held,
+            conpty: sessions.conpty(),
         })
     })
     .await
@@ -1068,8 +1079,9 @@ const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 /// frontend, a log or an error.
 ///
 /// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
-/// decision Q131): serve answers for that Host (still checking the Session's own), with the same
-/// printed-prompt check in the core.
+/// decision Q131), and which of the Session's own commands that ssh is (ticket 162): serve answers
+/// for that Host (still checking the Session's own), with the same printed-prompt check in the
+/// core, which also fills it only while the Session's own shell's marks show that ssh running.
 ///
 /// A refusal at sudo's own prompt whose mask roster didn't take logs what the probe drew, on
 /// stderr with the app's other `roster:` lines (ticket 155: no text but `*` and space in it).
@@ -1079,13 +1091,13 @@ async fn session_fill(
     sessions: tauri::State<'_, Arc<SessionManager>>,
     id: SessionId,
     prompt: String,
-    hop: Option<FillTarget>,
+    hop: Option<Hop>,
 ) -> Result<Value, CallError> {
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
         let filled = sessions.fill(id, FILL_WAIT, &prompt, hop.as_ref(), |target| {
-            backend.fill_secret(target, &prompt, hop.as_ref())
+            backend.fill_secret(target, &prompt, hop.as_ref().map(|h| &h.to))
         });
         filled.map(|host| json!({ "host": host })).map_err(|e| {
             // What sudo's prompt drew that the mask check didn't take (ticket 155): the app's log

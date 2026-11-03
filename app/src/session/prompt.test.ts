@@ -152,7 +152,7 @@ const host = (name: string, ip: string, over: Partial<Host> = {}): Host => ({
   ...over,
 });
 const INVENTORY = [host("esx-01", "10.0.0.11"), host("esx-02", "10.0.0.12"), host("keyed", "10.0.0.30", { enroll: true, ssh: { user: "ops", port: 22, auth: "key" } })];
-const TO_ESX_02 = { host: "esx-02", address: "10.0.0.12", port: 22, user: "ops" };
+const TO_ESX_02 = { host: "esx-02", address: "10.0.0.12", port: 22, user: "ops", run: 1 };
 const SSH_PROMPT = "ops@esx-02's password: ";
 const N = "0123456789abcdef01234567";
 /** The outer shell's own marks: roster's hook line, with this Session's token. */
@@ -365,6 +365,54 @@ describe("PromptWatch: a Session whose marks aren't roster's own (fail closed)",
     for (const c of ran("ssh esx-02", SSH_PROMPT)) await w.write(c);
     expect(w.hop()).toBeNull();
     expect(w.prompt()?.elsewhere).toMatch(/aren't roster's own/);
+  });
+});
+
+describe("PromptWatch: which of the Session's own commands a nested ssh is (ticket 162)", () => {
+  it("names the ssh by how many commands esx-01's own shell had started, its own included", async () => {
+    const w = await hopping([...ran("ls"), back(), ...ran("ssh esx-02", SSH_PROMPT)]);
+    expect(w.prompt()).toMatchObject({ elsewhere: null, hop: { ...TO_ESX_02, run: 2 } });
+  });
+
+  it("counts esx-01's own C marks however it shows them, an alternate screen's too", async () => {
+    // A C of its own while a full-screen program had the alternate screen up still counts, as the
+    // core counts it.
+    const w = await hopping([...ran("vim", `\x1b[?1049h${oC}\x1b[?1049l`), back(), ...ran("ssh esx-02", SSH_PROMPT)]);
+    expect(w.prompt()).toMatchObject({ elsewhere: null, hop: { ...TO_ESX_02, run: 3 } });
+  });
+});
+
+describe("PromptWatch under Windows' ConPTY (ticket 162, decision Q151 (i))", () => {
+  const WINDOWS = /on Windows roster fills only sudo's own prompt for this Session's Host/;
+  const onConpty = async (w: PromptWatch | Promise<PromptWatch>) => {
+    const watch = await w;
+    watch.conptyRules();
+    return watch;
+  };
+
+  it("offers sudo's own prompt for the Session's own Host, marked or not", async () => {
+    expect((await onConpty(fed(`ops@esx:~$ sudo -v\r\n${SUDO}`))).prompt()).toMatchObject({ elsewhere: null, kind: "sudo", hop: null });
+    expect((await onConpty(fed(...marked("sudo -v")))).prompt()).toMatchObject({ elsewhere: null, kind: "sudo", hop: null });
+  });
+
+  it("offers no nested ssh's prompt, and says why", async () => {
+    const login = await onConpty(hopping(ran("ssh esx-02", SSH_PROMPT)));
+    expect(login.prompt()).toMatchObject({ kind: "ssh", hop: null, elsewhere: expect.stringMatching(WINDOWS) });
+    const sudo = await onConpty(hopping([...ran("ssh esx-02", inner), `sudo -v\r\n${C}[sudo] password for ops: `]));
+    expect(sudo.prompt()).toMatchObject({ kind: "sudo", hop: null, elsewhere: expect.stringMatching(WINDOWS) });
+  });
+
+  it("keeps its own reason for a prompt it wouldn't fill anyway, and offers nothing it never offers", async () => {
+    expect((await onConpty(fed(...marked("bash -c 'sudo -v'")))).prompt()?.elsewhere).toMatch(/not sudo itself/);
+    expect((await onConpty(fed("Password: "))).prompt()).toBeNull();
+    expect((await onConpty(fed("[sudo] password for root: "))).prompt()).toBeNull();
+  });
+
+  it("follows the rule from when it's told, for the prompt already there", async () => {
+    const w = await hopping(ran("ssh esx-02", SSH_PROMPT));
+    expect(w.prompt()?.elsewhere).toBeNull();
+    w.conptyRules();
+    expect(w.prompt()?.elsewhere).toMatch(WINDOWS);
   });
 });
 

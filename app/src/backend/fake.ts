@@ -129,6 +129,9 @@ export interface FakeScenario {
   pwfeedback?: Record<string, boolean>;
   /** Per Host: `session.fill` refuses with this (ticket 119: 130, 131, the vault's codes). */
   fillRefusals?: Record<string, Refusal>;
+  /** Sessions run in Windows' ConPTY, as on Windows (decision Q151 (i), ticket 162): the core
+   * fills only sudo's own prompt for the Session's own Host, and refuses every other (row 183). */
+  conpty?: boolean;
   /** Per Host: ssh prints this into the PTY and exits 255 (a refused port, a changed key…). */
   sshFailures?: Record<string, string>;
   /** Per Host: what `host.check` answers (default: every step ok). */
@@ -859,11 +862,20 @@ function fakeSession(
     marks?: boolean | undefined;
     /** The shell `ssh NAME` reaches marks its prompts and commands too (ticket 120). */
     innerMarks?: boolean | undefined;
+    /** The token the Session was opened with (`openSession`'s `marks`): the core follows the marks
+     * that carry it (ticket 162). */
+    token?: string | undefined;
     /** The Inventory Host `ssh TARGET` reaches (by name or address), and whether it asks for its
      * Login's password (ticket 120): then `ssh` asks, without echo, and takes FAKE_LOGIN_PASSWORD. */
     reach?: (target: string) => { name: string; user: string; password: boolean } | null;
   } = {},
-): SessionHandle & { atPasswordPrompt(): boolean; masks(): boolean; endsWith(text: string): boolean; lineIs(text: string): boolean } {
+): SessionHandle & {
+  atPasswordPrompt(): boolean;
+  masks(): boolean;
+  endsWith(text: string): boolean;
+  lineIs(text: string): boolean;
+  ownRun(): number | null;
+} {
   // What it printed, without escapes, for a ConPTY-style repaint.
   let screen = "";
   // Its last output as text, for the core's printed-prompt check (ticket 137).
@@ -921,7 +933,19 @@ function fakeSession(
   // roster's hook line, once the shell has run it (ticket 120): its marks carry this token.
   let token: string | null = null;
   const marksHere = () => (nested === null ? extra.marks || token !== null : extra.innerMarks);
-  const mark = (m: string) => `\x1b]133;${m}${nested === null && token !== null ? `;roster=${token}` : ""}\x07`;
+  // The marks with the token the Session was opened with, as the core follows them (ticket 162):
+  // the commands started, and the last mark's kind.
+  let runs = 0;
+  let lastOwn: string | null = null;
+  const mark = (m: string) => {
+    const own = nested === null && token !== null;
+    if (own && token === extra.token) {
+      const kind = m.split(";")[0] ?? "";
+      if (kind === "C") runs += 1;
+      lastOwn = kind;
+    }
+    return `\x1b]133;${m}${own ? `;roster=${token}` : ""}\x07`;
+  };
   const marked = (p: string) => (marksHere() ? `${mark("A")}${p}${mark("B")}` : p);
   const promptOf = () => marked(`${nested ?? host}$ `);
   // A marked shell's first prompt comes after a D with no command before it, as roster's own hook,
@@ -1047,6 +1071,7 @@ function fakeSession(
       end(null, true);
     },
     atPasswordPrompt: () => password && !ended,
+    ownRun: () => (lastOwn === "C" ? runs : null),
     masks: () => password && masking && !ended,
     // The cursor's line as a terminal draws it (carriage returns and backspaces overwrite) is
     // `text` and nothing else: the core's whole-line check for sudo's pwfeedback (ticket 154).
@@ -1082,6 +1107,9 @@ function asText(s: string): string {
       .replace(/\s+/g, " ")
   );
 }
+
+/** sudo's own prompt, whole: the user it names. */
+const SUDO_FOR = /^\[sudo\] password for ([^\s:]+):$/;
 
 /** The password the fake vault holds for every Host Login a prompt fill types (ticket 119). Never
  * shown: tests check it reaches neither the terminal nor the page. */
@@ -1694,7 +1722,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       inOrder(async () => {
         login = null;
       }),
-    async openSession(host, size, events, typed) {
+    async openSession(host, size, events, typed, marks) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));
       const h = hosts.find((x) => x.name === host);
       if (!h) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
@@ -1757,12 +1785,13 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         pwfeedback: scenario.pwfeedback?.[host],
         marks: scenario.shellMarks,
         innerMarks: scenario.innerMarks,
+        token: marks,
         reach: (target) => {
           const to = hosts.find((x) => x.name.toLowerCase() === target.toLowerCase() || x.ip === target);
           return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
         },
       });
-      const { atPasswordPrompt, masks, endsWith, lineIs, ...handle } = session;
+      const { atPasswordPrompt, masks, endsWith, lineIs, ownRun, ...handle } = session;
       // The core's prompt fill (ticket 119), as the Tauri build's: the core's printed-prompt check
       // first (ticket 137), then serve's refusals (the Host changed since the Session connected, a
       // prompt that isn't sudo's or ssh's for this Host's own Login, no saved password, the
@@ -1772,12 +1801,28 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
       const fill = async (prompt: string, hop?: NestedHost) => {
         await wait();
+        // Under ConPTY (Q151 (i)), only sudo's own prompt for the Session's own Host: the core's
+        // refusal, before anything is looked up or typed (no code).
+        if (scenario.conpty && !(hop === undefined && SUDO_FOR.exec(prompt.trim().replace(/\s+/g, " "))?.[1] === connected.user)) {
+          throw new BackendCallError(
+            "on Windows roster fills only sudo's own prompt for this Session's Host: Windows' console can hide an echo of what roster types to check a prompt, so roster can't tell this one doesn't echo; type it yourself",
+          );
+        }
         // The core's check comes first (ticket 137): the Session's output must end with the prompt,
         // or nothing is asked or typed (130, so the app offers it again).
         if (!endsWith(prompt)) {
           throw new BackendCallError("the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it", FillRefusal.refused, {
             fix: "press the key again while the prompt is at the cursor",
           });
+        }
+        // A hop's fill goes only while the Session's own shell's last mark (with the token it was
+        // opened with) is the C of that ssh, its `run`th (ticket 162): nothing asked or typed.
+        if (hop && ownRun() !== hop.run) {
+          throw new BackendCallError(
+            "the Session's own shell doesn't show the ssh to that Host still running (it ended, or another command started), so roster didn't fill it",
+            FillRefusal.refused,
+            { fix: "press the key again once roster shows where the Session is" },
+          );
         }
         const self = hosts.find((x) => x.name === host);
         if (!self) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
@@ -1796,7 +1841,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         const refusal = scenario.fillRefusals?.[now.name];
         if (refusal) throw refuse(refusal);
         const line = prompt.trim();
-        const sudoFor = /^\[sudo\] password for ([^\s:]+):$/.exec(line)?.[1];
+        const sudoFor = SUDO_FOR.exec(line)?.[1];
         const sshFor = /^([^\s@']+)@([^\s@']+)'s password:$/.exec(line);
         const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name.toLowerCase(), now.ip.toLowerCase()].includes((sshFor[2] ?? "").toLowerCase()));
         if (!own) {
@@ -1824,7 +1869,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         await handle.write(`${FAKE_LOGIN_PASSWORD}\r`);
         return { host: now.name };
       };
-      return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...handle, fill } : handle;
+      const opened = scenario.conpty ? { ...handle, conpty: true } : handle;
+      return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...opened, fill } : opened;
     },
     async openQuickSession(to, password, size, events, options = {}) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));

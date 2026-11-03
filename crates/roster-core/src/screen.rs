@@ -39,6 +39,23 @@ const STYLES_MAX: usize = 256;
 type Style = Vec<(u8, Vec<u8>)>;
 /// The longest CSI parameter list kept; a longer sequence is parsed through and ignored.
 const CSI_MAX: usize = 64;
+/// The longest OSC read for a shell mark; a longer one is parsed through and ignored (roster's own
+/// marks are well under it).
+const OSC_MAX: usize = 128;
+
+/// The Session's own shell's marks, as roster's shell hooks make them (OSC 133 with the Session's
+/// token, decision Q131 (a)): how many commands it has started and the last mark's kind, so a
+/// nested ssh's fill goes only while that ssh runs (ticket 162). Only roster's own shell knows the
+/// token, so no other machine can make one of these marks.
+#[derive(Default)]
+struct OwnMarks {
+    /// `roster=TOKEN`, as a mark's parameter carries it; None: no marks are followed.
+    param: Option<Vec<u8>>,
+    /// The `C` marks seen: commands the shell started.
+    runs: u64,
+    /// The last mark's kind (`A`, `B`, `C`, `D`…).
+    last: Option<Vec<u8>>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Parse {
@@ -81,6 +98,11 @@ pub(crate) struct Screen {
     odd: u64,
     /// What a fill's probe draws, while it waits (ticket 154): [`Screen::watch_mask`].
     mask: Option<MaskWatch>,
+    /// The OSC being read, while it may be a shell mark (ticket 162); None for other strings and
+    /// one longer than [`OSC_MAX`].
+    osc: Option<Vec<u8>>,
+    /// The Session's own shell's marks (ticket 162): [`Screen::own_run`].
+    own: OwnMarks,
 }
 
 /// The whole screen as a terminal shows it, and the cursor: what a fill notes as it checks the
@@ -352,6 +374,41 @@ impl Screen {
             resizes: 0,
             odd: 0,
             mask: None,
+            osc: None,
+            own: OwnMarks::default(),
+        }
+    }
+
+    /// Follows the shell marks that carry `token` (roster's hooks' `roster=TOKEN`, decision Q131
+    /// (a)) from here on: [`Screen::own_run`] (ticket 162).
+    pub(crate) fn follow_marks(&mut self, token: &str) {
+        self.own = OwnMarks {
+            param: Some(format!("roster={token}").into_bytes()),
+            ..OwnMarks::default()
+        };
+    }
+
+    /// While the last of the Session's own shell's marks is a `C` (a command it started still
+    /// runs), which of its commands that is: 1 for the first. None otherwise, or with no token to
+    /// follow (ticket 162).
+    pub(crate) fn own_run(&self) -> Option<u64> {
+        let own = &self.own;
+        (own.param.is_some() && own.last.as_deref() == Some(b"C")).then_some(own.runs)
+    }
+
+    /// An OSC ended (BEL, or an ESC as a terminal takes it): a shell mark with the Session's token
+    /// counts (ticket 162).
+    fn osc_end(&mut self) {
+        let Some(body) = self.osc.take() else { return };
+        let Some(param) = &self.own.param else { return };
+        let Some(mark) = body.strip_prefix(b"133;") else { return };
+        let mut fields = mark.split(|&b| b == b';');
+        let kind = fields.next().unwrap_or_default();
+        if fields.any(|f| f == param.as_slice()) {
+            if kind == b"C" {
+                self.own.runs += 1;
+            }
+            self.own.last = Some(kind.to_vec());
         }
     }
 
@@ -401,6 +458,12 @@ impl Screen {
     /// Whether the screen was resized since `shot`, even back to its size (the review of #299, #6).
     pub(crate) fn resized_since(&self, shot: &Snapshot) -> bool {
         self.resizes != shot.resizes
+    }
+
+    /// Whether a mask watch is on (tests: a fill leaves none behind, ticket 162).
+    #[cfg(test)]
+    pub(crate) fn watching_mask(&self) -> bool {
+        self.mask.is_some()
     }
 
     /// Stops the mask watch, if one is on, noting nothing (the review of #299, #8: a fill that
@@ -618,9 +681,20 @@ impl Screen {
             Parse::Str => {
                 if b == 0x07 {
                     self.parse = Parse::Ground;
+                    self.osc_end();
                 } else if b == 0x1b {
+                    // A terminal (xterm.js) ends the OSC here, whatever follows the ESC.
                     self.parse = Parse::StrEsc;
+                    self.osc_end();
                 } else {
+                    if let Some(osc) = &mut self.osc {
+                        // CAN and SUB abort it, as in a terminal.
+                        if osc.len() >= OSC_MAX || b == 0x18 || b == 0x1a {
+                            self.osc = None;
+                        } else {
+                            osc.push(b);
+                        }
+                    }
                     self.saw_more(Kind::Str, b);
                 }
             }
@@ -717,7 +791,10 @@ impl Screen {
                 self.csi.clear();
                 self.csi_long = false;
             }
-            b']' | b'P' | b'_' | b'^' | b'X' => self.parse = Parse::Str,
+            b']' | b'P' | b'_' | b'^' | b'X' => {
+                self.parse = Parse::Str;
+                self.osc = (b == b']').then(Vec::new);
+            }
             0x20..=0x2f => {
                 self.parse = Parse::Inter;
                 self.inter = b;
@@ -741,8 +818,9 @@ impl Screen {
             }
             b'c' => {
                 let (resizes, odd) = (self.resizes, self.odd);
+                let own = std::mem::take(&mut self.own);
                 *self = Screen::new(self.rows as u16, self.cols as u16);
-                (self.resizes, self.odd) = (resizes, odd + 1);
+                (self.resizes, self.odd, self.own) = (resizes, odd + 1, own);
             }
             // The keypad modes and a string's end draw nothing.
             b'=' | b'>' | b'\\' => {}
@@ -1056,6 +1134,42 @@ mod tests {
         let mut s = Screen::new(24, 80);
         s.feed(bytes);
         s
+    }
+
+    /// Ticket 162: the Session's own shell's marks (its token) say which of its commands runs,
+    /// ended however a terminal ends an OSC; marks with another token, or none, don't count.
+    #[test]
+    fn own_marks_say_which_command_still_runs() {
+        const T: &str = "0123456789abcdef01234567";
+        let run = |bytes: &[u8]| {
+            let mut s = Screen::new(24, 80);
+            s.follow_marks(T);
+            s.feed(bytes);
+            s.own_run()
+        };
+        let c = format!("\x1b]133;C;roster={T}\x07");
+        let d = format!("\x1b]133;D;0;roster={T}\x07");
+        assert_eq!(run(c.as_bytes()), Some(1));
+        assert_eq!(run(format!("{c}{d}").as_bytes()), None);
+        assert_eq!(run(format!("{c}{d}{c}").as_bytes()), Some(2));
+        // Ended by ST, or by an ESC that starts something else.
+        assert_eq!(run(format!("\x1b]133;C;roster={T}\x1b\\").as_bytes()), Some(1));
+        assert_eq!(run(format!("{c}\x1b]133;D;0;roster={T}\x1b[0m").as_bytes()), None);
+        // Another shell's or a forged token, a mark without one, a mark CAN aborts, the token
+        // only in another OSC: none counts.
+        assert_eq!(
+            run(format!("{c}\x1b]133;D;0;roster=fedcba9876543210fedcba98\x07").as_bytes()),
+            Some(1)
+        );
+        assert_eq!(run(format!("{c}\x1b]133;D;0\x07").as_bytes()), Some(1));
+        assert_eq!(run(format!("{c}\x1b]133;D;0;rost\x18er={T}\x07").as_bytes()), Some(1));
+        assert_eq!(run(format!("\x1b]2;133;C;roster={T}\x07").as_bytes()), None);
+        // A screen reset doesn't forget them.
+        assert_eq!(run(format!("{c}\x1bc").as_bytes()), Some(1));
+        // With no token to follow, nothing counts.
+        let mut s = Screen::new(24, 80);
+        s.feed(c.as_bytes());
+        assert_eq!(s.own_run(), None);
     }
 
     #[test]

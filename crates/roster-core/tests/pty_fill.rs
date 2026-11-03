@@ -5,7 +5,7 @@
 #![cfg(unix)]
 
 use roster_core::session::{
-    FillError, FillTarget, LoginAs, PROBE, Secret, SessionCommand, SessionEvent, SessionManager, Size,
+    FillError, FillTarget, Hop, LoginAs, PROBE, Secret, SessionCommand, SessionEvent, SessionManager, Size,
 };
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
@@ -13,9 +13,15 @@ use std::time::{Duration, Instant};
 const SIZE: Size = Size { cols: 80, rows: 24 };
 const WAIT: Duration = Duration::from_millis(300);
 const SECRET: &str = "s3cret-pw";
+/// The token on roster's own shell marks for every stand-in Session (decision Q131 (a)).
+const TOKEN: &str = "0123456789abcdef01234567";
+/// The Session's own shell starting a command, as roster's hook marks it: the nested ssh a hop
+/// fill is for (ticket 162, #284 item 2). Put before a stand-in's script.
+const RUN: &str = "printf '\\033]133;C;roster=0123456789abcdef01234567\\007'; ";
 
 fn host_sh(script: &str) -> SessionCommand {
     let mut cmd = SessionCommand::new(vec!["sh".into(), "-c".into(), script.into()], vec![]);
+    cmd.marks = Some(TOKEN.into());
     cmd.fill_as = Some(FillTarget {
         host: "esx".into(),
         login: LoginAs {
@@ -63,6 +69,11 @@ fn quiet_for(rx: &Receiver<SessionEvent>, d: Duration) -> String {
         }
     }
     String::from_utf8_lossy(&seen).into_owned()
+}
+
+/// A nested ssh's Host, as the frontend resolved it at the Session's own `run`th command.
+fn at_run(run: u64, to: FillTarget) -> Hop {
+    Hop { to, run }
 }
 
 fn secret() -> Result<Secret, String> {
@@ -298,18 +309,21 @@ const NESTED: &str =
 #[test]
 fn a_nested_fill_types_only_at_a_prompt_the_session_printed() {
     let m = SessionManager::new();
-    let (id, rx) = open(&m, host_sh(NESTED));
+    let (id, rx) = open(&m, host_sh(&format!("{RUN}{NESTED}")));
     until(&rx, "password: ");
     // A prompt the Session never printed (the frontend's word alone) is refused before the vault.
     let mut asked = false;
-    let hop = FillTarget {
-        host: "esx-02".into(),
-        login: LoginAs {
-            address: "10.0.0.12".into(),
-            port: 22,
-            user: "ops".into(),
+    let hop = at_run(
+        1,
+        FillTarget {
+            host: "esx-02".into(),
+            login: LoginAs {
+                address: "10.0.0.12".into(),
+                port: 22,
+                user: "ops".into(),
+            },
         },
-    };
+    );
     match m.fill(id, WAIT, "ops@esx-03's password:", Some(&hop), |_| {
         asked = true;
         secret()
@@ -459,21 +473,146 @@ fn an_own_host_fill_reads_its_prompt_through_conpty_redraws() {
 #[test]
 fn a_nested_fill_says_the_host_whose_password_it_typed() {
     let m = SessionManager::new();
-    let (id, rx) = open(&m, host_sh(NESTED));
+    let (id, rx) = open(&m, host_sh(&format!("{RUN}{NESTED}")));
     until(&rx, "password: ");
-    let hop = FillTarget {
+    let hop = at_run(
+        1,
+        FillTarget {
+            host: "esx-02".into(),
+            login: LoginAs {
+                address: "10.0.0.12".into(),
+                port: 22,
+                user: "ops".into(),
+            },
+        },
+    );
+    let host = m
+        .fill(id, WAIT, "ops@esx-02's password:", Some(&hop), |_| secret())
+        .expect("filled");
+    assert_eq!(host, "esx-02");
+    m.close(id).unwrap();
+}
+
+/// One of roster's own shell marks (decision Q131 (a)) as `sh`'s printf writes it: `kind` with the
+/// Session's token, or `token`'s.
+fn mark(kind: &str, token: &str) -> String {
+    format!("printf '\\033]133;{kind};roster={token}\\007'; ")
+}
+
+fn esx_02() -> FillTarget {
+    FillTarget {
         host: "esx-02".into(),
         login: LoginAs {
             address: "10.0.0.12".into(),
             port: 22,
             user: "ops".into(),
         },
-    };
-    let host = m
-        .fill(id, WAIT, "ops@esx-02's password:", Some(&hop), |_| secret())
-        .expect("filled");
-    assert_eq!(host, "esx-02");
-    m.close(id).unwrap();
+    }
+}
+
+/// Ticket 162 (#284 item 2, the review of #283, #4): a hop's fill goes only to the nested ssh the
+/// frontend resolved it from, which the core knows positively: the last of the Session's own
+/// shell's marks (with its token) is the `C` that started it, that shell's `run`th. Once that ssh
+/// has ended (the shell's `D`), another command started (a later `C`), or the Session has no marks
+/// of its own, the hop's password never goes to the prompt the Session shows now, even one that
+/// reads the same (sudo's on the outer Host for the same user). Nothing is looked up or typed.
+#[test]
+fn a_nested_fill_goes_only_to_the_ssh_the_sessions_own_shell_still_runs() {
+    const SUDO: &str =
+        "stty -echo; printf '[sudo] password for ops: '; read -r pw; stty echo; echo; echo \"got:[$pw]\"; sleep 5";
+    let other = "fedcba9876543210fedcba98";
+    let c = mark("C", TOKEN);
+    let ended = format!("{}{}{}", mark("D;0", TOKEN), mark("A", TOKEN), mark("B", TOKEN));
+    // Each: name, the stand-in, whether it opens with roster's token, the hop's run, filled.
+    let cases: Vec<(&str, String, bool, u64, bool)> = vec![
+        ("in the ssh", format!("{c}{SUDO}"), true, 1, true),
+        ("the ssh ended", format!("{c}{ended}{SUDO}"), true, 1, false),
+        (
+            "the ssh ended, then sudo on the outer Host",
+            format!("{c}{ended}{c}{SUDO}"),
+            true,
+            1,
+            false,
+        ),
+        (
+            "its second ssh, as resolved",
+            format!("{c}{ended}{c}{SUDO}"),
+            true,
+            2,
+            true,
+        ),
+        ("the ssh not started yet", SUDO.to_string(), true, 1, false),
+        (
+            "marks with another token after it ended",
+            format!("{c}{ended}{}{SUDO}", mark("C", other)),
+            true,
+            1,
+            false,
+        ),
+        ("no token of its own", format!("{c}{SUDO}"), false, 1, false),
+        (
+            "a mark split across reads",
+            format!("printf '\\033]133;C;rost'; sleep 0.2; printf 'er={TOKEN}\\007'; {SUDO}"),
+            true,
+            1,
+            true,
+        ),
+    ];
+    for (name, script, token, run, filled) in cases {
+        let m = SessionManager::new();
+        let mut cmd = host_sh(&script);
+        if !token {
+            cmd.marks = None;
+        }
+        let (id, rx) = open(&m, cmd);
+        until(&rx, "ops: ");
+        std::thread::sleep(Duration::from_millis(100));
+        let mut asked = false;
+        let got = m.fill(
+            id,
+            WAIT,
+            "[sudo] password for ops:",
+            Some(&at_run(run, esx_02())),
+            |_| {
+                asked = true;
+                secret()
+            },
+        );
+        if filled {
+            assert_eq!(got.as_deref().ok(), Some("esx-02"), "{name}: {got:?}");
+        } else {
+            assert!(matches!(got, Err(FillError::NotInHop)), "{name}: {got:?}");
+            assert!(!asked, "{name}: the vault was asked");
+            m.write(id, b"\r").unwrap();
+        }
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+        assert_eq!(out.contains(SECRET), filled, "{name}: {out:?}");
+        m.close(id).unwrap();
+    }
+    // It typed nothing: the code that keeps the prompt offered once the app's view catches up.
+    let refusal = roster_core::backend::fill_refusal(FillError::NotInHop);
+    assert!(format!("{refusal:?}").contains("130"), "{refusal:?}");
+}
+
+/// Ticket 162 (#284 item 4): a fill whose Session is closed while it checks (the PTY's writer is
+/// gone) leaves nothing of the fill behind: keys sent after it aren't held (they fail, the Session
+/// isn't open), and the next fill isn't refused as a fill already under way.
+#[test]
+fn a_fill_whose_session_closes_meanwhile_leaves_nothing_set() {
+    // A shell that ignores the hang-up: the Session stays listed while its PTY is gone.
+    let script = format!("trap '' HUP; {}", pwfeedback(SUDO_OPS, "", "*", ":"));
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(&script));
+    until(&rx, "ops: ");
+    std::thread::sleep(Duration::from_millis(150));
+    let got = m.fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+        m.close(id).unwrap();
+        secret()
+    });
+    assert!(matches!(got, Err(FillError::NotFound(_))), "{got:?}");
+    assert!(m.write(id, b"x").is_err(), "a key was held after the fill ended");
+    let again = m.fill(id, WAIT, "[sudo] password for ops:", None, |_| secret());
+    assert!(!matches!(again, Err(FillError::Busy)), "{again:?}");
 }
 
 /// Ticket 137 (review #2): a refusal that typed nothing comes back with serve's "won't fill this
@@ -532,13 +671,15 @@ const SUDO_OPS: &str = "[sudo] password for ops: ";
 const ERASE_LINE: &str = "\\033[K";
 
 /// Fills the stand-in at `prompt` (as the frontend names it), with `hop` for a nested ssh's Host.
-fn fill_pwfeedback(
-    script: &str,
-    prompt: &str,
-    hop: Option<&FillTarget>,
-) -> (Result<String, FillError<String>>, String) {
+fn fill_pwfeedback(script: &str, prompt: &str, hop: Option<&Hop>) -> (Result<String, FillError<String>>, String) {
     let m = SessionManager::new();
-    let (id, rx) = open(&m, host_sh(script));
+    // A hop's fill is for the nested ssh the Session's own shell runs now (ticket 162).
+    let script = if hop.is_some() {
+        format!("{RUN}{script}")
+    } else {
+        script.to_string()
+    };
+    let (id, rx) = open(&m, host_sh(&script));
     until(&rx, prompt.trim_end());
     std::thread::sleep(Duration::from_millis(150));
     let _ = quiet_for(&rx, Duration::from_millis(50));
@@ -568,14 +709,17 @@ fn sudo_with_pwfeedback_is_filled_both_ways_sudo_erases() {
 /// own Host. A nested ssh's Host's sudo with pwfeedback refuses, as before.
 #[test]
 fn sudo_with_pwfeedback_on_a_nested_host_still_refuses() {
-    let hop = FillTarget {
-        host: "esx-02".into(),
-        login: LoginAs {
-            address: "10.0.0.12".into(),
-            port: 22,
-            user: "admin".into(),
+    let hop = at_run(
+        1,
+        FillTarget {
+            host: "esx-02".into(),
+            login: LoginAs {
+                address: "10.0.0.12".into(),
+                port: 22,
+                user: "admin".into(),
+            },
         },
-    };
+    );
     for (prompt, line) in [
         ("[sudo] password for admin: ", "[sudo] password for admin:"),
         (SUDO_OPS, "[sudo] password for ops:"),
@@ -698,14 +842,17 @@ fn recorded(rx: &Receiver<SessionEvent>) -> String {
 /// there. Every other prompt is refused before anything is looked up or typed.
 #[test]
 fn under_conpty_only_sudos_own_prompt_for_the_own_host_is_filled() {
-    let nested = FillTarget {
-        host: "esx-02".into(),
-        login: LoginAs {
-            address: "10.0.0.12".into(),
-            port: 22,
-            user: "ops".into(),
+    let nested = at_run(
+        1,
+        FillTarget {
+            host: "esx-02".into(),
+            login: LoginAs {
+                address: "10.0.0.12".into(),
+                port: 22,
+                user: "ops".into(),
+            },
         },
-    };
+    );
     for (prompt, line, hop) in [
         ("Password: ", "Password:", None),
         ("ops@esx-02's password: ", "ops@esx-02's password:", Some(&nested)),
@@ -1093,16 +1240,19 @@ fn a_mask_at_a_line_that_only_ends_with_sudos_prompt_refuses() {
 /// user, still refuses, and the secret is never typed.
 #[test]
 fn a_mask_anywhere_else_or_with_anything_more_still_refuses() {
-    let nested = FillTarget {
-        host: "esx-02".into(),
-        login: LoginAs {
-            address: "10.0.0.12".into(),
-            port: 22,
-            user: "ops".into(),
+    let nested = at_run(
+        1,
+        FillTarget {
+            host: "esx-02".into(),
+            login: LoginAs {
+                address: "10.0.0.12".into(),
+                port: 22,
+                user: "ops".into(),
+            },
         },
-    };
+    );
     // Each: name, the stand-in, the prompt the fill names, its hop.
-    let cases: Vec<(&str, String, &str, Option<&FillTarget>)> = vec![
+    let cases: Vec<(&str, String, &str, Option<&Hop>)> = vec![
         (
             "a prompt that names no one",
             pwfeedback("Password: ", "", "*", ":"),
@@ -1315,14 +1465,17 @@ fn a_refused_mask_says_what_was_drawn_for_the_log_only() {
         "{line}"
     );
 
-    let nested = FillTarget {
-        host: "esx-02".into(),
-        login: LoginAs {
-            address: "10.0.0.12".into(),
-            port: 22,
-            user: "ops".into(),
+    let nested = at_run(
+        1,
+        FillTarget {
+            host: "esx-02".into(),
+            login: LoginAs {
+                address: "10.0.0.12".into(),
+                port: 22,
+                user: "ops".into(),
+            },
         },
-    };
+    );
     for (script, prompt, hop) in [
         (
             pwfeedback(SUDO_OPS, "", "*", ":"),
