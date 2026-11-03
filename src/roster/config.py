@@ -36,6 +36,7 @@ def find_config(arg, inv=None):
     from . import inventories  # Pydantic: only once a roster.yml is looked for
     path = locate_config(arg, inv)
     use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path))
+    inventories.rebuild_if_stale()
     return path
 
 
@@ -122,6 +123,10 @@ def parse_inventory(text, path):
                 die(f"host {hname!r} has no user (set it on the host, its group, or defaults)")
             if re.search(r"\s", m["ip"] + m["ssh"]["user"]):
                 die(f"host {hname!r}: ip/user can't contain spaces")
+            for field, value in (("ip", m["ip"]), ("user", m["ssh"]["user"])):
+                if SSH_UNSAFE.search(str(value)) or "%" in str(value):    # written into the ssh config as they are
+                    die(f"host {hname!r}: {field} can't hold a quote, a % or a control character (it goes into "
+                        "this Box's ssh config)")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working
             m["user"], m["port"], m["auth"] = m["ssh"]["user"], m["ssh"]["port"], m["ssh"]["auth"]
             m["login"] = {"user": as_user(first(layers, "user")), "auth": as_auth(first(layers, "auth"))}  # for services

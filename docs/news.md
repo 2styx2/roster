@@ -10,7 +10,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (on a name clash only the active one's is there). Each one starts with the host keys this Box already recorded, so nothing is trusted anew. `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
+- **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (on a name clash only the active one's is there). Each one starts with the host keys this Box already recorded, so nothing is trusted anew. Upgrade every roster on a Box together (the CLI and the app's): an older one syncing there doesn't know the named Inventories' ssh config, though the next run of a new one puts it right. `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
 
 **App**
 
@@ -35,7 +35,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **`key_path:` in roster.yml can no longer add lines to this Box's ssh config** (security): a `key_path` with a quote or a newline in it could add directives, such as `ProxyCommand`, for every `ssh` on every Box that synced that roster.yml. roster now refuses such a `key_path` when it loads, and every path it writes into an ssh config goes through one check that refuses quotes and control characters (and writes a `%` as `%%` where ssh expands tokens). Host and group names with a trailing newline are refused too.
+- **`key_path:` in roster.yml can no longer add lines to this Box's ssh config** (security): a `key_path` with a quote or a newline in it could add directives, such as `ProxyCommand`, for every `ssh` on every Box that synced that roster.yml. roster now refuses such a `key_path` when it loads, and every path it writes into an ssh config goes through one check that refuses quotes and control characters (and writes a `%` as `%%` where ssh expands tokens). A Host's `ip` or `user` with a quote, a `%` or a control character is refused too (they're written into the ssh config as they are: a quote broke every `ssh` on the Box, a `%` was read as a token), and so are Host and group names with a trailing newline.
 
 ### Fixed
 

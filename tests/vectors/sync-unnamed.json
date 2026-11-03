@@ -18,5 +18,11 @@
     "inv/CLAUDE.md",
     "inv/ROSTER.md",
     "inv/roster.yml"
-  ]
+  ],
+  "modes": {
+    ".ssh": "0o700",
+    ".ssh/config": "0o600",
+    ".ssh/config.d": "0o700",
+    ".ssh/config.d/roster": "0o600"
+  }
 }

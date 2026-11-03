@@ -42,6 +42,34 @@ def cmd_init(args):
     say(f"wrote {path} - edit it, then run: roster setup")
 
 
+LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
+            "so `ssh {name}` reaches that one; skipped (`roster inv use` this Inventory to reach it)")
+
+
+def skip_left_out(hosts, to_stderr=False):
+    """HOSTS without the key Hosts a plain `ssh NAME` wouldn't reach (ticket 115): another named Inventory's Host by
+    that name is the one in this Box's ssh config, so roster must never ssh to it by name. Each skipped one is said."""
+    from .sshops import left_out
+    keep = []
+    for h in hosts:
+        if h["enroll"] and left_out(h["name"]):
+            print(f"  {h['name']}: " + LEFT_OUT.format(name=h["name"]), file=sys.stderr if to_stderr else sys.stdout,
+                  flush=True)
+        else:
+            keep.append(h)
+    return keep
+
+
+def refuse_left_out(h):
+    """`roster run` (and --sudo) over ssh: never by a name that reaches another Inventory's Host (its sudo password
+    would go there)."""
+    from .sshops import left_out
+    why = left_out(h["name"])
+    if why:
+        die(f"{why} - not running anything: make this Inventory the active one (`roster inv use`), or rename one of "
+            "the two in its roster.yml")
+
+
 def cmd_setup(cfg, args):
     hosts = selected(cfg, args.only)
     waiting = [h for h in hosts if not h["reviewed"]]
@@ -57,7 +85,7 @@ def cmd_setup(cfg, args):
     no_answer = record_fingerprints(cfg, hosts)
     write_ssh_config(cfg)
 
-    key_hosts = [h for h in hosts if h["enroll"] and h["name"] not in no_answer]
+    key_hosts = skip_left_out([h for h in hosts if h["enroll"] and h["name"] not in no_answer])
     pw_hosts = [h for h in hosts if not h["enroll"]]
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         works = dict(zip([h["name"] for h in key_hosts], ex.map(lambda h: ssh_ok(h["name"]), key_hosts), strict=True))
@@ -247,7 +275,7 @@ def cmd_mesh(cfg, args):
 
 
 def cmd_check(cfg, args):
-    hosts = selected(cfg, args.only)
+    hosts = skip_left_out(selected(cfg, args.only), to_stderr=args.json)
     if not args.json:
         warn_problems(hosts)
 
@@ -268,7 +296,7 @@ def cmd_check(cfg, args):
         jsonout.emit({"hosts": results, "mesh": drift, "ok": ok})
         return 0 if ok else 1
     bad = 0
-    width = max(len(h["name"]) for h in hosts)
+    width = max((len(h["name"]) for h in hosts), default=0)
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, res in sorted(ex.map(check, hosts), key=lambda r: r[0]["name"]):
             line = "  ".join(f"{k}:{'ok' if v else 'FAIL'}" for k, v in res.items())
@@ -570,6 +598,7 @@ def cmd_run(cfg, args):
     if args.sudo:
         return run_sudo(h, command)
     if h["enroll"]:
+        refuse_left_out(h)
         return run_instead(["ssh", "-o", "BatchMode=yes", h["name"], command])
     try:
         rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
@@ -594,6 +623,7 @@ def run_sudo(h, command):
             "(set auth: to the vault item that holds the password)")
     wrapped = sudo_wrap(command)
     if h["enroll"]:
+        refuse_left_out(h)
         # bytes: text mode on Windows would send "password\r\n", and sudo would take the "\r" as part of it
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], wrapped]),
                            input=(secret + "\n").encode(), capture_output=True)
@@ -612,7 +642,7 @@ def run_sudo(h, command):
 
 
 def cmd_revoke(cfg, args):
-    hosts = [h for h in selected(cfg, args.only) if h["enroll"]]
+    hosts = skip_left_out([h for h in selected(cfg, args.only) if h["enroll"]])
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
@@ -794,7 +824,8 @@ def cmd_inv(args):
         return 0
     if act == "use":
         inventories.use(args.name)
-        say(f"{args.name} is the active Inventory: {inventories.path_of(args.name)}")
+        name = inventories.canonical(args.name)
+        say(f"{name} is the active Inventory: {inventories.path_of(name)}")
         if os.environ.get("ROSTER_CONFIG"):
             say(f"note: ROSTER_CONFIG is set ({os.environ['ROSTER_CONFIG']}), and it comes before the active "
                 "Inventory: unset it for roster to use this one")

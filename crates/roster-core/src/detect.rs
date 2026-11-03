@@ -124,7 +124,8 @@ pub trait Runner {
 /// How long native Windows roster may take to say which Inventory it uses (`roster inv which`)
 /// before detection gives up on it and looks where it used to: a roster that hangs (an antivirus
 /// scan, a home folder on a network drive) must not leave the app connecting forever. The WSL
-/// probe holds `roster inv which` to the same, with `timeout`.
+/// probe holds `roster inv which` to the same, with `timeout` (or, where there's none, as on macOS,
+/// perl's `alarm`; with neither it waits, as it did before).
 pub const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Run `argv` in `dir` and wait at most `limit`: past it the process is killed and the answer is
@@ -243,7 +244,9 @@ while [ "$n" -gt 0 ]; do
   set -- "$@" "$a"
 done
 t=
-if command -v timeout >/dev/null 2>&1; then t="timeout ${ROSTER_PROBE_SECS:-15}"; fi
+if command -v timeout >/dev/null 2>&1; then t="timeout ${ROSTER_PROBE_SECS:-15}"
+elif command -v perl >/dev/null 2>&1; then t="perl -e alarm(shift);exec(@ARGV)||exit(127) ${ROSTER_PROBE_SECS:-15}"
+fi
 f=$(cd "$HOME" && $t "$p" "$@" inv which 2>/dev/null)
 case $f in /*) if [ -e "$f" ]; then echo "inventory=$f"; exit 0; fi ;; esac
 for f in "$ROSTER_CONFIG" "$HOME/roster.yml" "$HOME/.config/roster/roster.yml" "$HOME/infra/roster.yml"; do

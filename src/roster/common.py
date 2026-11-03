@@ -42,7 +42,16 @@ def current_inventory() -> str | None:
 def ssh_config_file(name: Any = _CURRENT) -> Path:
     """roster's generated ssh config for the Inventory NAME (default: the one this run uses)."""
     name = _inventory if name is _CURRENT else name
-    return ssh_dir() / "config.d" / ("roster" if name is None else f"roster-{name}")
+    if name is None:
+        return ssh_dir() / "config.d" / "roster"
+    # Not in config.d: a user's `Include ~/.ssh/config.d/*` would read it beside the index, and a Host the index
+    # leaves out (a name clash) would add its IdentityFile again (PR #335's review, N3).
+    return ssh_dir() / "roster-inventories" / name
+
+
+def legacy_ssh_config_file(name: str) -> Path:
+    """Where a named Inventory's ssh config was before it moved out of config.d."""
+    return ssh_dir() / "config.d" / f"roster-{name}"
 
 
 def known_hosts_file(name: Any = _CURRENT) -> Path:
@@ -58,7 +67,7 @@ def known_hosts_label():
 
 def ssh_index_file() -> Path:
     """With named Inventories: the file ~/.ssh/config includes, which includes each one's ssh config, the active
-    one's first (its name can't be a named Inventory's: those are roster-NAME)."""
+    one's first (named Inventories' own files are in ~/.ssh/roster-inventories/)."""
     return ssh_dir() / "config.d" / "roster.inventories"
 
 
@@ -76,15 +85,12 @@ SSH_UNSAFE = re.compile(r'["\x00-\x1f\x7f]')
 
 def replace_file(path: Path, text: str, mode: int = 0o600) -> None:
     """Write TEXT to PATH whole or not at all: a new file beside it (a name of its own, so two writers can't take each
-    other's), then renamed over it. A symlink is followed, so its target is what changes; the file keeps the mode it
-    has (MODE for a new one)."""
+    other's), then renamed over it, with MODE (0600: ~/.ssh/config as roster always left it, since OpenSSH refuses one
+    others can write). A symlink is followed, so its target is what changes."""
     import tempfile
     target = Path(os.path.realpath(path))
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        keep = target.stat().st_mode & 0o7777
-    except FileNotFoundError:
-        keep = mode
+    keep = mode
     fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".new", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:

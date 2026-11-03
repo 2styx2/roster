@@ -3,7 +3,6 @@
 import base64
 import concurrent.futures as cf
 import hashlib
-import os
 import re
 import shlex
 import subprocess
@@ -239,9 +238,7 @@ def write_ssh_config(cfg):
         lines = ssh_config_lines(cfg)
     except ValueError as e:
         die(f"this Box's ssh config wasn't written: {e} (key_path: in roster.yml, or this Box's home folder)")
-    ssh_config_file().parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    ssh_config_file().write_text("\n".join(lines))
-    os.chmod(ssh_config_file(), 0o600)
+    replace_file(ssh_config_file(), "\n".join(lines), 0o600)
     finish_ssh_config(cfg)
 
 
@@ -283,6 +280,8 @@ def finish_ssh_config(cfg):
 # ---------------------------------------------------------------- remote helpers
 
 def ssh_ok(name, timeout=10):
+    if left_out(name):                  # `ssh NAME` would reach another named Inventory's Host (ticket 115)
+        return False
     # ControlPath=none: never trust a cached connection, really log in with the key
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none",
