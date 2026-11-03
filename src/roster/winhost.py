@@ -90,7 +90,7 @@ function Can-Write($rights) {
     # do these rights (FileSystemRights' names, or a number for generic rights) let their holder change the file (its
     # data, attributes, permissions, owner) or delete it?
     if ("$rights" -match '^-?\d+$') {
-        $mask = 0x2 -bor 0x4 -bor 0x10 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+        $mask = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x2000000 -bor 0x10000000 -bor 0x40000000
         return [bool]([int64]"$rights" -band $mask)
     }
     return [bool]("$rights" -match 'FullControl|Modify|Write|CreateFiles|AppendData|CreateDirectories|ChangePermissions|TakeOwnership|Delete')
@@ -102,11 +102,16 @@ function Writers($a, $ok) {
       Sort-Object -Unique)
 }
 
-function Assert-Folder($dir, $me) {
-    # others who can write in the key file's folder could swap or seed the file roster writes there
-    $w = Writers (Get-KeyFileAcl $dir) @($me, $Admins, $System)
+function Assert-Folder($dir, $me, $owners) {
+    # others who can write in the key file's folder, or own it (an owner can change its permissions at will), could
+    # swap or seed the file roster writes there
+    $a = Get-KeyFileAcl $dir
+    $w = Writers $a @($me, $Admins, $System)
     if ($w.Count) {
         Refuse "$dir lets $($w -join ', ') write in it, so others could put keys in the file roster writes there. Take their write access off that folder first"
+    }
+    if ($a.Owner -notin $owners) {
+        Refuse "$dir is owned by $($a.Owner), who could let others write in it, so others could put keys in the file roster writes there. Make $($owners -join ' or ') its owner first"
     }
 }
 
@@ -290,11 +295,11 @@ function Main {
 
     if ($Mode -eq 'add') {
         if ($mine -eq $adminFile) {
-            Assert-Folder (Split-Path -Parent $adminFile) $me
+            Assert-Folder (Split-Path -Parent $adminFile) $me @($Admins, $System)
             if (Test-Path -LiteralPath $adminFile) { Assert-AdminFileTrusted $adminFile $me }
         } else {
             if (-not (Test-Path -LiteralPath $sshDir)) { New-Item -ItemType Directory -Path $sshDir | Out-Null }
-            Assert-Folder $sshDir $me
+            Assert-Folder $sshDir $me @($me, $Admins, $System)
         }
         $old = Read-Keys $mine
         $new = New-Text $old $Pub
@@ -314,12 +319,12 @@ function Main {
             $new = New-Text $old $null
             if ($new -ceq $old) { continue }
             if ($f -eq $adminFile) {
-                Assert-Folder (Split-Path -Parent $f) $me
+                Assert-Folder (Split-Path -Parent $f) $me @($Admins, $System)
                 Assert-AdminFileTrusted $f $me
                 Write-Keys $f $new $adminSecure
                 Set-AdminAcl $f
             } else {
-                Assert-Folder (Split-Path -Parent $f) $me
+                Assert-Folder (Split-Path -Parent $f) $me @($me, $Admins, $System)
                 Write-Keys $f $new $null
             }
             Say "FILE $f"

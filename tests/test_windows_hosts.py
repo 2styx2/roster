@@ -292,7 +292,7 @@ def test_setup_creates_the_admin_file_when_there_is_none(win, capsys):
 
 
 @needs_powershell
-@pytest.mark.parametrize("rights", ["Modify", "Write", "FullControl", "AppendData", "-536805376"])
+@pytest.mark.parametrize("rights", ["Modify", "Write", "FullControl", "AppendData", "-536805376", "64", "33554432"])
 def test_an_admin_file_others_could_write_is_refused_and_left_as_it_was(win, capsys, rights):
     """Review B1: sshd ignores an admin file others can write; narrowing its ACL now would turn on a key someone
     planted there, for every administrator. So it's refused, the file and its ACL untouched."""
@@ -336,6 +336,33 @@ def test_a_key_folder_others_can_write_in_is_refused(win, capsys):
     out = capsys.readouterr().out
     assert "FAIL  dc-01: [157]" in out and "write in it" in out
     assert not win.admin_file("dc-01").exists() and win.icacls("dc-01") == []
+
+
+@needs_powershell
+@pytest.mark.parametrize("host, folder", [("dc-01", "programdata/ssh"), ("ws-01", "home/.ssh")])
+def test_a_key_folder_someone_else_owns_is_refused(win, capsys, host, folder):
+    """Second review S2: the folder's owner can change its permissions whenever they like, so it must be SYSTEM or
+    Administrators (or, for the account's own .ssh, the account)."""
+    d = win.root / host / folder
+    d.mkdir(parents=True, exist_ok=True)
+    win.set_acl(host, d, "S-1-5-21-1000-1000-1000-1002", ace(ADMINS), ace(SYSTEM), ace(ME))
+    assert main(["setup", "--only", host]) == 1
+    out = capsys.readouterr().out
+    assert f"FAIL  {host}: [157]" in out and "owned by S-1-5-21-1000-1000-1000-1002" in out
+    assert win.icacls(host) == [] and not [p for p in d.iterdir() if "authorized_keys" in p.name]
+
+
+@needs_powershell
+def test_revoke_refuses_an_admin_file_others_could_write(win, capsys):
+    """Second review S3: revoke rewrites the admin file too, so the same refusal holds there: nothing changed."""
+    f = win.admin_file("dc-01")
+    f.write_bytes(OTHER + PLANTED + OLD)
+    win.set_acl("dc-01", f, ADMINS, ace(ADMINS), ace(SYSTEM), ace(USERS, "Modify"))
+    before = win.acl("dc-01", f)
+    assert main(["revoke", "-y", "--only", "dc-01"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  dc-01: [157]" in out and USERS in out
+    assert f.read_bytes() == OTHER + PLANTED + OLD and win.acl("dc-01", f) == before and win.icacls("dc-01") == []
 
 
 @needs_powershell
