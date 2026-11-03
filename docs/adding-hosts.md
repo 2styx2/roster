@@ -106,6 +106,7 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 - **`enroll: true`** for Linux servers you want key logins on. `roster setup` installs this box's key using the vault password once.
 - **`enroll: false`** for gear that only takes passwords: switches, routers, ESXi (it keeps root keys outside `~/.ssh`), and appliances. Logins then go through `roster run`.
+- **`os: windows`** for a Windows Host with OpenSSH Server (Windows 10/11, Server 2019 and later): `setup`, `revoke` and `check` then run PowerShell there instead of `sh`. See [Windows Hosts](#windows-hosts).
 - A different login for the web UI or API goes in a service entry:
 
 ```yaml
@@ -144,6 +145,34 @@ What the errors mean:
 | bw "locked" / session expired | Run `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` again |
 | `KeePassXC database is locked and there's no terminal to ask` | Run roster in a terminal (it asks for the master password once per run), or unlock in the app |
 | `KeePassXC database … isn't there` | Fix `providers: kp: database:` in `roster.yml`, or create the database in KeePassXC |
+| `[155] HOST looks like a Windows Host` | Its shell said `'sh' is not recognized`: set `os: windows` for it (see [Windows Hosts](#windows-hosts)), `roster sync`, then run it again |
+| `[157] … is UTF-16` / `… starts with a byte order mark` | A Windows Host's key file sshd can't read. roster won't re-encode it (that would turn on every key in it): save it as ASCII, then run `setup` again |
+| `warning: [154] HOST has type: windows but no os:` | roster treats it as a POSIX Host. Set `os: windows` if it's Windows |
+| Port 22 accepts connections but sends no SSH banner, on many Hosts at once | A network IPS or rate limiter between this Box and the Hosts, not the Hosts: probe a neighbouring Host, or wait a few minutes and retry with fewer `workers:`. Don't retry in a loop |
+
+## Windows Hosts
+
+roster adds its key to a Windows Host that runs Microsoft's OpenSSH Server (Windows 10 1809 and later, Server 2019 and later) once `roster.yml` says it's Windows:
+
+```yaml
+  dcs:
+    os: windows            # on the group, a Host, or defaults; any case
+    user: admin
+    auth: "bw:dc-01 ssh"
+    hosts:
+      dc-01: { ip: 10.0.0.5, type: windows }
+```
+
+- **`os:`** is `windows` or `posix` (the default: unset is `posix`). It cascades like `mesh:` (`defaults` → group → Host). `type:` stays a free label: a Host with `type: windows` and no `os:` gets warning 154 suggesting `os: windows`, and is still treated as POSIX. `roster discover` writes `os: windows` for the Hosts it takes for Windows.
+- **What runs there.** sshd hands a command line to the Host's DefaultShell: cmd.exe when none is set (Windows' default), or PowerShell when it is. roster works with both and relies on neither: every command is the same `powershell -NoProfile -NonInteractive -EncodedCommand …`, whose argument is base64 (nothing either shell reads specially, far under cmd's 8191-character limit), and the real script goes on stdin, so no key, tag or password is ever in a command line. A password is only the login's. Nothing on the Host needs an OpenSSH newer than 8.1, or PowerShell newer than Windows PowerShell 5.1.
+- **A new Host has no admin file yet.** That's the usual case: `setup` creates `administrators_authorized_keys` and sets its permissions; sshd ignores it until they're right, so the key works only once they are.
+- **Which file.** An account in Administrators (SID S-1-5-32-544 in `whoami /groups`) uses the file the Host's `sshd_config` gives `Match Group administrators`, by default `%ProgramData%\ssh\administrators_authorized_keys`; anyone else `%USERPROFILE%\.ssh\authorized_keys`. roster reads `sshd_config` on the Host and refuses (error 157) anything else that changes where sshd looks, rather than guess.
+- **What changes in it.** Only this Box's line (the one ending `roster-managed:BOX`); every other byte stays. It's written ASCII with no BOM, to a temp file beside it that then replaces it, so a cut-short run leaves the old file whole. A UTF-16 or BOM file is refused (error 157), never re-encoded.
+- **Permissions only narrow.** The admin file always gets Microsoft's ACL, set by SID so it works on any language: SYSTEM and Administrators with full control, inheritance removed, any other entry taken out; roster checks it afterwards. A user file roster creates gets this account, SYSTEM and Administrators. An existing user file's ACL is never changed: when others can use it, sshd ignores it, and `setup` and `check` say so (warning 157) for you to fix.
+- **`roster revoke`** cleans both files an administrator's key could be in (the account may have joined or left Administrators since).
+- **`roster check`** logs in with `exit 0` (the same in sh, cmd.exe and PowerShell), then, on a Windows Host whose key works, reads its key file and warns (157) about what sshd could ignore it for. A login refused on a shared connection ("No existing session") is error 158, not a key problem: roster's ssh config turns connection sharing off (`ControlMaster no`) for `os: windows` Hosts.
+- **Elevation.** An administrator's ssh session must be able to write `%ProgramData%\ssh`; if `setup` says access is denied there, log in once on the console and check the account is in Administrators.
+- **Not yet:** `roster run` on a Windows Host and the Mesh (a later release).
 
 ## Limits to know about
 

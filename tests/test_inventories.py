@@ -865,8 +865,10 @@ revoke_runs = pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a 
 
 
 def revoked(ssh_log):
-    """The Hosts a revoke ran its script on (`ssh -o BatchMode=yes NAME sh -c ...`), in no order."""
-    return sorted(ln.split()[3] for ln in ssh_log() if ln.startswith("ssh -o BatchMode=yes ") and " sh -c " in ln)
+    """The Hosts a revoke ran its script on (`ssh -o BatchMode=yes -o ControlPath=none NAME sh -c ...`), in no
+    order."""
+    return sorted(ln.split()[5] for ln in ssh_log()
+                  if ln.startswith("ssh -o BatchMode=yes -o ControlPath=none ") and " sh -c " in ln)
 
 
 @revoke_runs
@@ -899,7 +901,7 @@ def test_revoke_all_names_every_file_to_delete_once_every_host_is_done(two, caps
     run(capsys, "sync")
     run(capsys, "--inv", "home", "sync")
     done = []
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, script: done.append(h["name"]) or True)
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: done.append(h["name"]))
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert sorted(done) == ["build-pi", "nas-1", "pi"] and code == 0
     summary = out.split("\nremoved from ")[1]
@@ -1002,7 +1004,7 @@ def test_a_synced_inventory_that_isnt_the_active_one_is_still_reached(two, capsy
     home_not_synced(two, capsys)
     run(capsys, "--inv", "home", "sync")
     run(capsys, "--inv", "home", "check")
-    assert any(ln.split()[-2:] == ["pi", "true"] for ln in ssh_log())
+    assert any(ln.split()[-3:] == ["pi", "exit", "0"] for ln in ssh_log())
 
 
 @pytest.mark.parametrize("argv", [["revoke"], ["revoke", "--all"]])
@@ -1058,7 +1060,7 @@ def test_check_and_revoke_never_reach_another_unnamed_files_host(a_synced_b_not,
 
 def test_the_file_the_unnamed_ssh_config_is_from_still_reaches_its_hosts(a_synced_b_not, capsys, ssh_log):
     run(capsys, "-c", str(a_synced_b_not["a"]), "check")
-    assert any(ln.split()[-2:] == ["pi", "true"] for ln in ssh_log())
+    assert any(ln.split()[-3:] == ["pi", "exit", "0"] for ln in ssh_log())
 
 
 def test_serve_on_another_unnamed_file_wont_prepare_a_session_by_that_name(a_synced_b_not, serve):

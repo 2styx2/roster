@@ -91,6 +91,7 @@ The objects these answer with are generated from their models (`src/roster/model
 | `reviewed` | `boolean` | `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is. |
 | `mac` | `any` | Its MAC address; `""` if unset. |
 | `mesh` | `boolean \| null` | `mesh:` as roster.yml sets it; `null` if nothing does. |
+| `os` | `"windows" \| "posix" \| null` | `os:` as roster.yml sets it (defaults, group, Host): `windows` (setup, revoke and check run PowerShell there) or `posix`; `null` if nothing does, which is `posix`. |
 | `ip` | `string` | Its address (an IP or a DNS name). |
 | `name` | `string` | Its name in the Inventory, unique. |
 | `group` | `string` | The group it's in. |
@@ -389,6 +390,11 @@ One person may have several Inventories, the team's for work and their own for h
 | `147` | A `box.check` warning: the same address and port in two named Inventories, with different host keys |
 | `148` | A warning (stderr, and `box.check`): the named Inventories' ssh config index is out of date and couldn't be rewritten (a read-only `~/.ssh`); everything else goes on |
 | `149` | `roster revoke` (and `--all`): this Box's ssh is a batch file (a `.cmd` or `.bat` shim on Windows), and roster won't hand it the key-removal script, whose characters cmd.exe would act on; nothing is revoked. A CLI error, never a serve answer |
+| `154` | A warning (stderr): a Host has `type: windows` but no `os:`, so roster treats it as POSIX. Never a serve answer |
+| `155` | `roster setup` / `revoke`: a POSIX script failed with Windows' "'sh' is not recognized": set `os: windows`. A CLI error, never a serve answer |
+| `156` | `roster setup` / `revoke` / `check`: an `os: windows` Host has no PowerShell or isn't Windows; nothing was changed. A CLI error |
+| `157` | `roster setup` / `revoke` / `check` on a Windows Host: its key file is refused (UTF-16, a BOM, an `sshd_config` roster can't follow, an ACL it couldn't set; nothing changed), or, as a warning, others can use it |
+| `158` | `host.check`'s `auth` step: the login was refused on ssh's shared connection (ControlMaster, "No existing session"), not for its key or password |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

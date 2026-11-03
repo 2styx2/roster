@@ -18,9 +18,21 @@
 #                                                   deletes it to let them go: a signal, not a guess at how long)
 #                               FAKE_HOST_PATH=DIR goes first on every stand-in Host's PATH (a test's own tools)
 #                               Each run appends "start NAME" and "end NAME" to DIR/connections.
+#                                 DIR/NAME/windows  it's Windows (T195): `powershell ... -EncodedCommand B64` runs that
+#                                                   PowerShell with pwsh (powershell.exe on Windows), stdin and all,
+#                                                   with USERPROFILE=DIR/NAME/home, ProgramData=DIR/NAME/programdata,
+#                                                   and stand-in whoami.exe, icacls.exe and Get-Acl (fakes/windows/acl.py;
+#                                                   DIR/NAME/admin: the account is in Administrators). The file says
+#                                                   which shell sshd hands the command line to (its DefaultShell):
+#                                                   `cmd` (cmd.exe, Windows' default) or `powershell` (empty: that).
+#                                                   A line that shell would read otherwise than as written (cmd: & | <
+#                                                   > ^ % " or past 8191 characters; PowerShell: its own specials) is
+#                                                   refused as that shell would garble it. `exit 0` is a key login
+#                                                   test; any other command fails as that shell says it isn't one
+#                                                   ("'sh' is not recognized ...", "The term 'sh' is not recognized")
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
 #                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
-import os, subprocess, sys, time
+import base64, os, shutil, subprocess, sys, time
 args = sys.argv[1:]
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("ssh " + " ".join(args) + "\n")
 
@@ -41,6 +53,97 @@ def destination(argv):
             continue
         break
     return (argv[i], argv[i + 1:]) if i < len(argv) else (None, [])
+
+
+WINDOWS_PRELUDE = r"""
+function global:whoami.exe {
+    if ($args -contains '/user') { '"example\admin","S-1-5-21-1000-1000-1000-1001"' }
+    else {
+        '"Everyone","Well-known group","S-1-1-0","Mandatory group, Enabled by default, Enabled group"'
+        if (Test-Path -LiteralPath (Join-Path $env:FAKE_HOST_ROOT_NATIVE 'admin')) {
+            '"BUILTIN\Administrators","Alias","S-1-5-32-544","Group used for deny only"'
+        }
+    }
+    $global:LASTEXITCODE = 0
+}
+function global:icacls.exe { & $env:FAKE_PYTHON $env:FAKE_ACL icacls @args }
+function global:Get-Acl {
+    param([string]$LiteralPath)
+    $j = (& $env:FAKE_PYTHON $env:FAKE_ACL get $LiteralPath) | ConvertFrom-Json
+    $o = [pscustomobject]@{ AreAccessRulesProtected = [bool]$j.protected; OwnerSid = $j.owner; Allow = @($j.allow) }
+    $o | Add-Member ScriptMethod GetAccessRules {
+        param($explicit, $inherited, $type)
+        foreach ($r in $this.Allow) {
+            [pscustomobject]@{ IdentityReference = [pscustomobject]@{ Value = $r.sid }; FileSystemRights = $r.rights;
+                               AccessControlType = 'Allow' }
+        }
+    }
+    $o | Add-Member ScriptMethod GetOwner { param($type) [pscustomobject]@{ Value = $this.OwnerSid } }
+    $o
+}
+"""
+
+
+def windows_key_login(root):
+    """Would the stand-in Windows Host's sshd let a roster key in? As the real one decides: an admin's keys are in
+    the admin file (stock sshd_config), which it reads only with Microsoft's ACL; no BOM, no UTF-16."""
+    import json
+    admin = os.path.exists(os.path.join(root, "admin"))
+    f = os.path.join(root, "programdata", "ssh", "administrators_authorized_keys") if admin else \
+        os.path.join(root, "home", ".ssh", "authorized_keys")
+    data = open(f, "rb").read() if os.path.exists(f) else b""
+    acls = os.path.join(root, "acls.json")
+    acl = (json.load(open(acls)) if os.path.exists(acls) else {}).get(os.path.normcase(os.path.abspath(f)))
+    if admin and not (acl and acl["protected"] and sorted(e["sid"] for e in acl["allow"]) == ["S-1-5-18", "S-1-5-32-544"]):
+        data = b""                      # a wrong ACL: sshd ignores the file without a word
+    if data.startswith((b"\xef\xbb\xbf", b"\xff\xfe")) or b" roster-managed:" not in data:
+        print("admin@10.0.0.5: Permission denied (publickey,password,keyboard-interactive).", file=sys.stderr)
+        return False
+    return True
+
+
+CMD_SPECIAL = set('&|<>^%"')                 # cmd.exe acts on these in a command line
+PS_SPECIAL = set(";&$'\"(){}@#`|<>,")          # PowerShell's own syntax
+
+
+def windows_host(root, command):
+    """Run COMMAND on the stand-in Windows Host at ROOT, as its DefaultShell (cmd.exe or PowerShell) reads the line:
+    its exit code."""
+    line = " ".join(command)
+    shell = (open(os.path.join(root, "windows")).read().strip() or "powershell").lower()
+    special = CMD_SPECIAL if shell == "cmd" else PS_SPECIAL
+    words = line.split()
+    if words[:1] == ["powershell"] and (any(c in special for c in line) or (shell == "cmd" and len(line) > 8191)):
+        print(f"fake ssh: {shell} would not read this command line as written: {line[:80]}", file=sys.stderr)
+        return 1
+    if words[:1] == ["powershell"] and "-EncodedCommand" in words:
+        boot = base64.b64decode(words[words.index("-EncodedCommand") + 1]).decode("utf-16-le")
+        ps = shutil.which("pwsh") or (shutil.which("powershell.exe") if os.name == "nt" else None)
+        if not ps:
+            print("fake ssh: no PowerShell here to run a stand-in Windows Host with", file=sys.stderr)
+            return 127
+        home, programdata = os.path.join(root, "home"), os.path.join(root, "programdata")
+        os.makedirs(home, exist_ok=True)
+        env = {**os.environ, "OS": "Windows_NT", "USERPROFILE": home, "ProgramData": programdata,
+               "FAKE_HOST_ROOT_NATIVE": root, "FAKE_PYTHON": sys.executable,
+               "FAKE_ACL": os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows", "acl.py")}
+        code = base64.b64encode((WINDOWS_PRELUDE + "\n" + boot).encode("utf-16-le")).decode()
+        r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", code],
+                           input=sys.stdin.buffer.read(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                           cwd=home)
+        sys.stdout.buffer.write(r.stdout)
+        sys.stderr.buffer.write(r.stderr)
+        return r.returncode
+    if words == ["exit", "0"]:        # a login test: this account's key file holds roster's key, and sshd would read it
+        return 0 if windows_key_login(root) else 255
+    first = words[0] if words else ""
+    if shell == "cmd":
+        print(f"'{first}' is not recognized as an internal or external command,\noperable program or batch file.",
+              file=sys.stderr)
+    else:
+        print(f"{first} : The term '{first}' is not recognized as the name of a cmdlet, function, script file, or "
+              "operable program.", file=sys.stderr)
+    return 1
 
 
 hosts = os.environ.get("FAKE_HOSTS")
@@ -66,6 +169,11 @@ if hosts:
         slow = os.path.join(root, "slow")
         if os.path.exists(slow):
             time.sleep(float(open(slow).read() or 1))
+        if os.path.exists(os.path.join(root, "windows")):
+            rc = windows_host(root, command)
+            sys.stdout.flush()
+            open(log, "a").write(f"end {dest}\n")
+            sys.exit(rc)
         line = " ".join(command) or "sh"
         stdin = sys.stdin.buffer.read().decode() if line == "sh -s" else None
         esxi = os.path.exists(os.path.join(root, "esxi"))

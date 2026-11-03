@@ -13,7 +13,7 @@ Everything the `roster` command reads and does: the `roster.yml` format, resourc
 
 1. Creates an SSH key for that box, tagged with the box's name.
 2. Records every host's fingerprint.
-3. Installs the key on each host that accepts keys, using the password from your password manager once.
+3. Installs the key on each host that accepts keys, using the password from your password manager once. On an `os: windows` Host, in the file its sshd reads ([Windows Hosts](adding-hosts.md#windows-hosts)).
 4. Writes SSH config entries, so `ssh orion-dev-01` just works.
 5. Writes `ROSTER.md`, so Claude knows which hosts exist and how to reach them.
 6. Applies the Mesh when `roster.yml` has one (not with `--only`; see [The Mesh](mesh.md)).
@@ -62,6 +62,7 @@ groups:
 | `ssh` | Optional `{ port, user, auth }` that override the defaults for SSH only |
 | `enroll` | `true` installs a key (default); `false` for gear that only takes passwords |
 | `reviewed` | `false` on scanned hosts; `setup` skips them until you flip it |
+| `os` | `windows` for a Windows Host with OpenSSH Server: `setup`, `revoke` and `check` run PowerShell there (the script on stdin) and use the key file sshd reads for that account, and its ssh config shares no connection (`ControlMaster no`). `posix`, or unset, for everything else. Any case; cascades like the rest. `type:` stays a free label: `type: windows` with no `os:` gets warning 154. See [Windows Hosts](adding-hosts.md#windows-hosts) |
 | `mesh` | `true` lets a group's Hosts reach each other (the [Mesh](mesh.md)); `false` keeps a group or Host out of it and out of every Link. Cascades like the rest |
 | `mesh_dir` | Where a Mesh source keeps its key, known hosts, ssh config (and, on ESXi, `ROSTER.md`), in place of `~/.ssh/roster-mesh` or ESXi's datastore pick: an absolute path, on ESXi on a datastore. Cascades like the rest. See [`mesh_dir:`](mesh.md#esxi) |
 | `seen_as` | The Host's other addresses (one or a list, addresses or networks) that a Mesh peer's `from=` takes beside its `ip`: for a jump Host on several networks or a Host behind NAT. On the Host only. See [`seen_as:`](mesh.md#other-addresses) |
@@ -239,7 +240,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`) |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
-| `check [HOST]` | Reachability of SSH, web UIs and services, and the Mesh's drift (without `--only`). With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)) |
+| `check [HOST]` | Reachability of SSH (a login running `exit 0`, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without `--only`); on an `os: windows` Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)) |
 | `hosts [--find TEXT] [--all] [--long]` | The hosts and resources you can use: name, IP, user, logins (`ssh (key), web (admin), api`, `wifi`) and title. Unreviewed scanned hosts are hidden unless you pass `--all`, `--find` or `--only`. `--long` shows the full table (type, product, web URL, scan description) |
 | `info NAME` | Everything about one host or resource; fuzzy names work (`roster info core switch`) |
 | `resources [--find TEXT]` | List or search Wi-Fi networks, accounts and secrets that aren't hosts |
@@ -249,7 +250,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `bw BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts), e.g. `roster bw list items --search proxmox` |
 | `providers` | Available providers, whether their tools are installed, unknown ones in use |
 | `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
-| `revoke [--all]` | Remove this box's key from every host. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories) |
+| `revoke [--all]` | Remove this box's key from every host. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
 | `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
 | `inv list\|add NAME PATH\|use NAME\|remove NAME\|which` | Named Inventories, one of them active: list them (`*` marks the active one), name one, make one the active one, forget one (its file stays), or print the `roster.yml` roster uses. See [Named Inventories](#named-inventories) |
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
