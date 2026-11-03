@@ -855,3 +855,79 @@ def test_a_percent_in_a_user_is_refused_again(write_config):
     write_config("groups:\n  lab:\n    user: 'o%ps'\n    auth: agent\n    hosts:\n      b: {ip: 10.0.0.5}\n")
     with pytest.raises(SystemExit, match="user"):
         main(["hosts"])
+
+
+# ---------------------------------------------------------------- roster revoke --all (T183, #347)
+
+def revoked(ssh_log):
+    """The Hosts a revoke ran its script on (`ssh -o BatchMode=yes NAME sh -c ...`), in no order."""
+    return sorted(ln.split()[3] for ln in ssh_log() if ln.startswith("ssh -o BatchMode=yes ") and " sh -c " in ln)
+
+
+def test_revoke_all_revokes_every_named_inventory_and_the_unnamed_one(two, capsys, ssh_log, isolated):
+    third = isolated["home"] / "lab"
+    third.mkdir()
+    (third / "roster.yml").write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      nas-1: {ip: 10.0.0.30}\n")
+    run(capsys, "-c", str(third / "roster.yml"), "sync")         # the unnamed one: synced, never named
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    code, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert revoked(ssh_log) == ["build-pi", "nas-1", "pi"]        # esx has no key (enroll: false)
+    assert out.count("\nremoved from ") == 1                      # one summary
+    assert "removed from 0/3 hosts in 3 Inventories" in out       # the stand-in ssh reaches nothing
+    for label in ("work", "home", "unnamed"):
+        assert label in out
+    d = ssh(isolated)
+    for f in (d / "roster-inventories/work", d / "roster-inventories/home", d / "config.d/roster"):
+        assert str(f) in out.split("\nremoved from ")[1]
+    assert code == 1
+
+
+def test_revoke_all_never_reaches_a_left_out_host_by_its_name(two, capsys, ssh_log, monkeypatch):
+    monkeypatch.setenv("HOMEPW", "hunter2")
+    clashing(two, capsys)                                         # pi is in both; work's is the one ssh reaches
+    code, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert revoked(ssh_log) == ["build-pi", "pi"]                 # work's pi, once
+    assert "home: pi: left out of this Box's ssh config" in out
+
+
+def test_revoke_all_skips_an_inventory_whose_hosts_ssh_doesnt_reach_and_says_so(two, capsys, ssh_log):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")                                           # home was never synced on this Box
+    code, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert revoked(ssh_log) == ["build-pi"]
+    assert "home: not in this Box's ssh config" in out and code == 1
+
+
+def test_revoke_all_asks_once_and_no_changes_nothing(two, capsys, ssh_log, monkeypatch):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
+    assert run(capsys, "revoke", "--all")[0] == 1
+    assert len(asked) == 1 and "from 2 hosts in 2 Inventories" in asked[0] and "This box loses access" in asked[0]
+    assert revoked(ssh_log) == []
+
+
+def test_revoke_all_with_an_inventory_that_doesnt_load_says_so_without_its_words(two, capsys, ssh_log):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+    run(capsys, "--inv", "home", "sync")
+    two["home"].write_text("groups: [secret-looking line\n")
+    code, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert revoked(ssh_log) == ["build-pi"]
+    assert "home: its roster.yml doesn't load" in out and "secret-looking" not in out and code == 1
+
+
+@pytest.mark.parametrize("argv", [["revoke", "--all", "--only", "lab"], ["--inv", "work", "revoke", "--all"],
+                                  ["-c", "roster.yml", "revoke", "--all"]])
+def test_revoke_all_takes_no_only_inv_or_config(two, capsys, argv):
+    with pytest.raises(SystemExit):
+        main(argv)
+    assert "--all" in capsys.readouterr().err

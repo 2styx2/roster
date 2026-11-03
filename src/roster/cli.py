@@ -641,6 +641,14 @@ def run_sudo(h, command):
     return rc if rc >= 0 else 1
 
 
+def revoke_on(h, script):
+    """Run the key-removal SCRIPT on Host H by its name (`ssh NAME`); True when it says it's done."""
+    r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], script]),
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
+    return "ROSTER_OK" in r.stdout
+
+
 def cmd_revoke(cfg, args):
     hosts = skip_left_out([h for h in selected(cfg, args.only) if h["enroll"]])
     if not args.yes:
@@ -648,21 +656,99 @@ def cmd_revoke(cfg, args):
         if ans.strip().lower() != "y":
             return 1
     script = "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))
-
-    def revoke(h):
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], script]),
-                           stdin=subprocess.DEVNULL, capture_output=True, text=True)
-        subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
-        return h, "ROSTER_OK" in r.stdout
-
     bad = 0
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, ok in ex.map(revoke, hosts):
+        for h, ok in zip(hosts, ex.map(lambda h: revoke_on(h, script), hosts), strict=True):
             bad += not ok
             say(f"  {'ok  ' if ok else 'FAIL'}  {h['name']}")
     say(f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts. "
         f"To finish, delete {cfg['key']}, {cfg['pub']} and {ssh_config_file()} on this box.")
     return 1 if bad else 0
+
+
+def revoke_targets():
+    """`revoke --all`'s Inventories: [(label, name or None, roster.yml)], every named one in the order they were
+    named, then the unnamed one: the roster.yml roster's unnamed ssh config was last written from (the only unnamed
+    one whose Hosts `ssh NAME` reaches), unless it's a named one's file."""
+    from . import inventories
+    inv = inventories.load()
+    out: list[tuple[str, str | None, Path]] = [(x.name, x.name, x.path) for x in inv.inventories]
+    unnamed = inventories.unnamed_source()
+    if unnamed is not None and not any(inventories.same_file(x.path, unnamed) for x in inv.inventories
+                                       if x.path.exists()):
+        out.append(("unnamed", None, unnamed))
+    return out
+
+
+def cmd_revoke_all(args):
+    """T183 (#347): `roster revoke` for every Inventory on this Box at once, with one question and one summary. Each
+    Inventory is loaded and reached by its own name (this run's Inventory is never switched), and a Host is reached
+    only by a name `ssh NAME` takes to that Inventory's Host: never a left-out one, never one whose Inventory isn't in
+    this Box's ssh config."""
+    from . import inventories
+    inventories.rebuild_if_stale()
+    targets = revoke_targets()
+    if not targets:
+        say("no Inventory has written its ssh config on this Box (`roster inv list` names them): nothing to revoke")
+        return 1
+    plan: list[tuple[str, dict[str, Any], list[dict[str, Any]]]] = []
+    problems = 0
+    for label, name, path in targets:
+        again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(str(path))}"
+        try:
+            cfg = load_config(path)
+        except SystemExit:                  # its words could quote a line of that file: they stay with it
+            say(f"  {label}: its roster.yml doesn't load or isn't there ({path}) - not revoked (`{again} check "
+                "--box` says why)")
+            problems += 1
+            continue
+        keyed = [h for h in cfg["hosts"].values() if h["enroll"]]
+        reach = inventories.reachable_hosts(name)
+        if reach is None:
+            if keyed:
+                say(f"  {label}: not in this Box's ssh config, so `ssh NAME` doesn't reach its Hosts - its "
+                    f"{len(keyed)} hosts not revoked (`{again} sync` writes it, then `{again} revoke`)")
+                problems += 1
+            continue
+        left = inventories.left_out_hosts(name)
+        hosts = []
+        for h in keyed:
+            if h["name"] in reach:
+                hosts.append(h)
+            elif h["name"] in left:
+                say(f"  {label}: {h['name']}: " + LEFT_OUT.format(name=h["name"]))
+            else:
+                say(f"  {label}: {h['name']}: not in this Box's ssh config yet - not revoked (`{again} sync`, then "
+                    f"`{again} revoke`)")
+                problems += 1
+        plan.append((label, cfg, hosts))
+    total = sum(len(hosts) for _, _, hosts in plan)
+    if not args.yes:
+        tags = ", ".join(sorted({f"'{cfg['tag']}'" for _, cfg, _ in plan})) or "this box's key"
+        counts = ", ".join(f"{label} {len(hosts)}" for label, _, hosts in plan)
+        ans = input(f"Remove key {tags} from {total} hosts in {len(plan)} Inventories ({counts})? This box loses "
+                    "access. [y/N] ")
+        if ans.strip().lower() != "y":
+            return 1
+    jobs = [(label, h, "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))) for label, cfg, hosts in plan
+            for h in hosts]
+    bad = 0
+    with cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
+        for (label, h, _), ok in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
+            bad += not ok
+            say(f"  {'ok  ' if ok else 'FAIL'}  {label}: {h['name']}")
+    files = []
+    for _, cfg, _ in plan:
+        files += [str(cfg["key"]), str(cfg["pub"])]
+    files += [str(ssh_config_file(name)) for _, name, _ in targets if ssh_config_file(name).is_file()]
+    from .common import ssh_index_file
+    if ssh_index_file().is_file():
+        files.append(str(ssh_index_file()))
+    files = list(dict.fromkeys(files))
+    say(f"\nremoved from {total - bad}/{total} hosts in {len(plan)} Inventories. "
+        f"To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box." if files else
+        f"\nremoved from {total - bad}/{total} hosts in {len(plan)} Inventories.")
+    return 1 if bad or problems else 0
 
 
 AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
@@ -815,10 +901,12 @@ def cmd_inv(args):
             say(f"{'*' if x.name == inv.active else ' '} {x.name:<{width}}  {x.path}{missing}")
         return 0
     if act == "add":
-        first = inventories.add(args.name, args.path)
+        added = inventories.add(args.name, args.path)
         say(f"named {args.name}: {inventories.path_of(args.name)}"
-            + (f"; {args.name} is the active Inventory" if first else f" (`roster inv use {args.name}` makes it "
+            + (f"; {args.name} is the active Inventory" if added.first else f" (`roster inv use {args.name}` makes it "
                "the active one)"))
+        if added.mesh_state:
+            say(f"its Mesh state (from this file's `roster mesh` before it was named) is in {added.mesh_state} now")
         say(f"note: `roster --inv {args.name} sync` writes its ssh config and ROSTER.md here "
             f"(`roster --inv {args.name} setup` on a new Box)")
         return 0
@@ -830,11 +918,15 @@ def cmd_inv(args):
             say(f"note: ROSTER_CONFIG is set ({os.environ['ROSTER_CONFIG']}), and it comes before the active "
                 "Inventory: unset it for roster to use this one")
         return 0
-    was_active, kept = inventories.remove(args.name)
+    removed = inventories.remove(args.name)
     say(f"forgot {args.name} (its roster.yml stays where it is)"
-        + ("; no Inventory is active now (`roster inv use NAME` picks one)" if was_active else ""))
-    if kept:
-        say(f"its host keys are in {kept} now, so another Inventory named {args.name} starts without them")
+        + ("; no Inventory is active now (`roster inv use NAME` picks one)" if removed.was_active else ""))
+    if removed.known_hosts:
+        say(f"its host keys are in {removed.known_hosts} now, so another Inventory named {args.name} starts without "
+            "them")
+    if removed.mesh_state:
+        say(f"its Mesh state is in {removed.mesh_state} now, so another Inventory named {args.name} starts without "
+            "it")
     if not inventories.load().inventories:
         say("note: no named Inventories are left: run `roster sync` so ~/.ssh/config reaches this Box's Hosts again")
     return 0
@@ -965,6 +1057,8 @@ def build_parser():
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
     s.add_argument("--only", **only)
+    s.add_argument("--all", action="store_true", help="every Inventory on this box: each named one and the unnamed "
+                   "one, with one question and one summary")
     s.add_argument("-y", "--yes", action="store_true", help="don't ask first")
     s = sub.add_parser("inv", help="named Inventories (work, home): list, add NAME PATH, use NAME, remove NAME, "
                        "or which (the roster.yml roster uses)")
@@ -1021,6 +1115,10 @@ def _main(argv=None):
         return cmd_inv(args)
     if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
         build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
+    if args.cmd == "revoke" and args.all:
+        if args.only or args.inv or args.config:
+            build_parser().error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
+        return cmd_revoke_all(args)
     if args.cmd == "check" and args.box:
         if args.host or args.only:
             build_parser().error("check --box takes no HOST or --only: it checks this Box, not its Hosts")

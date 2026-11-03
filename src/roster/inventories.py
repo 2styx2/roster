@@ -6,8 +6,9 @@ Each named Inventory gets its own generated ssh config (~/.ssh/roster-inventorie
 (~/.ssh/roster_known_hosts-NAME); ROSTER.md is written next to its roster.yml, as always. ~/.ssh/config includes
 one index (config.d/roster.inventories) that holds every Inventory's Host blocks, the active one's first; a Host name
 an earlier Inventory has already is left out of a later one, so ssh reads exactly one roster block per name (ssh adds
-up IdentityFile over every block that matches, so a second block would offer the other Inventory's key). With no named
-Inventories none of this exists and roster writes and reads exactly what it always did."""
+up IdentityFile over every block that matches, so a second block would offer the other Inventory's key). Its Mesh state
+is ~/.config/roster/mesh-NAME.json (T182). With no named Inventories none of this exists and roster writes and reads
+exactly what it always did."""
 
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from .common import (
     die,
     known_hosts_file,
     legacy_ssh_config_file,
+    mesh_state_file,
     replace_file,
     ssh_config_file,
     ssh_dir,
@@ -169,9 +171,18 @@ def name_of(path: str | Path) -> str | None:
     return next((x.name for x in load().inventories if same_file(x.path, path)), None)
 
 
-def add(name: str, path: str | Path) -> bool:
+class Added(NamedTuple):
+    """What `inv add` did besides naming: whether the Inventory became the active one, and where the Mesh state it took
+    over went (None when it took none)."""
+
+    first: bool
+    mesh_state: Path | None
+
+
+def add(name: str, path: str | Path) -> Added:
     """Name the roster.yml at PATH. The first one named becomes the active one. Its known_hosts starts as the one every
-    roster.yml on this Box shared before named Inventories, so no host key the Box trusted is trusted anew."""
+    roster.yml on this Box shared before named Inventories, so no host key the Box trusted is trusted anew; the Box's
+    unnamed Mesh state moves to it when it's this file's (take_mesh_state)."""
     why = name_problem(name or "")
     if why:
         die(why)
@@ -194,9 +205,52 @@ def add(name: str, path: str | Path) -> bool:
     inv = Inventories(active=name if first else inv.active, inventories=(*inv.inventories, Named(name=name, path=path)))
     save(inv)
     seed_known_hosts(name)
+    moved = take_mesh_state(name, path)
     refresh_index(inv)
     refresh_roster_md(inv)
-    return first
+    return Added(first, moved)
+
+
+def mesh_state_hosts(f: Path) -> set[str] | None:
+    """The Host names the Mesh state file F names (members, pending, cuts and their peers); None when it doesn't load."""
+    try:
+        data = cast("dict[str, Any]", json.loads(f.read_text()))
+        hosts = {str(h) for h in cast("list[Any]", data.get("members") or [])}
+        hosts |= {str(h) for h in cast("dict[str, Any]", data.get("pending") or {})}
+        for host, peers in cast("dict[str, list[Any]]", data.get("cut") or {}).items():
+            hosts |= {str(host), *(str(p) for p in peers)}
+        return hosts
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def take_mesh_state(name: str, path: Path) -> Path | None:
+    """T182 (#346): the Box's one Mesh state (mesh.json, from before Mesh state was per Inventory) moves to the
+    Inventory NAME, once, when it is that roster.yml's: roster's unnamed ssh config was last written from PATH (the
+    Mesh reaches its Hosts over that config), or, with no unnamed ssh config to tell, every Host the state names is a
+    Host of PATH. Otherwise it stays the unnamed Inventory's. A Mesh state NAME has already is never overwritten.
+    Returns where it went, or None."""
+    shared, mine = mesh_state_file(None), mesh_state_file(name)
+    if not shared.is_file() or mine.exists():
+        return None
+    source = unnamed_source()
+    if source is not None:
+        if not same_file(source, path):
+            return None
+    else:
+        from .config import load_config
+        hosts = mesh_state_hosts(shared)
+        try:
+            have = set(load_config(path)["hosts"])
+        except SystemExit:
+            return None
+        if not hosts or not hosts <= have:
+            return None
+    try:
+        os.replace(shared, mine)
+    except FileNotFoundError:                   # another roster took it first
+        return None
+    return mine
 
 
 def seed_known_hosts(name: str) -> None:
@@ -220,10 +274,28 @@ def use(name: str) -> None:
     refresh_roster_md(inv)
 
 
-def remove(name: str) -> tuple[bool, Path | None]:
-    """Forget NAME (its roster.yml stays) and its generated ssh config. Its known_hosts is set aside (renamed
-    roster_known_hosts-NAME.removed-TIME), so a new Inventory of that name never inherits another file's keys.
-    Returns (whether it was the active one, where its known_hosts went)."""
+class Removed(NamedTuple):
+    """What `inv remove` did: whether NAME was the active one, and where its known_hosts and Mesh state went (None
+    when it had none)."""
+
+    was_active: bool
+    known_hosts: Path | None
+    mesh_state: Path | None
+
+
+def set_aside(f: Path) -> Path | None:
+    """Rename F to F.removed-TIME (None when F isn't there)."""
+    if not f.exists():
+        return None
+    kept = f.with_name(f"{f.name}.removed-{time.strftime('%Y%m%d-%H%M%S')}")
+    os.replace(f, kept)
+    return kept
+
+
+def remove(name: str) -> Removed:
+    """Forget NAME (its roster.yml stays) and its generated ssh config. Its known_hosts and Mesh state are set aside
+    (renamed roster_known_hosts-NAME.removed-TIME, mesh-NAME.json.removed-TIME), so a new Inventory of that name never
+    inherits another file's keys or Mesh."""
     inv = load()
     x = inv.get(name)
     if x is None:
@@ -235,13 +307,11 @@ def remove(name: str) -> tuple[bool, Path | None]:
     ssh_config_file(x.name).unlink(missing_ok=True)
     if generated(legacy_ssh_config_file(x.name)):
         legacy_ssh_config_file(x.name).unlink(missing_ok=True)
-    kept = None
-    if known_hosts_file(x.name).exists():
-        kept = known_hosts_file(x.name).with_name(f"{known_hosts_file(x.name).name}.removed-{time.strftime('%Y%m%d-%H%M%S')}")
-        os.replace(known_hosts_file(x.name), kept)
+    kept = set_aside(known_hosts_file(x.name))
+    mesh_kept = set_aside(mesh_state_file(x.name))
     refresh_index(inv)
     refresh_roster_md(inv)
-    return was_active, kept
+    return Removed(was_active, kept, mesh_kept)
 
 
 # ---------------------------------------------------------------- ~/.ssh/config: one include for them all

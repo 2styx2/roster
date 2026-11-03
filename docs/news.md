@@ -12,6 +12,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (on a name clash only the active one's is there). Each one starts with the host keys this Box already recorded, so nothing is trusted anew. Upgrade every roster on a Box together (the CLI and the app's): an older one syncing there doesn't know the named Inventories' ssh config, though the next run of a new one puts it right. `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
 
+- **`roster revoke --all`** (#347): removes this Box's key from every Inventory's Hosts at once, each named one and the unnamed one, with one question and one summary. A Host `ssh NAME` doesn't reach (left out on a name clash, or its Inventory not synced here) is skipped and said. See [Named Inventories](cli-reference.md#named-inventories).
+
 **App**
 
 - **Fix buttons in `:packages` and `:plugins`** (#213): a Package that can't be fetched has **Try again**, a cancelled one **Install…** (both run `:packages install NAME`, which fetches it again and shows the install prompt for one not installed: nothing installs without it), and a stopped Plugin **Reload** (`:plugins reload NAME`), with **Check for an update** for a Package's. Each button's tooltip shows the command it runs. See [errors](app/errors.md#packages).
@@ -24,6 +26,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **Each named Inventory has its own Mesh state** (#346): `roster mesh` remembers a named Inventory's pending Hosts and cuts in `~/.config/roster/mesh-NAME.json`, so two Inventories with a Host of the same name no longer mix their Meshes. One that isn't named keeps `mesh.json`, unchanged. Naming the Inventory the Box's `mesh.json` came from moves it there once, and `roster inv remove` sets it aside.
 - **roster.yml is checked by type as it loads** (decision Q113): a value of the wrong kind that roster used to trip over later now stops the load with roster's usual error, naming the key and never the value, e.g. `workers: lots` gives `error: roster.yml: workers: input should be a valid integer…` (code 1 in `roster serve` and `--json`) instead of a Python traceback. What loaded before still loads, except a `workers:` or `claude_inline_limit:` below 1 or with a fraction, and a `provider_dirs:` entry that isn't a path; `--json` and serve's results keep their shape (a Host's default `login` user written as a number now comes out as text, as its ssh user always did). roster now needs Pydantic 2 (installed with it). See [Development](development.md#languages-and-types).
 
 **App**

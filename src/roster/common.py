@@ -61,6 +61,14 @@ def known_hosts_file(name: Any = _CURRENT) -> Path:
     return ssh_dir() / ("roster_known_hosts" if name is None else f"roster_known_hosts-{name}")
 
 
+def mesh_state_file(name: Any = _CURRENT) -> Path:
+    """roster's Mesh state for the Inventory NAME (default: the one this run uses): ~/.config/roster/mesh.json for a
+    roster.yml that isn't named, as always, and mesh-NAME.json beside it for a named one (T182, #346), so two
+    Inventories never share it."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("mesh.json" if name is None else f"mesh-{name}.json")
+
+
 def known_hosts_label():
     """known_hosts_file() as messages name it: ~/.ssh/roster_known_hosts (or -NAME)."""
     return f"~/.ssh/{known_hosts_file().name}"
