@@ -54,7 +54,7 @@ import { mergeRows, type TableRow } from "../ui/table";
 import { detailsId, type Content, type GraphModel } from "../view/views";
 import { mergeGraph, type GraphNode } from "../graph/model";
 import { MAX_CLUSTERS, MAX_EDGES, MAX_NODES, type PluginGraph } from "./graphOps";
-import { quiet, type Message } from "../ui/messages";
+import { backgroundQuiet, quiet, type Message } from "../ui/messages";
 
 /** What the manager asks of the app. */
 export interface PluginUi {
@@ -793,7 +793,7 @@ export class PluginManager {
     if (what !== null) this.used(plugin, what);
     const reply = await this.backend.pluginCall(plugin, handler, args, user).catch((e: unknown) => this.lost(plugin, e));
     this.builtinsLost(reply);
-    this.apply(reply);
+    this.apply(reply, { background: user === false });
     return reply.result;
   }
 
@@ -805,7 +805,7 @@ export class PluginManager {
     if (held) return void held.push(reply);
     if (!this.loaded.has(reply.plugin)) return;
     this.used(reply.plugin, "got an answer to a request");
-    this.apply(reply);
+    this.apply(reply, { background: true });
   }
 
   /** Tells the Plugins that listen. A Session that ended sends what it had first. */
@@ -835,7 +835,7 @@ export class PluginManager {
     const replies = await this.backend.pluginEvent(name, payload).catch(() => []);
     for (const r of replies) {
       this.used(r.plugin, `heard ${name}`);
-      this.apply(r);
+      this.apply(r, { background: true });
     }
   }
 
@@ -1108,7 +1108,7 @@ export class PluginManager {
     this.known.set(manifest.name, info);
     this.loaded.set(manifest.name, { ...info, disposers: new Map() });
     this.problems.delete(manifest.name);
-    this.apply(reply, true);
+    this.apply(reply, { loading: true, background: true });
     this.changed();
   }
 
@@ -1135,8 +1135,9 @@ export class PluginManager {
   /** Applies a reply: its ops, then its error and whether it's now disabled. The core is the one
    * judge of what a Plugin may do: a `copy` op is in a reply only to a call the user started.
    * Notices after a copy wait for it: if it fails, they're dropped ("Copied" would be a lie) and
-   * the failure is said instead (decision Q87). */
-  private apply(reply: PluginReply, loading = false) {
+   * the failure is said instead (decision Q87). `background`: nothing the user did asked for it (a
+   * timer, an event, a request's answer, a load), so a quiet notice keeps a line that shows (Q162). */
+  private apply(reply: PluginReply, { loading = false, background = false }: { loading?: boolean; background?: boolean } = {}) {
     const name = reply.plugin;
     const l = this.loaded.get(name);
     if (l) {
@@ -1155,8 +1156,8 @@ export class PluginManager {
           );
           copying = Promise.all([before, done]).then(([a, b]) => a && b);
         } else if (op.op === "notify" && copying) {
-          void copying.then((ok) => ok && this.notify(name, op.level, `${name}: ${op.text}`, op.actions, op.quiet));
-        } else this.applyOp(l, name, op);
+          void copying.then((ok) => ok && this.notify(name, op.level, `${name}: ${op.text}`, op.actions, op.quiet, background));
+        } else this.applyOp(l, name, op, background);
       }
     }
     if (reply.error) {
@@ -1267,7 +1268,7 @@ export class PluginManager {
     return e !== undefined && e.source !== plugin;
   }
 
-  private applyOp(l: Loaded, plugin: string, op: PluginOp) {
+  private applyOp(l: Loaded, plugin: string, op: PluginOp, background = false) {
     const r = this.registries;
     const refuse = (what: string) => this.notify(plugin, "warn", `${plugin}: ${what}`);
     switch (op.op) {
@@ -1473,7 +1474,7 @@ export class PluginManager {
         this.float = op.spec ? { ...op.spec, plugin } : this.float?.plugin === plugin ? null : this.float;
         return;
       case "notify":
-        return this.notify(plugin, op.level, `${plugin}: ${op.text}`, op.actions, op.quiet);
+        return this.notify(plugin, op.level, `${plugin}: ${op.text}`, op.actions, op.quiet, background);
       case "open":
         return this.ui.run(`connect ${op.host}`);
       case "send":
@@ -1801,10 +1802,11 @@ export class PluginManager {
   /** A notice; an info one is quiet (on the message line, heard but not seen) unless it has
    * buttons or the Plugin said `quiet = false`, while `ui.messages` is quiet (ticket 117).
    * Warnings and errors always show. `:messages` keeps it either way. Public for the app's own
-   * notices about Plugins, as `:tutor`'s demo's (ticket 66). */
-  notify(plugin: string, level: Notice["level"], text: string, actions: Notice["actions"] = [], asked?: boolean) {
+   * notices about Plugins, as `:tutor`'s demo's (ticket 66). `background`: nothing the user did
+   * asked for it, so quiet, it keeps a line that shows, an error above all (decision Q162). */
+  notify(plugin: string, level: Notice["level"], text: string, actions: Notice["actions"] = [], asked?: boolean, background = false) {
     const routine = level === "info" && (asked ?? actions.length === 0);
-    if (routine && this.ui.say && this.ui.messagesAll?.() === false) return this.ui.say(quiet(text));
+    if (routine && this.ui.say && this.ui.messagesAll?.() === false) return this.ui.say(background ? backgroundQuiet(text) : quiet(text));
     this.ui.log?.(text);
     const notice: Notice = { id: ++this.noticeId, plugin, level, text, ...(actions.length ? { actions } : {}) };
     this.notices = [...this.notices, notice].slice(-MAX_NOTICES);
