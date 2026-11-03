@@ -183,7 +183,7 @@
             "name": "db-10-0-0-9"
           }
         ],
-        "backup": "/infra/.git/roster/roster.yml.bak",
+        "backup": "/team-inventory/.git/roster/roster.yml.bak",
         "group": "discovered-20261031"
       }
     ],
