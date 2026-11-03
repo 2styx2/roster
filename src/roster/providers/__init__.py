@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 from ..common import die, program_argv, run, say, time_left, user_config_dir
 
@@ -32,6 +33,8 @@ class TimedOut(SecretError):
 
 class WrongPassword(SecretError):
     """The master password didn't unlock the vault."""
+
+    step: dict[str, Any] | None = None  # vault.login: the step the sign-in carries on at (sign_in_problem), when it does
 
 
 class NotLoggedIn(SecretError):
@@ -547,7 +550,8 @@ def add_template_provider(name, conf):
         except (KeyError, IndexError, ValueError) as e:
             raise SecretError(f"provider '{name}': bad command template ({e}); "
                               "use {item}, {field}, {ref}, and {{ }} for literal braces")
-        r = ctx.run(line, shell=True, interactive=bool(conf.get("interactive")))
+        # S604: the template is the user's own command (roster.yml's providers:); what roster puts in is shlex-quoted
+        r = ctx.run(line, shell=True, interactive=bool(conf.get("interactive")))  # noqa: S604
         if r.returncode != 0:
             raise SecretError(f"provider '{name}' failed for '{item}' (exit {r.returncode}): {errtext(r)}")
         out = r.stdout.rstrip("\r\n")
@@ -570,9 +574,12 @@ def load_plugins(dirs):
             if f.name.startswith("_"):
                 continue
             spec = importlib.util.spec_from_file_location(f"roster_provider_{f.stem}", f)
+            if spec is None or spec.loader is None:
+                say(f"warning      provider plugin {f} didn't load: Python can't import it")
+                continue
             mod = importlib.util.module_from_spec(spec)
             # what a plugin can use without importing anything from roster:
-            mod.register, mod.SecretError, mod.split_field, mod.errtext = register, SecretError, split_field, errtext
+            vars(mod).update(register=register, SecretError=SecretError, split_field=split_field, errtext=errtext)
             try:
                 spec.loader.exec_module(mod)
             except Exception as e:

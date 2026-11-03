@@ -1,5 +1,6 @@
 # roster CI: both halves of the repo on every pull request and on pushes to main/dev and tags.
-#   CLI  (repo root): ruff, pytest on every supported Python and on Windows, build the wheel.
+#   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows,
+#        build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
 #   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
 #        headless Chromium (app/e2e); rustfmt, clippy and
@@ -46,6 +47,9 @@ jobs:
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen --python python3.12
       - run: uv run --python python3.12 ruff check src tests scripts app/scripts
+      # The type checker (decision Q113): basic over src/roster/, strict for the modules pyproject.toml lists.
+      # The job keeps its name "CLI lint (ruff)", which branch protection may require by name.
+      - run: uv run --python python3.12 pyright
       # One version across pyproject.toml, package.json, tauri.conf.json, the Cargo.tomls and the lock files.
       - run: scripts/bump-version.sh --check
 
