@@ -39,6 +39,13 @@ KB = 1000
 # bytes under the gzipped budget. T173 took two redundant declarations out of the Host row menu's rules
 # (T166) to get there from 84,522 / 15,485. Not raised: the next stylesheet change will go over, and its
 # pull request says why or makes room.
+# CSS measured 2026-11-03 (T178, #340): 83,981 bytes raw / 15,429 gzipped (dev was 84,634 / 15,478 by
+# then). T178 took out declarations that every element they match has overridden (a framed panel's
+# own width and float placement, which its frame sets; a full view's placement and fill; a Session's
+# link edge's base state; the Pending changes diff's padding and tint, which the import diff's rules
+# already replaced) and merged rules repeated for one selector, with every element's computed style
+# and a screenshot of 44 fixture states unchanged. That's 653 B raw, 49 B gzipped: the stylesheet
+# has no dead rules worth 1 KB gzipped, so the gzipped budget stays 71 bytes away. Not raised.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
     "js": {"raw": 2550, "gzip": 745},

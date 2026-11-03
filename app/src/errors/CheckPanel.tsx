@@ -3,7 +3,7 @@
 // roster runs the steps; this only shows them. A check makes at most one connection and one login.
 // While it runs (ticket 110) every step has its row from the start, so nothing moves as steps come
 // in: the one under way is the accent (live), drawn to as it starts, the rest muted until the answer.
-import { useEffect, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CheckStep } from "../backend/types";
 import { problemFromStep, type ErrorRow } from "./catalog";
 import { ProblemBody, type ProblemActions } from "./ErrorPanel";
@@ -45,10 +45,21 @@ export interface CheckPanelProps {
   rows: readonly ErrorRow[];
   actions: ProblemActions;
   onClose(): void;
+  /** Stop the check (#221 item 1): offered only for the app's own check while it runs. */
+  onStop?(job: string): void;
 }
 
-export function CheckPanel({ check, rows, actions, onClose }: CheckPanelProps) {
+/** Stop's glyph: the square a stopped step is marked with, so the button and its effect match. */
+const StopGlyph = () => (
+  <svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor" aria-hidden="true">
+    <rect x="2" y="2" width="6" height="6" rx="1" />
+  </svg>
+);
+
+export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanelProps) {
   const { host } = check;
+  const stopJob = check.state === "running" && !check.stopping && onStop ? (check.job ?? null) : null;
+  const closeRef = useRef<HTMLButtonElement>(null);
   const stopped = check.state === "done" ? stoppedStep(check.result, check.at) : null;
   const failed = check.state === "done" ? check.result.steps.find((s) => s.status === "fail") : undefined;
   const summary =
@@ -64,7 +75,7 @@ export function CheckPanel({ check, rows, actions, onClose }: CheckPanelProps) {
   const spoken = useSaid(said, SAY_AFTER_MS);
   const line =
     check.state === "running"
-      ? { className: "check-summary muted", text: `Checking ${host}…` }
+      ? { className: "check-summary muted", text: check.stopping ? `Stopping the check of ${host}…` : `Checking ${host}…` }
       : check.state === "error"
         ? { className: "problem-message", text: check.message }
         : { className: `check-summary ${check.result.ok ? "check-ok" : "muted"}`, text: summary };
@@ -76,8 +87,9 @@ export function CheckPanel({ check, rows, actions, onClose }: CheckPanelProps) {
           {host}
         </h2>
         <span className="panel-head-buttons">
+          {stopJob !== null && <StopButton onStop={() => onStop?.(stopJob)} focusAfter={closeRef} />}
           <PanelButton />
-          <button type="button" className="icon-button close" aria-label="Close the check" onClick={onClose}>
+          <button ref={closeRef} type="button" className="icon-button close" aria-label="Close the check" onClick={onClose}>
             <CloseGlyph />
           </button>
         </span>
@@ -95,6 +107,35 @@ export function CheckPanel({ check, rows, actions, onClose }: CheckPanelProps) {
         <CheckSteps host={host} steps={check.result.steps} rows={rows} actions={actions} stopped={stopped} />
       )}
     </section>
+  );
+}
+
+/** Stop, while the app's own check runs. It goes once pressed or once the check is over: focus on
+ * it then moves to the panel's close button (`focusAfter`), so a keyboard stays in the panel rather
+ * than drop to the page. */
+function StopButton({ onStop, focusAfter }: { onStop(): void; focusAfter: RefObject<HTMLButtonElement | null> }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const button = ref.current;
+    // Runs as it goes, while it's still in the page and still has focus. The close button comes
+    // after it in the header, so it's read now, not as this mounts (its ref isn't set yet then).
+    return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      if (button !== null && document.activeElement === button) focusAfter.current?.focus();
+    };
+  }, [focusAfter]);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="icon-button"
+      aria-label="Stop the check"
+      title="Stop the check"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onStop}
+    >
+      <StopGlyph />
+    </button>
   );
 }
 
