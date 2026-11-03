@@ -1649,9 +1649,10 @@ def test_a_meshed_host_that_runs_roster_itself_keeps_both_writers_lines_once(net
     (own / "roster.yml").write_text(HOSTS_OWN_YML)
     argv = ["--inv", "net"] if named else ["-c", str(own / "roster.yml")]
 
+    if named:
+        roster_on(net, "orion-2", "inv", "add", "net", str(own / "roster.yml"))
+
     def host_roster():
-        if named and not (net.host("orion-2") / "home/.config/roster/inventories.json").exists():
-            roster_on(net, "orion-2", "inv", "add", "net", str(own / "roster.yml"))
         roster_on(net, "orion-2", *argv, "sync")
 
     if not mesh_first:
