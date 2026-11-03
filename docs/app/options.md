@@ -1550,7 +1550,7 @@ roster.o.packages = { { "someone/recent-alerts", tag = "v1.2.0" }, "someone/pinn
 
 The proxy Plugins' requests to public names go through. Unset, they go direct.
 
-Takes http://HOST:PORT, the port written out, with no user or password.
+Takes `"http://HOST:PORT"`, the port written out, with no user or password.
 
 Methods: `roster.o.plugin_proxy = value` · `roster.o.plugin_proxy` · `roster.o.reset("plugin_proxy")`.
 
@@ -1719,7 +1719,7 @@ A Package spec: { SOURCE, tag = …, config = { … } }, or just SOURCE.
 
 | Field | Type | Default | |
 |---|---|---|---|
-| `source` | `string` | required | Where the repo is: the spec's first item, or source = …. Takes `"owner/repo"` (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path. |
+| `source` | `string` | required | Where the repo is: the spec's first item, or source = …. Takes `"owner/repo"` (GitHub), or a git URL: `"https://…"`, `"ssh://…"`, `"git@host:path"`, `"file://…"` or a full path. |
 | `name` | `string` | unset | Its name (its folder and its line in roster.lock); the repo's (or dir's) name when left out. |
 | `tag` | `string` | unset | The tag to pin. At most one of tag, branch and commit; none means the default branch. |
 | `branch` | `string` | unset | The branch to follow. |

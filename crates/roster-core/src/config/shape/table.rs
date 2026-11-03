@@ -648,7 +648,7 @@ pub(super) fn options() -> Vec<Opt> {
         "string",
         "required",
         Allowed::Form(
-            "\"owner/repo\" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path",
+            "\"owner/repo\" (GitHub), or a git URL: \"https://…\", \"ssh://…\", \"git@host:path\", \"file://…\" or a full path",
         ),
         "Where the repo is: the spec's first item, or source = ….",
         "\"someone/recent-alerts\"",
@@ -705,7 +705,7 @@ pub(super) fn options() -> Vec<Opt> {
         "plugin_proxy",
         "string",
         UNSET,
-        Allowed::Form("http://HOST:PORT, the port written out, with no user or password"),
+        Allowed::Form("\"http://HOST:PORT\", the port written out, with no user or password"),
         "The proxy Plugins' requests to public names go through. Unset, they go direct.",
         "\"http://10.0.0.5:3128\"",
     );
