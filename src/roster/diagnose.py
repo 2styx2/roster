@@ -21,9 +21,11 @@ from .sshops import (
     host_block,
     in_ssh_config,
     left_out,
+    not_reached,
     offered_host_key,
     recorded_host_keys,
     start_transport,
+    sync_fix,
     written_host_block,
 )
 
@@ -189,6 +191,9 @@ def step_ssh_config(ctx):
         if why:
             raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
                                                        "Inventory the active one (`roster inv use`)")
+        why = not_reached(h["name"])
+        if why:                         # another roster.yml's, or this Inventory isn't synced here
+            raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
     want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
     if have != want:

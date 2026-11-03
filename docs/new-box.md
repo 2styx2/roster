@@ -146,10 +146,10 @@ roster setup                                             # new key hosts get thi
 ## Removing a box
 
 ```bash
-roster revoke              # removes this box's key from every host
+roster revoke --all        # removes this box's key from every host, in every Inventory here
 ```
 
-Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and `~/.config/roster/bw-session` (and `~/.config/roster/inventories.json` if you named Inventories). Run `roster revoke` once per named Inventory (`roster --inv home revoke`).
+Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and `~/.config/roster/bw-session` (and `~/.config/roster/inventories.json` if you named Inventories). `roster revoke --all` covers every named Inventory and the unnamed one; plain `roster revoke` covers only the Inventory it runs on (`roster --inv home revoke`). Its summary lists the files to delete.
 
 ## See also
 

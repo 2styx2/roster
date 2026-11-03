@@ -27,17 +27,24 @@ def ssh_dir() -> Path:
 # wipes another's. None (no named Inventories, or a roster.yml that isn't one of them): the files roster always wrote.
 # config.find_config sets it as it finds roster.yml; one process uses one Inventory (serve restarts to switch).
 _inventory: str | None = None
+_config_path: Path | None = None       # the roster.yml this run uses, set with _inventory (None: not looked up)
 _CURRENT = object()
 CURRENT = _CURRENT          # "this run's Inventory", for a function that takes an Inventory's name or this default
 
 
-def use_inventory(name: str | None) -> None:
-    global _inventory
+def use_inventory(name: str | None, path: Path | None = None) -> None:
+    global _inventory, _config_path
     _inventory = name
+    _config_path = Path(path) if path is not None else None
 
 
 def current_inventory() -> str | None:
     return _inventory
+
+
+def current_config_path() -> Path | None:
+    """The roster.yml this run uses, as config.find_config found it (None when nothing looked one up)."""
+    return _config_path
 
 
 def ssh_config_file(name: Any = _CURRENT) -> Path:
@@ -59,6 +66,14 @@ def known_hosts_file(name: Any = _CURRENT) -> Path:
     """roster's known_hosts for the Inventory NAME (default: the one this run uses)."""
     name = _inventory if name is _CURRENT else name
     return ssh_dir() / ("roster_known_hosts" if name is None else f"roster_known_hosts-{name}")
+
+
+def mesh_state_file(name: Any = _CURRENT) -> Path:
+    """roster's Mesh state for the Inventory NAME (default: the one this run uses): ~/.config/roster/mesh.json for a
+    roster.yml that isn't named, as always, and mesh-NAME.json beside it for a named one (T182, #346), so two
+    Inventories never share it."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("mesh.json" if name is None else f"mesh-{name}.json")
 
 
 def known_hosts_label():
