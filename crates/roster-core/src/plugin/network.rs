@@ -669,9 +669,10 @@ impl Proxy {
         };
         match tokio::time::timeout(CONNECT_TIMEOUT, open).await {
             Ok(Ok(stream)) => Ok(stream),
-            Ok(Err(e)) => Err(format!("couldn't connect to the proxy {self}: {e}")),
+            // Never its address: the proxy is the user's, and a Plugin doesn't see where it is.
+            Ok(Err(e)) => Err(format!("couldn't connect to your plugin_proxy: {e}")),
             Err(_) => Err(format!(
-                "couldn't connect to the proxy {self}: no answer within {} s",
+                "couldn't connect to your plugin_proxy: no answer within {} s",
                 CONNECT_TIMEOUT.as_secs()
             )),
         }
@@ -680,13 +681,13 @@ impl Proxy {
     /// A tunnel through the proxy to exactly `to`, an address roster checked for `host` (#225 item
     /// 5, decision Q161): `CONNECT IP:PORT`, never the name, so the proxy's own DNS has no say in
     /// where it leads. Anything but a 2xx answer refuses the request; roster never falls back to
-    /// handing the proxy the name.
+    /// handing the proxy the name. Its messages never name the proxy: a Plugin hears them.
     async fn tunnel(&self, host: &str, to: SocketAddr) -> Result<tokio::net::TcpStream, String> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut stream = self.connect().await?;
         let refused = |why: String| {
             format!(
-                "the proxy {self} wouldn't open a tunnel to {to}, the address roster checked for {host} ({why}): through plugin_proxy a request goes only to that address, so it wasn't sent"
+                "your plugin_proxy wouldn't open a tunnel to {to}, the address roster checked for {host} ({why}): through it a request goes only to that address, so it wasn't sent"
             )
         };
         let ask = format!("CONNECT {to} HTTP/1.1\r\nHost: {to}\r\n\r\n");
@@ -724,6 +725,8 @@ impl Proxy {
     }
 }
 
+/// The proxy as the user wrote it, for the user's own messages (init.lua's). Never in a message a
+/// Plugin hears: a Plugin doesn't see where the user's proxy is.
 impl fmt::Display for Proxy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.url.host() {
@@ -1375,7 +1378,12 @@ impl Route {
         let mut why = format!("{host} has no address");
         let mut stream = None;
         for addr in addrs {
-            match proxy.tunnel(host, SocketAddr::new(addr.ip(), port)).await {
+            // An IPv4 address the resolver gave as IPv6 (::ffff:a.b.c.d) is asked for as IPv4,
+            // the form every proxy reads; it was checked by its IPv4 address all the same.
+            match proxy
+                .tunnel(host, SocketAddr::new(addr.ip().to_canonical(), port))
+                .await
+            {
                 Ok(s) => {
                     stream = Some(s);
                     break;
@@ -1395,8 +1403,12 @@ impl Route {
                     None => host.to_string(),
                 },
             );
+        // What the client adds without a proxy, unless the Plugin set its own.
         if !headers.iter().any(|(n, _)| n == "user-agent") {
             request = request.header(reqwest::header::USER_AGENT, USER_AGENT);
+        }
+        if !headers.iter().any(|(n, _)| n == "accept") {
+            request = request.header(reqwest::header::ACCEPT, "*/*");
         }
         for (name, value) in headers {
             request = request.header(name.as_str(), value.as_str());
@@ -1512,12 +1524,9 @@ impl Reply {
     fn content_length(&self) -> Option<u64> {
         match self {
             Reply::Direct(r) => r.content_length(),
-            Reply::Tunneled(t) => t
-                .response
-                .headers()
-                .get(reqwest::header::CONTENT_LENGTH)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse().ok()),
+            // The body's own size, as hyper read the answer: 0 for a HEAD or a 304 whatever
+            // Content-Length says, as reqwest's is.
+            Reply::Tunneled(t) => hyper::body::Body::size_hint(t.response.body()).exact(),
         }
     }
 
