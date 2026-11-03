@@ -93,6 +93,42 @@ describe("Packages", () => {
     expect(await screen.findByText("⚠ 1.0.0")).toBeInTheDocument();
   });
 
+  it("a cancelled install's Install… button and `:packages update NAME` both bring up the install prompt; nothing installs until it's allowed (#213)", async () => {
+    const pk = packages();
+    const user = await ready(pk);
+    await screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+    await user.keyboard(`${LEADER}:packages update recent-alerts{Enter}`);
+    await screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(pk.lock).toEqual({});
+    expect(screen.queryByText("⚠ 1.0.0")).toBeNull();
+
+    await user.keyboard(`${LEADER}:packages{Enter}`);
+    const panel = await screen.findByRole("region", { name: "Packages" });
+    await user.click(within(panel).getByRole("button", { name: "Install… (recent-alerts)" }));
+    const prompt = await screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
+    expect(pk.lock).toEqual({});
+    await user.click(within(prompt).getByRole("button", { name: "Install" }));
+    expect(await screen.findByText("⚠ 1.0.0")).toBeInTheDocument();
+  });
+
+  it("a Package that can't be fetched has Try again in `:packages`, which fetches it again and then asks (errors.md row 116)", async () => {
+    const pk = packages();
+    pk.named[0]!.unreachable = true;
+    const user = await ready(pk);
+    await user.keyboard(`${LEADER}:packages{Enter}`);
+    const panel = await screen.findByRole("region", { name: "Packages" });
+    const row = await within(panel).findByLabelText("recent-alerts, can't fetch");
+    pk.named[0]!.unreachable = false;
+    await user.click(within(row).getByRole("button", { name: "Try again (recent-alerts)" }));
+    await screen.findByRole("alertdialog", { name: "Install recent-alerts?" });
+    expect(pk.lock).toEqual({});
+  });
+
   it("`:packages update NAME` checks that Package", async () => {
     const pk = packages();
     pk.lock["recent-alerts"] = fakeCommit(1);

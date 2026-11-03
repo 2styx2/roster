@@ -24,6 +24,9 @@ export interface FakePackage {
   dir?: string;
   config?: Record<string, unknown>;
   versions: FakePackageVersion[];
+  /** Its repo can't be fetched (errors.md row 116): a sync that would clone it gives git's words
+   * as its error instead, and leaves no clone. A test clears it to bring the network back. */
+  unreachable?: boolean;
 }
 
 export interface FakePackages {
@@ -95,6 +98,10 @@ export function fakePackageHost(
     },
     async packagesSync() {
       return scenario.named.map((p) => {
+        if (p.unreachable && !clones[p.name]) {
+          const s = status(p);
+          return { ...s, pinned: false, error: `can't fetch ${s.url}: fatal: unable to access the repo` };
+        }
         clones[p.name] ??= scenario.lock[p.name] ?? latest(p).commit;
         return status(p);
       });
