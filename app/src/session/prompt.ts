@@ -29,6 +29,7 @@
 // - **No marks**: sudo's exact prompt only, and the offer says roster can't tell whether a nested
 //   shell runs. Nothing nested.
 import { Terminal } from "@xterm/xterm";
+import { CsiClamp } from "../terminal/csiClamp";
 import type { NestedHost, TermSize } from "../backend/types";
 import type { Breadcrumb } from "./breadcrumb";
 import { mayReachElsewhere, sudoOnly } from "./commandLine";
@@ -109,6 +110,8 @@ interface HopState {
 
 export class PromptWatch {
   private readonly term: Terminal;
+  /** A huge CSI count capped before the terminal reads it (csiClamp.ts). */
+  private readonly clamp = new CsiClamp();
   private readonly user: string;
   private readonly hops: HopSource | null;
   /** The Session's token in roster's own marks (the hook line's), if it has one. */
@@ -157,7 +160,7 @@ export class PromptWatch {
   /** Feeds the terminal; resolves once it has taken in `data`. */
   write(data: Uint8Array | string): Promise<void> {
     this.writes++;
-    return new Promise((resolve) => this.term.write(data, resolve));
+    return new Promise((resolve) => this.term.write(this.clamp.clamp(data), resolve));
   }
 
   /** The user sent the Session keys with typing in them (typed, pasted, or the shell hook line): a

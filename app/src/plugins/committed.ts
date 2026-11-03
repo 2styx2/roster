@@ -21,6 +21,7 @@
 // command gets no Done, since its end can't be told from the nested shell's. Nor does `exit` or
 // `logout`: a shell that exits sends no `D` for it, so the `D` after it is another shell's.
 import { Terminal } from "@xterm/xterm";
+import { CsiClamp } from "../terminal/csiClamp";
 
 /** The most text one `terminal_output` or one Done's `output` carries: its last whole lines. */
 export const OUTPUT_MAX = 16 * 1024;
@@ -64,6 +65,8 @@ const EXIT = /^\s*(exit|logout)(\s+\S+)?\s*$/;
 
 export class CommittedLines {
   private readonly term: Terminal;
+  /** A huge CSI count capped before the terminal reads it (csiClamp.ts). */
+  private readonly clamp = new CsiClamp();
   /** Per row of the screen: the text taken from the line that starts there. */
   private taken: (string | undefined)[];
   private runs: Run[] = [];
@@ -106,7 +109,7 @@ export class CommittedLines {
 
   /** Feeds the terminal; resolves once it has taken in `data`. */
   write(data: Uint8Array | string): Promise<void> {
-    return new Promise((resolve) => this.term.write(data, resolve));
+    return new Promise((resolve) => this.term.write(this.clamp.clamp(data), resolve));
   }
 
   /** The Session's terminal was resized: so is this one, and what's on screen counts as taken. */

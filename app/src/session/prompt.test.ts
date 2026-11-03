@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Host } from "../backend/types";
 import { mayReachElsewhere } from "./commandLine";
+import { HUGE_CSI, HUGE_CSI_MS, splitInCount } from "../test-hugeCsi";
 import { PromptWatch, sudoOnly } from "./prompt";
 
 const watches: PromptWatch[] = [];
@@ -384,4 +385,13 @@ describe("mayReachElsewhere: what stops every fill when the marks aren't roster'
       expect(mayReachElsewhere(command)).toBe(false);
     },
   );
+});
+
+describe("PromptWatch and a huge CSI count (ticket 163, #305)", () => {
+  it.each(HUGE_CSI)("takes %s fast, and still reads the prompt after it", async (_name, seq) => {
+    const start = performance.now();
+    const w = await fed(`ops@esx:~$ cat crafted${seq}`, ...splitInCount(seq), `\u009b${seq.slice(2)}`, `\r\n${SUDO}`);
+    expect(performance.now() - start).toBeLessThan(HUGE_CSI_MS);
+    expect(w.prompt()?.line).toBe("[sudo] password for ops:");
+  });
 });

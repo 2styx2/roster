@@ -3,6 +3,7 @@
 // after a resize isn't output, a rewritten line (a progress bar) arrives as it ended up, and a
 // full-screen program's drawing isn't sent at all.
 import { afterEach, describe, expect, it } from "vitest";
+import { HUGE_CSI, HUGE_CSI_MS, splitInCount } from "../test-hugeCsi";
 import { CommittedLines, lastLines, OUTPUT_MAX } from "./committed";
 
 const screens: CommittedLines[] = [];
@@ -252,5 +253,19 @@ describe("lastLines", () => {
     expect(lastLines(`one\n${long}`).length).toBe(0);
     expect(lastLines(`one\n${long}\n`).length).toBe(0);
     expect(lastLines("one\ntwo\nthreefour", 8)).toBe("");
+  });
+});
+
+describe("the terminal_output tap and a huge CSI count (ticket 163, #305)", () => {
+  it.each(HUGE_CSI)("takes %s fast, and goes on committing lines", async (_name, seq) => {
+    const s = screen();
+    const start = performance.now();
+    await s.write(`before${seq}`);
+    for (const part of splitInCount(seq)) await s.write(part);
+    await s.write(`\u009b${seq.slice(2)}`);
+    expect(performance.now() - start).toBeLessThan(HUGE_CSI_MS);
+    s.take();
+    await s.write("\x1b[2J\x1b[Hdone\r\n");
+    expect(s.take()).toBe("done\n");
   });
 });
