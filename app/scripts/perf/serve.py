@@ -16,7 +16,7 @@ import os
 import sys
 import time
 
-PROGRESS = "/tmp/roster-perf"
+PROGRESS = "/tmp/roster-perf"         # noqa: S108 - a dev script's progress file, nothing secret
 
 
 def stream(rate):

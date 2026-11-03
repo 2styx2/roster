@@ -262,7 +262,7 @@ def token(rng: random.Random) -> str | bytes:
 
 def fuzz() -> list[dict]:
     """Random repaints of P, most ending with the cursor put back."""
-    rng = random.Random(FUZZ_SEED)
+    rng = random.Random(FUZZ_SEED)     # noqa: S311 - seeded test cases, not secrets
     cases = []
     for _ in range(FUZZ_CASES):
         parts = [token(rng) for _ in range(rng.randint(1, 6))]
