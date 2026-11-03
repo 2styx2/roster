@@ -75,7 +75,7 @@ function global:Get-Acl {
         param($explicit, $inherited, $type)
         foreach ($r in $this.Allow) {
             [pscustomobject]@{ IdentityReference = [pscustomobject]@{ Value = $r.sid }; FileSystemRights = $r.rights;
-                               AccessControlType = 'Allow' }
+                               AccessControlType = $(if ($r.type) { $r.type } else { 'Allow' }) }
         }
     }
     $o | Add-Member ScriptMethod GetOwner { param($type) [pscustomobject]@{ Value = $this.OwnerSid } }
@@ -93,8 +93,11 @@ def windows_key_login(root):
         os.path.join(root, "home", ".ssh", "authorized_keys")
     data = open(f, "rb").read() if os.path.exists(f) else b""
     acls = os.path.join(root, "acls.json")
-    acl = (json.load(open(acls)) if os.path.exists(acls) else {}).get(os.path.normcase(os.path.abspath(f)))
-    if admin and not (acl and acl["protected"] and sorted(e["sid"] for e in acl["allow"]) == ["S-1-5-18", "S-1-5-32-544"]):
+    st = os.stat(f) if os.path.exists(f) else None
+    acl = (json.load(open(acls)) if os.path.exists(acls) else {}).get(f"{st.st_dev}:{st.st_ino}" if st else "")
+    if admin and not (acl and acl["protected"] and acl["owner"] in ("S-1-5-18", "S-1-5-32-544")
+                      and sorted(e["sid"] for e in acl["allow"] if e.get("type", "Allow") == "Allow")
+                      == ["S-1-5-18", "S-1-5-32-544"]):
         data = b""                      # a wrong ACL: sshd ignores the file without a word
     if data.startswith((b"\xef\xbb\xbf", b"\xff\xfe")) or b" roster-managed:" not in data:
         print("admin@10.0.0.5: Permission denied (publickey,password,keyboard-interactive).", file=sys.stderr)

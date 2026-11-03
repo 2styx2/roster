@@ -409,6 +409,9 @@ def check_windows_key(cfg, h):
     try:
         found = winhost.over_key(h, "check", cfg["tag_re"])
         notes = found.warnings
+        if found.admins:
+            print(f"note: {h['name']}: {found.files[0] if found.files else 'its key file'}: "
+                  f"{winhost.admins_note(h['name'])}", file=sys.stderr, flush=True)
     except RuntimeError as e:
         notes = [str(e)]
     for note in notes:
@@ -767,10 +770,14 @@ def revoke_on(h, tag_re):
     from . import winhost
     if is_windows(h):
         try:
-            winhost.over_key(h, "remove", tag_re)
-            return None
+            done = winhost.over_key(h, "remove", tag_re)
         except RuntimeError as e:
             return str(e)
+        from .errors import KEY_FILE
+        for w in done.warnings:             # on stderr: the ok/FAIL lines stay one per Host
+            print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_re.rsplit(':', 1)[-1].rstrip('$')})",
+                  file=sys.stderr, flush=True)
+        return None
     r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
                                      remove_script(tag_re)]),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)

@@ -22,6 +22,7 @@ What the script prints, one per line: `FILE <path>` (a file it wrote, or read fo
 `ROSTER_OK`; or `REFUSED <text>` (the key file, code 157), `ERROR <text>`, or `NOT_WINDOWS` (code 156)."""
 
 import base64
+import re
 import subprocess
 
 from .common import program_argv
@@ -29,7 +30,9 @@ from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_WINDOWS
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
 # its multi-line blocks would need blank lines to end them.
-BOOTSTRAP = "$ErrorActionPreference='Stop'; $s=[Console]::In.ReadToEnd(); & ([scriptblock]::Create($s))"
+# stdin's bytes are read as UTF-8 whatever the Host's console code page, and the script is ASCII anyway (ps_literal).
+BOOTSTRAP = ("$ErrorActionPreference='Stop'; $m=New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); "
+             "$s=[Text.Encoding]::UTF8.GetString($m.ToArray()); & ([scriptblock]::Create($s))")
 
 
 def remote_command():
@@ -39,13 +42,18 @@ def remote_command():
 
 
 def ps_literal(value):
-    """VALUE as a PowerShell single-quoted string: nothing in it is expanded, and a ' is written ''."""
+    """VALUE as a PowerShell single-quoted string: nothing in it is expanded, and a ' is written ''. Printable ASCII
+    only (ValueError otherwise): PowerShell also ends a literal at a Unicode quote, and a byte the Host's code page
+    reads as one (0x91, 0x92 in CP 1252) must never get there."""
     value = str(value)
-    if any(c in value for c in "\r\n\x00"):
-        raise ValueError("a value for a Windows Host's script can't hold a line break")
-    for q in "‘’‚‛":          # PowerShell reads these as quotes too
-        value = value.replace(q, "'")
+    if not all(" " <= c <= "~" for c in value):
+        raise ValueError("a value for a Windows Host's script must be printable ASCII")
     return "'" + value.replace("'", "''") + "'"
+
+
+def clean(text):
+    """TEXT from a Host, safe to print: a control character (a terminal escape) becomes ?."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", text)
 
 
 SCRIPT = r"""
@@ -63,12 +71,52 @@ function Icacls {
 }
 
 function Get-KeyFileAcl($p) {
+    # P's owner, whether it inherits, and its allow and deny entries, by SID
     $acl = Get-Acl -LiteralPath $p
     $sid = [Security.Principal.SecurityIdentifier]
-    $allowed = @($acl.GetAccessRules($true, $true, $sid) | Where-Object { "$($_.AccessControlType)" -eq 'Allow' } |
-        ForEach-Object { [pscustomobject]@{ Sid = $_.IdentityReference.Value; Rights = "$($_.FileSystemRights)" } })
+    $rules = @($acl.GetAccessRules($true, $true, $sid) | ForEach-Object {
+        [pscustomobject]@{ Sid = $_.IdentityReference.Value; Rights = "$($_.FileSystemRights)";
+                           Type = "$($_.AccessControlType)" } })
     [pscustomobject]@{ Owner = $acl.GetOwner($sid).Value; Protected = [bool]$acl.AreAccessRulesProtected;
-                       Allowed = $allowed }
+                       Allowed = @($rules | Where-Object { $_.Type -eq 'Allow' });
+                       Denied = @($rules | Where-Object { $_.Type -eq 'Deny' }) }
+}
+
+function Can-Write($rights) {
+    # do these rights (FileSystemRights' names, or a number for generic rights) let their holder change the file (its
+    # data, attributes, permissions, owner) or delete it?
+    if ("$rights" -match '^-?\d+$') {
+        $mask = 0x2 -bor 0x4 -bor 0x10 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+        return [bool]([int64]"$rights" -band $mask)
+    }
+    return [bool]("$rights" -match 'FullControl|Modify|Write|CreateFiles|AppendData|CreateDirectories|ChangePermissions|TakeOwnership|Delete')
+}
+
+function Writers($a, $ok) {
+    # the SIDs, other than OK's, that may write P (or change its permissions)
+    @($a.Allowed | Where-Object { $_.Sid -notin $ok -and (Can-Write $_.Rights) } | ForEach-Object { $_.Sid } |
+      Sort-Object -Unique)
+}
+
+function Assert-Folder($dir, $me) {
+    # others who can write in the key file's folder could swap or seed the file roster writes there
+    $w = Writers (Get-KeyFileAcl $dir) @($me, $Admins, $System)
+    if ($w.Count) {
+        Refuse "$dir lets $($w -join ', ') write in it, so others could put keys in the file roster writes there. Take their write access off that folder first"
+    }
+}
+
+function Assert-AdminFileTrusted($p, $me) {
+    # sshd ignores an admin file others can write, or someone else owns; making it trusted now would turn on whatever
+    # they put in it, for every administrator. So it's refused, untouched
+    $a = Get-KeyFileAcl $p
+    $w = Writers $a @($me, $Admins, $System)
+    if ($w.Count) {
+        Refuse "$p lets $($w -join ', ') write it, so others could have put keys in it (sshd ignores it as it is). Check every line in it, set its permissions to SYSTEM and Administrators only, then run setup again"
+    }
+    if ($a.Owner -notin $Admins, $System) {
+        Refuse "$p is owned by $($a.Owner), not SYSTEM or Administrators, so others could have put keys in it. Check every line in it, make Administrators its owner, then run setup again"
+    }
 }
 
 function Admin-AclProblem($p) {
@@ -77,17 +125,21 @@ function Admin-AclProblem($p) {
     $others = @($a.Allowed | ForEach-Object { $_.Sid } | Where-Object { $_ -notin $Admins, $System } | Sort-Object -Unique)
     if ($others.Count) { return "it lets in $($others -join ', ') besides SYSTEM and Administrators" }
     foreach ($s in $Admins, $System) {
-        if (-not ($a.Allowed | Where-Object { $_.Sid -eq $s -and $_.Rights -eq 'FullControl' })) {
+        if (-not ($a.Allowed | Where-Object { $_.Sid -eq $s -and $_.Rights -match 'FullControl' })) {
             return "$s hasn't full control of it"
         }
     }
+    $denied = @($a.Denied | ForEach-Object { $_.Sid } | Where-Object { $_ -in $Admins, $System } | Sort-Object -Unique)
+    if ($denied.Count) { return "it denies $($denied -join ', ') some access (sshd reads it as SYSTEM)" }
     if (-not $a.Protected) { return "it still inherits its folder's permissions" }
+    if ($a.Owner -notin $Admins, $System) { return "it's owned by $($a.Owner)" }
     return $null
 }
 
 function Set-AdminAcl($p) {
-    # Microsoft's ACL for administrators_authorized_keys, by SID (localized Windows names the groups differently): it
-    # only ever narrows who can use the file
+    # Microsoft's ACL for administrators_authorized_keys, by SID (localized Windows names the groups differently), and
+    # Administrators as its owner: it only ever narrows who can use the file
+    Icacls $p '/setowner' "*$($Admins)"
     Icacls $p '/inheritance:r' '/grant:r' "*$($Admins):F" '/grant:r' "*$($System):F"
     $a = Get-KeyFileAcl $p
     foreach ($s in @($a.Allowed | ForEach-Object { $_.Sid } | Where-Object { $_ -notin $Admins, $System } |
@@ -98,16 +150,31 @@ function Set-AdminAcl($p) {
     if ($why) { Refuse "$p's permissions aren't Microsoft's after icacls: $why" }
 }
 
+function Set-UserAcl($p, $me) {
+    # a user file roster makes: this account, SYSTEM and Administrators, nothing inherited; read back by SID
+    Icacls $p '/inheritance:r' '/grant:r' "*$($me):F" '/grant:r' "*$($System):F" '/grant:r' "*$($Admins):F"
+    $a = Get-KeyFileAcl $p
+    $others = @($a.Allowed | ForEach-Object { $_.Sid } | Where-Object { $_ -notin $me, $Admins, $System })
+    $mine = $a.Allowed | Where-Object { $_.Sid -eq $me -and $_.Rights -match 'FullControl' }
+    $denied = @($a.Denied | Where-Object { $_.Sid -in $me, $System })
+    if ($others.Count -or -not $mine -or $denied.Count -or -not $a.Protected) {
+        Refuse "$p's permissions aren't what roster set (this account, SYSTEM and Administrators) after icacls"
+    }
+}
+
 function User-AclWarnings($p, $me) {
+    # an existing user file is never changed: what would make sshd ignore it is only said
     $a = Get-KeyFileAcl $p
     $ok = @($me, $Admins, $System)
-    $others = @($a.Allowed | ForEach-Object { $_.Sid } | Where-Object { $_ -notin $ok } | Sort-Object -Unique)
-    if ($others.Count) {
-        Say "WARN $p lets in $($others -join ', ') besides this account, SYSTEM and Administrators: sshd ignores a key file others can use. roster doesn't change permissions it didn't set: remove those entries"
+    $w = Writers $a $ok
+    if ($w.Count) {
+        Say "WARN $p lets $($w -join ', ') write it, besides this account, SYSTEM and Administrators: sshd ignores a key file others can change. roster doesn't change permissions it didn't set: take their write access off it"
     }
     if ($a.Owner -and $a.Owner -notin $ok) {
         Say "WARN $p is owned by $($a.Owner), not this account: sshd ignores it. Make this account its owner"
     }
+    $denied = @($a.Denied | ForEach-Object { $_.Sid } | Where-Object { $_ -in $me, $System } | Sort-Object -Unique)
+    if ($denied.Count) { Say "WARN $p denies $($denied -join ', ') some access: sshd (SYSTEM) may not read it" }
 }
 
 function Read-Keys($p) {
@@ -126,12 +193,14 @@ function Read-Keys($p) {
     return $Latin1.GetString($b)
 }
 
+function Is-Mine($line) { return $line.TrimEnd() -cmatch $TagRe }
+
 function New-Text($text, $add) {
     # TEXT without this Box's lines, plus ADD: every other line kept as it was, line ends and all
     $nl = if ($text -match "`r`n") { "`r`n" } elseif ($text) { "`n" } else { "`r`n" }
     $out = -join @(foreach ($l in @($text -split '(?<=\n)')) {
         if ($l -eq '') { continue }
-        if ($l.TrimEnd("`r", "`n") -cmatch $TagRe) { continue }
+        if (Is-Mine $l) { continue }
         $l
     })
     if ($out -and -not $out.EndsWith("`n")) { $out += $nl }
@@ -139,13 +208,19 @@ function New-Text($text, $add) {
     return $out
 }
 
-function Write-Keys($p, $text) {
-    # a temp file beside it, then moved into place: a run cut short leaves the old file whole. An existing file is
-    # replaced (File.Replace keeps its permissions); a new one is moved in and gets its permissions after.
-    $tmp = "$p.roster-new"
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+function Write-Keys($p, $text, $secure) {
+    # A temp file beside P, with a name no one can guess, made with CreateNew (one that's there already is never
+    # opened); SECURE (a script block) gives it its final permissions, and checks them, while it's still empty; then
+    # the keys go in, and it replaces P (File.Replace keeps P's permissions) or is moved into place. A run cut short
+    # leaves the old file whole.
+    $tmp = "$p.roster-" + [guid]::NewGuid().ToString('N')
+    $fs = [IO.File]::Open($tmp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $fs.Dispose()
     try {
-        [IO.File]::WriteAllBytes($tmp, $Latin1.GetBytes($text))
+        if ($secure) { & $secure $tmp }
+        $bytes = $Latin1.GetBytes($text)
+        $fs = [IO.File]::Open($tmp, [IO.FileMode]::Truncate, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
         if (Test-Path -LiteralPath $p) { [IO.File]::Replace($tmp, $p, [NullString]::Value) }
         else { [IO.File]::Move($tmp, $p) }
     } catch {
@@ -166,6 +241,9 @@ function Admin-KeyFile {
         $line = ($raw -replace '#.*$', '').Trim()
         if (-not ($line -match '^(\S+?)(?:\s*=\s*|\s+)(.*)$')) { continue }
         $kw = $Matches[1].ToLowerInvariant(); $val = $Matches[2].Trim()
+        if ($kw -eq 'include') {
+            Refuse "sshd_config has Include $($val): roster doesn't follow included files, so it can't tell which key file sshd reads"
+        }
         if ($kw -eq 'match') { $match = $val; continue }
         if ($kw -ne 'authorizedkeysfile') { continue }
         $val = $val.Trim('"')
@@ -178,6 +256,9 @@ function Admin-KeyFile {
                 Refuse "sshd_config's Match Group administrators names more than one key file, or one with %-tokens: roster follows only one plain path"
             }
             $file = $val.Replace('__PROGRAMDATA__', $env:ProgramData)
+            if (-not [IO.Path]::IsPathRooted($file)) {
+                Refuse "sshd_config's Match Group administrators names a relative key file ($val): roster follows only a full path"
+            }
         } else {
             Refuse "sshd_config sets AuthorizedKeysFile under 'Match $match': roster follows only Match Group administrators"
         }
@@ -200,19 +281,24 @@ function Main {
     $sshDir = Join-Path $env:USERPROFILE '.ssh'
     $userFile = Join-Path $sshDir 'authorized_keys'
     $mine = if ($isAdmin -and $adminFile) { $adminFile } else { $userFile }
+    $adminSecure = { param($f) Set-AdminAcl $f }
+    $userSecure = { param($f) Set-UserAcl $f $me }
 
     if ($Mode -eq 'add') {
+        if ($mine -eq $adminFile) {
+            Assert-Folder (Split-Path -Parent $adminFile) $me
+            if (Test-Path -LiteralPath $adminFile) { Assert-AdminFileTrusted $adminFile $me }
+        } else {
+            if (-not (Test-Path -LiteralPath $sshDir)) { New-Item -ItemType Directory -Path $sshDir | Out-Null }
+            Assert-Folder $sshDir $me
+        }
         $old = Read-Keys $mine
         $new = New-Text $old $Pub
-        if ($mine -eq $userFile -and -not (Test-Path -LiteralPath $sshDir)) {
-            New-Item -ItemType Directory -Path $sshDir | Out-Null
-        }
         $created = $null -eq $old
-        if ($created -or $new -cne $old) { Write-Keys $mine $new }
-        if ($mine -eq $adminFile) { Set-AdminAcl $mine }
-        elseif ($created) {
-            Icacls $mine '/inheritance:r' '/grant:r' "*$($me):F" '/grant:r' "*$($System):F" '/grant:r' "*$($Admins):F"
-        } else { User-AclWarnings $mine $me }
+        $secure = if ($mine -eq $adminFile) { $adminSecure } elseif ($created) { $userSecure } else { $null }
+        if ($created -or $new -cne $old) { Write-Keys $mine $new $secure }
+        if ($mine -eq $adminFile) { Set-AdminAcl $mine; Say 'SCOPE admins' }
+        elseif (-not $created) { User-AclWarnings $mine $me }
         Say "FILE $mine"
     } elseif ($Mode -eq 'remove') {
         # both files sshd could have read this account's keys from (it may have joined or left Administrators since)
@@ -222,21 +308,32 @@ function Main {
             if ($null -eq $old) { continue }
             $new = New-Text $old $null
             if ($new -ceq $old) { continue }
-            Write-Keys $f $new
-            if ($f -eq $adminFile) { Set-AdminAcl $f }
+            if ($f -eq $adminFile) {
+                Assert-Folder (Split-Path -Parent $f) $me
+                Assert-AdminFileTrusted $f $me
+                Write-Keys $f $new $adminSecure
+                Set-AdminAcl $f
+            } else {
+                Assert-Folder (Split-Path -Parent $f) $me
+                Write-Keys $f $new $null
+            }
             Say "FILE $f"
+        }
+        if ($adminFile -and -not $isAdmin) {
+            Say "WARN this account isn't in Administrators now, so roster can't look in $adminFile. If it was an administrator when this Box's key was added, the key may still be there, and it logs in as every administrator: have an administrator remove the line ending in this Box's tag, or run roster revoke as one"
         }
     } else {
         Say "FILE $mine"
+        if ($mine -eq $adminFile) { Say 'SCOPE admins' }
         $text = Read-Keys $mine
         if ($null -eq $text) { Say "WARN $mine isn't there: sshd has no key for this account" }
-        elseif (-not (@($text -split '\n' | Where-Object { $_.TrimEnd("`r") -cmatch $TagRe }).Count)) {
+        elseif (-not (@($text -split '\n' | Where-Object { Is-Mine $_ }).Count)) {
             Say "WARN $mine doesn't hold this Box's key"
         }
         if ($null -ne $text) {
             if ($mine -eq $adminFile) {
                 $why = Admin-AclProblem $mine
-                if ($why) { Say "WARN $mine's permissions aren't Microsoft's ($why): sshd ignores it. roster setup sets them" }
+                if ($why) { Say "WARN $mine's permissions aren't Microsoft's ($why). roster setup sets them, unless others could write it" }
             } else { User-AclWarnings $mine $me }
         }
     }
@@ -274,15 +371,23 @@ def windows_hint(name):
 
 
 class Result:
-    """What the script said: the files it wrote or read, its warnings."""
+    """What the script said: the files it wrote or read, its warnings, and whether the file is the administrators'
+    (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
-    def __init__(self, files, warnings):
-        self.files, self.warnings = files, warnings
+    def __init__(self, files, warnings, admins=False):
+        self.files, self.warnings, self.admins = files, warnings, admins
+
+
+def admins_note(name):
+    return (f"a key in this file logs in as every administrator on {name}, not only this Login's user (Windows' "
+            "administrators share one key file)")
 
 
 def outcome(name, rc, out, err):
-    """The script's answer from Host NAME as a Result; RuntimeError (with its code, when it has one) otherwise."""
-    lines = [ln.rstrip("\r") for ln in out.splitlines()]
+    """The script's answer from Host NAME as a Result; RuntimeError (with its code, when it has one) otherwise.
+    Everything the Host said is cleaned of control characters first."""
+    lines = [clean(ln.rstrip("\r")) for ln in out.splitlines()]
+    out, err = "\n".join(lines), " ".join(clean(ln) for ln in err.splitlines())
     files = [ln[5:] for ln in lines if ln.startswith("FILE ")]
     warnings = [ln[5:] for ln in lines if ln.startswith("WARN ")]
     for ln in lines:
@@ -293,7 +398,7 @@ def outcome(name, rc, out, err):
         if ln == "NOT_WINDOWS":
             raise RuntimeError(not_windows(name))
     if "ROSTER_OK" in lines:
-        return Result(files, warnings)
+        return Result(files, warnings, "SCOPE admins" in lines)
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):

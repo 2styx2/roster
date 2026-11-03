@@ -94,19 +94,46 @@ def test_the_command_a_windows_host_gets_is_fixed_and_holds_no_value():
     assert words[:4] == ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"] and len(words) == 5
     assert re.fullmatch(r"[A-Za-z0-9+/=]+", words[4])     # nothing cmd.exe or PowerShell reads specially
     assert len(cmd) < 8191                                  # cmd.exe's longest command line
-    assert "[Console]::In.ReadToEnd()" in base64.b64decode(words[4]).decode("utf-16-le")
+    assert "OpenStandardInput()" in base64.b64decode(words[4]).decode("utf-16-le")
     script = winhost.script("add", " (roster-managed|fleet-managed):box$", "ssh-ed25519 AAAAkey roster-managed:box")
     assert "$Pub = 'ssh-ed25519 AAAAkey roster-managed:box'" in script and "AAAAkey" not in cmd
 
 
-@pytest.mark.parametrize("value", ["it's", "a\u2019b"])
+
+@pytest.mark.parametrize("value", ["it's", "roster-managed:box$"])
 def test_a_value_in_the_script_is_a_literal_whatever_quotes_it_holds(value):
     from roster.winhost import ps_literal
     lit = ps_literal(value)
     assert lit.startswith("'") and lit.endswith("'") and "'" not in lit[1:-1].replace("''", "")
-    with pytest.raises(ValueError):
-        ps_literal("a\nb")
 
+
+@pytest.mark.parametrize("value", ["a\nb", "a\x00b", "a\u2019b", "cl\u00e9", "a\x1b[2Jb"])
+def test_a_value_that_isnt_printable_ascii_never_goes_into_the_script(value):
+    """The Host decodes stdin as UTF-8, but a byte its code page reads as a quote (0x91, 0x92 in CP 1252) could still
+    end a literal: only printable ASCII goes in (the key line and tag are ASCII anyway)."""
+    from roster.winhost import ps_literal
+    with pytest.raises(ValueError):
+        ps_literal(value)
+
+
+def test_the_script_and_its_bootstrap_are_ascii_and_read_stdin_as_utf8():
+    import base64
+
+    from roster import winhost
+    script = winhost.script("add", " (roster-managed|fleet-managed):box$", "ssh-ed25519 AAAAkey roster-managed:box")
+    assert script.isascii()
+    boot = base64.b64decode(winhost.remote_command().split()[-1]).decode("utf-16-le")
+    assert "UTF8" in boot and "OpenStandardInput" in boot
+
+
+def test_what_a_host_says_is_printed_without_control_characters():
+    """A hostile Host's ERROR line could carry terminal escapes: they never reach this Box's terminal."""
+    from roster import winhost
+    with pytest.raises(RuntimeError) as e:
+        winhost.outcome("dc-01", 0, "ERROR bad\x1b[2J\x07thing\n", "")
+    assert "\x1b" not in str(e.value) and "\x07" not in str(e.value) and "bad" in str(e.value)
+    r = winhost.outcome("dc-01", 0, "WARN a\x1b]0;title\x07b\nROSTER_OK\n", "")
+    assert r.warnings == ["a?]0;title?b"]
 
 POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell.exe") if WINDOWS else None)
 needs_powershell = pytest.mark.skipif(POWERSHELL is None,
@@ -139,8 +166,14 @@ groups:
       web-1: { ip: 10.0.0.7, os: windows }
 """
 ME = "S-1-5-21-1000-1000-1000-1001"
+ADMINS, SYSTEM, USERS, AUTH_USERS = "S-1-5-32-544", "S-1-5-18", "S-1-5-32-545", "S-1-5-11"
 OTHER = b"ssh-ed25519 AAAAother other@laptop\r\n"
 OLD = b"ssh-ed25519 AAAAold roster-managed:box\r\n"
+PLANTED = b"ssh-ed25519 AAAAplanted someone@else\r\n"
+
+
+def ace(sid, rights="FullControl", inherited=False, kind="Allow"):
+    return {"sid": sid, "rights": rights, "inherited": inherited, "type": kind}
 
 
 # The two shells a Windows Host's sshd hands the command line to: cmd.exe (its DefaultShell unset, Windows' default)
@@ -153,7 +186,8 @@ def win(request, fakes, isolated, write_config, monkeypatch, tmp_path):
     """Stand-in Hosts: dc-01 (Windows, the account in Administrators), ws-01 (Windows, a plain user), dc-09 (Windows,
     but roster.yml has no os: for it), web-1 (os: windows, but a POSIX Host). Their sshd's DefaultShell is the test's
     (SHELLS), PowerShell otherwise. Their host keys are recorded, so setup scans nothing; a password login runs through
-    the stand-in ssh, stdin and all, as paramiko's would."""
+    the stand-in ssh, stdin and all, as paramiko's would. A file's ACL in the stand-in follows the file (by inode), as
+    NTFS's does through a rename."""
     shell = getattr(request, "param", "powershell")
     root = isolated["home"].parent.resolve() / "hosts"
     for name in ("dc-01", "ws-01", "dc-09", "web-1"):
@@ -191,10 +225,22 @@ def win(request, fakes, isolated, write_config, monkeypatch, tmp_path):
     w.user_file = lambda n: root / n / "home" / ".ssh" / "authorized_keys"
     w.icacls = lambda n: (root / n / "icacls.log").read_text().splitlines() if (root / n / "icacls.log").exists() else []
 
+    def key(f):
+        st = os.stat(f)
+        return f"{st.st_dev}:{st.st_ino}"
+
+    def state(n):
+        f = root / n / "acls.json"
+        return json.loads(f.read_text()) if f.exists() else {}
+
     def acl(n, f):
-        state = json.loads((root / n / "acls.json").read_text())
-        return state[os.path.normcase(os.path.abspath(f))]
-    w.acl = acl
+        return state(n)[key(f)]
+
+    def set_acl(n, f, owner, *aces, protected=True):
+        s = state(n)
+        s[key(f)] = {"protected": protected, "owner": owner, "allow": list(aces)}
+        (root / n / "acls.json").write_text(json.dumps(s))
+    w.acl, w.set_acl = acl, set_acl
     w.pub = lambda: (isolated["home"] / ".ssh" / "roster_ed25519.pub").read_text().split()
     return w
 
@@ -204,21 +250,27 @@ def key_line(w):
     return f"{t} {k} roster-managed:box\r\n".encode()
 
 
+def sids(acl, kind="Allow"):
+    return sorted(e["sid"] for e in acl["allow"] if e.get("type", "Allow") == kind)
+
+
 @needs_powershell
 @SHELLS
 def test_setup_puts_an_admins_key_in_the_admin_file_with_microsofts_acl(win, capsys):
-    win.admin_file("dc-01").write_bytes(OTHER + OLD)
+    win.admin_file("dc-01").write_bytes(OTHER + OLD)        # the folder's inherited ACL: Authenticated Users may read
     assert main(["setup", "--only", "dc-01"]) == 0
     out = capsys.readouterr().out
     assert "ok    dc-01" in out and "administrators_authorized_keys" in out
+    assert "every administrator on dc-01" in out            # what a key in that file means: Microsoft's design
     # only this Box's line changed: the old one gone, the new one added, every other byte kept; ASCII, no BOM
     assert win.admin_file("dc-01").read_bytes() == OTHER + key_line(win)
     assert not win.user_file("dc-01").exists()
-    assert win.icacls("dc-01")[0].endswith("/inheritance:r /grant:r *S-1-5-32-544:F /grant:r *S-1-5-18:F")
+    assert f"/inheritance:r /grant:r *{ADMINS}:F /grant:r *{SYSTEM}:F" in " | ".join(win.icacls("dc-01"))
     acl = win.acl("dc-01", win.admin_file("dc-01"))
-    assert acl["protected"] and sorted(e["sid"] for e in acl["allow"]) == ["S-1-5-18", "S-1-5-32-544"]
+    assert acl["protected"] and sids(acl) == [SYSTEM, ADMINS] and acl["owner"] == ADMINS
     # the password was only the login's: never in a command or a script
     assert all("hunter2" not in c + s for c, s in win.sent) and "hunter2" not in win.ssh_log()
+    assert not [p for p in win.admin_file("dc-01").parent.iterdir() if ".roster-" in p.name]     # no temp file left
     # again: the key login works now, so nothing is sent
     sent = len(win.sent)
     assert main(["setup", "--only", "dc-01"]) == 0
@@ -228,51 +280,147 @@ def test_setup_puts_an_admins_key_in_the_admin_file_with_microsofts_acl(win, cap
 @needs_powershell
 @SHELLS
 def test_setup_creates_the_admin_file_when_there_is_none(win, capsys):
-    """The usual case on a new Host: no administrators_authorized_keys yet. It's made with Microsoft's ACL, and the
-    key login works only once that's set (sshd ignores the file until then)."""
+    """The usual case on a new Host: no administrators_authorized_keys yet. Its temp file gets Microsoft's ACL and
+    Administrators as owner before the key is written into it, then it's moved into place."""
     assert not win.admin_file("dc-01").exists()
     assert main(["setup", "--only", "dc-01"]) == 0
     assert win.admin_file("dc-01").read_bytes() == key_line(win)
     acl = win.acl("dc-01", win.admin_file("dc-01"))
-    assert acl["protected"] and sorted(e["sid"] for e in acl["allow"]) == ["S-1-5-18", "S-1-5-32-544"]
-    assert not list(win.admin_file("dc-01").parent.glob("*.roster-new"))
+    assert acl["protected"] and sids(acl) == [SYSTEM, ADMINS] and acl["owner"] == ADMINS
+    first = win.icacls("dc-01")[0]
+    assert ".roster-" in first and first.endswith(f"/setowner *{ADMINS}")      # the temp file, first thing
 
 
 @needs_powershell
-def test_setup_takes_an_admin_files_other_principals_out_of_its_acl(win, capsys):
-    win.admin_file("dc-01").write_bytes(OTHER)
-    (win.root / "dc-01" / "acls.json").write_text(json.dumps({os.path.normcase(os.path.abspath(win.admin_file("dc-01"))): {
-        "protected": True, "owner": "S-1-5-32-544",
-        "allow": [{"sid": "S-1-5-32-544", "rights": "FullControl", "inherited": False},
-                  {"sid": "S-1-5-11", "rights": "Modify", "inherited": False}]}}))
+@pytest.mark.parametrize("rights", ["Modify", "Write", "FullControl", "AppendData", "-536805376"])
+def test_an_admin_file_others_could_write_is_refused_and_left_as_it_was(win, capsys, rights):
+    """Review B1: sshd ignores an admin file others can write; narrowing its ACL now would turn on a key someone
+    planted there, for every administrator. So it's refused, the file and its ACL untouched."""
+    f = win.admin_file("dc-01")
+    f.write_bytes(OTHER + PLANTED)
+    win.set_acl("dc-01", f, ADMINS, ace(ADMINS), ace(SYSTEM), ace(USERS, rights))
+    before = win.acl("dc-01", f)
+    assert main(["setup", "--only", "dc-01"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  dc-01: [157]" in out and USERS in out and "nothing was changed" in out
+    assert f.read_bytes() == OTHER + PLANTED and win.acl("dc-01", f) == before and win.icacls("dc-01") == []
+
+
+@needs_powershell
+def test_an_admin_file_someone_else_owns_is_refused_and_left_as_it_was(win, capsys):
+    f = win.admin_file("dc-01")
+    f.write_bytes(OTHER + PLANTED)
+    win.set_acl("dc-01", f, "S-1-5-21-1000-1000-1000-1002", ace(ADMINS), ace(SYSTEM))
+    assert main(["setup", "--only", "dc-01"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  dc-01: [157]" in out and "owned by S-1-5-21-1000-1000-1000-1002" in out
+    assert f.read_bytes() == OTHER + PLANTED and win.icacls("dc-01") == []
+
+
+@needs_powershell
+def test_an_admin_file_others_may_only_read_is_narrowed(win, capsys):
+    f = win.admin_file("dc-01")
+    f.write_bytes(OTHER)
+    win.set_acl("dc-01", f, ADMINS, ace(ADMINS), ace(SYSTEM), ace(AUTH_USERS, "ReadAndExecute, Synchronize", True),
+                protected=False)
     assert main(["setup", "--only", "dc-01"]) == 0
-    assert "/remove:g *S-1-5-11" in win.icacls("dc-01")
-    assert sorted(e["sid"] for e in win.acl("dc-01", win.admin_file("dc-01"))["allow"]) == ["S-1-5-18", "S-1-5-32-544"]
+    assert sids(win.acl("dc-01", f)) == [SYSTEM, ADMINS]
+
+
+@needs_powershell
+def test_a_key_folder_others_can_write_in_is_refused(win, capsys):
+    """Others who can write in %ProgramData%\\ssh could swap or seed the file roster writes: refused, nothing made."""
+    d = win.admin_file("dc-01").parent
+    win.set_acl("dc-01", d, ADMINS, ace(ADMINS), ace(SYSTEM), ace(USERS, "Modify"))
+    assert main(["setup", "--only", "dc-01"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  dc-01: [157]" in out and "write in it" in out
+    assert not win.admin_file("dc-01").exists() and win.icacls("dc-01") == []
+
+
+@needs_powershell
+def test_a_temp_file_someone_left_is_never_reused(win, capsys):
+    """The temp file's name is random and made with CreateNew: one someone made beside it is never opened."""
+    planted = win.admin_file("dc-01").parent / "administrators_authorized_keys.roster-new"
+    planted.write_bytes(PLANTED)
+    assert main(["setup", "--only", "dc-01"]) == 0
+    assert planted.read_bytes() == PLANTED
+    assert win.admin_file("dc-01").read_bytes() == key_line(win)
+
+
+@needs_powershell
+def test_check_reports_an_admin_file_that_denies_system(win, capsys):
+    """Review F3: a deny entry for SYSTEM (sshd reads as SYSTEM) isn't Microsoft's ACL, and icacls' grants don't take
+    it away: check says so."""
+    assert main(["setup", "--only", "dc-01"]) == 0
+    f = win.admin_file("dc-01")
+    win.set_acl("dc-01", f, ADMINS, ace(ADMINS), ace(SYSTEM), ace(SYSTEM, "Read", kind="Deny"))
+    capsys.readouterr()
+    assert main(["check", "--only", "dc-01"]) == 0
+    assert "denies S-1-5-18" in capsys.readouterr().err
 
 
 @needs_powershell
 def test_setup_gives_a_new_user_file_this_account_system_and_administrators(win, capsys):
     assert main(["setup", "--only", "ws-01"]) == 0
+    out = capsys.readouterr().out
     assert win.user_file("ws-01").read_bytes() == key_line(win)
-    assert not win.admin_file("ws-01").exists()
-    assert win.icacls("ws-01") == [f"/inheritance:r /grant:r *{ME}:F /grant:r *S-1-5-18:F /grant:r *S-1-5-32-544:F"]
+    assert not win.admin_file("ws-01").exists() and "every administrator" not in out
+    calls = win.icacls("ws-01")
+    assert len(calls) == 1 and ".roster-" in calls[0]          # on the temp file, before the key is in it
+    assert calls[0].endswith(f"/inheritance:r /grant:r *{ME}:F /grant:r *{SYSTEM}:F /grant:r *{ADMINS}:F")
+    acl = win.acl("ws-01", win.user_file("ws-01"))
+    assert acl["protected"] and sids(acl) == [SYSTEM, ME, ADMINS]
+
+
+@needs_powershell
+def test_a_new_user_files_acl_is_read_back(win, capsys):
+    """Review F3: icacls saying it worked isn't enough: the ACL is read back by SID before any key goes in."""
+    (win.root / "ws-01" / "icacls-noop").touch()            # this stand-in's icacls exits 0 and changes nothing
+    assert main(["setup", "--only", "ws-01"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  ws-01: [157]" in out
+    assert not win.user_file("ws-01").exists()
+    assert not [p for p in (win.root / "ws-01" / "home" / ".ssh").iterdir()]
 
 
 @needs_powershell
 def test_an_existing_user_files_acl_is_never_changed_only_reported(win, capsys):
-    win.user_file("ws-01").parent.mkdir()
-    win.user_file("ws-01").write_bytes(b"ssh-ed25519 AAAAother other@laptop\n")
-    (win.root / "ws-01" / "acls.json").write_text(json.dumps({os.path.normcase(os.path.abspath(win.user_file("ws-01"))): {
-        "protected": False, "owner": ME,
-        "allow": [{"sid": ME, "rights": "FullControl", "inherited": True},
-                  {"sid": "S-1-1-0", "rights": "ReadAndExecute", "inherited": True}]}}))
+    f = win.user_file("ws-01")
+    f.parent.mkdir()
+    f.write_bytes(b"ssh-ed25519 AAAAother other@laptop\n")
+    win.set_acl("ws-01", f, ME, ace(ME, inherited=True), ace("S-1-1-0", "Modify", True), protected=False)
     assert main(["setup", "--only", "ws-01"]) == 0
     out = capsys.readouterr().out
     assert "[157]" in out and "S-1-1-0" in out
     assert win.icacls("ws-01") == []
     # its own line ends (LF) kept, and the new line takes the same
     t, k = win.pub()[:2]
-    assert win.user_file("ws-01").read_bytes() == b"ssh-ed25519 AAAAother other@laptop\n" + f"{t} {k} roster-managed:box\n".encode()
+    assert f.read_bytes() == b"ssh-ed25519 AAAAother other@laptop\n" + f"{t} {k} roster-managed:box\n".encode()
+
+
+@needs_powershell
+def test_others_reading_a_user_file_isnt_reported(win, capsys):
+    """Review F3: sshd minds who can write a key file, not who can read it."""
+    f = win.user_file("ws-01")
+    f.parent.mkdir()
+    f.write_bytes(b"ssh-ed25519 AAAAother other@laptop\n")
+    win.set_acl("ws-01", f, ME, ace(ME), ace(USERS, "ReadAndExecute, Synchronize"))
+    assert main(["setup", "--only", "ws-01"]) == 0
+    assert "[157]" not in capsys.readouterr().out
+
+
+@needs_powershell
+def test_a_non_ascii_comment_in_this_boxs_key_changes_nothing(win, capsys, isolated):
+    """Review F1: only the key type, the key and the tag go to the Host; the .pub's own comment never does."""
+    assert main(["setup", "--only", "ws-01"]) == 0
+    pub = isolated["home"] / ".ssh" / "roster_ed25519.pub"
+    t, k = pub.read_text().split()[:2]
+    pub.write_text(f"{t} {k} cl\u00e9@bo\u00eete\n", encoding="utf-8")
+    win.user_file("ws-01").unlink()
+    assert main(["setup", "--only", "ws-01"]) == 0
+    assert win.user_file("ws-01").read_bytes() == key_line(win)
+    assert all(s.isascii() for _, s in win.sent)
 
 
 @needs_powershell
@@ -286,11 +434,18 @@ def test_a_key_file_sshd_cant_read_is_refused_not_re_encoded(win, capsys, start)
 
 
 @needs_powershell
-def test_an_sshd_config_roster_cant_follow_is_refused(win, capsys):
+@pytest.mark.parametrize("change, said", [
+    (("AuthorizedKeysFile\t.ssh/authorized_keys", "AuthorizedKeysFile C:/keys/%u"),
+     "sshd_config sets AuthorizedKeysFile C:/keys/%u for every account"),
+    (("Subsystem", "Include C:/ProgramData/ssh/sshd_config.d/*.conf\nSubsystem"), "Include"),
+    (("__PROGRAMDATA__/ssh/administrators_authorized_keys", "keys/admins"), "relative"),
+])
+def test_an_sshd_config_roster_cant_follow_is_refused(win, capsys, change, said):
     cfg = win.root / "dc-01" / "programdata" / "ssh" / "sshd_config"
-    cfg.write_text(STOCK_SSHD.replace("AuthorizedKeysFile\t.ssh/authorized_keys", "AuthorizedKeysFile C:/keys/%u"))
+    cfg.write_text(STOCK_SSHD.replace(*change))
     assert main(["setup", "--only", "dc-01"]) == 1
-    assert "[157] sshd_config sets AuthorizedKeysFile C:/keys/%u for every account" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "FAIL  dc-01: [157]" in out and said in out
     assert not win.admin_file("dc-01").exists()
 
 
@@ -299,7 +454,7 @@ def test_an_sshd_config_roster_cant_follow_is_refused(win, capsys):
 def test_revoke_cleans_both_files_an_admins_key_could_be_in(win, capsys):
     win.admin_file("dc-01").write_bytes(OTHER + OLD)
     win.user_file("dc-01").parent.mkdir()
-    win.user_file("dc-01").write_bytes(OLD + OTHER)
+    win.user_file("dc-01").write_bytes(OLD.replace(b"\r\n", b"  \r\n") + OTHER)     # a trailing space someone left
     assert main(["revoke", "-y", "--only", "dc-01"]) == 0
     assert "ok    dc-01" in capsys.readouterr().out
     assert win.admin_file("dc-01").read_bytes() == OTHER and win.user_file("dc-01").read_bytes() == OTHER
@@ -309,18 +464,35 @@ def test_revoke_cleans_both_files_an_admins_key_could_be_in(win, capsys):
 
 
 @needs_powershell
-def test_check_reports_a_user_file_others_can_use(win, capsys, monkeypatch):
+def test_revoke_from_an_account_no_longer_an_administrator_warns_about_the_admin_file(win, capsys):
+    """Review F4: a key the account added while an administrator may still be in the admin file, which this account
+    can't open now: revoke says so, and how to take it out."""
+    win.user_file("ws-01").parent.mkdir()
+    win.user_file("ws-01").write_bytes(OLD)
+    assert main(["revoke", "-y", "--only", "ws-01"]) == 0
+    captured = capsys.readouterr()
+    assert "ok    ws-01" in captured.out and win.user_file("ws-01").read_bytes() == b""
+    assert "administrators_authorized_keys" in captured.err and "roster-managed:box" in captured.err
+
+
+@needs_powershell
+def test_check_reports_a_user_file_others_can_write(win, capsys, monkeypatch):
     win.user_file("ws-01").parent.mkdir()
     assert main(["setup", "--only", "ws-01"]) == 0
-    state = {os.path.normcase(os.path.abspath(win.user_file("ws-01"))): {
-        "protected": True, "owner": ME, "allow": [{"sid": ME, "rights": "FullControl", "inherited": False},
-                                                   {"sid": "S-1-5-32-545", "rights": "Read", "inherited": False}]}}
-    (win.root / "ws-01" / "acls.json").write_text(json.dumps(state))
+    win.set_acl("ws-01", win.user_file("ws-01"), ME, ace(ME), ace(USERS, "Write"))
     capsys.readouterr()
     assert main(["check", "--only", "ws-01"]) == 0
     captured = capsys.readouterr()
     assert "ws-01  ssh:ok" in captured.out
-    assert "warning: [157] ws-01:" in captured.err and "S-1-5-32-545" in captured.err
+    assert "warning: [157] ws-01:" in captured.err and USERS in captured.err
+
+
+@needs_powershell
+def test_check_says_an_admin_file_key_logs_in_as_every_administrator(win, capsys):
+    assert main(["setup", "--only", "dc-01"]) == 0
+    capsys.readouterr()
+    assert main(["check", "--only", "dc-01"]) == 0
+    assert "every administrator on dc-01" in capsys.readouterr().err
 
 
 @SHELLS

@@ -408,7 +408,8 @@ def enroll(h, pub, tag_re):
                                "(check that file's permissions and encoding, and whether sshd_config's Match Group "
                                "administrators applies to this account)")
         from .errors import KEY_FILE
-        return [f"key file {f}" for f in done.files] + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings]
+        return ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins else [])
+                + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
     _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, tag_re)), pw)
     if "ROSTER_OK" not in out:
         if winhost.looks_windows(out + err):
