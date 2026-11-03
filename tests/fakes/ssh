@@ -131,12 +131,35 @@ def windows_host(root, command):
                "FAKE_HOST_ROOT_NATIVE": root, "FAKE_PYTHON": sys.executable,
                "FAKE_ACL": os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows", "acl.py")}
         code = base64.b64encode((WINDOWS_PRELUDE + "\n" + boot).encode("utf-16-le")).decode()
-        r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", code],
-                           input=sys.stdin.buffer.read(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
-                           cwd=home)
-        sys.stdout.buffer.write(r.stdout)
-        sys.stderr.buffer.write(r.stderr)
-        return r.returncode
+        # Win32-OpenSSH (8.1 and 9.5, measured on real Hosts) never delivers EOF on a child's stdin once more than 4096
+        # bytes have passed: so here too, past 4096 bytes the child's stdin stays open until it exits by itself, and a
+        # script that waits for EOF hangs (FAKE_EOF_WAIT seconds, then this fails as a stuck ssh would be killed)
+        data = sys.stdin.buffer.read()
+        p = subprocess.Popen([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", code], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=home)
+        import threading
+        got = {}
+        readers = [threading.Thread(target=lambda k=k, f=f: got.__setitem__(k, f.read()), daemon=True)
+                   for k, f in (("out", p.stdout), ("err", p.stderr))]
+        for t in readers:
+            t.start()
+        p.stdin.write(data)
+        p.stdin.flush()
+        if len(data) <= 4096:
+            p.stdin.close()
+        try:
+            rc = p.wait(timeout=float(os.environ.get("FAKE_EOF_WAIT", "60")))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+            print("fake ssh: the Windows Host's command never ended (it waited for EOF on stdin past 4096 bytes)",
+                  file=sys.stderr)
+            return 255
+        for t in readers:
+            t.join()
+        sys.stdout.buffer.write(got.get("out", b""))
+        sys.stderr.buffer.write(got.get("err", b""))
+        return rc
     if words == ["exit", "0"]:        # a login test: this account's key file holds roster's key, and sshd would read it
         return 0 if windows_key_login(root) else 255
     first = words[0] if words else ""

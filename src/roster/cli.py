@@ -752,11 +752,13 @@ def run_windows(h, command, sudo):
         die(f"[{RUN_SUDO_WINDOWS}] {h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
             "ran. Log in as an account in Administrators (its ssh session is already elevated) and run it without "
             "--sudo")
-    if h["enroll"]:
-        refuse_left_out(h)
-        return winhost.run(h, command)
     try:
+        if h["enroll"]:
+            refuse_left_out(h)
+            return winhost.run(h, command)
         return winhost.run(h, command, get_secret(h["ssh"]["auth"], h["group"]), key=False)
+    except ValueError as e:                 # the script with CMD in it is over 1 MB: nothing was sent
+        die(f"{h['name']}: {e}: nothing ran")
     except RuntimeError as e:
         die(f"{h['name']}: {e}")
 
