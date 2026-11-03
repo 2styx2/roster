@@ -22,6 +22,7 @@
 // `logout`: a shell that exits sends no `D` for it, so the `D` after it is another shell's.
 import { Terminal } from "@xterm/xterm";
 import { CsiClamp } from "../terminal/csiClamp";
+import { guarded } from "../terminal/xtermGuard";
 
 /** The most text one `terminal_output` or one Done's `output` carries: its last whole lines. */
 export const OUTPUT_MAX = 16 * 1024;
@@ -65,8 +66,9 @@ const EXIT = /^\s*(exit|logout)(\s+\S+)?\s*$/;
 
 export class CommittedLines {
   private readonly term: Terminal;
-  /** A huge CSI count capped before the terminal reads it (csiClamp.ts). */
-  private readonly clamp = new CsiClamp();
+  /** A huge CSI count capped before the terminal reads it, and ED 1 drawn without throwing
+   * (csiClamp.ts). */
+  private readonly clamp: CsiClamp;
   /** Per row of the screen: the text taken from the line that starts there. */
   private taken: (string | undefined)[];
   private runs: Run[] = [];
@@ -90,6 +92,7 @@ export class CommittedLines {
 
   constructor(size: ScreenSize) {
     this.term = new Terminal({ cols: size.cols, rows: size.rows, scrollback: 0, allowProposedApi: false });
+    this.clamp = new CsiClamp(this.term);
     this.taken = new Array<string | undefined>(size.rows).fill(undefined);
     // A scroll moves every row up one: so does what was taken from them.
     this.term.onScroll(() => {
@@ -101,10 +104,14 @@ export class CommittedLines {
       if (this.partial) this.partial = this.partial.row > 0 ? { ...this.partial, row: this.partial.row - 1 } : null;
     });
     this.term.onLineFeed(() => this.lineFeed());
-    this.term.parser.registerOscHandler(133, (data) => {
-      this.mark(data);
-      return true;
-    });
+    // A throw in it skips that mark rather than stopping this terminal (xtermGuard.ts).
+    this.term.parser.registerOscHandler(
+      133,
+      guarded(this.term, (data: string) => {
+        this.mark(data);
+        return true;
+      }),
+    );
   }
 
   /** Feeds the terminal; resolves once it has taken in `data`. */
