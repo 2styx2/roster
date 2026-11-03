@@ -45,6 +45,11 @@ function recorded(s: FakeScenario) {
       calls.push(options?.restart ? "restart" : "start");
       return backend.connect(options);
     },
+    vaultStatus: async () => {
+      const status = await backend.vaultStatus();
+      calls.push("status");
+      return status;
+    },
     lockVault: () => {
       calls.push("lock");
       return backend.lockVault();
@@ -96,7 +101,7 @@ describe(":inventory NAME", () => {
     expect(within(dialog).getByRole("button", { name: "Switch to home" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(calls).toEqual(["start"]);
+    expect(calls.filter((c) => c !== "status")).toEqual(["start"]);
     expect(within(statusbar()).getByTitle(`Inventory work: ${WORK}`)).toBeInTheDocument();
   });
 
@@ -105,11 +110,13 @@ describe(":inventory NAME", () => {
     await user.keyboard(`${LEADER}:connect linux-1-000{Enter}`);
     await user.keyboard(`${LEADER}:inventory home{Enter}`);
     await user.click(within(await confirm()).getByRole("button", { name: "Switch to home" }));
-    await waitFor(() => expect(calls).toContain("restart"));
+    // The new serve's lock screen, once the app has asked it where its vault stands (the cover
+    // before it was the old serve's).
+    await waitFor(() => expect(calls.slice(calls.indexOf("restart"))).toContain("status"));
     // The new serve has never been unlocked: home's vault asks for its password.
     await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
-    expect(calls.slice(0, 4)).toEqual(["start", "lock", "use home", "restart"]);
+    expect(calls.filter((c) => c !== "status").slice(0, 4)).toEqual(["start", "lock", "use home", "restart"]);
     expect(await within(statusbar()).findByTitle(`Inventory home: ${HOME}`)).toHaveTextContent("home");
     expect(statusbar()).toHaveTextContent(HOME);
     // Announced (the message line is a status region).
@@ -136,7 +143,7 @@ describe(":inventory NAME", () => {
     expect(dialog).toHaveTextContent("1 Pending change in work's roster.yml isn't published: publish it (:publish) or discard it (:discard) first.");
     expect(within(dialog).queryByRole("button", { name: "Switch to home" })).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
-    expect(calls).toEqual(["start"]);
+    expect(calls.filter((c) => c !== "status")).toEqual(["start"]);
   });
 
   it("says so plainly when an earlier step of roster's lookup wins, and doesn't switch", async () => {
@@ -146,7 +153,7 @@ describe(":inventory NAME", () => {
     expect(dialog).toHaveTextContent(/roster runs on \/home\/you\/scratch\/roster\.yml, not on the active Inventory \(home\)/);
     expect(dialog).toHaveTextContent(/\$ROSTER_CONFIG or a roster\.yml in the folder roster starts in comes first/);
     expect(within(dialog).queryByRole("button", { name: "Switch to work" })).not.toBeInTheDocument();
-    expect(calls).toEqual(["start"]);
+    expect(calls.filter((c) => c !== "status")).toEqual(["start"]);
   });
 
   it("names the ones there are for a name that isn't one, and says where you are already", async () => {
