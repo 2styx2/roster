@@ -20,7 +20,9 @@ src/roster/
   jsonout.py        `--json` on the read commands: one document with a version, `cmd:`/`env:` references cut (Q92, Q110)
   common.py         small shared helpers: output, paths, text, starting programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login
-  config.py         loading/validating roster.yml, search, --only
+  config.py         loading/validating roster.yml, search, --only; find_config: which roster.yml (-c, --inv, ...)
+  inventories.py    named Inventories (`roster inv`, inventories.json): the active one, each one's own ssh config and
+                    known_hosts, the ssh config index, and the warnings for the same machine in two of them
   example.py        the `roster init` template
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type

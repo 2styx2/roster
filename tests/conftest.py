@@ -68,6 +68,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.chdir(work)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)         # an in-process serve test sets it
+    from roster import common
+    monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
     if WINDOWS:                         # files the tests write read as on Linux: "\n", not CRLF
         write_text = Path.write_text
         monkeypatch.setattr(Path, "write_text", lambda self, data, encoding=None, errors=None, newline="\n":

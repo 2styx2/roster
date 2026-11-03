@@ -135,7 +135,9 @@ fn an_override_command_keeps_its_arguments_and_resolves_only_the_program() {
     };
     let cmd = roster_command(Some("uv run --project /home/u/work/roster roster"));
     let c = detect(&r, Platform::Windows, &cmd, None).unwrap();
-    assert_eq!(r.calls.borrow()[1].last().unwrap(), "uv");
+    // The probe gets the whole command: it resolves the program, and runs all of it to ask roster
+    // which Inventory it uses (ticket 115).
+    assert!(r.calls.borrow()[1].ends_with(&cmd), "{:?}", r.calls.borrow()[1]);
     assert_eq!(
         &c.serve_argv[6..],
         &s(&[
@@ -513,8 +515,8 @@ fn auto_on_windows_takes_roster_on_windows_with_an_inventory_and_never_runs_wsl(
         ])
     );
     assert!(
-        r.calls.borrow().is_empty(),
-        "nothing runs, WSL stays asleep: {:?}",
+        r.calls.borrow().iter().all(|c| c[0] != "wsl.exe"),
+        "WSL stays asleep: {:?}",
         r.calls.borrow()
     );
 }
@@ -613,4 +615,106 @@ fn no_roster_anywhere_on_windows_names_both_places() {
     let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
     assert_eq!(e.kind, ErrorKind::NoWsl);
     assert!(e.hint.contains("roster on Windows itself"), "{e}");
+}
+
+// ---- the app and the CLI agree on the Inventory (ticket 115): the probe asks roster
+
+/// A real probe against a stand-in roster that answers `inv which` as the CLI does: the file it
+/// uses, here the named Inventory it found from `$HOME` (`$PWD`), only when it got its arguments.
+#[cfg(unix)]
+#[test]
+fn the_real_probe_takes_the_inventory_roster_itself_says_it_uses() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = common::temp("detect-asks");
+    let home = tmp.to_path_buf();
+    let h = home.to_str().unwrap().to_string();
+    for d in ["bin", "infra", "work", "x"] {
+        std::fs::create_dir_all(home.join(d)).unwrap();
+    }
+    // ~/infra/roster.yml is where the app used to look; roster says ~/work/roster.yml (its active one)
+    std::fs::write(home.join("infra/roster.yml"), "hosts: []\n").unwrap();
+    std::fs::write(home.join("work/roster.yml"), "hosts: []\n").unwrap();
+    let program = home.join("bin/roster");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\n[ \"$1 $2 $3 $4\" = \"--dir {h}/x inv which\" ] || exit 2\necho \"$PWD/work/roster.yml\"\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cmd = roster_command(Some("~/bin/roster --dir ~/x"));
+    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None).unwrap();
+    let canonical = std::fs::canonicalize(&home).unwrap();
+    let asked = format!("{}/work/roster.yml", canonical.to_str().unwrap());
+    let used = &c.serve_argv[c.serve_argv.len() - 2];
+    assert!(
+        used == &asked || used == &format!("{h}/work/roster.yml"),
+        "{:?}",
+        c.serve_argv
+    );
+    assert!(c.has_inventory);
+
+    // A roster too old to answer (`inv` isn't a command: exit 2) falls back to where the app looked.
+    std::fs::write(&program, "#!/bin/sh\nexit 2\n").unwrap();
+    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None).unwrap();
+    assert_eq!(c.serve_argv[c.serve_argv.len() - 2], format!("{h}/infra/roster.yml"));
+}
+
+/// Native Windows roster, scripted: `inv which` answers ANSWER, run in the folder it records.
+struct WindowsAsks {
+    pc: Scripted,
+    answer: String,
+    dirs: RefCell<Vec<String>>,
+}
+
+impl Runner for WindowsAsks {
+    fn run(&self, argv: &[String], env: &[(&str, &str)]) -> std::io::Result<Output> {
+        self.pc.run(argv, env)
+    }
+
+    fn run_in(&self, argv: &[String], _env: &[(&str, &str)], dir: &str) -> std::io::Result<Output> {
+        self.pc.calls.borrow_mut().push(argv.to_vec());
+        self.dirs.borrow_mut().push(dir.to_string());
+        Ok(Output {
+            code: Some(0),
+            stdout: format!("{}\r\n", self.answer),
+            stderr: String::new(),
+        })
+    }
+
+    fn var(&self, name: &str) -> Option<String> {
+        self.pc.var(name)
+    }
+
+    fn is_file(&self, path: &str) -> bool {
+        self.pc.is_file(path)
+    }
+}
+
+#[test]
+fn windows_roster_is_asked_which_inventory_it_uses_from_the_home_folder() {
+    let mut pc = windows_pc(true, None);
+    pc.files.insert(r"C:\Users\you\home-net\roster.yml".into());
+    let r = WindowsAsks {
+        pc,
+        answer: r"C:\Users\you\home-net\roster.yml".into(),
+        dirs: RefCell::default(),
+    };
+    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
+    assert_eq!(
+        c.serve_argv,
+        s(&[
+            r"C:\Users\you\.local\bin\roster.exe",
+            "-c",
+            r"C:\Users\you\home-net\roster.yml",
+            "serve"
+        ])
+    );
+    assert_eq!(
+        r.pc.calls.borrow().as_slice(),
+        &[s(&[r"C:\Users\you\.local\bin\roster.exe", "inv", "which"])]
+    );
+    assert_eq!(r.dirs.borrow().as_slice(), &[r"C:\Users\you".to_string()]);
 }

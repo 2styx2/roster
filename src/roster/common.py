@@ -22,12 +22,43 @@ def ssh_dir():
     return Path.home() / ".ssh"
 
 
-def ssh_config_file():
-    return ssh_dir() / "config.d" / "roster"
+# The named Inventory this run uses (ticket 115): its own generated ssh config and known_hosts, so syncing one never
+# wipes another's. None (no named Inventories, or a roster.yml that isn't one of them): the files roster always wrote.
+# config.find_config sets it as it finds roster.yml; one process uses one Inventory (serve restarts to switch).
+_inventory = None
+_CURRENT = object()
 
 
-def known_hosts_file():
-    return ssh_dir() / "roster_known_hosts"
+def use_inventory(name):
+    global _inventory
+    _inventory = name
+
+
+def current_inventory():
+    return _inventory
+
+
+def ssh_config_file(name=_CURRENT):
+    """roster's generated ssh config for the Inventory NAME (default: the one this run uses)."""
+    name = _inventory if name is _CURRENT else name
+    return ssh_dir() / "config.d" / ("roster" if name is None else f"roster-{name}")
+
+
+def known_hosts_file(name=_CURRENT):
+    """roster's known_hosts for the Inventory NAME (default: the one this run uses)."""
+    name = _inventory if name is _CURRENT else name
+    return ssh_dir() / ("roster_known_hosts" if name is None else f"roster_known_hosts-{name}")
+
+
+def known_hosts_label():
+    """known_hosts_file() as messages name it: ~/.ssh/roster_known_hosts (or -NAME)."""
+    return f"~/.ssh/{known_hosts_file().name}"
+
+
+def ssh_index_file():
+    """With named Inventories: the file ~/.ssh/config includes, which includes each one's ssh config, the active
+    one's first (its name can't be a named Inventory's: those are roster-NAME)."""
+    return ssh_dir() / "config.d" / "roster.inventories"
 
 
 def user_config_dir():

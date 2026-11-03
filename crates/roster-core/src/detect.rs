@@ -2,15 +2,16 @@
 //!
 //! What's looked for is a [`Choice`]: the Config's `backend` (or a development env var). On
 //! Windows, `auto` looks for roster on Windows itself first ([`probe_windows`]: PATH with PATHEXT,
-//! plus `%USERPROFILE%\.local\bin`, where `uv tool install` puts it; no process is started), and
+//! plus `%USERPROFILE%\.local\bin`, where `uv tool install` puts it; then that roster is asked which Inventory it uses), and
 //! takes it if it has an Inventory; else the WSL distros, as `wsl` does. `local` is only Windows'
 //! own roster. For WSL the default distro is probed first, then every other distro that's already
 //! Running (`wsl.exe -l -v`), until one has both roster and an Inventory. A stopped distro other
 //! than the default is never probed, because probing would boot it (see [`list_distros`]);
 //! `ROSTER_APP_WSL_DISTRO=<name>` picks one distro explicitly, starting it if needed. On Linux roster runs locally. The probe is one login-shell
 //! script per target; it resolves the roster program to an absolute path (`~/.local/bin` is only
-//! on PATH in interactive shells on some distros) and finds `roster.yml` the way roster would,
-//! plus `~/infra/roster.yml`. `serve` then gets `-c <path>` because it isn't started from a login
+//! on PATH in interactive shells on some distros) and asks that roster which `roster.yml` it uses
+//! (`roster inv which`, ticket 115), so the app and the CLI agree; only a roster that can't answer
+//! leaves it to the old list, which adds `~/infra/roster.yml`. `serve` then gets `-c <path>` because it isn't started from a login
 //! shell, so variables like `ROSTER_CONFIG` from the user's profile never reach it. For the same
 //! reason it gets the login shell's PATH (`env PATH=...`): `wsl.exe --exec` has no `~/.local/bin`,
 //! and roster finds the vault CLI (`bw`) and `ssh` on PATH. No shell expands `~` in the override
@@ -103,6 +104,12 @@ pub struct Output {
 pub trait Runner {
     fn run(&self, argv: &[String], env: &[(&str, &str)]) -> std::io::Result<Output>;
 
+    /// [`Runner::run`] in the folder `dir` (asking native Windows roster which Inventory it uses,
+    /// from the home folder serve starts in). By default the folder is the caller's.
+    fn run_in(&self, argv: &[String], env: &[(&str, &str)], _dir: &str) -> std::io::Result<Output> {
+        self.run(argv, env)
+    }
+
     /// An env var of the app's own process (`PATH`, `PATHEXT`, `USERPROFILE`, `APPDATA`, `ROSTER_CONFIG`).
     fn var(&self, _name: &str) -> Option<String> {
         None
@@ -132,6 +139,21 @@ impl Runner for SystemRunner {
         })
     }
 
+    fn run_in(&self, argv: &[String], env: &[(&str, &str)], dir: &str) -> std::io::Result<Output> {
+        let mut c = Command::new(&argv[0]);
+        c.args(&argv[1..])
+            .envs(env.iter().copied())
+            .current_dir(dir)
+            .stdin(std::process::Stdio::null());
+        crate::rpc::no_console_window(&mut c);
+        let o = c.output()?;
+        Ok(Output {
+            code: o.status.code(),
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        })
+    }
+
     fn var(&self, name: &str) -> Option<String> {
         std::env::var(name).ok().filter(|v| !v.trim().is_empty())
     }
@@ -151,15 +173,28 @@ pub fn roster_command(override_value: Option<&str>) -> Vec<String> {
     if v.is_empty() { vec!["roster".into()] } else { v }
 }
 
-/// Run with `bash -lc PROBE probe <program>`. Prints `roster=<abs path>` if the program resolves
-/// (a leading `~` means the target's home: no shell expands it, as the program comes in quoted),
-/// then `home=$HOME`, `path=<the login PATH>` and `inventory=<path>` (empty when there's none).
+/// Run with `bash -lc PROBE probe <program> [<its arguments>...]`. Prints `roster=<abs path>` if the
+/// program resolves (a leading `~` means the target's home: no shell expands it, as the program
+/// comes in quoted), then `home=$HOME`, `path=<the login PATH>` and `inventory=<path>` (empty when
+/// there's none). The Inventory is the one roster itself says it uses (`roster inv which`, run from
+/// `$HOME` as serve is), so the app and the CLI agree on the file (ticket 115). Only a roster too old
+/// to answer, or one that finds none, falls back to the places the app looked before: those, plus
+/// `~/infra/roster.yml`.
 const PROBE: &str = r#"PATH="$HOME/.local/bin:$PATH"
-case $1 in "~" | "~/"*) set -- "$HOME${1#"~"}" ;; esac
+case $1 in "~" | "~/"*) set -- "$HOME${1#"~"}" "${@:2}" ;; esac
 p=$(command -v -- "$1") || exit 0
 echo "roster=$p"
 echo "home=$HOME"
 echo "path=$PATH"
+shift
+n=$#
+while [ "$n" -gt 0 ]; do
+  a=$1; shift; n=$((n - 1))
+  case $a in "~" | "~/"*) a="$HOME${a#"~"}" ;; esac
+  set -- "$@" "$a"
+done
+f=$(cd "$HOME" && "$p" "$@" inv which 2>/dev/null)
+case $f in /*) if [ -e "$f" ]; then echo "inventory=$f"; exit 0; fi ;; esac
 for f in "$ROSTER_CONFIG" "$HOME/roster.yml" "$HOME/.config/roster/roster.yml" "$HOME/infra/roster.yml"; do
   if [ -n "$f" ] && [ -e "${f/#\~/$HOME}" ]; then echo "inventory=${f/#\~/$HOME}"; exit 0; fi
 done
@@ -246,13 +281,26 @@ fn which_windows(runner: &dyn Runner, program: &str, home: Option<&str>) -> Opti
     dirs.iter().find_map(|d| tries(&win_join(d, program)))
 }
 
-/// roster on Windows itself (no WSL): found as [`which_windows`] says, and its Inventory where
-/// roster looks for it there (`ROSTER_CONFIG`, then `roster.yml` in the home folder (serve's
-/// working folder), `%APPDATA%\roster\`, then `~\infra\`). Nothing is run: a GUI app's own env
-/// is the user's.
-pub fn probe_windows(runner: &dyn Runner, program: &str) -> (Option<String>, Option<String>, Option<String>) {
+/// roster on Windows itself (no WSL): found as [`which_windows`] says, and its Inventory as roster
+/// itself says (`roster inv which`, run from the home folder, serve's working folder), so the app and
+/// the CLI agree (ticket 115). Only when roster doesn't answer (too old, or it finds none) does the
+/// app look where it used to: `ROSTER_CONFIG`, then `roster.yml` in the home folder,
+/// `%APPDATA%\roster\`, then `~\infra\`. The one command run is roster's own, with the app's env,
+/// which is the user's.
+pub fn probe_windows(runner: &dyn Runner, roster_cmd: &[String]) -> (Option<String>, Option<String>, Option<String>) {
     let home = runner.var("USERPROFILE");
-    let roster = which_windows(runner, &win_home(program, home.as_deref()), home.as_deref());
+    let roster = which_windows(runner, &win_home(&roster_cmd[0], home.as_deref()), home.as_deref());
+    if let (Some(r), Some(h)) = (&roster, &home) {
+        let mut argv = vec![r.clone()];
+        argv.extend(roster_cmd[1..].iter().map(|a| win_home(a, Some(h))));
+        argv.extend(["inv".into(), "which".into()]);
+        if let Ok(o) = runner.run_in(&argv, &[], h) {
+            let f = o.stdout.trim();
+            if o.code == Some(0) && !f.is_empty() && !f.contains('\n') && runner.is_file(f) {
+                return (roster, Some(f.to_string()), home);
+            }
+        }
+    }
     let mut places: Vec<String> = Vec::new();
     if let Some(c) = runner.var("ROSTER_CONFIG") {
         places.push(win_home(c.trim(), home.as_deref()));
@@ -270,8 +318,10 @@ pub fn probe_windows(runner: &dyn Runner, program: &str) -> (Option<String>, Opt
     (roster, inventory, home)
 }
 
-fn probe(runner: &dyn Runner, target: &Target, program: &str) -> Probe {
-    let argv = target.wrap(&["bash", "-lc", PROBE, "probe", program].map(String::from));
+fn probe(runner: &dyn Runner, target: &Target, roster_cmd: &[String]) -> Probe {
+    let mut argv: Vec<String> = ["bash", "-lc", PROBE, "probe"].map(String::from).into();
+    argv.extend_from_slice(roster_cmd);
+    let argv = target.wrap(&argv);
     match runner.run(&argv, &[]) {
         Ok(o) => parse_probe(&o.stdout),
         Err(_) => Probe::default(),
@@ -416,7 +466,7 @@ pub fn detect_choice(
     let mut fallback = None;
     let native = platform == Platform::Windows && matches!(choice, Choice::Auto | Choice::Local);
     if native {
-        let (roster, inventory, home) = probe_windows(runner, program);
+        let (roster, inventory, home) = probe_windows(runner, roster_cmd);
         if roster.is_some() {
             let p = Probe {
                 roster,
@@ -464,7 +514,7 @@ pub fn detect_choice(
         },
     };
     for t in &targets {
-        let p = probe(runner, t, program);
+        let p = probe(runner, t, roster_cmd);
         if p.roster.is_none() {
             continue;
         }

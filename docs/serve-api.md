@@ -1,6 +1,6 @@
 # `roster serve` API
 
-`roster serve` is the backend for the desktop app (the roster app, [`app/`](../app/README.md)). It speaks JSON-RPC 2.0 on stdin/stdout, one JSON object per line, answers several requests at once (API 20; [Ordering, locks and jobs](#ordering-locks-and-jobs)), and exits with code 0 when stdin closes. It is the app's backend, not a public API: scripts and other tools use the CLI's `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). Its one other channel is the private askpass socket for password Sessions (below). Only responses go to stdout; warnings and logs go to stderr. It finds `roster.yml` the same way every other command does (`-c PATH`, `$ROSTER_CONFIG`, ...).
+`roster serve` is the backend for the desktop app (the roster app, [`app/`](../app/README.md)). It speaks JSON-RPC 2.0 on stdin/stdout, one JSON object per line, answers several requests at once (API 20; [Ordering, locks and jobs](#ordering-locks-and-jobs)), and exits with code 0 when stdin closes. It is the app's backend, not a public API: scripts and other tools use the CLI's `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). Its one other channel is the private askpass socket for password Sessions (below). Only responses go to stdout; warnings and logs go to stderr. It finds `roster.yml` the same way every other command does (`-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, ...).
 
 Results are the objects roster builds when it loads `roster.yml`, with no extra schema. Logins come back as references (`bw:esxi-02 ssh+web`), never as values.
 
@@ -282,6 +282,32 @@ Requests without an `id` (notifications) run but get no reply. `serve` sends thr
 <!-- END generated:methods -->
 
 The checks of [`roster check --box`](cli-reference.md#roster-check---box), in section order: `roster`, `inventory`, `ssh`, `vault`, `askpass`, `repo` (a newer roster may add sections; the app shows one it doesn't know under its id). `level` is `ok`, `warn` or `error`; `fix` says what to do in a sentence; `topic` is a `:help` topic that explains it (an error catalog row such as `E6`, or a command such as `:publish`). `ok` is false when any check is an `error`. Every check is local: files, `PATH`, each vault CLI's own status, the infra repo's git with no fetch. Nothing logs in to a Host or touches the network. It reads `roster.yml` as it is now without applying it, so a file that doesn't load is an `inventory` error while `hosts.list` still answers with the last good Inventory. `askpass` says whether this `serve`'s askpass channel is open. No check carries a secret: Logins are counted by provider, never looked up. `box.check` never fails; with no `roster.yml`, the `inventory` check says so.
+
+## Named Inventories: `inventories.list`, `inventories.use`
+
+One person may have several Inventories, the team's for work and their own for home, and one is active (ticket 115; [`roster inv`](cli-reference.md#named-inventories)). A `serve` runs on one of them for its whole life: `inventories.list` says which (`name`, `path`) and which is active, and `inventories.use` makes another one the active one. The app then restarts `serve` (as it does for a new `backend`), which finds the active one, or starts it with `--inv NAME`. `inventories.use` changes nothing else: no vault is locked or unlocked and no Session is touched; those are the app's to do around the restart.
+
+<!-- BEGIN generated:methods inventories.list inventories.use -->
+
+| Method | Params | Result | Errors | Since API |
+|---|---|---|---|---|
+| `inventories.list` | none | `{inventories: [{name, path, active, exists}], active, name, path}`: `active` is the active Inventory's name (or `null`), `name` the named Inventory this serve runs on (`null` when its `roster.yml` isn't one) and `path` its `roster.yml` (`null` when none was found). With no named Inventories, `inventories` is `[]` | `143` | 27 |
+| `inventories.use` | `{name}` | `{active, path, restart: true}`: `path` is its `roster.yml` | `140`, `143` | 27 |
+
+<!-- END generated:methods -->
+
+| Code | Meaning |
+|---|---|
+| `140` | No named Inventory by that name (`inventories.use`, `--inv`, `roster inv use` and `remove`). `data.names`: the ones there are |
+| `141` | `roster inv add`: the name, the file or its folder is already a named Inventory's (each Inventory keeps its own folder: `ROSTER.md` is written next to it) |
+| `142` | `roster inv add`: a bad name (letters, digits, `.` `_` `-`), or no file at the path |
+| `143` | roster's list of named Inventories (`inventories.json` in roster's folder) doesn't load |
+| `144` | A `box.check` warning: another named Inventory's `roster.yml` isn't there or doesn't load, so it isn't compared |
+| `145` | A `box.check` warning: a Host here and one in another named Inventory have the same host key (the same machine?) |
+| `146` | A `box.check` warning: the same Host name in two named Inventories; `ssh NAME` reaches the active one's |
+| `147` | A `box.check` warning: the same address and port in two named Inventories, with different host keys |
+
+`box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
 ## Editing: Pending changes
 

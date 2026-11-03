@@ -97,6 +97,24 @@ def inventory(path, cfg, error):
         n = sum(len(h["problems"]) for h in hosts)
         out.append(check("inventory", "warn", f"{count(n, 'service entry')} left out, on {names(left_out)}",
                          "`roster hosts` prints each one with its fix", "E57"))
+    out += named(cfg)
+    return out
+
+
+def named(cfg):
+    """The named Inventories (ticket 115): which one this is, and the same machine in two of them (warnings only)."""
+    from . import inventories
+    from .common import current_inventory
+    if not inventories.list_file().exists():
+        return []
+    inv = inventories.load()
+    if not inv.items:
+        return []
+    here = current_inventory()
+    which = (f"this is the named Inventory {here}" + (" (the active one)" if here == inv.active else "")
+             if here else "this roster.yml isn't one of the named Inventories")
+    out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.items)}")]
+    out += [check("inventory", "warn", w["message"], w["fix"], f"E{w['row']}") for w in inventories.overlaps(cfg)]
     return out
 
 

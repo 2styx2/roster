@@ -127,6 +127,19 @@ FILL_REFUSED = 130          # the prompt isn't provably this Host's own Login's 
                             #   read it as (sudo, su, ssh), when it is one
 NOTHING_TO_FILL = 131       # the Login that would answer has no saved password (auth: agent, key, none, prompt)
 
+# Named Inventories (ticket 115, #201): `roster inv`, `roster --inv`, serve's inventories.*, and the warnings
+# `roster check --box` (box.check), setup and sync give when the same machine is in two Inventories (catalog rows
+# 188-195). The warnings are never errors, and compare host-key fingerprints only, never a secret.
+UNKNOWN_INVENTORY = 140     # no named Inventory by that name (`--inv`, inv use/remove, inventories.use); data.names
+INVENTORY_TAKEN = 141       # inv add: the name, the file or its folder is already a named Inventory's
+BAD_INVENTORY = 142         # inv add: a bad name, or no file at the path
+INVENTORIES_UNREADABLE = 143  # roster's list of named Inventories (inventories.json) doesn't load
+OTHER_DOESNT_LOAD = 144     # warning: another named Inventory's roster.yml isn't there or doesn't load, so it isn't
+                            #   compared
+SAME_MACHINE = 145          # warning: a Host here and one in another Inventory have the same host key
+SAME_HOST_NAME = 146        # warning: the same Host name in two Inventories (`ssh NAME` reaches the active one's)
+SAME_ADDRESS = 147          # warning: the same address and port in two Inventories, with different host keys
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

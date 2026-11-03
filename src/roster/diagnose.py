@@ -13,7 +13,7 @@ import time
 from contextlib import nullcontext
 
 from . import askpass, errors, providers
-from .common import not_reviewed, time_left
+from .common import known_hosts_label, not_reviewed, time_left
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
 from .providers import PROVIDERS
 from .sshops import (
@@ -274,7 +274,7 @@ def changed_key(h, recorded, key):
     data = {"recorded": [fingerprint(k) for k in recorded.values()], "offered": fingerprint(key) if key else None}
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
-                       "If the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts "
+                       f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
                        f"and run `roster setup --only {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 

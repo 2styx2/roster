@@ -294,7 +294,7 @@ def cmd_discover(args):
         cfg_path = Path(args.config).expanduser()          # --write will create it
     else:
         try:
-            cfg_path = find_config(args.config)
+            cfg_path = find_config(args.config, getattr(args, "inv", None))
             cfg = load_config(cfg_path)
         except SystemExit as e:
             # a roster.yml that's there but broken is error 1 under --json, found by -c or not; none at all (nothing

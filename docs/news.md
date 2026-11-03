@@ -6,6 +6,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### Added
+
+**CLI**
+
+- **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (the active one wins a name clash). `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
+
 ### Changed
 
 **App**

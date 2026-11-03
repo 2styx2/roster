@@ -9,7 +9,8 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, die, oneline, user_config_dir
+from . import inventories
+from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, die, oneline, use_inventory, user_config_dir
 from .providers import NO_PASSWORD
 from .resources import load_resources
 
@@ -28,14 +29,31 @@ HTTPS_PORTS, HTTP_PORTS = (443, 8443), (80, 8000, 8008, 8080, 8888)
 
 # ---------------------------------------------------------------- config
 
-def find_config(arg):
+def find_config(arg, inv=None):
+    """The roster.yml this run uses: `-c PATH` (ARG), `--inv NAME` (INV), $ROSTER_CONFIG, ./roster.yml, the active named
+    Inventory, then ~/.config/roster/roster.yml (ticket 115). It also picks the generated ssh config and known_hosts
+    this run reads and writes: the named Inventory's own when the file is one (common.use_inventory)."""
+    path = locate_config(arg, inv)
+    use_inventory(inv if inv and not arg else inventories.name_of(path))
+    return path
+
+
+def locate_config(arg, inv=None):
+    """find_config's lookup alone."""
     if arg:
         return Path(arg).expanduser()
+    if inv:
+        return inventories.path_of(inv)
     if os.environ.get("ROSTER_CONFIG"):
         return Path(os.environ["ROSTER_CONFIG"]).expanduser()
-    for p in (Path.cwd() / "roster.yml", user_config_dir() / "roster.yml"):
-        if p.exists():
-            return p
+    here = Path.cwd() / "roster.yml"
+    if here.exists():
+        return here
+    active = inventories.active_path()
+    if active is not None:
+        return active
+    if (user_config_dir() / "roster.yml").exists():
+        return user_config_dir() / "roster.yml"
     die("no roster.yml found here or in ~/.config/roster/ - run `roster init`, "
         "or pass -c PATH / set ROSTER_CONFIG")
 
