@@ -1791,7 +1791,17 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
         },
       });
-      const { atPasswordPrompt, masks, endsWith, lineIs, ownRun, ...handle } = session;
+      const { atPasswordPrompt, masks, endsWith, lineIs, ownRun, ...shell } = session;
+      // Resizes counted as the core counts them (Q151 (b)): a fill refuses if one lands between its
+      // prompt check and its probe.
+      let resizes = 0;
+      const handle = {
+        ...shell,
+        resize: (s: TermSize) => {
+          resizes += 1;
+          return shell.resize(s);
+        },
+      };
       // The core's prompt fill (ticket 119), as the Tauri build's: the core's printed-prompt check
       // first (ticket 137), then serve's refusals (the Host changed since the Session connected, a
       // prompt that isn't sudo's or ssh's for this Host's own Login, no saved password, the
@@ -1800,6 +1810,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const connected = { ip: h.ip, port: h.ssh.port, user: h.ssh.user };
       // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
       const fill = async (prompt: string, hop?: NestedHost) => {
+        // The core checks the prompt as the call arrives: a resize sent after it counts.
+        const resizedBefore = resizes;
         await wait();
         // Under ConPTY (Q151 (i)), only sudo's own prompt for the Session's own Host: the core's
         // refusal, before anything is looked up or typed (no code).
@@ -1859,6 +1871,12 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         if (vaultNow() === "locked") throw new BackendCallError(VAULT_LOCKED, SessionRefusal.vaultLocked);
         const echoes = () =>
           new BackendCallError("the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it");
+        // Before the probe, never a resize since the check (Q151 (b)): nothing typed, 130.
+        if (resizes !== resizedBefore) {
+          throw new BackendCallError("the Session's screen changed while roster checked the prompt, so roster didn't fill it", FillRefusal.refused, {
+            fix: "press the key again once the Session's screen is still",
+          });
+        }
         if (!atPasswordPrompt()) throw echoes();
         // The probe. sudo with pwfeedback draws a `*` for it and takes it back (ticket 154): as in
         // the core, that's no echo only for the Session's own Host, at sudo's prompt for its ssh

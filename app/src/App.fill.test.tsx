@@ -3,6 +3,7 @@
 // without echo, the offer shows only while it does, `␣ p` fills it, and the password never
 // reaches the page. The fake stands in for the core's probe: no prompt (or one that echoes) is
 // refused there.
+import { useEffect } from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -11,6 +12,7 @@ import { FAKE_LOGIN_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeSc
 import { FILL_API_VERSION, FillRefusal, NESTED_FILL_API_VERSION } from "./backend/types";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
+import type { TerminalViewProps } from "./terminal/TerminalView";
 
 const hosts = makeHosts(12);
 // makeHosts: every third Host has a vault Login (bw:…), the rest log in with keys (auth: key).
@@ -193,6 +195,71 @@ describe("filling a password prompt", () => {
     expect(offer()).toBeNull();
     await user.keyboard(`${LEADER}p`);
     await waitFor(() => expect(messageLine()).toHaveTextContent(/needs a newer roster \(API version 25/));
+  });
+});
+
+// Ticket 168 (#319): the message line is a row of the window's layout, so a message appearing or
+// going changes the terminal's height. Pressing fill clears the last message (as every command
+// does), the terminal grew a row, and the core refused the fill on the resize (Q151). This stub
+// fits as the real terminal does: one row fewer while the message line shows.
+function LaidOutTerminal(props: TerminalViewProps) {
+  const { onResize, active } = props;
+  useEffect(() => {
+    if (!active) return;
+    const fit = () => {
+      const line = document.querySelector(".message-line");
+      const shown = line !== null && line.textContent !== "" && !line.classList.contains("visually-hidden");
+      onResize({ cols: 100, rows: shown ? 29 : 30 });
+    };
+    fit();
+    const observer = new MutationObserver(fit);
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+    return () => observer.disconnect();
+  }, [onResize, active]);
+  return <StubTerminal {...props} />;
+}
+
+describe("a fill never resizes the Session it fills (ticket 168)", () => {
+  async function atPromptWithMessage() {
+    const user = userEvent.setup();
+    render(
+      <App
+        backend={fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION })}
+        terminalView={LaidOutTerminal}
+        registries={builtinRegistries()}
+      />,
+    );
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    await connect(user, vaultHost);
+    // A message on the line (here the key pressed with no prompt up), as the owner had.
+    await user.keyboard(`${LEADER}p`);
+    await waitFor(() => expect(messageLine()).toHaveTextContent(/No password prompt/));
+    await sudo(user);
+    await screen.findByRole("status", { name: "Password prompt" });
+    return user;
+  }
+
+  it("fills from ␣ p though the message line goes as it starts", async () => {
+    const user = await atPromptWithMessage();
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(/\[sudo ok\]/);
+    expect(messageLine()).not.toHaveTextContent(/screen changed/);
+  });
+
+  it("fills from the offer's button though the message line goes as it starts", async () => {
+    const user = await atPromptWithMessage();
+    await user.click(screen.getByRole("button", { name: "Fill" }));
+    await within(output()).findByText(/\[sudo ok\]/);
+    expect(messageLine()).not.toHaveTextContent(/screen changed/);
+  });
+
+  it("tells the Session the size the terminal took meanwhile, once the fill ends", async () => {
+    const user = await atPromptWithMessage();
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(/\[sudo ok\]/);
+    // The fake shell says each resize it's told about: the row the message line gave back.
+    await within(output()).findByText(/\[resized to 100x30\]/);
   });
 });
 
@@ -390,6 +457,16 @@ describe("the fake's printed-prompt check, as the core's", () => {
     for (const c of `ssh ${to.name}\r`) await other.handle.write(c);
     await other.until(new RegExp(`admin@${to.name.toLowerCase()}'s password: $`));
     await expect(other.fill(`admin@${to.name.toLowerCase()}'s password:`, hop)).rejects.toMatchObject({ code: FillRefusal.refused });
+  });
+
+  it("refuses with 130, typing nothing, when the Session is resized while it checks (Q151, ticket 168)", async () => {
+    const { handle, fill, until, seen } = await session();
+    for (const c of "sudo -v\r") await handle.write(c);
+    await until(/password for admin: $/);
+    const filling = fill("[sudo] password for admin:");
+    void handle.resize({ cols: 80, rows: 25 });
+    await expect(filling).rejects.toMatchObject({ code: FillRefusal.refused, message: expect.stringMatching(/screen changed/) });
+    expect(seen()).not.toMatch(/sudo ok|Sorry/);
   });
 
   it("refuses with the probe's echo when the line ends with the prompt's text but echoes", async () => {
