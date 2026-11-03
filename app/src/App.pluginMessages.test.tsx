@@ -27,6 +27,7 @@ const pins: FakePlugin = {
         else if (w === "moved") roster.notify("Moved 2 pins from pins.yml", "info", { quiet: false });
         else if (w === "plan") roster.notify("Plan ready", "info", { actions: [{ label: "Show the plan", run: "pin count" }] });
         else if (w === "broken") roster.notify("pins.json doesn't parse", "warn");
+        else if (w === "later") roster.defer(400, () => roster.notify("Synced 3 pins"));
       },
     });
     roster.progress.set("sync", { title: "Syncing pins", cancel: () => undefined });
@@ -106,5 +107,46 @@ describe("a Plugin's messages, quiet by default", () => {
     expect(screen.getByRole("status", { name: "From pins" })).toHaveTextContent("pins: Copied esx-02's address");
     await run(user, "cancel sync");
     expect(seen()).toBe("Stopping Syncing pins");
+  });
+});
+
+// The owner's ruling (2026-11-03, decision Q162): errors always show (Q115 (a)) wins over Q126 (b).
+// A quiet notice from a timer, an event or a request's answer arrives when nothing was asked, so it
+// never takes the place of what the line shows; `:messages` keeps it.
+describe("a background quiet message keeps a visible line", () => {
+  const wait = () => new Promise((r) => setTimeout(r, 600));
+
+  it("an info notice from a timer leaves an error on the line, and :messages keeps both", async () => {
+    const user = await ready();
+    await run(user, "pin later");
+    await run(user, "connect nope");
+    expect(seen()).toBe("No Host named nope");
+    await wait();
+    expect(seen()).toBe("No Host named nope");
+    await run(user, "messages");
+    const view = await screen.findByRole("region", { name: /^Messages/ });
+    expect(within(view).getByText("pins: Synced 3 pins")).toBeInTheDocument();
+    expect(within(view).getByText("No Host named nope")).toBeInTheDocument();
+  });
+
+  it("on an empty line it's still heard, and the user's own quiet confirmation still replaces an error", async () => {
+    const user = await ready();
+    await run(user, "pin later");
+    await wait();
+    expect(seen()).toBe("");
+    expect(messageLine()).toHaveTextContent(/^pins: Synced 3 pins$/);
+    await run(user, "connect nope");
+    await run(user, "pin add");
+    expect(seen()).toBe("");
+    expect(messageLine()).toHaveTextContent(/^Pinned esx-02$/);
+  });
+
+  it("with :messages all, it shows as a notice, beside the error", async () => {
+    const user = await ready({ messages: "all" });
+    await run(user, "pin later");
+    await run(user, "connect nope");
+    await wait();
+    expect(screen.getByRole("status", { name: "From pins" })).toHaveTextContent("pins: Synced 3 pins");
+    expect(seen()).toBe("No Host named nope");
   });
 });

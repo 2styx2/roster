@@ -1,8 +1,9 @@
 // `:plugins`' rows: each network site a Plugin was granted says how many requests went there
 // since the app started (decision Q116): counts and a time, never what was sent.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
-import { dataLine, PluginsPanel, REFRESH_MS } from "./PluginsPanel";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { PackageStatus } from "../backend/types";
+import { dataLine, PackagesPanel, PluginsPanel, REFRESH_MS, UPGRADE_TOPIC } from "./PluginsPanel";
 import type { PluginStatus, Snapshot } from "./manager";
 
 const NOW = Date.now();
@@ -122,5 +123,116 @@ describe("PluginsPanel's data-folder line (ticket 98)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const pkg = (over: Partial<PackageStatus> = {}): PackageStatus => ({
+  name: "recent-alerts",
+  source: "team/recent-alerts",
+  url: "https://git.example.com/team/recent-alerts.git",
+  dir: null,
+  wants: "default branch",
+  commit: null,
+  locked: null,
+  pinned: false,
+  config: {},
+  note: null,
+  error: null,
+  ...over,
+});
+
+const packagesSnap = (packages: PackageStatus[], over: Partial<Snapshot> = {}): Snapshot => ({ ...snap([]), packages, ...over });
+
+/** The buttons in a row, by their visible text. */
+const buttons = (li: HTMLElement) => within(li).queryAllByRole("button").map((b) => b.textContent);
+
+describe("PackagesPanel's Fix buttons (errors.md rows 116-121, issue #213)", () => {
+  it("a Package that can't be fetched has Try again, which fetches it again through :packages install", () => {
+    const onRun = vi.fn();
+    render(<PackagesPanel snapshot={packagesSnap([pkg({ error: "can't fetch https://git.example.com/team/recent-alerts.git: fatal: could not read Username" })])} onClose={() => undefined} onRun={onRun} />);
+    const li = screen.getByRole("listitem", { name: "recent-alerts, can't fetch" });
+    expect(buttons(li)).toEqual(["Try again"]);
+    const button = within(li).getByRole("button", { name: "Try again (recent-alerts)" });
+    expect(button).toHaveAttribute("title", ":packages install recent-alerts");
+    fireEvent.click(button);
+    expect(onRun).toHaveBeenCalledWith("packages install recent-alerts");
+  });
+
+  it("a cancelled install has Install…, which asks again (the install prompt), never installs by itself", () => {
+    const onRun = vi.fn();
+    render(<PackagesPanel snapshot={packagesSnap([pkg({ commit: "1".repeat(40) })], { declined: ["recent-alerts"] })} onClose={() => undefined} onRun={onRun} />);
+    const li = screen.getByRole("listitem", { name: "recent-alerts, cancelled" });
+    fireEvent.click(within(li).getByRole("button", { name: "Install… (recent-alerts)" }));
+    expect(onRun).toHaveBeenCalledWith("packages install recent-alerts");
+  });
+
+  it("a stopped Package's Plugin has Reload and Check for an update", () => {
+    const onRun = vi.fn();
+    const plugin = status({ name: "alerts", path: "package:recent-alerts", problem: "init.lua:12: attempt to index a nil value" });
+    render(<PackagesPanel snapshot={packagesSnap([pkg({ commit: "1".repeat(40), locked: "1".repeat(40), pinned: true })], { plugins: [plugin] })} onClose={() => undefined} onRun={onRun} />);
+    const li = screen.getByRole("listitem", { name: "recent-alerts, stopped" });
+    expect(buttons(li)).toEqual(["Reload", "Check for an update"]);
+    fireEvent.click(within(li).getByRole("button", { name: "Reload (alerts)" }));
+    expect(onRun).toHaveBeenLastCalledWith("plugins reload alerts");
+    fireEvent.click(within(li).getByRole("button", { name: "Check for an update (recent-alerts)" }));
+    expect(onRun).toHaveBeenLastCalledWith("packages update recent-alerts");
+  });
+
+  it("a running Package has no buttons, and none without onRun", () => {
+    const plugin = status({ name: "alerts", path: "package:recent-alerts" });
+    const { unmount } = render(<PackagesPanel snapshot={packagesSnap([pkg({ commit: "1".repeat(40), locked: "1".repeat(40), pinned: true })], { plugins: [plugin] })} onClose={() => undefined} onRun={() => undefined} />);
+    expect(buttons(screen.getByRole("listitem", { name: "recent-alerts, running" }))).toEqual([]);
+    unmount();
+    render(<PackagesPanel snapshot={packagesSnap([pkg({ error: "can't fetch it" })])} onClose={() => undefined} />);
+    expect(buttons(screen.getByRole("listitem", { name: "recent-alerts, can't fetch" }))).toEqual([]);
+  });
+
+  it("gives the keys back to the panel when the button pressed goes away", () => {
+    const error = packagesSnap([pkg({ error: "can't fetch it" })]);
+    const { rerender } = render(<PackagesPanel snapshot={error} onClose={() => undefined} onRun={() => undefined} />);
+    const button = screen.getByRole("button", { name: "Try again (recent-alerts)" });
+    button.focus();
+    fireEvent.click(button);
+    const fetched = pkg({ commit: "1".repeat(40), locked: "1".repeat(40), pinned: true });
+    rerender(<PackagesPanel snapshot={packagesSnap([fetched], { plugins: [status({ name: "alerts", path: "package:recent-alerts" })] })} onClose={() => undefined} onRun={() => undefined} />);
+    expect(document.activeElement).toBe(screen.getByRole("region", { name: "Packages" }));
+  });
+});
+
+describe("PluginsPanel's Fix buttons (errors.md rows 120-121)", () => {
+  it("a stopped Plugin has Reload", () => {
+    const onRun = vi.fn();
+    render(<PluginsPanel snapshot={snap([status({ problem: "it failed 3 times" })])} onGrant={() => undefined} onClose={() => undefined} onRun={onRun} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reload (webhook)" }));
+    expect(onRun).toHaveBeenCalledWith("plugins reload webhook");
+  });
+
+  it("a Package init.lua no longer names has no Reload: :packages clean is the way", () => {
+    const gone = status({ name: "alerts", path: "package:recent-alerts", problem: "init.lua no longer names it: :packages clean removes it" });
+    render(<PluginsPanel snapshot={snap([gone])} onGrant={() => undefined} onClose={() => undefined} onRun={() => undefined} />);
+    expect(screen.queryByRole("button", { name: /^Reload/ })).toBeNull();
+  });
+
+  it("a running Plugin has no Reload", () => {
+    render(<PluginsPanel snapshot={snap([status()])} onGrant={() => undefined} onClose={() => undefined} onRun={() => undefined} />);
+    expect(screen.queryByRole("button", { name: /^Reload/ })).toBeNull();
+  });
+});
+
+describe("PluginsPanel's hint for Plugins written before api 4 (issue #228)", () => {
+  it("says their info notices are quiet now, with the authors' note one click away", () => {
+    const onRun = vi.fn();
+    render(<PluginsPanel snapshot={snap([status()])} onGrant={() => undefined} onClose={() => undefined} onRun={onRun} />);
+    const li = screen.getByRole("listitem", { name: "webhook, running" });
+    expect(li).toHaveTextContent("Written for api 2: its info notices are quiet now unless it marks them quiet = false, and :messages keeps them.");
+    fireEvent.click(within(li).getByRole("button", { name: "What changed (webhook)" }));
+    expect(onRun).toHaveBeenCalledWith(`help ${UPGRADE_TOPIC}`);
+  });
+
+  it("says nothing for api 4 and later, or a built-in Plugin", () => {
+    const current = status({ name: "fresh", manifest: { name: "fresh", version: "1.0.0", description: "", author: null, api: 4, permissions: [] } });
+    const builtin = status({ name: "hosts", path: "builtin:hosts", builtin: true, manifest: { name: "hosts", version: "1.0.0", description: "", author: null, api: 1, permissions: [] } });
+    render(<PluginsPanel snapshot={snap([current, builtin])} onGrant={() => undefined} onClose={() => undefined} onRun={() => undefined} />);
+    expect(screen.queryByText(/Written for api/)).toBeNull();
   });
 });
