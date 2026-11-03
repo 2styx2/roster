@@ -2013,3 +2013,58 @@ def test_a_renamed_box_takes_its_entries_under_the_earlier_name_with_it(net):
     assert not any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))      # its dropped Link's line too
     assert "(owner box2)" in net.file("orion-2", "home/.ssh/roster-mesh/config")
     assert mesh.run(net.cfg())["already"]
+
+
+# ---------------------------------------------------------------- Windows Hosts (T196, #376, decision Q176)
+
+WIN_MESH = CONFIG.replace("      new-1: { ip: 10.0.0.40, reviewed: false }\n",
+                          "      new-1: { ip: 10.0.0.40, reviewed: false }\n"
+                          "      win-1: { ip: 10.0.0.50, os: windows }\n") + \
+    "  - { from: win-1, to: storage }\n  - { from: orion-3, to: nas-1, via: win-1 }\n"
+
+
+@pytest.fixture
+def win_net(net):
+    """net, with win-1 (os: windows) in the meshed group, in a Link of its own and as another Link's hop: a stand-in
+    Windows Host that would refuse any sh script the Mesh sent it."""
+    (net.host("win-1") / "home").mkdir(parents=True)
+    (net.host("win-1") / "windows").write_text("cmd")
+    net.cfg_path.write_text(WIN_MESH)
+    return net
+
+
+def test_a_windows_host_is_left_out_of_the_mesh_with_its_reason(win_net):
+    g = mesh.graph(win_net.cfg())
+    assert g["excluded"]["win-1"].startswith("[160] os: windows")
+    assert not any("win-1" in (x["from"], x["to"], x.get("via")) for x in g["links"])
+    assert ("orion-2", "orion-3") in {(x["from"], x["to"]) for x in g["links"]}      # the rest of the group: as before
+    assert "win-1" not in g["visit"]
+
+
+def test_mesh_dry_run_and_apply_never_visit_a_windows_host_and_say_why(win_net, capsys):
+    assert main(["mesh", "--dry-run"]) == 0
+    assert "win-1 ([160] os: windows" in capsys.readouterr().out
+    assert main(["mesh"]) == 0                       # a Link or meshed group naming it isn't an error
+    assert "win-1 ([160] os: windows" in capsys.readouterr().out
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert not any(c.endswith(" win-1") for c in win_net.connections())
+
+
+def test_mesh_status_and_check_say_why_a_windows_host_is_left_out(win_net, capsys):
+    main(["mesh", "status"])
+    assert "left out: " in (out := capsys.readouterr().out) and "win-1 ([160] os: windows" in out
+    main(["check"])
+    assert "mesh         left out: win-1 ([160] os: windows" in capsys.readouterr().out
+
+
+def test_a_windows_host_once_in_the_mesh_is_never_visited_to_take_it_back(win_net):
+    """A Host given os: windows after an apply (its Mesh never worked there: sh): the next run leaves it alone."""
+    win_net.cfg_path.write_text(CONFIG)
+    mesh.run(win_net.cfg(), apply=True)
+    st = mesh.load_state()
+    st["members"] = sorted({*st["members"], "win-1"})
+    mesh.save_state(st)
+    win_net.cfg_path.write_text(WIN_MESH)
+    r = mesh.run(win_net.cfg(), apply=True)
+    assert "win-1" not in r["pending"]
+    assert not any(c.endswith(" win-1") for c in win_net.connections())

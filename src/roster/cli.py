@@ -291,6 +291,8 @@ def cmd_mesh(cfg, args):
             return 0
         for n in st["members"]:
             say(f"  {n:<16} can reach {plural(st['reach'].get(n, 0), 'Host')}")
+        if st["excluded"]:
+            say("left out: " + ", ".join(f"{n} ({why})" for n, why in st["excluded"].items()))
         if st["pending"]:
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         warn_cut(st["cut_pending"])
@@ -396,6 +398,10 @@ def cmd_check(cfg, args):
                     or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
+    if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
+        if windows:
+            say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
     return 1 if bad or skipped else 0
@@ -718,6 +724,8 @@ def cmd_run(cfg, args):
     command = " ".join(words)
     if not h["reviewed"]:
         die(not_reviewed(h))
+    if is_windows(h):
+        return run_windows(h, command, args.sudo)
     if args.sudo:
         return run_sudo(h, command)
     if h["enroll"]:
@@ -733,6 +741,24 @@ def cmd_run(cfg, args):
         print(f"hint: sudo wants a password - use  roster run --sudo {h['name']} -- {' '.join(words[1:])}",
               file=sys.stderr)
     return rc if rc >= 0 else 1
+
+
+def run_windows(h, command, sudo):
+    """`roster run` on an os: windows Host (T196, decision Q176): COMMAND always under PowerShell (winhost.run), the
+    same whatever sshd's DefaultShell. --sudo is refused before the vault is asked: Windows has no sudo over ssh."""
+    from . import winhost
+    from .errors import RUN_SUDO_WINDOWS
+    if sudo:
+        die(f"[{RUN_SUDO_WINDOWS}] {h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
+            "ran. Log in as an account in Administrators (its ssh session is already elevated) and run it without "
+            "--sudo")
+    if h["enroll"]:
+        refuse_left_out(h)
+        return winhost.run(h, command)
+    try:
+        return winhost.run(h, command, get_secret(h["ssh"]["auth"], h["group"]), key=False)
+    except RuntimeError as e:
+        die(f"{h['name']}: {e}")
 
 
 def run_sudo(h, command):

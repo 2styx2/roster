@@ -106,7 +106,7 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 - **`enroll: true`** for Linux servers you want key logins on. `roster setup` installs this box's key using the vault password once.
 - **`enroll: false`** for gear that only takes passwords: switches, routers, ESXi (it keeps root keys outside `~/.ssh`), and appliances. Logins then go through `roster run`.
-- **`os: windows`** for a Windows Host with OpenSSH Server (Windows 10/11, Server 2019 and later): `setup`, `revoke` and `check` then run PowerShell there instead of `sh`. See [Windows Hosts](#windows-hosts).
+- **`os: windows`** for a Windows Host with OpenSSH Server (Windows 10/11, Server 2019 and later): `setup`, `revoke`, `check` and `run` then run PowerShell there instead of `sh`, and the Mesh leaves it out. See [Windows Hosts](#windows-hosts).
 - A different login for the web UI or API goes in a service entry:
 
 ```yaml
@@ -148,6 +148,8 @@ What the errors mean:
 | `[155] HOST looks like a Windows Host` | Its shell said `'sh' is not recognized`: set `os: windows` for it (see [Windows Hosts](#windows-hosts)), `roster sync`, then run it again |
 | `[157] … is UTF-16` / `… starts with a byte order mark` | A Windows Host's key file sshd can't read. roster won't re-encode it (that would turn on every key in it): save it as ASCII, then run `setup` again |
 | `warning: [154] HOST has type: windows but no os:` | roster treats it as a POSIX Host. Set `os: windows` if it's Windows |
+| `[159] HOST is a Windows Host (os: windows), which has no sudo over ssh` | `roster run --sudo` on Windows: log in as an account in Administrators and run it without `--sudo` |
+| `[161] the command isn't PowerShell, so nothing ran` | `roster run` on a Windows Host runs PowerShell: rewrite it, or wrap cmd.exe's syntax in `cmd /c '…'` |
 | Port 22 accepts connections but sends no SSH banner, on many Hosts at once | A network IPS or rate limiter between this Box and the Hosts, not the Hosts: probe a neighbouring Host, or wait a few minutes and retry with fewer `workers:`. Don't retry in a loop |
 
 ## Windows Hosts
@@ -174,7 +176,12 @@ roster adds its key to a Windows Host that runs Microsoft's OpenSSH Server (Wind
 - **`roster revoke`** cleans both files an administrator's key could be in (the account may have joined or left Administrators since). An account that is no longer an administrator can't open the admin file: revoke warns that this Box's key may still be there, logging in as every administrator, so an administrator removes the line ending `roster-managed:BOX` (or runs `roster revoke` as one).
 - **`roster check`** logs in with `exit 0` (the same in sh, cmd.exe and PowerShell), then, on a Windows Host whose key works, reads its key file and warns (157) about what sshd could ignore it for. A login refused on a shared connection ("No existing session") is error 158, not a key problem: roster's ssh config turns connection sharing off (`ControlMaster no`) for `os: windows` Hosts.
 - **Elevation.** An administrator's ssh session must be able to write `%ProgramData%\ssh`; if `setup` says access is denied there, log in once on the console and check the account is in Administrators.
-- **Not yet:** `roster run` on a Windows Host and the Mesh (a later release).
+- **`roster run HOST -- CMD` runs CMD under PowerShell**, always, whatever the Host's DefaultShell (cmd.exe or PowerShell), so it behaves the same on every Windows Host: the same launch line as `setup`'s, with CMD in the script on stdin as data, never in a command line (non-ASCII text arrives as written, UTF-8). Write it as you would at a PowerShell prompt: `roster run dc-01 -- Get-Service sshd`, `roster run dc-01 -- 'Get-ChildItem C:\Temp | Select-Object -First 5'`. For cmd.exe's syntax, say so: `roster run dc-01 -- cmd /c 'dir /s C:\Temp'`. A command that isn't PowerShell (Windows PowerShell 5.1 has no `&&`) runs nothing: error 161 with PowerShell's own words.
+  - **Exit code:** CMD's own `exit N`; 1 for a terminating error (`throw`); otherwise, when its last statement failed, that native command's exit code (`$LASTEXITCODE`), or 1 for a cmdlet. A native command that wrote to stderr but exited 0 succeeded.
+  - **Output** comes back as text as it's written: stdout, and on stderr errors, warnings (`WARNING: …`) and a native command's stderr; `Write-Host` goes to stdout. PowerShell's own text is UTF-8; an old console program's non-ASCII bytes (its code page's) may not survive. A password Host's output arrives when the command ends, as on any Host.
+  - **stdin** carries the script, so CMD reads nothing from it.
+  - **`--sudo` is refused** (error 159) before the vault is asked: Windows has no sudo over ssh. Log in as an account in Administrators, whose ssh session is already elevated.
+- **The Mesh leaves Windows Hosts out** (code 160): its scripts are sh. A meshed group or a Link that names one isn't an error: the rest of the Mesh is set up, and `roster mesh --dry-run`, `mesh status` and `check` list it under "left out" with the reason. See [The Mesh](mesh.md#windows-hosts).
 
 ## Limits to know about
 

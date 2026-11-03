@@ -24,15 +24,19 @@ What the script prints, one per line: `FILE <path>` (a file it wrote, or read fo
 import base64
 import re
 import subprocess
+from typing import IO, cast
 
 from .common import program_argv
-from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_WINDOWS
+from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_POWERSHELL, NOT_WINDOWS
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
 # its multi-line blocks would need blank lines to end them.
 # stdin's bytes are read as UTF-8 whatever the Host's console code page, and the script is ASCII anyway (ps_literal).
-BOOTSTRAP = ("$ErrorActionPreference='Stop'; $m=New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); "
-             "$s=[Text.Encoding]::UTF8.GetString($m.ToArray()); & ([scriptblock]::Create($s))")
+# No progress records (T196): powershell.exe started with -EncodedCommand writes them, and errors, to stderr as CLIXML
+# ("#< CLIXML <Objs ..."), and its first module load ("Preparing modules for first use") would start that stream.
+BOOTSTRAP = ("$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Stop'; $m=New-Object IO.MemoryStream; "
+             "[Console]::OpenStandardInput().CopyTo($m); $s=[Text.Encoding]::UTF8.GetString($m.ToArray()); "
+             "& ([scriptblock]::Create($s))")
 
 
 def remote_command():
@@ -356,6 +360,117 @@ def script(mode, tag_re, pub=""):
         raise ValueError(mode)
     header = f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
     return header + SCRIPT
+
+
+# `roster run HOST -- CMD` on an os: windows Host (T196, #376, decision Q176): CMD runs under PowerShell, launched as
+# above, whatever sshd's DefaultShell. $Command (the header) is the person's text, as data: it's parsed on its own
+# first (nothing runs if it isn't PowerShell), then run with PowerShell's usual error handling ('Continue'). The exit
+# code: CMD's own `exit N`; 1 for a terminating error; else, when its last statement failed ($?), that native
+# command's $LASTEXITCODE, or 1. Windows PowerShell 5.1 also sets $? false for a native command that only wrote to
+# stderr, so with exit code 0, and that stderr the last error, that's still a success. Every stream reaches the Box as text: errors,
+# warnings, verbose and debug on stderr; Write-Host on stdout (with -EncodedCommand they'd be CLIXML otherwise).
+RUN_SCRIPT = r"""
+if ($env:OS -ne 'Windows_NT') {
+    [Console]::Error.WriteLine("roster: NOT_WINDOWS: this Host isn't Windows, so nothing was run")
+    exit 1
+}
+try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
+$ErrorActionPreference = 'Continue'
+try { $null = [scriptblock]::Create($Command) } catch {
+    $why = "$(if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message })"
+    [Console]::Error.WriteLine("roster: NOT_POWERSHELL: " + ($why -replace '\s+', ' '))
+    exit 1
+}
+function Out-Text {
+    process {
+        if ($_ -is [Management.Automation.ErrorRecord]) {
+            if ($_.Exception -is [Management.Automation.RemoteException]) {
+                [Console]::Error.WriteLine("$_")               # a native command's stderr line, as it wrote it
+            } else {
+                $n = "$($_.InvocationInfo.MyCommand.Name)"
+                [Console]::Error.WriteLine($(if ($n -match '^[\w-]+$') { "$n : $_" } else { "$_" }))
+            }
+        }
+        elseif ($_ -is [Management.Automation.WarningRecord]) { [Console]::Error.WriteLine("WARNING: $($_.Message)") }
+        elseif ($_ -is [Management.Automation.VerboseRecord]) { [Console]::Error.WriteLine("VERBOSE: $($_.Message)") }
+        elseif ($_ -is [Management.Automation.DebugRecord]) { [Console]::Error.WriteLine("DEBUG: $($_.Message)") }
+        elseif ($_ -is [Management.Automation.InformationRecord]) { [Console]::Out.WriteLine("$($_.MessageData)") }
+        else { $_ }
+    }
+}
+$global:LASTEXITCODE = 0; $global:RosterRunOk = $true; $global:RosterRunLast = $null
+# two newlines: a ` at the end of CMD continues onto the first, never onto this line
+try { & ([scriptblock]::Create($Command + "`n`n" + '$global:RosterRunOk = $?; $global:RosterRunLast = $Error[0]')) *>&1 | Out-Text } catch {
+    [Console]::Error.WriteLine(($_ | Out-String).TrimEnd())
+    exit 1
+}
+if ($global:RosterRunOk) { exit 0 }
+if ($global:LASTEXITCODE) { exit $global:LASTEXITCODE }
+if ($global:RosterRunLast.Exception -is [Management.Automation.RemoteException]) { exit 0 }   # only native stderr
+exit 1
+"""
+
+
+def run_script(command):
+    """The script `roster run` sends an os: windows Host for COMMAND (the person's text). COMMAND goes in as base64 of
+    its UTF-8, decoded there: never PowerShell source, so no quote in it (ASCII or Unicode, which PowerShell also
+    reads as quotes) can end a literal, and non-ASCII text arrives as written (the bootstrap reads stdin as UTF-8)."""
+    data = base64.b64encode(command.encode("utf-8")).decode("ascii")
+    return f"$Command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{data}'))\n" + RUN_SCRIPT
+
+
+def run_said(name, err):
+    """What roster adds when `roster run` on Windows Host NAME stopped before CMD ran (its stderr ERR), or None."""
+    if "roster: NOT_POWERSHELL:" in err:
+        return (f"[{NOT_POWERSHELL}] the command isn't PowerShell, so nothing ran on {name}: roster run runs PowerShell "
+                "on a Windows Host (for cmd.exe's syntax: cmd /c '...')")
+    low = err.lower()
+    if "roster: not_windows:" in low or ("powershell" in low and ("not found" in low or "no such file" in low)):
+        return (f"[{NOT_WINDOWS}] {name} has os: windows, but it has no PowerShell or isn't Windows: nothing ran. "
+                "Fix os: for it in roster.yml")
+    return None
+
+
+def run(h, command, password=None, key=True):
+    """`roster run` on Windows Host H: COMMAND under PowerShell, its stdout and stderr to ours as they come (a key
+    Host's; a password Host's arrive when it ends, as paramiko gives them), and its exit code. PASSWORD: a password
+    Host's login (paramiko), never in the script."""
+    import sys
+    script = run_script(command).encode("utf-8")
+    sys.stdout.flush()
+    if key:
+        # stdout straight through; stderr too, line by line, kept to say why when nothing ran
+        p = subprocess.Popen(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], remote_command()]),
+                             stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdin, stderr = cast(IO[bytes], p.stdin), cast(IO[bytes], p.stderr)     # both PIPE
+        said = []
+        try:
+            try:
+                stdin.write(script)
+                stdin.close()
+            except BrokenPipeError:             # ssh is gone already (no login): its stderr says why
+                pass
+            for raw in stderr:
+                line = raw.decode(errors="replace")
+                sys.stderr.write(line)
+                sys.stderr.flush()
+                if len(said) < 50:
+                    said.append(line)
+            rc = p.wait()
+        except KeyboardInterrupt:               # Ctrl+C reached ssh too; its code is what counts
+            return p.wait() or 130
+        err = "".join(said)
+    else:
+        from .sshops import password_exec
+        rc, out, err = password_exec(h, remote_command(), password, stdin=script.decode("utf-8"))
+        sys.stdout.write(out)
+        sys.stdout.flush()
+        sys.stderr.write(err)
+    why = run_said(h["name"], err)
+    if why:
+        print(f"error: {clean(why)}", file=sys.stderr, flush=True)
+        return rc or 1
+    return rc if rc >= 0 else 1
 
 
 def looks_windows(text):

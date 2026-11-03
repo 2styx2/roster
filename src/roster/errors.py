@@ -154,6 +154,12 @@ KEY_FILE = 157              # a Windows Host's key file roster won't touch (UTF-
                             #   follow, an ACL it couldn't set), or, as a warning, one whose ACL lets others in
 CONNECTION_SHARING = 158    # ssh's shared connection (ControlMaster) was refused ("No existing session"), not a login
 
+# Windows Hosts, part 2 (T196, #376, decision Q176): `roster run` there under PowerShell, and what roster won't do there
+# (catalog rows 219-221)
+RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has no sudo over ssh; refused before the vault
+MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
+NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

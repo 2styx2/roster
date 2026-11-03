@@ -519,3 +519,95 @@ def test_a_refused_key_on_a_windows_host_points_at_its_key_file(write_config):
     p = login_failure(hosts["dc-01"], False, "admin@10.0.0.5: Permission denied (publickey).")
     assert p.code == 46 and "permissions" in p.fix and "administrators_authorized_keys" in p.fix
     assert "administrators_authorized_keys" not in login_failure(hosts["web-1"], False, "Permission denied").fix
+
+
+# ---------------------------------------------------------------- roster run (T196, #376, decision Q176)
+
+def run_on(win, capfd, *words, host="dc-01"):
+    """`roster run HOST -- WORDS` on a stand-in Windows Host: (exit code, stdout, stderr), as the terminal got them."""
+    main(["sync"])
+    capfd.readouterr()
+    rc = main(["run", host, "--", *words])
+    out, err = capfd.readouterr()
+    return rc, out, err
+
+
+@needs_powershell
+@SHELLS
+def test_run_on_a_windows_host_runs_powershell_whatever_its_default_shell(win, capfd):
+    """The same fixed launch line as setup's (base64 only), whatever sshd's DefaultShell; the command goes in the
+    script on stdin, never in argv."""
+    rc, out, err = run_on(win, capfd, "Write-Output", "'a & b | c'; $x = 1 + 1; Write-Output \"two=$x\"")
+    assert (rc, out.splitlines()) == (0, ["a & b | c", "two=2"]) and "CLIXML" not in err
+    ran = [ln for ln in win.ssh_log().splitlines() if " dc-01 " in ln]
+    assert ran and all("Write-Output" not in ln and "a & b" not in ln for ln in ran)
+    assert ran[-1].endswith(" dc-01 " + __import__("roster.winhost").winhost.remote_command())
+
+
+@needs_powershell
+@pytest.mark.parametrize("command, code", [
+    ("exit 3", 3),                                                   # the command's own exit
+    ("& $env:FAKE_PYTHON -c 'import sys; sys.exit(4)'", 4),          # a native command's $LASTEXITCODE
+    ("Get-Item -LiteralPath ./no-such-thing", 1),                    # a cmdlet that failed ($? false)
+    ("throw 'boom'", 1),                                             # a terminating error
+    ("& $env:FAKE_PYTHON -c 'import sys; sys.exit(4)'; Write-Output fine", 0),   # the last statement counts
+    ("Write-Output fine", 0),
+])
+def test_run_on_a_windows_host_passes_on_its_exit_code(win, capfd, command, code):
+    rc, out, err = run_on(win, capfd, command)
+    assert rc == code, (out, err)
+
+
+@needs_powershell
+def test_run_on_a_windows_host_shows_errors_as_text(win, capfd):
+    """Errors, warnings and a native command's stderr reach stderr as text (no CLIXML); a native command that wrote
+    to stderr but exited 0 succeeded."""
+    rc, out, err = run_on(win, capfd, "Write-Warning careful; Write-Error oops; "
+                                      "& $env:FAKE_PYTHON -c 'import sys; sys.stderr.write(chr(110)+chr(10))'")
+    assert rc == 0 and "CLIXML" not in err and "<Objs" not in err
+    assert "WARNING: careful" in err and "oops" in err and "\nn" in "\n" + err
+    rc, out, err = run_on(win, capfd, "throw 'boom'")
+    assert rc == 1 and "boom" in err and "CLIXML" not in err
+
+
+@needs_powershell
+@pytest.mark.parametrize("command, said", [
+    ("Write-Output 'it''s $(1+1) `n'", "it's $(1+1) `n"),            # PowerShell's own quoting, as the person wrote it
+    ("Write-Output 'café ’quoted’'", "café ’quoted’"),   # non-ASCII: UTF-8 both ways
+    ("Write-Output \"$('x')\"", "x"),
+])
+def test_the_command_is_data_in_the_script_whatever_it_holds(win, capfd, command, said):
+    rc, out, err = run_on(win, capfd, command)
+    assert (rc, out.splitlines()) == (0, [said]), err
+
+
+@needs_powershell
+def test_a_command_that_isnt_powershell_runs_nothing(win, capfd):
+    rc, out, err = run_on(win, capfd, "Write-Output", "ran;", "echo", "(")
+    assert rc == 1 and out == "" and "[161]" in err and "isn't PowerShell" in err
+
+
+@needs_powershell
+def test_run_on_a_windows_password_host_sends_the_same_script(win, capfd, write_config):
+    write_config(WIN.replace("      dc-01: 10.0.0.5\n", "      dc-01: { ip: 10.0.0.5, enroll: false }\n"))
+    rc, out, err = run_on(win, capfd, "Write-Output hello; exit 7")
+    assert (rc, out.splitlines()) == (7, ["hello"])
+    from roster import winhost
+    assert win.sent and win.sent[-1][0] == winhost.remote_command() and "hello" not in win.sent[-1][0]
+
+
+@needs_powershell
+def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd):
+    rc, out, err = run_on(win, capfd, "Write-Output hi", host="web-1")
+    assert rc != 0 and "[156]" in err and "os:" in err
+
+
+@pytest.mark.parametrize("enroll", [True, False])
+def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, monkeypatch, capsys, enroll):
+    from roster import cli
+    write_config(WIN.replace("      dc-01: 10.0.0.5\n", f"      dc-01: {{ ip: 10.0.0.5, enroll: {str(enroll).lower()} }}\n"))
+    monkeypatch.setattr(cli, "get_secret", lambda *a: pytest.fail("the vault was asked"))
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
+    with pytest.raises(SystemExit) as e:
+        main(["run", "--sudo", "dc-01", "--", "whoami"])
+    assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)
