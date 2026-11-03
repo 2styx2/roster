@@ -77,7 +77,7 @@ Reads any option by its dotted name: a copy of what init.lua set there, or nil. 
 ```lua
 local views = roster.o.get("views") or {}
 for id in pairs(views) do print(id) end
-local dot = roster.o.keys.leader["."] -- a key that is a dot
+print(roster.o.keys.leader["."]) -- a key that is a dot
 ```
 
 ### `roster.o.reset(name)`

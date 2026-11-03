@@ -566,7 +566,7 @@ roster.o = {}
 --- ```lua
 --- local views = roster.o.get("views") or {}
 --- for id in pairs(views) do print(id) end
---- local dot = roster.o.keys.leader["."] -- a key that is a dot
+--- print(roster.o.keys.leader["."]) -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size", "views.get".
 ---@return any

@@ -118,7 +118,7 @@
               "names": []
             }
           ],
-          "example": "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end\nlocal dot = roster.o.keys.leader[\".\"] -- a key that is a dot",
+          "example": "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end\nprint(roster.o.keys.leader[\".\"]) -- a key that is a dot",
           "methods": [],
           "listed": false
         },

@@ -36,7 +36,7 @@ end
 do
   local views = roster.o.get("views") or {}
   for id in pairs(views) do print(id) end
-  local dot = roster.o.keys.leader["."] -- a key that is a dot
+  print(roster.o.keys.leader["."]) -- a key that is a dot
 end
 
 -- roster.o.reset
