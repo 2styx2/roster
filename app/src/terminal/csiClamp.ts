@@ -3,140 +3,189 @@
 // `ESC[99999999L` (insert lines) runs out of memory, freezing the whole renderer, and anything a
 // Session prints can carry one (a remote Host, `cat` of a crafted file). So every xterm roster
 // feeds a Session's output to (the tab's own, PromptWatch's, CommittedLines', the shell hooks'
-// prompt screen) takes it through a CsiClamp first.
+// prompt screen) takes it through a CsiClamp first. First written for the prompt screen (ticket
+// 159, #298), shared from here.
 
 /** The largest CSI parameter an xterm is given: more than any screen's rows or columns, so a
  * move, an erase, an insert, a scroll or a tab stop draws the same as with the count sent. Only
  * REP (`ESC[Nb`) repeats fewer times, and only past 9999. */
 export const CSI_PARAM_MAX = 9999;
 
+/** How much of a CSI's parameters it keeps: xterm reads at most 32 parameters, which (at most
+ * four digits each, with their separators) fit well inside. Past it, further parameter bytes are
+ * dropped, as they change nothing xterm draws; the sequence still waits for its final byte. */
+const PARAMS_MAX = 256;
+/** How many intermediate bytes it keeps; past it they're dropped too, so a sequence that never
+ * ends holds a bounded amount. */
+const INTERMEDIATES_MAX = 16;
+
 const ESC = 0x1b;
 const CAN = 0x18;
 const SUB = 0x1a;
 const DEL = 0x7f;
 /** UTF-8's lead byte of U+0080 to U+00BF: before 0x80-0x9F, a C1 control. */
-const C1_LEAD = 0xc2;
+const C2 = 0xc2;
 /** U+009B, the C1 form of `ESC [` (UTF-8 C2 9B), which xterm.js parses as a CSI. */
 const C1_CSI = 0x9b;
 const ZERO = 0x30;
 const NINE = 0x39;
-const CAPPED = [NINE, NINE, NINE, NINE];
 
-const enum State {
-  /** Not in a CSI: text, other sequences, OSC and DCS strings (passed as they came). */
-  Ground,
+const enum St {
+  Text,
   /** After ESC. */
-  Escape,
-  /** In a CSI: its parameters, intermediates, up to its final byte. */
+  Esc,
+  /** After 0xC2 in text: the first byte of a C1 control (U+0080 to U+009F) or of another character. */
+  C2,
   Csi,
+  /** After 0xC2 in a CSI. */
+  CsiC2,
 }
 
-/** Caps every CSI parameter (and sub-parameter) at CSI_PARAM_MAX, as a stream: a sequence split
- * across writes is followed from one to the next. It follows xterm.js's own parser
- * (EscapeSequenceParser.ts) for where a CSI starts and ends, so it changes nothing but a number
- * above the cap: a CSI starts at `ESC [` (controls between the two included, as xterm runs them)
- * and at U+009B, anywhere, even inside an OSC or DCS string, as xterm.js reads it there too;
- * it ends at its final byte (0x40-0x7E), at ESC, CAN or SUB, at a C1 control, or at a character
- * past ASCII. Nothing is cut or dropped, however long a sequence is: xterm.js bounds that itself.
- *
- * Output with no number above the cap comes out byte for byte as it went in, though a number's
- * digits may come out in the next write (held until the number ends: at most four), and a
- * control inside a number (which xterm runs where it stands) comes out before the digits held
- * ahead of it. A number past the cap comes out as its leading zeros and `9999`. */
-export class CsiClamp {
-  private state = State.Ground;
-  /** The byte before was 0xC2: a C1 control may follow. */
-  private c1 = false;
-  /** The current number's significant digits, held back until it ends (at most four), and
-   * whether it has more than four, so it's past the cap. */
-  private held: number[] = [];
-  private over = false;
+/** A C0 control xterm.js runs where it stands inside an escape or a CSI, the sequence going on
+ * (every one but ESC, CAN and SUB, which end it). */
+const runsInPlace = (c: number) => c < 0x20 && c !== ESC && c !== CAN && c !== SUB;
 
-  /** `data` with every CSI count capped; `data` itself when it's unchanged. */
+/** Gives each CSI parameter (and sub-parameter) as at most CSI_PARAM_MAX, whether the CSI begins
+ * with `ESC [` or with the C1 introducer U+009B (UTF-8 `C2 9B`, which xterm.js takes the same,
+ * anywhere, even inside an OSC or DCS string), across writes: a sequence split between two reads
+ * is held until it ends. Leading zeros go (`0005` is 5, as xterm reads it). Nothing of a CSI ever
+ * comes out as text: it comes out whole at its final byte, or unfinished where an ESC, CAN, SUB,
+ * a C1 control or a character past ASCII ends it, as xterm.js ends it. Controls inside it (a
+ * backspace, a line feed), and between `ESC` and `[`, come out where they are, as a terminal runs
+ * them there. Everything else, OSC and DCS strings included, passes as it came. */
+export class CsiClamp {
+  private state: St = St.Text;
+  /** The CSI's introducer as it came (`ESC [` or `C2 9B`). */
+  private intro: number[] = [];
+  /** The CSI's parameter and intermediate bytes so far, parameters capped. */
+  private seq: number[] = [];
+  /** Where the current parameter's digits are in `seq`. */
+  private digits: number[] = [];
+  private params = 0;
+  private intermediates = 0;
+
+  /** `data` with every CSI count capped; `data` itself when it comes out as it came. */
   clamp(data: Uint8Array): Uint8Array;
   clamp(data: string): string | Uint8Array;
   clamp(data: Uint8Array | string): Uint8Array | string;
   clamp(data: Uint8Array | string): Uint8Array | string {
     if (typeof data === "string") {
-      // Mostly text with no escape at all, or with no CSI open: as it came.
-      if (this.state === State.Ground && !this.c1 && !data.includes("\x1b") && !data.includes("\x9b")) return data;
+      // Mostly text with no escape at all, outside any sequence: as it came.
+      if (this.state === St.Text && !data.includes("\x1b") && !data.includes("\x9b")) return data;
       return this.clamp(new TextEncoder().encode(data));
     }
-    if (this.state === State.Ground && !this.c1 && data.indexOf(ESC) < 0 && data.indexOf(C1_CSI) < 0) {
-      this.c1 = data.length > 0 && data[data.length - 1] === C1_LEAD;
-      return data;
-    }
+    if (this.state === St.Text && data.indexOf(ESC) < 0 && data.indexOf(C2) < 0) return data;
     const out: number[] = [];
-    for (const b of data) {
-      // A C1 control (C2 80 to C2 9F) acts anywhere, as in xterm.js: U+009B starts a CSI, any
-      // other ends one. Its two bytes go out as they came.
-      if (this.c1) {
-        this.c1 = false;
-        if (b === C1_CSI) {
-          out.push(b);
-          this.enterCsi();
-          continue;
-        }
+    for (let i = 0; i < data.length; i++) {
+      const c = data[i] ?? 0;
+      switch (this.state) {
+        case St.Text:
+          if (c === ESC) this.state = St.Esc;
+          else if (c === C2) this.state = St.C2;
+          else out.push(c);
+          break;
+        case St.Esc:
+          if (c === 0x5b) this.startCsi([ESC, 0x5b]);
+          else if (runsInPlace(c) || c === DEL) out.push(c); // run (DEL ignored), still after ESC
+          else {
+            out.push(ESC);
+            this.state = St.Text;
+            i--; // look at it again as text
+          }
+          break;
+        case St.C2:
+          if (c >= 0x80 && c <= 0x9f) this.c1(c, out);
+          else {
+            out.push(C2);
+            this.state = St.Text;
+            i--;
+          }
+          break;
+        case St.Csi:
+          this.inCsi(c, out);
+          break;
+        case St.CsiC2:
+          // A C1 control or a character past ASCII ends the CSI, as in xterm.js (which drops
+          // the character and acts on the control).
+          this.unfinished(out);
+          if (c >= 0x80 && c <= 0x9f) this.c1(c, out);
+          else {
+            out.push(C2);
+            this.state = St.Text;
+            i--;
+          }
+          break;
       }
-      if (b === C1_LEAD) {
-        // What follows is a C1 control or a character past ASCII: either ends a CSI or an escape
-        // (xterm.js drops the character, or acts on the control), and U+009B starts a new CSI.
-        if (this.state === State.Csi) this.endNumber(out);
-        this.state = State.Ground;
-        out.push(b);
-        this.c1 = true;
-        continue;
-      }
-      if (this.state === State.Ground) {
-        out.push(b);
-        if (b === ESC) this.state = State.Escape;
-        continue;
-      }
-      if (this.state === State.Escape) {
-        out.push(b);
-        if (b === 0x5b) this.enterCsi();
-        // ESC again, a control (xterm.js runs it and stays in the escape) and DEL keep it open.
-        else if (b === ESC || b === DEL || (b < 0x20 && b !== CAN && b !== SUB)) this.state = State.Escape;
-        else this.state = State.Ground;
-        continue;
-      }
-      // In a CSI.
-      if (b >= ZERO && b <= NINE) {
-        if (this.held.length === 0 && b === ZERO && !this.over) {
-          out.push(b); // a leading zero changes nothing
-        } else if (this.held.length < 4 && !this.over) {
-          this.held.push(b);
-        } else {
-          this.over = true;
-        }
-        continue;
-      }
-      if (b === DEL || (b < 0x20 && b !== ESC && b !== CAN && b !== SUB)) {
-        // xterm.js runs a control (and ignores DEL) where it stands, and the number goes on.
-        out.push(b);
-        continue;
-      }
-      this.endNumber(out);
-      out.push(b);
-      if (b === ESC) this.state = State.Escape;
-      // The final byte, CAN, SUB, or a character past ASCII ends it; separators, private
-      // markers and intermediates (0x20-0x3F) don't.
-      else if (b > 0x3f || b === CAN || b === SUB) this.state = State.Ground;
     }
     return same(out, data) ? data : Uint8Array.from(out);
   }
 
-  private enterCsi() {
-    this.state = State.Csi;
-    this.held = [];
-    this.over = false;
+  private startCsi(intro: number[]) {
+    this.state = St.Csi;
+    this.intro = intro;
+    this.seq = [];
+    this.digits = [];
+    this.params = 0;
+    this.intermediates = 0;
   }
 
-  /** Puts out the number held so far, capped if it's past the cap. */
-  private endNumber(out: number[]) {
-    out.push(...(this.over ? CAPPED : this.held));
-    this.held = [];
-    this.over = false;
+  /** The CSI as far as it got, out unfinished (the terminal drops it at what ends it). */
+  private unfinished(out: number[]) {
+    out.push(...this.intro, ...this.seq);
+  }
+
+  /** A C1 control (`C2 c`): a CSI introducer starts one; any other goes out as it came. */
+  private c1(c: number, out: number[]) {
+    if (c === C1_CSI) this.startCsi([C2, C1_CSI]);
+    else {
+      out.push(C2, c);
+      this.state = St.Text;
+    }
+  }
+
+  private inCsi(c: number, out: number[]) {
+    if (c >= ZERO && c <= NINE) {
+      // A parameter past four digits is the cap: its digits all 9. A leading zero changes nothing.
+      const lone = this.digits.length === 1 && this.seq[this.digits[0] ?? -1] === ZERO;
+      if (c === ZERO && lone) return;
+      if (lone) {
+        this.seq[this.digits[0] ?? 0] = c;
+        return;
+      }
+      if (this.digits.length < 4) {
+        if (this.params >= PARAMS_MAX) return;
+        this.params++;
+        this.digits.push(this.seq.length);
+        this.seq.push(c);
+      } else for (const at of this.digits) this.seq[at] = NINE;
+    } else if (c >= 0x3a && c <= 0x3f) {
+      this.digits = [];
+      if (this.params >= PARAMS_MAX) return;
+      this.params++;
+      this.seq.push(c);
+    } else if (c >= 0x20 && c <= 0x2f) {
+      this.digits = [];
+      if (this.intermediates >= INTERMEDIATES_MAX) return;
+      this.intermediates++;
+      this.seq.push(c);
+    } else if (c >= 0x40 && c <= 0x7e) {
+      out.push(...this.intro, ...this.seq, c);
+      this.state = St.Text;
+    } else if (c === ESC) {
+      this.unfinished(out);
+      this.state = St.Esc;
+    } else if (c === CAN || c === SUB) {
+      this.unfinished(out);
+      out.push(c);
+      this.state = St.Text;
+    } else if (c === C2) this.state = St.CsiC2;
+    else if (c < 0x20) out.push(c); // a control runs where it is, the CSI still going
+    else if (c !== DEL) {
+      // Another character's bytes: xterm.js drops the character and leaves the CSI.
+      this.unfinished(out);
+      out.push(c);
+      this.state = St.Text;
+    }
   }
 }
 

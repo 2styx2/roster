@@ -31,9 +31,9 @@ describe("CsiClamp", () => {
     expect(clamped("\x1b[99999999L")).toBe("\x1b[9999L");
     expect(clamped("\x1b[10000;123456789H")).toBe("\x1b[9999;9999H");
     expect(clamped("\x1b[?12345;5h")).toBe("\x1b[?9999;5h");
-    // sub-parameters too, and a leading zero stays
+    // sub-parameters too; leading zeros go (xterm reads `0005` as 5)
     expect(clamped("\x1b[38:2:123456:1:2m")).toBe("\x1b[38:2:9999:1:2m");
-    expect(clamped("\x1b[00099999999M")).toBe("\x1b[0009999M");
+    expect(clamped("\x1b[00099999999M")).toBe("\x1b[9999M");
   });
 
   it("caps the C1 CSI (U+009B) the same", () => {
@@ -60,7 +60,7 @@ describe("CsiClamp", () => {
     const normal = [
       "plain text, numbers 123456789 and all\r\n",
       "\x1b[1;31mERROR\x1b[0m \x1b[38;2;255;128;0mrgb\x1b[m \x1b[9999;9999H\x1b[2J\x1b[?1049h\x1b[?2004l",
-      "\x1b[0000009999X", // leading zeros, and 9999 itself
+      "\x1b[9999X\x1b[0X\x1b[;0H", // 9999 itself, and a lone 0
       "\x1b]0;job 123456789 done\x07\x1b]52;c;MTIzNDU2Nzg5MDEyMzQ1Ng==\x07\x1b]133;D;123456\x1b\\",
       "\x1bP99999999$q12345678m\x1b\\\x1b_99999999\x1b\\",
       "‛quoted‛ ‹›, 中文, 😀 (UTF-8 with 0x9B inside a character)",
@@ -90,24 +90,51 @@ describe("CsiClamp", () => {
     expect(clamped("\x1b[1é123456789")).toBe("\x1b[1é123456789");
     expect(clamped("\x1b[1m123456789")).toBe("\x1b[1m123456789");
     // controls inside a CSI run where they stand and the number goes on (so does `ESC <control> [`)
-    expect(clamped("\x1b[12\r\n345678L")).toBe("\x1b[\r\n9999L");
-    expect(clamped("\x1b\n[99999999L")).toBe("\x1b\n[9999L");
+    expect(clamped("\x1b[12\r\n345678L")).toBe("\r\n\x1b[9999L");
+    expect(clamped("\x1b\n[99999999L")).toBe("\n\x1b[9999L");
+    expect(clamped("\x1b\x7f[99999999L")).toBe("\x7f\x1b[9999L");
     // `ESC <intermediate> [` isn't a CSI
     expect(clamped("\x1b([99999999")).toBe("\x1b([99999999");
   });
 
-  it("never cuts a long CSI: xterm.js takes it as it would unclamped, no tail shown as text", async () => {
-    const long = `\x1b[${"1;".repeat(50_000)}99999999Lafter`;
-    expect(clamped(long)).toBe(`\x1b[${"1;".repeat(50_000)}9999Lafter`);
-    const raw = term();
-    const via = term();
-    const c = new CsiClamp();
-    await write(raw, `\x1b[${"1;".repeat(50_000)}5Lafter`);
-    await write(via, c.clamp(enc(long)));
-    expect(screen(via)).toBe(screen(raw));
-    expect(screen(via)).toMatch(/^after\n/);
-    raw.dispose();
-    via.dispose();
+  it("draws a long CSI as xterm.js does, nothing of its tail shown as text", async () => {
+    for (const long of [
+      `\x1b[${"1;".repeat(50_000)}99999999Lafter`,
+      `\u009b${";".repeat(300)}1$ after`,
+      `\x1b[${"0".repeat(300)}5Cafter`,
+      `\x1b[${"1;".repeat(200)}5Dafter`,
+      `\x1b[1${" ".repeat(40)}Lafter`,
+    ]) {
+      const raw = term();
+      const via = term();
+      const c = new CsiClamp();
+      await write(raw, long.replace(/99999999/g, "9999"));
+      for (const part of [long.slice(0, 100), long.slice(100)]) await write(via, c.clamp(enc(part)));
+      expect(screen(via)).toBe(screen(raw));
+      expect(screen(via)).toMatch(/fter/); // ("$ a" ends one: `a` is its final byte)
+      raw.dispose();
+      via.dispose();
+    }
+  });
+
+  it("draws what a plain xterm.js draws where a CSI ends early or starts late", async () => {
+    for (const out of [
+      "\x1b[1é123456789m after", // a character past ASCII ends it: the digits are text
+      "\x1b[1\u0085123456789m after",
+      "\x1b[1\x18123456789m after",
+      "ab\x1b\r[5Cx", // a control between ESC and [ runs there, and it's still a CSI
+      "ab\x1b\x7f[5Dx",
+      "\x1b]0;12345678\x1b[3Cx", // ESC ends the OSC and starts a CSI
+    ]) {
+      const raw = term();
+      const via = term();
+      const c = new CsiClamp();
+      await write(raw, out);
+      await write(via, c.clamp(enc(out)));
+      expect(screen(via)).toBe(screen(raw));
+      raw.dispose();
+      via.dispose();
+    }
   });
 
   it("draws a capped count as the count would on a screen of any size up to 9999", async () => {
