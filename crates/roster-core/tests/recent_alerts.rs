@@ -155,13 +155,18 @@ struct World {
 }
 
 impl World {
+    /// Its host has generous limits ([`common::unhurried`]): only the isolation test is about them.
     fn new(test: &str) -> World {
+        World::with_limits(test, common::unhurried())
+    }
+
+    fn with_limits(test: &str, limits: Limits) -> World {
         let root = temp(test);
         let repo = Repo::new(&root);
         let packages = Packages::new(&root.join("data"), &root.join("config"));
         let specs = vec![spec(&repo.url(), config())];
         let serve = Arc::new(Serve0::default());
-        let host = PluginHost::new(serve.clone(), Limits::default());
+        let host = PluginHost::new(serve.clone(), limits);
         World {
             repo,
             packages,
@@ -400,10 +405,33 @@ fn a_long_line_matches_past_what_a_row_shows() {
     assert!(label.ends_with('…'));
 }
 
+/// Its clock, held by the test: `os.time()` stands still in the Plugin, and moves on only when a
+/// Session prints `SKIP <seconds>` (a line the Plugin then ignores). A quiet spell is measured
+/// on this clock, never by sleeping through one and hoping the machine kept up (T165: with a
+/// one-second spell, a busy machine crossed into the next second between two outputs).
+fn with_test_clock(w: &World) {
+    w.repo.edit(
+        "init.lua",
+        "local roster = require(\"roster\")\n",
+        "local roster = require(\"roster\")\n\
+         local real_time, test_now = os.time, os.time()\n\
+         os.time = function(t) if t then return real_time(t) end return test_now end\n",
+    );
+    w.repo.edit(
+        "init.lua",
+        "  roster.on(\"terminal_output\", function(e)\n",
+        "  roster.on(\"terminal_output\", function(e)\n\
+         \x20   local skip = e.text:match(\"^SKIP (%d+)\\n$\")\n\
+         \x20   if skip then test_now = test_now + tonumber(skip) return end\n",
+    );
+    w.repo.publish("a clock the test holds");
+}
+
 #[test]
 fn a_hosts_notices_come_at_most_once_per_quiet_spell_and_then_count_what_was_held() {
     let mut w = World::new("quiet");
-    w.specs[0].config.insert("quiet".into(), json!(1));
+    w.specs[0].config.insert("quiet".into(), json!(60));
+    with_test_clock(&w);
     ok(&w.install(&["terminal.read"]));
     let notices = |replies: &[Reply]| -> Vec<String> {
         replies
@@ -412,6 +440,7 @@ fn a_hosts_notices_come_at_most_once_per_quiet_spell_and_then_count_what_was_hel
             .map(|n| n["text"].as_str().unwrap().to_string())
             .collect()
     };
+    let skip = |seconds: u32| assert!(w.output(1, "esx-02", &format!("SKIP {seconds}\n")).is_empty());
     assert_eq!(notices(&w.output(1, "esx-02", "ERROR one\n")), ["esx-02: ERROR one"]);
     // `tail -f` on a noisy log: the section keeps up, the notices don't pile up.
     let replies = w.output(1, "esx-02", "ERROR two\nERROR three\n");
@@ -419,10 +448,13 @@ fn a_hosts_notices_come_at_most_once_per_quiet_spell_and_then_count_what_was_hel
     assert_eq!(rows(one(&replies[0].ops, "section")).len(), 3);
     // Another Host has its own spell.
     assert_eq!(notices(&w.output(2, "appliance", "panic\n")), ["appliance: panic"]);
-    std::thread::sleep(std::time::Duration::from_millis(2100));
+    // A second before the spell ends, still held.
+    skip(59);
+    assert!(notices(&w.output(1, "esx-02", "ERROR four\n")).is_empty());
+    skip(1);
     assert_eq!(
-        notices(&w.output(1, "esx-02", "ERROR four\n")),
-        ["3 new alerts on esx-02, the last: ERROR four"]
+        notices(&w.output(1, "esx-02", "ERROR five\n")),
+        ["4 new alerts on esx-02, the last: ERROR five"]
     );
 }
 
@@ -804,16 +836,24 @@ fn removing_it_leaves_nothing_behind() {
 
 #[test]
 fn a_version_that_throws_loops_or_allocates_is_stopped_with_its_name_and_the_rest_carries_on() {
-    for (what, code, says) in [
-        ("throws", "error(\"boom\")", "init.lua:"),
-        ("loops", "while true do end", "ms"),
+    // Each case meets only the limit it's about: the loop the app's own call budget, the rest a
+    // minute a call, so the one that allocates runs into the memory limit however slowly a busy
+    // machine runs it (T165: with 250 ms it ran out of time first, 13 runs in 800).
+    let quick_calls = Limits {
+        call: Limits::default().call,
+        ..common::unhurried()
+    };
+    for (what, code, says, limits) in [
+        ("throws", "error(\"boom\")", "init.lua:", common::unhurried()),
+        ("loops", "while true do end", "ms", quick_calls),
         (
             "allocates",
             "local t = {} for i = 1, 1e9 do t[i] = string.rep(\"x\", 1000000) .. i end",
             "used too much memory",
+            common::unhurried(),
         ),
     ] {
-        let w = World::new(&format!("isolation-{what}"));
+        let w = World::with_limits(&format!("isolation-{what}"), limits);
         w.repo.edit(
             "init.lua",
             "  roster.on(\"terminal_output\", function(e)\n",

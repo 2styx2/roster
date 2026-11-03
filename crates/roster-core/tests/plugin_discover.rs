@@ -179,7 +179,7 @@ fn perms(names: &[&str]) -> Vec<Permission> {
 
 /// discover, installed from roster's repo as a user installs it, in a host with the stand-in serve.
 struct World {
-    host: PluginHost,
+    host: Arc<PluginHost>,
     serve: Arc<FakeServe>,
     dir: PathBuf,
     config: Value,
@@ -222,7 +222,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(FakeServe::default());
-        let host = PluginHost::new(serve.clone(), Limits::default());
+        let host = Arc::new(PluginHost::new(serve.clone(), Limits::default()));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -259,7 +259,7 @@ impl World {
         let started = Instant::now();
         while self.host.requests(NAME) > 0 {
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < common::CEILING,
                 "roster serve's answers didn't come"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -459,11 +459,12 @@ fn behind_a_busy_roster_serve_the_question_comes_when_it_answers() {
     let w = World::new("busy", json!({}));
     let loaded = w.load(ALL);
     let publish = w.serve.busy.lock().unwrap();
-    let started = Instant::now();
     let words = json!({ "args": "10.0.0.0/24", "words": ["10.0.0.0/24"] });
-    let asked = w.host.call(NAME, command(&loaded.ops), words.clone());
+    // It answers while serve is still busy (`publish` is held until below): a call that waited
+    // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
+    let (host, run, args) = (Arc::clone(&w.host), command(&loaded.ops), words.clone());
+    let asked = common::within_ceiling("the scan command's answer", move || host.call(NAME, run, args));
     ok(&asked);
-    assert!(started.elapsed() < Duration::from_millis(500));
     assert!(!has(&asked.ops, "confirm"));
     let again = w.host.call(NAME, command(&loaded.ops), words);
     ok(&again);
