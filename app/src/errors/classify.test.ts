@@ -124,3 +124,24 @@ describe("terminalTail", () => {
     expect(terminalTail("Password: \rroster askpass: [37] spent")).toBe("roster askpass: [37] spent");
   });
 });
+
+describe("terminalTail drops what's left of an escape sequence cut off at its start (#295 review)", () => {
+  it("drops the body of an OSC whose start was cut off, up to its BEL or ST", () => {
+    expect(terminalTail("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\x07Timeout, server 10.0.0.6 not responding.")).toBe(
+      "Timeout, server 10.0.0.6 not responding.",
+    );
+    expect(terminalTail("QUJDREVG\x1b\\done")).toBe("done");
+  });
+
+  it("keeps the text before a whole OSC", () => {
+    expect(terminalTail("before\x1b]0;title\x07after")).toBe("beforeafter");
+  });
+
+  it("drops a long base64-looking run", () => {
+    const run = "QUJD".repeat(40);
+    expect(terminalTail(`x ${run} y`)).not.toContain(run.slice(0, 64));
+    // A host key fingerprint (43 characters) stays.
+    const fp = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+    expect(terminalTail(fp)).toBe(fp);
+  });
+});

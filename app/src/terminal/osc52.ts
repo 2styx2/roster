@@ -32,7 +32,8 @@ export function osc52Text(body: string): string | null {
   const selection = body.slice(0, semi);
   const data = body.slice(semi + 1);
   if (!SELECTION.test(selection) || data === "" || data === "?") return null;
-  if (data.length > MAX_ENCODED + 2 || !BASE64.test(data) || data.length % 4 === 1) return null;
+  // Too long to be within the cap: never decoded.
+  if (data.length > MAX_ENCODED || data.length % 4 === 1 || !BASE64.test(data)) return null;
   let binary: string;
   try {
     binary = atob(data);
@@ -40,7 +41,8 @@ export function osc52Text(body: string): string | null {
     return null;
   }
   if (binary.length > OSC52_MAX_BYTES) return null;
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   try {
     return utf8.decode(bytes) || null;
   } catch {
@@ -68,17 +70,160 @@ export function wireOsc52(t: Pick<Terminal, "parser">, deps: Osc52Deps): () => v
   return () => handler.dispose();
 }
 
-/** Writes a Session's output to `t`, keeping, for each write, whether it was held while the tab
- * was hidden (hold.ts): xterm parses writes in order and calls each one's callback once it's
- * parsed, so the oldest write not yet called back is the one being parsed. `onScreen` is false
- * while that's held output. */
-export function screenWriter(t: Pick<Terminal, "write">): { write(data: Uint8Array, held: boolean): void; onScreen(): boolean } {
-  const pending: boolean[] = [];
+/** Drops, from a Session's output bytes, every OSC 52 that starts in output held while its tab
+ * was hidden (hold.ts), up to its end, wherever that comes: on screen or not is decided where a
+ * sequence starts, not where xterm.js calls the handler, at its end (#295 review). OSC 52 draws
+ * nothing, so the screen is as it would be (decision Q37 holds). xterm ends an OSC at BEL, at
+ * C1 ST (U+009C) and at any ESC (with `\`, that's ST; else it starts the next sequence); CAN
+ * and SUB abort it. Output that wasn't held passes untouched, except to finish one begun held. */
+export class HeldOsc52Filter {
+  private state: "text" | "start" | "drop" | "dropEsc" | "dropC2" = "text";
+  /** The bytes of a possible start read so far, and how many of `ESC ] 5 2 ;` they make. */
+  private pending: number[] = [];
+  private matched = 0;
+
+  filter(data: Uint8Array, held: boolean): Uint8Array {
+    if (!held && this.state === "text") return data;
+    const out: number[] = [];
+    let i = 0;
+    for (; i < data.length; i++) {
+      const b = data[i] as number;
+      if (this.state === "text") {
+        // Output that wasn't held goes as it is from here.
+        if (!held) break;
+        if (b === 0x1b || b === 0xc2) {
+          this.state = "start";
+          this.pending = [b];
+          this.matched = b === 0x1b ? 1 : 0;
+        } else {
+          out.push(b);
+        }
+      } else if (this.state === "start") {
+        if (this.matched === 0) {
+          // After 0xC2: 0x9D is U+009D, the C1 form of `ESC ]`.
+          if (b === 0x9d) {
+            this.pending.push(b);
+            this.matched = 2;
+            continue;
+          }
+        } else if (b === OSC52_BYTES[this.matched]) {
+          this.pending.push(b);
+          if (++this.matched === OSC52_BYTES.length) {
+            this.state = "drop";
+            this.pending = [];
+          }
+          continue;
+        }
+        // Not OSC 52: what was held back goes out as it came, and this byte is read again.
+        out.push(...this.pending);
+        this.pending = [];
+        this.state = "text";
+        i--;
+      } else if (this.state === "drop") {
+        if (b === 0x07 || b === 0x18 || b === 0x1a) this.state = "text";
+        else if (b === 0x1b) this.state = "dropEsc";
+        else if (b === 0xc2) this.state = "dropC2";
+      } else if (this.state === "dropEsc") {
+        this.state = "text";
+        if (b !== 0x5c) {
+          // That ESC ended it and starts what comes next: keep both.
+          out.push(0x1b);
+          i--;
+        }
+      } else {
+        // dropC2: U+009C (C2 9C) is ST.
+        this.state = b === 0x9c ? "text" : "drop";
+        if (this.state === "drop") i--;
+      }
+    }
+    if (out.length === 0 && i >= data.length) return new Uint8Array(0);
+    const rest = data.subarray(i);
+    if (out.length === 0) return rest;
+    const all = new Uint8Array(out.length + rest.length);
+    all.set(out);
+    all.set(rest, out.length);
+    return all;
+  }
+}
+
+const OSC52_BYTES = [0x1b, 0x5d, 0x35, 0x32, 0x3b];
+
+/** Writes a Session's output to `t`, from the output gate (hold.ts: `held` is output that came
+ * while the tab was hidden), with every OSC 52 begun in held output taken out (HeldOsc52Filter).
+ * Nothing is kept per write, so a write that throws leaves nothing behind. */
+export function screenWriter(t: Pick<Terminal, "write">): { write(data: Uint8Array, held: boolean): void } {
+  const filter = new HeldOsc52Filter();
   return {
     write(data, held) {
-      pending.push(held);
-      t.write(data, () => void pending.shift());
+      const bytes = filter.filter(data, held);
+      if (bytes.length > 0) t.write(bytes);
     },
-    onScreen: () => pending[0] !== true,
   };
+}
+
+const OSC52_START = "\x1b]52;";
+
+/** Takes OSC 52 sequences out of a Session's decoded output as it streams, for what roster keeps
+ * of it to explain a failure (tabs.ts `preAuth` and `late`, read by terminalTail into a Problem,
+ * which reaches the message line, `:messages` and the State). Copied text must never get there,
+ * so it goes at capture, a sequence split across chunks too, and never by a regex at read time
+ * over a tail that may have cut the sequence's start off (#295 review). The C1 forms (U+009D
+ * for `ESC ]`, U+009C for ST) count too, as xterm.js parses them. */
+export class Osc52Stripper {
+  private state: "text" | "start" | "drop" | "dropEsc" = "text";
+  /** What's been read of a possible start, as it came, and as `ESC ]` forms it. */
+  private raw = "";
+  private norm = "";
+
+  strip(text: string): string {
+    if (this.state === "text" && !text.includes("\x1b") && !text.includes("\x9d")) return text;
+    let out = "";
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i] as string;
+      switch (this.state) {
+        case "text":
+          if (ch === "\x1b" || ch === "\x9d") {
+            this.state = "start";
+            this.raw = ch;
+            this.norm = ch === "\x9d" ? "\x1b]" : ch;
+          } else {
+            out += ch;
+          }
+          break;
+        case "start": {
+          const norm = this.norm + ch;
+          if (OSC52_START.startsWith(norm)) {
+            this.raw += ch;
+            this.norm = norm;
+            if (norm === OSC52_START) {
+              this.state = "drop";
+              this.raw = this.norm = "";
+            }
+          } else {
+            // Not OSC 52: what was held goes out as it came, and this character is read again.
+            out += this.raw;
+            this.raw = this.norm = "";
+            this.state = "text";
+            i--;
+          }
+          break;
+        }
+        case "drop":
+          if (ch === "\x07" || ch === "\x9c") this.state = "text";
+          else if (ch === "\x1b") this.state = "dropEsc";
+          break;
+        case "dropEsc":
+          // ST ends it; any other ESC cuts it off and starts a sequence of its own.
+          if (ch === "\\") {
+            this.state = "text";
+          } else {
+            this.state = "start";
+            this.raw = this.norm = "\x1b";
+            i--;
+          }
+          break;
+      }
+    }
+    return out;
+  }
 }

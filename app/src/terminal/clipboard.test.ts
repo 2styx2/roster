@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { resolveKeymap } from "../keymap";
 import { memoryPlatform } from "../platform/memory";
-import { copyIfSelected, copySelection, pasteClipboard, rightClick, type Selectable } from "./clipboard";
+import { copyIfSelected, copySelection, pasteClipboard, programHasMouse, rightClick, type Selectable } from "./clipboard";
 
 /** A terminal's selection and what it sends to the shell, without a screen. */
 function fakeTerm(selection = ""): Selectable & { sent: string[]; selection: string } {
@@ -171,5 +171,36 @@ describe("What a paste sends to the shell (xterm.js)", () => {
 
   it("wraps it in bracketed-paste marks when the shell asked for them, so it doesn't run line by line", async () => {
     expect(await sent("echo one\necho two\n", true)).toBe("\x1b[200~echo one\recho two\r\x1b[201~");
+  });
+});
+
+// #295 review: whose a right-click is, with xterm.js's own rule for the key that takes the mouse
+// back (shouldForceSelection: Shift, or Option on macOS when macOptionClickForcesSelection).
+describe("Whose right-click it is while a program has mouse reporting on", () => {
+  const click = (mods: { shiftKey?: boolean; altKey?: boolean; button?: number } = {}) => ({ shiftKey: false, altKey: false, button: 2, ...mods });
+  const win = { mac: false, macOptionClickForcesSelection: false };
+  const mac = { mac: true, macOptionClickForcesSelection: true };
+
+  it("no mouse reporting: never the program's", () => {
+    expect(programHasMouse(click(), "none", win)).toBe(false);
+  });
+
+  it.each(["x10", "vt200", "drag", "any"] as const)("mouse reporting %s: the program's, but not with Shift (Windows, Linux)", (mode) => {
+    expect(programHasMouse(click(), mode, win)).toBe(true);
+    expect(programHasMouse(click({ shiftKey: true }), mode, win)).toBe(false);
+    expect(programHasMouse(click({ altKey: true }), mode, win)).toBe(true);
+  });
+
+  it("macOS: Option takes it back when macOptionClickForcesSelection is on; Shift doesn't", () => {
+    expect(programHasMouse(click(), "vt200", mac)).toBe(true);
+    expect(programHasMouse(click({ altKey: true }), "vt200", mac)).toBe(false);
+    expect(programHasMouse(click({ shiftKey: true }), "vt200", mac)).toBe(true);
+    // xterm's default: nothing takes it back on macOS.
+    expect(programHasMouse(click({ altKey: true }), "vt200", { mac: true, macOptionClickForcesSelection: false })).toBe(true);
+  });
+
+  it("a context menu from the keyboard (the Menu key, Shift+F10) is never the program's: it pastes as before", () => {
+    expect(programHasMouse(click({ button: 0 }), "vt200", win)).toBe(false);
+    expect(programHasMouse(click({ button: 0 }), "vt200", mac)).toBe(false);
   });
 });

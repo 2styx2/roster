@@ -5,7 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { memoryPlatform } from "../platform/memory";
 import { CommittedLines } from "../plugins/committed";
 import { holdWhileHidden } from "./hold";
-import { OSC52_MAX_BYTES, screenWriter, wireOsc52 } from "./osc52";
+import { OSC52_MAX_BYTES, Osc52Stripper, screenWriter, wireOsc52 } from "./osc52";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 const osc = (body: string, end = "\x07") => `\x1b]52;${body}${end}`;
@@ -88,6 +88,13 @@ describe("OSC 52: a program sets the clipboard", () => {
     expect(s.writes.map((w) => w.length)).toEqual([OSC52_MAX_BYTES]);
   });
 
+  it("ignores base64 longer than the cap can encode, and text just over it that encodes as long as the cap", async () => {
+    const s = setup();
+    await s.write(osc(`c;${"QUJD".repeat(Math.ceil(OSC52_MAX_BYTES / 3) + 1)}`));
+    await s.write(osc(`c;${b64("a".repeat(OSC52_MAX_BYTES + 2))}`));
+    expect(s.writes).toEqual([]);
+  });
+
   it("ignores a Session that isn't on screen (a background tab)", async () => {
     const s = setup({ onScreen: false });
     await s.write(osc(`c;${b64("rm -rf ~")}`));
@@ -162,7 +169,7 @@ describe("OSC 52 from a background tab, through the output gate", () => {
     const clipboard = { readText: async () => "", writeText: async (text: string) => void writes.push(text) };
     const t = new Terminal({ allowProposedApi: true });
     const screen = screenWriter(t);
-    wireOsc52(t, { enabled: () => true, onScreen: screen.onScreen, clipboard: () => clipboard });
+    wireOsc52(t, { enabled: () => true, onScreen: () => true, clipboard: () => clipboard });
     const gate = holdWhileHidden(screen.write);
     const settled = () => new Promise<void>((done) => t.write("", done));
     return { writes, gate, settled };
@@ -188,6 +195,38 @@ describe("OSC 52 from a background tab, through the output gate", () => {
     expect(s.writes).toEqual([]);
   });
 
+  // #295 review: on screen or not is decided where the sequence starts, not where it ends.
+  it("a sequence that started while hidden and ends once shown never sets the clipboard", async () => {
+    const s = tab();
+    const seq = osc(`c;${b64("started in the background")}`);
+    for (const cut of [2, 4, 7, 12, seq.length - 1]) {
+      s.gate.hide();
+      s.gate.write(enc(seq.slice(0, cut)));
+      s.gate.show();
+      s.gate.write(enc(seq.slice(cut)));
+      await s.settled();
+    }
+    expect(s.writes).toEqual([]);
+    s.gate.write(enc(osc(`c;${b64("after")}`)));
+    await s.settled();
+    expect(s.writes).toEqual(["after"]);
+  });
+
+  it("another sequence split the same way still works (a title), and the screen is as without the gate", async () => {
+    const t = new Terminal({ allowProposedApi: true });
+    const titles: string[] = [];
+    t.onTitleChange((x) => titles.push(x));
+    const screen = screenWriter(t);
+    const gate = holdWhileHidden(screen.write);
+    gate.hide();
+    gate.write(enc("ab\x1b]"));
+    gate.show();
+    gate.write(enc("0;esx-02\x07cd\x1b]52;c;QUJD\x07ef"));
+    await new Promise<void>((done) => t.write("", done));
+    expect(titles).toEqual(["esx-02"]);
+    expect(t.buffer.active.getLine(0)?.translateToString(true)).toBe("abcdef");
+  });
+
   it("what it sends once it's on screen does, after the held output", async () => {
     const s = tab();
     s.gate.hide();
@@ -196,5 +235,56 @@ describe("OSC 52 from a background tab, through the output gate", () => {
     s.gate.write(enc(osc(`c;${b64("live")}`)));
     await s.settled();
     expect(s.writes).toEqual(["live"]);
+  });
+});
+
+describe("Osc52Stripper: copied text out of what roster keeps to explain a failure", () => {
+  const run = (...chunks: string[]) => {
+    const s = new Osc52Stripper();
+    return chunks.map((c) => s.strip(c)).join("");
+  };
+
+  it("takes a whole sequence out, ended by BEL, ST or C1 ST, and keeps what's around it", () => {
+    expect(run(`a\x1b]52;c;${b64("x")}\x07b`)).toBe("ab");
+    expect(run(`a\x1b]52;;${b64("x")}\x1b\\b`)).toBe("ab");
+    expect(run(`a\x9d52;c;${b64("x")}\x9cb`)).toBe("ab");
+  });
+
+  it("follows one split anywhere across chunks, its start too", () => {
+    const seq = `one\x1b]52;c;${b64("secret text")}\x07two`;
+    for (let cut = 1; cut < seq.length; cut++) expect(run(seq.slice(0, cut), seq.slice(cut))).toBe("onetwo");
+  });
+
+  it("leaves every other sequence as it came", () => {
+    const other = "\x1b]0;title\x07\x1b[31mred\x1b[0m\x1b]5;x\x07\x1b]521\x07";
+    expect(run(other)).toBe(other);
+    expect(run(other.slice(0, 3), other.slice(3))).toBe(other);
+  });
+
+  it("an ESC inside cuts the sequence off, and what follows it is kept", () => {
+    expect(run(`\x1b]52;c;QUJD\x1b[31mred`)).toBe("\x1b[31mred");
+  });
+});
+
+describe("screenWriter when xterm refuses a write (#295 review)", () => {
+  it("a write that throws leaves nothing behind: what follows is written, OSC 52 still filtered", () => {
+    const got: string[] = [];
+    let fail = true;
+    const t = {
+      write(data: string | Uint8Array) {
+        if (fail) {
+          fail = false;
+          throw new Error("write data discarded, use flow control to avoid losing data");
+        }
+        got.push(new TextDecoder().decode(data as Uint8Array));
+      },
+    };
+    const screen = screenWriter(t);
+    const enc = (x: string) => new TextEncoder().encode(x);
+    expect(() => screen.write(enc("lost"), false)).toThrow();
+    screen.write(enc("next"), false);
+    screen.write(enc(`held\x1b]52;c;${b64("x")}\x07`), true);
+    screen.write(enc("live"), false);
+    expect(got).toEqual(["next", "held", "live"]);
   });
 });

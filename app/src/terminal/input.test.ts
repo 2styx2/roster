@@ -303,6 +303,34 @@ describe("A paste can't carry control characters to the program", () => {
   });
 });
 
+// #295 review: the WebView's own copy (Cmd+C, Edit > Copy) goes through xterm's copy listener,
+// which copies the selection as it is; roster's trims it as every copy route does.
+describe("The WebView's own copy event", () => {
+  function copyEvent(target: HTMLElement) {
+    const data: Record<string, string> = {};
+    const e = new Event("copy", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+    e.clipboardData = { setData: (type: string, value: string) => void (data[type] = value), getData: (type: string) => data[type] ?? "" };
+    target.dispatchEvent(e);
+    return { e, data };
+  }
+
+  it("copies the selection without the spaces at its lines' ends", async () => {
+    const { t, textarea } = open();
+    await new Promise<void>((done) => t.write("ab      \r\ncd   \r\n", done));
+    t.selectLines(0, 1);
+    const { e, data } = copyEvent(textarea);
+    expect(e.defaultPrevented).toBe(true);
+    expect(data["text/plain"]?.split(/\r?\n/)).toEqual(["ab", "cd"]);
+  });
+
+  it("with nothing selected leaves the event alone", () => {
+    const { textarea } = open();
+    const { e, data } = copyEvent(textarea);
+    expect(e.defaultPrevented).toBe(false);
+    expect(data).toEqual({});
+  });
+});
+
 describe("AltGr (Ctrl+Alt on Windows) types its character", () => {
   it("AltGr+A (ą on a Polish layout) isn't taken for a Ctrl+Alt+a binding by its physical key", async () => {
     const { searches, textarea } = open({ overrides: { terminal: { "Ctrl+Alt+a": "terminal.search" } } });

@@ -75,3 +75,18 @@ export async function rightClick(term: Selectable, clipboard: Clipboard, { progr
   if (programHasMouse) return;
   await pasteClipboard(term, clipboard);
 }
+
+/** Whether a right-click is the program's: it has mouse reporting on, the click came from a
+ * pointer (a context menu from the Menu key or Shift+F10 pastes as before), and the key that
+ * takes the mouse back isn't held. That key is xterm.js's own (`shouldForceSelection`): Shift,
+ * or on macOS Option when `macOptionClickForcesSelection` is on, as xterm then neither reports
+ * the click nor drags a program's selection. As Windows Terminal (`_canSendVTMouseInput`). */
+export function programHasMouse(
+  e: { shiftKey: boolean; altKey: boolean; button: number },
+  mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any",
+  { mac, macOptionClickForcesSelection }: { mac: boolean; macOptionClickForcesSelection: boolean },
+): boolean {
+  if (mouseTrackingMode === "none" || e.button !== 2) return false;
+  const forced = mac ? e.altKey && macOptionClickForcesSelection : e.shiftKey;
+  return !forced;
+}

@@ -339,6 +339,54 @@ describe("Tabs", () => {
       expect(problem?.details).toContain("Timeout, server 10.0.0.6 not responding.");
     });
 
+    // #295 review: copied text (OSC 52) never reaches a Problem, so never the message line,
+    // :messages or the State, even when the kept tail cuts the sequence in two.
+    const copiedB64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+    const bigCopy = "pa55w0rd-copied ".repeat(400); // > 4 KB once encoded
+
+    it.each([
+      ["in one chunk", 1],
+      ["split across many chunks", 7],
+    ])("a long OSC 52 (%s) then an ssh drop leaves none of the copied text in the Problem", async (_, parts) => {
+      const { backend, session } = scriptedSessions();
+      const c = clock();
+      const tabs = new Tabs(backend, { now: c.now });
+      const host = reviewed[0]!;
+      tabs.open(host);
+      await settle();
+      session(host).print("admin@web-1:~$ ");
+      c.advance(600_000);
+      const seq = `\x1b]52;c;${copiedB64(bigCopy)}\x07`;
+      const step = Math.ceil(seq.length / parts);
+      for (let i = 0; i < seq.length; i += step) session(host).print(seq.slice(i, i + step));
+      session(host).print("Timeout, server 10.0.0.6 not responding.\r\n");
+      session(host).exit(255);
+      await settle();
+      const problem = problemOf(tabs.snapshot().tabs[0]?.status);
+      expect(problem?.code).toBe("dropped");
+      const all = JSON.stringify(problem);
+      expect(all).not.toContain(copiedB64(bigCopy).slice(-40, -4));
+      expect(all).not.toContain(copiedB64(bigCopy).slice(0, 40));
+      expect(all).not.toContain("pa55w0rd");
+      expect(problem?.details).toContain("Timeout, server 10.0.0.6 not responding.");
+    });
+
+    it("an OSC 52 inside the pre-auth window never reaches its Problem either", async () => {
+      const { backend, session } = scriptedSessions();
+      const c = clock();
+      const tabs = new Tabs(backend, { now: c.now });
+      const host = reviewed[0]!;
+      tabs.open(host);
+      await settle();
+      session(host).print(`\x1b]52;c;${copiedB64("pa55w0rd-early")}\x07`);
+      session(host).print(CHANGED_KEY);
+      session(host).exit(255);
+      await settle();
+      const problem = problemOf(tabs.snapshot().tabs[0]?.status);
+      expect(problem?.code).toBe(43);
+      expect(JSON.stringify(problem)).not.toContain(copiedB64("pa55w0rd-early"));
+    });
+
     it("a normal exit after the window is no Problem", async () => {
       const { backend, session } = scriptedSessions();
       const c = clock();

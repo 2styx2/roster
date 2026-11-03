@@ -67,11 +67,22 @@ const CUP = new RegExp(`${ESC}\\[\\d*(?:;\\d*)?[Hf]`, "g");
 /** Every other CSI sequence, and two-character escapes. */
 const CSI = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]|${ESC}[@-Z\\\\-_]|${ESC}[()][0-9A-Za-z]`, "g");
 
+/** What's left of an OSC whose start the kept tail cut off: its body, up to the first BEL or ST,
+ * with no `ESC ]` before it. And one cut off at the end: from its `ESC ]` on. */
+const CUT_OSC_START = new RegExp(`^[^${ESC}\\x07]*(?:\\x07|${ESC}\\\\)`);
+const CUT_OSC_END = new RegExp(`${ESC}\\][^\\x07${ESC}]*$`);
+/** A long base64-looking run (an encoded payload, a copied blob): never worth showing in a
+ * Problem, and it may be copied text (#295 review). A host key fingerprint (43) is shorter. */
+const BASE64_RUN = /[A-Za-z0-9+/]{64,}={0,2}/g;
+
 /** The last `lines` non-empty lines of terminal output as plain text: escape sequences gone, a
  * carriage return keeping what was written after it. */
 export function terminalTail(output: string, lines = 30): string {
   const plain = output
     .replace(OSC, "")
+    .replace(CUT_OSC_START, "")
+    .replace(CUT_OSC_END, "")
+    .replace(BASE64_RUN, "")
     .replace(CUP, "\n")
     .replace(CSI, "")
     // eslint-disable-next-line no-control-regex -- stripping the remaining control characters

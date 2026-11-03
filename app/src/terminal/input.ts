@@ -5,7 +5,7 @@
 import type { Terminal } from "@xterm/xterm";
 import { chordOf, type Action, type KeyLike } from "../keymap";
 import type { Clipboard } from "../platform/types";
-import { copyIfSelected, copySelection, pasteClipboard, pasteText } from "./clipboard";
+import { copiedText, copyIfSelected, copySelection, pasteClipboard, pasteText } from "./clipboard";
 import { isLeaderKey } from "./keys";
 import type { ZoomAction } from "./options";
 
@@ -99,6 +99,16 @@ export function wireInput(t: Terminal, host: HTMLElement, deps: InputDeps): () =
   };
   host.addEventListener("paste", onPaste, true);
 
+  // The WebView's own copy (Cmd+C, Edit > Copy): xterm's listener would copy the selection as it
+  // is; here it's trimmed as every copy is (clipboard.ts copiedText).
+  const onCopy = (e: ClipboardEvent) => {
+    if (!t.hasSelection() || !e.clipboardData) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.clipboardData.setData("text/plain", copiedText(t.getSelection()));
+  };
+  host.addEventListener("copy", onCopy, true);
+
   // The Leader never reaches the shell (Ctrl+Space would send NUL); App's keymap acts on it.
   // The keymap's terminal chords don't either; they act on keydown only.
   t.attachCustomKeyEventHandler((ev) => {
@@ -158,6 +168,7 @@ export function wireInput(t: Terminal, host: HTMLElement, deps: InputDeps): () =
     settle();
     data.dispose();
     host.removeEventListener("paste", onPaste, true);
+    host.removeEventListener("copy", onCopy, true);
     t.attachCustomKeyEventHandler(() => true);
   };
 }
