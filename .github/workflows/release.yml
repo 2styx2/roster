@@ -205,8 +205,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           p="roster-app-$VERSION-${{ matrix.name }}"
+          mkdir -p unpacked/deb unpacked/appimage
           dpkg-deb -x "out/$p.deb" unpacked/deb
-          mkdir -p unpacked/appimage && chmod +x "out/$p.AppImage"
+          chmod +x "out/$p.AppImage"
           (cd unpacked/appimage && "../../out/$p.AppImage" --appimage-extract > /dev/null)
           python -I scripts/check-release-notices.py unpacked/deb unpacked/appimage
       - name: Installers carry LICENSE and THIRD-PARTY-NOTICES (macOS)
