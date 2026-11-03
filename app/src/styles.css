@@ -494,8 +494,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   color: var(--text); border-radius: var(--radius-sm); cursor: default; white-space: nowrap;
 }
 .row-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.row-menu-keys { flex: none; margin-left: auto; }
-.sidebar .row-menu-item:focus, .sidebar .row-menu-item:focus-visible {
+.row-menu-keys { flex: none; } /* at the end: the label takes the free space */
+/* :focus covers :focus-visible: a menu item has focus only while it's the active one. */
+.sidebar .row-menu-item:focus {
   outline: none; background: var(--raised); box-shadow: inset 0 0 0 1px var(--raised-line);
 }
 .row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }

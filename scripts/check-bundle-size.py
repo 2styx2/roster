@@ -35,6 +35,10 @@ KB = 1000
 # hostMenu.ts, the `menu` command and keyboard.md's new Sidebar section, bundled for :help) took it from
 # dev's 2,489.4 raw / 729.7 gzipped (already at the budget) to 2,497.5 / 732.4. The app's own code and
 # the text :help reads, not a dependency, so the budgets follow it with room for the next small feature.
+# CSS measured 2026-11-03 (T173, #324): 84,467 bytes raw / 15,471 gzipped against 85 / 15.5 KB, so 29
+# bytes under the gzipped budget. T173 took two redundant declarations out of the Host row menu's rules
+# (T166) to get there from 84,522 / 15,485. Not raised: the next stylesheet change will go over, and its
+# pull request says why or makes room.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
     "js": {"raw": 2550, "gzip": 745},
