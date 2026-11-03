@@ -578,6 +578,11 @@ impl SessionManager {
         let writes = running.writes.load(Ordering::SeqCst);
         let (printed, checked) = {
             let shown = running.shown.lock().unwrap();
+            // A screen that lost track of the terminal never says where the prompt is (the last
+            // pass on #318), on any platform.
+            if let Some(diff) = shown.screen.lost_track() {
+                return Err(FillError::LostTrack { diff: Box::new(diff) });
+            }
             if !shown.screen.cursor_after(prompt) {
                 return Err(FillError::NotPrinted);
             }
@@ -822,6 +827,11 @@ pub enum FillError<E> {
     /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
     /// looked up or typed.
     NotPrinted,
+    /// The Session printed something the core's screen can't follow (a wide character, a mode
+    /// it doesn't model…), so it can't tell where the prompt is until a terminal reset (`reset`,
+    /// RIS; the last pass on #318). Nothing was looked up or typed. `diff` names what did it, for
+    /// the log only ([`FillError::log_line`]).
+    LostTrack { diff: Box<ScreenDiff> },
     /// A nested ssh's fill, but the Session's own shell's marks don't show that ssh still running:
     /// it ended, another command started, or the Session has no marks of its own (ticket 162).
     /// Nothing was looked up or typed.
@@ -850,6 +860,9 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
             FillError::NotPrinted => f.write_str(
                 "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
             ),
+            FillError::LostTrack { .. } => f.write_str(
+                "roster's screen lost track of this Session's terminal (it printed something roster can't follow), so roster didn't fill it; `reset` in the Session starts it over",
+            ),
             FillError::NotInHop => f.write_str(
                 "the Session's own shell doesn't show the ssh to that Host still running (it ended, or another command started), so roster didn't fill it",
             ),
@@ -868,6 +881,9 @@ impl<E> FillError<E> {
     /// screen, a line that isn't only sudo's prompt, or what the probe drew; and how many bytes
     /// were printed before the probe, never what they were.
     pub fn log_line(&self) -> Option<String> {
+        if let FillError::LostTrack { diff } = self {
+            return Some(capped(format!("prompt fill refused at the prompt check: {diff}")));
+        }
         if let FillError::Changed { before, diff } = self {
             // A count and what differs, never text (the review of #299, #3; ticket 155c).
             return Some(capped(format!(

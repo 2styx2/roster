@@ -1657,3 +1657,42 @@ fn a_refused_mask_says_what_was_drawn_for_the_log_only() {
         assert_eq!(err.log_line(), None);
     }
 }
+
+/// The last pass on #318: once the Session printed something the core's screen can't follow (a
+/// wide character, synchronized output), it doesn't say a prompt is at the cursor, on any
+/// platform, so the fill refuses before anything is looked up or typed, and the log says why.
+#[test]
+fn a_screen_that_lost_track_refuses_before_anything_is_looked_up() {
+    for (earlier, what) in [("\u{4e2d} ", "wide character"), ("\x1b[?2026h", "CSI[?2026h")] {
+        for rules in [false, true] {
+            let prompt = format!("{earlier}\r\n[sudo] password for ops: ");
+            let m = SessionManager::with_conpty_rules(rules);
+            let (id, rx) = open(&m, host_sh(&recording(&prompt, ":")));
+            shown(&rx, "ops: ");
+            let mut asked = false;
+            let err = m
+                .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+                    asked = true;
+                    secret()
+                })
+                .unwrap_err();
+            assert!(matches!(err, FillError::LostTrack { .. }), "{what} {rules}: {err:?}");
+            assert!(!asked, "{what} {rules}: the vault was asked");
+            let log = err.log_line().unwrap_or_default();
+            assert!(
+                log.contains(&format!("roster's screen lost track of the terminal at {what}")),
+                "{log}"
+            );
+            let FillError::LostTrack { diff } = err else {
+                unreachable!()
+            };
+            let refusal = format!(
+                "{:?}",
+                roster_core::backend::fill_refusal(FillError::LostTrack { diff })
+            );
+            assert!(refusal.contains("130"), "{refusal}");
+            assert_eq!(recorded(&m, id, &rx), "", "{what} {rules}: something was typed");
+            m.close(id).unwrap();
+        }
+    }
+}

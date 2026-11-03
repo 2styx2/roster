@@ -919,6 +919,12 @@ impl Screen {
         d
     }
 
+    /// What made the screen lose track of xterm.js's, for the log, if it has: then no prompt is
+    /// at its cursor (the last pass on #318).
+    pub(crate) fn lost_track(&self) -> Option<ScreenDiff> {
+        self.diverged.as_ref().map(|_| self.diff(&self.snapshot()))
+    }
+
     /// Whether the screen was resized since `shot`, even back to its size (the review of #299, #6).
     pub(crate) fn resized_since(&self, shot: &Snapshot) -> bool {
         self.resizes != shot.resizes
@@ -987,6 +993,9 @@ impl Screen {
     /// (ticket 155, decision Q151 (h)). The caller checks the prompt's line itself.
     pub(crate) fn mask_pending(&self, stars: usize) -> bool {
         let Some(w) = &self.mask else { return false };
+        if self.diverged.is_some() {
+            return false;
+        }
         let c = self.compare(&w.at);
         !w.other && w.stars <= stars && c.shape && c.others && self.row == w.at.row
     }
@@ -1046,6 +1055,9 @@ impl Screen {
     /// Whether the cursor's whole line, read as [`Screen::cursor_after`] reads it, is `text`
     /// and nothing else (ticket 154).
     pub(crate) fn line_is(&self, text: &str) -> bool {
+        if self.diverged.is_some() {
+            return false;
+        }
         let needle = squash(text.chars());
         let needle = needle.trim_matches(' ');
         !needle.is_empty() && squash(self.grid[self.row].iter().map(|c| c.char())).trim_matches(' ') == needle
@@ -1091,6 +1103,9 @@ impl Screen {
     /// whitespace as one space, trailing whitespace not counting) and nothing is drawn after the
     /// cursor on it: the cursor sits right after `text`, as at a prompt. An empty `text` never does.
     pub(crate) fn cursor_after(&self, text: &str) -> bool {
+        if self.diverged.is_some() {
+            return false;
+        }
         let needle = squash(text.chars());
         let needle = needle.trim_matches(' ');
         if needle.is_empty() {
@@ -1995,6 +2010,26 @@ mod tests {
         let s = screen(format!("\x1b]4;1;rgb:ff/00/00\x07{PROMPT}").as_bytes());
         let shot = s.snapshot();
         assert!(s.matches(&shot));
+    }
+
+    /// The last pass on #318: a screen that lost track never says the prompt is at the cursor,
+    /// nor that the probe's mask is pending; after a reset it does again.
+    #[test]
+    fn a_screen_that_lost_track_never_has_the_prompt_at_the_cursor() {
+        const PROMPT: &str = "[sudo] password for ops:";
+        for earlier in ["\u{4e2d} \r\n", "\x1b[?2026h"] {
+            let mut s = screen(format!("{earlier}{PROMPT} ").as_bytes());
+            assert!(!s.cursor_after(PROMPT), "{earlier:?}");
+            assert!(!s.line_is(PROMPT), "{earlier:?}");
+            s.watch_mask();
+            assert!(!s.mask_pending(1), "{earlier:?}");
+            s.stop_mask_watch();
+            s.feed(format!("\x1bc{PROMPT} ").as_bytes());
+            assert!(s.cursor_after(PROMPT), "{earlier:?}");
+            assert!(s.line_is(PROMPT), "{earlier:?}");
+            s.watch_mask();
+            assert!(s.mask_pending(1), "{earlier:?}");
+        }
     }
 
     /// The second review of #318 (#4): the prompt checks compare whole characters, not their

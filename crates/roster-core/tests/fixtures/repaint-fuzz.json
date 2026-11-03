@@ -40,7 +40,7 @@
     },
     {
       "after_hex": "1b5b3146c25b7375646f5d2a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -58,7 +58,7 @@
     },
     {
       "after_hex": "1b500761621b5c1b5b354b1b5d303b74071b28421b5b3120411b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -94,7 +94,7 @@
     },
     {
       "after_hex": "c080c29b323b3236481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -112,7 +112,7 @@
     },
     {
       "after_hex": "1b5b33383a323a313a323a333b313b33396d1b5b4a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -166,7 +166,7 @@
     },
     {
       "after_hex": "e4b81b5b304b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -220,7 +220,7 @@
     },
     {
       "after_hex": "1b5b393b32393b32396d1b5b3f313034396cc21b5d303b74071b5d343b313b7267623a66662f30302f3030071b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -250,7 +250,7 @@
     },
     {
       "after_hex": "1b5b33383b353b31303b313a323b306d1b5b31451b5b343a373b35383a353a346d1b5b314b1b5b3830431b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -274,7 +274,7 @@
     },
     {
       "after_hex": "c0801b5d343b313b7267623a66662f30302f3030071b5b334a1b5b3830651b5b31540a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -304,7 +304,7 @@
     },
     {
       "after_hex": "c0801b5d383b3b1b5c1b5f781b5c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -358,7 +358,7 @@
     },
     {
       "after_hex": "1b5b33383a323a3a313a323a336dff1b5b3830471b5b35451b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -442,13 +442,13 @@
     },
     {
       "after_hex": "c29b323b3236481b5b3f3541",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "801b5b4b1b5b421b5b31641b5b32343b3148081b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -508,7 +508,7 @@
     },
     {
       "after_hex": "801b5b304b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -538,13 +538,13 @@
     },
     {
       "after_hex": "1b5b323b3148ff1b5b3f3235681b28421b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b354b1b5b501b5b35393b366d1b5b3220711b5b32343b32346d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -556,7 +556,7 @@
     },
     {
       "after_hex": "1b5b731b5b3f313034396cc0801b5b334a081b5b32336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -580,7 +580,7 @@
     },
     {
       "after_hex": "1b5b323b3830481b5b4a1b28301b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -628,7 +628,7 @@
     },
     {
       "after_hex": "1b5b303a324b0a1b5b35356d1b5b731b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -640,7 +640,7 @@
     },
     {
       "after_hex": "0a096f70731b5b303a324b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -670,7 +670,7 @@
     },
     {
       "after_hex": "1b5b3162c080c29b323b323648201b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -718,7 +718,7 @@
     },
     {
       "after_hex": "1b5b4b1b5b304b1b5b32343b3830481b28301b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -748,13 +748,13 @@
     },
     {
       "after_hex": "1b5b3830641b5b4b1b5b314765cc811b5b314c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b371b5b31621b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -766,7 +766,7 @@
     },
     {
       "after_hex": "1b5b3f313034396c1b5b313a323b336d1b5b333b3830481b5b32343b3830481b5b33383b323b313b323b333b316d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -778,7 +778,7 @@
     },
     {
       "after_hex": "1b5b31401b5b32343b3830480d1b5b334b1b5b3120411b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -790,7 +790,7 @@
     },
     {
       "after_hex": "1b5b303a334a1b5b313b3132481b5d303b74071b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -814,7 +814,7 @@
     },
     {
       "after_hex": "1b5b303a324b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -838,7 +838,7 @@
     },
     {
       "after_hex": "1b5b39326d1b5b334a1b5b3b3b33383a323a3a313a323a336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -862,7 +862,7 @@
     },
     {
       "after_hex": "c29b323b3236481b5b4a1b5b33383a323a313a323a333b33383a323a3a313a323a333b366d1b5b3f3235681b5f781b5c1b5b354b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -874,7 +874,7 @@
     },
     {
       "after_hex": "1b5b33383b353b31303b393b33383b323b313b323b336dc21b5b31581b5b303a334a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -898,7 +898,7 @@
     },
     {
       "after_hex": "1b5b34343b33393b396dff",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -910,7 +910,7 @@
     },
     {
       "after_hex": "1b5b303a334a081b500761621b5c1b5b35471b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -928,7 +928,7 @@
     },
     {
       "after_hex": "1b5b303a334a1b5d303b74071b5b383b32346d1b5d343b313b7267623a66662f30302f3030071b5b304b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1006,7 +1006,7 @@
     },
     {
       "after_hex": "0a1b5b304a1b5b3f35411b5b343a376d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1024,7 +1024,7 @@
     },
     {
       "after_hex": "1b5b33383b323b313b323b333b35396d1b5b323b323648071b5b333b33383a323a313a323a336d1b5b3565e4b8ad1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1066,7 +1066,7 @@
     },
     {
       "after_hex": "081b5b33383b353b31306d1b5b334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1084,7 +1084,7 @@
     },
     {
       "after_hex": "1b5b34383b353b343b32393b32316de4b8071b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1102,7 +1102,7 @@
     },
     {
       "after_hex": "071b5b303a334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1114,7 +1114,7 @@
     },
     {
       "after_hex": "1b5b33383b353b31303b34383b353b346d1b5d383b3b1b5c091b5b303a334a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1156,7 +1156,7 @@
     },
     {
       "after_hex": "1b5b32313b35336de4b81b5b313b31481b5b35651b5b35336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1168,7 +1168,7 @@
     },
     {
       "after_hex": "1b5b304b1b5b35383a353a346d1b5b33383b353b31306d1b5b343a303b35356d1b5d383b3b1b5c1b5b303a334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1240,13 +1240,13 @@
     },
     {
       "after_hex": "1b371b5b73081b5b334a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b3830611b5b4b1b5b343a3b39326d1b5b303a324b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1270,7 +1270,7 @@
     },
     {
       "after_hex": "1b5b731b5b33383a323a313a323a336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1300,7 +1300,7 @@
     },
     {
       "after_hex": "081b28301b5b33396d1b283007",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1330,7 +1330,7 @@
     },
     {
       "after_hex": "1b5b3120411b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1360,13 +1360,13 @@
     },
     {
       "after_hex": "1b5b303a334a1b5b35641b5b334a1b5b393b32393b32396d1b5b344a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b303a324b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1402,13 +1402,13 @@
     },
     {
       "after_hex": "1b5b35421b5b441b5b343a303b363b306d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b751b5b3b32313b343a306d1b5b323b31481b5b334a1b5b3f3132681b5b3b35383a353a346d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1432,7 +1432,7 @@
     },
     {
       "after_hex": "1b5b34383b353b343b35383a353a343b356d201b5b34346d1b5b323b3830481b5b3f3541",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1462,7 +1462,7 @@
     },
     {
       "after_hex": "1b5b32343b383048240820201b5b303a324b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1528,7 +1528,7 @@
     },
     {
       "after_hex": "1b5b303a324b0d0d1b5b33396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1588,7 +1588,7 @@
     },
     {
       "after_hex": "1b5b334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1612,7 +1612,7 @@
     },
     {
       "after_hex": "1b5b31641b5d343b313b7267623a66662f30302f3030071b5b324b801b5b32343b33393b32346d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1624,7 +1624,7 @@
     },
     {
       "after_hex": "1b5b320d3b3236481b5b343a336d801b5b323b31481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1636,13 +1636,13 @@
     },
     {
       "after_hex": "1b5b3220711b5b363b34346d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b334a1b5b415b7375646f5d1b5b323b3148ff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1660,7 +1660,7 @@
     },
     {
       "after_hex": "1b5b303a324b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1690,7 +1690,7 @@
     },
     {
       "after_hex": "1b5b344a1b5d383b3b1b5c1b5b33383b323b313b323b333b366d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1738,13 +1738,13 @@
     },
     {
       "after_hex": "1b5b383066c0801b5b32343b31481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b333b383048ff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1810,7 +1810,7 @@
     },
     {
       "after_hex": "e4b81b5b32316d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1852,7 +1852,7 @@
     },
     {
       "after_hex": "1b4d1b5b320d3b3236481b5b3158c080",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1870,13 +1870,13 @@
     },
     {
       "after_hex": "1b5b751b5b3120411b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b323b3236481b5b303a324b1b5b333b31481b5b3143c0801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1924,7 +1924,7 @@
     },
     {
       "after_hex": "1b5b3f3235681b5b334a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -1972,7 +1972,7 @@
     },
     {
       "after_hex": "c080c2ff1b5b326d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2038,7 +2038,7 @@
     },
     {
       "after_hex": "1b5d303b74071b500761621b5c1b5b451b5b35393b33383b353b31303b30316d091b5b39323b33383a323a313a323a336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2062,7 +2062,7 @@
     },
     {
       "after_hex": "20201b5b334a1b37",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2074,7 +2074,7 @@
     },
     {
       "after_hex": "80201b5b44201b5b32373b33383a353a31306d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2086,7 +2086,7 @@
     },
     {
       "after_hex": "1b5b3f35411b5b33383b353b31303b33393b396d1b5b32343b3148c3831b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2134,7 +2134,7 @@
     },
     {
       "after_hex": "e4b81b5b313b3132482a1b5b3f323568781b5b35451b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2146,7 +2146,7 @@
     },
     {
       "after_hex": "1b5b334a801b5b35333b35356d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2176,13 +2176,13 @@
     },
     {
       "after_hex": "1b5b35333b353b356d1b5b3f3541ff1b5d303b74071b5f781b5c091b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "0a1b5b313b31481b5b304b1b5b32326d1b5b312041071b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2194,7 +2194,7 @@
     },
     {
       "after_hex": "0dc0801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2212,7 +2212,7 @@
     },
     {
       "after_hex": "1b5b363b396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2230,7 +2230,7 @@
     },
     {
       "after_hex": "0a1b5b303b32326d65cc811b5b33383a353a31303b343a333b6d1b500761621b5c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2278,19 +2278,19 @@
     },
     {
       "after_hex": "1b5b33323b323b346d1b5b33383b353b326de4b81b500761621b5c1b5b323b3148071b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "ff1b5b333b3830481b5b31401b5b38304508e4b81b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b33383a323a313a323a336d1b5b31501b5b343a3b353b34396d1b500761621b5c20201b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2362,13 +2362,13 @@
     },
     {
       "after_hex": "1b5b303a324b1b5b303a334a1b5b303a334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b35411b5b313a323b343a333b366d1b5b323b3830481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2416,7 +2416,7 @@
     },
     {
       "after_hex": "1b5b42c21b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2446,7 +2446,7 @@
     },
     {
       "after_hex": "1b5b4bff081b5b3830611b37",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2458,7 +2458,7 @@
     },
     {
       "after_hex": "801b5b3561",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2482,13 +2482,13 @@
     },
     {
       "after_hex": "c0801b5b33581b500761621b5c1b5b333b31481b5d383b3b1b5c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b401b5b303a324b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2530,7 +2530,7 @@
     },
     {
       "after_hex": "c21b5b334a1b5b33326d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2548,7 +2548,7 @@
     },
     {
       "after_hex": "1b5b32373b32393b343a6de4b80a5b7375646f5d1b5b4d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2566,7 +2566,7 @@
     },
     {
       "after_hex": "1b5b33383b323b313b323b333b35336d1b5b323b3236481b5b33383a323a3a313a323a333b33383a323a313a323a336d1b28421b5b334b1b5b4b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2602,7 +2602,7 @@
     },
     {
       "after_hex": "1b500761621b5cc21b5b343a303b32316d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2626,7 +2626,7 @@
     },
     {
       "after_hex": "e4b807",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2782,7 +2782,7 @@
     },
     {
       "after_hex": "1b5b35651b5b3340ff1b5b34343b35356d1b5d383b3b1b5c1b5b31441b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2794,7 +2794,7 @@
     },
     {
       "after_hex": "201b5b33383a323a313a323a333b35396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2812,7 +2812,7 @@
     },
     {
       "after_hex": "1b5b32343b31481b5b32396d801b5b471b5b731b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2824,7 +2824,7 @@
     },
     {
       "after_hex": "801b5f781b5c1b5b344a1b5b3162201b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2878,7 +2878,7 @@
     },
     {
       "after_hex": "1b5b32313b33383b323b313b323b333b356d1b5b3f32356c1b5b303a324b1b5f781b5c",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2890,7 +2890,7 @@
     },
     {
       "after_hex": "1b5d343b313b7267623a66662f30302f3030071b5b316d1b4465cc811b5b334b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2926,7 +2926,7 @@
     },
     {
       "after_hex": "1b5b334a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2944,13 +2944,13 @@
     },
     {
       "after_hex": "1b5d383b3b1b5c1b5b304a091b28301b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b344a1b28301b5b313b343a373b326d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -2962,7 +2962,7 @@
     },
     {
       "after_hex": "1b5b303a324b0dc21b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3046,7 +3046,7 @@
     },
     {
       "after_hex": "e4b81b5b31471b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3058,7 +3058,7 @@
     },
     {
       "after_hex": "1b5b35336de4b81b381b5b346d1b5b334b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3088,13 +3088,13 @@
     },
     {
       "after_hex": "1b5b34343b33383b353b326d1b441b5b3162e4b8e4b8adc0801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b37c0801b5b313b32396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3112,7 +3112,7 @@
     },
     {
       "after_hex": "c21b5b303a324b1b5b31621b5b32343b31481b5b31621b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3196,7 +3196,7 @@
     },
     {
       "after_hex": "1b5b33383a323a313a323a336d0a201b5b35383a353a346d1b5b3f3132681b5d343b313b7267623a66662f30302f3030071b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3214,13 +3214,13 @@
     },
     {
       "after_hex": "1b5b313a323b32326d1b371b5b334b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b334a1b5d303b7407",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3268,7 +3268,7 @@
     },
     {
       "after_hex": "1b5b31501b5d383b3b1b5c1b5b751b5b344a1b5b313b366d1b5b33383a323a313a323a333b386d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3280,7 +3280,7 @@
     },
     {
       "after_hex": "1b5b731b5b303a324b1b5b354b1b5b343a303b366d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3394,13 +3394,13 @@
     },
     {
       "after_hex": "1b5b33581b5b313b3132481b5b64c21b5b31461b5b30313b33383a323a3a313a323a333b35396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "ff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3442,13 +3442,13 @@
     },
     {
       "after_hex": "1b5b333b3148ff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "071b5b333b3148801b5b333b33396d1b5b35471b5b32373b32393b32346d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3520,13 +3520,13 @@
     },
     {
       "after_hex": "1b5d303b7407ff1b5b35383a353a346d1b500761621b5c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "071b5b334a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3598,7 +3598,7 @@
     },
     {
       "after_hex": "1b5f781b5c1b5b3f32356c1b5b31401b5b303a334a1b5b32393b35383a353a343b343a336d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3640,7 +3640,7 @@
     },
     {
       "after_hex": "801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3652,13 +3652,13 @@
     },
     {
       "after_hex": "1b5b334b1b5b32343b31481b5b35396dc21b5b401b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b32343b31481b5b6d0d801b5b313b3132481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3700,7 +3700,7 @@
     },
     {
       "after_hex": "1b5b35383a353a343b33383b353b31303b33383a323a313a323a336d081b5b4a1b5b751b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3712,7 +3712,7 @@
     },
     {
       "after_hex": "1b5b333b383b316d1b2830",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3748,7 +3748,7 @@
     },
     {
       "after_hex": "1b5b31621b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3778,7 +3778,7 @@
     },
     {
       "after_hex": "1b5b31451b5b4b0d1b5b31621b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3826,7 +3826,7 @@
     },
     {
       "after_hex": "1b5b32343b3148e4b81b500761621b5c1b5b31621b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3898,7 +3898,7 @@
     },
     {
       "after_hex": "c0801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -3994,13 +3994,13 @@
     },
     {
       "after_hex": "1b5b4aff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b323b31481b5b32326d1b5b35333b34346d805b7375646f5d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4066,7 +4066,7 @@
     },
     {
       "after_hex": "1b5b3830451b5b303a324b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4078,7 +4078,7 @@
     },
     {
       "after_hex": "091b5b33383b353b323b33323b39326d1b5b3f32356c1b5b303a334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4108,7 +4108,7 @@
     },
     {
       "after_hex": "ff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4126,7 +4126,7 @@
     },
     {
       "after_hex": "c21b5b601b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4144,7 +4144,7 @@
     },
     {
       "after_hex": "1b5b303a334a1b5b3220711b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4168,7 +4168,7 @@
     },
     {
       "after_hex": "1b5b383b356d1b5b303a324b1b5b4a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4228,7 +4228,7 @@
     },
     {
       "after_hex": "c080201b5b344a",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4264,7 +4264,7 @@
     },
     {
       "after_hex": "1b5b33383b353b323b39323b33383b353b326d1b5b31581b5b393b373b343a336d1b4d1b5b313a323b33326d1b5b353b32313b32336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4318,7 +4318,7 @@
     },
     {
       "after_hex": "1b5b3f313034396c1b5b73ff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4372,7 +4372,7 @@
     },
     {
       "after_hex": "1b5b33581b5b303a324b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4402,13 +4402,13 @@
     },
     {
       "after_hex": "1b5b39323b33383b353b31303b343a6d1b5b333b314865cc8120201b5b334d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "c0801b5b323b3236481b5b343a6d1b5b333b3830486f70731b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4444,7 +4444,7 @@
     },
     {
       "after_hex": "1b5b31611b5b313a326d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4480,7 +4480,7 @@
     },
     {
       "after_hex": "1b5b323b31481b5b35383a353a346d1b5b3b34393b32346d1b5b303a334a1b5b3830611b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4504,7 +4504,7 @@
     },
     {
       "after_hex": "1b5b323b3236481b5b32316d1b5b303a334a1b5b3150",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4516,7 +4516,7 @@
     },
     {
       "after_hex": "0aff1b5b303a334a1b5b32343b3830481b5b35396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4528,7 +4528,7 @@
     },
     {
       "after_hex": "801b5b343a376d1b5b75c21b5b3220711b5b30313b343a373b33396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4546,7 +4546,7 @@
     },
     {
       "after_hex": "1b5b4b091b28301b5b393b306d1b5b354b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4558,7 +4558,7 @@
     },
     {
       "after_hex": "1b5b33581b5b3f3541e4b81b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4570,7 +4570,7 @@
     },
     {
       "after_hex": "1b5b32333b33383b323b313b323b333b366d1b5b39326d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4624,13 +4624,13 @@
     },
     {
       "after_hex": "1b5b343a373b39323b326d1b5b3f313034396c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4642,7 +4642,7 @@
     },
     {
       "after_hex": "1b5b353b32343b39326d1b28301b5b333b33383a353a31306d1b5b323b343a373b343a306d1b5b376d1b5b334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4666,19 +4666,19 @@
     },
     {
       "after_hex": "1b441b3865cc81e4b8ad1b5b35393b34396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "0a1b5b376d1b5b303a334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "20201b5b3f313034396c1b5b3120411b5d343b313b7267623a66662f30302f3030071b5b35353b353b34396dc0801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4696,7 +4696,7 @@
     },
     {
       "after_hex": "1b5b304a1b5b4b1b5b3220711b45ff1b5b30313b343a3b346d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4768,7 +4768,7 @@
     },
     {
       "after_hex": "1b5b3120411b5b3120411b5b33581b28301b5d383b3b1b5c1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4846,7 +4846,7 @@
     },
     {
       "after_hex": "1b5b313a323b35383a353a343b33326d1b5b4a1b5b333b31481b5b396d1b5b334a091b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4864,7 +4864,7 @@
     },
     {
       "after_hex": "1b5b323b33393b32376de4b81b5b396d",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4894,7 +4894,7 @@
     },
     {
       "after_hex": "1b500761621b5cc21b5b3220712020ff1b5b3220711b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -4960,7 +4960,7 @@
     },
     {
       "after_hex": "1b5b326d1b5b304a1b5f781b5c1b451b5b303a334ac0801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5008,7 +5008,7 @@
     },
     {
       "after_hex": "1b5b651b5b401b5b303a334a1b5b32343b3830481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5020,13 +5020,13 @@
     },
     {
       "after_hex": "08e4b81b5b334b07",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5044,7 +5044,7 @@
     },
     {
       "after_hex": "1b5b31652a081b5b334a1b5b313b373b33326d1b5b731b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5062,7 +5062,7 @@
     },
     {
       "after_hex": "c21b5b751b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5086,7 +5086,7 @@
     },
     {
       "after_hex": "1b5b3120411b5b33323b30316d1b2830081b5b3f35411b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5116,7 +5116,7 @@
     },
     {
       "after_hex": "1b5b35411b5b3166c080241b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5146,13 +5146,13 @@
     },
     {
       "after_hex": "1b5b313b31324865cc811b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b334a1b371b5b33393b33383a353a31306d1b5b33581b5b323b31481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5188,7 +5188,7 @@
     },
     {
       "after_hex": "1b5b334b1b5b3830451b5b323b3236481b5b303a324b",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5278,7 +5278,7 @@
     },
     {
       "after_hex": "1b5b334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5368,19 +5368,19 @@
     },
     {
       "after_hex": "1b5b35383a353a346d1b5b334a1b5b32376d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "ff",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b73201b5b31621b5b501b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5410,7 +5410,7 @@
     },
     {
       "after_hex": "1b5b313a323b396d1b500761621b5c0a1b5b33383a323a3a313a323a336dff1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5440,7 +5440,7 @@
     },
     {
       "after_hex": "1b5b581b5b32323b35336d1b5b303a334a1b5b35336d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5500,7 +5500,7 @@
     },
     {
       "after_hex": "1b5b3220711b5b323b3236481b5b303a324b1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5518,25 +5518,25 @@
     },
     {
       "after_hex": "801b5b323b31481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b28301b5b39326d1b5b34396d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b343a303b343a336d1b441b451b5b35333b313a323b33326d1b5b31401b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "801b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5554,7 +5554,7 @@
     },
     {
       "after_hex": "1b5d343b313b7267623a66662f30302f3030071b5b303a334a1b5b6d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5620,7 +5620,7 @@
     },
     {
       "after_hex": "1b5b334a1b5b343a376d1b28421b5b343a373b396d1b5b333b3830481b5b35451b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5686,13 +5686,13 @@
     },
     {
       "after_hex": "c080",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b5b343a303b343a333b313a326d0a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5704,13 +5704,13 @@
     },
     {
       "after_hex": "1b5b3830641b5b383065c080091b5d343b313b7267623a66662f30302f303007081b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
     {
       "after_hex": "1b451b5b35383a353a343b33393b386d241b5b35441b5b3f35411b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5746,7 +5746,7 @@
     },
     {
       "after_hex": "1b5b334a1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5788,7 +5788,7 @@
     },
     {
       "after_hex": "081b5b353b343a3b33383b353b326dc21b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5800,7 +5800,7 @@
     },
     {
       "after_hex": "1b5d383b3b1b5c1b5b3358c21b5b30313b393b35356d1b5b354b1b5b323b3236481b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5824,7 +5824,7 @@
     },
     {
       "after_hex": "801b5b383047",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5866,7 +5866,7 @@
     },
     {
       "after_hex": "1b5b31411b451b5b363b33383b353b31303b336d081b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5962,7 +5962,7 @@
     },
     {
       "after_hex": "1b5b32336d1b5d343b313b7267623a66662f30302f3030071b381b5d383b3b1b5c1b5b366d1b5b30313b33383a353a31306d1b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
@@ -5974,7 +5974,7 @@
     },
     {
       "after_hex": "e4b81b5d383b3b1b5c1b5b334b1b5d303b74071b5b31501b5b6d1b5b323b323648",
-      "at_prompt": true,
+      "at_prompt": false,
       "diverged": true,
       "same": false
     },
