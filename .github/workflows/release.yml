@@ -4,7 +4,8 @@
 #                                the maintainer checks it and publishes it (docs/releasing.md)
 #   workflow_dispatch            the same builds, uploaded as workflow artifacts only: no Release, no tag
 #   pull_request touching this   the same builds, as a dry run, so a broken release pipeline shows up
-#   file or the version script   before a tag needs it (docs.yml builds the docs PDF on every PR)
+#   file, its scripts or the     before a tag needs it (docs.yml builds the docs PDF on every PR)
+#   bundle config
 #
 # One version for everything (scripts/bump-version.sh); a tag whose version differs from the files fails first.
 # No code signing yet: Windows SmartScreen and macOS Gatekeeper warn (docs/releasing.md says how to add it).
@@ -20,6 +21,7 @@ on:
       - scripts/bump-version.sh
       - scripts/news_section.py
       - scripts/check-release-notices.py
+      - app/src-tauri/tauri.conf.json
 
 concurrency:
   group: release-${{ github.ref }}
@@ -51,6 +53,8 @@ jobs:
           fi
           # A tag's Release notes start with its docs/news.md section: fail now, not after the builds.
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then python3 -I scripts/news_section.py "$v" > /dev/null; fi
+          # Every installer carries LICENSE and THIRD-PARTY-NOTICES (bundle.resources): fail before the builds.
+          python3 -I scripts/check-release-notices.py --config app/src-tauri/tauri.conf.json
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Version $v" >> "$GITHUB_STEP_SUMMARY"
 
@@ -186,6 +190,35 @@ jobs:
         run: |
           shopt -s nullglob
           python -I scripts/check-release-notices.py out/*.zip out/*.tar.gz
+      # The installers carry both too (bundle.resources in tauri.conf.json): unpack each and look.
+      - name: Installers carry LICENSE and THIRD-PARTY-NOTICES (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = "roster-app-$env:VERSION-${{ matrix.name }}"
+          7z x -y -ounpacked/nsis "out/$p-setup.exe" | Out-Null
+          if ($LASTEXITCODE) { throw "7z couldn't unpack $p-setup.exe" }
+          $msi = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$PWD\out\$p.msi`" /qn TARGETDIR=`"$PWD\unpacked\msi`""
+          if ($msi.ExitCode) { throw "msiexec /a $p.msi failed: $($msi.ExitCode)" }
+          python -I scripts/check-release-notices.py unpacked/nsis unpacked/msi
+      - name: Installers carry LICENSE and THIRD-PARTY-NOTICES (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          p="roster-app-$VERSION-${{ matrix.name }}"
+          dpkg-deb -x "out/$p.deb" unpacked/deb
+          mkdir -p unpacked/appimage && chmod +x "out/$p.AppImage"
+          (cd unpacked/appimage && "../../out/$p.AppImage" --appimage-extract > /dev/null)
+          python -I scripts/check-release-notices.py unpacked/deb unpacked/appimage
+      - name: Installers carry LICENSE and THIRD-PARTY-NOTICES (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          p="roster-app-$VERSION-macos"
+          mkdir -p unpacked/dmg
+          hdiutil attach -nobrowse -readonly -mountpoint unpacked/dmg "out/$p-universal.dmg" > /dev/null
+          s=0
+          python -I scripts/check-release-notices.py unpacked/dmg "${{ matrix.target_dir }}/bundle/macos/Roster.app" || s=$?
+          hdiutil detach unpacked/dmg > /dev/null
+          exit $s
       - run: ls -l out
       - uses: actions/upload-artifact@v4
         with:
