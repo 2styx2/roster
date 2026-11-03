@@ -28,7 +28,8 @@ Tick each box; write down anything that differs with the build number and what y
 - [ ] With `roster.o.terminal.copy_on_select = false`: selecting doesn't change the clipboard; **Ctrl+C** with a selection copies it and clears the highlight; **Ctrl+C** again (no selection) interrupts `sleep 100`.
 - [ ] **Ctrl+C with no selection** interrupts a running `sleep 100`, and the clipboard is unchanged.
 - [ ] **Ctrl+Shift+C** and **Ctrl+Insert** copy the selection and leave it highlighted.
-- [ ] **Right-click with a selection** copies it and clears it; nothing is pasted.
+- [ ] **Right-click with a selection** (`copy_on_select` on, the default; #302): copies it, clears it and pastes it at the prompt, as Windows Terminal with `copyOnSelect` does. Notepad then gets the same text.
+- [ ] **Right-click with a selection and `roster.o.terminal.copy_on_select = false`** (`:source`): copies it and clears it; nothing is pasted.
 - [ ] **A wrapped line**: `printf 'x%.0s' {1..300}; echo`, then select the whole wrapped line. Pasted in Notepad it's one line of 300 `x`, with no line break where it wrapped.
 - [ ] **Full-width text**: `echo 日本語x`, select it; Notepad gets `日本語x` with no spaces in it.
 - [ ] **Trailing blanks**: `printf 'one\ntwo\n'`, select both lines and past the end; Notepad gets `one`, `two` without padding. Spaces a program printed at a line's end are trimmed too, as in Windows Terminal (`printf 'one   \ntwo\n'` copies `one`, `two`).
@@ -37,7 +38,8 @@ Tick each box; write down anything that differs with the build number and what y
 
 ## Programs
 
-- [ ] **A full-screen program with mouse reporting** (vim with `:set mouse=a`, htop, tmux with `set -g mouse on`, Claude Code): a drag goes to the program (vim moves its visual selection, tmux selects in its own copy mode). **Shift+drag** makes roster's own selection; Ctrl+C or right-click then copies it.
+- [ ] **A full-screen program with mouse reporting** (vim with `:set mouse=a`, htop, tmux with `set -g mouse on`, Claude Code): a drag goes to the program (vim moves its visual selection, tmux selects in its own copy mode). **Shift+drag** makes roster's own selection; Ctrl+C copies it, and **Shift+right-click** copies it and pastes it (with `copy_on_select` on).
+- [ ] **The same program, Shift+drag, then a plain right-click** (#302): the click goes to the program (vim moves its cursor there), the highlight goes, and nothing is copied or pasted (the clipboard still holds what the Shift+drag copied), as in Windows Terminal.
 - [ ] **The same program, right-click with no selection**: it goes to the program, as in Windows Terminal, and nothing is pasted; **Shift+right-click** pastes (#293).
 - [ ] **OSC 52 from a program** (T157, #293): in tmux with `set -g set-clipboard on`, copy in copy mode; in Claude Code, a plain drag (no Shift) copies when you let go. The text lands on the Windows clipboard. A program asking to read the clipboard (`printf '\e]52;c;?\a'`) gets no answer: nothing appears at the prompt.
 - [ ] **The alternate screen** (vim, less): paste in vim's insert mode goes in as one paste (no auto-indent staircase with `:set paste` off, since vim asks for bracketed paste); Shift+drag and Ctrl+C copy from the screen.

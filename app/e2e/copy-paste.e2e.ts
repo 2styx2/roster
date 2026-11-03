@@ -297,6 +297,32 @@ describe("copy", () => {
     expect(await h.reads()).toBe(0);
   });
 
+  // #302 item 1 (owner 2026-11-03, Q166): with copy-on-select on, Windows Terminal's right-click
+  // copies the selection, clears it and then pastes ("CopyOnSelect: right click always pastes").
+  it("with copy-on-select on, right-click with a selection copies it, clears it, then pastes it (#302)", async () => {
+    await h.mount({ windows: true, copyOnSelect: true });
+    await h.output("hello world\r\n");
+    await clip("on the clipboard before");
+    await h.drag([0, 0], [4, 0]);
+    await h.copiedCount(1);
+    await h.rightClick(2, 0);
+    expect(await h.sentCount(1)).toEqual(["hello"]);
+    expect(await h.hasSelection()).toBe(false);
+    expect(await h.copied()).toEqual(["hello", "hello"]);
+    await h.settled();
+    expect(await h.sent()).toEqual(["hello"]);
+  });
+
+  it("with copy-on-select on, right-click with no selection pastes once", async () => {
+    await h.mount({ windows: true, copyOnSelect: true });
+    await clip("whoami");
+    await h.rightClick(2, 0);
+    expect(await h.sentCount(1)).toEqual(["whoami"]);
+    await h.settled();
+    expect(await h.sent()).toEqual(["whoami"]);
+    expect(await h.copied()).toEqual([]);
+  });
+
   // T160 (#302): Windows Terminal ends copied lines with \r\n (TextBuffer::GetPlainText), so
   // every copy route does on Windows: copy-on-select, Ctrl+C, right-click and the WebView's copy.
   it("on Windows, several lines copy with \\r\\n line ends, by every copy route (#302)", async () => {
@@ -505,6 +531,44 @@ describe("programs", () => {
     await h.rightClick(1, 0, { shift: true });
     expect(await h.copiedCount(2)).toEqual(["text", "some"]);
     expect(await h.hasSelection()).toBe(false);
+  });
+
+  // #302 item 2 (owner 2026-11-03, Q166): a selection doesn't change it. Windows Terminal checks
+  // _canSendVTMouseInput before its copy-or-paste rule, so a plain right-click is the program's.
+  it("with mouse reporting on, Shift+drag then a plain right-click goes to the program: no copy, no paste (#302)", async () => {
+    await h.mount({ windows: true, copyOnSelect: false });
+    await h.output(`${ALT_SCREEN}${MOUSE_ON}some text here\r\n`);
+    await clip("not pasted");
+    await h.drag([0, 0], [3, 0], { shift: true });
+    await h.rightClick(2, 0);
+    const sent = await h.sentCount(2);
+    expect(sent.join("")).toBe("\x1b[<2;3;1M\x1b[<2;3;1m");
+    expect(await h.copied()).toEqual([]);
+    expect(await h.reads()).toBe(0);
+    // xterm.js clears a selection on any input it sends the program, the click's report too.
+    expect(await h.hasSelection()).toBe(false);
+  });
+
+  it("the same with copy-on-select on: the drag copied, the right-click is the program's and pastes nothing (#302)", async () => {
+    await h.output(`${ALT_SCREEN}${MOUSE_ON}some text here\r\n`);
+    await h.drag([0, 0], [3, 0], { shift: true });
+    expect(await h.copiedCount(1)).toEqual(["some"]);
+    await h.rightClick(2, 0);
+    const sent = await h.sentCount(2);
+    expect(sent.join("")).toBe("\x1b[<2;3;1M\x1b[<2;3;1m");
+    expect(await h.reads()).toBe(0);
+    expect(await h.copied()).toEqual(["some"]);
+  });
+
+  it("with mouse reporting on and copy-on-select on, Shift+drag then Shift+right-click copies and pastes the selection (#302)", async () => {
+    await h.output(`${ALT_SCREEN}${MOUSE_ON}some text here\r\n`);
+    await h.drag([0, 0], [3, 0], { shift: true });
+    await h.copiedCount(1);
+    await h.rightClick(2, 0, { shift: true });
+    expect(await h.sentCount(1)).toEqual(["some"]);
+    expect(await h.hasSelection()).toBe(false);
+    await h.settled();
+    expect(await h.sent()).toEqual(["some"]);
   });
 
   // #293: right-click with no selection while the program reports the mouse goes to the program,

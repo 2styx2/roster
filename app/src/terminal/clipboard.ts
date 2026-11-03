@@ -72,17 +72,27 @@ export async function pasteClipboard(term: Selectable, clipboard: Clipboard): Pr
   }
 }
 
-/** Right-click: copy the selection and clear it, or paste when there's none. With
- * `programHasMouse` (a program turned mouse reporting on, and Shift isn't held) and nothing
- * selected, it's the program's, as in Windows Terminal: xterm has sent it the click, and nothing
- * is pasted (decision Q149). A selection (made with Shift+drag) is still copied. */
-export async function rightClick(term: Selectable, clipboard: Clipboard, { programHasMouse = false }: { programHasMouse?: boolean } = {}): Promise<void> {
-  if (term.hasSelection()) {
-    copySelection(term, clipboard);
-    term.clearSelection();
-    return;
-  }
+/** Right-click, as Windows Terminal (`ControlInteractivity.cpp` `PointerPressed`, decisions Q149
+ * and Q166). With `programHasMouse` (a program turned mouse reporting on, and the key that takes
+ * the mouse back isn't held) it's the program's, selection or not: xterm has sent it the click,
+ * and nothing is copied or pasted. Otherwise it copies the selection and clears it, or pastes
+ * when there's none; with `copyOnSelect` on it always pastes, after the copy, so a
+ * right-click on a selection pastes that selection ("CopyOnSelect: right click always pastes"). */
+export async function rightClick(
+  term: Selectable,
+  clipboard: Clipboard,
+  { programHasMouse = false, copyOnSelect = false }: { programHasMouse?: boolean; copyOnSelect?: boolean } = {},
+): Promise<void> {
   if (programHasMouse) return;
+  const selected = term.hasSelection();
+  if (selected) {
+    const text = copiedText(term.getSelection());
+    term.clearSelection();
+    // Waited for, so the paste below reads what was just copied (Windows Terminal's copy is done
+    // before its paste).
+    if (text) await clipboard.writeText(text).catch(() => {});
+  }
+  if (selected && !copyOnSelect) return;
   await pasteClipboard(term, clipboard);
 }
 
