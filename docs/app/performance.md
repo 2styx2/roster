@@ -78,7 +78,7 @@ A change that goes over one of these needs a reason in its pull request. Measure
 | After closing every Session | JS heap within 2 MB of idle; DOM nodes within 100 of idle | +0 MB (13.8 vs 15.5); +11 |
 | A Plugin's call (the core's `Limits::call`; over it, the call is an error and counts toward disabling the Plugin) | ≤ 250 ms, wall clock | Mesh, 1,000 Hosts in one group, its longest call with the answers it waits for: 31 ms (release build, idle); 100–166 ms (release, one core shared with four busy loops); 51 ms (test build, idle) (2026-11-02, #222) |
 | App JS, minified | ≤ 2,550 KB raw, ≤ 745 KB gzipped | 2,195 KB; 654 KB (2026-11-01); 2,427 KB; 710 KB (2026-11-02, ticket 145); 2,456.6 KB; 718.9 KB (2026-11-02, ticket 149); 2,497.5 KB; 732.4 KB (2026-11-03, ticket 166) |
-| App CSS, minified | ≤ 85 KB raw, ≤ 15.5 KB gzipped | 75 KB; 13.8 KB; 83.3 KB (2026-11-02) |
+| App CSS, minified | ≤ 85 KB raw, ≤ 15.5 KB gzipped | 75 KB; 13.8 KB; 83.3 KB (2026-11-02); 84.5 KB; 15.47 KB (2026-11-03, ticket 173) |
 | Docs website's `search.js` (every page loads it), minified | ≤ 12 KB raw | 9.8 KB; 3.8 KB gzipped |
 | Docs website's `search-index.js` (loaded when the search box is first used) | ≤ 300 KB gzipped | 756 KB raw; 221 KB gzipped; 253 KB gzipped (2026-11-02); 278 KB gzipped (2026-11-02, ticket 145) |
 

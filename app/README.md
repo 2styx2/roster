@@ -205,7 +205,8 @@ app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [
 app/scripts/linux-run.sh  the Linux build (ticket 20, docs/app/dev/linux.md): `build`, `fetch` (CI's), `run` and
                       `measure` with its own HOME and XDG dirs (opens a window), `report`
 app/e2e/              copy and paste end to end (T158): TerminalView in headless Chromium through Vite, a fake
-                      Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md)
+                      Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md);
+                      a Host row's menu placed in the whole app's layout (T173, host-menu.e2e.ts)
 app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it's shown (questions go through)
 app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153)
 ```
@@ -215,7 +216,7 @@ app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads
 ```bash
 cd app && npm ci       # once, in WSL
 npm run check          # in app/: tsc --noEmit + eslint + Vitest (UI tests use the fake Backend)
-npm run e2e            # in app/: copy and paste in headless Chromium (npx playwright-core install --only-shell chromium once)
+npm run e2e            # in app/: copy and paste, and the Host row menu, in headless Chromium (npx playwright-core install --only-shell chromium once)
 cargo test             # at the root: roster-core only (WSL can't build app/src-tauri: no webkit2gtk)
 cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check
 ```
