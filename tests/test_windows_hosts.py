@@ -5,13 +5,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 
 import pytest
-from conftest import WINDOWS, stand_in_hosts
+from conftest import FAKES, WINDOWS, stand_in_hosts
 
 from roster import sshops
 from roster.cli import main
-from roster.common import program_argv
 from roster.config import load_config
 
 CASCADE = """\
@@ -177,7 +177,9 @@ def win(request, fakes, isolated, write_config, monkeypatch, tmp_path):
     def via_stand_in(h, command, password, timeout=15, stdin=None):
         sent.append((command, stdin or ""))
         assert password == "hunter2"
-        r = subprocess.run(program_argv(["ssh", h["name"], command]), input=(stdin or "").encode(),
+        # the stand-in ssh itself, not its .cmd shim on Windows: paramiko hands the Host the command as it is, and a
+        # POSIX script's quotes would never reach a batch file
+        r = subprocess.run([sys.executable, str(FAKES / "ssh"), h["name"], command], input=(stdin or "").encode(),
                            capture_output=True)
         return r.returncode, r.stdout.decode(), r.stderr.decode()
     monkeypatch.setattr(sshops, "password_exec", via_stand_in)
@@ -330,6 +332,7 @@ def test_a_windows_host_without_os_windows_says_to_set_it(win, capsys):
 
 
 @stand_in_hosts
+@pytest.mark.skipif(WINDOWS, reason="a POSIX stand-in Host on Windows would find this machine's own powershell")
 def test_os_windows_on_a_host_without_powershell_changes_nothing(win, capsys, monkeypatch):
     from conftest import POSIX_SH
     monkeypatch.setenv("FAKE_SH", POSIX_SH)
