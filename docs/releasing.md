@@ -10,12 +10,12 @@ A Release is one version of the whole repo: the CLI and the app ship together, w
 |---|---|
 | `roster-app-X.Y.Z-windows-x64-setup.exe` | The Windows installer (NSIS), per user |
 | `roster-app-X.Y.Z-windows-x64.msi` | The Windows installer (MSI), for managed installs |
-| `roster-app-X.Y.Z-windows-x64.zip` | `roster-app.exe` and `LICENSE`, nothing installed (needs WebView2, which Windows 10 and 11 have) |
+| `roster-app-X.Y.Z-windows-x64.zip` | `roster-app.exe`, `LICENSE` and `THIRD-PARTY-NOTICES`, nothing installed (needs WebView2, which Windows 10 and 11 have) |
 | `roster-app-X.Y.Z-linux-x64.AppImage` | Linux, one file, built on Ubuntu 22.04 so it runs on that and newer |
 | `roster-app-X.Y.Z-linux-x64.deb` | Debian and Ubuntu |
-| `roster-app-X.Y.Z-linux-x64.tar.gz` | The `roster-app` binary and `LICENSE` (needs WebKitGTK 4.1) |
+| `roster-app-X.Y.Z-linux-x64.tar.gz` | The `roster-app` binary, `LICENSE` and `THIRD-PARTY-NOTICES` (needs WebKitGTK 4.1) |
 | `roster-app-X.Y.Z-macos-universal.dmg` | macOS, Apple silicon and Intel in one app, ad-hoc signed |
-| `roster-app-X.Y.Z-macos.tar.gz` | `Roster.app` and `LICENSE` |
+| `roster-app-X.Y.Z-macos.tar.gz` | `Roster.app`, `LICENSE` and `THIRD-PARTY-NOTICES` |
 | `roster-X.Y.Z-py3-none-any.whl`, `roster-X.Y.Z.tar.gz` | The CLI's wheel and sdist (`uv build`) |
 | `roster-cli-X.Y.Z.tar.gz` | The CLI's source with `install.sh` and `LICENSE`, for a box without git: unpack, `./install.sh`. It has the man page at `share/man/man1/roster.1` too, laid out like a prefix |
 | `roster.1` | The `roster(1)` man page on its own, for packagers (the wheel also installs it to `PREFIX/share/man/man1/`) |
@@ -23,6 +23,14 @@ A Release is one version of the whole repo: the CLI and the app ship together, w
 | `SHA256SUMS` | The SHA-256 of every file above |
 
 The Release notes start with that version's section of [news.md](news.md) (what's new, changed, removed and deprecated, by area; `scripts/news_section.py` makes its links work on GitHub), then a short install note, then the pull requests merged since the last Release (GitHub's generated notes). The Version job fails a tag whose version has no section in `news.md`, before anything is built.
+
+## Third-party notices
+
+The app binaries carry code copied or ported from other projects (today `crates/roster-core/src/wcwidth.rs`, character widths from xterm.js, MIT). Their licences ask that the notice ship with every copy, so `THIRD-PARTY-NOTICES` at the repo root lists each such part with its copyright and licence text, and every app archive (the Windows `.zip`, the Linux and macOS `.tar.gz`) packs it next to `LICENSE`. The CLI's files carry no third-party code, so they ship `LICENSE` alone.
+
+**When to update it:** in the same pull request that copies, ports or vendors third-party code into the repo (a file, a table, a function translated from another project). Add its path, where it came from (project, version, file), the copyright line and the licence text. A dependency pulled in by Cargo or npm isn't listed here.
+
+**The check:** after packing, the `app` job runs `scripts/check-release-notices.py` on its archives and fails when one holds `LICENSE` without `THIRD-PARTY-NOTICES` beside it. `tests/test_release_notices.py` (run by `uv run pytest` on every pull request) fails if a step of `release.yml` that packs `LICENSE` into an app archive doesn't pack the notices too, or if the check step is gone.
 
 ## One version
 
