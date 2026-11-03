@@ -193,7 +193,15 @@ struct World {
 }
 
 impl World {
+    /// With generous limits ([`common::unhurried`]): these tests check what the Plugin does, not
+    /// how long it takes. The defaults (250 ms a call) are wall-clock time, which a loaded
+    /// machine runs out of (T165, T167).
     fn new(test: &str, config: Value) -> World {
+        World::within(test, config, common::unhurried())
+    }
+
+    /// [`World::new`] under `limits`.
+    fn within(test: &str, config: Value, limits: Limits) -> World {
         let root = temp(test);
         let (bare, work) = (root.join("remote/roster.git"), root.join("work"));
         std::fs::create_dir_all(&bare).unwrap();
@@ -222,7 +230,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(FakeServe::default());
-        let host = Arc::new(PluginHost::new(serve.clone(), Limits::default()));
+        let host = Arc::new(PluginHost::new(serve.clone(), limits));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -456,7 +464,14 @@ fn it_asks_before_it_scans_and_nothing_starts_until_the_user_says_scan() {
 /// did (decision Q103).
 #[test]
 fn behind_a_busy_roster_serve_the_question_comes_when_it_answers() {
-    let w = World::new("busy", json!({}));
+    // A call's budget and grace that the wait for serve below (2.6 s) outlasts, but four times
+    // the app's 250 ms budget for the Lua itself, which a busy machine runs out of (T165, T167).
+    let limits = Limits {
+        call: Duration::from_secs(1),
+        grace: Duration::from_secs(1),
+        ..Limits::default()
+    };
+    let w = World::within("busy", json!({}), limits);
     let loaded = w.load(ALL);
     let publish = w.serve.busy.lock().unwrap();
     let words = json!({ "args": "10.0.0.0/24", "words": ["10.0.0.0/24"] });
@@ -724,7 +739,7 @@ roster.commands.add("go", { run = function() roster.serve.call("discover.start",
     )
     .unwrap();
     let serve = Arc::new(FakeServe::default());
-    let host = PluginHost::new(serve.clone(), Limits::default());
+    let host = PluginHost::new(serve.clone(), common::unhurried());
     let grants = perms(&["serve:discover.start", "serve:discover.add", "serve:discover.status"]);
     let (_, loaded) = host.load(&Source::Dir(dir.to_path_buf()), &grants).unwrap();
     ok(&loaded);

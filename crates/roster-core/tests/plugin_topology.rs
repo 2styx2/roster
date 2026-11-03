@@ -397,8 +397,10 @@ impl World {
             );
             std::thread::sleep(Duration::from_millis(2));
         }
-        // An answer's reply can reach the listener just after the count drops: wait a moment.
-        while let Ok(r) = self.replies.lock().unwrap().recv_timeout(Duration::from_millis(50)) {
+        // The host hands an answer's reply to the listener before the answer stops counting
+        // (`deliver`, then the count in plugin/mod.rs), so every reply is in by now: no waiting
+        // for a quiet spell (T167).
+        while let Ok(r) = self.replies.lock().unwrap().try_recv() {
             ok(&r);
             reply.ops.extend(r.ops);
         }
