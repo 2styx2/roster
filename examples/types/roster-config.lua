@@ -24,7 +24,7 @@
 ---@field folders? roster.config.Folder[]|roster.o.List Folders kept in the Config, read-only in the app: each a Folder spec.
 ---@field vault? roster.config.Vault This Box's own vault settings, over roster.yml's providers. Paths and choices, never a secret.
 ---@field packages? (string|roster.config.Package)[]|roster.o.List Plugins fetched from git repos and pinned in roster.lock: each a Package spec, or just its source.
----@field plugin_proxy? string The proxy Plugins' requests to public names go through. Unset, they go direct. Takes http://HOST:PORT, the port written out, with no user or password.
+---@field plugin_proxy? string The proxy Plugins' requests to public names go through. Unset, they go direct. Takes "http://HOST:PORT", the port written out, with no user or password.
 ---@field idle_lock_minutes? integer Lock after this many minutes without input. Default: `15`. Takes 1 to 1440 minutes.
 ---@field pull_fresh_minutes? integer How old the last pull of the infra repo may be before a form pulls again; 0 pulls every time. Default: `5`. Takes 0 to 1440 minutes.
 ---@field auto_reload? boolean Reload on every save of a .lua file of the Config, and of roster.yml. Off, :source reloads. Default: `false`.
@@ -218,7 +218,7 @@
 --- A Package spec: { SOURCE, tag = …, config = { … } }, or just SOURCE.
 ---@class roster.config.Package
 ---@field [1]? string The source, as the spec's first item.
----@field source? string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path.
+---@field source? string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: "https://…", "ssh://…", "git@host:path", "file://…" or a full path.
 ---@field name? string Its name (its folder and its line in roster.lock); the repo's (or dir's) name when left out.
 ---@field tag? string The tag to pin. At most one of tag, branch and commit; none means the default branch.
 ---@field branch? string The branch to follow.

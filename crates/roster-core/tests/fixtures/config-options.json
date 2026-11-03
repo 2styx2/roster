@@ -3014,7 +3014,7 @@
           "ty": "string",
           "default": "unset",
           "about": "The proxy Plugins' requests to public names go through. Unset, they go direct.",
-          "takes": "http://HOST:PORT, the port written out, with no user or password",
+          "takes": "\"http://HOST:PORT\", the port written out, with no user or password",
           "names": [],
           "item": null,
           "fields": [],
@@ -3410,7 +3410,7 @@
               "name": "source",
               "ty": "string",
               "default": "required",
-              "about": "Where the repo is: the spec's first item, or source = …. Takes \"owner/repo\" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path.",
+              "about": "Where the repo is: the spec's first item, or source = …. Takes \"owner/repo\" (GitHub), or a git URL: \"https://…\", \"ssh://…\", \"git@host:path\", \"file://…\" or a full path.",
               "names": []
             },
             {

@@ -756,3 +756,29 @@ fn no_init_lua_name_means_something_else_in_the_plugin_api() {
         }
     }
 }
+
+#[test]
+fn the_reference_writes_a_url_form_as_code_not_as_a_link() {
+    // #267: "Takes http://HOST:PORT" rendered as a bare URL, which a link check (and a Markdown
+    // viewer) takes for a link. Outside code, a URL is only ever a link's target.
+    let md = shape::markdown();
+    let mut in_fence = false;
+    for line in md.lines() {
+        if line.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let prose: String = line.split('`').step_by(2).collect::<Vec<_>>().join(" ");
+        for (at, _) in prose.match_indices("://") {
+            let before = &prose[..at];
+            assert!(
+                before.ends_with("](http") || before.ends_with("](https"),
+                "a URL outside code in {}: {line}",
+                shape::DOC_PATH
+            );
+        }
+    }
+}

@@ -9,7 +9,8 @@ request: it's slow, and other people's sites are flaky. Relative links are check
 
 It checks every http(s) link in docs/**/*.md, README.md, CONTRIBUTING.md, GLOSSARY.md and app/README.md,
 outside code. Made-up and private addresses are skipped (example.com and the like, IP addresses, localhost,
-.lan/.local/.internal names), so it only ever fetches, and prints, the docs' own public URLs.
+.lan/.local/.internal names), and so are placeholders a sentence describes (http://HOST:PORT, https://…), so
+it only ever fetches, and prints, the docs' own public URLs.
 
 A link is dead when the site answers 404, 410 or a 5xx, or can't be reached at all (DNS, refused, TLS, no
 answer in 20 s), twice. 401, 403, 429 and the like are a site turning robots away, not a dead link.
@@ -24,7 +25,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT = 20
@@ -42,9 +43,14 @@ def docs(root=ROOT):
 
 
 def public(url):
-    host = (urlsplit(url).hostname or "").lower()
-    if not host or MADE_UP.search(host):
-        return False
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if not host or MADE_UP.search(host) or "…" in host:
+        return False                    # https://…: a placeholder, not a site
+    try:
+        _ = parts.port                  # raises on a port that isn't a number
+    except ValueError:
+        return False                    # http://HOST:PORT: a placeholder's port
     try:
         ipaddress.ip_address(host)
         return False                    # an address in an example, never a site of its own
@@ -64,8 +70,23 @@ def urls(text):
     return out
 
 
+def ascii_url(url):
+    """The URL as it goes on the wire: an international name in IDNA, other letters percent-encoded (an
+    http request line can't carry them as they are). What's already encoded stays as it is."""
+    p = urlsplit(url)
+    host = p.hostname.encode("idna").decode("ascii") if p.hostname else ""
+    netloc = f"{host}:{p.port}" if p.port else host
+    keep = "/%:@!$&'()*+,;=~-._?#[]"
+    return urlunsplit((p.scheme, netloc, quote(p.path, safe=keep), quote(p.query, safe=keep + "/"),
+                       quote(p.fragment, safe=keep)))
+
+
 def fetch(url):
     """The HTTP status the URL answers with (after redirects), or why it couldn't be reached."""
+    try:
+        url = ascii_url(url)
+    except (UnicodeError, ValueError) as e:  # a name IDNA refuses: no site has it
+        return str(e) or type(e).__name__
     for method in ("HEAD", "GET"):          # some sites refuse HEAD: ask again with GET
         req = urllib.request.Request(url, method=method, headers={"User-Agent": AGENT, "Accept": "*/*"})
         try:
