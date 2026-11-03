@@ -98,6 +98,7 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>) {
         "/see-other" => reply("303 See Other", "Location: /echo\r\n", b""),
         "/temporary" => reply("307 Temporary Redirect", "Location: /echo\r\n", b""),
         "/no-location" => reply("302 Found", "", b"stay"),
+        "/to-https" => reply("302 Found", "Location: https://api.example.com/hello\r\n", b""),
         "/moved" => reply("301 Moved Permanently", "Location: /echo\r\n", b""),
         "/permanent" => reply("308 Permanent Redirect", "Location: /echo\r\n", b""),
         // Raw UTF-8 in the Location, as some servers send it.
@@ -888,6 +889,9 @@ fn one_site_has_one_pin_or_none() {
     assert!(common::read_manifest(&dir).is_ok());
 }
 
+/// Every server name (SNI) a client asked [`tls_appliance`] for, in order.
+static SNI: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// A self-signed appliance over https on 127.0.0.1 (a made-up certificate for
 /// `appliance.example`, made for these tests only, in tests/fixtures/tls). With `key`, it signs
 /// the handshake with another key than its certificate's: someone showing a copied certificate.
@@ -901,7 +905,10 @@ fn tls_appliance(key: &str) -> u16 {
     #[derive(Debug)]
     struct One(Arc<rustls::sign::CertifiedKey>);
     impl rustls::server::ResolvesServerCert for One {
-        fn resolve(&self, _: rustls::server::ClientHello<'_>) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        fn resolve(&self, hello: rustls::server::ClientHello<'_>) -> Option<Arc<rustls::sign::CertifiedKey>> {
+            if let Some(name) = hello.server_name() {
+                SNI.lock().unwrap().push(name.to_string());
+            }
             Some(Arc::clone(&self.0))
         }
     }
@@ -1037,37 +1044,138 @@ fn a_pinned_site_is_redirected_only_to_itself() {
     assert!(server.heads.lock().unwrap().is_empty());
 }
 
-/// A proxy on 127.0.0.1: what each request's first line was; a plain-http request gets "via
-/// proxy", a CONNECT a 403.
-fn proxy_server() -> (u16, Arc<Mutex<Vec<String>>>) {
+/// This computer's resolver in the proxy tests: `api.example.com` and `appliance.example` are at
+/// 45.10.20.30, a public address (nothing listens there: only the proxy below knows where it
+/// leads); `two.example` at 45.10.20.40 and 45.10.20.30; `v6.example` at 2a00::5;
+/// `mapped.example` at ::ffff:45.10.20.31; `inside.example` at 10.0.0.5; any other name can't be
+/// looked up.
+fn lookup() -> roster_core::plugin::network::Lookup {
+    Arc::new(|host: &str| {
+        let at = |ip: &str| Ok(vec![std::net::SocketAddr::new(ip.parse().unwrap(), 0)]);
+        match host {
+            // nothing.invalid: no real resolver ever answers it, so without the proxy it fails here.
+            "api.example.com" | "appliance.example" | "nothing.invalid" => at("45.10.20.30"),
+            "inside.example" => at("10.0.0.5"),
+            "two.example" => Ok(vec![
+                std::net::SocketAddr::new("45.10.20.40".parse().unwrap(), 0),
+                std::net::SocketAddr::new("45.10.20.30".parse().unwrap(), 0),
+            ]),
+            "v6.example" => at("2a00::5"),
+            "mapped.example" => at("::ffff:45.10.20.31"),
+            _ => Err("no such name".into()),
+        }
+    })
+}
+
+/// A server roster must never reach: whatever it's sent, it answers `inside`.
+fn inside_server() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let lines = Arc::new(Mutex::new(Vec::new()));
-    let seen = Arc::clone(&lines);
     std::thread::spawn(move || {
         for mut stream in listener.incoming().flatten() {
-            let seen = Arc::clone(&seen);
             std::thread::spawn(move || {
-                let mut head = Vec::new();
-                let mut byte = [0u8; 1];
-                while !head.ends_with(b"\r\n\r\n") {
-                    match stream.read(&mut byte) {
-                        Ok(1) => head.push(byte[0]),
-                        _ => return,
-                    }
-                }
-                let head = String::from_utf8_lossy(&head).into_owned();
-                seen.lock().unwrap().push(head.clone());
-                let out: &[u8] = if head.starts_with("CONNECT ") {
-                    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"
-                } else {
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia proxy"
-                };
-                let _ = stream.write_all(out);
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ninside");
             });
         }
     });
-    (port, lines)
+    port
+}
+
+/// A proxy on 127.0.0.1 that resolves names its own way, as a proxy may: asked for a name (`CONNECT
+/// NAME:PORT`, or `GET http://NAME/…`), it leads to `inside`, a server roster must never reach;
+/// asked for an address (`CONNECT IP:PORT`), it opens a tunnel to the port on 127.0.0.1 that
+/// `routes` gives that address (an address it has no route for gets a 502). It keeps the head of
+/// everything it was sent (not what goes through a tunnel).
+struct ResolvingProxy {
+    port: u16,
+    heads: Arc<Mutex<Vec<String>>>,
+}
+
+impl ResolvingProxy {
+    fn start(inside: u16, routes: &[(&str, u16)]) -> ResolvingProxy {
+        ResolvingProxy::answering(inside, routes, None)
+    }
+
+    /// A proxy that answers every CONNECT with `say` instead (a 403, something that isn't HTTP,
+    /// nothing at all), then holds the connection until roster closes it.
+    fn saying(say: &[u8]) -> ResolvingProxy {
+        ResolvingProxy::answering(inside_server(), &[], Some(say.to_vec()))
+    }
+
+    fn answering(inside: u16, routes: &[(&str, u16)], say: Option<Vec<u8>>) -> ResolvingProxy {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let heads = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&heads);
+        let routes: Vec<(String, u16)> = routes.iter().map(|(a, p)| (a.to_string(), *p)).collect();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let (seen, routes, say) = (Arc::clone(&seen), routes.clone(), say.clone());
+                std::thread::spawn(move || {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        match stream.read(&mut byte) {
+                            Ok(1) => head.push(byte[0]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&head).into_owned();
+                    seen.lock().unwrap().push(head.clone());
+                    let Some(target) = head.strip_prefix("CONNECT ").and_then(|t| t.split(' ').next()) else {
+                        // Absolute form: the proxy looks the name up itself.
+                        let mut up = TcpStream::connect(("127.0.0.1", inside)).unwrap();
+                        let _ = up.write_all(head.as_bytes());
+                        let _ = std::io::copy(&mut up, &mut stream);
+                        return;
+                    };
+                    if let Some(say) = say {
+                        let _ = stream.write_all(&say);
+                        let _ = std::io::copy(&mut stream, &mut std::io::sink());
+                        return;
+                    }
+                    let to = match target.parse::<std::net::SocketAddr>() {
+                        Ok(_) => match routes.iter().find(|(a, _)| a == target) {
+                            Some((_, p)) => *p,
+                            None => {
+                                let _ = stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
+                                return;
+                            }
+                        },
+                        // A name: wherever this proxy's own DNS says.
+                        Err(_) => inside,
+                    };
+                    let Ok(mut up) = TcpStream::connect(("127.0.0.1", to)) else {
+                        return;
+                    };
+                    let _ = stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n");
+                    let (mut down, mut back) = (stream.try_clone().unwrap(), up.try_clone().unwrap());
+                    std::thread::spawn(move || {
+                        let _ = std::io::copy(&mut down, &mut up);
+                        let _ = up.shutdown(std::net::Shutdown::Write);
+                    });
+                    let _ = std::io::copy(&mut back, &mut stream);
+                    let _ = stream.shutdown(std::net::Shutdown::Write);
+                });
+            }
+        });
+        ResolvingProxy { port, heads }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    fn heads(&self) -> Vec<String> {
+        self.heads.lock().unwrap().clone()
+    }
+}
+
+/// A host whose Plugins look names up with [`lookup`].
+fn host() -> PluginHost {
+    PluginHost::new(Arc::new(NoServe), Limits::default()).with_lookup(lookup())
 }
 
 fn load_proxied(
@@ -1076,7 +1184,18 @@ fn load_proxied(
     permissions: &[&str],
     url: &str,
 ) -> (Reply, Receiver<Reply>, PluginHost, common::Temp) {
-    let host = PluginHost::new(Arc::new(NoServe), Limits::default());
+    load_proxied_with(test, proxy, permissions, url, json!({}))
+}
+
+/// [`load_proxied`] with `req`'s keys in the request ([`FETCH`]).
+fn load_proxied_with(
+    test: &str,
+    proxy: &str,
+    permissions: &[&str],
+    url: &str,
+    req: Value,
+) -> (Reply, Receiver<Reply>, PluginHost, common::Temp) {
+    let host = host();
     let proxy = Some(roster_core::plugin::network::Proxy::parse(proxy).unwrap());
     let (tx, rx) = channel();
     let tx = Mutex::new(tx);
@@ -1089,65 +1208,422 @@ fn load_proxied(
         .load_with_proxy(
             &Source::Dir(folder.to_path_buf()),
             &grants,
-            &json!({ "url": url }),
+            &json!({ "url": url, "req": req }),
             proxy,
         )
         .unwrap();
     (reply, rx, host, folder)
 }
 
+/// #225 item 5: the proxy may resolve a name to another address than roster checked. roster asks
+/// it for a tunnel to the address it checked, never the name, and speaks HTTP through the tunnel
+/// itself with the name only in `Host`, so the request reaches that address and nothing else.
 #[test]
-fn a_public_site_goes_through_the_users_proxy_with_nothing_of_theirs_added() {
-    let (port, lines) = proxy_server();
-    // By name: the proxy's own name may lead anywhere the user's setting says.
-    let proxy = format!("http://localhost:{port}");
+fn through_the_proxy_a_request_reaches_only_the_address_roster_checked() {
+    let server = Server::start();
+    let proxy = ResolvingProxy::start(inside_server(), &[("45.10.20.30:80", server.port)]);
     let (reply, rx, _h, _f) = load_proxied(
-        "proxy-http",
-        &proxy,
+        "connect-http",
+        &proxy.url(),
         &["network:http://api.example.com"],
-        "http://api.example.com/hello?q=1",
+        "http://api.example.com/echo",
     );
     assert!(reply.error.is_none(), "{:?}", reply.error);
-    assert_eq!(notices(&rx, 1, 20), ["200 9 via proxy | connection,content-length"]);
-    let seen = lines.lock().unwrap().clone();
+    let got = notices(&rx, 1, 20);
+    assert!(got[0].starts_with("200 "), "{got:?}");
+    let echoed = got[0].to_ascii_lowercase();
+    assert!(echoed.contains("get /echo http/1.1"), "{got:?}");
+    assert!(echoed.contains("host: api.example.com\r\n"), "{got:?}");
+    assert!(!echoed.contains("inside"), "{got:?}");
+    let heads = proxy.heads();
+    assert_eq!(heads.len(), 1, "{heads:?}");
+    assert!(heads[0].starts_with("CONNECT 45.10.20.30:80 HTTP/1.1\r\n"), "{heads:?}");
+    assert!(!heads[0].contains("api.example.com"), "{heads:?}");
     assert!(
-        seen[0].starts_with("GET http://api.example.com/hello?q=1 HTTP/1.1"),
-        "{seen:?}"
+        !heads[0].to_ascii_lowercase().contains("proxy-authorization"),
+        "{heads:?}"
     );
+}
+
+/// https the same way: the tunnel goes to the address checked, and TLS asks for the name (SNI) and
+/// checks the certificate against the name, never the address.
+#[test]
+fn through_the_proxy_https_goes_to_the_address_checked_with_the_name_as_sni() {
+    let appliance = tls_appliance("appliance.key.der");
+    let proxy = ResolvingProxy::start(inside_server(), &[("45.10.20.30:443", appliance)]);
+    let site = format!("network:appliance.example#sha256:{}", appliance_pin());
+    let (reply, rx, _h, _f) = load_proxied(
+        "connect-https",
+        &proxy.url(),
+        &[&site],
+        "https://appliance.example/hello",
+    );
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert_eq!(notices(&rx, 1, 20), ["200 8 hi there | connection,content-length"]);
+    let heads = proxy.heads();
+    assert_eq!(heads.len(), 1, "{heads:?}");
     assert!(
-        !seen[0].to_ascii_lowercase().contains("proxy-authorization"),
-        "{seen:?}"
+        heads[0].starts_with("CONNECT 45.10.20.30:443 HTTP/1.1\r\n"),
+        "{heads:?}"
     );
-    // https is a tunnel: the proxy sees only where to.
-    let (_r, rx, _h, _f) = load_proxied(
-        "proxy-https",
-        &proxy,
-        &["network:api.example.com"],
+    assert!(SNI.lock().unwrap().iter().any(|n| n == "appliance.example"));
+}
+
+/// Through the tunnel, a request is what it is without the proxy: its body and headers go, the
+/// 1 MB cap holds while reading, and its timeout ends it.
+#[test]
+fn through_the_tunnel_the_body_the_cap_and_the_timeout_hold() {
+    let server = Server::start();
+    let proxy = ResolvingProxy::start(inside_server(), &[("45.10.20.30:80", server.port)]);
+    let site = "network:http://api.example.com";
+    let post = json!({ "method": "POST", "body": "hello", "headers": { "X-Api-Key": "k3y" } });
+    let (_r, rx, _h, _f) = load_proxied_with(
+        "tunnel-post",
+        &proxy.url(),
+        &[site],
+        "http://api.example.com/echo",
+        post,
+    );
+    let got = notices(&rx, 1, 20)[0].to_ascii_lowercase();
+    assert!(got.starts_with("200 ") && got.contains("post /echo http/1.1"), "{got}");
+    assert!(
+        got.contains("content-length: 5\r\n") && got.contains("x-api-key: k3y\r\n"),
+        "{got}"
+    );
+    assert!(got.contains("user-agent: roster/"), "{got}");
+    for (test, path, req, want) in [
+        ("tunnel-big", "/big", json!({}), "failed: the response is over"),
+        (
+            "tunnel-unsized",
+            "/big-unsized",
+            json!({}),
+            "failed: the response is over",
+        ),
+        (
+            "tunnel-slow",
+            "/slow",
+            json!({ "timeout": 0.5 }),
+            "failed: no answer within 0.5 s",
+        ),
+    ] {
+        let url = format!("http://api.example.com{path}");
+        let (_r, rx, _h, _f) = load_proxied_with(test, &proxy.url(), &[site], &url, req);
+        let got = notices(&rx, 1, 20);
+        assert!(got[0].starts_with(want), "{path}: {got:?}");
+    }
+}
+
+/// A proxy that won't open a tunnel to an address (some allow only names, or only port 443) fails
+/// the request: roster never falls back to handing it the name.
+#[test]
+fn a_proxy_that_wont_tunnel_to_the_address_fails_the_request_closed() {
+    let proxy = ResolvingProxy::saying(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+    for (test, site, url) in [
+        (
+            "refused-http",
+            "network:http://api.example.com",
+            "http://api.example.com/hello",
+        ),
+        (
+            "refused-https",
+            "network:api.example.com",
+            "https://api.example.com/hello",
+        ),
+    ] {
+        let (_r, rx, _h, _f) = load_proxied(test, &proxy.url(), &[site], url);
+        let got = notices(&rx, 1, 20);
+        assert!(
+            got[0].starts_with("failed: your plugin_proxy wouldn't open a tunnel to 45.10.20.30:")
+                && got[0].contains("403"),
+            "{got:?}"
+        );
+        // The Plugin never learns where the user's proxy is (Q116: it can't set or see it).
+        assert!(!got[0].contains(&proxy.port.to_string()), "{got:?}");
+    }
+    let heads = proxy.heads();
+    assert_eq!(heads.len(), 2, "{heads:?}");
+    assert!(heads.iter().all(|h| h.starts_with("CONNECT 45.10.20.30:")), "{heads:?}");
+}
+
+/// The answer a Plugin gets for a request through a proxy that answers the CONNECT with `say`.
+fn through_a_proxy_saying(test: &str, say: &[u8], url: &str) -> (String, ResolvingProxy) {
+    let proxy = ResolvingProxy::saying(say);
+    let site = if url.starts_with("http:") {
+        "network:http://api.example.com"
+    } else {
+        "network:api.example.com"
+    };
+    let (_r, rx, _h, _f) = load_proxied(test, &proxy.url(), &[site], url);
+    let got = notices(&rx, 1, 30);
+    assert_eq!(got.len(), 1, "no answer for {test}");
+    (got[0].clone(), proxy)
+}
+
+/// Whatever else a proxy answers the CONNECT with fails the request, and never names the proxy.
+#[test]
+fn a_proxy_that_answers_the_connect_wrongly_fails_the_request() {
+    let mut long = b"HTTP/1.1 200 OK\r\nX-Padding: ".to_vec();
+    long.extend(std::iter::repeat_n(b'a', 9000));
+    for (test, say, want) in [
+        (
+            "not-http",
+            &b"SSH-2.0-OpenSSH_9.6\r\n\r\n"[..],
+            "its answer wasn't HTTP",
+        ),
+        ("too-long", &long[..], "its answer wasn't HTTP"),
+    ] {
+        let (got, proxy) = through_a_proxy_saying(test, say, "http://api.example.com/hello");
+        assert!(
+            got.starts_with("failed: your plugin_proxy wouldn't open a tunnel to 45.10.20.30:80") && got.contains(want),
+            "{test}: {got}"
+        );
+        assert!(!got.contains(&proxy.port.to_string()), "{got}");
+    }
+}
+
+/// A proxy that says nothing after the CONNECT is given up on after 10 s, the time to connect.
+#[test]
+fn a_proxy_that_never_answers_the_connect_is_given_up_on() {
+    let started = std::time::Instant::now();
+    let (got, _proxy) = through_a_proxy_saying("silent", b"", "http://api.example.com/hello");
+    assert!(
+        got.starts_with("failed: your plugin_proxy wouldn't open a tunnel to 45.10.20.30:80")
+            && got.contains("no answer within 10 s"),
+        "{got}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(20));
+}
+
+/// Bytes a proxy sends after its 200 aren't the site's: over https they fail TLS, so a proxy can't
+/// answer for a site that way.
+#[test]
+fn bytes_a_proxy_sends_after_its_200_dont_pass_for_the_site() {
+    let (got, _proxy) = through_a_proxy_saying(
+        "after-200",
+        b"HTTP/1.1 200 Connection established\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nforged",
         "https://api.example.com/hello",
     );
-    let got = notices(&rx, 1, 20);
-    assert!(got[0].starts_with("failed: "), "{got:?}");
     assert!(
-        lines
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|l| l.starts_with("CONNECT api.example.com:443 "))
+        got.starts_with("failed: couldn't connect to https://api.example.com"),
+        "{got}"
     );
+    assert!(!got.contains("forged"), "{got}");
+}
+
+/// A proxy that can't be reached is said plainly, without its address.
+#[test]
+fn a_proxy_that_cant_be_reached_isnt_named_to_the_plugin() {
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (_r, rx, _h, _f) = load_proxied(
+        "unreachable",
+        &format!("http://127.0.0.1:{port}"),
+        &["network:http://api.example.com"],
+        "http://api.example.com/hello",
+    );
+    let got = notices(&rx, 1, 20);
+    assert!(
+        got[0].starts_with("failed: couldn't connect to your plugin_proxy: "),
+        "{got:?}"
+    );
+    assert!(!got[0].contains(&port.to_string()), "{got:?}");
+}
+
+/// Through the tunnel the certificate is checked as without a proxy: a self-signed one without a
+/// pin, another pin, or the pinned certificate shown with another key, each fails.
+#[test]
+fn a_bad_certificate_through_the_tunnel_fails() {
+    let pin = appliance_pin();
+    for (test, key, site, want) in [
+        (
+            "tunnel-unpinned",
+            "appliance.key.der",
+            "network:appliance.example".to_string(),
+            "certificate",
+        ),
+        (
+            "tunnel-wrong-pin",
+            "appliance.key.der",
+            format!("network:appliance.example#sha256:{PIN}"),
+            "isn't the one pinned",
+        ),
+        (
+            "tunnel-wrong-key",
+            "other.key.der",
+            format!("network:appliance.example#sha256:{pin}"),
+            "ignature",
+        ),
+    ] {
+        let appliance = tls_appliance(key);
+        let proxy = ResolvingProxy::start(inside_server(), &[("45.10.20.30:443", appliance)]);
+        let (_r, rx, _h, _f) = load_proxied(test, &proxy.url(), &[&site], "https://appliance.example/hello");
+        let got = notices(&rx, 1, 20);
+        assert!(
+            got[0].starts_with("failed: couldn't connect to https://appliance.example") && got[0].contains(want),
+            "{test}: {got:?}"
+        );
+        assert!(proxy.heads()[0].starts_with("CONNECT 45.10.20.30:443 "), "{test}");
+    }
+}
+
+/// HEAD (and any answer with no body) through the tunnel is judged by the body that comes, not
+/// by the size its Content-Length announces.
+#[test]
+fn a_head_through_the_tunnel_isnt_judged_by_its_content_length() {
+    let server = Server::start();
+    let proxy = ResolvingProxy::start(inside_server(), &[("45.10.20.30:80", server.port)]);
+    let (_r, rx, _h, _f) = load_proxied_with(
+        "tunnel-head",
+        &proxy.url(),
+        &["network:http://api.example.com"],
+        "http://api.example.com/big",
+        json!({ "method": "HEAD" }),
+    );
+    let got = notices(&rx, 1, 20);
+    assert!(got[0].starts_with("200 0 "), "{got:?}");
+}
+
+/// With several addresses, each is tried in turn until the proxy opens a tunnel to one; an IPv6
+/// one is written in brackets, and an IPv4 one the resolver gave as IPv6 is written as IPv4.
+#[test]
+fn every_address_is_tried_and_written_as_a_proxy_reads_it() {
+    let server = Server::start();
+    let proxy = ResolvingProxy::start(
+        inside_server(),
+        &[
+            ("45.10.20.30:80", server.port),
+            ("[2a00::5]:80", server.port),
+            ("45.10.20.31:80", server.port),
+        ],
+    );
+    for (test, name) in [
+        ("two", "two.example"),
+        ("v6", "v6.example"),
+        ("mapped", "mapped.example"),
+    ] {
+        let (_r, rx, _h, _f) = load_proxied(
+            test,
+            &proxy.url(),
+            &[&format!("network:http://{name}")],
+            &format!("http://{name}/hello"),
+        );
+        assert_eq!(
+            notices(&rx, 1, 20),
+            ["200 8 hi there | connection,content-length,content-type,set-cookie,x-two"],
+            "{test}"
+        );
+    }
+    let firsts: Vec<String> = proxy
+        .heads()
+        .iter()
+        .map(|h| h.lines().next().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        firsts,
+        [
+            "CONNECT 45.10.20.40:80 HTTP/1.1",
+            "CONNECT 45.10.20.30:80 HTTP/1.1",
+            "CONNECT [2a00::5]:80 HTTP/1.1",
+            "CONNECT 45.10.20.31:80 HTTP/1.1",
+        ]
+    );
+}
+
+/// A redirect from http to https through the proxy is a new tunnel, to port 443 of the address
+/// checked, with TLS for the name; a redirect to a site that's an address goes direct.
+#[test]
+fn a_redirect_through_the_proxy_takes_a_tunnel_of_its_own_or_goes_direct() {
+    let server = Server::start();
+    let appliance = tls_appliance("appliance.key.der");
+    let proxy = ResolvingProxy::start(
+        inside_server(),
+        &[("45.10.20.30:80", server.port), ("45.10.20.30:443", appliance)],
+    );
+    let sites = ["network:http://api.example.com", "network:api.example.com"];
+    let (_r, rx, _h, _f) = load_proxied("to-https", &proxy.url(), &sites, "http://api.example.com/to-https");
+    let got = notices(&rx, 1, 20);
+    // The appliance's certificate is for another name and no OS trusts it: the TLS check ran.
+    assert!(
+        got[0].starts_with("failed: couldn't connect to https://api.example.com"),
+        "{got:?}"
+    );
+    assert!(SNI.lock().unwrap().iter().any(|n| n == "api.example.com"));
+    let firsts: Vec<String> = proxy
+        .heads()
+        .iter()
+        .map(|h| h.lines().next().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        firsts,
+        ["CONNECT 45.10.20.30:80 HTTP/1.1", "CONNECT 45.10.20.30:443 HTTP/1.1"]
+    );
+
+    let sites = ["network:http://api.example.com", &server.site()];
+    let url = format!("http://api.example.com/hop/{}/hello", server.port);
+    let (_r, rx, _h, _f) = load_proxied("to-address", &proxy.url(), &sites, &url);
+    assert!(notices(&rx, 1, 20)[0].starts_with("200 8 hi there"));
+    assert_eq!(proxy.heads().len(), 3, "the address was reached through the proxy");
+}
+
+/// Through the tunnel, `Accept: */*` goes unless the Plugin says otherwise, as without a proxy.
+#[test]
+fn through_the_tunnel_accept_is_any_unless_the_plugin_says() {
+    let server = Server::start();
+    let proxy = ResolvingProxy::start(inside_server(), &[("45.10.20.30:80", server.port)]);
+    for (test, req, want) in [
+        ("accept-default", json!({}), "accept: */*\r\n"),
+        (
+            "accept-own",
+            json!({ "headers": { "Accept": "application/json" } }),
+            "accept: application/json\r\n",
+        ),
+    ] {
+        let (_r, rx, _h, _f) = load_proxied_with(
+            test,
+            &proxy.url(),
+            &["network:http://api.example.com"],
+            "http://api.example.com/echo",
+            req,
+        );
+        let got = notices(&rx, 1, 20)[0].to_ascii_lowercase();
+        assert!(got.contains(want), "{test}: {got}");
+        assert_eq!(got.matches("accept:").count(), 1, "{test}: {got}");
+    }
+}
+
+/// A name this computer can't look up has no address roster checked, so nothing goes to the proxy
+/// for it; and a name this computer finds inside is refused as without a proxy.
+#[test]
+fn a_name_roster_cant_check_never_reaches_the_proxy() {
+    let proxy = ResolvingProxy::start(inside_server(), &[]);
+    let (_r, rx, _h, _f) = load_proxied(
+        "unknown",
+        &proxy.url(),
+        &["network:http://unknown.example"],
+        "http://unknown.example/hello",
+    );
+    let got = notices(&rx, 1, 20);
+    assert!(
+        got[0].starts_with("failed: couldn't look up unknown.example on this computer"),
+        "{got:?}"
+    );
+    let (_r, rx, _h, _f) = load_proxied(
+        "inside",
+        &proxy.url(),
+        &["network:http://inside.example"],
+        "http://inside.example/hello",
+    );
+    let got = notices(&rx, 1, 20);
+    assert!(got[0].starts_with("failed: inside.example is at 10.0.0.5"), "{got:?}");
+    assert!(proxy.heads().is_empty(), "{:?}", proxy.heads());
 }
 
 #[test]
 fn an_address_site_never_goes_through_the_proxy() {
     let server = Server::start();
-    let (port, lines) = proxy_server();
-    let (_r, rx, _h, _f) = load_proxied(
-        "proxy-ip",
-        &format!("http://127.0.0.1:{port}"),
-        &[&server.site()],
-        &server.url("/hello"),
-    );
+    let proxy = ResolvingProxy::start(inside_server(), &[]);
+    let (_r, rx, _h, _f) = load_proxied("proxy-ip", &proxy.url(), &[&server.site()], &server.url("/hello"));
     assert!(notices(&rx, 1, 20)[0].starts_with("200 8 hi there"));
-    assert!(lines.lock().unwrap().is_empty());
+    assert!(proxy.heads().is_empty());
 }
 
 #[test]
@@ -1210,7 +1686,7 @@ fn load_on_lock(test: &str, host: &PluginHost, permissions: &[&str], url: &str, 
 }
 
 fn listening() -> (PluginHost, Receiver<Reply>) {
-    let host = PluginHost::new(Arc::new(NoServe), Limits::default());
+    let host = host();
     let (tx, rx) = channel();
     let tx = Mutex::new(tx);
     host.set_listener(Arc::new(move |r: Reply| {
@@ -1228,25 +1704,23 @@ fn lock(host: &PluginHost) {
 
 #[test]
 fn a_new_proxy_setting_reaches_a_plugin_that_runs_already() {
-    let (one, one_saw) = proxy_server();
-    let (two, two_saw) = proxy_server();
+    let server = Server::start();
+    let one = ResolvingProxy::start(inside_server(), &[("45.10.20.30:80", server.port)]);
+    let two = ResolvingProxy::start(inside_server(), &[("45.10.20.30:80", server.port)]);
     let (host, rx) = listening();
-    let url = "http://nothing.invalid/hello";
     let _f = load_on_lock(
         "proxy-change",
         &host,
         &["network:http://nothing.invalid"],
-        url,
-        Some(&format!("http://127.0.0.1:{one}")),
+        "http://nothing.invalid/hello",
+        Some(&one.url()),
     );
     lock(&host);
-    assert_eq!(notices(&rx, 1, 20), ["200 via proxy"]);
-    host.set_proxy(Some(
-        roster_core::plugin::network::Proxy::parse(&format!("http://127.0.0.1:{two}")).unwrap(),
-    ));
+    assert_eq!(notices(&rx, 1, 20), ["200 hi there"]);
+    host.set_proxy(Some(roster_core::plugin::network::Proxy::parse(&two.url()).unwrap()));
     lock(&host);
-    assert_eq!(notices(&rx, 1, 20), ["200 via proxy"]);
-    assert_eq!((one_saw.lock().unwrap().len(), two_saw.lock().unwrap().len()), (1, 1));
+    assert_eq!(notices(&rx, 1, 20), ["200 hi there"]);
+    assert_eq!((one.heads().len(), two.heads().len()), (1, 1));
     // Taken away: direct again, and a name that doesn't resolve fails here.
     host.set_proxy(None);
     lock(&host);
@@ -1255,34 +1729,7 @@ fn a_new_proxy_setting_reaches_a_plugin_that_runs_already() {
         got[0].starts_with("failed: ") && got[0].contains("couldn't look up nothing.invalid"),
         "{got:?}"
     );
-    assert_eq!(two_saw.lock().unwrap().len(), 1);
-}
-
-#[test]
-fn a_public_name_that_points_inside_isnt_reached_through_the_proxy() {
-    use std::net::ToSocketAddrs;
-    // A name this computer resolves to itself, where it does (systemd's resolver, most Linux).
-    let inside = ("roster-test.localhost", 0)
-        .to_socket_addrs()
-        .map(|a| a.collect::<Vec<_>>())
-        .unwrap_or_default();
-    if inside.is_empty() {
-        eprintln!("skipped: roster-test.localhost doesn't resolve here (the unit test covers the rule)");
-        return;
-    }
-    let (port, lines) = proxy_server();
-    let (host, rx) = listening();
-    let _f = load_on_lock(
-        "proxy-inside",
-        &host,
-        &["network:http://roster-test.localhost"],
-        "http://roster-test.localhost/hello",
-        Some(&format!("http://127.0.0.1:{port}")),
-    );
-    lock(&host);
-    let got = notices(&rx, 1, 20);
-    assert!(got[0].contains("roster-test.localhost is at"), "{got:?}");
-    assert!(lines.lock().unwrap().is_empty());
+    assert_eq!(two.heads().len(), 1);
 }
 
 #[test]

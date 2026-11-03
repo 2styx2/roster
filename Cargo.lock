@@ -2958,18 +2958,24 @@ name = "roster-core"
 version = "0.4.0"
 dependencies = [
  "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "mlua",
  "notify",
  "portable-pty",
  "reqwest",
  "ring",
+ "roster-core",
  "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "url",
 ]
 

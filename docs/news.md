@@ -98,6 +98,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **A Plugin's request through `plugin_proxy` reaches only the address roster checked** (#225, decision Q161): roster now asks the proxy for a tunnel to the address it looked up and checked (`CONNECT 45.10.20.30:443`), never the name, and speaks TLS (with the name as its server name) and HTTP through it itself, so the proxy's own DNS can no longer send a request somewhere roster never checked. This computer must now be able to look a public name up: a name it can't isn't sent (before, it went to the proxy unchecked). And the proxy must allow a CONNECT to an address, to port 80 too for an `http://` site; one that refuses fails the request instead of being handed the name ([errors](app/errors.md#a-plugins-private-sites-pins-and-proxy) rows 200 to 202).
 - **Prompt fill, tightened:** the fill key now types the Session's own Host's password only when the cursor is right after that very prompt, as a terminal draws it (Windows' redraws included), as a nested ssh's fill already needed; a sudo prompt that went by gets nothing and the vault isn't asked, and pressing the key again works once the prompt is back at the cursor. `terminal.read` Plugins no longer get any of a Session's shell-hook token when the output is split at an unlucky point or wraps it with links, colours or charset switches inside; ordinary output reaches them unchanged.
 
 ### Fixed
