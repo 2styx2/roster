@@ -340,6 +340,14 @@ pub(super) fn options() -> Vec<Opt> {
         "Right-click copies the selection, or pastes when there's none.",
         "false",
     );
+    b.leaf(
+        "terminal.osc52",
+        "boolean",
+        "true",
+        BOOL,
+        "A program in the Session on screen may set the clipboard with OSC 52 (write only, at most 1 MiB), as in Windows Terminal: how Claude Code, vim or tmux copy what you select in them.",
+        "false",
+    );
     b.colours(
         "terminal.colors",
         "roster.config.TerminalColors",

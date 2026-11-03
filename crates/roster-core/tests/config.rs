@@ -143,6 +143,18 @@ fn terminal_shell_hooks_is_unset_by_default_and_takes_a_boolean() {
 }
 
 #[test]
+fn terminal_osc52_is_on_by_default_and_takes_a_boolean() {
+    // #293, decision Q149: a program may set the clipboard with OSC 52, as in Windows Terminal.
+    assert!(Config::default().terminal.osc52);
+    let dir = with_init("osc52", "roster.o.terminal.osc52 = false\n");
+    assert!(!config::load(&dir).unwrap().terminal.osc52);
+    let dir = with_init("osc52-bad", "\nroster.o.terminal.osc52 = \"yes\"\n");
+    let e = config::load(&dir).unwrap_err();
+    assert_eq!(e.line, Some(2), "{e}");
+    assert!(e.message.contains("terminal.osc52"), "{e}");
+}
+
+#[test]
 fn ui_messages_is_unset_by_default_and_takes_quiet_or_all() {
     // Ticket 111: unset leaves it to `:messages`, whose choice the State keeps (quiet until it
     // makes one).

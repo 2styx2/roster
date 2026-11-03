@@ -110,6 +110,7 @@ roster.o.terminal.line_height = 1.0 -- a multiple of the font's own line height,
 roster.o.terminal.scrollback = 10000 -- lines, at most 1000000
 roster.o.terminal.copy_on_select = true
 roster.o.terminal.right_click_paste = true -- copies the selection, or pastes when there's none
+roster.o.terminal.osc52 = true -- a program (Claude Code, vim, tmux) may set the clipboard: write only
 -- "webgl" (fast) or "dom" (the browser's own text rendering: closer to Windows Terminal's
 -- ClearType, slower with a lot of output). docs/app/config.md compares them.
 roster.o.terminal.renderer = "webgl"
