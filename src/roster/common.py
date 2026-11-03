@@ -11,6 +11,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NoReturn
 
 KEY_TAG = "roster-managed"
 LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
@@ -99,7 +100,7 @@ def run_instead(argv):
     macOS the process becomes it (execvp); Windows has no such thing, so roster waits for it and passes on its code."""
     argv = program_argv(argv)
     if not WINDOWS:
-        os.execvp(argv[0], argv)
+        os.execvp(argv[0], argv)        # noqa: S606 - an argv list (no shell): roster's own ssh command line
     try:
         return subprocess.run(argv).returncode
     except KeyboardInterrupt:          # Ctrl+C went to the child as well; its code is what counts
@@ -113,7 +114,7 @@ def roster_command():
     return f"{shlex.quote(sys.executable)} -m roster"     # e.g. inside a uv venv that isn't on PATH
 
 
-def die(msg):
+def die(msg: str) -> NoReturn:
     sys.exit(f"error: {msg}")
 
 
