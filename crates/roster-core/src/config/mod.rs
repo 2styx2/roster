@@ -29,8 +29,14 @@ use std::time::Duration;
 
 /// The file the app runs.
 pub const FILE_NAME: &str = "init.lua";
-/// The version of the `roster` Lua table (`roster.api_version`), raised when it changes.
+/// The Plugin API's version (`roster.api_version`), which init.lua's table shows too.
 pub const API_VERSION: u32 = 5;
+/// init.lua's own version (`roster.config_version`, decision Q165): 4 is v0.3.0's shape
+/// (`roster.o` and the collections' functions). Raised when a change to init.lua's `roster`
+/// table or an option can't be told by its name: a name removed or renamed, or one that keeps its
+/// name but takes, gives or does something else. A new name doesn't raise it (it reads as nil
+/// in an older app). The Plugin API's changes don't either.
+pub const CONFIG_VERSION: u32 = 4;
 
 /// What went wrong: where, and what. Shown as `init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
