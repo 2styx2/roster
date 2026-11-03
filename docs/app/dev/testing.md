@@ -71,9 +71,9 @@ export const backend: Backend = isTauri() ? tauriBackend() : fakeBackend(fixture
 - `@playwright/test` 1.64.1: `webServer: { command: "npm run dev -- --port 5179 --strictPort", url: "http://localhost:5179" }` and `await expect(page).toHaveScreenshot()`. WebGL in headless Chromium wasn't tested. Force the DOM renderer for stable pixel diffs (`?renderer=dom`).
 - These screenshots are Chromium, not WebView2 or WebKitGTK. Real-window checks still go through the Windows build loop (windows-build-loop.md).
 
-## End to end: copy and paste (headless Chromium)
+## End to end (headless Chromium)
 
-`app/e2e/` (T158, #294) runs roster's real `TerminalView` (xterm.js, `terminal/input.ts`, `terminal/clipboard.ts`) in headless Chromium, with real key and mouse events and the browser's own paste. `npm run e2e` in `app/` (CI's App frontend job runs it after `npm run check`, which needs no browser).
+`app/e2e/` runs copy and paste (T158, #294) and a Host row's menu (T173, below). For copy and paste it runs roster's real `TerminalView` (xterm.js, `terminal/input.ts`, `terminal/clipboard.ts`) in headless Chromium, with real key and mouse events and the browser's own paste. `npm run e2e` in `app/` (CI's App frontend job runs it after `npm run check`, which needs no browser).
 
 ```text
 app/e2e/
@@ -84,7 +84,10 @@ app/e2e/
   browser.ts           playwright-core: the browser, the page, typed calls into window.e2e, drag, right-click,
                        raw DevTools key events (Ctrl+м, AltGr)
   copy-paste.e2e.ts    every path in #294
+  host-menu.e2e.ts     a Host row's menu in the whole app (index.html, `?fixture=many-hosts`, T173)
 ```
+
+- **The Host row menu** (`host-menu.e2e.ts`, T173, #324) opens the whole app (`inject("appUrl")`) on the fake Backend at a narrow (420×520) and a wide (1600×1000) window. On a Host row scrolled to the Sidebar's top and one at its bottom, it right-clicks the row's left and right ends and presses the Menu key and Shift+F10 on the App-mode cursor. Each time the menu must be inside the window with all four corners its own pixels (nothing cut off or on top of it), next to its row (at the pointer, or under the row; above it at the bottom), and focused (the menu from the pointer, its first item from a key). It waits for the opening transition to finish before it measures.
 
 - **The browser** is the Chromium headless shell that `playwright-core` (pinned in `package-lock.json`) names: `npx playwright-core install --only-shell chromium` once (CI adds `--with-deps`). `$CHROME` picks another binary.
 - **It looks like Windows.** The page's `navigator.platform` and user agent are WebView2's, so xterm.js runs its Windows handling (AltGr as Ctrl+Alt); one group opens a Linux page for the off-Windows keys (decision Q138).
