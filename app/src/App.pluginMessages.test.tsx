@@ -2,14 +2,16 @@
 // Q126, Neovim's model): an error, a warning or an answer shows; a routine confirmation
 // (`roster.echo(text, { quiet = true })`) and an info notice are quiet by default. Quiet, a screen
 // reader still hears it and `:messages` keeps it; `ui.messages = "all"` brings it back.
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
 import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { STATE_KEY } from "./plugins/manager";
+import { builtinRegistries } from "./registries";
+import { BUILTIN } from "./registry";
 import { StubTerminal } from "./terminal/StubTerminal";
 
 const LEADER = "{Control>} {/Control}";
@@ -148,5 +150,34 @@ describe("a background quiet message keeps a visible line", () => {
     await wait();
     expect(screen.getByRole("status", { name: "From pins" })).toHaveTextContent("pins: Synced 3 pins");
     expect(seen()).toBe("No Host named nope");
+  });
+});
+
+// roster's own quiet messages that come unasked follow the same rule (#349): its notice that it's
+// trying again to tell the core its own commands comes when a built-in registers late or the core
+// host is built anew, never as the answer to something the user did.
+describe("roster's own unasked quiet message keeps a visible line", () => {
+  it("an error stays when roster says it's trying again to tell the core its commands, and :messages keeps both", async () => {
+    const user = userEvent.setup();
+    const registries = builtinRegistries();
+    const backend = fakeBackend({ hosts: makeHosts(3) });
+    const sent = vi.spyOn(backend, "pluginBuiltins");
+    render(<App backend={backend} terminalView={StubTerminal} registries={registries} platform={memoryPlatform()} />);
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    await vi.waitFor(() => expect(sent).toHaveBeenCalled());
+    await run(user, "connect nope");
+    expect(seen()).toBe("No Host named nope");
+    // The core turns the list down; a built-in registers later, as App's effects do.
+    sent.mockRejectedValue(new Error("no such command"));
+    const calls = sent.mock.calls.length;
+    act(() => void registries.commands.register({ id: "late", source: BUILTIN, area: "Other", label: () => "Late", run: () => undefined }));
+    await vi.waitFor(() => expect(sent.mock.calls.length).toBeGreaterThan(calls));
+    await tick();
+    expect(seen()).toBe("No Host named nope");
+    await run(user, "messages");
+    const view = await screen.findByRole("region", { name: /^Messages/ });
+    expect(within(view).getByText("Plugins: couldn't tell roster its own commands; trying again")).toBeInTheDocument();
+    expect(within(view).getByText("No Host named nope")).toBeInTheDocument();
   });
 });

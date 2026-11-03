@@ -670,9 +670,9 @@ describe("roster's own commands, to the core (issue #184)", () => {
         expect(sent.mock.invocationCallOrder.some((c) => c < load && (i === 0 || c > (loads.mock.invocationCallOrder[i - 1] ?? 0)))).toBe(true);
       }
       expect(sent.mock.calls.every(([names]) => names.includes("publish") && names.includes("lock"))).toBe(true);
-      // Said once, quietly, and without the ids.
+      // Said once, quietly, and without the ids; unasked, so it keeps a line that shows (#349).
       expect(said).toHaveLength(1);
-      expect(said[0]).toMatchObject({ kind: "quiet" });
+      expect(said[0]).toMatchObject({ kind: "quiet", background: true });
       expect(JSON.stringify(said[0])).not.toContain("publish");
       // Retried on its own, and once it's through, not again.
       down = false;
