@@ -600,7 +600,8 @@ def test_run_on_a_windows_host_shows_errors_as_text(win, capfd):
 @needs_powershell
 @pytest.mark.parametrize("command, said", [
     ("Write-Output 'it''s $(1+1) `n'", "it's $(1+1) `n"),            # PowerShell's own quoting, as the person wrote it
-    ("Write-Output 'café ’quoted’'", "café ’quoted’"),   # non-ASCII: UTF-8 both ways
+    # non-ASCII, UTF-8 both ways; a Unicode single quote is just a character inside PowerShell's double quotes
+    ("Write-Output \"caf\u00e9 \u2019quoted\u2019 \u2713\"", "caf\u00e9 \u2019quoted\u2019 \u2713"),
     ("Write-Output \"$('x')\"", "x"),
 ])
 def test_the_command_is_data_in_the_script_whatever_it_holds(win, capfd, command, said):
