@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from . import __version__, boxsync, jsonout, mesh
@@ -343,7 +344,7 @@ def cmd_check_box(args):
     section = None
     for c in checks:
         if c["section"] != section:
-            say(("" if section is None else "\n") + health.SECTIONS.get(c["section"], c["section"]))
+            say(("" if section is None else "\n") + str(health.SECTIONS.get(c["section"], c["section"])))
             section = c["section"]
         say(f"  {c['level']:<5}  {c['message']}")
         if c.get("fix"):
@@ -509,7 +510,7 @@ def cmd_reveal(cfg, args):
             secret = get_secret(r["auth"], r["group"] or "resources")
         except RuntimeError as e:
             die(f"{r['name']}: {e}")
-    say(wifi_uri(r, secret) if args.wifi else secret)
+    say(wifi_uri(r, secret) if args.wifi else secret or "")
     return 0
 
 
@@ -776,10 +777,10 @@ def cmd_inv(args):
         if args.json:
             jsonout.emit(inv.view())
             return 0
-        if not inv.items:
+        if not inv.inventories:
             say("no named Inventories (roster inv add NAME PATH names one)")
-        width = max((len(x.name) for x in inv.items), default=0)
-        for x in inv.items:
+        width = max((len(x.name) for x in inv.inventories), default=0)
+        for x in inv.inventories:
             missing = "" if x.path.is_file() else "  (not there)"
             say(f"{'*' if x.name == inv.active else ' '} {x.name:<{width}}  {x.path}{missing}")
         return 0
@@ -852,8 +853,8 @@ def build_parser():
     which.add_argument("--inv", metavar="NAME", help="use the named Inventory NAME for this one command "
                        "(`roster inv list` names them)")
     sub = p.add_subparsers(dest="cmd", required=True)
-    only = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
-    as_json = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
+    only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
+    as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
                "Machine-readable output in docs/cli-reference.md)"}
     sub.add_parser("init", help="write an example roster.yml")
     s = sub.add_parser("setup", help="one-time setup of this box")

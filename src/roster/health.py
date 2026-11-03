@@ -108,12 +108,12 @@ def named(cfg):
     if not inventories.list_file().exists():
         return []
     inv = inventories.load()
-    if not inv.items:
+    if not inv.inventories:
         return []
     here = current_inventory()
     which = (f"this is the named Inventory {here}" + (" (the active one)" if here == inv.active else "")
              if here else "this roster.yml isn't one of the named Inventories")
-    out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.items)}")]
+    out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.inventories)}")]
     out += [check("inventory", "warn", w["message"], w["fix"], f"E{w['row']}") for w in inventories.overlaps(cfg)]
     return out
 

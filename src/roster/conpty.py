@@ -19,7 +19,10 @@ from ctypes import wintypes
 
 from .common import program_argv
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+# Windows-only parts of ctypes (WinDLL here, WinError and get_last_error below): typeshed declares them for win32
+# alone, and the type checker reads this module as Linux sees it; it runs on Windows only
+WinDLL = ctypes.WinDLL  # pyright: ignore[reportAttributeAccessIssue]
+kernel32 = WinDLL("kernel32", use_last_error=True)
 
 HPCON = wintypes.HANDLE
 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
@@ -86,7 +89,7 @@ kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 def _check(ok):
     if not ok:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise ctypes.WinError(ctypes.get_last_error())  # pyright: ignore[reportAttributeAccessIssue] - Windows only
 
 
 def _env_block(env):
@@ -100,7 +103,7 @@ TCP_TABLE_OWNER_PID_LISTENER = 3
 ERROR_INSUFFICIENT_BUFFER = 122
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 THREAD_TERMINATE = 0x0001
-iphlpapi = ctypes.WinDLL("iphlpapi")
+iphlpapi = WinDLL("iphlpapi")
 iphlpapi.GetExtendedTcpTable.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), wintypes.BOOL,
                                          wintypes.ULONG, ctypes.c_int, wintypes.ULONG]
 kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -201,14 +204,14 @@ class ConPty:
         if not kernel32.CreateProcessW(None, line, None, None, False,
                                        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
                                        _env_block(env), None, ctypes.byref(si), ctypes.byref(self._pi)):
-            err = ctypes.get_last_error()
+            err = ctypes.get_last_error()  # pyright: ignore[reportAttributeAccessIssue] - Windows only
             if err in (2, 3):                                   # ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND
                 raise FileNotFoundError(cmdline)
-            raise ctypes.WinError(err)
+            raise ctypes.WinError(err)  # pyright: ignore[reportAttributeAccessIssue] - Windows only
         if not kernel32.AssignProcessToJobObject(self._job, self._pi.hProcess):
-            err = ctypes.get_last_error()
+            err = ctypes.get_last_error()  # pyright: ignore[reportAttributeAccessIssue] - Windows only
             kernel32.TerminateProcess(self._pi.hProcess, 1)     # suspended and outside the job: nothing else ends it
-            raise ctypes.WinError(err)
+            raise ctypes.WinError(err)  # pyright: ignore[reportAttributeAccessIssue] - Windows only
         kernel32.ResumeThread(self._pi.hThread)
 
     def _pump(self):

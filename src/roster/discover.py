@@ -68,7 +68,9 @@ def parse_nmap_xml(text):
     """nmap -oX output -> [{ip, hostname, mac, vendor, os, ports: [{port, name, product, title, ssl}]}]"""
     import xml.etree.ElementTree as ET
     try:
-        root = ET.fromstring(text)
+        # S314: the XML is the output of the nmap roster just ran on this box, not a document from the network, and
+        # ElementTree never fetches external entities
+        root = ET.fromstring(text)  # noqa: S314
     except ET.ParseError as e:
         die(f"couldn't read nmap's output: {e}")
     found = []
@@ -101,7 +103,7 @@ def parse_nmap_xml(text):
                 ostypes.append(sv["ostype"])
             product = " ".join(x for x in (sv.get("product"), sv.get("version"),
                                            f"({sv['extrainfo']})" if sv.get("extrainfo") else "") if x)
-            rec["ports"].append({"port": int(p.get("portid")), "name": sv.get("name", "") or "unknown",
+            rec["ports"].append({"port": int(p.attrib["portid"]), "name": sv.get("name", "") or "unknown",
                                  "product": product, "title": title,
                                  "ssl": sv.get("tunnel") == "ssl" or sv.get("name") in ("https", "ssl")})
         osm = host.find("os/osmatch")
@@ -362,6 +364,8 @@ def with_group(text, group, entries, note, needs_user):
             die("roster.yml has `groups:` written inline (e.g. groups: {}); switch it to block style first")
         text = text.rstrip("\n") + "\n\ngroups:\n"
         m = re.search(r"(?m)^groups:[ \t]*(#.*)?$", text)
+        if m is None:
+            raise RuntimeError("groups: was just added, yet isn't there")
     after = text[m.end():]
     child = re.search(r"(?m)^( +)\S", after)
     indent = len(child.group(1)) if child and not after[:child.start()].strip(" \t\n#") else 2

@@ -9,6 +9,7 @@ license-files = ["LICENSE"]
 dependencies = [
     "pyyaml>=6.0",
     "paramiko>=3.4",
+    "pydantic>=2",
 ]
 
 [project.scripts]
@@ -20,6 +21,7 @@ roster-askpass-login = "roster.askpass:logged_in_main"
 
 [dependency-groups]
 dev = [
+    "pyright[nodejs]==1.1.414",
     "pytest>=8.0",
     "pytest-timeout==2.4.0",
     "pytest-xdist==3.8.0",
@@ -51,5 +53,20 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["E501", "B904", "UP031"]
+# S: flake8-bandit's security rules (T112). Each finding is fixed or carries a noqa with its reason, except:
+#   S603, S607: roster's job is running ssh, git, nmap and the vault CLIs found on PATH, always as an argv list
+#   (never a shell; common.program_argv refuses what cmd.exe would act on), so every call would be a noqa.
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = ["E501", "B904", "UP031", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest's asserts; made-up passwords and temp paths for the stand-in vaults and Hosts
+"tests/**" = ["S101", "S105", "S106", "S108"]
+
+# The type checker (T112, decision Q113): basic over the CLI, strict for each module that is new or rewritten from
+# T112 on (add it to `strict`). `uv run pyright`; CI runs it beside ruff.
+[tool.pyright]
+include = ["src/roster"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+strict = ["src/roster/models.py", "src/roster/inventories.py"]

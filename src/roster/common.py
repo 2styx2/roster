@@ -11,6 +11,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, NoReturn
 
 KEY_TAG = "roster-managed"
 LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
@@ -18,14 +19,14 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 WINDOWS = os.name == "nt"                  # roster running natively on Windows (not in WSL)
 
 
-def ssh_dir():
+def ssh_dir() -> Path:
     return Path.home() / ".ssh"
 
 
 # The named Inventory this run uses (ticket 115): its own generated ssh config and known_hosts, so syncing one never
 # wipes another's. None (no named Inventories, or a roster.yml that isn't one of them): the files roster always wrote.
 # config.find_config sets it as it finds roster.yml; one process uses one Inventory (serve restarts to switch).
-_inventory = None
+_inventory: str | None = None
 _CURRENT = object()
 
 
@@ -34,17 +35,17 @@ def use_inventory(name):
     _inventory = name
 
 
-def current_inventory():
+def current_inventory() -> str | None:
     return _inventory
 
 
-def ssh_config_file(name=_CURRENT):
+def ssh_config_file(name: Any = _CURRENT) -> Path:
     """roster's generated ssh config for the Inventory NAME (default: the one this run uses)."""
     name = _inventory if name is _CURRENT else name
     return ssh_dir() / "config.d" / ("roster" if name is None else f"roster-{name}")
 
 
-def known_hosts_file(name=_CURRENT):
+def known_hosts_file(name: Any = _CURRENT) -> Path:
     """roster's known_hosts for the Inventory NAME (default: the one this run uses)."""
     name = _inventory if name is _CURRENT else name
     return ssh_dir() / ("roster_known_hosts" if name is None else f"roster_known_hosts-{name}")
@@ -55,20 +56,20 @@ def known_hosts_label():
     return f"~/.ssh/{known_hosts_file().name}"
 
 
-def ssh_index_file():
+def ssh_index_file() -> Path:
     """With named Inventories: the file ~/.ssh/config includes, which includes each one's ssh config, the active
     one's first (its name can't be a named Inventory's: those are roster-NAME)."""
     return ssh_dir() / "config.d" / "roster.inventories"
 
 
-def user_config_dir():
+def user_config_dir() -> Path:
     """roster's own folder: ~/.config/roster, or %APPDATA%\\roster on Windows (where the app's init.lua is too)."""
     if WINDOWS:
         return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "roster"
     return Path.home() / ".config" / "roster"
 
 
-def ssh_path(path):
+def ssh_path(path: str | Path) -> str:
     """PATH as ssh reads it in its config and -o values: as is, but with forward slashes on Windows (Windows'
     OpenSSH takes C:/Users/..., and a backslash is an escape character in some of its option values)."""
     return Path(path).as_posix() if WINDOWS else str(path)
@@ -130,7 +131,7 @@ def run_instead(argv):
     macOS the process becomes it (execvp); Windows has no such thing, so roster waits for it and passes on its code."""
     argv = program_argv(argv)
     if not WINDOWS:
-        os.execvp(argv[0], argv)
+        os.execvp(argv[0], argv)        # noqa: S606 - an argv list (no shell): roster's own ssh command line
     try:
         return subprocess.run(argv).returncode
     except KeyboardInterrupt:          # Ctrl+C went to the child as well; its code is what counts
@@ -144,7 +145,7 @@ def roster_command():
     return f"{shlex.quote(sys.executable)} -m roster"     # e.g. inside a uv venv that isn't on PATH
 
 
-def die(msg):
+def die(msg: str) -> NoReturn:
     sys.exit(f"error: {msg}")
 
 

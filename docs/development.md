@@ -4,7 +4,8 @@
 uv sync                  # creates .venv with dev tools
 uv run pytest            # no network or SSH server needed; temp folders are deleted when each test ends (below)
 uv run pytest tests/test_mesh.py -n 4   # the slow Mesh suite on 4 workers (pytest-xdist), as CI's Windows job runs it
-uv run ruff check src tests scripts app/scripts
+uv run ruff check src tests scripts app/scripts   # with flake8-bandit's security rules (S)
+uv run pyright           # the type checker: basic over src/roster/, strict for the modules listed in pyproject.toml
 uv build                 # wheel + sdist in dist/
 ```
 
@@ -21,8 +22,10 @@ src/roster/
   common.py         small shared helpers: output, paths, text, starting programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login
   config.py         loading/validating roster.yml, search, --only; find_config: which roster.yml (-c, --inv, ...)
-  inventories.py    named Inventories (`roster inv`, inventories.json): the active one, each one's own ssh config and
-                    known_hosts, the ssh config index, and the warnings for the same machine in two of them
+  models.py         roster.yml's Inventory as Pydantic models (Host, its Logins and services, group, Link, resource);
+                    load_inventory returns them, load_config their dict view (Inventory.as_config)
+  inventories.py    named Inventories (`roster inv`, inventories.json, its Pydantic models): the active one, each one's
+                    own ssh config and known_hosts, the ssh config index, and the warnings for the same machine in two
   example.py        the `roster init` template
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
@@ -75,7 +78,13 @@ The app's checks are in [app/README.md](../app/README.md#development) (`npm run 
 
 ## Languages and types
 
-The CLI and `roster serve` are Python; the app's core is Rust (decision Q113, [ADR 0009](adr/0009-python-cli-rust-where-it-falls-short.md)). Every new data shape in the CLI or serve (a serve method's params and result, a `roster.yml` key, a `--json` document) is a Pydantic model, and new or rewritten modules pass the type checker in strict mode (ticket T112 adds the checker and its command here). When something can't be done well in Python, write it in Rust in the Cargo workspace instead of a second Python copy. A full rewrite of the CLI is revisited once the app has matured.
+The CLI and `roster serve` are Python; the app's core is Rust (decision Q113, [ADR 0009](adr/0009-python-cli-rust-where-it-falls-short.md)). Every new data shape in the CLI or serve (a serve method's params and result, a `roster.yml` key, a `--json` document) is a Pydantic model, and new or rewritten modules pass the type checker in strict mode. Existing dicts move over when a ticket touches them, not in one sweep.
+
+- **The type checker is pyright** (`uv run pyright`, pinned in the dev group; CI's `CLI lint` job runs it beside ruff). It checks `src/roster/` in basic mode; a module that is new or rewritten goes on the `strict` list in `pyproject.toml`'s `[tool.pyright]` in the same pull request (`models.py` is the first). What it finds is fixed, or silenced on its line with the rule and a reason (`# pyright: ignore[reportAttributeAccessIssue] - Windows only`), never for a whole file.
+- **roster.yml loads into models** (`models.py`): `config.load_inventory(path)` returns an `Inventory` of `Host`s (with their `SshLogin`, `Login` and `Service`s), `Group`s, `Link`s and resources (`WifiResource`, `AccountResource`, `SecretResource`), read-only. New code reads those. `load_config(path)` is the same Inventory as the dicts the older code, serve's results and `--json` read (`Inventory.as_config()`), keys unchanged; a module moves to the models when a ticket touches it. A key roster doesn't know stays on its Host (`shell_hooks`, a team's own).
+- **A model's error is roster's own:** config.py makes its checks first, with their usual messages; whatever the models still refuse (`workers: lots`) stops with `error: PATH: KEY: what's wrong` (code 1 in serve and `--json`), never a Pydantic traceback, and never the value that failed. No repr shows an `auth:` or a key roster doesn't know: anything that could hold a secret is `Field(repr=False)` (`SecretStr` for a value a vault returns).
+- **Pydantic is imported lazily:** only when roster.yml is loaded (inside `config.parse_inventory`), so `roster --help`, `roster --version` and `roster askpass` don't pay for it (`tests/test_models.py` checks `import roster.cli` doesn't load it). Measure a change to that with `python -X importtime -c "import roster.cli"`.
+- **ruff's `S` rules** (flake8-bandit) are on: a finding is fixed or carries a `noqa` with its reason. `S603`/`S607` (running a program from PATH without a shell) are off everywhere, since running ssh, git and the vault CLIs as argv lists is roster's job; the tests may assert and use made-up passwords and temp paths. When something can't be done well in Python, write it in Rust in the Cargo workspace instead of a second Python copy. A full rewrite of the CLI is revisited once the app has matured.
 
 ## Trying it safely
 
