@@ -187,6 +187,77 @@ describe(":check HOST, live", () => {
   });
 });
 
+describe(":check HOST, Stop (#221 item 1)", () => {
+  const stopButton = (panel: HTMLElement) => within(panel).findByRole("button", { name: "Stop the check" });
+
+  it("stops the app's own check, says it's stopping, then where it stopped and which steps ran", async () => {
+    const { user, backend } = await ready();
+    const panel = await check(user, host);
+    progress(backend, host, "tcp");
+    await user.click(await stopButton(panel));
+    expect(backend.stoppedChecks()).toEqual(["check-1"]);
+    // One way to stop: the button goes, and the line says it's stopping until serve answers.
+    expect(within(panel).queryByRole("button", { name: "Stop the check" })).toBeNull();
+    expect(panel).toHaveTextContent(`Stopping the check of ${host}…`);
+    act(() => backend.answerCheck(host, stoppedAt(host, 5)));
+    expect(await within(panel).findByText(/Stopped at TCP port/)).toBeInTheDocument();
+    expect(statuses(panel)).toEqual(["ok", "ok", "ok", "ok", "ok", "skipped", "skipped", "skipped"]);
+    expect(panel.querySelector('[data-step="tcp"]')).toHaveAttribute("data-stopped");
+  });
+
+  it("is a button a keyboard reaches; once it's gone, focus moves to the panel's close button", async () => {
+    const { user, backend } = await ready();
+    const panel = await check(user, host);
+    const stop = await stopButton(panel);
+    stop.focus();
+    await user.keyboard("{Enter}");
+    expect(backend.stoppedChecks()).toEqual(["check-1"]);
+    expect(within(panel).getByRole("button", { name: "Close the check" })).toHaveFocus();
+  });
+
+  it("goes when the check answers on its own, and focus on it moves to the close button", async () => {
+    const { user, backend } = await ready();
+    const panel = await check(user, host);
+    (await stopButton(panel)).focus();
+    act(() => backend.answerCheck(host, { host, ok: true, steps: CHECK_STEPS.map((step) => ({ step, status: "ok" as const, message: "fine" })) }));
+    expect(await within(panel).findByText(/All checks passed/)).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Stop the check" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Close the check" })).toHaveFocus();
+    expect(backend.stoppedChecks()).toEqual([]);
+  });
+
+  it("isn't offered for a check another caller started (a Plugin's), which the app leaves alone", async () => {
+    const { user, backend } = await ready({ othersChecks: [host] });
+    const panel = await check(user, host);
+    await waitFor(() => expect(backend.jobsListed()).toBe(1));
+    expect(within(panel).queryByRole("button", { name: "Stop the check" })).toBeNull();
+  });
+
+  it("asking again for the same Host keeps its Stop: it's still the app's own check", async () => {
+    const { user } = await ready();
+    await check(user, host);
+    const panel = await check(user, host);
+    expect(await stopButton(panel)).toBeInTheDocument();
+  });
+
+  it("a Stop that doesn't reach serve says so and offers Stop again (errors.md row 203)", async () => {
+    const { user, backend } = await ready({ stopFails: true });
+    const panel = await check(user, host);
+    await user.click(await stopButton(panel));
+    expect(await screen.findByText(/The check couldn't be stopped: roster serve went away/)).toBeInTheDocument();
+    expect(await stopButton(panel)).toBeInTheDocument();
+    expect(panel).toHaveTextContent(`Checking ${host}…`);
+    expect(backend.stoppedChecks()).toEqual([]);
+  });
+
+  it("isn't offered on a serve before API 21, whose check isn't a job", async () => {
+    const { user } = await ready({ apiVersion: 20 });
+    const panel = await check(user, host);
+    await act(async () => {});
+    expect(within(panel).queryByRole("button", { name: "Stop the check" })).toBeNull();
+  });
+});
+
 describe("jobs.list on joining a check", () => {
   const job = (at: string): JobProgress => ({ kind: "check", job: "check-1", action: "check", state: "running", done: 0, total: 8, at, host });
   it("never moves back a step that progress has already shown", () => {

@@ -15,7 +15,9 @@ import {
   BOX_CHECK_API_VERSION,
   type HealthCheck,
   type CallErrorData,
+  CHECK_JOBS_API_VERSION,
   CHECK_STEPS,
+  type CheckStarted,
   EditError,
   type Host,
   type HostChange,
@@ -143,6 +145,11 @@ export interface FakeScenario {
   /** Hosts whose `host.check` waits until the test answers it (`answerCheck`), so it can push the
    * check's `job.progress` (`jobProgress`) in between. */
   heldChecks?: string[];
+  /** Hosts whose check another caller started (a Plugin's `host.check`), so the app's joins it
+   * and it isn't the app's own to stop (#221 item 1). */
+  othersChecks?: string[];
+  /** `stopCheck` fails as when serve went away (errors.md row 203). */
+  stopFails?: boolean;
   /** `box.check`'s checks (default: HEALTHY_BOX, every one ok). */
   boxChecks?: HealthCheck[];
   /** `inventory.info`'s api_version (default 2; editing needs 5). */
@@ -1220,6 +1227,8 @@ export interface FakeBackend extends Backend {
   /** Answers a held `host.check` (`heldChecks`) with its result, or fails it with an error (the
    * core giving up after 90 s, serve going away). */
   answerCheck(host: string, outcome: HostCheck | Error): void;
+  /** Every check the app asked to stop (`stopCheck`), by job. */
+  stoppedChecks(): string[];
   /** Every `host.get` asked with `settled` so far: the Host's name. */
   settledGets(): string[];
   /** Whether `inventory.watch` asked to apply outside edits (null: not watching). */
@@ -1277,6 +1286,10 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     for (const w of jobWatchers) w(job);
   };
   const heldChecks = new Map<string, { resolve(c: HostCheck): void; reject(e: Error): void }>();
+  /** A held check's job (`check-N`) and whether it's the app's own, by Host. */
+  const heldJobs = new Map<string, CheckStarted>();
+  let heldJobCount = 0;
+  const stoppedChecks: string[] = [];
   let checkJobs = 0;
   /** serve's check job (ticket 108): progress as each step starts, up to where `result` failed or
    * stopped. Never a step's message. */
@@ -2021,9 +2034,21 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const checks = scenario.boxChecks ?? [...HEALTHY_BOX];
       return { checks, ok: !checks.some((c) => c.level === "error"), roster_version: "0.1.0", api_version: scenario.apiVersion ?? 2 };
     },
-    async checkHost(host) {
+    async checkHost(host, onStarted) {
       if (scenario.heldChecks?.includes(host)) {
-        return new Promise<HostCheck>((resolve, reject) => heldChecks.set(host, { resolve, reject }));
+        // serve's check job (API 21): one per Host, so asking again while it runs joins it.
+        if ((scenario.apiVersion ?? 2) >= CHECK_JOBS_API_VERSION) {
+          const started = heldJobs.get(host) ?? { job: `check-${++heldJobCount}`, own: !scenario.othersChecks?.includes(host) };
+          heldJobs.set(host, started);
+          onStarted?.(started);
+        }
+        const earlier = heldChecks.get(host);
+        return new Promise<HostCheck>((resolve, reject) =>
+          heldChecks.set(host, {
+            resolve: (c) => (earlier?.resolve(c), resolve(c)),
+            reject: (e) => (earlier?.reject(e), reject(e)),
+          }),
+        );
       }
       await wait();
       const result = ((): HostCheck => {
@@ -2043,10 +2068,19 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (scenario.checkSteps) await runCheckJob(result, scenario.checkSteps);
       return result;
     },
+    async stopCheck(job) {
+      if (scenario.stopFails) throw new BackendCallError("roster serve went away", null, null, true);
+      const held = [...heldJobs.values()].find((s) => s.job === job);
+      if (!held?.own) return false;
+      stoppedChecks.push(job);
+      return true;
+    },
+    stoppedChecks: () => [...stoppedChecks],
     answerCheck(host, outcome) {
       const held = heldChecks.get(host);
       if (!held) throw new Error(`no held check of ${host}`);
       heldChecks.delete(host);
+      heldJobs.delete(host);
       if (outcome instanceof Error) held.reject(outcome);
       else held.resolve(outcome);
     },

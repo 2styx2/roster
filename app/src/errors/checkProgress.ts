@@ -2,12 +2,13 @@
 // starts (API 21, decision Q112 (q)), never a step's message or status. So while it runs the panel
 // knows only which step is under way: the ones before it are done (ok, or skipped by design as a key
 // Login's vault steps are), the rest still to come. The answer then says how each came out.
-import { CHECK_STEPS, type HostCheck, type JobProgress } from "../backend/types";
+import { CHECK_STEPS, type CheckStarted, type HostCheck, type JobProgress } from "../backend/types";
 
 export type CheckState =
   /** `at`: the step under way (null before the first, or on a serve before API 21, which sends
-   * none); `since`: when it started, in ms. */
-  | { state: "running"; host: string; at: string | null; since: number }
+   * none); `since`: when it started, in ms; `job`: its job when it's the app's own to stop (#221
+   * item 1), and `stopping` once Stop was pressed. */
+  | { state: "running"; host: string; at: string | null; since: number; job?: string; stopping?: boolean }
   | { state: "done"; host: string; result: HostCheck; at: string | null }
   /** The call failed (the core gave up after 90 s, serve went away): `at` is where it was. */
   | { state: "error"; host: string; message: string; at: string | null };
@@ -37,6 +38,23 @@ export function checkJoined(check: CheckState | null, jobs: readonly JobProgress
   if (check?.state !== "running" || check.at !== null) return check;
   const job = jobs.find((j) => j.kind === "check" && j.host === check.host && j.state === "running");
   return job ? checkProgressed(check, job, now) : check;
+}
+
+/** The core says a check is under way: one the app started (or joined, having started it) can be
+ * stopped. Another caller's check (a Plugin's) can't, and another Host's word changes nothing. */
+export function checkOwned(check: CheckState | null, host: string, started: CheckStarted): CheckState | null {
+  if (check?.state !== "running" || check.host !== host || !started.own || check.job === started.job) return check;
+  return { ...check, job: started.job };
+}
+
+/** Stop was pressed: the line says so until the answer comes, and there's no second Stop. */
+export function checkStopping(check: CheckState | null): CheckState | null {
+  return check?.state === "running" && check.job !== undefined ? { ...check, stopping: true } : check;
+}
+
+/** Stop didn't reach serve: Stop is offered again. */
+export function checkStopFailed(check: CheckState | null): CheckState | null {
+  return check?.state === "running" && check.stopping ? { ...check, stopping: false } : check;
 }
 
 export type LiveStatus = "pending" | "running" | "done" | "stopped";

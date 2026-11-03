@@ -2,7 +2,7 @@
 //! calls, Sessions).
 //! All logic lives in roster-core so it can be tested without Tauri (docs/app/dev/testing.md).
 
-use roster_core::backend::{Backend, BackendInfo, QuickTarget, fill_refusal};
+use roster_core::backend::{Backend, BackendInfo, CheckStarted, QuickTarget, fill_refusal, timeout_for};
 use roster_core::config::{self, Config, Loader, Report};
 use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
 use roster_core::package::{self, Packages};
@@ -327,11 +327,29 @@ async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Val
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
 /// first failure. roster makes at most one connection and one login, so this is safe on 10.19.
 /// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
-/// worker of serve waits for it.
+/// worker of serve waits for it. `started` hears the check's job once serve has it under way, and
+/// whether it's the app's own to stop (`host_check_stop`, #221 item 1); an older serve sends none.
 #[tauri::command]
-async fn host_check(state: tauri::State<'_, Arc<BackendState>>, host: String) -> Result<Value, CallError> {
+async fn host_check(
+    state: tauri::State<'_, Arc<BackendState>>,
+    host: String,
+    started: Channel<CheckStarted>,
+) -> Result<Value, CallError> {
     let backend = state.get()?;
-    blocking(move || backend.check_host(&host)).await
+    blocking(move || {
+        backend.check_host_with(&host, timeout_for("host.check"), |s| {
+            let _ = started.send(s.clone());
+        })
+    })
+    .await
+}
+
+/// Stop in the `:check` panel (#221 item 1): stops a check of the app's own at its next step
+/// (`Backend::stop_check`, serve's `jobs.stop`). Another caller's check isn't stopped.
+#[tauri::command]
+async fn host_check_stop(state: tauri::State<'_, Arc<BackendState>>, job: String) -> Result<Value, CallError> {
+    let backend = state.get()?;
+    blocking(move || backend.stop_check(&job)).await
 }
 
 /// This Box's health (`box.check`, api 16, ticket 49): roster.yml, ssh, the vault CLIs, askpass and the
@@ -1305,6 +1323,7 @@ pub fn run() {
             hosts_list,
             host_get,
             host_check,
+            host_check_stop,
             box_check,
             jobs_list,
             inventory_pull,
