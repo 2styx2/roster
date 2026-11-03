@@ -956,6 +956,10 @@ struct OpenedSession {
     /// Its PTY is Windows' ConPTY: the app offers only the fills the core makes there (decision
     /// Q151 (i), ticket 162).
     conpty: bool,
+    /// The ssh user the core fills sudo's prompt for (`session.prepare`'s login), so the app judges
+    /// sudo's prompt by the same user (the review of #308, #6). None for a Quick Connect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
 }
 
 /// Open a Session to `host`: `session.prepare`, then the command in a PTY of `cols`×`rows`.
@@ -993,6 +997,7 @@ async fn session_open(
         // The token on roster's own shell marks for this attempt (ticket 162): the core follows
         // them, so a nested ssh's fill goes only while that ssh runs.
         cmd.marks = marks;
+        let user = cmd.fill_as.as_ref().map(|t| t.login.user.clone());
         let id = sessions
             .open(&cmd, Size { cols, rows }, move |event| {
                 let body = match event {
@@ -1008,6 +1013,7 @@ async fn session_open(
             quick: None,
             held,
             conpty: sessions.conpty(),
+            user,
         })
     })
     .await
@@ -1049,6 +1055,7 @@ async fn quick_session_open(
             quick: Some(q.quick),
             held: q.held,
             conpty: sessions.conpty(),
+            user: None,
         })
     })
     .await

@@ -73,7 +73,7 @@ fn quiet_for(rx: &Receiver<SessionEvent>, d: Duration) -> String {
 
 /// A nested ssh's Host, as the frontend resolved it at the Session's own `run`th command.
 fn at_run(run: u64, to: FillTarget) -> Hop {
-    Hop { to, run }
+    Hop { to, run: Some(run) }
 }
 
 fn secret() -> Result<Secret, String> {
@@ -592,6 +592,45 @@ fn a_nested_fill_goes_only_to_the_ssh_the_sessions_own_shell_still_runs() {
     // It typed nothing: the code that keeps the prompt offered once the app's view catches up.
     let refusal = roster_core::backend::fill_refusal(FillError::NotInHop);
     assert!(format!("{refusal:?}").contains("130"), "{refusal:?}");
+}
+
+/// The review of #308 (#3, #5): a token that isn't 8 to 64 lowercase hex characters is no token
+/// (an empty or short one could be guessed), and a hop that doesn't say which command it is has
+/// no command to match: both refuse, nothing asked or typed.
+#[test]
+fn a_nested_fill_needs_a_real_token_and_the_hops_run() {
+    const SUDO: &str =
+        "stty -echo; printf '[sudo] password for ops: '; read -r pw; stty echo; echo; echo \"got:[$pw]\"; sleep 5";
+    let short = "0123456";
+    let upper = "0123456789ABCDEF01234567";
+    let long = "0".repeat(65);
+    let cases: Vec<(&str, Option<&str>, Option<u64>)> = vec![
+        ("an empty token", Some(""), Some(1)),
+        ("a short token", Some(short), Some(1)),
+        ("upper case", Some(upper), Some(1)),
+        ("too long", Some(long.as_str()), Some(1)),
+        ("a hop with no run", Some(TOKEN), None),
+    ];
+    for (name, token, run) in cases {
+        let m = SessionManager::new();
+        let mut cmd = host_sh(&format!("{}{SUDO}", mark("C", token.unwrap_or(""))));
+        cmd.marks = token.map(String::from);
+        let (id, rx) = open(&m, cmd);
+        until(&rx, "ops: ");
+        std::thread::sleep(Duration::from_millis(100));
+        let mut asked = false;
+        let hop = Hop { to: esx_02(), run };
+        let got = m.fill(id, WAIT, "[sudo] password for ops:", Some(&hop), |_| {
+            asked = true;
+            secret()
+        });
+        assert!(matches!(got, Err(FillError::NotInHop)), "{name}: {got:?}");
+        assert!(!asked, "{name}: the vault was asked");
+        m.close(id).unwrap();
+    }
+    // An app that sends no `run` gets this refusal, not a malformed call.
+    let hop: Hop = serde_json::from_str(r#"{"host":"esx-02","address":"10.0.0.12","port":22,"user":"ops"}"#).unwrap();
+    assert_eq!(hop.run, None);
 }
 
 /// Ticket 162 (#284 item 4): a fill whose Session is closed while it checks (the PTY's writer is

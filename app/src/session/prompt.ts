@@ -150,8 +150,11 @@ export class PromptWatch {
   /** The `C` marks with the Session's token, wherever they came (the alternate screen too): the
    * commands its own shell started, counted as the core counts them (ticket 162). */
   private runs = 0;
-  /** The Session's PTY is Windows' ConPTY (ticket 162): `conptyRules`. */
-  private conpty = false;
+  /** The kind of the last mark with the Session's token (`C`: a command it started still runs). */
+  private lastOwn: string | null = null;
+  /** The Session's PTY is Windows' ConPTY (ticket 162): `conptyRules`. Then the user the core fills
+   * sudo's prompt for (null: none). */
+  private conpty: { user: string | null } | null = null;
   /** A fill was tried at the prompt as it was after this many writes: not offered again until more. */
   private spentAt = -1;
 
@@ -217,10 +220,19 @@ export class PromptWatch {
   }
 
   /** The Session's PTY is Windows' ConPTY, where the core fills only sudo's own prompt for the
-   * Session's own Host (decision Q151 (i)): every other prompt is refused here too, with why, so
-   * no fill is offered that the core will refuse (ticket 162). The core's refusal stays the guard. */
-  conptyRules() {
-    this.conpty = true;
+   * Session's own Host (decision Q151 (i)), for `user`, the ssh user it connected as (the core's,
+   * which can differ from the Inventory's; null: none): every other prompt is refused here too,
+   * with why, so no fill is offered that the core will refuse (ticket 162). The core's refusal
+   * stays the guard. */
+  conptyRules(user: string | null) {
+    this.conpty = { user };
+  }
+
+  /** While the last mark with the Session's token is a `C`, how many such `C`s there have been:
+   * what the core's screen says for the same output (`Screen::own_run`), which a nested ssh's
+   * fill must match (ticket 162). Null otherwise. */
+  ownRun(): number | null {
+    return this.lastOwn === "C" ? this.runs : null;
   }
 
   /** Where a nested ssh has taken the Session, until it ends; null on the Session's own Host. */
@@ -234,7 +246,9 @@ export class PromptWatch {
    * there's none (or the marks say it's a shell's own prompt, or a fill was just tried). */
   prompt(): PasswordPrompt | null {
     const prompt = this.anyPrompt();
-    if (!this.conpty || prompt === null || prompt.elsewhere !== null || (prompt.kind === "sudo" && prompt.hop === null)) return prompt;
+    if (!this.conpty || prompt === null || prompt.elsewhere !== null) return prompt;
+    const coreUser = this.conpty.user;
+    if (prompt.kind === "sudo" && prompt.hop === null && coreUser !== null && SUDO.exec(prompt.line)?.[1] === coreUser) return prompt;
     return { ...prompt, elsewhere: CONPTY, hop: null };
   }
 
@@ -358,16 +372,21 @@ export class PromptWatch {
   }
 
   private mark(data: string) {
-    const [kind, ...params] = data.split(";");
-    if (kind === "C" && this.nonce !== null && params.includes(`roster=${this.nonce}`)) this.runs++;
+    const [kind = "", ...params] = data.split(";");
+    // The Session's token, however the hook line went: counted as the core counts it.
+    const token = this.nonce !== null && params.includes(`roster=${this.nonce}`);
+    if (token) {
+      if (kind === "C") this.runs++;
+      this.lastOwn = kind;
+    }
     if (this.term.buffer.active.type !== "normal") return;
     this.marksSeen = true;
-    const own = this.vouched && this.nonce !== null && params.includes(`roster=${this.nonce}`);
+    const own = this.vouched && token;
     if (own) {
       this.hooked = true;
-      this.outerMark(kind ?? "", true);
-    } else if (this.hooked) this.foreignMark(kind ?? "");
-    else this.outerMark(kind ?? "", false);
+      this.outerMark(kind, true);
+    } else if (this.hooked) this.foreignMark(kind);
+    else this.outerMark(kind, false);
   }
 
   /** A mark of the Session's own shell: provably so (`own`, roster's token), or the only shell

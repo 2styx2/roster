@@ -53,8 +53,8 @@ struct OwnMarks {
     param: Option<Vec<u8>>,
     /// The `C` marks seen: commands the shell started.
     runs: u64,
-    /// The last mark's kind (`A`, `B`, `C`, `D`…).
-    last: Option<Vec<u8>>,
+    /// The last mark's kind (`A`, `B`, `C`, `D`…), or 0 for a kind longer than one letter.
+    last: Option<u8>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,9 +98,13 @@ pub(crate) struct Screen {
     odd: u64,
     /// What a fill's probe draws, while it waits (ticket 154): [`Screen::watch_mask`].
     mask: Option<MaskWatch>,
-    /// The OSC being read, while it may be a shell mark (ticket 162); None for other strings and
-    /// one longer than [`OSC_MAX`].
+    /// The OSC being read, while it may be a shell mark (ticket 162): only while a token is
+    /// followed; None for other strings and one longer than [`OSC_MAX`].
     osc: Option<Vec<u8>>,
+    /// A `0xC2` in the text or a string, not yet drawn or kept: with a byte from `0x80` to `0x9f`
+    /// after it, it's a C1 control (U+0080 to U+009F), which xterm.js acts on (the review of #308,
+    /// #4).
+    c1: bool,
     /// The Session's own shell's marks (ticket 162): [`Screen::own_run`].
     own: OwnMarks,
 }
@@ -375,6 +379,7 @@ impl Screen {
             odd: 0,
             mask: None,
             osc: None,
+            c1: false,
             own: OwnMarks::default(),
         }
     }
@@ -393,22 +398,70 @@ impl Screen {
     /// follow (ticket 162).
     pub(crate) fn own_run(&self) -> Option<u64> {
         let own = &self.own;
-        (own.param.is_some() && own.last.as_deref() == Some(b"C")).then_some(own.runs)
+        (own.param.is_some() && own.last == Some(b'C')).then_some(own.runs)
     }
 
-    /// An OSC ended (BEL, or an ESC as a terminal takes it): a shell mark with the Session's token
-    /// counts (ticket 162).
+    /// An OSC ended (BEL, ST, or an ESC, as xterm.js ends one): a shell mark with the Session's
+    /// token counts (ticket 162). Its id is read as xterm.js reads it: digits up to the first `;`
+    /// (`0133` is 133), anything else and it's no OSC at all.
     fn osc_end(&mut self) {
         let Some(body) = self.osc.take() else { return };
         let Some(param) = &self.own.param else { return };
-        let Some(mark) = body.strip_prefix(b"133;") else { return };
-        let mut fields = mark.split(|&b| b == b';');
+        let (id, payload) = match body.iter().position(|&b| b == b';') {
+            Some(at) => (&body[..at], &body[at + 1..]),
+            None => (&body[..], &[][..]),
+        };
+        if id.is_empty() || !id.iter().all(u8::is_ascii_digit) {
+            return;
+        }
+        let id = id
+            .iter()
+            .fold(0u32, |n, &d| n.saturating_mul(10).saturating_add(u32::from(d - b'0')));
+        if id != 133 {
+            return;
+        }
+        let mut fields = payload.split(|&b| b == b';');
         let kind = fields.next().unwrap_or_default();
         if fields.any(|f| f == param.as_slice()) {
             if kind == b"C" {
                 self.own.runs += 1;
             }
-            self.own.last = Some(kind.to_vec());
+            self.own.last = Some(if kind.len() == 1 { kind[0] } else { 0 });
+        }
+    }
+
+    /// A C1 control (U+0080 to U+009F, `0xC2` then `b`), in the text or a string, as xterm.js
+    /// takes it anywhere: ST ends a string (an OSC as a whole one), the CSI, OSC, DCS and SOS, PM
+    /// and APC introducers start one (ending any string unfinished), IND and NEL move the cursor,
+    /// and the rest end any sequence (the review of #308, #4).
+    fn c1_control(&mut self, b: u8) {
+        self.not_mask();
+        self.saw(Seen::Ctl(b));
+        if self.parse == Parse::Str && b == 0x9c {
+            self.osc_end();
+        }
+        self.osc = None;
+        self.pending_wrap = false;
+        self.parse = Parse::Ground;
+        match b {
+            0x9b => {
+                self.parse = Parse::Csi;
+                self.csi.clear();
+                self.csi_long = false;
+            }
+            0x9d => {
+                self.parse = Parse::Str;
+                self.osc = self.own.param.is_some().then(Vec::new);
+            }
+            0x90 | 0x98 | 0x9e | 0x9f => self.parse = Parse::Str,
+            0x84 => self.line_feed(),
+            0x85 => {
+                self.col = 0;
+                self.line_feed();
+            }
+            0x9c => {}
+            // Tab sets and the rest: not modelled.
+            _ => self.odd += 1,
         }
     }
 
@@ -641,6 +694,20 @@ impl Screen {
     }
 
     fn byte(&mut self, b: u8) {
+        if self.c1 {
+            self.c1 = false;
+            if (0x80..=0x9f).contains(&b) {
+                self.last_put = None;
+                self.c1_control(b);
+                return;
+            }
+            // The first byte of a character: drawn, or kept in the string, as it would have been.
+            match self.parse {
+                Parse::Ground => self.ground_char(0xc2),
+                Parse::Str => self.str_char(0xc2),
+                _ => {}
+            }
+        }
         if !(self.parse == Parse::Ground && (0x80..0xc0).contains(&b)) {
             self.last_put = None;
         }
@@ -686,16 +753,15 @@ impl Screen {
                     // A terminal (xterm.js) ends the OSC here, whatever follows the ESC.
                     self.parse = Parse::StrEsc;
                     self.osc_end();
-                } else {
-                    if let Some(osc) = &mut self.osc {
-                        // CAN and SUB abort it, as in a terminal.
-                        if osc.len() >= OSC_MAX || b == 0x18 || b == 0x1a {
-                            self.osc = None;
-                        } else {
-                            osc.push(b);
-                        }
-                    }
+                } else if b == 0x18 || b == 0x1a {
+                    // CAN and SUB abort it, and what follows is text again (xterm.js).
+                    self.osc = None;
+                    self.parse = Parse::Ground;
                     self.saw_more(Kind::Str, b);
+                } else if b == 0xc2 {
+                    self.c1 = true;
+                } else {
+                    self.str_char(b);
                 }
             }
             Parse::StrEsc => {
@@ -721,7 +787,29 @@ impl Screen {
         }
     }
 
+    /// A byte of a string's contents: an OSC that may be a mark keeps it, but the C0 controls
+    /// xterm.js ignores there.
+    fn str_char(&mut self, b: u8) {
+        if let Some(osc) = &mut self.osc {
+            if osc.len() >= OSC_MAX {
+                self.osc = None;
+            } else if b >= 0x20 {
+                osc.push(b);
+            }
+        }
+        self.saw_more(Kind::Str, b);
+    }
+
     fn ground(&mut self, b: u8) {
+        if b == 0xc2 {
+            // Maybe a C1 control: the next byte says.
+            self.c1 = true;
+            return;
+        }
+        self.ground_char(b);
+    }
+
+    fn ground_char(&mut self, b: u8) {
         if self.mask.is_some() {
             match b {
                 b'*' => {
@@ -793,7 +881,7 @@ impl Screen {
             }
             b']' | b'P' | b'_' | b'^' | b'X' => {
                 self.parse = Parse::Str;
-                self.osc = (b == b']').then(Vec::new);
+                self.osc = (b == b']' && self.own.param.is_some()).then(Vec::new);
             }
             0x20..=0x2f => {
                 self.parse = Parse::Inter;
@@ -1134,6 +1222,32 @@ mod tests {
         let mut s = Screen::new(24, 80);
         s.feed(bytes);
         s
+    }
+
+    /// The review of #308 (#4): the core takes as a mark exactly what xterm.js does, so its count
+    /// and PromptWatch's agree: the same cases as prompt.test.ts, through both.
+    #[test]
+    fn own_marks_match_the_shared_cases() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/own-marks.json")).unwrap();
+        let token = fixture["token"].as_str().unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let mut s = Screen::new(24, 80);
+            s.follow_marks(token);
+            for chunk in case["chunks"].as_array().unwrap() {
+                s.feed(chunk.as_str().unwrap().as_bytes());
+            }
+            assert_eq!(s.own_run(), case["run"].as_u64(), "{}", case["name"]);
+        }
+    }
+
+    /// The review of #308 (#4): a string CAN or SUB aborts is over, and what follows is drawn.
+    #[test]
+    fn can_and_sub_end_a_string_and_the_text_after_is_drawn() {
+        for abort in ["\x18", "\x1a"] {
+            let s = screen(format!("\x1b]0;title{abort}$ ").as_bytes());
+            assert!(s.cursor_after("$"), "{abort:?}");
+        }
     }
 
     /// Ticket 162: the Session's own shell's marks (its token) say which of its commands runs,

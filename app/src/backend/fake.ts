@@ -1869,7 +1869,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         await handle.write(`${FAKE_LOGIN_PASSWORD}\r`);
         return { host: now.name };
       };
-      const opened = scenario.conpty ? { ...handle, conpty: true } : handle;
+      const opened = { ...handle, ...(scenario.conpty ? { conpty: true } : {}), fillUser: connected.user };
       return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...opened, fill } : opened;
     },
     async openQuickSession(to, password, size, events, options = {}) {

@@ -65,11 +65,13 @@ pub struct FillTarget {
 /// commands that ssh is: the `run`th its own shell marked as starting, with the Session's token
 /// (ticket 162). A fill for it goes only while that's still the last of those marks
 /// ([`SessionManager::fill`]). Read from `{host, address, port, user, run}`; serve gets `to` only.
+/// No `run` (an app from before ticket 162) is no command to match: the fill is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Hop {
     #[serde(flatten)]
     pub to: FillTarget,
-    pub run: u64,
+    #[serde(default)]
+    pub run: Option<u64>,
 }
 
 impl std::fmt::Debug for Prepared {
@@ -416,7 +418,9 @@ impl SessionManager {
         let reader = Reader::new(pair.master.as_ref())?;
         let writer = pair.master.take_writer().map_err(io)?;
         let mut screen = Screen::new(size.rows, size.cols);
-        if let Some(token) = &cmd.marks {
+        // Only a token like the frontend's (96 random bits in hex): an empty or short one could be
+        // guessed, so it's no token (the review of #308, #3).
+        if let Some(token) = cmd.marks.as_deref().filter(|t| marks_token(t)) {
             screen.follow_marks(token);
         }
         let running = Arc::new(Running {
@@ -580,7 +584,7 @@ impl SessionManager {
             // Positively still in the nested ssh the frontend resolved (ticket 162): anything
             // printed after this check refuses the fill below.
             if let Some(hop) = hop
-                && shown.screen.own_run() != Some(hop.run)
+                && (hop.run.is_none() || shown.screen.own_run() != hop.run)
             {
                 return Err(FillError::NotInHop);
             }
@@ -745,6 +749,12 @@ fn sudo_prompt_for(prompt: &str, user: &str) -> bool {
         && words.len() == 4
         && words[..3] == ["[sudo]", "password", "for"]
         && words[3].strip_suffix(':') == Some(user)
+}
+
+/// Whether `token` is one the core follows marks by ([`SessionCommand::marks`]): 8 to 64
+/// lowercase hex characters, as the frontend's 24 are.
+fn marks_token(token: &str) -> bool {
+    (8..=64).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Where [`PROBE`] is split: Ctrl+U and the letter go first, the last Ctrl+U a wait later

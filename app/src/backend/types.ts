@@ -683,6 +683,9 @@ export interface SessionHandle {
   /** Its PTY is Windows' ConPTY: the core fills only sudo's own prompt for the Session's own Host
    * there (decision Q151 (i)), so the app offers no other (ticket 162). Absent: it isn't. */
   readonly conpty?: boolean;
+  /** The ssh user the core fills sudo's prompt for (what `session.prepare` said it connects as),
+   * which can differ from the Inventory's; absent: none (the review of #308, #6). */
+  readonly fillUser?: string;
   /** Fills the password prompt the Session shows from the vault (serve API 25, ticket 119,
    * decision Q129), for the line at its cursor (`prompt`, the Host's text). The core asks serve for
    * the password of the Host the Session was opened to and types it only if the prompt doesn't

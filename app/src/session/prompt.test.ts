@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Host } from "../backend/types";
 import { mayReachElsewhere } from "./commandLine";
 import { HUGE_CSI, HUGE_CSI_MS, splitInCount } from "../test-hugeCsi";
+import ownMarks from "../../../crates/roster-core/tests/fixtures/own-marks.json";
 import { PromptWatch, sudoOnly } from "./prompt";
 
 const watches: PromptWatch[] = [];
@@ -382,11 +383,22 @@ describe("PromptWatch: which of the Session's own commands a nested ssh is (tick
   });
 });
 
+describe("PromptWatch counts the Session's own marks as the core does (ticket 162, the review of #308, #4)", () => {
+  // The same cases as the core's screen (screen.rs, own_marks_match_the_shared_cases): what xterm.js
+  // takes as a mark, each run through both.
+  it.each(ownMarks.cases)("$name", async ({ chunks, run }) => {
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, ownMarks.token);
+    watches.push(w);
+    for (const c of chunks) await w.write(c);
+    expect(w.ownRun()).toBe(run);
+  });
+});
+
 describe("PromptWatch under Windows' ConPTY (ticket 162, decision Q151 (i))", () => {
   const WINDOWS = /on Windows roster fills only sudo's own prompt for this Session's Host/;
   const onConpty = async (w: PromptWatch | Promise<PromptWatch>) => {
     const watch = await w;
-    watch.conptyRules();
+    watch.conptyRules("ops");
     return watch;
   };
 
@@ -408,10 +420,19 @@ describe("PromptWatch under Windows' ConPTY (ticket 162, decision Q151 (i))", ()
     expect((await onConpty(fed("[sudo] password for root: "))).prompt()).toBeNull();
   });
 
+  it("judges sudo's prompt by the user the core fills for, not the Inventory's (the review of #308, #6)", async () => {
+    const differs = await fed(`ops@esx:~$ sudo -v\r\n${SUDO}`);
+    differs.conptyRules("admin");
+    expect(differs.prompt()).toMatchObject({ kind: "sudo", elsewhere: expect.stringMatching(WINDOWS) });
+    const unknown = await fed(`ops@esx:~$ sudo -v\r\n${SUDO}`);
+    unknown.conptyRules(null);
+    expect(unknown.prompt()?.elsewhere).toMatch(WINDOWS);
+  });
+
   it("follows the rule from when it's told, for the prompt already there", async () => {
     const w = await hopping(ran("ssh esx-02", SSH_PROMPT));
     expect(w.prompt()?.elsewhere).toBeNull();
-    w.conptyRules();
+    w.conptyRules("ops");
     expect(w.prompt()?.elsewhere).toMatch(WINDOWS);
   });
 });

@@ -595,7 +595,7 @@ export class Tabs {
           entry.session = session;
           // Windows' ConPTY (ticket 162): the watch offers only the fills the core makes there.
           if (session.conpty && watch) {
-            watch.conptyRules();
+            watch.conptyRules(session.fillUser ?? null);
             this.promptChanged(entry, watch);
           }
           for (const data of entry.pending.splice(0)) void session.write(data).catch(() => {});

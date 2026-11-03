@@ -104,7 +104,7 @@ function sessionChannel(events: SessionEvents): Channel<SessionMessage> {
 
 async function openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword, marks?: string): Promise<SessionHandle> {
   // A typed password (ticket 16) goes once to serve's stdin, like vault_unlock's.
-  const { id, auth, held, conpty } = await call<{ id: number; auth: SessionAuth; held?: string; conpty?: boolean }>("session_open", {
+  const { id, auth, held, conpty, user } = await call<{ id: number; auth: SessionAuth; held?: string; conpty?: boolean; user?: string }>("session_open", {
     host,
     password: typed?.password ?? null,
     save: typed?.save === true,
@@ -118,6 +118,7 @@ async function openSession(host: string, size: TermSize, events: SessionEvents, 
     auth,
     ...(held === undefined ? {} : { held }),
     ...(conpty === true ? { conpty } : {}),
+    ...(user === undefined ? {} : { fillUser: user }),
     write: (data) => call("session_write", { id, data }),
     resize: ({ cols, rows }) => call("session_resize", { id, cols, rows }),
     close: () => call("session_close", { id }),
