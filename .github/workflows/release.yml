@@ -19,6 +19,7 @@ on:
       - .github/workflows/release.yml
       - scripts/bump-version.sh
       - scripts/news_section.py
+      - scripts/check-release-notices.py
 
 concurrency:
   group: release-${{ github.ref }}
@@ -155,6 +156,7 @@ jobs:
           cp "$d"/bundle/msi/*.msi "out/$p.msi"
           7z a -tzip "out/$p.zip" "./$d/roster-app.exe" > /dev/null
           if [ -f LICENSE ]; then 7z a -tzip "out/$p.zip" ./LICENSE > /dev/null; fi
+          if [ -f THIRD-PARTY-NOTICES ]; then 7z a -tzip "out/$p.zip" ./THIRD-PARTY-NOTICES > /dev/null; fi
       - name: Collect (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -163,8 +165,10 @@ jobs:
           cp "$d"/bundle/appimage/*.AppImage "out/$p.AppImage"
           cp "$d"/bundle/deb/*.deb "out/$p.deb"
           cp "$d/roster-app" out/roster-app; [ -f LICENSE ] && cp LICENSE out/LICENSE
-          tar -czf "out/$p.tar.gz" -C out roster-app $( [ -f LICENSE ] && echo LICENSE )
-          rm -f out/roster-app out/LICENSE
+          [ -f THIRD-PARTY-NOTICES ] && cp THIRD-PARTY-NOTICES out/THIRD-PARTY-NOTICES
+          tar -czf "out/$p.tar.gz" -C out roster-app $( [ -f LICENSE ] && echo LICENSE ) \
+            $( [ -f THIRD-PARTY-NOTICES ] && echo THIRD-PARTY-NOTICES )
+          rm -f out/roster-app out/LICENSE out/THIRD-PARTY-NOTICES
       - name: Collect (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -172,7 +176,16 @@ jobs:
           mkdir -p out
           cp "$d"/bundle/dmg/*.dmg "out/$p-universal.dmg"
           mkdir -p pack && cp -R "$d/bundle/macos/Roster.app" pack/; [ -f LICENSE ] && cp LICENSE pack/
+          [ -f THIRD-PARTY-NOTICES ] && cp THIRD-PARTY-NOTICES pack/
           tar -czf "out/$p.tar.gz" -C pack .
+      # The app binaries carry ported third-party code (THIRD-PARTY-NOTICES): its notice ships next to LICENSE.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Archives carry THIRD-PARTY-NOTICES
+        run: |
+          shopt -s nullglob
+          python -I scripts/check-release-notices.py out/*.zip out/*.tar.gz
       - run: ls -l out
       - uses: actions/upload-artifact@v4
         with:
