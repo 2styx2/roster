@@ -56,6 +56,8 @@ export interface CommandContext {
   fold(id: string | null, how: FoldHow): void;
   /** The Sidebar row under the cursor, or null. */
   cursorRow(): SidebarRow | null;
+  /** Opens the menu of the Host row under the Sidebar's cursor (T166, Q156). */
+  rowMenu(): void;
   /** The Host the user means: the one under the Sidebar's cursor, else the Session on screen's. */
   selectedHost(): string | null;
   /** Every Host's name, in roster.yml order (empty until the Inventory is loaded). */
@@ -354,6 +356,15 @@ export const builtinCommands: readonly CommandDef[] = [
   fold("fold", "fold", "Fold, or go to the parent"),
   fold("unfold", "unfold", "Unfold, or go to the first child"),
   fold("togglefold", "toggle", "Fold or unfold"),
+  {
+    // A Host row's menu (T166, Q156): what a right-click on it opens, from the keyboard.
+    id: "menu",
+    source: BUILTIN,
+    area: "Sidebar",
+    label: () => "The menu of the Host under the cursor: open, details, check, edit, rename, move, remove",
+    staysInAppMode: true,
+    run: (ctx) => ctx.rowMenu(),
+  },
   {
     id: "mode",
     source: BUILTIN,

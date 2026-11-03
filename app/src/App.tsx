@@ -98,7 +98,8 @@ import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
-import { allRows, moveCursor, Sidebar } from "./sidebar/Sidebar";
+import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
+import { hostMenu } from "./sidebar/hostMenu";
 import { sectionBuilder } from "./sidebar/sections";
 import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
 import { PluginManager, type DemoPlugins } from "./plugins/manager";
@@ -446,6 +447,8 @@ function Workspace({
   // The Sidebar's selected row (decision Q88): the one last clicked, or where j/k left the cursor.
   // Its buttons show; in App mode the cursor row is the selected one.
   const [selected, setSelected] = useState<string | null>(null);
+  // A Host row's open menu (T166, Q156).
+  const [rowMenu, setRowMenu] = useState<OpenMenu | null>(null);
   const moveTo = (id: string | null) => {
     setCursor(id);
     setSelected(id);
@@ -1569,6 +1572,12 @@ function Workspace({
     },
     fold,
     cursorRow,
+    rowMenu: () => {
+      const row = cursorRow();
+      if (!sidebarShown) return setMessage("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
+      if (!row?.menu) return setMessage("Only a Host's row has a menu: move the cursor to one");
+      setRowMenu({ row: row.id, at: null });
+    },
     selectedHost: () => {
       const row = cursorRow();
       if (row?.host) return row.host;
@@ -1887,6 +1896,8 @@ function Workspace({
 
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (MODIFIERS.has(e.key)) return;
+    // A Host row's menu takes its own keys (arrows, letters, Esc), in App mode too.
+    if (e.target instanceof Element && e.target.closest(".row-menu")) return;
     // An overlay (the Picker, the command line, the bindings filter) opens in Terminal mode, so its
     // input gets the keys as a terminal would, until the Leader.
     const leaderKey = isLeaderKey(e, options.leader);
@@ -2178,6 +2189,18 @@ function Workspace({
               run(line);
             }}
             treeRef={setTree}
+            menu={rowMenu}
+            onMenu={setRowMenu}
+            rowMenu={(row: SidebarRow) => {
+              const h = row.host === undefined ? undefined : hostByName.get(row.host);
+              return hostMenu(row, {
+                reviewed: h ? h.reviewed : null,
+                live: canLive,
+                edit: canEdit,
+                folders: commands.get("folder") !== undefined,
+                keys: (command) => hintFor(keymap, command),
+              });
+            }}
             onTreeFocus={(from) => {
               // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
               if (keyRef.current.mode !== "terminal") return;
@@ -2192,7 +2215,8 @@ function Workspace({
             }}
             onTreeBlur={(to) => {
               // Focus went elsewhere (Tab on, a click): keys are the terminal's again.
-              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline")) setMode(terminalMode);
+              // A Host row's menu is the tree's own: App mode stays while it's open.
+              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline, .row-menu")) setMode(terminalMode);
             }}
           />
         )}

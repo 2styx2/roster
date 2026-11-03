@@ -168,7 +168,8 @@ app/src/tutor/        `:tutor` (ticket 55, decision Q76): tutor.ts (the tutorial
 app/src/news/         news.ts: what's new after an upgrade, said once in the status line (`newsSeen` in the State, ticket 47)
 app/src/ui/Announce.tsx
                       a live region that speaks a count once it settles (finders, the Picker, help's search; ticket 54)
-app/src/sidebar/      Sidebar.tsx (sections of rows, raised row, cursor), sections.ts (section registry, Sessions)
+app/src/sidebar/      Sidebar.tsx (sections of rows, raised row, cursor), RowMenu.tsx and hostMenu.ts (a Host row's
+                      menu, Q156), sections.ts (section registry, Sessions)
 app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|remove|rename|move`, `:group new|rename|delete`),
                       ConfirmPanel.tsx (removing a Host asks first)
 app/src/folders/      Folders (GLOSSARY), now the built-in Plugin's: folders.ts (the Folder model and the `folders` registry
