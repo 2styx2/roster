@@ -17,6 +17,45 @@ fn with_init(name: &str, lua: &str) -> common::Temp {
     dir
 }
 
+/// Limits a test's load never meets except the one it's about: a minute of Lua time and of
+/// wall-clock time. The defaults (1 s and 2 s) are wall-clock time, and a loaded machine pauses
+/// a process for longer than that, so a test about memory or size ran out of time first (T167).
+fn unhurried() -> config::Limits {
+    config::Limits {
+        time: std::time::Duration::from_secs(60),
+        wall: std::time::Duration::from_secs(60),
+        ..config::Limits::default()
+    }
+}
+
+/// [`config::watch`], one at a time in this test binary: each watcher is an inotify instance on
+/// Linux, 128 a user by default, and many test binaries at once with four watchers each ran out
+/// ("Too many open files", T167). Keep the pair (`let _w = …`, not `let _ = …`): dropping it
+/// stops the watcher, then lets the next test's start (a tuple drops its fields in order).
+fn watch_alone(
+    dir: &std::path::Path,
+    on_change: impl Fn() + Send + 'static,
+) -> (config::Watcher, std::sync::MutexGuard<'static, ()>) {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let turn = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    (config::watch(dir, on_change).unwrap(), turn)
+}
+
+/// `dir` loaded under `limits` on another thread: the test fails at [`common::CEILING`] rather
+/// than hang if the load never comes back.
+fn load_within(dir: &std::path::Path, limits: config::Limits) -> Result<Config, config::ConfigError> {
+    let dir = dir.to_path_buf();
+    common::within_ceiling("init.lua's load", move || {
+        config::load_with(
+            &dir,
+            &config::Env {
+                limits,
+                ..config::Env::default()
+            },
+        )
+    })
+}
+
 #[test]
 fn no_file_gives_the_defaults() {
     let dir = temp_dir("none");
@@ -375,15 +414,12 @@ fn an_error_in_a_required_module_names_that_file() {
 #[test]
 fn an_endless_loop_runs_out_of_time() {
     let dir = with_init("loop", "local n = 0\nwhile true do n = n + 1 end\n");
-    let env = config::Env {
-        limits: config::Limits {
-            time: std::time::Duration::from_millis(100),
-            ..config::Limits::default()
-        },
-        ..config::Env::default()
+    let limits = config::Limits {
+        time: std::time::Duration::from_millis(100),
+        ..unhurried()
     };
     // The error is the limit's: an endless loop has no other way out (no stopwatch, T165).
-    let e = config::load_with(&dir, &env).unwrap_err();
+    let e = load_within(&dir, limits).unwrap_err();
     assert_eq!(e.line, Some(2), "{e}");
     assert!(e.message.contains("took longer"), "{e}");
 }
@@ -394,14 +430,12 @@ fn a_runaway_table_runs_out_of_memory() {
         "memory",
         "local t = {}\nfor i = 1, 1e9 do t[i] = string.rep('x', 1000) .. i end\n",
     );
-    let env = config::Env {
-        limits: config::Limits {
-            memory: 8 * 1024 * 1024,
-            ..config::Limits::default()
-        },
-        ..config::Env::default()
+    // Only the memory limit: with the default time limits, a loaded machine ran out of time first.
+    let limits = config::Limits {
+        memory: 8 * 1024 * 1024,
+        ..unhurried()
     };
-    let e = config::load_with(&dir, &env).unwrap_err();
+    let e = load_within(&dir, limits).unwrap_err();
     assert!(e.message.contains("memory"), "{e}");
 }
 
@@ -595,17 +629,16 @@ fn saving_calls_the_watcher_back_once_for_a_write_or_a_rename() {
     use std::time::Duration;
     let dir = temp_dir("watch");
     let (tx, rx) = mpsc::channel();
-    let _w = config::watch(&dir, move || {
+    let _w = watch_alone(&dir, move || {
         let _ = tx.send(());
-    })
-    .unwrap();
+    });
     // A first file appears.
     std::fs::write(dir.join("init.lua"), "return {}").unwrap();
-    rx.recv_timeout(Duration::from_secs(3)).expect("a new init.lua is seen");
+    rx.recv_timeout(common::CEILING).expect("a new init.lua is seen");
     // Vim-style: write a temp file, rename it over.
     std::fs::write(dir.join("init.lua.tmp"), "return { vim = false }").unwrap();
     std::fs::rename(dir.join("init.lua.tmp"), dir.join("init.lua")).unwrap();
-    rx.recv_timeout(Duration::from_secs(3))
+    rx.recv_timeout(common::CEILING)
         .expect("a rename over init.lua is seen");
     // One save, one call.
     assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
@@ -729,25 +762,6 @@ fn the_example_init_lua_loads_and_is_the_defaults() {
     assert_eq!(config, Config::default());
 }
 
-/// Loads `dir` with a short time limit on another thread, and fails the test (instead of hanging
-/// it) if the load doesn't come back within `within`.
-fn load_quickly(dir: &std::path::Path, within: std::time::Duration) -> Result<Config, config::ConfigError> {
-    let dir = dir.to_path_buf();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let env = config::Env {
-            limits: config::Limits {
-                time: std::time::Duration::from_millis(100),
-                ..config::Limits::default()
-            },
-            ..config::Env::default()
-        };
-        let _ = tx.send(config::load_with(&dir, &env));
-    });
-    rx.recv_timeout(within)
-        .expect("init.lua kept running past its time limit")
-}
-
 #[test]
 fn pcall_and_xpcall_cant_catch_running_out_of_time() {
     for (name, lua) in [
@@ -770,7 +784,12 @@ fn pcall_and_xpcall_cant_catch_running_out_of_time() {
         ),
     ] {
         let dir = with_init(&format!("deadline-{name}"), lua);
-        let e = load_quickly(&dir, std::time::Duration::from_secs(5)).unwrap_err();
+        // Only the time limit: the wall-clock watchdog's 2 s ran out first on a loaded machine.
+        let limits = config::Limits {
+            time: std::time::Duration::from_millis(100),
+            ..unhurried()
+        };
+        let e = load_within(&dir, limits).unwrap_err();
         assert!(e.message.contains("took longer"), "{name}: {e}");
         assert_eq!(e.line, Some(1), "{name}: {e}");
     }
@@ -795,7 +814,9 @@ fn a_table_shared_into_a_huge_tree_is_refused_quickly() {
         ("api", "roster.themes.define('big', t)\nreturn {}"),
     ] {
         let dir = with_init(&format!("shared-{name}"), &format!("{shared}{tail}"));
-        let e = load_quickly(&dir, std::time::Duration::from_secs(5)).unwrap_err();
+        // Only the size cap: it refuses the copy after 100,000 values, long before the 2^30, so
+        // the refusal coming at all is the proof (the time limits ran out first under load).
+        let e = load_within(&dir, unhurried()).unwrap_err();
         assert!(e.message.contains("too big"), "{name}: {e}");
     }
     // Sharing a small table is fine: each use is a copy.
@@ -1050,22 +1071,20 @@ fn saving_a_symlinked_init_lua_or_module_calls_the_watcher_back() {
     symlink(dotfiles.join("lua"), dir.join("lua")).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _w = config::watch(&dir, move || {
+    let _w = watch_alone(&dir, move || {
         let _ = tx.send(());
-    })
-    .unwrap();
-    std::thread::sleep(Duration::from_millis(100));
+    });
 
     std::fs::write(dotfiles.join("init.lua"), "return { vim = false }").unwrap();
-    rx.recv_timeout(Duration::from_secs(3))
+    rx.recv_timeout(common::CEILING)
         .expect("a save of the symlink's target is seen");
     // Editor-style: a temp file renamed over the target.
     std::fs::write(dotfiles.join("init.lua.tmp"), "return {}").unwrap();
     std::fs::rename(dotfiles.join("init.lua.tmp"), dotfiles.join("init.lua")).unwrap();
-    rx.recv_timeout(Duration::from_secs(3))
+    rx.recv_timeout(common::CEILING)
         .expect("a rename over the target is seen");
     std::fs::write(dotfiles.join("lua/keys.lua"), "return { 1 }").unwrap();
-    rx.recv_timeout(Duration::from_secs(3))
+    rx.recv_timeout(common::CEILING)
         .expect("a module in a symlinked folder is seen");
     // The rest of the dotfiles folder isn't the Config.
     while rx.recv_timeout(Duration::from_millis(400)).is_ok() {}
@@ -1074,19 +1093,53 @@ fn saving_a_symlinked_init_lua_or_module_calls_the_watcher_back() {
 }
 
 /// A tool that keeps writing (a sync, a formatter on a loop) mustn't hold the reload back
-/// forever: it comes at most about half a second after the first event.
+/// forever: it comes while the writes still go on. The writer saves every 5 ms (the watcher's
+/// quiet is 150 ms) and stops only once the reload has come, so a watcher that waited for a
+/// quiet spell would never call back, and the test fails at the ceiling (T167: it was a stopwatch, which a loaded machine failed). How soon it comes is
+/// [`a_continuous_stream_of_saves_still_reloads_within_half_a_second`]'s.
 #[test]
-fn a_continuous_stream_of_saves_still_reloads_within_half_a_second() {
+fn a_continuous_stream_of_saves_still_reloads() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let dir = temp_dir("watch-stream");
     std::fs::write(dir.join("init.lua"), "return {}").unwrap();
     let (tx, rx) = mpsc::channel();
-    let _w = config::watch(&dir, move || {
+    let _w = watch_alone(&dir, move || {
+        let _ = tx.send(());
+    });
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = std::thread::spawn({
+        let (dir, stop) = (dir.to_path_buf(), Arc::clone(&stop));
+        move || {
+            while !stop.load(Ordering::SeqCst) {
+                std::fs::write(dir.join("init.lua"), "return {}").unwrap();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    });
+    let reloaded = rx.recv_timeout(common::CEILING);
+    stop.store(true, Ordering::SeqCst);
+    writer.join().unwrap();
+    reloaded.expect("a reload while the saves keep coming");
+}
+
+/// The same stream reloads within about half a second of its first save (the watcher's
+/// `MAX_WAIT`, 500 ms): a time budget, so it times this machine, and a busy machine fails it
+/// however fast the watcher is (T167). Run it on an idle one:
+/// `cargo test -p roster-core --test config -- --ignored`.
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn a_continuous_stream_of_saves_still_reloads_within_half_a_second() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    let dir = temp_dir("watch-stream-budget");
+    std::fs::write(dir.join("init.lua"), "return {}").unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _w = watch_alone(&dir, move || {
         let _ = tx.send(Instant::now());
-    })
-    .unwrap();
-    std::thread::sleep(Duration::from_millis(100));
+    });
     let started = Instant::now();
     let writer = std::thread::spawn({
         let dir = dir.to_path_buf();
@@ -1097,9 +1150,7 @@ fn a_continuous_stream_of_saves_still_reloads_within_half_a_second() {
             }
         }
     });
-    let first = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("a reload during the stream");
+    let first = rx.recv_timeout(common::CEILING).expect("a reload during the stream");
     assert!(
         first.duration_since(started) < Duration::from_millis(900),
         "{:?}",
@@ -1264,17 +1315,15 @@ fn folders_yml_is_only_read_and_a_save_of_it_is_no_config_change() {
     let dir = temp_dir("folders");
     assert_eq!(folders::read(&dir).unwrap(), None);
     let (tx, rx) = mpsc::channel();
-    let _w = config::watch(&dir, move || {
+    let _w = watch_alone(&dir, move || {
         let _ = tx.send(());
-    })
-    .unwrap();
+    });
     // Read once, to move its Folders into the Folders Plugin (decision Q93): saving it reloads nothing.
     std::fs::write(folders::path(&dir), "Lab:\n  - esx\n").unwrap();
     assert_eq!(folders::read(&dir).unwrap().as_deref(), Some("Lab:\n  - esx\n"));
     assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
     std::fs::write(dir.join("init.lua"), "return {}").unwrap();
-    rx.recv_timeout(Duration::from_secs(3))
-        .expect("a save of init.lua is seen");
+    rx.recv_timeout(common::CEILING).expect("a save of init.lua is seen");
 }
 
 #[test]
