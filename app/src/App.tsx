@@ -134,7 +134,7 @@ import { countOf } from "./ui/format";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
 import { PromptWatch } from "./session/prompt";
 import { XtermPromptScreen } from "./session/promptScreen";
-import { MESSAGES_VIEW, MessageLog, MessagesChoice, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
+import { MESSAGES_VIEW, MessageLog, MessagesChoice, lineAfter, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
 import { Keys } from "./ui/Keys";
 import {
   defaultLayouts,
@@ -467,13 +467,6 @@ function Workspace({
   const [message, setMessageNow] = useState<Message>("");
   // Every message goes into `:messages`'s history too, quiet ones included (ticket 111).
   const [messageLog] = useState(() => new MessageLog());
-  const setMessage = useCallback(
-    (m: Message) => {
-      setMessageNow(m);
-      messageLog.push(m);
-    },
-    [messageLog],
-  );
   const [store] = useState(() => storeProp ?? new StateStore(platform));
   const appState = useSyncExternalStore(store.subscribe, store.snapshot);
   // The Sidebar shown or hidden (issue #78): what the toggle chose is kept in the State, per mode,
@@ -518,6 +511,15 @@ function Workspace({
   // `:messages`'s choice in the State, else quiet (routine confirmations and tips don't show).
   const [messagesChoice] = useState(() => new MessagesChoice(store));
   messagesChoice.setConfig(config?.ui.messages ?? null);
+  // A quiet message from the background (a Plugin's notice from a timer, an event or a request's
+  // answer) keeps a line that shows, an error above all (decision Q162).
+  const setMessage = useCallback(
+    (m: Message) => {
+      setMessageNow((now) => lineAfter(now, m, messagesChoice.all()));
+      messageLog.push(m);
+    },
+    [messageLog, messagesChoice],
+  );
   const allMessages = messagesChoice.all();
   const spokenMessage = spokenText(message, allMessages);
   const [fontSize, setFontSize] = useState(terminalOptions.fontSize);
@@ -2543,8 +2545,8 @@ function Workspace({
             }}
           />
         )}
-        {pluginsOpen && framed("plugins", "Plugins", "plugins", <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} onRefresh={() => void plugins.refreshRequests()} onOpen={() => void plugins.refreshData()} />)}
-        {packagesOpen && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={closePackages} />)}
+        {pluginsOpen && framed("plugins", "Plugins", "plugins", <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} onRefresh={() => void plugins.refreshRequests()} onOpen={() => void plugins.refreshData()} onRun={run} />)}
+        {packagesOpen && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={closePackages} onRun={run} />)}
         {pluginSnap.confirm && (
           <PluginConfirmPanel
             key={pluginSnap.confirm.id}
