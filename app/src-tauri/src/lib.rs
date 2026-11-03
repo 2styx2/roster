@@ -374,6 +374,21 @@ async fn inventory_pull(state: tauri::State<'_, Arc<BackendState>>) -> Result<Va
     call(&state, "inventory.pull", json!({})).await
 }
 
+/// The named Inventories, the active one, and which one this serve runs on (`inventories.list`,
+/// serve API 27, ticket 115).
+#[tauri::command]
+async fn inventories_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
+    call(&state, "inventories.list", json!({})).await
+}
+
+/// Makes the named Inventory `name` the active one (`inventories.use`, serve API 27). The frontend
+/// locks the vault first and then restarts serve (`backend_connect` with `restart`), whose
+/// detection asks roster again which file to use: never the old serve's `-c PATH`.
+#[tauri::command]
+async fn inventories_use(state: tauri::State<'_, Arc<BackendState>>, name: String) -> Result<Value, CallError> {
+    call(&state, "inventories.use", json!({ "name": name })).await
+}
+
 /// One test login with a Host's new address, user or Login (`host.verify_login`, decision Q43):
 /// one connection, one attempt. The password stays in roster.
 #[tauri::command]
@@ -1327,6 +1342,8 @@ pub fn run() {
             box_check,
             jobs_list,
             inventory_pull,
+            inventories_list,
+            inventories_use,
             host_verify_login,
             host_update,
             host_scan_key,

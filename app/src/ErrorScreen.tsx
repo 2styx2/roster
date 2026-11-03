@@ -26,10 +26,13 @@ const commandsIn = (text: string) => text.split("`").filter((_, i) => i % 2 === 
 
 export function ErrorScreen({
   problem,
+  note,
   onRetry,
   copy,
 }: {
   problem: BackendProblem;
+  /** What led here, when the app knows more than the problem says (a switch of Inventory). */
+  note?: string | null | undefined;
   onRetry: () => void;
   copy?: ((text: string) => Promise<void>) | undefined;
 }) {
@@ -38,6 +41,7 @@ export function ErrorScreen({
     <div className="screen center">
       <section className="error" role="region" aria-label={heading} aria-live="polite">
         <h1>{heading}</h1>
+        {note && <p className="problem-message">{note}</p>}
         <p className="problem-message">{withCode(problem.message)}</p>
         <dl className="problem-facts">
           <dt>Where</dt>

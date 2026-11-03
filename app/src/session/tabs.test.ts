@@ -1383,3 +1383,108 @@ describe("shell hooks (ticket 121, #210)", () => {
     expect(await tabs.integrate(999)).toBe("not-open");
   });
 });
+
+describe("Sessions from another named Inventory (ticket 115)", () => {
+  const WORK = { name: "work", path: "/home/you/work-infra/roster.yml" };
+  const HOME = { name: "home", path: "/home/you/home-lab/roster.yml" };
+
+  /** Tabs over the fake, each Session at sudo's prompt, counting fills, starts and hook lines. */
+  async function atPrompts() {
+    const backend = fakeBackend({ ...unlocked, hosts });
+    const events: SessionEvents[] = [];
+    const asked: string[] = [];
+    const opened: string[] = [];
+    backend.openSession = async (host, _size, ev) => {
+      opened.push(host);
+      events.push(ev);
+      const done = async () => {};
+      return { id: events.length, auth: "key", write: done, resize: done, close: done, fill: async (p: string) => (asked.push(p), { host }) };
+    };
+    const tabs = new Tabs(backend);
+    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    const prompt = async (i: number) => {
+      events[i]?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
+      await settle();
+    };
+    const exit = async (i: number) => {
+      events[i]?.exit({ code: 0, closed: false });
+      await settle();
+    };
+    return { tabs, asked, opened, prompt, exit };
+  }
+
+  it("stay open, marked with theirs, and are never filled or reconnected until roster runs on it again", async () => {
+    const { tabs, asked, prompt, exit } = await atPrompts();
+    tabs.serveStarting();
+    // Opened before the app knew where this serve runs: it counts as opened there.
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory(WORK);
+    await settle();
+    await prompt(0);
+    const tab = () => tabs.snapshot().tabs[0]!;
+    expect(tab().label).toBe(reviewed[0]);
+    expect(tab().prompt).not.toBeNull();
+
+    tabs.serveStarting();
+    tabs.setInventory(HOME);
+    expect(tab()).toMatchObject({ label: `${reviewed[0]} · work`, from: "work", prompt: null });
+    await expect(tabs.fill(id)).rejects.toThrow(/came from work/);
+    expect(asked).toEqual([]);
+    await exit(0);
+    expect(tabs.reconnect(id)).toBe(false);
+
+    // A Session opened on home isn't marked; back on work, the first one isn't either.
+    tabs.open(reviewed[1]!);
+    expect(tabs.snapshot().tabs[1]?.label).toBe(reviewed[1]);
+    tabs.serveStarting();
+    tabs.setInventory(WORK);
+    expect(tab().label).toBe(reviewed[0]);
+    expect(tabs.snapshot().tabs[1]).toMatchObject({ label: `${reviewed[1]} · home`, from: "home" });
+    expect(tabs.reconnect(id)).toBe(true);
+  });
+
+  it("fail closed from a restart until the new serve says where it runs, and for good if it never does", async () => {
+    const { tabs, asked, opened, prompt, exit } = await atPrompts();
+    tabs.serveStarting();
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory(WORK);
+    await settle();
+    await prompt(0);
+
+    // serve starts again: until it says, nothing of the old one's is filled or started again.
+    tabs.serveStarting();
+    await expect(tabs.fill(id)).rejects.toThrow(/came from work/);
+    expect(tabs.snapshot().tabs[0]?.prompt).toBeNull();
+    expect(asked).toEqual([]);
+    await exit(0);
+    const starts = opened.length;
+    expect(tabs.reconnect(id)).toBe(false);
+    tabs.resumeAfterUnlock();
+    expect(opened.length).toBe(starts);
+
+    // A tab opened while it's unknown is this serve's: a restart that never says loses it too.
+    const fresh = tabs.open(reviewed[1]!);
+    await settle();
+    tabs.serveStarting();
+    await exit(1);
+    expect(tabs.reconnect(fresh)).toBe(false);
+
+    // The same file again: theirs again.
+    tabs.setInventory(WORK);
+    expect(tabs.reconnect(id)).toBe(true);
+    expect(tabs.reconnect(fresh)).toBe(false);
+  });
+
+  it("tell two unnamed files apart by their path", async () => {
+    const { tabs, asked, prompt } = await atPrompts();
+    tabs.serveStarting();
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory({ name: null, path: "/home/you/a/roster.yml" });
+    await settle();
+    await prompt(0);
+    tabs.serveStarting();
+    tabs.setInventory({ name: null, path: "/home/you/b/roster.yml" });
+    await expect(tabs.fill(id)).rejects.toThrow(/came from \/home\/you\/a\/roster\.yml/);
+    expect(asked).toEqual([]);
+  });
+});

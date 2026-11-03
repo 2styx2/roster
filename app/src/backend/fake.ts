@@ -10,6 +10,8 @@ import {
   BackendStartError,
   type Backend,
   type BackendInfo,
+  type Inventories,
+  InventoriesError,
   type BackendProblem,
   type BoxCheck,
   BOX_CHECK_API_VERSION,
@@ -99,6 +101,13 @@ import {
   worstCaseSessions,
 } from "./worstCase";
 
+/** The fake's named Inventories (FakeScenario.inventories). */
+export interface FakeInventories {
+  named: { name: string; path: string; exists?: boolean; hosts?: HostList }[];
+  active: string | null;
+  override?: string;
+}
+
 export interface FakeScenario {
   hosts: HostList;
   /** connect() fails with this (every time, unless `failOnce`). */
@@ -154,6 +163,11 @@ export interface FakeScenario {
   boxChecks?: HealthCheck[];
   /** `inventory.info`'s api_version (default 2; editing needs 5). */
   apiVersion?: number;
+  /** Named Inventories (ticket 115, API 27): `inventories.list`'s, the active one, and the file an
+   * earlier step of roster's lookup finds first (`$ROSTER_CONFIG` or `./roster.yml`), if any. Each
+   * (re)start "detects" as the app's probe does: `override` if set, else the active one. A named
+   * Inventory with `hosts` has those once serve runs on it. */
+  inventories?: FakeInventories;
   /** Ticket 10: `inventory.pull` refuses with this (62 diverged, 63 offline…). */
   pullRefusal?: Refusal;
   /** Decision Q88: how long `inventory.pull` takes, in ms (else `delay`). */
@@ -1604,21 +1618,55 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     }
   };
 
+  // ---- named Inventories (ticket 115): which is active, and which file this serve runs on
+  const namedInvs = scenario.inventories?.named.map((n) => ({ ...n })) ?? [];
+  let activeInventory = scenario.inventories?.active ?? null;
+  let serveOn: { name: string | null; path: string } | null = null;
+  let started = false;
+  /** What a start finds, as the app's probe asks `roster inv which`: an earlier step of the
+   * lookup, else the active named Inventory, else the default file. */
+  const detect = (): { name: string | null; path: string } => {
+    const override = scenario.inventories?.override;
+    const path = override ?? namedInvs.find((n) => n.name === activeInventory)?.path ?? scenario.info?.path ?? "~/team-inventory/roster.yml";
+    return { name: namedInvs.find((n) => n.path === path)?.name ?? null, path };
+  };
+  const inventoriesList = (): Inventories => ({
+    inventories: namedInvs.map((n) => ({ name: n.name, path: n.path, active: n.name === activeInventory, exists: n.exists ?? true })),
+    active: activeInventory,
+    name: serveOn?.name ?? null,
+    path: serveOn?.path ?? null,
+  });
+
   return {
-    async connect(): Promise<BackendInfo> {
+    async connect(options): Promise<BackendInfo> {
       await wait();
       if (scenario.startProblem && !(scenario.failOnce && failures > 0)) {
         failures++;
         throw new BackendStartError(scenario.startProblem);
+      }
+      if (!started || options?.restart) {
+        // A new serve: the lookup runs again, never the last start's file.
+        started = true;
+        const was = serveOn?.path;
+        serveOn = detect();
+        const own = namedInvs.find((n) => n.name === serveOn?.name)?.hosts;
+        if (was !== serveOn.path && (own || was !== undefined)) {
+          // Another file: its Hosts (the scenario's own when it names none).
+          const next = own ?? scenario.hosts;
+          committed = next.hosts;
+          hosts = committed;
+          groups = next.groups;
+          committedGroups = groups;
+        }
       }
       const info = scenario.info ?? {};
       return {
         backend: info.backend ?? "Fake",
         command: info.command ?? ["roster", "serve"],
         inventory: {
-          path: info.path ?? "~/team-inventory/roster.yml",
+          path: serveOn?.path ?? info.path ?? "~/team-inventory/roster.yml",
           box: info.box ?? "browser",
-          host_count: scenario.hosts.hosts.length,
+          host_count: hosts.length,
           providers: ["bw"],
           roster_version: "0.1.0",
           api_version: scenario.apiVersion ?? 2,
@@ -2131,6 +2179,20 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const updated = withFields(h, wanted);
       hosts = hosts.map((x) => (x.name === host ? updated : x));
       return { changed: true, host: updated, backup: "~/team-inventory/.git/roster/roster.yml.bak", sync: synced() };
+    },
+    async listInventories() {
+      await wait();
+      return inventoriesList();
+    },
+    async useInventory(name) {
+      await wait();
+      const chosen = namedInvs.find((n) => n.name === name);
+      if (!chosen) {
+        const names = namedInvs.map((n) => n.name);
+        throw new BackendCallError(`no Inventory named '${name}'`, InventoriesError.unknown, { names, fix: `pick one of ${names.join(", ") || "none"}` });
+      }
+      activeInventory = name;
+      return { active: name, path: chosen.path, restart: true as const };
     },
     async pendingChanges() {
       await wait();

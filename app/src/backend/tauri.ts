@@ -30,6 +30,8 @@ import {
   type InventoryChanged,
   type JobProgress,
   type InventoryReload,
+  type Inventories,
+  type InventoryUsed,
   type PendingChanges,
   type PackageChecked,
   type PackageStatus,
@@ -195,6 +197,9 @@ export function tauriBackend(): Backend {
     checkBox: () => call<BoxCheck>("box_check"),
     listJobs: () => call<{ jobs: JobProgress[] }>("jobs_list").then((r) => r.jobs),
     pullInventory: () => call<PullResult>("inventory_pull"),
+    // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
+    listInventories: () => call<Inventories>("inventories_list"),
+    useInventory: (name) => call<InventoryUsed>("inventories_use", { name }),
     verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
     pendingChanges: () => call<PendingChanges>("changes_diff"),

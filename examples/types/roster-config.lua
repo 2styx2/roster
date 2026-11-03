@@ -182,7 +182,7 @@
 ---@field titlebar? boolean The title bar. Default: `true`.
 ---@field sidebar? boolean|roster.config.Sidebar The Sidebar: shown or hidden, the side it's on, and its sections. Default: `{ side = "left" }`. Takes true, false, or a table of the options below (which shows it).
 ---@field sessionbar? false|"bottom"|"top" The thin tmux-style bar of open Sessions, and its edge. Default: `false`.
----@field statusbar? boolean|string[]|roster.o.List The status bar, and its segments. Default: `true`. Takes true, false, or segments in order: "backend", "box", "hosts", "path", "changes", "hints", "mode". Each item once.
+---@field statusbar? boolean|string[]|roster.o.List The status bar, and its segments. Default: `true`. Takes true, false, or segments in order: "backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode". Each item once.
 ---@field fullscreen? boolean OS fullscreen. Default: `false`.
 ---@field toolbar? boolean|string[]|roster.o.List The controls for common commands, in the title bar (or a bar of their own without one). Default: `true`. Takes true, false, or controls in order: "sidebar", "find", "quick", "add", "changes", "publish", "details", "cmdline", "keys", "help", "lock", "mode", or a Plugin control's id. Each item once.
 

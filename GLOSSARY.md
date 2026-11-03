@@ -9,7 +9,7 @@ A list of hosts and resources, kept in one `roster.yml`: the team's, in the infr
 _Avoid_: config, host list, map file
 
 **Active Inventory**:
-The named Inventory roster uses on this Box when nothing else says which (`-c`, `--inv`, `$ROSTER_CONFIG` or a `./roster.yml` come first). `roster inv use NAME` picks it; the app shows its name and switches only after you confirm.
+The named Inventory roster uses on this Box when nothing else says which (`-c`, `--inv`, `$ROSTER_CONFIG` or a `./roster.yml` come first). `roster inv use NAME` picks it; the app shows its name in the status bar and switches (`:inventory NAME`) only after you confirm, restarting `roster serve` on it and locking the other one's vault.
 
 **Host**:
 A machine or device recorded in the Inventory, saved with its address, type, services and logins.
