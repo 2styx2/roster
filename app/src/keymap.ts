@@ -133,6 +133,8 @@ export const defaultBindings: KeymapTables = {
     R: "host rename",
     M: "host move",
     N: "group new",
+    // Another named Inventory (ticket 115): the line, to type or Tab through the names; it asks first.
+    I: "inventory",
     c: "changes",
     r: "reconnect",
     // Fill the password prompt on screen from the vault (ticket 119): offered only at one.
