@@ -243,7 +243,7 @@ fn output_while_the_vault_answers_refuses_too() {
             secret()
         })
         .unwrap_err();
-    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
+    assert!(matches!(err, FillError::Changed { .. }), "{err:?}");
     m.close(id).unwrap();
 }
 
@@ -612,6 +612,455 @@ fn sudo_with_pwfeedback_is_filled_through_conpty_style_redraws() {
     }
 }
 
+/// Ticket 155 (#284), from the owner's Windows build: ConPTY sends only what changed on its
+/// screen, so sudo's `*` and its erasure reach the core as nothing, and it repaints regions it
+/// already drew (here 0.2 s into the fill, while the vault answers). Each stand-in clears the
+/// screen, draws `$ sudo -v` and its prompt, then repaints the same content as ConPTY may
+/// (cursor addressing, erases, erased characters, the cursor hidden and shown) and draws
+/// nothing for the probe's keys.
+fn conpty(prompt: &str, repaint: &str) -> String {
+    erasing(prompt, "", "", "", &format!("(sleep 0.2; printf '{repaint}') & :")).replacen(
+        "printf '%s'",
+        "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'",
+        1,
+    )
+}
+
+/// ConPTY's repaints of the unchanged screen, with the cursor parked after the prompt on row 2.
+fn same_screen_repaints(prompt: &str) -> Vec<(&'static str, String)> {
+    let col = prompt.len() + 1;
+    vec![
+        (
+            "the viewport, line by line",
+            format!("\\033[?25l\\033[H$ sudo -v\\033[K\\r\\n{prompt}\\033[K\\r\\n\\033[K\\033[2;{col}H\\033[?25h"),
+        ),
+        (
+            "the prompt's line, spaces as erased characters",
+            format!(
+                "\\033[?25l\\033[2;1H{}\\033[1X\\033[2;{col}H\\033[?25h",
+                prompt.trim_end().replace(' ', "\\033[1X\\033[1C")
+            ),
+        ),
+        ("the cursor alone", format!("\\033[?25l\\033[2;{col}H\\033[?25h")),
+    ]
+}
+
+/// Windows' rules (decision Q151): a manager that applies them to its Sessions' PTYs here.
+fn conpty_rules() -> SessionManager {
+    SessionManager::with_conpty_rules(true)
+}
+
+#[test]
+fn sudo_with_pwfeedback_is_filled_through_a_conpty_repaint_before_the_probe() {
+    for (name, repaint) in same_screen_repaints(SUDO_OPS) {
+        let m = conpty_rules();
+        let (id, rx) = open(&m, host_sh(&conpty(SUDO_OPS, &repaint)));
+        until(&rx, "ops: ");
+        let got = m.fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+            std::thread::sleep(Duration::from_millis(400));
+            secret()
+        });
+        assert_eq!(got.as_ref().ok().map(String::as_str), Some("esx"), "{name}: {got:?}");
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        assert!(out.contains(&format!("got:[{SECRET}]")), "{name}: {out:?}");
+        m.close(id).unwrap();
+    }
+}
+
+/// A stand-in that keeps every byte it reads, raw (no line discipline in the way), and reports
+/// them in hex once its input has been quiet for 2 s: nobody presses Enter here, so whatever it
+/// read came from the fill (or a key the test sent). It clears the screen and draws `$ sudo -v`
+/// and `prompt`, then runs `before`.
+fn recording(prompt: &str, before: &str) -> String {
+    format!(
+        "stty raw -echo min 0 time 20; printf '\\033[2J\\033[H$ sudo -v\\r\\n%s' '{prompt}'; {before}; all=''; \
+         while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
+         [ -z \"$c\" ] && break; all=\"$all $c\"; done; \
+         stty sane; echo; echo \"got:[$all ]\"; sleep 5",
+        prompt = prompt.replace('\'', "'\"'\"'")
+    )
+}
+
+/// The bytes a [`recording`] stand-in read.
+fn recorded(rx: &Receiver<SessionEvent>) -> String {
+    let out = until(rx, "got:") + &quiet_for(rx, Duration::from_millis(100));
+    out.split("got:[")
+        .nth(1)
+        .and_then(|r| r.split(']').next())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// The coordinator's ruling on the review of #299 (#1, decision Q151 (i)): under ConPTY an echo
+/// can vanish between two frames however the probe is timed (a network stall can bring the echo
+/// and its erasure in one frame), so only sudo's own prompt for the Session's own Host is filled
+/// there. Every other prompt is refused before anything is looked up or typed.
+#[test]
+fn under_conpty_only_sudos_own_prompt_for_the_own_host_is_filled() {
+    let nested = FillTarget {
+        host: "esx-02".into(),
+        login: LoginAs {
+            address: "10.0.0.12".into(),
+            port: 22,
+            user: "ops".into(),
+        },
+    };
+    for (prompt, line, hop) in [
+        ("Password: ", "Password:", None),
+        ("ops@esx-02's password: ", "ops@esx-02's password:", Some(&nested)),
+        (SUDO_OPS, "[sudo] password for ops:", Some(&nested)),
+        ("[sudo] password for root: ", "[sudo] password for root:", None),
+    ] {
+        let m = conpty_rules();
+        let (id, rx) = open(&m, host_sh(&recording(prompt, ":")));
+        until(&rx, prompt.trim_end());
+        std::thread::sleep(Duration::from_millis(150));
+        let mut asked = false;
+        let got = m.fill(id, WAIT, line, hop, |_| {
+            asked = true;
+            secret()
+        });
+        let err = got.unwrap_err();
+        assert!(matches!(err, FillError::ConPty), "{line}: {err:?}");
+        assert!(!asked, "{line}: the vault was asked");
+        assert!(err.to_string().contains("Windows"), "{err}");
+        assert_eq!(recorded(&rx), "", "{line}: something was typed");
+        m.close(id).unwrap();
+    }
+    // Its refusal has no code: pressing again can't fill it.
+    let refusal = roster_core::backend::fill_refusal(FillError::ConPty);
+    assert!(!format!("{refusal:?}").contains("130"), "{refusal:?}");
+}
+
+/// The review of #299 (#3, #4): output between the prompt check and the probe that isn't
+/// allowed refuses before anything is typed. On Linux and macOS (no ConPTY) that's any output at
+/// all, a repaint of the same screen included; under ConPTY, output that changed the screen.
+/// The refusal typed nothing, so it comes back as code 130 and the prompt stays offered.
+#[test]
+fn output_before_the_probe_refuses_before_anything_is_typed() {
+    let col = SUDO_OPS.len() + 1;
+    let changes = [
+        ("sudo's retry", format!("\\r\\nSorry, try again.\\r\\n{SUDO_OPS}")),
+        (
+            "another line",
+            format!("\\033[?25l\\033[H$ sudo -k\\033[2;{col}H\\033[?25h"),
+        ),
+        ("a line below", format!("\\033[5;1Hmotd\\033[2;{col}H")),
+        ("the cursor elsewhere", "\\033[3;1H".to_string()),
+    ];
+    let mut cases: Vec<(String, bool, &str, String)> = vec![
+        (
+            "a repaint, no ConPTY".into(),
+            false,
+            "[sudo] password for ops:",
+            same_screen_repaints(SUDO_OPS).remove(0).1,
+        ),
+        (
+            "a repaint at a plain prompt, no ConPTY".into(),
+            false,
+            "Password:",
+            same_screen_repaints("Password: ").remove(0).1,
+        ),
+    ];
+    for (name, change) in changes {
+        cases.push((
+            format!("{name}, ConPTY"),
+            true,
+            "[sudo] password for ops:",
+            change.clone(),
+        ));
+        cases.push((format!("{name}, no ConPTY"), false, "[sudo] password for ops:", change));
+    }
+    for (name, rules, line, repaint) in cases {
+        let prompt = format!("{line} ");
+        let m = SessionManager::with_conpty_rules(rules);
+        let before = format!("(sleep 0.2; printf '{repaint}') & :");
+        let (id, rx) = open(&m, host_sh(&recording(&prompt, &before)));
+        until(&rx, line);
+        let err = m
+            .fill(id, WAIT, line, None, |_| {
+                std::thread::sleep(Duration::from_millis(400));
+                secret()
+            })
+            .unwrap_err();
+        assert!(matches!(err, FillError::Changed { .. }), "{name}: {err:?}");
+        let log = err.log_line().unwrap_or_default();
+        assert!(
+            log.starts_with("prompt fill refused before the probe: what was printed after the prompt check (")
+                && log.ends_with(" bytes) changed the screen")
+                && !log.contains("Sorry")
+                && !log.contains("motd"),
+            "{name}: {log}"
+        );
+        let FillError::Changed { before } = err else {
+            unreachable!()
+        };
+        let refusal = format!(
+            "{:?}",
+            roster_core::backend::fill_refusal(FillError::Changed { before })
+        );
+        assert!(refusal.contains("130"), "{name}: {refusal}");
+        assert_eq!(recorded(&rx), "", "{name}: something was typed");
+        m.close(id).unwrap();
+    }
+}
+
+/// The review of #299 (#2): keys sent to the Session while a fill checks its prompt are held
+/// until the fill ends, then sent in order, so an Enter typed during the wait can't land between
+/// the probe's letter and its Ctrl+U (where sudo would take `x` as an attempt). The fill refuses.
+#[test]
+fn keys_sent_during_a_fill_wait_until_it_ends() {
+    for (rules, prompt) in [(false, "Password: "), (false, SUDO_OPS), (true, SUDO_OPS)] {
+        let m = std::sync::Arc::new(SessionManager::with_conpty_rules(rules));
+        let (id, rx) = open(&m, host_sh(&recording(prompt, ":")));
+        until(&rx, prompt.trim_end());
+        std::thread::sleep(Duration::from_millis(150));
+        let typer = {
+            let m = std::sync::Arc::clone(&m);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                m.write(id, b"a\r").unwrap();
+            })
+        };
+        let err = m.fill(id, WAIT, prompt.trim_end(), None, |_| secret()).unwrap_err();
+        typer.join().unwrap();
+        assert!(matches!(err, FillError::Typed), "{prompt} {rules}: {err:?}");
+        assert_eq!(recorded(&rx), "15 78 15 61 0d", "{prompt} {rules}");
+        m.close(id).unwrap();
+    }
+}
+
+/// The review of #299 (#6): a resize at any point of a fill refuses it, even one put back.
+#[test]
+fn a_resize_during_a_fill_refuses() {
+    // While the vault answers: before the probe, so nothing is typed.
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(&recording("Password: ", ":")));
+    until(&rx, "Password: ");
+    std::thread::sleep(Duration::from_millis(150));
+    let err = m
+        .fill(id, WAIT, "Password:", None, |_| {
+            m.resize(id, Size { cols: 100, rows: 24 }).unwrap();
+            m.resize(id, SIZE).unwrap();
+            secret()
+        })
+        .unwrap_err();
+    assert!(matches!(err, FillError::Changed { .. }), "{err:?}");
+    assert_eq!(recorded(&rx), "");
+    m.close(id).unwrap();
+    // While the probe waits.
+    let m = std::sync::Arc::new(SessionManager::new());
+    let (id, rx) = open(&m, host_sh(NO_ECHO));
+    until(&rx, "Password: ");
+    let resizer = {
+        let m = std::sync::Arc::clone(&m);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            m.resize(id, Size { cols: 100, rows: 24 }).unwrap();
+            m.resize(id, SIZE).unwrap();
+        })
+    };
+    let err = m.fill(id, WAIT, "Password:", None, |_| secret()).unwrap_err();
+    resizer.join().unwrap();
+    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
+    m.write(id, b"\r").unwrap();
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+    assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
+    m.close(id).unwrap();
+}
+
+/// T155 item 3, which the key hold needs: a second fill while one checks the prompt is refused
+/// at once, and the first goes on.
+#[test]
+fn a_second_fill_while_one_checks_is_refused() {
+    let m = std::sync::Arc::new(SessionManager::new());
+    let (id, rx) = open(&m, host_sh(NO_ECHO));
+    until(&rx, "Password: ");
+    let first = {
+        let m = std::sync::Arc::clone(&m);
+        std::thread::spawn(move || {
+            m.fill(id, WAIT, "Password:", None, |_| {
+                std::thread::sleep(Duration::from_millis(300));
+                secret()
+            })
+        })
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let second = m.fill(id, WAIT, "Password:", None, |_| secret());
+    assert!(matches!(second, Err(FillError::Busy)), "{second:?}");
+    assert_eq!(first.join().unwrap().ok().as_deref(), Some("esx"));
+    let out = until(&rx, "got:");
+    assert!(out.contains(&format!("got:[{SECRET}]")), "{out:?}");
+    m.close(id).unwrap();
+}
+
+/// Ticket 155 (#284): under ConPTY, the probe's own output is still checked as before after a
+/// repaint that left the screen as it was: an echo (taken back or not) or a redraw during the
+/// probe refuses, and the log says which step it was.
+#[test]
+fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
+    let repaint = same_screen_repaints(SUDO_OPS).remove(0).1;
+    const PENDING: &str = "with the probe's letter pending, the screen showed more than sudo's prompt and at most its `*`; the probe drew ";
+    const PROBED: &str = "the probe drew ";
+    // Each: name, what it draws per key, how it takes one back, the rule the log names.
+    for (name, mask, erase, rule) in [
+        ("an echo", "x", "\\b \\b", PENDING),
+        ("a colour", "\\033[1m*\\033[0m", "\\b \\b", PENDING),
+        ("a colour in the erase", "*", "\\b \\b\\033[1m", PROBED),
+    ] {
+        let script = erasing(
+            SUDO_OPS,
+            erase,
+            "",
+            mask,
+            &format!("(sleep 0.2; printf '{repaint}') & :"),
+        )
+        .replacen("printf '%s'", "printf '\\033[2J\\033[H$ sudo -v\\r\\n%s'", 1);
+        let m = conpty_rules();
+        let (id, rx) = open(&m, host_sh(&script));
+        until(&rx, "ops: ");
+        let err = m
+            .fill(id, WAIT, "[sudo] password for ops:", None, |_| {
+                std::thread::sleep(Duration::from_millis(400));
+                secret()
+            })
+            .unwrap_err();
+        let log = err.log_line().unwrap_or_default();
+        assert!(
+            log.starts_with(&format!("prompt fill refused at sudo's prompt: {rule}"))
+                && (rule == PENDING || log.contains("not sudo's pwfeedback mask as roster takes it; "))
+                && log.ends_with(" bytes printed before the probe repainted the screen as it was"),
+            "{name}: {log}"
+        );
+        m.write(id, b"\r").unwrap();
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        assert!(!out.contains(SECRET), "{name}: {out:?}");
+        m.close(id).unwrap();
+    }
+    // The owner's second press: sudo took an Enter and redrew its retry during the probe.
+    let script = erasing(SUDO_OPS, "", "", "", ":").replacen(
+        "else pw=\"$pw$c\"",
+        "else printf '\\r\\nSorry, try again.\\r\\n[sudo] password for ops: '; pw=\"$pw$c\"",
+        1,
+    );
+    let (got, out) = fill_pwfeedback(&script, "[sudo] password for ops:", None);
+    assert!(matches!(got, Err(FillError::Echoes(Some(_)))), "{got:?} {out:?}");
+    assert!(!out.contains(SECRET), "{out:?}");
+}
+
+/// A stand-in for what Windows' ConPTY sends (ticket 155, #284, Q151 (h)): the tty in raw mode
+/// (no echo of its own), and the prompt's line drawn only once per 50 ms frame, and only if it
+/// changed since the last frame drawn: a key echoed and taken back within one frame sends
+/// nothing. `mode` is what the line shows for what was typed: `echo` (the keys), `mask` (sudo's
+/// `*` per key) or `silent` (nothing). Enter ends it and it reports what it read.
+const FRAMES: &str = r#"
+import os, select, sys, termios, time, tty
+prompt, mode = sys.argv[1], sys.argv[2]
+saved = termios.tcgetattr(0)
+tty.setraw(0)
+os.write(1, b"\x1b[2J\x1b[H" + prompt.encode())
+line = b""
+shown = b""
+frame = 0.05
+last = time.monotonic()
+while True:
+    r, _, _ = select.select([0], [], [], frame)
+    if r:
+        c = os.read(0, 1)
+        if c in (b"\r", b"\n", b""):
+            break
+        line = b"" if c == b"\x15" else line + c
+    now = time.monotonic()
+    if now - last >= frame:
+        last = now
+        drawn = {"echo": line, "mask": b"*" * len(line), "silent": b""}[mode]
+        if drawn != shown:
+            os.write(1, b"\x1b[%dG" % (len(prompt) + 1) + drawn + b"\x1b[K")
+            shown = drawn
+termios.tcsetattr(0, termios.TCSADRAIN, saved)
+os.write(1, b"\r\ngot:[" + line + b"]\r\n")
+time.sleep(5)
+"#;
+
+fn frames(prompt: &str, mode: &str) -> SessionCommand {
+    let mut cmd = host_sh("");
+    cmd.argv = vec!["python3".into(), "-c".into(), FRAMES.into(), prompt.into(), mode.into()];
+    cmd
+}
+
+/// Ticket 155 (#284, the coordinator's review of #299): under a terminal that sends only frame
+/// diffs, an echoing prompt's echo of the probe's letter mustn't vanish within one frame. The
+/// probe's letter stays on the line through a whole wait before it's taken back, so a frame
+/// draws it: refused, the secret never typed. pwfeedback's `*` and a silent prompt still fill.
+#[test]
+fn an_echo_cant_hide_inside_one_frame_of_a_diff_only_terminal() {
+    // Each: the prompt, the fill's line, what it shows, ConPTY's rules, whether it fills.
+    for (prompt, line, mode, rules, fills) in [
+        (SUDO_OPS, "[sudo] password for ops:", "echo", true, false),
+        (SUDO_OPS, "[sudo] password for ops:", "silent", true, true),
+        (SUDO_OPS, "[sudo] password for ops:", "mask", true, true),
+        ("Password: ", "Password:", "echo", false, false),
+        (SUDO_OPS, "[sudo] password for ops:", "echo", false, false),
+        ("Password: ", "Password:", "silent", false, true),
+    ] {
+        let m = SessionManager::with_conpty_rules(rules);
+        let (id, rx) = open(&m, frames(prompt, mode));
+        until(&rx, prompt.trim_end());
+        std::thread::sleep(Duration::from_millis(200));
+        let got = m.fill(id, WAIT, line, None, |_| secret());
+        if fills {
+            assert_eq!(got.as_deref().ok(), Some("esx"), "{line} {mode} {rules}: {got:?}");
+        } else {
+            assert!(
+                matches!(got, Err(FillError::Echoes(_))),
+                "{line} {mode} {rules}: {got:?}"
+            );
+            m.write(id, b"\r").unwrap();
+        }
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        m.close(id).unwrap();
+        let want = if fills {
+            format!("got:[{SECRET}]")
+        } else {
+            "got:[]".to_string()
+        };
+        assert!(out.contains(&want), "{line} {mode} {rules}: {out:?}");
+        if !fills {
+            assert!(!out.contains(SECRET), "{line} {mode} {rules}: {out:?}");
+        }
+    }
+}
+
+/// The probe goes in two writes, each followed by a wait: Ctrl+U and the letter, then the last
+/// Ctrl+U (Q151 (h)). A refusal still types nothing else, and the line ends empty.
+#[test]
+fn the_probe_goes_in_two_steps_with_a_wait_between() {
+    let script = "stty raw -echo min 0 time 20; printf 'Password: '; \
+                  a=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'); s=$(date +%s%N); \
+                  b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); e=$(date +%s%N); \
+                  stty sane; echo; echo \"got:[$a $b $(( (e - s) / 1000000 ))]\"; sleep 5";
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, "Password: ");
+    std::thread::sleep(Duration::from_millis(150));
+    let _ = m.fill(id, WAIT, "Password:", None, |_| secret());
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+    m.close(id).unwrap();
+    let got = out
+        .split("got:[")
+        .nth(1)
+        .and_then(|r| r.split(']').next())
+        .unwrap_or_default();
+    let parts: Vec<&str> = got.split(' ').collect();
+    assert_eq!(&parts[..2], ["1578", "15"], "{out:?}");
+    let gap: u64 = parts[2].parse().unwrap();
+    assert!(
+        gap >= WAIT.as_millis() as u64 - 20,
+        "the last Ctrl+U came {gap} ms after the letter: {out:?}"
+    );
+}
+
 /// Ticket 154 (the review of #283, #3): a cursor hide or show inside another sequence isn't one.
 /// Taken out byte by byte, `ESC [ ESC[?25l K` would read as sudo's `ESC [ K`; a terminal reads a
 /// broken sequence, then a hide, then a `K` drawn on the line.
@@ -745,7 +1194,7 @@ fn output_while_the_vault_answers_then_the_mask_refuses() {
             secret()
         })
         .unwrap_err();
-    assert!(matches!(err, FillError::Echoes(_)), "{err:?}");
+    assert!(matches!(err, FillError::Changed { .. }), "{err:?}");
     m.write(id, b"\r").unwrap();
     let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
     assert!(out.contains("got:[]") && !out.contains(SECRET), "{out:?}");
@@ -839,7 +1288,7 @@ fn a_refused_mask_says_what_was_drawn_for_the_log_only() {
     assert_eq!(
         err.log_line().as_deref(),
         Some(
-            "prompt fill refused at sudo's prompt: the probe drew CSI[1m '*' CSI[0m BS ' ' BS, not sudo's pwfeedback mask as roster takes it"
+            "prompt fill refused at sudo's prompt: with the probe's letter pending, the screen showed more than sudo's prompt and at most its `*`; the probe drew CSI[1m '*' CSI[0m; the cursor moved from 1:26 to 1:27; the line changed"
         ),
         "{err:?}"
     );

@@ -1055,7 +1055,8 @@ fn session_write(
 
 /// How long a prompt fill waits for an echo of its probe before it types the secret (ticket 119,
 /// decision Q129). Longer than an ssh round trip to a far Host; a link slower than that could echo
-/// after it, which is why the docs say so.
+/// after it, which is why the docs say so. The probe goes in two steps with this wait after each
+/// (ticket 155, decision Q151 (h)), so a fill takes about twice this before it types.
 const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 
 /// Fills the password prompt Session `id` shows, when the user pressed the fill key at one
