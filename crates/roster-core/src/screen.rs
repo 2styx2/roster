@@ -5,11 +5,38 @@
 //! It keeps one screen of cells (and the main screen while an alternate one is up), never the
 //! scrollback, and parses every escape sequence a terminal does, acting on the ones that move the
 //! cursor or change cells and skipping the rest (colours, titles, links, DCS and APC strings).
-//! A UTF-8 character takes one cell, kept as its first byte; a wide one is therefore a column
-//! short, which can only make a comparison fail (a refusal), never pass.
+//! A UTF-8 character takes one cell, kept whole with the style it was drawn with (the review of
+//! #299, #5); the prompt checks read its first byte. A wide one is therefore a column short,
+//! which can only make a comparison fail (a refusal), never pass. What it doesn't model (a
+//! repeat, insert mode, scroll regions, the alignment test, other charsets, origin and wrap
+//! modes, tab stops, a style it can't name) it counts ([`Screen::matches`] then never holds).
 
-/// A blank cell.
-const BLANK: u8 = b' ';
+/// One cell: its character, all of its UTF-8 bytes (at most 4), and the style it was drawn with
+/// (an index into the screen's styles).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Cell {
+    ch: [u8; 4],
+    style: u16,
+}
+
+impl Cell {
+    /// Its first byte: what the prompt checks read.
+    fn byte(self) -> u8 {
+        self.ch[0]
+    }
+}
+
+/// A blank cell in the default style.
+const BLANK: Cell = Cell {
+    ch: [b' ', 0, 0, 0],
+    style: 0,
+};
+/// The most styles a screen names; one more counts as something it doesn't model.
+const STYLES_MAX: usize = 256;
+
+/// A style, as SGR sets it: for each attribute it models, its value as the parameters gave it,
+/// sorted by attribute ([`Screen::sgr`]).
+type Style = Vec<(u8, Vec<u8>)>;
 /// The longest CSI parameter list kept; a longer sequence is parsed through and ignored.
 const CSI_MAX: usize = 64;
 
@@ -28,17 +55,30 @@ enum Parse {
 pub(crate) struct Screen {
     rows: usize,
     cols: usize,
-    grid: Vec<Vec<u8>>,
+    grid: Vec<Vec<Cell>>,
     row: usize,
     col: usize,
     /// The cursor is past the last column: the next character wraps first.
     pending_wrap: bool,
     saved: (usize, usize),
     /// The main screen and its cursor while the alternate screen is up.
-    main: Option<(Vec<Vec<u8>>, usize, usize)>,
+    main: Option<(Vec<Vec<Cell>>, usize, usize)>,
     parse: Parse,
     csi: Vec<u8>,
     csi_long: bool,
+    /// The first intermediate byte of an escape sequence (`(` in `ESC ( B`).
+    inter: u8,
+    /// The style characters are drawn (and cells erased) with: an index into `styles`.
+    style: u16,
+    /// Every style seen, the default first.
+    styles: Vec<Style>,
+    /// The cell the last character went to and how many of its bytes it has, for the rest of a
+    /// UTF-8 character.
+    last_put: Option<(usize, usize, usize)>,
+    /// Resizes so far (the review of #299, #6).
+    resizes: u64,
+    /// Things done that this screen doesn't model (the review of #299, #5).
+    odd: u64,
     /// What a fill's probe draws, while it waits (ticket 154): [`Screen::watch_mask`].
     mask: Option<MaskWatch>,
 }
@@ -50,12 +90,29 @@ pub(crate) struct Screen {
 pub(crate) struct Snapshot {
     rows: usize,
     cols: usize,
-    grid: Vec<Vec<u8>>,
+    grid: Vec<Vec<Cell>>,
     row: usize,
     col: usize,
     pending_wrap: bool,
     /// The alternate screen is up.
     alternate: bool,
+    resizes: u64,
+    odd: u64,
+}
+
+/// How the screen now compares with a [`Snapshot`] (the review of #299, #9: one comparison for
+/// every check).
+struct Compared {
+    /// The same size, the same screen (main or alternate), no resize and nothing unmodelled since.
+    shape: bool,
+    /// Something this screen doesn't model was done since.
+    odd: bool,
+    /// The cursor where it was (row, column, pending wrap).
+    cursor: bool,
+    /// The snapshot's cursor row as it was.
+    prompt_row: bool,
+    /// Every other row as it was.
+    others: bool,
 }
 
 /// The screen and the cursor as they were when a fill typed its probe, and what the output has
@@ -154,26 +211,28 @@ pub struct Drawn {
     line_changed: bool,
     /// Another line of the screen changed, or its size or the alternate screen (ticket 155).
     elsewhere_changed: bool,
-    /// Bytes the Session printed between the prompt check and the probe (the fill sets it).
+    /// The output did something the screen doesn't model (the review of #299, #5).
+    unmodelled: bool,
+    /// Bytes the Session printed between the prompt check and the probe, which only repainted the
+    /// screen (the fill sets it).
     pub(crate) before: u64,
     /// Which of the fill's rules refused (the fill sets it), for the log (ticket 155).
     pub(crate) why: Why,
 }
 
-/// Which rule refused a fill at sudo's prompt for the Session's own Host, for the log
+/// Which step refused a fill at sudo's prompt for the Session's own Host, for the log
 /// ([`Drawn`], ticket 155).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Why {
-    /// What the probe drew isn't sudo's mask as roster takes it, or the screen didn't end as it was.
+    /// At the end: what the probe drew isn't sudo's mask as roster takes it, or the screen didn't
+    /// end as it was.
     #[default]
     Probe,
-    /// What was printed between the prompt check and the probe left the screen or the cursor other
-    /// than they were: not a repaint of the same content.
-    Repaint,
-    /// The cursor's line isn't sudo's prompt and nothing else.
+    /// At the end: the cursor's line isn't sudo's prompt and nothing else.
     Line,
-    /// With the probe's letter pending (before the last Ctrl+U), the screen showed more than
-    /// sudo's prompt and its one `*` (Q151 (h)).
+    /// With the probe's letter pending (before the last Ctrl+U): the watch saw something it
+    /// doesn't allow, or the screen wasn't sudo's prompt and at most its one `*` with every other
+    /// line as it was (Q151 (h)).
     Pending,
 }
 
@@ -264,6 +323,9 @@ impl std::fmt::Display for Drawn {
         if self.elsewhere_changed {
             f.write_str("; another line changed")?;
         }
+        if self.unmodelled {
+            f.write_str("; something roster's screen doesn't model")?;
+        }
         Ok(())
     }
 }
@@ -283,6 +345,12 @@ impl Screen {
             parse: Parse::Ground,
             csi: Vec::new(),
             csi_long: false,
+            inter: 0,
+            style: 0,
+            styles: vec![Vec::new()],
+            last_put: None,
+            resizes: 0,
+            odd: 0,
             mask: None,
         }
     }
@@ -297,28 +365,48 @@ impl Screen {
             col: self.col,
             pending_wrap: self.pending_wrap,
             alternate: self.main.is_some(),
+            resizes: self.resizes,
+            odd: self.odd,
         }
     }
 
-    /// Whether the screen shows exactly what it did at `shot`, every cell, with the cursor
-    /// (row, column, pending wrap) where it was, on the same screen (main or alternate) of the
-    /// same size (ticket 155): output since was at most a repaint of the same content.
+    fn compare(&self, at: &Snapshot) -> Compared {
+        let dims = (self.rows, self.cols, self.main.is_some()) == (at.rows, at.cols, at.alternate);
+        let odd = self.odd != at.odd;
+        Compared {
+            shape: dims && !odd && self.resizes == at.resizes,
+            odd,
+            cursor: (self.row, self.col, self.pending_wrap) == (at.row, at.col, at.pending_wrap),
+            prompt_row: dims && self.grid.get(at.row) == at.grid.get(at.row),
+            others: dims
+                && self
+                    .grid
+                    .iter()
+                    .zip(&at.grid)
+                    .enumerate()
+                    .all(|(i, (now, was))| i == at.row || now == was),
+        }
+    }
+
+    /// Whether the screen shows exactly what it did at `shot`, every cell's whole character and
+    /// style, with the cursor (row, column, pending wrap) where it was, on the same screen (main
+    /// or alternate) of the same size, with no resize (even one put back) and nothing this screen
+    /// doesn't model since (ticket 155; the review of #299, #5 and #6): output since was at most a
+    /// repaint of the same content.
     pub(crate) fn matches(&self, shot: &Snapshot) -> bool {
-        (
-            self.rows,
-            self.cols,
-            self.row,
-            self.col,
-            self.pending_wrap,
-            self.main.is_some(),
-        ) == (
-            shot.rows,
-            shot.cols,
-            shot.row,
-            shot.col,
-            shot.pending_wrap,
-            shot.alternate,
-        ) && self.grid == shot.grid
+        let c = self.compare(shot);
+        c.shape && c.cursor && c.prompt_row && c.others
+    }
+
+    /// Whether the screen was resized since `shot`, even back to its size (the review of #299, #6).
+    pub(crate) fn resized_since(&self, shot: &Snapshot) -> bool {
+        self.resizes != shot.resizes
+    }
+
+    /// Stops the mask watch, if one is on, noting nothing (the review of #299, #8: a fill that
+    /// ends any way ends its watch).
+    pub(crate) fn stop_mask_watch(&mut self) {
+        self.mask = None;
     }
 
     /// Starts noting what the output draws from here on, with the screen and the cursor as they
@@ -349,23 +437,15 @@ impl Screen {
             };
         };
         let at = &w.at;
-        let stayed = (at.row, at.col, at.pending_wrap) == (self.row, self.col, self.pending_wrap);
-        let same = self.matches(at);
-        // The prompt's own line, wherever the cursor went.
-        let line_changed = self.grid.get(at.row) != at.grid.get(at.row);
-        let elsewhere_changed = (self.rows, self.cols, self.main.is_some()) != (at.rows, at.cols, at.alternate)
-            || self
-                .grid
-                .iter()
-                .zip(&at.grid)
-                .enumerate()
-                .any(|(i, (now, was))| i != at.row && now != was);
+        let c = self.compare(at);
         Watched {
-            masked: !w.other && w.stars <= stars && same,
+            masked: !w.other && w.stars <= stars && c.shape && c.cursor && c.prompt_row && c.others,
             drawn: Drawn {
-                moved: (!stayed).then_some(((at.row + 1, at.col + 1), (self.row + 1, self.col + 1))),
-                line_changed,
-                elsewhere_changed,
+                moved: (!c.cursor).then_some(((at.row + 1, at.col + 1), (self.row + 1, self.col + 1))),
+                // The prompt's own line, wherever the cursor went.
+                line_changed: !c.prompt_row,
+                elsewhere_changed: !c.others,
+                unmodelled: c.odd,
                 seen: w.seen,
                 more: w.more,
                 before: 0,
@@ -380,16 +460,8 @@ impl Screen {
     /// (ticket 155, decision Q151 (h)). The caller checks the prompt's line itself.
     pub(crate) fn mask_pending(&self, stars: usize) -> bool {
         let Some(w) = &self.mask else { return false };
-        let at = &w.at;
-        !w.other
-            && w.stars <= stars
-            && (self.rows, self.cols, self.main.is_some(), self.row) == (at.rows, at.cols, at.alternate, at.row)
-            && self
-                .grid
-                .iter()
-                .zip(&at.grid)
-                .enumerate()
-                .all(|(i, (now, was))| i == at.row || now == was)
+        let c = self.compare(&w.at);
+        !w.other && w.stars <= stars && c.shape && c.others && self.row == w.at.row
     }
 
     /// Notes something the watch saw (ticket 155), unless it has seen [`SEEN_MAX`] things.
@@ -449,15 +521,16 @@ impl Screen {
     pub(crate) fn line_is(&self, text: &str) -> bool {
         let needle = squash(text.bytes().filter(|b| !(0x80..0xc0).contains(b)));
         let needle = needle.trim_ascii();
-        !needle.is_empty() && squash(self.grid[self.row].iter().copied()).trim_ascii() == needle
+        !needle.is_empty() && squash(self.grid[self.row].iter().map(|c| c.byte())).trim_ascii() == needle
     }
 
     /// The terminal was resized: the cursor's row stays on screen, cells beyond the new width go.
     pub(crate) fn resize(&mut self, rows: u16, cols: u16) {
         self.not_mask();
         self.saw(Seen::Resize);
+        self.resizes += 1;
         let (rows, cols) = (usize::from(rows.max(1)), usize::from(cols.max(1)));
-        let fit = |grid: &mut Vec<Vec<u8>>, row: &mut usize| {
+        let fit = |grid: &mut Vec<Vec<Cell>>, row: &mut usize| {
             if *row >= rows {
                 grid.drain(..*row + 1 - rows);
                 *row = rows - 1;
@@ -496,13 +569,18 @@ impl Screen {
         }
         let line = &self.grid[self.row];
         let end = if self.pending_wrap { self.cols } else { self.col };
-        if line[end..].iter().any(|&c| c != BLANK) {
+        if line[end..].iter().any(|c| c.byte() != b' ') {
             return false;
         }
-        squash(line[..end].iter().copied()).trim_ascii_end().ends_with(needle)
+        squash(line[..end].iter().map(|c| c.byte()))
+            .trim_ascii_end()
+            .ends_with(needle)
     }
 
     fn byte(&mut self, b: u8) {
+        if !(self.parse == Parse::Ground && (0x80..0xc0).contains(&b)) {
+            self.last_put = None;
+        }
         match self.parse {
             Parse::Ground => self.ground(b),
             Parse::Esc => self.esc(b),
@@ -559,6 +637,11 @@ impl Screen {
                 }
                 if !(0x20..=0x2f).contains(&b) {
                     self.parse = if b == 0x1b { Parse::Esc } else { Parse::Ground };
+                    // The alignment test and double-size lines (`ESC #`), and any charset but
+                    // ASCII: not modelled.
+                    if self.inter == b'#' || (b"()*+-./".contains(&self.inter) && b != b'B') {
+                        self.odd += 1;
+                    }
                 }
             }
         }
@@ -605,9 +688,11 @@ impl Screen {
                 self.pending_wrap = false;
                 self.col = ((self.col / 8 + 1) * 8).min(self.cols - 1);
             }
+            // Shift Out and In switch charsets: not modelled.
+            0x0e | 0x0f => self.odd += 1,
             0x00..=0x1f | 0x7f => {}
-            // A UTF-8 continuation byte: its character already took its cell.
-            0x80..=0xbf => {}
+            // A UTF-8 continuation byte: the rest of the character in the last cell drawn.
+            0x80..=0xbf => self.put_more(b),
             _ => self.put(b),
         }
     }
@@ -633,7 +718,10 @@ impl Screen {
                 self.csi_long = false;
             }
             b']' | b'P' | b'_' | b'^' | b'X' => self.parse = Parse::Str,
-            0x20..=0x2f => self.parse = Parse::Inter,
+            0x20..=0x2f => {
+                self.parse = Parse::Inter;
+                self.inter = b;
+            }
             0x1b => self.parse = Parse::Esc,
             b'7' => self.saved = (self.row, self.col),
             b'8' => self.restore(),
@@ -644,14 +732,22 @@ impl Screen {
             }
             b'M' => {
                 if self.row == 0 {
+                    let blank = self.blank();
                     self.grid.pop();
-                    self.grid.insert(0, vec![BLANK; self.cols]);
+                    self.grid.insert(0, vec![blank; self.cols]);
                 } else {
                     self.row -= 1;
                 }
             }
-            b'c' => *self = Screen::new(self.rows as u16, self.cols as u16),
-            _ => {}
+            b'c' => {
+                let (resizes, odd) = (self.resizes, self.odd);
+                *self = Screen::new(self.rows as u16, self.cols as u16);
+                (self.resizes, self.odd) = (resizes, odd + 1);
+            }
+            // The keypad modes and a string's end draw nothing.
+            b'=' | b'>' | b'\\' => {}
+            // Tab sets, single shifts and the rest: not modelled.
+            _ => self.odd += 1,
         }
         if b != b'[' {
             self.pending_wrap = false;
@@ -664,7 +760,11 @@ impl Screen {
             self.col = 0;
             self.line_feed();
         }
-        self.grid[self.row][self.col] = b;
+        self.grid[self.row][self.col] = Cell {
+            ch: [b, 0, 0, 0],
+            style: self.style,
+        };
+        self.last_put = Some((self.row, self.col, 1));
         if self.col + 1 == self.cols {
             self.pending_wrap = true;
         } else {
@@ -672,10 +772,107 @@ impl Screen {
         }
     }
 
+    /// The rest of a UTF-8 character, into the cell its first byte went to; a stray one isn't
+    /// modelled.
+    fn put_more(&mut self, b: u8) {
+        match self.last_put {
+            Some((row, col, n)) if n < 4 => {
+                self.grid[row][col].ch[n] = b;
+                self.last_put = Some((row, col, n + 1));
+            }
+            _ => self.odd += 1,
+        }
+    }
+
+    /// A cell an erase leaves: blank, in the current style (as a terminal erases with its
+    /// background).
+    fn blank(&self) -> Cell {
+        Cell {
+            ch: [b' ', 0, 0, 0],
+            style: self.style,
+        }
+    }
+
+    /// SGR: the style from here on (the review of #299, #5). Each attribute it models is set or
+    /// cleared by its parameters; one it doesn't, or a style past [`STYLES_MAX`], isn't modelled.
+    fn sgr(&mut self) {
+        let mut style = self.styles[usize::from(self.style)].clone();
+        let params: Vec<&[u8]> = self.csi.split(|&c| c == b';').collect();
+        let mut i = 0;
+        while i < params.len() {
+            let p = params[i];
+            let code = p.split(|&c| c == b':').next().unwrap_or_default();
+            let n: Option<u16> = std::str::from_utf8(code)
+                .ok()
+                .and_then(|c| if c.is_empty() { Some(0) } else { c.parse().ok() });
+            let mut value = p.to_vec();
+            // 38, 48 and 58 take their colour from the next parameters (unless given with `:`).
+            if matches!(n, Some(38 | 48 | 58)) && !p.contains(&b':') {
+                let take = match params.get(i + 1) {
+                    Some(&b"5") => 2,
+                    Some(&b"2") => 4,
+                    _ => 0,
+                };
+                for q in params.iter().skip(i + 1).take(take) {
+                    value.push(b';');
+                    value.extend_from_slice(q);
+                }
+                i += take;
+            }
+            let set = |style: &mut Style, slot: u8, value: Option<Vec<u8>>| {
+                style.retain(|(s, _)| *s != slot);
+                if let Some(v) = value {
+                    style.push((slot, v));
+                    style.sort();
+                }
+            };
+            match n {
+                Some(0) => style.clear(),
+                Some(1) => set(&mut style, 1, Some(value)),
+                Some(2) => set(&mut style, 2, Some(value)),
+                Some(22) => {
+                    set(&mut style, 1, None);
+                    set(&mut style, 2, None);
+                }
+                Some(3) => set(&mut style, 3, Some(value)),
+                Some(23) => set(&mut style, 3, None),
+                Some(4 | 21) => set(&mut style, 4, Some(value)),
+                Some(24) => set(&mut style, 4, None),
+                Some(5 | 6) => set(&mut style, 5, Some(value)),
+                Some(25) => set(&mut style, 5, None),
+                Some(7) => set(&mut style, 7, Some(value)),
+                Some(27) => set(&mut style, 7, None),
+                Some(8) => set(&mut style, 8, Some(value)),
+                Some(28) => set(&mut style, 8, None),
+                Some(9) => set(&mut style, 9, Some(value)),
+                Some(29) => set(&mut style, 9, None),
+                Some(53) => set(&mut style, 53, Some(value)),
+                Some(55) => set(&mut style, 53, None),
+                Some(30..=38 | 90..=97) => set(&mut style, 30, Some(value)),
+                Some(39) => set(&mut style, 30, None),
+                Some(40..=48 | 100..=107) => set(&mut style, 40, Some(value)),
+                Some(49) => set(&mut style, 40, None),
+                Some(58) => set(&mut style, 58, Some(value)),
+                Some(59) => set(&mut style, 58, None),
+                _ => self.odd += 1,
+            }
+            i += 1;
+        }
+        match self.styles.iter().position(|s| *s == style) {
+            Some(at) => self.style = at as u16,
+            None if self.styles.len() < STYLES_MAX => {
+                self.styles.push(style);
+                self.style = (self.styles.len() - 1) as u16;
+            }
+            None => self.odd += 1,
+        }
+    }
+
     fn line_feed(&mut self) {
         if self.row + 1 == self.rows {
+            let blank = self.blank();
             self.grid.remove(0);
-            self.grid.push(vec![BLANK; self.cols]);
+            self.grid.push(vec![blank; self.cols]);
         } else {
             self.row += 1;
         }
@@ -690,6 +887,10 @@ impl Screen {
             self.not_mask();
         }
         let private = self.csi.first() == Some(&b'?');
+        // `<`, `=`, `>` and `?` mark a private sequence; intermediates (` q`) another command.
+        let marked = self.csi.first().is_some_and(|b| b"<=>?".contains(b));
+        let plain = !marked && !self.csi.iter().any(|b| (0x20..=0x2f).contains(b));
+        let blank = self.blank();
         let params: Vec<usize> = self
             .csi
             .split(|&c| c == b';')
@@ -718,71 +919,71 @@ impl Screen {
             }
             b'J' if !private => match arg(0) {
                 0 => {
-                    self.grid[self.row][self.col..].fill(BLANK);
+                    self.grid[self.row][self.col..].fill(blank);
                     for line in &mut self.grid[self.row + 1..] {
-                        line.fill(BLANK);
+                        line.fill(blank);
                     }
                 }
                 1 => {
                     for line in &mut self.grid[..self.row] {
-                        line.fill(BLANK);
+                        line.fill(blank);
                     }
-                    self.grid[self.row][..=self.col].fill(BLANK);
+                    self.grid[self.row][..=self.col].fill(blank);
                 }
                 _ => {
                     for line in &mut self.grid {
-                        line.fill(BLANK);
+                        line.fill(blank);
                     }
                 }
             },
             b'K' if !private => {
                 let line = &mut self.grid[self.row];
                 match arg(0) {
-                    0 => line[self.col..].fill(BLANK),
-                    1 => line[..=self.col].fill(BLANK),
-                    _ => line.fill(BLANK),
+                    0 => line[self.col..].fill(blank),
+                    1 => line[..=self.col].fill(blank),
+                    _ => line.fill(blank),
                 }
             }
             b'X' => {
                 let end = (self.col + n).min(cols);
-                self.grid[self.row][self.col..end].fill(BLANK);
+                self.grid[self.row][self.col..end].fill(blank);
             }
             b'P' => {
                 let line = &mut self.grid[self.row];
                 let n = n.min(cols - self.col);
                 line.drain(self.col..self.col + n);
-                line.resize(cols, BLANK);
+                line.resize(cols, blank);
             }
             b'@' => {
                 let line = &mut self.grid[self.row];
                 let n = n.min(cols - self.col);
                 for _ in 0..n {
-                    line.insert(self.col, BLANK);
+                    line.insert(self.col, blank);
                 }
                 line.truncate(cols);
             }
             b'L' => {
                 for _ in 0..n.min(rows - self.row) {
                     self.grid.pop();
-                    self.grid.insert(self.row, vec![BLANK; cols]);
+                    self.grid.insert(self.row, vec![blank; cols]);
                 }
             }
             b'M' => {
                 for _ in 0..n.min(rows - self.row) {
                     self.grid.remove(self.row);
-                    self.grid.push(vec![BLANK; cols]);
+                    self.grid.push(vec![blank; cols]);
                 }
             }
             b'S' => {
                 for _ in 0..n.min(rows) {
                     self.grid.remove(0);
-                    self.grid.push(vec![BLANK; cols]);
+                    self.grid.push(vec![blank; cols]);
                 }
             }
             b'T' => {
                 for _ in 0..n.min(rows) {
                     self.grid.pop();
-                    self.grid.insert(0, vec![BLANK; cols]);
+                    self.grid.insert(0, vec![blank; cols]);
                 }
             }
             b's' if !private => self.saved = (self.row, self.col),
@@ -792,8 +993,17 @@ impl Screen {
                 if alt {
                     self.alternate(fin == b'h');
                 }
+                // 132 columns, reverse video, origin and wrap modes, side margins: not modelled.
+                if params.iter().any(|p| [3, 5, 6, 7, 69].contains(p)) {
+                    self.odd += 1;
+                }
             }
-            _ => {}
+            b'm' if plain => self.sgr(),
+            // Reports, device attributes, window ops and the cursor's shape draw nothing.
+            b'n' | b'c' | b't' | b'q' => {}
+            // Insert and newline modes, scroll regions, repeats, tab stops and the rest: not
+            // modelled.
+            _ => self.odd += 1,
         }
     }
 
@@ -1004,6 +1214,61 @@ mod tests {
         assert!(!s.matches(&shot));
     }
 
+    /// The review of #299 (#5): the snapshot keeps every cell's whole character and the colours
+    /// and styles it was drawn with, and anything this screen doesn't model (a repeat, insert
+    /// mode, a scroll region, the alignment test, another charset, origin or wrap mode) counts as
+    /// a change.
+    #[test]
+    fn a_repaint_must_draw_the_same_characters_with_the_same_style() {
+        const PROMPT: &[u8] = "\x1b[2J\x1b[H$ caf\u{e9}\r\n\x1b[1m[sudo]\x1b[m password for ops: ".as_bytes();
+        let same: &[&[u8]] = &[
+            "\x1b[1;1H$ caf\u{e9}\x1b[2;26H".as_bytes(),
+            b"\x1b[2;1H\x1b[1m[sudo]\x1b[0m password for ops: ",
+            b"\x1b[2;1H\x1b[0;1m[sudo]\x1b[m password for ops: \x1b[K",
+        ];
+        for out in same {
+            let mut s = screen(PROMPT);
+            let shot = s.snapshot();
+            s.feed(out);
+            assert!(s.matches(&shot), "{:?}", String::from_utf8_lossy(out));
+        }
+        let changed: &[&[u8]] = &[
+            // Another character with the same first byte.
+            "\x1b[1;1H$ caf\u{e8}\x1b[2;26H".as_bytes(),
+            // The same text, another style.
+            b"\x1b[2;1H[sudo] password for ops: ",
+            b"\x1b[2;1H\x1b[1;31m[sudo]\x1b[m password for ops: ",
+            b"\x1b[1;1H\x1b[7m$\x1b[m\x1b[2;26H",
+            // What this screen doesn't model.
+            b"\x1b[1;3H \x1b[1b\x1b[2;26H",
+            b"\x1b[4h\x1b[4l",
+            b"\x1b[1;10r\x1b[r\x1b[2;26H",
+            b"\x1b#8\x1b[2J\x1b[H",
+            b"\x1b(0\x1b(B",
+            b"\x0e\x0f",
+            b"\x1b[?6h\x1b[?6l\x1b[2;26H",
+            b"\x1b[?7l\x1b[?7h",
+            b"\x1b[3g",
+            b"\x1bH",
+        ];
+        for out in changed {
+            let mut s = screen(PROMPT);
+            let shot = s.snapshot();
+            s.feed(out);
+            assert!(!s.matches(&shot), "{:?}", String::from_utf8_lossy(out));
+        }
+    }
+
+    /// The review of #299 (#6): a resize and back is still a resize.
+    #[test]
+    fn a_resize_and_back_is_never_the_same_screen() {
+        let mut s = screen(b"[sudo] password for ops: ");
+        let shot = s.snapshot();
+        s.resize(24, 100);
+        s.resize(24, 80);
+        assert!(!s.matches(&shot));
+    }
+
     #[test]
     fn the_whole_line_must_be_the_prompt() {
         let s = screen(b"Enter vault PIN for [sudo] password for ops: ");
@@ -1090,14 +1355,17 @@ mod tests {
         };
         assert_eq!(
             said(b"\x1b[1;hunter2"),
-            "CSI[1;? text(6); the cursor moved from 1:26 to 1:32; the line changed"
+            "CSI[1;? text(6); the cursor moved from 1:26 to 1:32; the line changed; something roster's screen doesn't model"
         );
         assert_eq!(
             said(b"\x1b[2025s3cret"),
             "CSI[2025? text(5); the cursor moved from 1:26 to 1:31; the line changed"
         );
         assert_eq!(said(b"\x1b[s\x1b[u\x1b[?25l\x1b[?25h"), "CSI[s CSI[u CSI[?25l CSI[?25h");
-        assert_eq!(said(b"\x1b[2 q\x1b[>1x"), "CSI[params(2)? CSI[params(2)?");
+        assert_eq!(
+            said(b"\x1b[2 q\x1b[>1x"),
+            "CSI[params(2)? CSI[params(2)?; something roster's screen doesn't model"
+        );
         assert_eq!(said(b"\x1b[?h\x1b[?1049l"), "CSI[?? CSI[?1049l");
     }
 
@@ -1158,6 +1426,8 @@ mod tests {
         words.iter().enumerate().all(|(i, w)| ok_thing(i, w))
             && parts.all(|p| {
                 p == "the line changed"
+                    || p == "another line changed"
+                    || p == "something roster's screen doesn't model"
                     || p.strip_suffix(" bytes printed before the probe")
                         .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
                     || p.strip_prefix("the cursor moved from ").is_some_and(|r| {

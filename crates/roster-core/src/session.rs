@@ -253,6 +253,41 @@ struct Running {
     /// Its output as a terminal draws it, and how much of it there has been
     /// ([`SessionManager::fill`], tickets 120, 137 and 154).
     shown: Arc<Mutex<Shown>>,
+    /// Its PTY is Windows' ConPTY, or a test says to take it as one (decision Q151).
+    conpty: bool,
+    /// While a fill checks the prompt: the keys sent meanwhile, held until it ends (the review of
+    /// #299, #2). Lock it before `writer`.
+    held: Mutex<Option<Vec<u8>>>,
+}
+
+/// A fill in progress on a Session: while it lives, [`SessionManager::write`] holds the keys sent;
+/// dropped, it ends any mask watch and sends them, in order (the review of #299, #2 and #8).
+struct Filling<'a>(&'a Running);
+
+impl<'a> Filling<'a> {
+    /// None if another fill is already checking this Session (T155 item 3).
+    fn start(running: &'a Running) -> Option<Self> {
+        let mut held = running.held.lock().unwrap();
+        if held.is_some() {
+            return None;
+        }
+        *held = Some(Vec::new());
+        Some(Filling(running))
+    }
+}
+
+impl Drop for Filling<'_> {
+    fn drop(&mut self) {
+        self.0.shown.lock().unwrap().screen.stop_mask_watch();
+        // Under `held`, so a key sent now waits for these.
+        let mut held = self.0.held.lock().unwrap();
+        if let Some(keys) = held.take()
+            && !keys.is_empty()
+            && let Some(w) = self.0.writer.lock().unwrap().as_mut()
+        {
+            let _ = w.write_all(&keys).and_then(|_| w.flush());
+        }
+    }
 }
 
 /// What a Session has printed, as a fill checks it: the screen a terminal would draw (the
@@ -305,15 +340,33 @@ impl<S: Fn(SessionEvent)> Gate<S> {
 }
 
 /// Every running Session. Cheap to share: clone the `Arc` it lives in.
-#[derive(Default)]
 pub struct SessionManager {
     next_id: AtomicU32,
     sessions: Arc<Mutex<HashMap<SessionId, Arc<Running>>>>,
+    /// Its PTYs are Windows' ConPTY (decision Q151).
+    conpty: bool,
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::with_conpty_rules(cfg!(windows))
+    }
 }
 
 impl SessionManager {
+    /// Its PTYs' own rules: Windows' ConPTY's on Windows (decision Q151), the others' elsewhere.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// With ConPTY's fill rules (decision Q151) or not, whatever the platform: the app uses
+    /// [`SessionManager::new`]; tests use this to check Windows' rules on a Unix PTY.
+    pub fn with_conpty_rules(conpty: bool) -> Self {
+        SessionManager {
+            next_id: AtomicU32::new(0),
+            sessions: Arc::default(),
+            conpty,
+        }
     }
 
     /// Starts `cmd` in a new PTY of `size`. `sink` gets the output as it comes, then one Exit,
@@ -354,6 +407,8 @@ impl SessionManager {
                 screen: Screen::new(size.rows, size.cols),
                 total: 0,
             })),
+            conpty: self.conpty,
+            held: Mutex::new(None),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(id, Arc::clone(&running));
@@ -414,6 +469,12 @@ impl SessionManager {
     pub fn write(&self, id: SessionId, data: &[u8]) -> Result<(), SessionError> {
         let running = self.get(id)?;
         running.writes.fetch_add(1, Ordering::SeqCst);
+        // While a fill checks the prompt, keys wait for it to end (the review of #299, #2).
+        let mut held = running.held.lock().unwrap();
+        if let Some(keys) = held.as_mut() {
+            keys.extend_from_slice(data);
+            return Ok(());
+        }
         let mut w = running.writer.lock().unwrap();
         let w = w.as_mut().ok_or(SessionError::NotFound(id))?;
         w.write_all(data).and_then(|_| w.flush()).map_err(io)
@@ -422,35 +483,43 @@ impl SessionManager {
     /// Fills the password prompt the Session shows (tickets 119, 120 and 137; decisions Q129,
     /// Q131 and Q136), when the user pressed the fill key at one. `prompt` is the prompt line the
     /// frontend read off the screen; `hop` is a nested ssh's Host, as the frontend resolved it
-    /// (none for the Session's own Host). In order: the Session must be to an Inventory Host (else
-    /// [`FillError::NoHost`], and nothing is asked); what it has printed and been sent so far is
-    /// noted; the cursor must sit right after `prompt` on its line, as a terminal draws the
-    /// Session's output (through ConPTY's redraws), with nothing after it there, else
-    /// [`FillError::NotPrinted`] and nothing is asked or
-    /// typed, so the frontend's word alone never sends a password to a Session that isn't asking
-    /// for it, on its own Host or another; `lookup` gets the Host the Session was opened to and
-    /// what it connected to, and returns the secret (serve's `session.fill`, which judges `prompt`
-    /// and `hop`), and a refusal there types nothing; then the probe, [`PROBE`], goes to the
-    /// prompt: Ctrl+U (the line-kill key, which empties whatever was typed there already) around a
-    /// letter, in two steps (Ctrl+U and the letter, `wait`, the last Ctrl+U, `wait` again: ticket
-    /// 155, decision Q151 (h)), so an echoed letter stands on the line for a whole `wait` and a
-    /// terminal that sends only frame diffs (ConPTY) draws it. A prompt that doesn't echo, as
-    /// sudo's, su's and ssh's don't, prints nothing for it; one that echoes prints the letter (and
-    /// takes it back). So if anything was printed from the probe through the second `wait`, or what was printed between the check and the probe left the
-    /// Session's whole screen or its cursor other than they were at the check (ConPTY repaints
-    /// what it already drew: ticket 155, decision Q151), or a key was sent meanwhile, the secret
-    /// isn't typed ([`FillError::Echoes`], [`FillError::Typed`]). The one exception (ticket 154,
-    /// decision Q144): for the Session's own Host (no `hop`), at sudo's own prompt for its ssh
-    /// user, which is the whole of the cursor's line, sudo with `pwfeedback` draws a `*` for the
-    /// letter and erases it; if the screen was as it was at the check when the probe went, and
-    /// after it the screen saw at most that `*`, cursor moves, erases within the line and the
-    /// cursor's hide and show, and the cursor and the whole screen end exactly as they were
-    /// ([`Screen::end_mask_watch`]), the prompt
-    /// doesn't echo. Otherwise the secret and Enter go to
-    /// the PTY in one write, and the secret is wiped as it's dropped. Returns the name of the Host
-    /// whose password it typed: `hop`'s, else the Session's own.
+    /// (none for the Session's own Host). In order:
+    /// - the Session must be to an Inventory Host (else [`FillError::NoHost`], and nothing is
+    ///   asked), and no other fill may be checking it ([`FillError::Busy`]);
+    /// - under Windows' ConPTY (decision Q151 (i)), the fill must be the Session's own Host's at
+    ///   sudo's own prompt for its ssh user, else [`FillError::ConPty`] and nothing is asked or
+    ///   typed: ConPTY sends only what changed between its frames, so an echo of the probe can
+    ///   vanish there however it's timed, and sudo's own prompt is the one whose not echoing is
+    ///   sudo's contract;
+    /// - from here until the fill ends, keys sent to the Session ([`SessionManager::write`]) are
+    ///   held and sent after it, in order (the review of #299, #2), and refuse it
+    ///   ([`FillError::Typed`]);
+    /// - the cursor must sit right after `prompt` on its line, as a terminal draws the Session's
+    ///   output, with nothing after it there, else [`FillError::NotPrinted`] and nothing is asked
+    ///   or typed, so the frontend's word alone never sends a password to a Session that isn't
+    ///   asking for it; the whole screen and the cursor are noted then;
+    /// - `lookup` gets the Host the Session was opened to and what it connected to, and returns
+    ///   the secret (serve's `session.fill`, which judges `prompt` and `hop`); a refusal there
+    ///   types nothing;
+    /// - before the probe, nothing may have been printed since the check (under ConPTY, which
+    ///   repaints what it already drew: what was printed must have left the whole screen and the
+    ///   cursor exactly as they were, Q151 (b)), and the screen not resized, else
+    ///   [`FillError::Changed`] and nothing is typed;
+    /// - the probe, [`PROBE`], in two steps (Q151 (h)): Ctrl+U and the letter, `wait`, a check
+    ///   with the letter pending, the last Ctrl+U (always sent, so the line ends empty), `wait`
+    ///   again. A prompt that doesn't echo, as sudo's, su's and ssh's don't, prints nothing for
+    ///   it; one that echoes prints the letter. So if anything was printed from the probe on, the
+    ///   screen was resized, or a key was sent, the secret isn't typed ([`FillError::Echoes`],
+    ///   [`FillError::Typed`]). The one exception (ticket 154, decision Q144): for the Session's
+    ///   own Host, at sudo's own prompt for its ssh user, which is the whole of the cursor's line,
+    ///   sudo with `pwfeedback` draws a `*` for the letter and erases it; with the letter pending
+    ///   the line may be the prompt and that `*`, and at the end the mask watch must have seen at
+    ///   most that `*`, cursor moves, erases within the line and the cursor's hide and show, with
+    ///   the cursor and the whole screen exactly as they were ([`Screen::end_mask_watch`]).
     ///
-    /// The secret never leaves this call: not in a return value, an error, a log or an event.
+    /// Otherwise the secret and Enter go to the PTY in one write, and the secret is wiped as it's
+    /// dropped. Returns the name of the Host whose password it typed: `hop`'s, else the Session's
+    /// own. The secret never leaves this call: not in a return value, an error, a log or an event.
     pub fn fill<E>(
         &self,
         id: SessionId,
@@ -461,6 +530,15 @@ impl SessionManager {
     ) -> Result<String, FillError<E>> {
         let running = self.get(id).map_err(|_| FillError::NotFound(id))?;
         let target = running.fill_as.clone().ok_or(FillError::NoHost)?;
+        // sudo with `pwfeedback` draws a `*` for the probe's letter and erases it (ticket 154):
+        // allowed only for the Session's own Host, at sudo's own prompt for its ssh user.
+        let maskable = hop.is_none() && sudo_prompt_for(prompt, &target.login.user);
+        if running.conpty && !maskable {
+            return Err(FillError::ConPty);
+        }
+        // Keys are held from here; the guard sends them, and ends any mask watch, however the
+        // fill ends (the review of #299, #2 and #8).
+        let _filling = Filling::start(&running).ok_or(FillError::Busy)?;
         // Before the prompt check and the lookup, which may wait on the vault: what's printed or
         // typed from here on counts. The check reads the screen as of exactly the bytes counted.
         let writes = running.writes.load(Ordering::SeqCst);
@@ -471,23 +549,31 @@ impl SessionManager {
             }
             (shown.total, shown.screen.snapshot())
         };
-        // sudo with `pwfeedback` draws a `*` for the probe's letter and erases it (ticket 154):
-        // allowed only for the Session's own Host, at sudo's own prompt for its ssh user.
-        let maskable = hop.is_none() && sudo_prompt_for(prompt, &target.login.user);
         let secret = lookup(&target).map_err(FillError::Lookup)?;
-        // ConPTY repaints regions it already drew (ticket 155, #284): output before the probe is
-        // allowed only if the whole screen and the cursor are exactly as they were at the check.
-        let (probed, repainted) = {
+        // Before anything is typed (the review of #299, #3 and #4): nothing printed since the
+        // check, or under ConPTY a repaint that left the whole screen and the cursor as they were
+        // (ticket 155, #284); never a resize.
+        let probed = {
             let mut shown = running.shown.lock().unwrap();
+            let same = if running.conpty {
+                shown.screen.matches(&checked)
+            } else {
+                shown.total == printed && !shown.screen.resized_since(&checked)
+            };
+            if !same {
+                return Err(FillError::Changed {
+                    before: shown.total - printed,
+                });
+            }
             if maskable {
                 shown.screen.watch_mask();
             }
-            (shown.total, shown.total == printed || shown.screen.matches(&checked))
+            shown.total
         };
-        // The probe in two steps (ticket 155, decision Q151 (h)): Ctrl+U and the letter, then,
-        // after a whole wait, the last Ctrl+U. A terminal that sends only what changed between its
-        // frames (ConPTY) would send nothing for a letter echoed and taken back within one frame;
-        // left on the line for the wait, an echoed letter is drawn in a frame and seen here.
+        // The probe in two steps (Q151 (h)): Ctrl+U and the letter, then, after a whole wait, the
+        // last Ctrl+U. A terminal that sends only what changed between its frames would send
+        // nothing for a letter echoed and taken back within one frame; left on the line for the
+        // wait, an echoed letter is drawn in a frame and seen here (off ConPTY, it's seen anyway).
         let (first, last) = PROBE.split_at(PROBE_SPLIT);
         {
             let mut w = running.writer.lock().unwrap();
@@ -497,19 +583,21 @@ impl SessionManager {
         std::thread::sleep(wait);
         // With the letter pending: nothing printed at all, or at sudo's own prompt for the own
         // Host, the line is the prompt alone or the prompt and sudo's one `*`, the cursor right
-        // after it, and the mask watch has seen nothing it doesn't allow.
+        // after it, every other line as it was, and the mask watch has seen nothing it doesn't
+        // allow; never a resize.
         let pending = {
             let mut shown = running.shown.lock().unwrap();
-            let starred = format!("{} *", prompt.trim_end());
-            let ok = if maskable {
-                let s = &shown.screen;
-                s.mask_pending(PROBE_KEYS)
-                    && ((s.line_is(prompt) && s.cursor_after(prompt))
-                        || (s.line_is(&starred) && s.cursor_after(&starred)))
-            } else {
-                shown.total == probed
-            };
-            if repainted && ok {
+            let ok = !shown.screen.resized_since(&checked)
+                && if maskable {
+                    let s = &shown.screen;
+                    let starred = format!("{} *", prompt.trim_end());
+                    s.mask_pending(PROBE_KEYS)
+                        && ((s.line_is(prompt) && s.cursor_after(prompt))
+                            || (s.line_is(&starred) && s.cursor_after(&starred)))
+                } else {
+                    shown.total == probed
+                };
+            if ok {
                 None
             } else {
                 Some(maskable.then(|| shown.screen.end_mask_watch(PROBE_KEYS)))
@@ -525,7 +613,7 @@ impl SessionManager {
             return Err(FillError::Echoes(watched.map(|w| {
                 let mut drawn = w.drawn;
                 drawn.before = probed - printed;
-                drawn.why = if repainted { Why::Pending } else { Why::Repaint };
+                drawn.why = Why::Pending;
                 drawn
             })));
         }
@@ -538,19 +626,13 @@ impl SessionManager {
             let masked = watched.as_ref().is_some_and(|w| w.masked);
             let whole_line = shown.screen.line_is(prompt);
             let quiet = shown.total == probed || (masked && whole_line && shown.screen.cursor_after(prompt));
-            if !(repainted && quiet) {
+            if !quiet || shown.screen.resized_since(&checked) {
                 // What the probe drew and which rule refused, for the log (ticket 155): only where
                 // the mask could count.
                 return Err(FillError::Echoes(watched.map(|w| {
                     let mut drawn = w.drawn;
                     drawn.before = probed - printed;
-                    drawn.why = if !repainted {
-                        Why::Repaint
-                    } else if !whole_line {
-                        Why::Line
-                    } else {
-                        Why::Probe
-                    };
+                    drawn.why = if masked && !whole_line { Why::Line } else { Why::Probe };
                     drawn
                 })));
             }
@@ -676,8 +758,18 @@ pub enum FillError<E> {
     /// At sudo's own prompt for the Session's own Host, where the mask could have counted, it
     /// holds what the probe drew, for the log only ([`FillError::log_line`], ticket 155).
     Echoes(Option<Drawn>),
-    /// A key was sent to the Session while roster checked the prompt.
+    /// A key was sent to the Session while roster checked the prompt (it was held, and sent once
+    /// the fill ended).
     Typed,
+    /// Between the prompt check and the probe, the Session printed something (under ConPTY:
+    /// something that changed its screen or cursor) or was resized (the review of #299, #3, #4
+    /// and #6): `before` bytes. Nothing was typed.
+    Changed { before: u64 },
+    /// Under Windows' ConPTY, a prompt other than sudo's own for the Session's own Host (decision
+    /// Q151 (i)): an echo can't be told there. Nothing was looked up or typed.
+    ConPty,
+    /// Another fill is checking this Session's prompt.
+    Busy,
     /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
     /// looked up or typed.
     NotPrinted,
@@ -695,6 +787,13 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
                 "the prompt printed what roster typed to check it (it echoes, or it isn't a password prompt), so roster didn't fill it",
             ),
             FillError::Typed => f.write_str("a key was typed while roster checked the prompt, so roster didn't fill it"),
+            FillError::Changed { .. } => f.write_str(
+                "the Session's screen changed while roster checked the prompt, so roster didn't fill it",
+            ),
+            FillError::ConPty => f.write_str(
+                "on Windows roster fills only sudo's own prompt for this Session's Host: Windows' console can hide an echo of what roster types to check a prompt, so roster can't tell this one doesn't echo; type it yourself",
+            ),
+            FillError::Busy => f.write_str("roster is already checking this prompt"),
             FillError::NotPrinted => f.write_str(
                 "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
             ),
@@ -713,16 +812,19 @@ impl<E> FillError<E> {
     /// screen, a line that isn't only sudo's prompt, or what the probe drew; and how many bytes
     /// were printed before the probe, never what they were.
     pub fn log_line(&self) -> Option<String> {
+        if let FillError::Changed { before } = self {
+            // Only a count: no text (the review of #299, #3).
+            return Some(format!(
+                "prompt fill refused before the probe: what was printed after the prompt check ({before} bytes) changed the screen"
+            ));
+        }
         let FillError::Echoes(Some(drawn)) = self else {
             return None;
         };
         let before = drawn.before;
         Some(match drawn.why {
-            Why::Repaint => format!(
-                "prompt fill refused at sudo's prompt: what was printed before the probe ({before} bytes) changed the screen; the probe drew {drawn}"
-            ),
             Why::Pending => format!(
-                "prompt fill refused at sudo's prompt: with the probe's letter pending, the line showed more than sudo's prompt and its `*`; the probe drew {drawn}{}",
+                "prompt fill refused at sudo's prompt: with the probe's letter pending, the screen showed more than sudo's prompt and at most its `*`; the probe drew {drawn}{}",
                 repainted(before)
             ),
             Why::Line => format!(
