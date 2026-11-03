@@ -156,6 +156,9 @@ export const defaultBindings: KeymapTables = {
     Home: "top",
     End: "bottom",
     Enter: "choose",
+    // A Host row's menu (T166, Q156), as a right-click opens it: the Menu key, or Shift+F10.
+    ContextMenu: "menu",
+    "Shift+F10": "menu",
   },
   listVim: { j: "down", k: "up", h: "fold", l: "unfold", "g g": "top", G: "bottom" },
   picker: {

@@ -11,6 +11,7 @@ import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, fixtu
 import type { Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { chooseInMenu, inventoryRow, menuLabels } from "./test-menu";
 
 const LEADER = "{Control>} {/Control}";
 const UNREVIEWED = "switch-4-003";
@@ -264,10 +265,10 @@ describe("marking a Host reviewed", () => {
 
   it("from the Sidebar row's button", async () => {
     const { user, backend } = await ready();
-    await user.click(await screen.findByRole("button", { name: `Mark ${UNREVIEWED} reviewed` }));
+    await chooseInMenu(user, await inventoryRow(UNREVIEWED), /^Mark reviewed/);
     expect(await screen.findByText(/Marked switch-4-003 reviewed/)).toBeInTheDocument();
     expect((await backend.getHost(UNREVIEWED)).reviewed).toBe(true);
-    expect(screen.queryByRole("button", { name: `Mark ${UNREVIEWED} reviewed` })).toBeNull();
+    expect(menuLabels(await inventoryRow(UNREVIEWED))).not.toContain("Mark reviewed");
   });
 
   it("from the Picker, with Ctrl+R on an unreviewed Host", async () => {
@@ -312,17 +313,17 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
     expect((await backend.pendingChanges()).count).toBe(0);
   });
 
-  it("the Sidebar's ✓ takes back a review that's still a Pending change", async () => {
+  it("the Host's menu takes back a review that's still a Pending change", async () => {
     const { user, backend } = await ready(current);
-    await user.click(await screen.findByRole("button", { name: `Mark ${UNREVIEWED} reviewed` }));
-    const undo = await screen.findByRole("button", { name: `Mark ${UNREVIEWED} unreviewed` });
-    await user.click(undo);
+    await chooseInMenu(user, await inventoryRow(UNREVIEWED), /^Mark reviewed/);
+    await screen.findByText(/Marked switch-4-003 reviewed/);
+    await chooseInMenu(user, await inventoryRow(UNREVIEWED), /^Mark unreviewed/);
     expect(await screen.findByText(/Marked switch-4-003 unreviewed/)).toBeInTheDocument();
     expect((await backend.getHost(UNREVIEWED)).reviewed).toBe(false);
     expect((await backend.pendingChanges()).count).toBe(0);
-    expect(await screen.findByRole("button", { name: `Mark ${UNREVIEWED} reviewed` })).toBeInTheDocument();
-    // A Host reviewed in roster.yml already (published) has no such button: the command and the edit form reach it.
-    expect(screen.queryByRole("button", { name: `Mark ${REVIEWED} unreviewed` })).toBeNull();
+    expect(menuLabels(await inventoryRow(UNREVIEWED))).toContain("Mark reviewed");
+    // A Host reviewed in roster.yml already (published) has no such item: the command and the edit form reach it.
+    expect(menuLabels(await inventoryRow(REVIEWED))).not.toContain("Mark unreviewed");
   });
 
   it("from the edit form", async () => {

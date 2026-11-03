@@ -203,11 +203,8 @@ export function hostRow(host: Host, id: string, level: number): SidebarRow {
     host: host.name,
     dot: hostDot(host),
     detail: host.ip,
-    // Its details (ticket 18) first, on every Host row: what roster info shows.
-    actions: [
-      { label: `Show ${host.name}'s details`, icon: "info" as const, command: `info ${host.name}` },
-      ...(host.reviewed ? [] : [{ label: `Mark ${host.name} reviewed`, icon: "review" as const, command: `review ${host.name}` }]),
-    ],
+    // Its details, review, rename, remove… are in its menu, not buttons (T166, Q156: hostMenu.ts).
+    menu: true,
     ...(host.reviewed ? {} : { badge: "unreviewed", title: "Not reviewed yet: can't be opened" }),
     level,
     command: `open ${host.name}`,
@@ -227,8 +224,9 @@ function groupsOf(hosts: HostList): [string, Host[]][] {
 }
 
 /** Every Host, grouped as in roster.yml (the team's grouping), with counts. With the Live
- * Inventory (ticket 28) each group heading has `+` (a Host), rename and delete, each Host rename and
- * remove, a Host dropped on another group moves there, and the heading has "New group". */
+ * Inventory (ticket 28) each group heading has `+` (a Host), rename and delete, each Host's menu
+ * rename, move and remove (hostMenu.ts, Q156), a Host dropped on another group moves there, and
+ * the heading has "New group". */
 export const inventorySection: SidebarSectionDef = {
   id: "inventory",
   source: BUILTIN,
@@ -296,14 +294,11 @@ export const inventorySection: SidebarSectionDef = {
             data,
             drop,
             ...pending(live.pendingHosts.has(h.name)),
-            actions: [
-              ...(row.actions ?? []),
-              ...(h.reviewed && live.pendingReviews?.has(h.name)
-                ? [{ label: `Mark ${h.name} unreviewed`, icon: "unreview" as const, command: `host unreview ${h.name}` }]
-                : []),
-              { label: `Rename ${h.name}`, icon: "edit" as const, command: `host rename ${h.name}` },
-              { label: `Remove ${h.name} from the Inventory`, icon: "close" as const, command: `host remove ${h.name}` },
-            ],
+            // A review that's still only a Pending change can be taken back (issue #78); rename,
+            // move and remove are in every Host's menu (hostMenu.ts).
+            ...(h.reviewed && live.pendingReviews?.has(h.name)
+              ? { actions: [{ label: "Mark unreviewed", icon: "unreview" as const, command: `host unreview ${h.name}` }] }
+              : {}),
           };
         }),
       ];

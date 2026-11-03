@@ -33,6 +33,7 @@ function recorder(mode: ViewMode = "standard") {
     open: (h) => calls.push(`open ${h}`),
     fold: (id, how) => calls.push(`${how} ${id ?? "cursor"}`),
     cursorRow: () => null,
+    rowMenu: () => calls.push("rowMenu"),
     selectedHost: () => null,
     hostNames: () => hosts,
     say: (m) => calls.push(`say ${m}`),

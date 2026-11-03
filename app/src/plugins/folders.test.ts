@@ -58,7 +58,7 @@ function ctx(row: string | null = null, host: string | null = null): CommandCont
 }
 
 describe("the Folders Plugin in the app", () => {
-  it("draws its Hosts as the Inventory does, folds its Folders, and keeps its own buttons", async () => {
+  it("draws its Hosts as the Inventory does, folds its Folders, and keeps its own actions for the Host's menu", async () => {
     const { manager, registries } = setup({ import: [{ name: "Lab", hosts: [h1, "gone-01"] }], import_from: "folders.yml" });
     await manager.start();
     const s = section(registries);
@@ -66,8 +66,10 @@ describe("the Folders Plugin in the app", () => {
     const [head, host, gone] = s.rows;
     expect(head).toMatchObject({ id: "folders:Lab", foldable: true, icon: "folder", count: 2, command: "togglefold folders:Lab" });
     expect(host).toMatchObject({ id: `folders:Lab/${h1}`, label: h1, host: h1, detail: hostByName.get(h1)!.ip, drag: h1, level: 1 });
-    expect(host!.actions!.map((a) => a.label)).toEqual([`Show ${h1}'s details`, `Remove ${h1} from Lab`]);
-    expect(gone).toMatchObject({ label: "gone-01", note: "not in the Inventory", dot: "off" });
+    // Its Host's menu (T166, Q156) has the Host's commands; the row brings only the Folder's own.
+    expect(host).toMatchObject({ menu: true });
+    expect(host!.actions!.map((a) => a.label)).toEqual([`Remove ${h1} from Lab`]);
+    expect(gone).toMatchObject({ label: "gone-01", note: "not in the Inventory", dot: "off", menu: true });
     expect(host!.dragOut).toBe(`plugins run folders folder remove ${h1} Lab`);
   });
 

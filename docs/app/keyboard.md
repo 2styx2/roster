@@ -39,12 +39,12 @@ After the Leader you're in App mode until Esc, or until a command that isn't lis
 | (no key) | `vault signout` | Sign the vault CLI out, to sign in to a different account (ticket 42). It asks first, naming the account ("Sign out of you@example.com on this Box?"; Enter signs out, Esc keeps it), then locks and shows the full sign-in form. The lock screen's "Use a different account" does the same. KeePassXC, `pass`, `env` and `cmd` have no account: the command says why. Needs API 14 |
 | `<leader> E` | `edit [HOST]` | Edit the Host under the cursor, or the current Session's (ticket 10). It opens at once; when the last pull of the infra repo is older than `pull_fresh_minutes` it pulls in the background, and Save waits for it (a pull that changed the Host updates the fields you hadn't touched and says so; a pull that fails blocks the save). Enter saves, Esc closes |
 | `<leader> +`, `<leader> n` | `host add [GROUP]` | Add a Host (ticket 11), in GROUP or the cursor's group (also the `+` always shown on the Inventory heading, which starts in the cursor's group, and the `+` on a group heading). On a roster too old to add Hosts (API 6) the Inventory's `+` stays and says so, in its tooltip and when clicked: the form tests a Login first (host key confirmed, one login), then saves; Enter adds, Esc closes |
-| `<leader> D` | `host remove [HOST]` | Remove the Host under the cursor from `roster.yml` (ticket 28), after a question that names it; its vault item stays. Also the × on its row |
-| `<leader> R` | `host rename [HOST [NEW]]` | Rename a Host; what's left out, the command line asks for. Also the ✎ on its row |
-| `<leader> M` | `host move [HOST [GROUP]]` | Move a Host to another group (Tab completes the groups). Also: drag it onto another group |
+| `<leader> D` | `host remove [HOST]` | Remove the Host under the cursor from `roster.yml` (ticket 28), after a question that names it; its vault item stays. Also "Remove from the Inventory…" in its menu |
+| `<leader> R` | `host rename [HOST [NEW]]` | Rename a Host; what's left out, the command line asks for. Also "Rename…" in its menu |
+| `<leader> M` | `host move [HOST [GROUP]]` | Move a Host to another group (Tab completes the groups). Also: drag it onto another group, or "Move to another group…" in its menu |
 | `<leader> N` | `group new [NAME]` | Add an empty group. Also "New group" on the Inventory heading. `group rename [GROUP [NEW]]` and `group delete [GROUP [TO]]` have no key: the ✎ and × on a group heading run them; deleting a group with Hosts asks which group they go to |
-| (no key) | `review [HOST]` | Mark an unreviewed Host reviewed, so it can be opened; also the ✓ button on its Sidebar row, Ctrl+R in the Picker, and "Mark reviewed" in `:edit` |
-| (no key) | `host unreview [HOST]` (`unreview`) | Mark a reviewed Host unreviewed again (`reviewed: false`), for a review made by mistake, as a Pending change (API 9). While the review is still only a Pending change, the row's ↶ button (where the ✓ was) takes it back, leaving `roster.yml` as it was; `:discard` drops it with the rest. Also "Mark unreviewed" in `:edit`. `host review [HOST]` is `review` |
+| (no key) | `review [HOST]` | Mark an unreviewed Host reviewed, so it can be opened; also "Mark reviewed" in its Sidebar menu, Ctrl+R in the Picker, and "Mark reviewed" in `:edit` |
+| (no key) | `host unreview [HOST]` (`unreview`) | Mark a reviewed Host unreviewed again (`reviewed: false`), for a review made by mistake, as a Pending change (API 9). While the review is still only a Pending change, "Mark unreviewed" in the Host's Sidebar menu takes it back, leaving `roster.yml` as it was; `:discard` drops it with the rest. Also "Mark unreviewed" in `:edit`. `host review [HOST]` is `review` |
 | `<leader> c` | `changes` | Show the Pending changes (the diff of `roster.yml`); `:discard` asks, then discards them; `:publish` shows the diff and the commit message (edit it; `Ctrl+Enter` publishes, `Esc` goes back) |
 | `<leader> m` | `mode [standard\|focus]` | Switch the view mode (no argument: the other one) |
 | F11 (any mode, no Leader) | `focus` | Focus on or off |
@@ -58,7 +58,7 @@ After the Leader you're in App mode until Esc, or until a command that isn't lis
 | — | `hints [on\|off\|toggle]` | Show or hide every keycap hint (no word: toggle). The choice is kept in the State unless `init.lua` sets `ui.hints`, which wins ([config.md](config.md)). Hidden hints only go out of sight: every binding still works |
 | — | `messages [all\|quiet\|toggle\|clear]` | Alone: the recent messages, quiet ones too, oldest first (as Neovim's `:messages`), in a view. `all` shows every message on the message line, routine confirmations and tips too; `quiet` (the default) only errors, warnings, answers and results that need attention; `toggle` switches; `clear` forgets the list. The choice is kept in the State unless `init.lua` sets `ui.messages`, which wins ([config.md](config.md)). Quiet, a screen reader still hears what changed |
 | — | `info` | Alone: say the Backend, the Box and the Inventory's path whole (the status bar cuts them), the roster command, the terminal font and size, the renderer the terminal on screen draws with (`WebGL`, `DOM`, `DOM (no WebGL here)` when no WebGL context could be made, `DOM (WebGL context lost)`), and once the Picker has opened, how long it took (`Picker opened in 12 ms`: from the key to the frame it's drawn in) |
-| — | `info HOST` | Host details (ticket 18, decision Q71): a side panel opposite the Sidebar with what `roster info HOST` shows (address, type, product, description, services, the Vault item each Login uses by name, enrolled and reviewed). Tab completes Host names. Also the ⓘ on every Host row in the tree, the ⓘ on the Picker's selected row (never on hover), and Ctrl+I in the Picker. In Focus it floats over the terminal, like the Sidebar. Esc (App mode) closes it with the other side panels |
+| — | `info HOST` | Host details (ticket 18, decision Q71): a side panel opposite the Sidebar with what `roster info HOST` shows (address, type, product, description, services, the Vault item each Login uses by name, enrolled and reviewed). Tab completes Host names. Also "Details" in every Host's Sidebar menu, the ⓘ on the Picker's selected row (never on hover), and Ctrl+I in the Picker. In Focus it floats over the terminal, like the Sidebar. Esc (App mode) closes it with the other side panels |
 | — | `check [HOST\|%]` | With no Host, this Box's health, as Neovim's `:checkhealth`: each section's checks with the fix for any that fails ([Health](health)). With HOST, that Host's diagnostics, as `roster check HOST`: which step fails and what to do; `%` is the Host of the Session on screen |
 | `<leader> i` | `details` | Show or hide Host details for the selected Host (the Sidebar's cursor, else the Session on screen); also the Host details toggle by the window's buttons (toolbar id `details`), pressed while they show |
 | `<leader> S` | `source [PATH]` (`so`) | Reload the Config now, Neovim-style: `init.lua` and its modules; with PATH, only the file that owns it. Saving doesn't reload unless `auto_reload = true` (decision Q58) |
@@ -85,6 +85,7 @@ After the Leader you're in App mode until Esc, or until a command that isn't lis
 | — | `config [reload\|path]` | Open `init.lua` (made from the commented-out example the first time, never overwritten), read it again, or say where it is ([config.md](config.md)) |
 | In the Sidebar (App mode): `j`/`k`, `g g`/`G`, arrows, Home/End, Enter | `down` `up` `top` `bottom` `choose` | Move, jump, choose: a Session switches, a Host opens (or goes to its Session), a group, Folder or heading folds and you stay in the Sidebar. `j`/`k`/`g g`/`G` only with vim on |
 | In the Sidebar: `h` / `l`, ← / → | `fold` / `unfold` | Fold the row (or go to its parent); unfold it (or go to its first child). `h`/`l` only with vim on |
+| In the Sidebar (App mode): the Menu key, Shift+F10 | `menu` | The menu of the Host under the cursor, as a right-click on its row opens it ([The Sidebar](#the-sidebar)). On another row it says only a Host's row has one (T166, decision Q156) |
 | — | `fold ID` / `unfold ID` / `togglefold ID` | Fold a row or section by id: `section:sessions`, `section:folders`, `section:inventory`, `group:subnet-42`, `folders:Lab ESXi` (a Folder; `folder:…` in older versions). A click on a heading, group or Folder runs `togglefold`. What's folded is kept in State |
 | — | `open HOST` | Go to HOST's open Session, or open one (what a Host row in the tree runs). Also takes an open Session's name (a Quick Connect's `user@address`, or a Host no longer in the Inventory) and a Quick Connect address, `user@address[:port]`, which it connects to |
 | — | `open SERVICE`, `open HOST SERVICE` | Open a web service (http or https) in the default browser (ticket 18): SERVICE of the Host in Host details (else the selected Host), or of HOST. A Host's name, an open Session's or a Quick Connect address wins over a service of the same name. Tab completes the current Host's web services first, then Host names, then HOST's services. Also each service's Open button in Host details |
@@ -151,9 +152,29 @@ The command line completes like bash or zsh, and like Neovim's wildmenu. The can
 
 Typing anything also accepts the candidate. A click on one accepts it too.
 
+## The Sidebar
+
 With the mouse: click a Host to open it (or go to its Session), drag it onto a Folder (or the Folders heading) to add it, and drag it out of a Folder onto any other part of the Sidebar to remove it. Folder rows have rename (✎) and delete (×) buttons, and the Folders heading has + for a new one.
 
-A row's buttons (ⓘ, ✎, ×, ✓ and the rest) show on the selected row only: the row you last clicked, or in App mode the cursor row, so j/k move them. Hovering a row shows none of them, and its address stays in view. The Inventory heading's + (Add a Host) is always there.
+**A Host's menu** (T166, decision Q156): a Host's row has no buttons. Right-click it, or in App mode press the Menu key or Shift+F10 on it (`menu`), for its menu:
+
+| Item | Runs | Shown |
+|---|---|---|
+| Open | `open HOST`: its Session, or a new one | Reviewed Hosts |
+| New Session | `connect HOST`: another Session, in a tab of its own | Reviewed Hosts |
+| Mark reviewed | `review HOST` | Unreviewed Hosts, first |
+| Details | `info HOST` (`␣ i` on the selected Host) | Always |
+| Check | `check HOST` | Always |
+| Edit… | `edit HOST` (`␣ E`) | roster API 5 and later |
+| Mark unreviewed | `host unreview HOST` | While its review is only a Pending change |
+| Rename…, Move to another group… | `host rename HOST`, `host move HOST` (`␣ R`, `␣ M`): the command line asks for the rest | The Live Inventory (API 8) |
+| Add to a Folder… | `folder add HOST` (`␣ a`) | With the Folders Plugin |
+| A Plugin's own actions | What the Plugin's row runs ("Remove esx-02 from Lab" on a Folder's Host) | On that Plugin's rows |
+| Remove from the Inventory… | `host remove HOST` (`␣ D`): asks first | The Live Inventory |
+
+The keycaps beside the items are the keys that act on the Host under the cursor. In the menu, ↑ and ↓ move (they wrap), Home and End jump, a letter goes to the next item starting with it, Enter or Space runs the item, and Esc closes it and puts focus back where it was (the terminal, or the tree in App mode). Tab, a click outside it, a scroll or resizing the window closes it too. It opens at the pointer, or under the row from the keyboard, and moves to stay inside the window. A right-click also selects the row.
+
+Other rows' buttons (a group's +, ✎ and ×, a Folder's, a Session's ×) show on the selected row only: the row you last clicked, or in App mode the cursor row, so j/k move them. Hovering a row shows none of them, and its address stays in view. The Inventory heading's + (Add a Host) is always there.
 
 ## View modes
 
