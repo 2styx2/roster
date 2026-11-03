@@ -280,18 +280,47 @@ describe("a nested ssh to another Host (ticket 120)", () => {
   });
 });
 
+// Ticket 162 (#304, decision Q151 (i)): on Windows the core fills only sudo's own prompt for the
+// Session's own Host, so the app offers no other there; the fake refuses as the core does.
+describe("on Windows' ConPTY (ticket 162)", () => {
+  const there = vaultHosts[1]?.name ?? "";
+  const WINDOWS = /on Windows roster fills only sudo's own prompt for this Session's Host/;
+
+  it("offers and fills sudo's own prompt for the Session's own Host", async () => {
+    const user = await ready({ conpty: true });
+    await connect(user, vaultHost);
+    await sudo(user);
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(within(note).getByRole("button", { name: "Fill" })).toBeInTheDocument();
+    await user.keyboard(`${LEADER}p`);
+    await within(output()).findByText(/\[sudo ok\]/);
+  });
+
+  it("offers no nested ssh's login prompt, says why, and types nothing", async () => {
+    const user = await ready({ hosts: hooked, conpty: true });
+    await connect(user, keyHost);
+    await hooksOn();
+    await user.keyboard(`ssh ${there}{Enter}`);
+    await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
+    const note = await screen.findByRole("status", { name: "Password prompt" });
+    expect(note).toHaveTextContent(WINDOWS);
+    expect(within(note).queryByRole("button")).toBeNull();
+    await user.keyboard(`${LEADER}p`);
+    await waitFor(() => expect(messageLine()).toHaveTextContent(WINDOWS));
+    expect(output()).not.toHaveTextContent(new RegExp(`Connected to ${there}|Permission denied`));
+  });
+});
+
 // Ticket 137 (review #2, #7): the fake checks the prompt as the core does, before serve is asked:
 // the Session's output must end with the prompt line it's given, or nothing is asked or typed and
 // the refusal carries 130, so the app offers the prompt again.
 describe("the fake's printed-prompt check, as the core's", () => {
   const td = new TextDecoder();
-  async function session(scenario: Partial<FakeScenario> = {}) {
+  async function session(scenario: Partial<FakeScenario> = {}, marks?: string) {
     const backend = fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, vault: { status: "unlocked" }, ...scenario });
     let seen = "";
-    const handle = await backend.openSession(vaultHost, { cols: 80, rows: 24 }, {
-      output: (d) => void (seen += td.decode(d)),
-      exit: () => {},
-    });
+    const events = { output: (d: Uint8Array) => void (seen += td.decode(d)), exit: () => {} };
+    const handle = await backend.openSession(vaultHost, { cols: 80, rows: 24 }, events, undefined, marks);
     const until = (text: RegExp) => waitFor(() => expect(seen).toMatch(text));
     await until(/\$ $/);
     const fill = handle.fill;
@@ -317,6 +346,50 @@ describe("the fake's printed-prompt check, as the core's", () => {
     await expect(fill("[sudo] password for admin:")).resolves.toEqual({ host: vaultHost });
     await until(/\[sudo ok\]/);
     expect(seen()).toContain(`*\b \b${"*".repeat(FAKE_LOGIN_PASSWORD.length)}`);
+  });
+
+  it("under ConPTY refuses every prompt but sudo's own for the Session's own Host, with no code (ticket 162)", async () => {
+    const { handle, fill, until } = await session({ conpty: true });
+    expect(handle.conpty).toBe(true);
+    for (const c of "sudo -v\r") await handle.write(c);
+    await until(/password for admin: $/);
+    const to = hosts.hosts.find((h) => h.name === vaultHosts[1]?.name);
+    if (!to) throw new Error("no Host");
+    const hop = { host: to.name, address: to.ip, port: to.ssh.port, user: to.ssh.user, run: 1 };
+    const refused = await fill("[sudo] password for admin:", hop).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ message: expect.stringMatching(/on Windows roster fills only/), code: null });
+    await expect(fill("[sudo] password for admin:")).resolves.toEqual({ host: vaultHost });
+  });
+
+  it("fills a hop only while the Session's own shell still runs that ssh (ticket 162)", async () => {
+    const token = "0123456789abcdef01234567";
+    const to = hosts.hosts.find((h) => h.name === vaultHosts[1]?.name);
+    if (!to) throw new Error("no Host");
+    const hop = { host: to.name, address: to.ip, port: to.ssh.port, user: to.ssh.user, run: 1 };
+    const { handle, fill, until } = await session({ hosts }, token);
+    const type = async (line: string) => {
+      for (const c of line) await handle.write(c);
+    };
+    // roster's hook line: the shell marks with the token from here.
+    await type(`hooks roster=${token}\r`);
+    await type(`ssh ${to.name}\r`);
+    await until(new RegExp(`admin@${to.name.toLowerCase()}'s password: $`));
+    await expect(fill(`admin@${to.name.toLowerCase()}'s password:`, hop)).resolves.toEqual({ host: to.name });
+    await until(new RegExp(`Connected to ${to.name}`));
+    // That ssh ends; the Session's own Host asks for sudo, for the same user.
+    await type("exit\r");
+    await type("sudo -v\r");
+    await until(/password for admin: $/);
+    await expect(fill("[sudo] password for admin:", hop)).rejects.toMatchObject({
+      code: FillRefusal.refused,
+      message: expect.stringMatching(/doesn't show the ssh to that Host still running/),
+    });
+    // Opened without the token, no hop is ever filled.
+    const other = await session({ hosts });
+    for (const c of `hooks roster=${token}\r`) await other.handle.write(c);
+    for (const c of `ssh ${to.name}\r`) await other.handle.write(c);
+    await other.until(new RegExp(`admin@${to.name.toLowerCase()}'s password: $`));
+    await expect(other.fill(`admin@${to.name.toLowerCase()}'s password:`, hop)).rejects.toMatchObject({ code: FillRefusal.refused });
   });
 
   it("refuses with the probe's echo when the line ends with the prompt's text but echoes", async () => {

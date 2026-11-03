@@ -1165,8 +1165,10 @@ describe("a nested ssh (ticket 120)", () => {
     const asked: unknown[] = [];
     const typed: string[] = [];
     let token = "";
-    backend.openSession = async (_host, _size, events) => {
+    let opened: string | undefined;
+    backend.openSession = async (_host, _size, events, _typed, marks) => {
       ev = events;
+      opened = marks;
       const done = async () => {};
       const write = async (d: string) => void typed.push(d);
       return { id: 1, auth: "key", write, resize: done, close: done, fill: async (...args: unknown[]) => (asked.push(args), { host: to.name }) };
@@ -1190,7 +1192,7 @@ describe("a nested ssh (ticket 120)", () => {
     await print(`${own("D;0")}${own("A")}$ ${own("B")}`);
     // You type the ssh line and press Enter; the Session echoes it and its shell marks C.
     tabs.write(id, "\r");
-    return { tabs, id, asked, print, typed, own, token: () => token };
+    return { tabs, id, asked, print, typed, own, token: () => token, opened: () => opened };
   }
 
   it("puts the Host the ssh went to on the tab until the outer shell's own D", async () => {
@@ -1205,11 +1207,14 @@ describe("a nested ssh (ticket 120)", () => {
   });
 
   it("sends the Host it went to with the prompt, and nothing of it comes back but the name", async () => {
-    const { tabs, id, asked, print, own } = await onHost();
+    const { tabs, id, asked, print, own, token, opened } = await onHost();
     await print(`ssh ${to.name}\r\n${own("C")}admin@${to.name}'s password: `);
     expect(tabs.snapshot().tabs[0]?.prompt).toMatchObject({ kind: "ssh", elsewhere: null });
     await expect(tabs.fill(id)).resolves.toBe(to.name);
-    expect(asked).toEqual([[`admin@${to.name}'s password:`, { host: to.name, address: to.ip, port: 22, user: "admin" }]]);
+    // The ssh is the Session's own shell's first command (ticket 162), and the core was given the
+    // token its marks carry when the Session opened.
+    expect(asked).toEqual([[`admin@${to.name}'s password:`, { host: to.name, address: to.ip, port: 22, user: "admin", run: 1 }]]);
+    expect(opened()).toBe(token());
   });
 
   it("takes keys typed into the ssh as a reason not to fill its prompt", async () => {

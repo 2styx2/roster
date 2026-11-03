@@ -486,6 +486,12 @@ pub fn fill_refusal(e: FillError<CallError>) -> CallError {
             message: FillError::<CallError>::NotPrinted.to_string(),
             data: Some(json!({ "fix": "press the key again while the prompt is at the cursor" })),
         },
+        // Nothing was typed (ticket 162): offered again once the app sees where the Session is.
+        FillError::NotInHop => CallError::Rpc {
+            code: FILL_REFUSED,
+            message: FillError::<CallError>::NotInHop.to_string(),
+            data: Some(json!({ "fix": "press the key again once roster shows where the Session is" })),
+        },
         // Nothing was typed: the prompt stays offered (the review of #299, #3).
         e @ FillError::Changed { .. } => CallError::Rpc {
             code: FILL_REFUSED,

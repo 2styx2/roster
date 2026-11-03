@@ -61,6 +61,19 @@ pub struct FillTarget {
     pub login: LoginAs,
 }
 
+/// A nested ssh's Host, as the frontend resolved it (ticket 120), and which of the Session's own
+/// commands that ssh is: the `run`th its own shell marked as starting, with the Session's token
+/// (ticket 162). A fill for it goes only while that's still the last of those marks
+/// ([`SessionManager::fill`]). Read from `{host, address, port, user, run}`; serve gets `to` only.
+/// No `run` (an app from before ticket 162) is no command to match: the fill is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Hop {
+    #[serde(flatten)]
+    pub to: FillTarget,
+    #[serde(default)]
+    pub run: Option<u64>,
+}
+
 impl std::fmt::Debug for Prepared {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Prepared")
@@ -86,6 +99,11 @@ pub struct SessionCommand {
     /// the only Host a prompt fill may ask serve about ([`SessionManager::fill`]). None for a
     /// Quick Connect, a stub, or a serve too old to say what it connected to.
     pub fill_as: Option<FillTarget>,
+    /// The token on roster's own shell marks in this Session (decision Q131 (a)), as the frontend
+    /// made it for the attempt: the core follows the marks that carry it, so a nested ssh's fill
+    /// goes only while that ssh runs (ticket 162). Never in a log (its Debug shows only whether
+    /// there is one). None: no hop is filled.
+    pub marks: Option<String>,
 }
 
 impl SessionCommand {
@@ -96,6 +114,7 @@ impl SessionCommand {
             env,
             auth: "key".into(),
             fill_as: None,
+            marks: None,
         }
     }
 
@@ -123,6 +142,7 @@ impl std::fmt::Debug for SessionCommand {
             .field("env", &env)
             .field("auth", &self.auth)
             .field("fill_as", &self.fill_as)
+            .field("marks", &self.marks.as_ref().map(|_| "…"))
             .finish()
     }
 }
@@ -167,6 +187,7 @@ pub fn session_command(target: &Target, prepared: &Prepared) -> SessionCommand {
             host: prepared.host.clone(),
             login,
         }),
+        marks: None,
     }
 }
 
@@ -396,6 +417,12 @@ impl SessionManager {
         drop(pair.slave);
         let reader = Reader::new(pair.master.as_ref())?;
         let writer = pair.master.take_writer().map_err(io)?;
+        let mut screen = Screen::new(size.rows, size.cols);
+        // Only a token like the frontend's (96 random bits in hex): an empty or short one could be
+        // guessed, so it's no token (the review of #308, #3).
+        if let Some(token) = cmd.marks.as_deref().filter(|t| marks_token(t)) {
+            screen.follow_marks(token);
+        }
         let running = Arc::new(Running {
             killer: Mutex::new(child.clone_killer()),
             master: Mutex::new(Some(pair.master)),
@@ -403,10 +430,7 @@ impl SessionManager {
             closed: AtomicBool::new(false),
             fill_as: cmd.fill_as.clone(),
             writes: AtomicU64::new(0),
-            shown: Arc::new(Mutex::new(Shown {
-                screen: Screen::new(size.rows, size.cols),
-                total: 0,
-            })),
+            shown: Arc::new(Mutex::new(Shown { screen, total: 0 })),
             conpty: self.conpty,
             held: Mutex::new(None),
         });
@@ -456,6 +480,12 @@ impl SessionManager {
         Ok(id)
     }
 
+    /// Whether its PTYs are Windows' ConPTY, whose fill rules (decision Q151 (i)) the app follows
+    /// in what it offers (ticket 162).
+    pub fn conpty(&self) -> bool {
+        self.conpty
+    }
+
     fn get(&self, id: SessionId) -> Result<Arc<Running>, SessionError> {
         self.sessions
             .lock()
@@ -498,6 +528,10 @@ impl SessionManager {
     ///   output, with nothing after it there, else [`FillError::NotPrinted`] and nothing is asked
     ///   or typed, so the frontend's word alone never sends a password to a Session that isn't
     ///   asking for it; the whole screen and the cursor are noted then;
+    /// - for a `hop`, the last of the Session's own shell's marks (with its token,
+    ///   [`SessionCommand::marks`]) must be the `C` that started that ssh, the shell's `hop.run`th,
+    ///   else [`FillError::NotInHop`] and nothing is asked or typed (ticket 162): once that ssh has
+    ///   ended or another command started, the prompt is another Host's, however it reads;
     /// - `lookup` gets the Host the Session was opened to and what it connected to, and returns
     ///   the secret (serve's `session.fill`, which judges `prompt` and `hop`); a refusal there
     ///   types nothing;
@@ -525,7 +559,7 @@ impl SessionManager {
         id: SessionId,
         wait: Duration,
         prompt: &str,
-        hop: Option<&FillTarget>,
+        hop: Option<&Hop>,
         lookup: impl FnOnce(&FillTarget) -> Result<Secret, E>,
     ) -> Result<String, FillError<E>> {
         let running = self.get(id).map_err(|_| FillError::NotFound(id))?;
@@ -546,6 +580,13 @@ impl SessionManager {
             let shown = running.shown.lock().unwrap();
             if !shown.screen.cursor_after(prompt) {
                 return Err(FillError::NotPrinted);
+            }
+            // Positively still in the nested ssh the frontend resolved (ticket 162): anything
+            // printed after this check refuses the fill below.
+            if let Some(hop) = hop
+                && (hop.run.is_none() || shown.screen.own_run() != hop.run)
+            {
+                return Err(FillError::NotInHop);
             }
             (shown.total, shown.screen.snapshot())
         };
@@ -645,7 +686,7 @@ impl SessionManager {
         line.0.push(b'\r');
         drop(secret);
         w.write_all(&line.0).and_then(|_| w.flush()).map_err(fill_io)?;
-        Ok(hop.map_or(target.host, |h| h.host.clone()))
+        Ok(hop.map_or(target.host, |h| h.to.host.clone()))
     }
 
     pub fn resize(&self, id: SessionId, size: Size) -> Result<(), SessionError> {
@@ -708,6 +749,12 @@ fn sudo_prompt_for(prompt: &str, user: &str) -> bool {
         && words.len() == 4
         && words[..3] == ["[sudo]", "password", "for"]
         && words[3].strip_suffix(':') == Some(user)
+}
+
+/// Whether `token` is one the core follows marks by ([`SessionCommand::marks`]): 8 to 64
+/// lowercase hex characters, as the frontend's 24 are.
+fn marks_token(token: &str) -> bool {
+    (8..=64).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Where [`PROBE`] is split: Ctrl+U and the letter go first, the last Ctrl+U a wait later
@@ -773,6 +820,10 @@ pub enum FillError<E> {
     /// The Session's output doesn't end with the fill's prompt (tickets 120 and 137). Nothing was
     /// looked up or typed.
     NotPrinted,
+    /// A nested ssh's fill, but the Session's own shell's marks don't show that ssh still running:
+    /// it ended, another command started, or the Session has no marks of its own (ticket 162).
+    /// Nothing was looked up or typed.
+    NotInHop,
     /// Writing to the PTY failed.
     Io(String),
 }
@@ -796,6 +847,9 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
             FillError::Busy => f.write_str("roster is already checking this prompt"),
             FillError::NotPrinted => f.write_str(
                 "the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it",
+            ),
+            FillError::NotInHop => f.write_str(
+                "the Session's own shell doesn't show the ssh to that Host still running (it ended, or another command started), so roster didn't fill it",
             ),
             FillError::Io(m) => f.write_str(m),
         }
@@ -936,6 +990,56 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::time::Instant;
+
+    /// Ticket 162 (#284 item 4): a fill that finds the PTY's writer gone (the Session closed while
+    /// it checked, after the mask watch started) leaves no fill state set: no mask watch, no keys
+    /// held, nothing that makes the next fill Busy.
+    #[cfg(unix)]
+    #[test]
+    fn a_fill_whose_writer_is_gone_leaves_no_fill_state() {
+        let m = SessionManager::with_conpty_rules(false);
+        let mut cmd = SessionCommand::new(
+            vec![
+                "sh".into(),
+                "-c".into(),
+                "trap '' HUP; stty -echo; printf '[sudo] password for ops: '; sleep 5".into(),
+            ],
+            vec![],
+        );
+        cmd.fill_as = Some(FillTarget {
+            host: "esx".into(),
+            login: LoginAs {
+                address: "10.0.0.6".into(),
+                port: 22,
+                user: "ops".into(),
+            },
+        });
+        let id = m.open(&cmd, Size { cols: 80, rows: 24 }, |_| {}).unwrap();
+        let running = m.get(id).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !running
+            .shown
+            .lock()
+            .unwrap()
+            .screen
+            .cursor_after("[sudo] password for ops:")
+        {
+            assert!(std::time::Instant::now() < deadline, "no prompt");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let got = m.fill(id, Duration::from_millis(50), "[sudo] password for ops:", None, |_| {
+            m.close(id).unwrap();
+            Ok::<_, String>(Secret::new("pw".into()))
+        });
+        assert!(matches!(got, Err(FillError::NotFound(_))), "{got:?}");
+        assert!(running.held.lock().unwrap().is_none(), "keys still held");
+        assert!(
+            !running.shown.lock().unwrap().screen.watching_mask(),
+            "mask watch still on"
+        );
+        assert!(running.writer.lock().unwrap().is_none());
+    }
 
     #[test]
     fn the_mask_counts_only_at_sudos_own_prompt_for_the_user() {

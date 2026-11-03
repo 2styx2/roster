@@ -511,8 +511,8 @@ export class Tabs {
    * runs `session.prepare` right before the spawn, so an askpass token is never stale. */
   private start(
     entry: Entry,
-    open: (size: TermSize, events: SessionEvents) => Promise<SessionHandle> = (size, events) =>
-      this.backend.openSession(entry.tab.host, size, events),
+    open: (size: TermSize, events: SessionEvents, marks: string) => Promise<SessionHandle> = (size, events, marks) =>
+      this.backend.openSession(entry.tab.host, size, events, undefined, marks),
   ) {
     const attempt = ++entry.attempt;
     const current = () => entry.attempt === attempt && !entry.closing;
@@ -570,7 +570,7 @@ export class Tabs {
           this.dropSave(entry);
           if (this.find(id)) this.setStatus(entry, { state: "ended", exit, problem: this.classify(entry, exit) });
         },
-      })
+      }, nonce)
       .then(
         (session) => {
           if (!current()) {
@@ -593,6 +593,11 @@ export class Tabs {
             return;
           }
           entry.session = session;
+          // Windows' ConPTY (ticket 162): the watch offers only the fills the core makes there.
+          if (session.conpty && watch) {
+            watch.conptyRules(session.fillUser ?? null);
+            this.promptChanged(entry, watch);
+          }
           for (const data of entry.pending.splice(0)) void session.write(data).catch(() => {});
           const quick = entry.tab.quick && { ...entry.tab.quick, id: session.quick ?? null };
           const held = session.held;
@@ -754,7 +759,7 @@ export class Tabs {
     if (!entry || entry.tab.status.state !== "password" || password === "") return;
     const typed = save ? { password, save: true } : { password };
     this.setStatus(entry, { state: "connecting" });
-    this.start(entry, (size, events) => this.backend.openSession(entry.tab.host, size, events, typed));
+    this.start(entry, (size, events, marks) => this.backend.openSession(entry.tab.host, size, events, typed, marks));
   }
 
   /** The user trusts the key the tab asks about: roster records it (if the Host still offers

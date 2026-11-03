@@ -45,6 +45,10 @@ const SSH = /^([^\s@']+)@([^\s@']+)'s password:$/;
 const SSH_OWN = /^(?:[^\s@']+@[^\s@']+'s password:|Permission denied, please try again\.|)$/;
 /** Lines of the screen kept above it, so where `B` left the cursor survives a scroll. */
 const SCROLLBACK = 200;
+/** Why roster won't fill a prompt under Windows' ConPTY that the core refuses there (ticket 162,
+ * decision Q151 (i)): errors.md row 185. */
+const CONPTY =
+  "on Windows roster fills only sudo's own prompt for this Session's Host: Windows' console can hide an echo of what roster types to check a prompt, so roster can't tell this one doesn't echo";
 
 export { sudoOnly };
 export type { Breadcrumb };
@@ -106,6 +110,9 @@ interface HopState {
   sshDirty: boolean;
   /** A fill was tried at its login prompt. */
   filled: boolean;
+  /** Which of the Session's own commands the ssh is (`PromptWatch.runs` at its C): the core fills
+   * it only while that's still the last of the own shell's marks (ticket 162). */
+  run: number;
 }
 
 export class PromptWatch {
@@ -140,6 +147,14 @@ export class PromptWatch {
   private typedAny = false;
   private marksSeen = false;
   private writes = 0;
+  /** The `C` marks with the Session's token, wherever they came (the alternate screen too): the
+   * commands its own shell started, counted as the core counts them (ticket 162). */
+  private runs = 0;
+  /** The kind of the last mark with the Session's token (`C`: a command it started still runs). */
+  private lastOwn: string | null = null;
+  /** The Session's PTY is Windows' ConPTY (ticket 162): `conptyRules`. Then the user the core fills
+   * sudo's prompt for (null: none). */
+  private conpty: { user: string | null } | null = null;
   /** A fill was tried at the prompt as it was after this many writes: not offered again until more. */
   private spentAt = -1;
 
@@ -204,6 +219,22 @@ export class PromptWatch {
     this.term.dispose();
   }
 
+  /** The Session's PTY is Windows' ConPTY, where the core fills only sudo's own prompt for the
+   * Session's own Host (decision Q151 (i)), for `user`, the ssh user it connected as (the core's,
+   * which can differ from the Inventory's; null: none): every other prompt is refused here too,
+   * with why, so no fill is offered that the core will refuse (ticket 162). The core's refusal
+   * stays the guard. */
+  conptyRules(user: string | null) {
+    this.conpty = { user };
+  }
+
+  /** While the last mark with the Session's token is a `C`, how many such `C`s there have been:
+   * what the core's screen says for the same output (`Screen::own_run`), which a nested ssh's
+   * fill must match (ticket 162). Null otherwise. */
+  ownRun(): number | null {
+    return this.lastOwn === "C" ? this.runs : null;
+  }
+
   /** Where a nested ssh has taken the Session, until it ends; null on the Session's own Host. */
   hop(): Breadcrumb | null {
     const hop = this.hopState?.hop;
@@ -214,6 +245,15 @@ export class PromptWatch {
   /** The password prompt at the cursor that roster might fill, and whether it may; null when
    * there's none (or the marks say it's a shell's own prompt, or a fill was just tried). */
   prompt(): PasswordPrompt | null {
+    const prompt = this.anyPrompt();
+    if (!this.conpty || prompt === null || prompt.elsewhere !== null) return prompt;
+    const coreUser = this.conpty.user;
+    if (prompt.kind === "sudo" && prompt.hop === null && coreUser !== null && SUDO.exec(prompt.line)?.[1] === coreUser) return prompt;
+    return { ...prompt, elsewhere: CONPTY, hop: null };
+  }
+
+  /** `prompt()`, whatever the PTY. */
+  private anyPrompt(): PasswordPrompt | null {
     if (this.writes === this.spentAt) return null;
     const b = this.term.buffer.active;
     if (b.type !== "normal") return null;
@@ -270,7 +310,7 @@ export class PromptWatch {
     if (state.typed) return refuse(`you typed into this ssh, so roster can't tell this prompt is still ${hop.host}'s login`);
     if (state.sshDirty) return refuse(`this ssh has printed more than its login's lines, so this prompt may not be ${hop.host}'s login`);
     if (state.filled) return refuse(`roster already tried ${hop.host}'s password in this ssh; type it yourself`);
-    return { line, elsewhere: null, marked: true, kind: "ssh", hop: fillHop(hop) };
+    return { line, elsewhere: null, marked: true, kind: "ssh", hop: fillHop(hop, state.run) };
   }
 
   /** sudo's prompt while a nested ssh runs: the Host it went to's sudo, only at the first command
@@ -293,7 +333,7 @@ export class PromptWatch {
     if (inner.command === null) return refuse("roster couldn't read the running command");
     if (!sudoOnly(inner.command)) return refuse(`\`${inner.command}\` is running, not sudo itself, so this prompt may be another machine's`);
     if (inner.dirty) return refuse("the command has printed more than sudo's own lines, so this prompt may be another machine's");
-    return { line, elsewhere: null, marked: true, kind: "sudo", hop: fillHop(hop) };
+    return { line, elsewhere: null, marked: true, kind: "sudo", hop: fillHop(hop, state.run) };
   }
 
   private lineFeed() {
@@ -332,15 +372,21 @@ export class PromptWatch {
   }
 
   private mark(data: string) {
+    const [kind = "", ...params] = data.split(";");
+    // The Session's token, however the hook line went: counted as the core counts it.
+    const token = this.nonce !== null && params.includes(`roster=${this.nonce}`);
+    if (token) {
+      if (kind === "C") this.runs++;
+      this.lastOwn = kind;
+    }
     if (this.term.buffer.active.type !== "normal") return;
     this.marksSeen = true;
-    const [kind, ...params] = data.split(";");
-    const own = this.vouched && this.nonce !== null && params.includes(`roster=${this.nonce}`);
+    const own = this.vouched && token;
     if (own) {
       this.hooked = true;
-      this.outerMark(kind ?? "", true);
-    } else if (this.hooked) this.foreignMark(kind ?? "");
-    else this.outerMark(kind ?? "", false);
+      this.outerMark(kind, true);
+    } else if (this.hooked) this.foreignMark(kind);
+    else this.outerMark(kind, false);
   }
 
   /** A mark of the Session's own shell: provably so (`own`, roster's token), or the only shell
@@ -374,7 +420,7 @@ export class PromptWatch {
         if (hop?.known && !this.entered) {
           hop = { known: false, label: hop.host, why: "roster didn't see you press Enter on that line, so the Host may have drawn it" };
         }
-        if (hop) this.hopState = newHop(hop);
+        if (hop) this.hopState = newHop(hop, this.runs);
         return;
       }
       case "D":
@@ -463,11 +509,12 @@ export class PromptWatch {
   }
 }
 
-function newHop(hop: Hop): HopState {
-  return { hop, inner: level(), innerMarked: false, innerDone: false, typed: false, asked: false, sshDirty: false, filled: false };
+function newHop(hop: Hop, run: number): HopState {
+  return { hop, inner: level(), innerMarked: false, innerDone: false, typed: false, asked: false, sshDirty: false, filled: false, run };
 }
 
-/** The Host a nested ssh went to, as roster resolved it from the Inventory at its `C` mark. */
-function fillHop(hop: Extract<Hop, { known: true }>): NestedHost {
-  return { host: hop.host, address: hop.address, port: hop.port, user: hop.user };
+/** The Host a nested ssh went to, as roster resolved it from the Inventory at its `C` mark, the
+ * Session's own shell's `run`th command. */
+function fillHop(hop: Extract<Hop, { known: true }>, run: number): NestedHost {
+  return { host: hop.host, address: hop.address, port: hop.port, user: hop.user, run };
 }
