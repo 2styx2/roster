@@ -314,11 +314,15 @@ fn the_roster_table_has_what_the_shape_declares() {
 #[test]
 fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // The CONFIG_VERSION snapshot (tests/config_version.rs) too: the generator adds new names to it.
+    let snapshot = shape::version::snapshot_path(config::CONFIG_VERSION);
+    let committed = std::fs::read_to_string(root.join(&snapshot)).ok();
     for (path, text) in [
         (shape::DOC_PATH, shape::markdown()),
         (shape::STUBS_PATH, shape::stubs()),
         (shape::JSON_PATH, shape::json_text()),
         (shape::CHECK_PATH, shape::check_lua()),
+        (snapshot.as_str(), shape::version::current_text(committed.as_deref())),
     ] {
         let committed = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         assert!(
