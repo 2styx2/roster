@@ -11,6 +11,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - **A Host's row in the Sidebar has a menu instead of buttons** (#314): selecting a Host no longer shows ⓘ, ✓, ✎ and × on its row. Right-click it, or press the Menu key or Shift+F10 on it in App mode (`menu`), for Open, New Session, Details, Check, Edit, Rename, Move to another group, Add to a Folder, Remove from the Inventory and any Plugin's own actions on that row (a Folder's "Remove from Lab"), each running the same command its button or key did, with the keys shown beside it. It's a keyboard and screen-reader menu: arrows, Home/End, a letter, Enter, Esc (decision Q156). Groups, Folders and Sessions keep their buttons. See [The Sidebar](app/keyboard.md#the-sidebar).
+- **A Plugin's quiet notice no longer hides an error** (#228): a quiet info notice a Plugin gives from a timer, an event or a request's answer, when you asked for nothing, leaves the message line as it is when it shows something, so an error stays on screen; `:messages` still lists the notice. A notice from something you ran replaces the line as before (decision Q162). See [`roster.notify`](plugin-api.md#rosternotifytext-level-opts).
 
 ### Fixed
 
