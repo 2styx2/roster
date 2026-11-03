@@ -512,7 +512,7 @@ function Workspace({
   const [messagesChoice] = useState(() => new MessagesChoice(store));
   messagesChoice.setConfig(config?.ui.messages ?? null);
   // A quiet message from the background (a Plugin's notice from a timer, an event or a request's
-  // answer) keeps a line that shows, an error above all (decision Q162).
+  // answer, or roster's own unasked one) keeps a line that shows, an error above all (decision Q162).
   const setMessage = useCallback(
     (m: Message) => {
       setMessageNow((now) => lineAfter(now, m, messagesChoice.all()));

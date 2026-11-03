@@ -10,8 +10,8 @@ const host = (name: string): Host =>
   ({ name, group: "lab", ip: "10.0.0.5", ssh: { user: "root", port: 22, auth: "bw:nas ssh" }, reviewed: true }) as unknown as Host;
 
 const pending = (count: number, pushed: boolean): PendingChanges => ({
-  path: "/infra/roster.yml",
-  repo: "/infra",
+  path: "/team-inventory/roster.yml",
+  repo: "/team-inventory",
   diff: count ? "diff" : "",
   hosts: [],
   count,

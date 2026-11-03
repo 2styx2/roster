@@ -118,7 +118,7 @@ describe("S7: an empty Inventory says what to do", () => {
     const user = start(empty);
     const main = await screen.findByRole("main", { name: /workspace/i });
     expect(main).toHaveTextContent(/No Hosts in the Inventory yet/);
-    expect(main).toHaveTextContent("~/infra/roster.yml");
+    expect(main).toHaveTextContent("~/team-inventory/roster.yml");
     expect(within(main).queryByRole("button", { name: /find a host/i })).toBeNull();
     expect(within(screen.getByRole("group", { name: "Inventory" })).getByText(/No Hosts yet\. Add them in roster\.yml\./)).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
@@ -224,7 +224,7 @@ describe("M6: the status bar's path, whole, from the keyboard", () => {
   it(":info says the Backend, the Box and the Inventory's path", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:info{Enter}`);
-    expect(screen.getByRole("status")).toHaveTextContent(/~\/infra\/roster\.yml/);
+    expect(screen.getByRole("status")).toHaveTextContent(/~\/team-inventory\/roster\.yml/);
   });
 
   it(":info says which roster command runs, since it's what gets the master password (review 2)", async () => {
