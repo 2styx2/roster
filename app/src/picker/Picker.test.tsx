@@ -13,9 +13,9 @@ function host(name: string, more: Partial<Host> = {}): Host {
 
 const list: HostList = {
   hosts: [
-    host("esxi-02", { ip: "10.19.77.10", type: "esxi", group: "core" }),
+    host("esxi-02", { ip: "10.0.0.10", type: "esxi", group: "core" }),
     host("proxmox-01", { ip: "10.19.1.20", type: "proxmox", group: "core" }),
-    host("scan-99", { ip: "10.19.77.99", reviewed: false }),
+    host("scan-99", { ip: "10.0.0.99", reviewed: false }),
     host("unifi", { ip: "10.19.1.1", type: "router" }),
   ],
   groups: { core: { title: "Core servers", description: "" }, lab: { title: "Lab", description: "" } },
@@ -37,7 +37,7 @@ describe("Picker", () => {
     expect(rows()).toHaveLength(4);
     const first = within(rows()[0]!);
     expect(first.getByText("esxi-02")).toBeInTheDocument();
-    expect(first.getByText("10.19.77.10")).toBeInTheDocument();
+    expect(first.getByText("10.0.0.10")).toBeInTheDocument();
     expect(first.getByText("core")).toBeInTheDocument();
     expect(first.getByText("esxi")).toBeInTheDocument();
   });
@@ -48,7 +48,7 @@ describe("Picker", () => {
     await user.keyboard("prox");
     expect(rows().map((r) => r.dataset.host)).toEqual(["proxmox-01"]);
     await user.clear(screen.getByRole("combobox"));
-    await user.keyboard("10.19.77");
+    await user.keyboard("10.0.0");
     expect(rows().map((r) => r.dataset.host)).toEqual(["esxi-02", "scan-99"]);
   });
 

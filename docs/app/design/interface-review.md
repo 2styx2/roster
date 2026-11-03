@@ -180,7 +180,7 @@ accessibility evidence comes from the ARIA tree and keyboard walks.
 - **Where:** Sidebar names (`.sb-label`, `styles.css:276–279`; full text only in `title`, `Sidebar.tsx:209, 222`),
   Picker columns (`styles.css:414`, `Picker.tsx:141–150` `title`), finder names and paths (`styles.css:658, 661`),
   status bar Box and path (`styles.css:190–192`), session bar names, `:check` messages (`styles.css:373`). Screens:
-  `review/worst-case-dark.png` (`server-10-19-77-203-very-l…`, `lab-hub2-ops-console-work…`),
+  `review/worst-case-dark.png` (`server-10-0-0-203-very-l…`, `lab-hub2-ops-console-work…`),
   `review/w640-picker-light.png`.
 - **Why:** this is a keyboard-first app (Q27, Q36), and the only way to the full value is hovering a mouse.
   Two long Hosts that differ only at the end (`…-building-4` / `…-building-5`) can't be told apart from the
