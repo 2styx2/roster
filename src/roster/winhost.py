@@ -3,7 +3,8 @@
 roster can't know which shell a Windows Host's sshd runs a command with (cmd.exe by default, PowerShell where the
 DefaultShell is set), and the two parse a command line differently. So every command here is the same fixed one,
 `powershell -NoProfile -NonInteractive -EncodedCommand <BOOTSTRAP>`, whose argument is base64 (no character either
-shell, or a Box's ssh.cmd, acts on): the bootstrap reads the real script from stdin and runs it. Values the script needs
+shell, or a Box's ssh.cmd, acts on): the bootstrap reads the real script from stdin (framed: its length, then its
+bytes, never waiting for EOF) and runs it. Values the script needs
 (this Box's public key line, its tag) go in that script, never in argv, and a secret never goes in at all: a password
 Host's password is only paramiko's login (sshops.password_exec).
 
@@ -30,9 +31,29 @@ from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_WINDOWS
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
 # its multi-line blocks would need blank lines to end them.
-# stdin's bytes are read as UTF-8 whatever the Host's console code page, and the script is ASCII anyway (ps_literal).
-BOOTSTRAP = ("$ErrorActionPreference='Stop'; $m=New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); "
-             "$s=[Text.Encoding]::UTF8.GetString($m.ToArray()); & ([scriptblock]::Create($s))")
+# Win32-OpenSSH (8.1 and 9.5, measured on real Hosts) never delivers EOF on a child's stdin once more than 4096 bytes
+# have passed, so nothing here waits for EOF: the script goes as "<its length in bytes>\n<the bytes>" (framed), and the
+# bootstrap reads that line, then exactly that many bytes, decodes them as UTF-8 whatever the Host's code page (the
+# script is ASCII anyway: ps_literal), and runs them. A length line that isn't digits, is over 1 MB, or bytes that come
+# short run nothing (ERROR). $ProgressPreference keeps PowerShell's progress records ("#< CLIXML") off stderr.
+MAX_SCRIPT = 1 << 20
+BOOTSTRAP = (
+    "$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Stop'; "
+    "function F { [Console]::Out.WriteLine('ERROR the script came malformed or short on stdin'); exit 3 }; "
+    "$in=[Console]::OpenStandardInput(); $h=''; "
+    "while (($c=$in.ReadByte()) -ne 10) { if ($c -lt 48 -or $c -gt 57 -or $h.Length -ge 7) { F }; $h+=[char]$c }; "
+    f"$n=[int]('0'+$h); if ($n -lt 1 -or $n -gt {MAX_SCRIPT}) {{ F }}; "
+    "$b=New-Object byte[] $n; $o=0; "
+    "while ($o -lt $n) { $r=$in.Read($b,$o,$n-$o); if ($r -le 0) { F }; $o+=$r }; "
+    "& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b)))")
+
+
+def framed(script):
+    """SCRIPT as it goes on stdin: its length in bytes on a line, then the script (ASCII, so length in chars too)."""
+    data = script.encode()
+    if len(data) > MAX_SCRIPT:
+        raise ValueError("a Windows Host's script is over 1 MB")
+    return f"{len(data)}\n{script}"
 
 
 def remote_command():
@@ -423,7 +444,7 @@ def over_key(h, mode, tag_re, timeout=60):
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
                                          remote_command()]),
-                           input=script(mode, tag_re).encode(), capture_output=True, timeout=timeout)
+                           input=framed(script(mode, tag_re)).encode(), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None
     out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
@@ -435,5 +456,5 @@ def over_key(h, mode, tag_re, timeout=60):
 def install(h, pub, tag_re, password):
     """Add this Box's key line PUB on Windows Host H, logging in with PASSWORD (paramiko; None: an agent's key)."""
     from .sshops import password_exec
-    rc, out, err = password_exec(h, remote_command(), password, timeout=15, stdin=script("add", tag_re, pub))
+    rc, out, err = password_exec(h, remote_command(), password, timeout=15, stdin=framed(script("add", tag_re, pub)))
     return outcome(h["name"], rc, out, err)

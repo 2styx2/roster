@@ -277,6 +277,45 @@ def test_setup_puts_an_admins_key_in_the_admin_file_with_microsofts_acl(win, cap
     assert "1 already work" in capsys.readouterr().out and len(win.sent) == sent
 
 
+def stand_in(name, command, data, wait="60"):
+    """Run COMMAND on stand-in Host NAME with DATA on stdin: (exit code, stdout, stderr)."""
+    r = subprocess.run([sys.executable, str(FAKES / "ssh"), name, command], input=data, capture_output=True,
+                       env={**os.environ, "FAKE_EOF_WAIT": wait})
+    return r.returncode, r.stdout.decode(), r.stderr.decode()
+
+
+@needs_powershell
+def test_a_script_past_4096_bytes_runs_though_the_hosts_sshd_never_sends_eof(win):
+    """Win32-OpenSSH never delivers EOF on stdin past 4096 bytes (measured on real Hosts): the bootstrap reads a length
+    line, then exactly that many bytes, and never waits for EOF. The stand-in Host has the same limit."""
+    from roster import winhost
+    script = winhost.script("check", " (roster-managed|fleet-managed):box$")
+    assert len(script) > 4096
+    rc, out, _ = stand_in("dc-01", winhost.remote_command(), winhost.framed(script).encode())
+    assert "ROSTER_OK" in out
+    # what waited for EOF hangs on the stand-in, as on the real Host
+    old = "$s=[Console]::In.ReadToEnd(); & ([scriptblock]::Create($s))"
+    import base64
+    cmd = "powershell -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(old.encode("utf-16-le")).decode()
+    rc, out, err = stand_in("dc-01", cmd, script.encode(), wait="3")
+    assert rc == 255 and "ROSTER_OK" not in out and "never ended" in err
+
+
+@needs_powershell
+@pytest.mark.parametrize("data", [b"abc\nSay-Nothing", b"100\nshort", b"", b"99999999\n", b"12"])
+def test_a_bad_length_line_or_a_short_script_runs_nothing(win, data):
+    from roster import winhost
+    rc, out, _ = stand_in("dc-01", winhost.remote_command(), data)
+    assert rc != 0 and "ERROR" in out and "ROSTER_OK" not in out
+
+
+def test_the_script_goes_with_its_length_and_the_launch_line_stays_short():
+    from roster import winhost
+    script = winhost.script("add", " (roster-managed|fleet-managed):box$", "ssh-ed25519 AAAAkey roster-managed:box")
+    assert winhost.framed(script) == f"{len(script.encode())}\n{script}"
+    assert len(winhost.remote_command()) < 8191 - 200          # cmd.exe's limit, with room for ssh's own words
+
+
 @needs_powershell
 @SHELLS
 def test_setup_creates_the_admin_file_when_there_is_none(win, capsys):
