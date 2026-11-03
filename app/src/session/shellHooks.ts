@@ -17,166 +17,45 @@ export type ShellKind = "posix" | "fish" | "pwsh";
 /** CSI, OSC and other escape sequences (charset designators such as `ESC ( B` whole), so
  * coloured text reads as its text. */
 const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-Z\\^-~]/g;
-/** One step of what a terminal draws: CSI (its parameters and final byte), a string (OSC, DCS,
- * APC, PM, SOS: drawn as nothing), another escape, or one character. */
-const TOKENS = /\x1b\[([0-?]*)[ -/]*([@-~])|\x1b[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b([ -/]*[0-Z\\^-~])?|[\s\S]/gu;
-
-/** The line the cursor is on as a terminal draws it (ticket 159, #296): carriage returns,
- * backspaces, tabs, moves left and right, and erases within the line applied, so a prompt a shell
- * draws and then moves the cursor back to (fish's `ESC[K \r ESC[<n>C`) reads as its text. `text`
- * is the line up to the cursor; `rest`, what's on it after the cursor. Only the tail of the output
- * is known, not the screen around it. A move to a row (`ESC[r;cH`) with none known yet stays on the
- * cursor's line (PowerShell puts the cursor back on its prompt so), and rows map from it until a
- * line feed, which may scroll the screen. After a move up or down, a move to a row it can't map,
- * or a restored cursor, the line's text isn't known and reads as blank but for what is drawn on it
- * after the move, so no prompt drawn before the move is seen (it fails toward sending nothing).
- * `below`: the lines it knows below the cursor's. The line doesn't wrap. */
-function drawnLine(out: string): { text: string; rest: string; below: string } {
-  /** Lines from the first one the output has drawn; `null`: a line whose text isn't known. */
-  let lines: (string[] | null)[] = [[]];
-  let row = 0;
-  let col = 0;
-  /** The screen row of `lines[0]`, once a move to a row (`ESC[r;cH`) has told it; null after a
-   * line feed (which may scroll the screen) or a move it can't follow. */
-  let top: number | null = null;
-  const line = (): string[] => {
-    let l = lines[row];
-    if (!l) {
-      l = [];
-      lines[row] = l;
-    }
-    return l;
-  };
-  const lost = () => {
-    lines = [null];
-    row = 0;
-    top = null;
-  };
-  /** To screen row `r` (from 0): a row it knows since the last line feed, or, with none known, the
-   * row it's on (as a shell puts the cursor back on its prompt line: PowerShell's `ESC[r;cH`). */
-  const toRow = (r: number) => {
-    if (top === null) top = r - row;
-    const at = r - top;
-    if (at < 0 || at > lines.length) {
-      lost();
-      top = r;
-    } else row = at;
-  };
-  const put = (ch: string) => {
-    const l = line();
-    while (l.length < col) l.push(" ");
-    l[col++] = ch;
-  };
-  for (const m of out.matchAll(TOKENS)) {
-    const t = m[0];
-    if (m[2] !== undefined) {
-      const params = m[1] ?? "";
-      const n = Math.max(1, Number.parseInt(params, 10) || 1);
-      const arg = Number.parseInt(params, 10) || 0;
-      // A private sequence (`ESC[?25l`, `ESC[>c`) draws nothing.
-      if (/[<=>?]/.test(params)) continue;
-      const l = line();
-      switch (m[2]) {
-        case "C":
-        case "a":
-          col += n;
-          break;
-        case "D":
-          col = Math.max(0, col - n);
-          break;
-        case "G":
-        case "`":
-          col = n - 1;
-          break;
-        case "K":
-          if (arg === 0) l.splice(col);
-          else if (arg === 1) l.fill(" ", 0, Math.min(l.length, col + 1));
-          else lines[row] = [];
-          break;
-        case "X":
-          l.fill(" ", col, Math.min(l.length, col + n));
-          break;
-        case "P":
-          l.splice(col, n);
-          break;
-        case "@":
-          if (col < l.length) l.splice(col, 0, ...Array<string>(n).fill(" "));
-          break;
-        case "J":
-          if (arg === 0) {
-            l.splice(col);
-            lines.splice(row + 1);
-          } else if (arg === 1) {
-            l.fill(" ", 0, Math.min(l.length, col + 1));
-            for (let r = 0; r < row; r++) lines[r] = [];
-          } else lines = lines.map(() => []);
-          break;
-        case "H":
-        case "f":
-          toRow(n - 1);
-          col = Math.max(1, Number.parseInt(params.split(";")[1] ?? "", 10) || 1) - 1;
-          break;
-        case "d":
-          toRow(n - 1);
-          break;
-        case "A":
-        case "B":
-        case "E":
-        case "F":
-        case "u":
-          // Another line, or a place it can't tell: its text isn't known.
-          lost();
-          if (m[2] !== "A" && m[2] !== "B") col = 0;
-          break;
-        default:
-        // Colours, modes, reports and the rest draw nothing.
-      }
-    } else if (t.startsWith("\x1b")) {
-      const esc = m[3] ?? "";
-      // Index and next line go down a line, as a line feed does; reverse index (up) and a restored
-      // cursor go where it can't tell. Charset designators and the rest draw nothing.
-      if (esc === "D" || esc === "E") {
-        row++;
-        top = null;
-      }
-      if (esc === "E") col = 0;
-      if (esc === "M" || esc === "8") {
-        lost();
-        col = 0;
-      }
-    } else if (t === "\r") col = 0;
-    else if (t === "\n" || t === "\x0b" || t === "\x0c") {
-      row++;
-      top = null;
-    }
-    else if (t === "\b") col = Math.max(0, col - 1);
-    else if (t === "\t") col = (Math.floor(col / 8) + 1) * 8;
-    else if (t >= " " && t !== "\x7f") put(t);
-  }
-  const below = lines
-    .slice(row + 1)
-    .map((b) => (b ?? []).join(""))
-    .join("\n");
-  const l = lines[row] ?? (row < lines.length ? null : []);
-  if (!l) return { text: " ".repeat(col), rest: "", below };
-  const drawn = Array.from({ length: Math.max(col, l.length) }, (_, i) => l[i] ?? " ");
-  return { text: drawn.slice(0, col).join(""), rest: drawn.slice(col).join(""), below };
+/** The cursor's line on the Session's screen, as a terminal draws it (ticket 159, #296). */
+export interface CursorLine {
+  /** The line up to the cursor, from where it starts (a long one wraps onto more rows). */
+  text: string;
+  /** What's on it after the cursor (its rows wrapped on included), blanks at the end left out. */
+  rest: string;
+  /** The two rows above the line, as drawn. */
+  above: string[];
+  /** The row below the line, as drawn (a prompt drawn there with the cursor put back). */
+  below: string;
+  /** The screen is the alternate one (a full-screen program: an editor, a pager, a menu). */
+  alt: boolean;
 }
 
-/** The line the cursor is on, as a terminal draws it: its text up to the cursor, then whatever is
- * on it after the cursor (blanks at its end left out). */
-export function lastLine(out: string): string {
-  const { text, rest } = drawnLine(out);
-  return text + rest.trimEnd();
+/** The Session's screen the prompt is read off (promptScreen.ts: xterm, as the tab draws it),
+ * fed all its output at its size. This module takes it as a value so it loads without a terminal. */
+export interface PromptScreen {
+  write(data: Uint8Array | string): void;
+  /** It has drawn everything written to it. */
+  settled(): boolean;
+  /** Resolves once it has drawn everything written so far. */
+  flushed(): Promise<void>;
+  resize(size: { cols: number; rows: number }): void;
+  line(): CursorLine;
+  dispose(): void;
 }
 
 const PWSH = /^PS \S.*> $/;
-/** fish's default prompt: `user@host cwd`, then its version control's ` (branch)` (a detached HEAD
- * is `((f5c479ed))`, an informative one `(main|REBASE-i 1/3)`), then the last status when it
- * failed (` [1]`, a pipeline's ` [1|0]`), then `>` or `#` (root). */
-const FISH = /^[^\s@[\]:]+@[^\s@[\]:]+ [~/]\S*(?: \(.*\))?(?: \[\d+(?:\|\d+)*\])?[>#] $/;
-/** A line that asks for a secret: whatever it ends with, it's never a prompt roster sends to. */
-const SECRET = /pass(?:word|phrase|code)|\bPIN\b/i;
+/** fish's default prompt: `user@host cwd`, then its version control's ` (branch)` (no space or
+ * parenthesis, `<` or `>` in it but one nested pair: a detached HEAD is `((f5c479ed))`), then the last
+ * status when it failed (` [1]`, a pipeline's ` [1|0]`), then `>` or `#` (root). */
+const FISH = /^[^\s@[\]:]+@[^\s@[\]:]+ [~/]\S*(?: \((?:[^()\s<>]|\([^()\s<>]*\))+\))?(?: \[\d+(?:\|\d+)*\])?[>#] $/;
+/** Words that ask for a secret, in a few languages: with one on the prompt's line, the two rows
+ * above it or the row below, whatever the line ends with, it's no prompt roster sends to. */
+const SECRET =
+  /pass(?:word|phrase|code)|passwort|kennwort|mot de passe|contrase\u00f1a|senha|\u5bc6\u7801|\u30d1\u30b9\u30ef\u30fc\u30c9|one[- ]time|verification code/i;
+/** Short words that ask for a secret only as a word of their own at the end of what's asked
+ * (`Enter your PIN`, `OTP code: `, `Token? `), not inside a name (a branch `(pin-deps)`). */
+const SECRET_WORD = /(?<![\p{L}\p{N}_-])(?:PIN|OTP|token)(?:\s+code)?(?![\p{L}\p{N}_-])\s*(?:[:?>#$%]|$)/imu;
 /** `$`, `#` or `%` right after the prompt's text (`user@web-01:~$ `, `web-01% `), or a `$` on
  * its own (a two-line prompt's second line). Not after a space, which is tcsh's (`web-01:~ % `)
  * and a menu's (`Choice # `). */
@@ -239,12 +118,13 @@ export function newNonce(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The shell whose idle prompt ends `out`, or null when it isn't a prompt roster knows. */
-export function promptShell(out: string): ShellKind | null {
-  const { text: line, rest, below } = drawnLine(out);
-  // Something after the cursor (typed-ahead text, a prompt drawn over another) isn't an idle
-  // prompt; nor is one with a line asking for a secret on it or drawn below it.
-  if (rest.trim() !== "" || SECRET.test(line + rest + "\n" + below)) return null;
+/** The shell whose idle prompt the cursor is at, or null when it isn't a prompt roster knows: the
+ * cursor at the end of the prompt with nothing after it, on the normal screen, and no word asking
+ * for a secret on its line, the two rows above or the row below (Q150). */
+export function promptShell(at: CursorLine): ShellKind | null {
+  if (at.alt || at.rest.trim() !== "") return null;
+  for (const line of [...at.above, at.text, at.below]) if (SECRET.test(line) || SECRET_WORD.test(line)) return null;
+  const line = at.text;
   if (PWSH.test(line)) return "pwsh";
   if (FISH.test(line)) return "fish";
   if (POSIX.test(line)) return "posix";
@@ -355,10 +235,13 @@ export class ShellHooks {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private holdTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly windowTimer: ReturnType<typeof setTimeout>;
+  /** The Session's screen, where the prompt is read; null: none, so nothing is ever sent. */
+  private readonly screen: PromptScreen | null;
 
-  constructor(io: ShellHooksIo, nonce: string) {
+  constructor(io: ShellHooksIo, nonce: string, screen: PromptScreen | null) {
     this.io = io;
     this.nonce = nonce;
+    this.screen = screen;
     this.windowTimer = setTimeout(() => {
       this.armed = false;
       clearTimeout(this.idleTimer);
@@ -368,6 +251,7 @@ export class ShellHooks {
   /** The Session printed `data` (`text`, decoded by a streaming decoder). Returns what to show
    * now, or null: held. */
   output(data: Uint8Array, text: string): Uint8Array | null {
+    this.screen?.write(data);
     this.scanFolder(text);
     if (this.held) {
       this.held.push(data);
@@ -402,14 +286,24 @@ export class ShellHooks {
     // Marks that aren't roster's (the shell's own integration) don't stop it: the user asked, and
     // roster's marks, with the token, go round them.
     if (this.ours) return Promise.resolve("marked");
-    const kind = promptShell(this.tail);
+    const screen = this.screen;
+    if (!screen) return Promise.resolve("no-prompt");
+    // The prompt as the screen draws it once it has drawn all the output so far.
+    if (!screen.settled()) return screen.flushed().then(() => this.integrate());
+    const kind = promptShell(screen.line());
     if (!kind) return Promise.resolve("no-prompt");
     if (!this.send(kind)) return Promise.resolve("not-open");
     return new Promise((resolve) => this.waiting.push(resolve));
   }
 
+  /** The Session's size changed. */
+  resize(size: { cols: number; rows: number }) {
+    this.screen?.resize(size);
+  }
+
   /** The Session ended or its tab closed: what's held shows, and nothing more is sent. */
   stop() {
+    this.screen?.dispose();
     clearTimeout(this.windowTimer);
     clearTimeout(this.idleTimer);
     this.armed = false;
@@ -418,7 +312,14 @@ export class ShellHooks {
 
   private idle() {
     if (!this.armed || this.typedYet || this.marked || this.sentLine !== null || !this.io.enabled()) return;
-    const kind = promptShell(this.tail);
+    const screen = this.screen;
+    if (!screen) return;
+    // Output the screen hasn't drawn yet: look again once it's quiet.
+    if (!screen.settled()) {
+      this.idleTimer = setTimeout(() => this.idle(), IDLE_MS);
+      return;
+    }
+    const kind = promptShell(screen.line());
     if (kind && !this.send(kind)) this.idleTimer = setTimeout(() => this.idle(), IDLE_MS);
   }
 
@@ -426,7 +327,7 @@ export class ShellHooks {
     const line = hookLine(kind, this.nonce);
     if (!this.io.write(line + "\r")) return false;
     this.sentLine = line;
-    this.sentAt = lastLine(this.tail);
+    this.sentAt = this.screen?.line().text ?? "";
     this.armed = false;
     clearTimeout(this.idleTimer);
     this.held = [];
@@ -482,7 +383,7 @@ export class ShellHooks {
     const clean =
       lf >= 0 &&
       squash(between).startsWith(squash(this.sentLine ?? "")) &&
-      lastLine(text) === this.sentAt &&
+      (this.screen?.line().text ?? null) === this.sentAt &&
       (between.match(/\n/g) ?? []).length <= 4 &&
       squash(between).length - squash(this.sentLine ?? "").length <= 240;
     if (!clean) return this.giveUp();

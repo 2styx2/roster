@@ -12,7 +12,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { hookLine, lastLine, promptShell, type ShellKind } from "./shellHooks";
+import { XtermPromptScreen } from "./promptScreen";
+import { hookLine, promptShell, type CursorLine, type ShellKind } from "./shellHooks";
 
 const has = (shell: string) => spawnSync("sh", ["-c", `command -v ${shell}`]).status === 0;
 const ENV = { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: "/tmp", TERM: "xterm-256color", SHELL: "/bin/sh" };
@@ -47,11 +48,16 @@ const shown = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07
  * console waits for a cursor-position answer is lost). Then Enter, on its own, once the shell has
  * drawn the line. Each step waits for a sign, never for the shell to go quiet: on a busy machine
  * a shell still starting is quiet too. */
-function runPty(argv: string[], lines: string[], ready: (since: string) => boolean, cwd?: string): Promise<string> {
+/** What the shell printed since the last Enter, and the cursor's line on its screen now. */
+type Ready = (since: string, at: CursorLine) => boolean;
+
+function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
     const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV, cwd });
+    // The shell's screen, as the tab's terminal draws it (120 by 40, as stty says).
+    const screen = new XtermPromptScreen({ cols: 120, rows: 40 });
     let out = "";
     let answered = 0;
     // Where the last thing typed went in: what the shell printed after it is its answer.
@@ -60,7 +66,7 @@ function runPty(argv: string[], lines: string[], ready: (since: string) => boole
     const next = () => {
       const since = out.slice(mark);
       if (line === undefined) {
-        if (!lines.length || !ready(since)) return;
+        if (!lines.length || !ready(since, screen.line())) return;
         line = lines.shift()!;
         child.stdin.write(line);
       } else {
@@ -76,12 +82,14 @@ function runPty(argv: string[], lines: string[], ready: (since: string) => boole
       out += d;
       const asks = out.match(ASK) ?? [];
       for (; answered < asks.length; answered++) child.stdin.write(asks[answered] === "\x1b[6n" ? "\x1b[1;1R" : "\x1b[?62;22c");
-      next();
+      screen.write(d);
+      void screen.flushed().then(next);
     });
     child.stderr.on("data", (d: Buffer) => (out += d.toString()));
     child.stdin.on("error", () => {});
     child.on("close", () => {
       clearTimeout(timer);
+      screen.dispose();
       resolve(out);
     });
   });
@@ -89,14 +97,14 @@ function runPty(argv: string[], lines: string[], ready: (since: string) => boole
 
 /** PSReadLine waits for keys once it has drawn the prompt and then asked where the cursor is,
  * or at `>> `, the next line of an unfinished command (no question there). */
-const pwshReady = (since: string) =>
-  lastLine(since) === ">> " || (promptShell(since) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
+const pwshReady: Ready = (since, at) =>
+  at.text === ">> " || (promptShell(at) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
 /** fish once it has drawn its prompt (`… ~> `, `… [1]> `; it then puts the cursor back with a
  * carriage return and a move right, so this looks at the text, not the last line), or, in an
  * unfinished command, once it has drawn the next line (a line feed, then it clears that line).
  * When it runs a command it prints a line feed too, then sets the window title (OSC 0): that line
  * feed isn't a sign, the next prompt is. */
-const fishReady = (since: string) =>
+const fishReady: Ready = (since) =>
   shown(since).endsWith("> ") || (!since.includes("\x1b]0;") && since.includes("\n\x1b[K"));
 
 /** The end of what a shell printed, escaped, for a failed test's message. */
@@ -113,7 +121,7 @@ interface Shell {
   argv: string[];
   kind: ShellKind;
   /** On a pty (or else piped in): when it waits for the next line typed. */
-  pty?: (since: string) => boolean;
+  pty?: Ready;
 }
 const SHELLS: Shell[] = [
   { name: "bash", argv: ["bash", "--norc", "--noprofile", "-i"], kind: "posix" },
@@ -146,8 +154,8 @@ describe.each(SHELLS.flatMap((s) => [[s.name, "/tmp", s] as const, [s.name, "a g
   (_, where, shell) => {
     it.skipIf(!has(shell.name) || !hasPty)("knows the shell", async () => {
       let seen = false;
-      const ready = (since: string) => {
-        if (promptShell(since) !== shell.kind || (shell.pty && !shell.pty(since))) return false;
+      const ready: Ready = (since, at) => {
+        if (promptShell(at) !== shell.kind || (shell.pty && !shell.pty(since, at))) return false;
         seen = true;
         return true;
       };

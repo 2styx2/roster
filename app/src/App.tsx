@@ -132,6 +132,7 @@ import { Logo } from "./chrome/Logo";
 import { countOf } from "./ui/format";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
 import { PromptWatch } from "./session/prompt";
+import { XtermPromptScreen } from "./session/promptScreen";
 import { MESSAGES_VIEW, MessageLog, MessagesChoice, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
 import { Keys } from "./ui/Keys";
 import {
@@ -771,7 +772,11 @@ function Workspace({
   // Shell hooks (ticket 121): init.lua's terminal.shell_hooks and each Host's shell_hooks.
   const shellHooksInit = config?.terminal.shellHooks ?? null;
   useEffect(
-    () => tabs.setShellHooks((tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks)),
+    () =>
+      tabs.setShellHooks(
+        (tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks),
+        (size) => new XtermPromptScreen(size),
+      ),
     [tabs, shellHooksInit, hostByName],
   );
   const groupNames = useMemo(() => {

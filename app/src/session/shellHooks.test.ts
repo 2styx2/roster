@@ -1,9 +1,20 @@
 /* eslint-disable no-control-regex -- terminal output is made of control characters */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, lastLine, newNonce, promptShell, shellHooksOn } from "./shellHooks";
+import { CsiClamp, XtermPromptScreen } from "./promptScreen";
+import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn, type CursorLine } from "./shellHooks";
 
 /** The Session's token in roster's own marks (ticket 120, Q131). */
 const NONCE = "0123456789abcdef01234567";
+
+/** The cursor's line once a terminal (xterm, as the tab's) of `size` has drawn `out`. */
+async function at(out: string, size = { cols: 80, rows: 24 }): Promise<CursorLine> {
+  const screen = new XtermPromptScreen(size);
+  screen.write(out);
+  await screen.flushed();
+  const line = screen.line();
+  screen.dispose();
+  return line;
+}
 
 describe("promptShell: which shell an idle prompt is, from what it printed", () => {
   it.each([
@@ -19,8 +30,8 @@ describe("promptShell: which shell an idle prompt is, from what it printed", () 
     ["root@web-01 /etc# ", "fish"],
     ["PS C:\\Users\\admin> ", "pwsh"],
     ["PS /home/admin> ", "pwsh"],
-  ])("%j is %s", (out, shell) => {
-    expect(promptShell(out)).toBe(shell);
+  ])("%j is %s", async (out, shell) => {
+    expect(promptShell(await at(out))).toBe(shell);
   });
 
   it.each([
@@ -39,10 +50,15 @@ describe("promptShell: which shell an idle prompt is, from what it printed", () 
     ["% ", "a bare %"],
     ["Choice # ", "a menu asking for a number"],
     ["Enter selection # ", "a menu"],
-  ])("%j (%s) is nothing it knows", (out) => {
-    expect(promptShell(out)).toBeNull();
+  ])("%j (%s) is nothing it knows", async (out) => {
+    expect(promptShell(await at(out))).toBeNull();
   });
 });
+
+/** The cells `text` takes on a terminal: CJK takes two; an emoji one, as fish counts it by default
+ * (`fish_emoji_width` 1) and as xterm's Unicode 6 widths, the tab's own, draw it. */
+const cells = (text: string) =>
+  [...text].reduce((n, ch) => n + (/[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\uff00-\uff60\uffe0-\uffe6]/u.test(ch) ? 2 : 1), 0);
 
 /** A prompt as fish 3.x draws it (from real fish output on CI, names made up): the window title,
  * a colour reset with a charset designator (`ESC ( B`) between the parts, then `ESC[K`, a carriage
@@ -50,20 +66,23 @@ describe("promptShell: which shell an idle prompt is, from what it printed", () 
 function fish3(user: string, host: string, cwd: string, vcs = "", status = "", suffix = ">"): string {
   const reset = "\x1b(B\x1b[m";
   const parts = `${user}${reset}@${host}${reset} ${cwd}${reset}${vcs}${reset}${status ? ` ${status}` : ""}${suffix} `;
-  const width = `${user}@${host} ${cwd}${vcs}${status ? ` ${status}` : ""}${suffix} `.length;
+  const width = cells(`${user}@${host} ${cwd}${vcs}${status ? ` ${status}` : ""}${suffix} `);
   return `\x1b]0;${cwd}\x07\x1b[30m${reset}\r${parts}\x1b[K\r\x1b[${width}C`;
 }
 
-describe("promptShell reads the prompt line as a terminal draws it (ticket 159, #296)", () => {
+describe("promptShell reads the prompt line off the Session's screen (ticket 159, #296)", () => {
   it.each([
     [fish3("user", "web-01", "~/src/app", " ((f5c479ed))"), "fish 3 in a detached HEAD", "fish"],
     [fish3("user", "web-01", "~/src/app", " (main)"), "fish 3 on a branch", "fish"],
+    [fish3("user", "web-01", "~/src/app", " (pin-deps)"), "fish 3 on a branch named like a PIN", "fish"],
     [fish3("user", "web-01", "/tmp"), "fish 3's default prompt", "fish"],
+    [fish3("user", "web-01", "~/tokens"), "fish 3 in a folder named like a token", "fish"],
     [fish3("user", "web-01", "~", "", "[1]"), "fish 3 after a failed command", "fish"],
     [fish3("user", "web-01", "~", " (main)", "[1|0]"), "fish 3 after a failed pipeline", "fish"],
     [fish3("root", "web-01", "/etc", "", "", "#"), "fish 3 as root", "fish"],
+    [fish3("user", "web-01", "~/文档"), "fish 3 in a folder with wide characters (finding 9)", "fish"],
+    [fish3("user", "web-01", "~/🚀x", " (main)"), "fish 3 in a folder with an emoji (finding 9)", "fish"],
     ["\x1b(Buser@web-01 ~> ", "fish after a charset designator", "fish"],
-    ["user@web-01 ~/src (feature/x|REBASE-i 1/3)> ", "fish's informative git prompt", "fish"],
     ["user@web-01:~$ ls\b\b\x1b[K", "bash after the typed-ahead text was erased", "posix"],
     ["\r\x1b[Kuser@web-01:~$ ", "bash after clearing the line", "posix"],
     ["user@web-01:~$ x\b \b", "bash after a backspace", "posix"],
@@ -73,20 +92,21 @@ describe("promptShell reads the prompt line as a terminal draws it (ticket 159, 
     ["\x1b[2J\x1b[H\x1b[1Guser@web-01:~$ ", "a prompt after a cleared screen", "posix"],
     ["PS /home/admin> \x1b[K\r\x1b[16C", "PowerShell moving the cursor back to its prompt's end", "pwsh"],
     ["PS C:\\Users\\admin> \x1b[?25l\x1b[?25h", "PowerShell hiding and showing the cursor", "pwsh"],
-    ["PS /home/admin> \x1b[?25l\x1b[12;17H\x1b[?25h", "PowerShell putting the cursor back on its prompt by row", "pwsh"],
+    ["PS /home/admin> \x1b[?25l\x1b[1;17H\x1b[?25h", "PowerShell putting the cursor back on its prompt by row", "pwsh"],
     ["\x1b[?25l\x1b[1;1HPS /tmp> ls\x1b[2;1H\x1b[2;10H\x1b[1;10H\x1b[K\x1b[1;10H", "PowerShell erasing a line it drew over two rows", "pwsh"],
-  ])("%j (%s) is %s", (out, _, shell) => {
-    expect(promptShell(out)).toBe(shell);
+    ["Last login: today\r\n" + "x".repeat(1100) + "\r\nuser@web-01:~$ ", "a prompt after a line longer than 1 KB", "posix"],
+  ])("%j (%s) is %s", async (out, _, shell) => {
+    expect(promptShell(await at(out))).toBe(shell);
   });
 
-  it("reads PSReadLine's next line of an unfinished command, put back by row (real pwsh output on CI)", () => {
+  it("reads PSReadLine's next line of an unfinished command, put back by row (real pwsh output on CI)", async () => {
     const line = "\x1b[?25l\x1b[1;1H\x1b[0m\x1b[92mif\x1b[0m \x1b[37m{\x1b[39;49m\x1b[0m\x1b[1;5H\x1b[?12l\x1b[?25h";
     const next = "\x1b[?25l\x1b[2;1H\x1b[0m\x1b[37m>> \x1b[39;49m\x1b[0m\x1b[2;4H\x1b[?12l\x1b[?25h";
-    expect(lastLine("PS /home/admin> \x1b[6n" + line + next)).toBe(">> ");
+    expect((await at("PS /home/admin> \x1b[6n" + line + next)).text).toBe(">> ");
   });
 
   // The hook line is a write into the user's shell, with the Session's token: never at a password
-  // prompt, however it was drawn, nor at a prompt with anything after the cursor.
+  // prompt, however it was drawn, nor anywhere but the end of an idle prompt.
   it.each([
     ["[sudo] password for user: ", "sudo's prompt"],
     ["Password: ", "su's prompt"],
@@ -99,19 +119,81 @@ describe("promptShell reads the prompt line as a terminal draws it (ticket 159, 
     ["Password# ", "a password prompt ending like a root prompt"],
     ["[sudo] password for user$ ", "a sudo prompt ending like a shell prompt"],
     ["user@web-01 ~/passwords> \rPassphrase> ", "a passphrase prompt drawn over fish's"],
+    ["Passwort: \r\nweb-01% ", "German, the row above"],
+    ["Kennwort# ", "German, ending like a root prompt"],
+    ["Mot de passe : \r\nweb-01$ ", "French, the row above"],
+    ["Contraseña$ ", "Spanish"],
+    ["Senha$ ", "Portuguese"],
+    ["密码# ", "Chinese"],
+    ["パスワード$ ", "Japanese"],
+    ["Enter your PIN\r\n$ ", "a PIN asked for on the row above (finding 4)"],
+    ["Enter PIN:\r\n\r\nweb-01% ", "a PIN asked for two rows above"],
+    ["OTP code:\r\nweb-01% ", "a one-time code"],
+    ["One-time code$ ", "a one-time code ending like a prompt"],
+    ["Token? \r\nweb-01% ", "a token"],
+    ["Verification code$ ", "a verification code"],
+    ["Passcode# ", "a passcode"],
+    ["user@web-01:~$ \x1b7\r\nPassword: \x1b8", "a password prompt drawn below, the cursor restored"],
     ["user@web-01:~$ ls\x1b[2D", "a prompt with text after the cursor"],
     ["user@web-01:~$ \x1b[3D", "the cursor moved back into the prompt"],
-    ["user@web-01:~$ \x1b[1A", "the cursor moved up off the prompt"],
-    ["user@web-01:~$ \x1b[5;1H", "the cursor moved by row to the start of the line"],
-    ["user@web-01:~$ \x1b[3;1H\x1b[4;1H", "the cursor moved by row to a line it hasn't seen"],
+    ["\r\nuser@web-01:~$ \x1b[1A", "the cursor moved up off the prompt"],
+    ["user@web-01:~$ \x1b[5;1H", "the cursor moved to another row"],
+    ["PS /home/admin> \x1b[30;17H", "the cursor moved to row 30 (finding 7)"],
     ["user@web-01:~$ \r\n\x1b[7;16H", "the cursor moved by row after a line feed"],
-    ["\x1b[1;1Huser@web-01:~$ \x1b[2;1HPassword: \x1b[1;16H", "a password prompt drawn below the prompt"],
-    ["user@web-01:~$ \x1b7\r\nPassword: \x1b8", "a password prompt drawn below, the cursor restored"],
     ["user@web-01:~$ \r\x1b[K", "a cleared line"],
     ["user@web-01:~$ \x1b[2K", "a line erased under the cursor"],
+    ["user@web-01:~$ \x1b[5;10r", "a scroll region set, which homes the cursor (finding 3)"],
+    ["user@web-01:~$ \x1bc", "a terminal reset (finding 3)"],
+    ["user@web-01:~$ \x1b[3S", "the screen scrolled up (finding 3)"],
+    ["user@web-01:~$ \x1b[2L", "lines inserted at the cursor (finding 3)"],
+    ["web-01% \x1b[2I", "a tab forward (finding 3)"],
+    ["user@web-01:~$ x\x1b[5b", "a character repeated (finding 3)"],
+    ["\x1b[?1049huser@web-01:~$ ", "a prompt-like line on the alternate screen"],
     ["user@web-01 ~ (main> ", "fish's prompt with a parenthesis that isn't closed"],
-  ])("%j (%s) is nothing it sends to", (out) => {
-    expect(promptShell(out)).toBeNull();
+    ["root@db ~ (mysql db)> ", "a parenthesis with a space in it (finding 6)"],
+    ["user@web-01 ~ (a>b)> ", "a parenthesis with a > in it (finding 6)"],
+    ["user@web-01 ~/src (feature/x|REBASE-i 1/3)> ", "a parenthesis with a space (finding 6)"],
+    ["user@web-01 ~ (main))> ", "a parenthesis closed twice (finding 6)"],
+  ])("%j (%s) is nothing it sends to", async (out) => {
+    expect(promptShell(await at(out))).toBeNull();
+  });
+
+  it("doesn't send at a prompt the shell redrew with a recalled command (Up, then Home) (finding 1)", async () => {
+    // One row: the recalled command after the cursor.
+    expect(promptShell(await at("user@web-01:~$ ls -la\x1b[6D"))).toBeNull();
+    // Wrapped onto a second row, the cursor put back after the prompt with a move up.
+    const recalled = "user@web-01:~$ " + "echo " + "a".repeat(40);
+    expect(promptShell(await at(recalled + "\x1b[1A\r\x1b[15C", { cols: 40, rows: 10 }))).toBeNull();
+  });
+
+  it("refuses a password asked for at the start of a line longer than 1 KB (finding 8)", async () => {
+    expect(promptShell(await at("Enter password for the key: " + "*".repeat(1100) + " web-01% "))).toBeNull();
+  });
+
+  it("takes huge counts in moves and repeats in bounded time (finding 2)", async () => {
+    const from = performance.now();
+    for (const seq of ["\x1b[99999999@", "\x1b[99999999P", "\x1b[99999999X", "\x1b[99999999L", "\x1b[99999999M", "\x1b[99999999S", "\x1b[99999999T"])
+      await at("user@web-01:~$ " + seq);
+    for (const seq of ["\x1b[99999999C", "\x1b[99999999D", "x\x1b[99999999b", "\x1b[99999999;99999999H", "\x1b[99999999I"]) {
+      expect(promptShell(await at("user@web-01:~$ " + seq))).toBeNull();
+    }
+    expect(performance.now() - from).toBeLessThan(5_000);
+  });
+});
+
+describe("CsiClamp: the prompt screen's bound on CSI counts", () => {
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  it("caps each parameter at 9999 and passes the rest as it came, split across reads or not", () => {
+    const clamp = new CsiClamp();
+    expect(dec.decode(clamp.clamp(enc.encode("a\x1b[99999999;5;123456M\x1b[?2004h\x1b[38;5;1mb")))).toBe(
+      "a\x1b[9999;5;9999M\x1b[?2004h\x1b[38;5;1mb",
+    );
+    expect(dec.decode(clamp.clamp(enc.encode("\x1b[123")))).toBe("");
+    expect(dec.decode(clamp.clamp(enc.encode("45678L\x1b")))).toBe("\x1b[9999L");
+    expect(dec.decode(clamp.clamp(enc.encode("]0;t\x07")))).toBe("\x1b]0;t\x07");
+    // A control inside a CSI still runs inside it, as in a terminal; ESC, CAN and SUB end it.
+    expect(dec.decode(clamp.clamp(enc.encode("\x1b[99\b999999C\x1b[5\x18x")))).toBe("\x1b[99\b99C\x1b[5\x18x");
   });
 });
 
@@ -147,7 +229,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
       show: (data) => shown.push(dec.decode(data)),
       cwd: (path) => folders.push(path),
       enabled: () => on,
-    }, NONCE);
+    }, NONCE, new XtermPromptScreen({ cols: 80, rows: 24 }));
     const print = (s: string) => {
       const data = enc.encode(s);
       const now = hooks.output(data, s);
@@ -330,6 +412,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
 
     const never = setup({ enabled: false });
     never.print(PROMPT);
+    vi.advanceTimersByTime(0);
     const off = never.hooks.integrate();
     never.print(never.sent[0]!.slice(0, -1) + "\r\nuser@web-01:~$ ");
     vi.advanceTimersByTime(HOLD_MS);
@@ -339,6 +422,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
 
     const busy = setup({ enabled: false });
     busy.print("user@web-01:~$ ls");
+    vi.advanceTimersByTime(0);
     expect(await busy.hooks.integrate()).toBe("no-prompt");
     vi.useRealTimers();
 
@@ -350,12 +434,14 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     // The shell's own integration marks it, not roster: :integrate still sends roster's line.
     const theirs = setup({ enabled: false });
     theirs.print(`${A}user@web-01:~$ ${B}`);
+    vi.advanceTimersByTime(0);
     void theirs.hooks.integrate();
     expect(theirs.sent).toEqual([hookLine("posix", NONCE) + "\r"]);
     vi.useRealTimers();
 
     const closed = setup({ enabled: false, session: false });
     closed.print(PROMPT);
+    vi.advanceTimersByTime(0);
     expect(await closed.hooks.integrate()).toBe("not-open");
   });
 
@@ -400,7 +486,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     vi.useFakeTimers();
     const shown: number[] = [];
     const sent: string[] = [];
-    const hooks = new ShellHooks({ write: (l) => (sent.push(l), true), show: (d) => shown.push(...d), cwd: () => {}, enabled: () => true }, NONCE);
+    const hooks = new ShellHooks({ write: (l) => (sent.push(l), true), show: (d) => shown.push(...d), cwd: () => {}, enabled: () => true }, NONCE, new XtermPromptScreen({ cols: 80, rows: 24 }));
     const decoder = new TextDecoder();
     const feed = (bytes: Uint8Array) => {
       const now = hooks.output(bytes, decoder.decode(bytes, { stream: true }));

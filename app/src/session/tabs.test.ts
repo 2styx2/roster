@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { XtermPromptScreen } from "./promptScreen";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "../backend/fake";
 import { BackendCallError, FillRefusal, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
 import { IDLE_MS, hookLine } from "./shellHooks";
@@ -1073,7 +1074,7 @@ describe("filling a password prompt (ticket 119)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void writes.push(d), resize: done, close: done, fill };
     };
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(() => true);
+    tabs.setShellHooks(() => true, (size) => new XtermPromptScreen(size));
     tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
@@ -1123,6 +1124,8 @@ describe("a nested ssh (ticket 120)", () => {
       return { id: 1, auth: "key", write, resize: done, close: done, fill: async (...args: unknown[]) => (asked.push(args), { host: to.name }) };
     };
     const tabs = new Tabs(backend);
+    // Not by itself: `:integrate` reads the prompt off the Session's screen.
+    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
     tabs.setFillPrompts({
       userOf: () => "admin",
       watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
@@ -1190,6 +1193,7 @@ describe("a nested ssh (ticket 120)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void (sent += d), resize: done, close: done };
     };
     const tabs = new Tabs(backend);
+    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
     const seen: string[] = [];
     tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
     const id = tabs.open(reviewed[0] ?? "");
@@ -1262,7 +1266,7 @@ describe("shell hooks (ticket 121, #210)", () => {
     vi.useFakeTimers();
     const { backend, session, typed } = scriptedSessions();
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(on);
+    tabs.setShellHooks(on, (size) => new XtermPromptScreen(size));
     const seen: Uint8Array[] = [];
     const id = tabs.open(reviewed[0]!);
     tabs.attach(id, (d) => seen.push(d));
@@ -1291,8 +1295,9 @@ describe("shell hooks (ticket 121, #210)", () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS * 3);
     expect(typed()).toBe("");
     expect(await tabs.integrate(id)).toBe("no-prompt");
-    // The core types the fill (never through Tabs.write), so the hooks still send at the shell's prompt.
-    s.print("\r\nuser@web-01:~$ ");
+    // The core types the fill (never through Tabs.write), so the hooks still send at the shell's
+    // prompt, once sudo's prompt is more than two rows up (Q150).
+    s.print("\r\nok\r\nok\r\nuser@web-01:~$ ");
     await vi.advanceTimersByTimeAsync(IDLE_MS);
     expect(typed()).toBe(line() + "\r");
   });
@@ -1314,6 +1319,8 @@ describe("shell hooks (ticket 121, #210)", () => {
     const { s, typed, line, tabs, id } = await opened(() => false);
     expect(await tabs.integrate(id)).toBe("no-prompt");
     s.print(PROMPT);
+    // Once the Session's screen has drawn it.
+    await vi.advanceTimersByTimeAsync(0);
     const on = tabs.integrate(id);
     expect(typed()).toBe(line() + "\r");
     s.print(line() + "\r\n" + A + "user@web-01:~$ " + B);
