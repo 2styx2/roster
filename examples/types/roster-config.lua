@@ -561,30 +561,33 @@ roster.config_dir = nil
 roster.o = {}
 
 --- Reads any option by its dotted name: a copy of what init.lua set there, or nil.
---- The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.
+--- The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line. A map's key that holds a dot can't be named with dots ("keys.leader.." is an unknown name): read it with brackets, the key as a string, as the example's last line does.
 ---
 --- ```lua
 --- local views = roster.o.get("views") or {}
 --- for id in pairs(views) do print(id) end
+--- local dot = roster.o.keys.leader["."] -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size", "views.get".
 ---@return any
 function roster.o.get(name) end
 
 --- Puts an option back to its default: what init.lua set there is taken away.
---- Any option: a value, an object, a map or a list. An unknown name is an error at its line.
+--- Any option: a value, an object, a map or a list. An unknown name is an error at its line. A map's key that holds a dot can't be named with dots: take it away with brackets, the key as a string, set to nil, as the example's last line does.
 ---
 --- ```lua
 --- roster.o.reset("terminal.size")
+--- roster.o.keys.leader["."] = nil -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size".
 function roster.o.reset(name) end
 
 --- Sets any option by its dotted name, as roster.o does.
---- The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option.
+--- The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option. A map's key that holds a dot can't be named with dots: set it through roster.o with brackets, the key as a string, as the example's last line does.
 ---
 --- ```lua
 --- roster.set("terminal.size", "16pt")
+--- roster.o.keys.leader["."] = "connect esx-02" -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size".
 ---@param value any Its value, as the option takes it; nil resets it.
