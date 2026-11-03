@@ -101,9 +101,9 @@ describe("random repaints the core takes as the same screen", () => {
     const differ: string[] = [];
     const prompt: string[] = [];
     for (const { after_hex, same, at_prompt, diverged } of repaintFuzz.cases) {
-      // Nothing to check where the core refuses and has lost track (some of those, ED 1 from the
-      // last column with no scrollback, throw inside xterm.js 6.0.0).
-      if (!same && diverged) continue;
+      // Where the core refuses and has lost track there's nothing to compare, but each still goes
+      // through: some, ED 1 from the bottom row's last column before anything scrolled off, threw
+      // inside xterm.js 6.0.0 and stopped the tab's writes until the clamp drew them (ticket 172).
       const { t, feed } = tab();
       await feed(enc(repaintFuzz.before));
       const was = shown(t);
