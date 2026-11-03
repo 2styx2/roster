@@ -278,10 +278,17 @@ export const builtinCommands: readonly CommandDef[] = [
     arg: "host",
     optionalArg: true,
     label: (h) =>
-      h
-        ? `Check ${h}`
-        : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail",
+      h === "stop"
+        ? "Stop the app's own check that's running, as the check panel's Stop (x) does"
+        : h
+          ? `Check ${h}`
+          : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail. stop stops the app's own check",
     run: (ctx, h) => ctx.check(h ?? null),
+    // `stop` (#361) after the Hosts: a Host named stop is still checked by `:check stop`.
+    complete: (word, hostNames) => {
+      const hosts = matching([...hostNames].sort(), word);
+      return "stop".startsWith(word.toLowerCase()) && !hostNames.includes("stop") ? [...hosts, "stop"] : hosts;
+    },
   },
   {
     id: "edit",

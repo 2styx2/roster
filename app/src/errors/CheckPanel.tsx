@@ -3,7 +3,7 @@
 // roster runs the steps; this only shows them. A check makes at most one connection and one login.
 // While it runs (ticket 110) every step has its row from the start, so nothing moves as steps come
 // in: the one under way is the accent (live), drawn to as it starts, the rest muted until the answer.
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CheckStep } from "../backend/types";
 import { problemFromStep, type ErrorRow } from "./catalog";
 import { ProblemBody, type ProblemActions } from "./ErrorPanel";
@@ -40,6 +40,9 @@ const SAY_AFTER_MS = 600;
 
 const label = (step: string) => STEP_LABEL[step] ?? step;
 
+/** Stop's own key while the panel has focus (#361), as a view's heading button has one. */
+export const STOP_KEY = "x";
+
 export interface CheckPanelProps {
   check: CheckState;
   rows: readonly ErrorRow[];
@@ -70,6 +73,15 @@ export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanel
         : failed
           ? `Failed at ${label(failed.step)}; the rest were skipped.`
           : `Stopped at ${label(stopped ?? "")}; the rest were skipped.`;
+  // Stop's key, from anywhere in the panel that didn't take it itself (a field keeps its letters,
+  // a held key stops nothing more).
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (stopJob === null || e.key !== STOP_KEY || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.repeat) onStop?.(stopJob);
+  };
   // The step under way, for a screen reader (the summary line below says the outcome itself).
   const said = check.state === "running" && check.at !== null ? `Checking ${label(check.at)}` : "";
   const spoken = useSaid(said, SAY_AFTER_MS);
@@ -80,7 +92,7 @@ export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanel
         ? { className: "problem-message", text: check.message }
         : { className: `check-summary ${check.result.ok ? "check-ok" : "muted"}`, text: summary };
   return (
-    <section className="check-panel" role="region" aria-label={`Check ${host}`}>
+    <section className="check-panel" role="region" aria-label={`Check ${host}`} onKeyDown={onKeyDown}>
       <header>
         <h2>
           <span className="muted">Check · </span>
@@ -110,7 +122,7 @@ export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanel
   );
 }
 
-/** Stop, while the app's own check runs. It goes once pressed or once the check is over: focus on
+/** Stop, while the app's own check runs (its key: `x` in the panel, or `:check stop`). It goes once pressed or once the check is over: focus on
  * it then moves to the panel's close button (`focusAfter`), so a keyboard stays in the panel rather
  * than drop to the page. */
 function StopButton({ onStop, focusAfter }: { onStop(): void; focusAfter: RefObject<HTMLButtonElement | null> }) {
@@ -130,7 +142,8 @@ function StopButton({ onStop, focusAfter }: { onStop(): void; focusAfter: RefObj
       type="button"
       className="icon-button"
       aria-label="Stop the check"
-      title="Stop the check"
+      title={`Stop the check (${STOP_KEY})`}
+      aria-keyshortcuts={STOP_KEY}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onStop}
     >

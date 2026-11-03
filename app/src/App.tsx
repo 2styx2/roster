@@ -67,7 +67,7 @@ import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping } from "./errors/checkProgress";
+import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping, stopTarget } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -1379,6 +1379,19 @@ function Workspace({
   };
 
   // What commands act on. Rebuilt each render, so it always sees the current state.
+  /** Stops the app's own check (#221 item 1): the panel's Stop, its `x`, and `:check stop` (#361).
+   * serve stops it at its next step, and the check's own answer then says where. A stop that
+   * doesn't reach serve offers Stop again (errors.md row 203). */
+  const stopCheck = (job: string) => {
+    const run = checkRun.current;
+    setCheck(checkStopping);
+    backend.stopCheck(job).catch((e: unknown) => {
+      if (run !== checkRun.current) return;
+      setCheck(checkStopFailed);
+      setMessage(`The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+
   /** `:check` with no Host (ticket 49): every health section, shown as `:help health` (open at once,
    * saying it's checking, then filled in). roster's own sections need `box.check` (API 16). */
   const checkBox = () => {
@@ -1448,6 +1461,11 @@ function Workspace({
     },
     check: (name) => {
       if (name === null) return checkBox();
+      // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
+      if (name === "stop" && !hostByName.has(name)) {
+        const target = stopTarget(check, conn.state === "ready" ? conn.info.inventory.api_version : 0);
+        return "job" in target ? stopCheck(target.job) : setMessage(target.message);
+      }
       // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
       const current = onScreenTab && !onScreenTab.quick ? onScreenTab.host : null;
       if (name === "%" && current === null) {
@@ -2351,17 +2369,7 @@ function Workspace({
               checkRun.current++;
               setCheck(null);
             }}
-            onStop={(job) => {
-              const run = checkRun.current;
-              setCheck(checkStopping);
-              // serve stops it at its next step, and the check's own answer then says where. A stop
-              // that doesn't reach serve offers Stop again (errors.md row 203).
-              backend.stopCheck(job).catch((e: unknown) => {
-                if (run !== checkRun.current) return;
-                setCheck(checkStopFailed);
-                setMessage(`The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`);
-              });
-            }}
+            onStop={stopCheck}
           />,
         )}
         {editing !== null && hostByName.get(editing) && framed("edit", "Edit", "edit", 

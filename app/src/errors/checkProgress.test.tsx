@@ -20,7 +20,7 @@ async function ready(scenario: Partial<FakeScenario> = {}) {
   const user = userEvent.setup();
   const backend = fakeBackend({ hosts, apiVersion: 21, heldChecks: [host, other], ...scenario });
   render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform()} />);
-  await screen.findByText(/12 hosts/i);
+  await screen.findByText(/\d+ hosts/i);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i });
   return { user, backend };
@@ -255,6 +255,72 @@ describe(":check HOST, Stop (#221 item 1)", () => {
     const panel = await check(user, host);
     await act(async () => {});
     expect(within(panel).queryByRole("button", { name: "Stop the check" })).toBeNull();
+  });
+});
+
+describe(":check stop and the panel's x (#361)", () => {
+  const stopButton = (panel: HTMLElement) => within(panel).findByRole("button", { name: "Stop the check" });
+  const line = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
+    await user.keyboard(`${LEADER}:`);
+    await user.keyboard(`${text}{Enter}`);
+  };
+
+  it(":check stop stops the app's own check, as Stop does", async () => {
+    const { user, backend } = await ready();
+    const panel = await check(user, host);
+    await stopButton(panel);
+    await line(user, "check stop");
+    expect(backend.stoppedChecks()).toEqual(["check-1"]);
+    expect(within(panel).queryByRole("button", { name: "Stop the check" })).toBeNull();
+    expect(panel).toHaveTextContent(`Stopping the check of ${host}…`);
+  });
+
+  it(":check stop with no check running says so", async () => {
+    const { user, backend } = await ready();
+    await line(user, "check stop");
+    expect(await screen.findByText("There's no check running to stop")).toBeInTheDocument();
+    expect(backend.stoppedChecks()).toEqual([]);
+  });
+
+  it(":check stop leaves a check another caller started alone, and says why", async () => {
+    const { user, backend } = await ready({ othersChecks: [host] });
+    await check(user, host);
+    await waitFor(() => expect(backend.jobsListed()).toBe(1));
+    await line(user, "check stop");
+    expect(await screen.findByText(`The check of ${host} isn't the app's to stop: another caller started it`)).toBeInTheDocument();
+    expect(backend.stoppedChecks()).toEqual([]);
+  });
+
+  it(":check stop that doesn't reach serve says so, and Stop is offered again (row 203)", async () => {
+    const { user } = await ready({ stopFails: true });
+    const panel = await check(user, host);
+    await stopButton(panel);
+    await line(user, "check stop");
+    expect(await screen.findByText(/The check couldn't be stopped: roster serve went away/)).toBeInTheDocument();
+    expect(await stopButton(panel)).toBeInTheDocument();
+  });
+
+  it("a Host named stop is still checked by :check stop", async () => {
+    const list = makeHosts(12);
+    const first = list.hosts.find((h) => h.reviewed)!;
+    list.hosts.push({ ...first, name: "stop" });
+    const { user } = await ready({ hosts: list, heldChecks: [] });
+    expect(await check(user, "stop")).toBeInTheDocument();
+  });
+
+  it("x in the panel stops it; its tooltip names the key, and focus stays in the panel", async () => {
+    const { user, backend } = await ready();
+    const panel = await check(user, host);
+    const stop = await stopButton(panel);
+    expect(stop).toHaveAttribute("title", "Stop the check (x)");
+    expect(stop).toHaveAttribute("aria-keyshortcuts", "x");
+    stop.focus();
+    await user.keyboard("x");
+    expect(backend.stoppedChecks()).toEqual(["check-1"]);
+    expect(within(panel).getByRole("button", { name: "Close the check" })).toHaveFocus();
+    // Once it's stopping, x does nothing more.
+    await user.keyboard("x");
+    expect(backend.stoppedChecks()).toEqual(["check-1"]);
   });
 });
 
