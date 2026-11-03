@@ -23,6 +23,7 @@ HOSTS = {"orion-2": "10.0.0.2", "orion-3": "10.0.0.3", "esx-02": "10.0.0.12", "s
          "nas-1": "10.0.0.30", "db-9": "10.0.9.9", "new-1": "10.0.0.40", "jump-1": "10.0.5.1"}
 
 CONFIG = """\
+box_name: box
 defaults:
   user: admin
 groups:
@@ -145,7 +146,7 @@ def net(fakes, isolated, write_config, monkeypatch, host_key):
 def key_line_of(net, src, dst_ip):
     d = "vmfs/volumes/5f0e-uuid/.roster-mesh" if (net.host(src) / "esxi").exists() else "home/.ssh/roster-mesh"
     pub = (net.host(src) / d / "id_ed25519.pub").read_text().split()
-    return f'from="{dst_ip}",no-agent-forwarding,no-X11-forwarding {pub[0]} {pub[1]} roster-mesh:{src}'
+    return f'from="{dst_ip}",no-agent-forwarding,no-X11-forwarding {pub[0]} {pub[1]} roster-mesh:{src}@box'
 
 
 # ---------------------------------------------------------------- inventory
@@ -800,11 +801,11 @@ def test_rewriting_a_file_keeps_its_mode(net):
 
 def test_every_rewrite_on_a_host_is_relabelled_after_the_move():
     h = {"name": "orion-2", "ssh": {"user": "admin"}}
-    script = mesh.write_script(h, "apply", {}, [], set())
+    script = mesh.write_script(h, "apply", {}, [], set(), "box")
     body = script[script.index("replace() {"):script.index("put() {")]
     mv = body.index('mv -f "$n" "$f"')
     assert body.index('chcon --reference="$f" "$n"') < mv < body.index('restorecon -F "$f"')
-    assert "replace" in mesh.cut_script(h, "orion-3", False)
+    assert "replace" in mesh.cut_script(h, "orion-3", False, "box")
 
 
 @pytest.mark.parametrize("ok", [True, False])
@@ -1464,6 +1465,9 @@ def test_naming_the_inventory_the_mesh_state_is_from_moves_it_once(net, isolated
     assert not (config_dir() / "mesh.json").exists()
     main(["sync"])                                  # named: its own ssh config, as after any `inv add`
     capsys.readouterr()
+    assert main(["mesh"]) == 0                      # its entries now carry the Inventory too (T199): tagged once
+    assert "tag key from orion-2 as this Box's" in capsys.readouterr().out
+    assert any(x.endswith("roster-mesh:orion-2@box/lab") for x in net.mesh_lines("nas-1"))
     assert main(["mesh"]) == 0 and "already in the mesh" in capsys.readouterr().out
 
 
@@ -1586,7 +1590,7 @@ def test_find_leftovers_reports_what_this_roster_yml_doesnt_ask_for_and_changes_
     out = capsys.readouterr().out
     assert net.snapshot() == before
     assert "nas-1: key from orion-2 (from=10.0.0.2)" in out
-    assert "may be another Box's or another Inventory's Mesh" in out
+    assert "this Box's own (their tag names it)" in out             # T199: this Box's tag, so this Box's
     logged = [x.split()[1] for x in net.connections() if x.startswith("start")]
     assert len(logged) == len(set(logged))              # once per Host, one at a time
 
@@ -1604,6 +1608,7 @@ def test_remove_leftovers_asks_says_whose_they_may_be_and_removes_only_them(net,
     mesh.run(net.cfg(), apply=True)
     reinstall()
     net.cfg_path.write_text(DROPPED)
+    untag(net)                                          # an older roster's: they may be another Box's
     asked = []
     monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
     assert main(["mesh", "--remove-leftovers"]) == 1
@@ -1629,7 +1634,9 @@ def test_remove_leftovers_takes_a_former_sources_files_too(net):
 
 
 def test_remove_leftovers_is_refused_with_another_inventorys_mesh_on_this_box(net, capsys):
+    """With an older roster's lines only (no Box or Inventory in their tag): this Box's own are told apart."""
     mesh.run(net.cfg(), apply=True)
+    untag(net)
     reinstall()
     (mesh.state_file().parent / "mesh-work.json").write_text("{}\n")
     net.cfg_path.write_text(DROPPED)
@@ -1792,3 +1799,217 @@ def test_a_reinstalled_box_with_the_same_roster_yml_takes_the_mesh_as_it_is(net)
     assert mesh.run(net.cfg())["already"]                # the same keys and lines: nothing to change
     mesh.run(net.cfg(), apply=True)
     assert net.snapshot() == before
+
+
+# ---------------------------------------------------------------- whose Mesh it is (T199, #379)
+# Each Box (and named Inventory) tags what it writes with itself: roster-mesh:SOURCE@BOX (BOX/INVENTORY for a named
+# Inventory) in authorized_keys, and the same owner in the Mesh files' headers, so one Box's apply, cut or
+# --remove-leftovers never takes another's.
+
+# Box L3 (#372's review, second pass): orion-2 only as a peer (L1 meshes it as a source), nas-1 as a source
+L3_BOX = """\
+box_name: l3
+defaults:
+  user: admin
+groups:
+  home:
+    hosts:
+      orion-2: 10.0.0.2
+      nas-1: 10.0.0.30
+links:
+  - { from: nas-1, to: orion-2 }
+"""
+
+
+class Box:
+    """Another Box on the same Hosts: its own roster.yml and its own Mesh state (~/.config/roster/mesh.json)."""
+
+    def __init__(self, net, yml):
+        self.net, self.yml, self.state = net, yml, None
+
+    def __enter__(self):
+        f = mesh.state_file()
+        self.mine, self.cfg = (f.read_bytes() if f.exists() else None), self.net.cfg_path.read_text()
+        f.unlink(missing_ok=True)
+        if self.state is not None:
+            f.write_bytes(self.state)
+        self.net.cfg_path.write_text(self.yml)
+        return self
+
+    def __exit__(self, *exc):
+        f = mesh.state_file()
+        self.state = f.read_bytes() if f.exists() else None
+        f.unlink(missing_ok=True)
+        if self.mine is not None:
+            f.write_bytes(self.mine)
+        self.net.cfg_path.write_text(self.cfg)
+
+
+def mesh_files(net, host):
+    """Everything the Mesh keeps on HOST as a source, and the lines it adds to ~/.ssh/config and CLAUDE.md."""
+    d = net.host(host) / "home/.ssh/roster-mesh"
+    files = {p.name: p.read_text() for p in sorted(d.iterdir())} if d.exists() else {}
+    return files, net.file(host, "home/ROSTER.md"), net.file(host, "home/.ssh/config")
+
+
+def test_another_boxs_apply_leaves_this_boxs_mesh_on_a_shared_host_alone(net):
+    """#379: L1 meshes orion-2 -> nas-1; L3 lists orion-2 only as a peer (nas-1 -> orion-2). L3's apply used to remove
+    orion-2's Mesh key, config, known_hosts, Include and ROSTER.md, which L1 wrote."""
+    mesh.run(net.cfg(), apply=True)                                  # Box L1 (box)
+    l1_files, l1_nas = mesh_files(net, "orion-2"), net.mesh_lines("nas-1")
+    assert l1_files[0] and l1_files[1] and all(x.endswith("roster-mesh:orion-2@box") for x in l1_nas)
+    l3 = Box(net, L3_BOX)
+    with l3:
+        r = mesh.run(net.cfg(), apply=True)
+        assert r["pending"] == {}
+        assert not any(c.startswith("remove") for h in r["hosts"] for c in h["changes"])
+        assert mesh.run(net.cfg())["already"]
+    assert mesh_files(net, "orion-2") == l1_files                    # L1's Mesh on orion-2 intact
+    assert [x for x in net.mesh_lines("nas-1") if "@box" in x] == l1_nas
+    assert any(x.endswith("roster-mesh:nas-1@l3") for x in net.mesh_lines("orion-2"))
+    l3_nas = mesh_files(net, "nas-1")
+    assert "(owner l3)" in l3_nas[0]["config"]
+    r = mesh.run(net.cfg(), apply=True)                              # L1 again: L3's Mesh stays
+    assert not any(c.startswith("remove") for h in r["hosts"] for c in h["changes"]), r["hosts"]
+    assert mesh_files(net, "nas-1") == l3_nas
+    assert any(x.endswith("roster-mesh:nas-1@l3") for x in net.mesh_lines("orion-2"))
+    assert mesh.run(net.cfg())["already"]
+    with l3:
+        assert mesh.run(net.cfg())["already"]
+
+
+def test_two_inventories_on_one_box_never_remove_each_others_mesh(net, isolated, capsys):
+    """#379: two named Inventories on this Box that mesh the same machines: each one's apply, and dropping its Link,
+    leaves the other's lines and files alone."""
+    work = isolated["home"] / "work-inv"
+    work.mkdir()
+    (work / "roster.yml").write_text(L3_BOX.replace("box_name: l3\n", "box_name: box\n"))
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert main(["inv", "add", "work", str(work / "roster.yml")]) == 0
+    assert main(["--inv", "lab", "mesh"]) == 0
+    lab_o2, lab_nas = mesh_files(net, "orion-2"), net.mesh_lines("nas-1")
+    assert all(x.endswith("roster-mesh:orion-2@box/lab") for x in lab_nas)
+    assert main(["--inv", "work", "mesh"]) == 0
+    assert any(x.endswith("roster-mesh:nas-1@box/work") for x in net.mesh_lines("orion-2"))
+    assert mesh_files(net, "orion-2") == lab_o2 and [x for x in net.mesh_lines("nas-1") if "/lab" in x] == lab_nas
+    work_nas = mesh_files(net, "nas-1")
+    capsys.readouterr()
+    assert main(["--inv", "lab", "mesh"]) == 0
+    assert "already in the mesh" in capsys.readouterr().out
+    (work / "roster.yml").write_text(L3_BOX.replace("box_name: l3\n", "box_name: box\n").split("links:")[0])
+    assert main(["--inv", "work", "mesh"]) == 0                      # work's Link gone: only work's entries go
+    assert not any("@box/work" in x for x in net.mesh_lines("orion-2"))
+    assert mesh_files(net, "nas-1") != work_nas and not (net.host("nas-1") / "home/.ssh/roster-mesh").exists()
+    assert mesh_files(net, "orion-2") == lab_o2 and net.mesh_lines("nas-1") == lab_nas
+
+
+def untag(net):
+    """The Hosts as a roster before #379 left them: no Box in the tag, the key's comment or the files' headers."""
+    for p in net.root.rglob("*"):
+        if p.is_file() and p.name in ("authorized_keys", "id_ed25519.pub", "config", "ROSTER.md"):
+            t = p.read_text()
+            t = re.sub(r"(roster-mesh:[A-Za-z0-9._-]+)@[A-Za-z0-9_/.-]+$", r"\1", t, flags=re.M)
+            t = re.sub(r"^(# Written by roster mesh for \S+) \(owner [^)]*\)", r"\1", t, flags=re.M)
+            t = re.sub(r"^(<!-- roster-mesh: written by roster for \S+) \(owner [^)]*\)", r"\1", t, flags=re.M)
+            p.write_text(t)
+    f = mesh.state_file()
+    if f.exists():                                      # and its Mesh record, which said no owner
+        st = json.loads(f.read_text())
+        st.pop("owner", None)
+        f.write_text(json.dumps(st))
+
+
+def test_an_older_rosters_entries_this_box_wrote_are_tagged_on_its_next_apply(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    tagged = net.snapshot()
+    untag(net)
+    assert not any("@box" in x for h in HOSTS for x in net.mesh_lines(h))
+    r = mesh.run(net.cfg())                                          # the plan says so
+    assert "tag key from orion-2 as this Box's" in next(h for h in r["hosts"] if h["host"] == "nas-1")["changes"]
+    mesh.run(net.cfg(), apply=True)
+    assert net.snapshot() == {k: v for k, v in tagged.items()
+                              if not k.endswith("id_ed25519.pub")} | {k: v for k, v in net.snapshot().items()
+                                                                      if k.endswith("id_ed25519.pub")}
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_an_older_rosters_entries_this_box_has_no_record_of_are_kept_and_found_as_leftovers(net, capsys, monkeypatch):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    reinstall()                                         # no record: nothing proves they're this Box's
+    old = {h: net.mesh_lines(h) for h in HOSTS}
+    o2 = mesh_files(net, "orion-2")
+    net.cfg_path.write_text(DROPPED)                    # orion-2 -> nas-1 no longer asked for
+    mesh.run(net.cfg(), apply=True)
+    assert all(x in net.mesh_lines(h) for h in HOSTS for x in old[h])          # unknown owner: kept
+    assert mesh_files(net, "orion-2")[0] == o2[0]
+    capsys.readouterr()
+    assert main(["mesh", "--find-leftovers"]) == 0
+    out = capsys.readouterr().out
+    assert "nas-1: key from orion-2 (from=10.0.0.2), with no Box in its tag" in out
+    assert "may be another Box's or another Inventory's Mesh" in out
+    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert not any(x.endswith("roster-mesh:orion-2") for x in net.mesh_lines("nas-1"))
+
+
+def test_a_new_box_with_the_same_roster_yml_adds_its_own_lines_and_takes_none(net):
+    mesh.run(net.cfg(), apply=True)
+    box = net.snapshot()
+    other = Box(net, CONFIG.replace("box_name: box\n", "box_name: l2\n"))
+    with other:
+        r = mesh.run(net.cfg(), apply=True)
+        assert r["pending"] == {}                       # the sources' files are box's, with the same peers: fine
+        assert mesh.run(net.cfg())["already"]
+    assert any(x.endswith("roster-mesh:orion-2@l2") for x in net.mesh_lines("nas-1"))
+    assert all(x in net.ak(h) for h in HOSTS for x in net.mesh_lines(h) if "@box" in x)
+    assert mesh_files(net, "orion-2")[0]["config"] == box["orion-2/home/.ssh/roster-mesh/config"].decode()
+    with other:                                         # l2 drops its Link: only its own line goes
+        net.cfg_path.write_text(DROPPED.replace("box_name: box\n", "box_name: l2\n"))
+        mesh.run(net.cfg(), apply=True)
+    assert [x for x in net.mesh_lines("nas-1") if "@" in x] == [key_line_of(net, "orion-2", "10.0.0.2")]
+
+
+def test_a_source_whose_files_are_another_boxs_with_other_peers_is_pending_and_left_alone(net):
+    mesh.run(net.cfg(), apply=True)
+    o2 = mesh_files(net, "orion-2")
+    with Box(net, L3_BOX.replace("from: nas-1, to: orion-2", "from: orion-2, to: nas-1")):
+        r = mesh.run(net.cfg(), apply=True)
+        assert "orion-2" in r["pending"] and "another Box's or Inventory's (box)" in r["pending"]["orion-2"]
+        r = mesh.run(net.cfg(), apply=True, rotate=["orion-2"])         # nor is box's key replaced
+        assert "is another Box's or Inventory's (box): roster doesn't replace it" in r["pending"]["orion-2"]
+    assert mesh_files(net, "orion-2") == o2
+
+
+def test_a_cut_says_when_an_older_rosters_line_it_cant_prove_is_still_there(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    reinstall()                                         # no record: the older lines may be another Box's
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "orion-2: a roster-mesh:orion-3 line with no Box in its tag is still there" in out
+    assert any(x.endswith("roster-mesh:orion-3") for x in net.mesh_lines("orion-2"))
+
+
+def test_cut_takes_this_boxs_lines_and_proven_older_ones_and_leaves_another_boxs(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)                                          # this Box's, from before #379: its record proves it
+    with Box(net, L3_BOX):
+        mesh.run(net.cfg(), apply=True)
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 0
+    assert not any("roster-mesh:orion-2" in x for h in HOSTS for x in net.mesh_lines(h))
+    assert any(x.endswith("roster-mesh:nas-1@l3") for x in net.mesh_lines("orion-2"))   # l3's: kept
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert [x for h in HOSTS for x in net.mesh_lines(h)] == [x for x in net.mesh_lines("orion-2") if "@l3" in x]
+    assert (net.host("nas-1") / "home/.ssh/roster-mesh/config").exists()           # l3's files: kept
+
+
+def test_a_renamed_box_takes_its_entries_under_the_earlier_name_with_it(net):
+    """box_name: changed (or the Inventory named): its record says which owner its entries carry, so they're its own."""
+    mesh.run(net.cfg(), apply=True)
+    net.cfg_path.write_text(DROPPED.replace("box_name: box\n", "box_name: box2\n"))
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {}
+    assert not any("@box" in x and "@box2" not in x for h in HOSTS for x in net.mesh_lines(h))
+    assert not any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))      # its dropped Link's line too
+    assert "(owner box2)" in net.file("orion-2", "home/.ssh/roster-mesh/config")
+    assert mesh.run(net.cfg())["already"]

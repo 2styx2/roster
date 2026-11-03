@@ -243,7 +243,7 @@ how long to wait for the answer (default: 30)
 .PP
 \fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-find\-leftovers] [\-\-remove\-leftovers] [\-\-json] [{cut,status}] [HOST]\fR
 .PP
-Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change, then syncs this Box as \fBroster sync\fR does; \fBmesh cut \-\-all [\-y]\fR takes every Mesh entry off every Host (any other Box's on them too) and leaves \fBroster.yml\fR as it is (before removing roster: Uninstalling roster); \fBmesh \-\-find\-leftovers\fR lists the Mesh entries on every Host that this \fBroster.yml\fR doesn't ask for, changing nothing, and \fBmesh \-\-remove\-leftovers [\-y]\fR removes them after a question (they may be another Box's: A Box with no Mesh record); \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
+Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change, then syncs this Box as \fBroster sync\fR does; \fBmesh cut \-\-all [\-y]\fR takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves \fBroster.yml\fR as it is (before removing roster: Uninstalling roster); \fBmesh \-\-find\-leftovers\fR lists the Mesh entries on every Host that this \fBroster.yml\fR doesn't ask for, changing nothing, and \fBmesh \-\-remove\-leftovers [\-y]\fR removes them after a question (an older roster's may be another Box's: Whose Mesh it is); \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
 .TP
 \fBACTION\fR
 cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections)
@@ -264,10 +264,10 @@ with cut: don't ask first
 with cut: every Mesh entry off every Host, roster.yml unchanged (before removing roster from this Box)
 .TP
 \fB\-\-find\-leftovers\fR
-look on every Host, once, for Mesh entries this roster.yml doesn't ask for (an earlier install's, or another Box's); changes nothing
+look on every Host, once, for Mesh entries this roster.yml doesn't ask for (this Box's, or an older roster's with no Box in the tag); changes nothing
 .TP
 \fB\-\-remove\-leftovers\fR
-the same, then remove them after a question (\-y doesn't ask): they may be another Box's Mesh
+the same, then remove them after a question (\-y doesn't ask): an older roster's may be another Box's Mesh
 .TP
 \fB\-\-json\fR
 with status or \-\-dry\-run: print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
