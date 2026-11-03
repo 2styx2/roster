@@ -167,6 +167,19 @@ export function lookupCommand(view: HelpView): CommandDef {
   };
 }
 
+/** `:version` (T180): this build's version, roster's licence and the third-party notices, as Neovim's
+ * `:version`; the `version` help page, made from THIRD-PARTY-NOTICES when the app is built. */
+export function versionCommand(view: HelpView): CommandDef {
+  return {
+    id: "version",
+    source: BUILTIN,
+    area: "App",
+    seldom: true,
+    label: () => "Version, licence and third-party notices",
+    run: () => void view.openTopic("version"),
+  };
+}
+
 /** `:helpgrep [TEXT]`: searches the text of every page (Neovim's `:helpgrep`), in a finder. */
 export function helpgrepCommand(): CommandDef {
   return {
@@ -279,6 +292,7 @@ export function registerHelp(registries: Registries, view: HelpView): () => void
     registries.commands.register(helpCommand(view)),
     registries.commands.register(helpgrepCommand()),
     registries.commands.register(lookupCommand(view)),
+    registries.commands.register(versionCommand(view)),
     registries.finders.register(helpFinder(view)),
     registries.finders.register(helpgrepFinder(view)),
     registries.finders.register(outlineFinder(view)),

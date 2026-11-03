@@ -1,19 +1,25 @@
-"""Check that release archives ship THIRD-PARTY-NOTICES next to LICENSE (T170, docs/releasing.md).
+"""Check that the app's downloads ship THIRD-PARTY-NOTICES next to LICENSE (T170, T180, docs/releasing.md).
 
 The app binaries carry code ported from other projects (THIRD-PARTY-NOTICES lists it), and their licences
-ask that the notice ship with every copy. release.yml runs this on the app's archives right after packing them:
+ask that the notice ship with every copy. release.yml runs this on the app's archives right after packing them,
+and on each installer unpacked into a folder:
 
     python3 scripts/check-release-notices.py out/*.zip out/*.tar.gz
+    python3 scripts/check-release-notices.py unpacked/deb unpacked/appimage
+    python3 scripts/check-release-notices.py --config app/src-tauri/tauri.conf.json
 
 In every .zip, .tar.gz or .tgz given, each folder that holds a LICENSE must hold a THIRD-PARTY-NOTICES too.
-Exit 0 when all of them do, 1 when one doesn't, 2 on bad arguments. Standard library only (it runs on the
-release runners' own Python).
+A folder given (an installer unpacked, or an installed app) must have both, side by side, somewhere in it.
+--config checks the Tauri config bundles both into every installer. Exit 0 when all of them do, 1 when one
+doesn't, 2 on bad arguments. Standard library only (it runs on the release runners' own Python).
 """
 
+import json
+import os
 import sys
 import tarfile
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 NOTICES = "THIRD-PARTY-NOTICES"
 
@@ -42,16 +48,57 @@ def missing(members):
     return out
 
 
+def config_gaps(path):
+    """What the Tauri config at PATH lacks for the installers to carry LICENSE and THIRD-PARTY-NOTICES.
+
+    bundle.resources must map each from the repo root (../../ from app/src-tauri) to the top of the app's
+    resources, where every installer puts it on disk, and bundle.licenseFile must be LICENSE (the licence the
+    Windows installers show)."""
+    with open(path, encoding="utf-8") as f:
+        bundle = json.load(f).get("bundle", {})
+    resources = bundle.get("resources")
+    resources = resources if isinstance(resources, dict) else {}
+    out = [f"bundle.resources has no ../../{n} (as {n})" for n in ("LICENSE", NOTICES)
+           if resources.get(f"../../{n}") != n]
+    if bundle.get("licenseFile") != "../../LICENSE":
+        out.append("bundle.licenseFile isn't ../../LICENSE")
+    return out
+
+
+def together(folder):
+    """The first folder under FOLDER (itself included) that holds both LICENSE and THIRD-PARTY-NOTICES, with /."""
+    for dirpath, _dirs, files in sorted(os.walk(folder)):
+        if "LICENSE" in files and NOTICES in files:
+            return Path(dirpath).as_posix()    # the same log on every OS
+    return None
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if not argv:
-        print("usage: check-release-notices.py ARCHIVE...", file=sys.stderr)
+    if not argv or argv[0] == "--config" and len(argv) != 2:
+        print("usage: check-release-notices.py ARCHIVE|FOLDER... | --config TAURI_CONF", file=sys.stderr)
         return 2
+    if argv[0] == "--config":
+        gaps = config_gaps(argv[1])
+        for g in gaps:
+            print(f"error: {argv[1]}: {g}: the installers must carry LICENSE and {NOTICES}", file=sys.stderr)
+        if not gaps:
+            print(f"{argv[1]}: ok")
+        return 1 if gaps else 0
     bad = 0
     for a in argv:
+        if os.path.isdir(a):
+            found = together(a)
+            if found is None:
+                print(f"error: {a} has no folder with both LICENSE and {NOTICES}: the installer must carry them "
+                      "(bundle.resources in app/src-tauri/tauri.conf.json)", file=sys.stderr)
+                bad = 1
+            else:
+                print(f"{a}: ok ({found})")
+            continue
         members = names(a)
         if members is None:
-            print(f"error: {a}: not a .zip, .tar.gz or .tgz", file=sys.stderr)
+            print(f"error: {a}: not a .zip, .tar.gz, .tgz or folder", file=sys.stderr)
             return 2
         gaps = missing(members)
         for folder in gaps:
