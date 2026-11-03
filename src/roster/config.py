@@ -5,6 +5,7 @@ import os
 import re
 import socket
 from pathlib import Path
+from typing import Any, Literal, overload
 from urllib.parse import urlparse
 
 import yaml
@@ -40,11 +41,18 @@ def find_config(arg):
         "or pass -c PATH / set ROSTER_CONFIG")
 
 
-def load_config(path):
+def load_inventory(path):
+    """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
     path = Path(path).expanduser().resolve()
     if not path.exists():
         die(f"{path} not found - run `roster init` to create one")
-    return parse_config(path.read_text(), path)
+    return parse_inventory(path.read_text(), path)
+
+
+def load_config(path):
+    """load_inventory's dict view, for the code that still reads dicts (it moves to the models when a ticket
+    touches it)."""
+    return load_inventory(path).as_config()
 
 
 def load_config_text(text, path):
@@ -53,7 +61,16 @@ def load_config_text(text, path):
 
 
 def parse_config(text, path):
-    """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked."""
+    """parse_inventory's dict view."""
+    return parse_inventory(text, path).as_config()
+
+
+def parse_inventory(text, path):
+    """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked into an Inventory. A check
+    the code below doesn't make the models do, and their error is roster's own (die), naming the key."""
+    from pydantic import ValidationError  # only when roster.yml is loaded: it costs more than roster's start
+
+    from .models import Inventory, problem
     try:
         raw = yaml.safe_load(text) or {}
     except yaml.YAMLError as e:
@@ -88,7 +105,7 @@ def parse_config(text, path):
                 die(f"host {hname!r}: ip/user can't contain spaces")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working
             m["user"], m["port"], m["auth"] = m["ssh"]["user"], m["ssh"]["port"], m["ssh"]["auth"]
-            m["login"] = {k: first(layers, k) for k in LOGIN}    # default login for the host's services
+            m["login"] = {"user": as_user(first(layers, "user")), "auth": as_auth(first(layers, "auth"))}  # for services
             m["services"], m["web"], m["problems"] = resolve_services(hname, m, layers, names)
             m["enroll"] = bool(m["enroll"])
             m["reviewed"] = bool(m["reviewed"])
@@ -117,12 +134,16 @@ def parse_config(text, path):
     key = Path(os.path.expanduser(str(raw.get("key_path") or "~/.ssh/roster_ed25519")))
     # matches this box's key line in authorized_keys, including tags from older versions
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
-    return {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
-            "pub": Path(str(key) + ".pub"), "workers": int(raw.get("workers") or 32),
-            "inline_limit": int(raw.get("claude_inline_limit") or 60), "hosts": hosts, "groups": groups, "mesh_dirs": mesh_dirs,
-            "seen_as": seen_as, "sudo": sudo_refs,
-            "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
-            "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])}
+    try:
+        return Inventory.model_validate(
+            {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
+             "pub": Path(str(key) + ".pub"), "workers": raw.get("workers") or 32,
+             "inline_limit": raw.get("claude_inline_limit") or 60, "hosts": hosts, "groups": groups,
+             "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
+             "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
+             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])})
+    except ValidationError as e:
+        die(f"{path}: {problem(e)}")
 
 
 # ---------------------------------------------------------------- the Mesh's links (decision Q63)
@@ -433,7 +454,12 @@ def matches(h, text):
     return bool(words) and all(w in hay for w in words)
 
 
-def selected(cfg, only, resources=False):
+@overload
+def selected(cfg: dict[str, Any], only: str | None, resources: Literal[False] = False) -> list[dict[str, Any]]: ...
+@overload
+def selected(cfg: dict[str, Any], only: str | None,
+             resources: Literal[True]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]: ...
+def selected(cfg: dict[str, Any], only: str | None, resources: bool = False) -> Any:
     """Hosts picked by --only; with resources=True, (hosts, resources), and a match on either is enough."""
     hosts, rs = list(cfg["hosts"].values()), list(cfg["resources"].values()) if resources else []
     if only:

@@ -14,6 +14,7 @@ doc's `<!-- BEGIN generated:methods ... -->` markers and run `uv run python scri
 """
 
 import hashlib
+import io
 import json
 import os
 import queue
@@ -24,7 +25,9 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Any
 
 from . import __version__, askpass, boxsync, changes, diagnose, discover, edit, fill, health, jobs, mesh, providers
 from .common import (
@@ -120,13 +123,13 @@ class State:
         self.noticed = None                 # an outside edit already reported as not applied (auto off)
         self.auto = False                   # inventory.watch: apply outside edits as they're saved
         self.watcher = None                 # the Watcher thread, once inventory.watch started it
-        self.notify = None                  # fn(method, params): a JSON-RPC notification to the app (serve() sets it)
+        self.notify: Callable[[str, Any], None] | None = None    # fn(method, params): a JSON-RPC notification to the app (serve() sets it)
         # roster.yml, its repo and the loaded Inventory: every write holds it for its whole request, a reload for
         # itself (LOCKS). Reentrant for its holder, so a write may reload.
         self.lock = Lock("roster.yml")
         self.vault = Lock("the vault")      # unlocking and locking alone; looking up, saving, minting tokens shared
         self.unlocked = set()               # providers vault.unlock opened (vault.lock locks them again)
-        self.askpass = None                 # the askpass Channel, while serve() runs
+        self.askpass: Any = None            # the askpass Channel, while serve() runs
         self.login = None                   # the sign-in in progress (vault.login): SignIn
         self.created = {}                   # item id -> provider, for the items vault.create_item made (undo)
         self.jobs = jobs.Jobs(log=log_line)  # background work: Mesh runs and scans (its notify is serve's)
@@ -166,7 +169,7 @@ class State:
         if self.error is None:
             return None
         p = inventory_problem(self.error, self.path)
-        p.data |= versions()
+        p.data = {**(p.data or {}), **versions()}
         return p
 
     def fresh(self):
@@ -182,7 +185,7 @@ class State:
 
     def inventory(self):
         if self.cfg is None:
-            raise self.problem()
+            raise self.problem() or RuntimeError("roster.yml hasn't been loaded yet")
         return self.cfg
 
 
@@ -518,7 +521,8 @@ def check_job(state, name):
             # shared only for the steps that fetch a secret or mint a token (diagnose.VAULT_STEPS), so a lock or an
             # unlock never waits for the rest; vault.lock stops the check rather than wait (stop_checks)
             at = current_deadline()
-            if not state.vault.acquire(True, max(0.0, at - time.monotonic()), "host.check", job.halted):
+            wait = LOCK_WAIT if at is None else max(0.0, at - time.monotonic())
+            if not state.vault.acquire(True, wait, "host.check", job.halted):
                 if job.halted.is_set():
                     raise diagnose.Stopped
                 raise busy_error("vault", state.vault.holder())
@@ -966,8 +970,9 @@ def quick_prepare(state, params):
     key, recorded = diagnose.offered_key(h)
     if recorded == "changed":
         p = diagnose.changed_key(h, recorded_host_keys(h), key)
-        p.data["fix"] = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
-                         "the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts")
+        fix = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
+               "the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts")
+        p.data = {**(p.data or {}), "fix": fix}
         raise p
     offered = still_offered(asked, key, label, "not connecting", "box", "Quick Connect again")
     qid = secrets.token_hex(8)
@@ -2079,7 +2084,7 @@ def vault_targets(state, params):
         raise write_problem(e) from None
     problem = found["problem"] and write_problem(found["problem"])
     return {"provider": provider, **found,
-            "problem": problem and {"code": problem.code, "message": problem.message, "fix": problem.data["fix"]}}
+            "problem": problem and {"code": problem.code, "message": problem.message, "fix": (problem.data or {}).get("fix")}}
 
 
 METHODS["vault.create_item"] = vault_create_item
@@ -3104,8 +3109,9 @@ class Server:
 def serve(config_arg):
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
-    sys.stdin.reconfigure(encoding="utf-8", newline="\n")
-    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    for stream in (sys.stdin, sys.stdout):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", newline="\n")
     out = sys.stdout
     sys.stdout = sys.stderr             # whatever else roster prints (warnings, say()) must not corrupt the stream
     state = State(config_arg)
