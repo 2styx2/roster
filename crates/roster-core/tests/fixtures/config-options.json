@@ -1831,7 +1831,7 @@
           "written": "roster.o.terminal.right_click_paste",
           "ty": "boolean",
           "default": "true",
-          "about": "Right-click copies the selection, or pastes when there's none.",
+          "about": "Right-click copies the selection, or pastes when there's none; with copy_on_select on, it copies and then pastes.",
           "takes": "",
           "names": [],
           "item": null,

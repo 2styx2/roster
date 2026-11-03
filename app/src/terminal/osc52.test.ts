@@ -1,6 +1,6 @@
 // OSC 52 (#293, decision Q149): a program on the Host sets the clipboard, as Windows Terminal
 // lets it. Through a real xterm.js parser, so the sequences are the ones a program sends.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { memoryPlatform } from "../platform/memory";
 import { CommittedLines } from "../plugins/committed";
@@ -267,10 +267,11 @@ describe("Osc52Stripper: copied text out of what roster keeps to explain a failu
 });
 
 describe("screenWriter when xterm refuses a write (#295 review)", () => {
-  it("a write that throws leaves nothing behind: what follows is written, OSC 52 still filtered", () => {
+  it("a write that throws leaves nothing behind and is logged once: what follows is written, OSC 52 still filtered", () => {
     const got: string[] = [];
     let fail = true;
     const t = {
+      parser: { registerCsiHandler: () => ({ dispose() {} }) },
       write(data: string | Uint8Array) {
         if (fail) {
           fail = false;
@@ -279,13 +280,18 @@ describe("screenWriter when xterm refuses a write (#295 review)", () => {
         got.push(new TextDecoder().decode(data as Uint8Array));
       },
     };
-    const screen = screenWriter(t);
+    const screen = screenWriter(t as unknown as Terminal);
     const enc = (x: string) => new TextEncoder().encode(x);
-    expect(() => screen.write(enc("lost"), false)).toThrow();
+    // Logged once, by the error's name only, and the next write goes on (ticket 172).
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    screen.write(enc("lost"), false);
     screen.write(enc("next"), false);
     screen.write(enc(`held\x1b]52;c;${b64("x")}\x07`), true);
     screen.write(enc("live"), false);
     expect(got).toEqual(["next", "held", "live"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/lost|discarded/);
+    warn.mockRestore();
   });
 });
 

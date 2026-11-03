@@ -208,7 +208,8 @@ app/e2e/              copy and paste end to end (T158): TerminalView in headless
                       Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md);
                       a Host row's menu placed in the whole app's layout (T173, host-menu.e2e.ts)
 app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it's shown (questions go through)
-app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153)
+app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153); bound to its xterm, guards it (T172)
+app/src/terminal/xtermGuard.ts  what keeps an xterm fed a Session's output going when a handler throws: ED 1 rerun as ED 2, any other sequence skipped, logged once (T172, Q158)
 ```
 
 **Checks** (run all before a commit):

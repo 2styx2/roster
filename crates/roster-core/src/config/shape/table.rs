@@ -337,7 +337,7 @@ pub(super) fn options() -> Vec<Opt> {
         "boolean",
         "true",
         BOOL,
-        "Right-click copies the selection, or pastes when there's none.",
+        "Right-click copies the selection, or pastes when there's none; with copy_on_select on, it copies and then pastes.",
         "false",
     );
     b.leaf(
