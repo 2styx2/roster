@@ -624,8 +624,11 @@ def test_run_on_a_windows_password_host_sends_the_same_script(win, capfd, write_
     assert win.sent and win.sent[-1][0] == winhost.remote_command() and "hello" not in win.sent[-1][0]
 
 
-@needs_powershell
-def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd):
+@stand_in_hosts
+@pytest.mark.skipif(WINDOWS, reason="a POSIX stand-in Host on Windows would find this machine's own powershell")
+def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd, monkeypatch):
+    from conftest import POSIX_SH
+    monkeypatch.setenv("FAKE_SH", POSIX_SH)
     rc, out, err = run_on(win, capfd, "Write-Output hi", host="web-1")
     assert rc != 0 and "[156]" in err and "os:" in err
 
