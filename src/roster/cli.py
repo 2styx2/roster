@@ -281,7 +281,10 @@ def cmd_mesh(cfg, args):
 
 
 def cmd_check(cfg, args):
-    hosts = skip_left_out(selected(cfg, args.only), to_stderr=args.json)
+    wanted = selected(cfg, args.only)
+    hosts = skip_left_out(wanted, to_stderr=args.json)
+    # T194 (#371): a Host skipped (ssh NAME doesn't reach it), or nothing checked at all, isn't a pass
+    skipped = len(wanted) - len(hosts) or not hosts
     if not args.json:
         warn_problems(hosts)
 
@@ -298,7 +301,7 @@ def cmd_check(cfg, args):
         drift = mesh.drift(cfg) if not args.only else None
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
-        ok = all(r["ok"] for r in results) and not broken
+        ok = all(r["ok"] for r in results) and not broken and not skipped
         from . import jsondocs
         jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "ok": ok}))
         return 0 if ok else 1
@@ -319,7 +322,9 @@ def cmd_check(cfg, args):
                     or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
-    return 1 if bad else 0
+    if skipped:
+        say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
+    return 1 if bad or skipped else 0
 
 
 def cmd_check_host(args):
@@ -673,7 +678,8 @@ def check_ssh_takes(script):
 
 
 def cmd_revoke(cfg, args):
-    hosts = skip_left_out([h for h in selected(cfg, args.only) if h["enroll"]])
+    keyed = [h for h in selected(cfg, args.only) if h["enroll"]]
+    hosts = skip_left_out(keyed)
     script = "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))
     if hosts:
         check_ssh_takes(script)
@@ -686,9 +692,23 @@ def cmd_revoke(cfg, args):
         for h, ok in zip(hosts, ex.map(lambda h: revoke_on(h, script), hosts), strict=True):
             bad += not ok
             say(f"  {'ok  ' if ok else 'FAIL'}  {h['name']}")
-    say(f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts. "
-        f"To finish, delete {cfg['key']}, {cfg['pub']} and {ssh_config_file()} on this box.")
-    return 1 if bad else 0
+    done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
+    # T194 (#371): the files go only once every Host this file names has lost the key; with any skipped, failed or
+    # left to --only, deleting the key would leave it on those for good
+    every = len(hosts) == len(keyed) and not args.only
+    if bad or not hosts or not every:
+        why = ("nothing was revoked" if not hosts else "hosts above were skipped or failed" if bad or len(hosts) <
+               len(keyed) else "--only left this file's other hosts with the key")
+        say(f"{done} Not finished: {why}. Keep this box's key and ssh config files until every host of this "
+            "roster.yml has lost the key (`roster revoke` without --only names them then).")
+    else:
+        from .inventories import unnamed_from_elsewhere
+        files = [str(cfg["key"]), str(cfg["pub"])]
+        # never another roster.yml's config.d/roster (#371): its Hosts still need it
+        if unnamed_from_elsewhere() is None:
+            files.append(str(ssh_config_file()))
+        say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box.")
+    return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
 
 def revoke_targets():
@@ -718,7 +738,7 @@ def cmd_revoke_all(args):
         return 1
     plan: list[tuple[str, dict[str, Any], list[dict[str, Any]]]] = []
     problems = 0
-    left_alone = 0                          # left-out Hosts: skipped, not a failure (as plain revoke)
+    left_alone = 0                          # left-out Hosts: skipped, so not finished (exit 1, T194)
     for label, name, path in targets:
         again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(str(path))}"
         try:
@@ -786,7 +806,7 @@ def cmd_revoke_all(args):
             f"{done} To finish, delete {files[0]} on this box.")
     else:
         say(done)
-    return 1 if bad or problems else 0
+    return 1 if bad or problems or left_alone or not total else 0
 
 
 AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
