@@ -124,19 +124,23 @@ def state_file():
 
 def load_state():
     """{members: [hosts roster wrote Mesh entries on], pending: {host: why}, cut: {host: [peers not confirmed]},
-    applied: digest of the last complete apply}. Only bookkeeping: the Mesh itself comes from roster.yml."""
+    applied: digest of the last complete apply, known: whether this Box has a record at all}. Only bookkeeping: the
+    Mesh itself comes from roster.yml. known is False on a new Box, or one where roster was removed and installed
+    again without `roster mesh cut` first (T193): the Hosts may hold Mesh entries this Box knows nothing of."""
+    f = state_file()
     try:
-        data = json.loads(state_file().read_text())
+        data = json.loads(f.read_text())
     except (OSError, ValueError):
         data = {}
     return {"members": list(data.get("members") or []), "pending": dict(data.get("pending") or {}),
-            "cut": dict(data.get("cut") or {}), "applied": data.get("applied")}
+            "cut": dict(data.get("cut") or {}), "applied": data.get("applied"), "known": f.exists()}
 
 
 def save_state(st):
     f = state_file()
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_suffix(".new")
+    st = {k: v for k, v in st.items() if k != "known"}
     tmp.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
     os.replace(tmp, f)
 
@@ -336,6 +340,7 @@ H=$(mktemp); grep -E "$TAGS" "$AK" 2>/dev/null > "$H"
 [ -n "$KEEP" ] && grep -E " roster-mesh:($KEEP)\$" "$H" >> "$W"
 grep -vxFf "$W" "$H" | while read -r l; do echo "DROP ${l##*:}"; done
 grep -vxFf "$H" "$W" | while read -r l; do echo "ADD ${l##*:}"; done
+grep -xFf "$W" "$H" | while read -r l; do echo "HAVE ${l##*:}"; done
 S1=$(mktemp); S2=$(mktemp); sort "$H" > "$S1"; sort "$W" > "$S2"
 if [ "$MODE" = apply ] && ! cmp -s "$S1" "$S2"; then
   d=${AK%/*}; mkdir -p "$d"; [ -z "$ESXI" ] && chmod 700 "$d"
@@ -540,8 +545,11 @@ def visits_of(cfg, hosts):
     {jump Host: {peer: Host}} for the hops, jump Hosts that aren't sources, every Host of phase 2)."""
     g = graph(cfg)
     st = load_state()
-    # Hosts roster wrote on before and still knows how to reach: visited too, so what's no longer asked for goes
-    ex = sorted(n for n in set(st["members"]) | set(st["pending"]) if n not in g["visit"] and n in hosts
+    # Hosts roster wrote on before and still knows how to reach: visited too, so what's no longer asked for goes.
+    # With no record on this Box at all (new, or roster removed and installed again: T193), that's every Host roster
+    # can log in to, once: an earlier install's tagged entries are found by their tag and removed.
+    before = set(st["members"]) | set(st["pending"]) if st["known"] else set(hosts)
+    ex = sorted(n for n in before if n not in g["visit"] and n in hosts
                 and hosts[n]["enroll"] and hosts[n]["reviewed"])
     links = [dict(x) for x in g["links"]]
     live = {(x["from"], x["to"]) for x in links if "skip" not in x}
@@ -704,6 +712,8 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
         changes += [f"replace key from {s}" for s in sorted(added & dropped)]
         changes += [f"add key from {s}" for s in sorted(added - dropped)]
         changes += [f"remove key from {s}" for s in sorted(dropped - added)]
+        if not st["known"]:
+            found(out, name, lines, changes, apply)
         changes = [c.replace("write include", "write Include in ~/.ssh/config")
                    .replace("write claude", "write the import in ~/.claude/CLAUDE.md")
                    .replace("remove include", "remove the Include from ~/.ssh/config")
@@ -720,6 +730,28 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
         record(cfg, g, st, result, ex)
     result["cut_pending"] = load_state()["cut"] if apply else st["cut"]
     return result
+
+
+FOUND = "{name}: Mesh entries from an earlier roster on this Box (it has no record of them)"
+
+
+def found(out, name, lines, changes, apply):
+    """With no Mesh record on this Box (T193): what NAME held from an earlier install, found by roster's own tag and
+    mark, never by guessing. What roster.yml still asks for is kept (adopted); the rest goes as any removal does."""
+    kept = [f"key from {s}" for s in report(lines, "HAVE ")]
+    if "SAME include" in lines:
+        kept.insert(0, "its Include")
+    probe = out["probe"].get(name) or {}
+    if probe.get("pub") and not probe.get("key"):
+        kept.insert(0, "its Mesh key")
+    gone = [c for c in changes if c.startswith("remove")]
+    if kept:
+        out.setdefault("warnings", []).append(FOUND.format(name=name) + ": kept, as roster.yml still asks for them: "
+                                              + ", ".join(kept))
+    if gone:
+        out.setdefault("warnings", []).append(
+            FOUND.format(name=name) + ": roster.yml no longer asks for them, so "
+            + ("roster removed them: " if apply else "roster mesh removes them: ") + ", ".join(gone))
 
 
 def stale(out, name, lines):
@@ -887,6 +919,47 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
     st["applied"] = None
     save_state(st)
     return {"host": name, "confirmed": sorted(confirmed), "pending": pending, "warnings": out.get("warnings", [])}
+
+
+def cut_all(cfg, workers=16, progress=None, stopped=None):
+    """Every Mesh entry off every Host roster.yml has that roster can log in to, at once (T193: before removing roster
+    from this Box): each Host's roster-mesh lines in authorized_keys and its own Mesh files, as a cut of that Host
+    does on itself. roster.yml isn't changed, so the next `roster mesh` puts the Mesh back. Returns {confirmed,
+    pending: {host: why}, warnings}; the pending Hosts stay in the Mesh's bookkeeping."""
+    progress = progress or (lambda done, total, host: None)
+    stopped = stopped or (lambda: False)
+    hosts = with_mesh_dirs(cfg)
+    todo = sorted(n for n, h in hosts.items() if h["enroll"] and h["reviewed"])
+    at = current_deadline()
+
+    def one(n):
+        with deadline_at(at):
+            if why := not_now(stopped):
+                return n, None, why
+            lines, err = on_host(hosts[n], cut_script(hosts[n], n, True), timeout=CUT_TIMEOUT)
+        return n, lines, err
+
+    confirmed, pending, out = [], {}, {}
+    progress(0, len(todo), None)
+    with cf.ThreadPoolExecutor(max(1, min(workers, len(todo)))) as ex:
+        for i, (n, lines, err) in enumerate(ex.map(one, todo), 1):
+            if err:
+                pending[n] = err
+            else:
+                confirmed.append(n)
+                stale(out, n, lines)
+            progress(i, len(todo), n)
+    st = load_state()
+    done = set(confirmed)
+    st["members"] = sorted((set(st["members"]) - done) | set(pending))
+    st["pending"] = {n: why for n, why in st["pending"].items() if n not in done}
+    for host, peers in list(st["cut"].items()):
+        st["cut"][host] = [p for p in peers if p not in done]
+        if not st["cut"][host]:
+            del st["cut"][host]
+    st["applied"] = None
+    save_state(st)
+    return {"confirmed": confirmed, "pending": pending, "warnings": out.get("warnings", [])}
 
 
 def write_cut(cfg, name):

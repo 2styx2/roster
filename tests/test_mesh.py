@@ -1543,3 +1543,83 @@ def test_the_mesh_never_reaches_a_host_of_an_inventory_not_synced_here(net, isol
     assert main(["--inv", "lab", "mesh"]) == 1
     assert net.connections() == []
     assert "orion-2 is not in this Box's ssh config for this Inventory" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- roster installed or not (T193, #365)
+
+def reinstall():
+    """roster removed from the Box without `roster mesh cut` first, then installed again: no Mesh state here."""
+    mesh.state_file().unlink()
+
+
+def test_a_reinstalled_box_finds_the_mesh_entries_it_no_longer_wants_and_removes_them(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    net.cfg_path.write_text(CONFIG.replace("  - { from: orion-2, to: storage }\n", ""))
+    before = net.snapshot()
+    assert main(["mesh", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert net.snapshot() == before
+    assert "nas-1: remove key from orion-2" in out
+    assert "nas-1: Mesh entries from an earlier roster on this Box (it has no record of them)" in out
+    mesh.run(net.cfg(), apply=True)
+    assert net.mesh_lines("nas-1") == []
+    assert "roster-managed:box" in net.ak("nas-1") and "own@laptop" in net.ak("nas-1")
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_a_reinstalled_box_adopts_the_entries_its_plan_still_wants(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    before = net.snapshot()
+    r = mesh.run(net.cfg())
+    assert r["already"]                                              # the same keys, kept: nothing to change
+    assert any(w.startswith("orion-2: Mesh entries from an earlier roster") and "kept" in w for w in r["warnings"])
+    assert main(["mesh"]) == 0
+    assert net.snapshot() == before
+
+
+def test_a_reinstalled_box_without_a_mesh_in_roster_yml_still_finds_and_removes_the_old_one(net):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    net.cfg_path.write_text(CONFIG.replace("    mesh: true\n", "").split("links:")[0])
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {}
+    assert not any(net.mesh_lines(h) for h in HOSTS)
+    assert not (net.host("orion-2") / "home/.ssh/roster-mesh").exists()
+    assert mesh.MARK not in net.file("orion-2", "home/.ssh/config")
+
+
+def test_status_says_when_this_box_has_no_mesh_record(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    assert main(["mesh", "status"]) == 0
+    assert "no Mesh record on this Box" in capsys.readouterr().out
+    mesh.run(net.cfg(), apply=True)
+    assert main(["mesh", "status"]) == 0
+    assert "no Mesh record" not in capsys.readouterr().out
+
+
+def test_cut_all_takes_every_mesh_entry_off_every_host_and_keeps_roster_yml(net, capsys):
+    before = net.snapshot()
+    yml = net.cfg_path.read_text()
+    mesh.run(net.cfg(), apply=True)
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert net.snapshot() == before
+    assert net.cfg_path.read_text() == yml                           # uninstalling: roster.yml is the user's
+    assert "cut the Mesh: confirmed on" in capsys.readouterr().out
+
+
+def test_cut_all_with_a_host_down_says_so_and_fails(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    net.down("nas-1")
+    assert main(["mesh", "cut", "--all", "--yes"]) == 1
+    assert "not confirmed  nas-1" in capsys.readouterr().out
+    net.down("nas-1", False)
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert net.mesh_lines("nas-1") == []
+
+
+def test_cut_all_takes_no_host(net, capsys):
+    with pytest.raises(SystemExit):
+        main(["mesh", "cut", "--all", "orion-2", "--yes"])

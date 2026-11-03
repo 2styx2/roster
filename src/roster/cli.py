@@ -222,6 +222,26 @@ def mesh_apply(cfg):
     return r["pending"]
 
 
+def mesh_cut_all(cfg, args):
+    """`roster mesh cut --all` (T193): every Mesh entry off every Host, before removing roster from this Box."""
+    n = sum(1 for h in cfg["hosts"].values() if h["enroll"] and h["reviewed"])
+    if not args.yes:
+        ans = input(f"Take every Mesh key and file off all {plural(n, 'Host')} now, at once? roster.yml isn't "
+                    "changed: the next `roster mesh` puts the Mesh back. [y/N] ")
+        if ans.strip().lower() != "y":
+            return 1
+    r = mesh.cut_all(cfg, cfg["workers"])
+    say(f"cut the Mesh: confirmed on {', '.join(r['confirmed']) or 'no Host'}")
+    for host, why in r["pending"].items():
+        say(f"  not confirmed  {host}: {why}")
+    for w in r["warnings"]:
+        say(f"warning: {w}")
+    if r["pending"]:
+        say(f"not finished on {plural(len(r['pending']), 'Host')}: `roster mesh cut --all` again once they answer, "
+            "before removing roster from this Box")
+    return 1 if r["pending"] else 0
+
+
 def cmd_mesh(cfg, args):
     from .errors import Problem
     if args.action == "status":
@@ -236,10 +256,19 @@ def cmd_mesh(cfg, args):
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         warn_cut(st["cut_pending"])
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
+        if not mesh.load_state()["known"]:         # T193: new here, or roster removed and installed again
+            say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left; `roster mesh "
+                "--dry-run` looks for them on every Host it can log in to, and `roster mesh` adopts or removes them")
         return 0
+    if args.action == "cut" and args.all:
+        if args.target:
+            die("roster mesh cut --all takes no Host: it cuts every Host")
+        return mesh_cut_all(cfg, args)
+    if args.all:
+        die("--all goes with cut: roster mesh cut --all")
     if args.action == "cut":
         if not args.target:
-            die("usage: roster mesh cut HOST")
+            die("usage: roster mesh cut HOST, or roster mesh cut --all")
         if args.target not in cfg["hosts"]:
             die(f"unknown host {args.target!r} (see `roster hosts`)")
         if not args.yes:
@@ -1118,6 +1147,8 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="show the plan; change nothing on any Host")
     s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)")
     s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
+    s.add_argument("--all", action="store_true", help="with cut: every Mesh entry off every Host, roster.yml "
+                   "unchanged (before removing roster from this Box)")
     s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
