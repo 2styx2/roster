@@ -1091,3 +1091,48 @@ def test_revoke_all_labels_the_unnamed_one_so_no_named_one_reads_the_same(two, c
     run(capsys, "sync")
     _, out, _ = run(capsys, "revoke", "--all", "-y")
     assert "(unnamed): nas-1" in out and "(unnamed): build-pi" not in out
+
+
+# ---------------------------------------------------------------- every Host skipped (T194, #371)
+
+def test_revoke_with_every_host_skipped_fails_and_names_no_file_to_delete(a_synced_b_not, capsys, ssh_log):
+    """B's pi is skipped (roster's unnamed ssh config is A's): nothing was revoked, so revoke fails, and its key
+    and config.d/roster (A's, which A still needs) are never named for deleting."""
+    code, out, _ = run(capsys, "-c", str(a_synced_b_not["b"]), "revoke", "-y")
+    assert code == 1
+    assert "To finish, delete" not in out and "config.d" not in out.split("\nremoved from ")[1]
+
+
+def test_check_with_every_host_skipped_fails(a_synced_b_not, capsys, ssh_log):
+    assert run(capsys, "-c", str(a_synced_b_not["b"]), "check")[0] == 1
+    assert run(capsys, "-c", str(a_synced_b_not["b"]), "check", "--json")[0] == 1
+
+
+def test_check_with_a_left_out_host_skipped_fails(two, capsys, ssh_log, monkeypatch):
+    monkeypatch.setenv("HOMEPW", "hunter2")
+    clashing(two, capsys)
+    monkeypatch.setattr("roster.cli.ssh_ok", lambda name, timeout=10: True)
+    monkeypatch.setattr("roster.cli.tcp_ok", lambda host, port, timeout=3: True)
+    code, out, _ = run(capsys, "--inv", "home", "check")
+    assert "pi: left out of this Box's ssh config" in out and code == 1
+
+
+def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_revoked(a_synced_b_not, isolated,
+                                                                                      capsys, monkeypatch):
+    a = a_synced_b_not["a"]
+    a.write_text(A_YML + "      nas-1: {ip: 10.0.0.30}\n")
+    run(capsys, "-c", str(a), "sync")
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
+    code, out, _ = run(capsys, "-c", str(a), "revoke", "--only", "pi", "-y")
+    assert code == 0 and "removed from 1/1 hosts" in out and "To finish, delete" not in out
+    code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
+    assert code == 0 and "To finish, delete" in out and str(ssh(isolated) / "config.d/roster") in out
+
+
+@revoke_runs
+def test_revoke_all_with_a_left_out_host_skipped_fails(two, capsys, ssh_log, monkeypatch):
+    monkeypatch.setenv("HOMEPW", "hunter2")
+    clashing(two, capsys)
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
+    code, out, _ = run(capsys, "revoke", "--all", "-y")
+    assert "home: pi: left out" in out and "To finish, delete" not in out and code == 1

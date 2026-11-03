@@ -20,6 +20,8 @@ mod watch;
 
 pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};
 pub use schema::*;
+#[cfg(feature = "test-hooks")]
+pub use watch::{HeldClock, watch_held};
 pub use watch::{Watcher, watch};
 
 use serde::Serialize;

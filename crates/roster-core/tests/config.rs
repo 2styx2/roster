@@ -36,9 +36,58 @@ fn watch_alone(
     dir: &std::path::Path,
     on_change: impl Fn() + Send + 'static,
 ) -> (config::Watcher, std::sync::MutexGuard<'static, ()>) {
-    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let turn = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let turn = watcher_turn();
     (config::watch(dir, on_change).unwrap(), turn)
+}
+
+/// This test binary's one watcher at a time ([`watch_alone`], [`HeldWatcher`]).
+fn watcher_turn() -> std::sync::MutexGuard<'static, ()> {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// A watcher on a clock the test holds ([`config::watch_held`], T184), one at a time like
+/// [`watch_alone`], that counts its calls back. A save's quiet never runs out on its own, so
+/// a loaded machine can't split one save into two calls, and "no more calls" is checked after
+/// the watcher has taken in every event, not after a quiet spell.
+struct HeldWatcher {
+    dir: std::path::PathBuf,
+    clock: config::HeldClock,
+    calls: std::sync::mpsc::Receiver<()>,
+    marks: usize,
+    _watcher: (config::Watcher, std::sync::MutexGuard<'static, ()>),
+}
+
+impl HeldWatcher {
+    fn new(dir: &std::path::Path) -> HeldWatcher {
+        let turn = watcher_turn();
+        let (tx, calls) = std::sync::mpsc::channel();
+        let (watcher, clock) = config::watch_held(dir, move || {
+            let _ = tx.send(());
+        })
+        .unwrap();
+        HeldWatcher {
+            dir: dir.to_path_buf(),
+            clock,
+            calls,
+            marks: 0,
+            _watcher: (watcher, turn),
+        }
+    }
+
+    /// How many times the watcher called back for what was written since the last count. It
+    /// writes a marker (no `.lua`, so it counts for nothing) and waits until the watcher has
+    /// seen it, so every event before it is in too (one inotify queue, read in order); then
+    /// it moves the clock past the longest a save waits, which returns once any call that
+    /// makes is made.
+    fn calls(&mut self) -> usize {
+        self.marks += 1;
+        let mark = format!("mark-{}", self.marks);
+        std::fs::write(self.dir.join(&mark), "").unwrap();
+        assert!(self.clock.seen(&mark, common::CEILING), "the watcher never saw {mark}");
+        self.clock.pass(std::time::Duration::from_secs(1));
+        self.calls.try_iter().count()
+    }
 }
 
 /// `dir` loaded under `limits` on another thread: the test fails at [`common::CEILING`] rather
@@ -625,26 +674,18 @@ fn the_config_dir_follows_the_platform() {
 
 #[test]
 fn saving_calls_the_watcher_back_once_for_a_write_or_a_rename() {
-    use std::sync::mpsc;
-    use std::time::Duration;
     let dir = temp_dir("watch");
-    let (tx, rx) = mpsc::channel();
-    let _w = watch_alone(&dir, move || {
-        let _ = tx.send(());
-    });
-    // A first file appears.
+    let mut w = HeldWatcher::new(&dir);
+    // A first file appears: one save, one call.
     std::fs::write(dir.join("init.lua"), "return {}").unwrap();
-    rx.recv_timeout(common::CEILING).expect("a new init.lua is seen");
+    assert_eq!(w.calls(), 1, "a new init.lua");
     // Vim-style: write a temp file, rename it over.
     std::fs::write(dir.join("init.lua.tmp"), "return { vim = false }").unwrap();
     std::fs::rename(dir.join("init.lua.tmp"), dir.join("init.lua")).unwrap();
-    rx.recv_timeout(common::CEILING)
-        .expect("a rename over init.lua is seen");
-    // One save, one call.
-    assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
+    assert_eq!(w.calls(), 1, "a rename over init.lua");
     // Something else in the dir is ignored.
     std::fs::write(dir.join("notes.txt"), "hi").unwrap();
-    assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
+    assert_eq!(w.calls(), 0, "notes.txt");
 }
 
 /// The defaults as the frontend gets them, kept in a file that src/config tests read, so the
@@ -1059,8 +1100,6 @@ fn a_startup_reload_waits_only_so_long_then_reports_when_done() {
 #[test]
 fn saving_a_symlinked_init_lua_or_module_calls_the_watcher_back() {
     use std::os::unix::fs::symlink;
-    use std::sync::mpsc;
-    use std::time::Duration;
     let dotfiles = temp_dir("watch-dotfiles");
     std::fs::write(dotfiles.join("init.lua"), "return {}").unwrap();
     std::fs::create_dir_all(dotfiles.join("lua")).unwrap();
@@ -1070,26 +1109,19 @@ fn saving_a_symlinked_init_lua_or_module_calls_the_watcher_back() {
     symlink(dotfiles.join("init.lua"), dir.join("init.lua")).unwrap();
     symlink(dotfiles.join("lua"), dir.join("lua")).unwrap();
 
-    let (tx, rx) = mpsc::channel();
-    let _w = watch_alone(&dir, move || {
-        let _ = tx.send(());
-    });
+    let mut w = HeldWatcher::new(&dir);
 
     std::fs::write(dotfiles.join("init.lua"), "return { vim = false }").unwrap();
-    rx.recv_timeout(common::CEILING)
-        .expect("a save of the symlink's target is seen");
+    assert_eq!(w.calls(), 1, "a save of the symlink's target");
     // Editor-style: a temp file renamed over the target.
     std::fs::write(dotfiles.join("init.lua.tmp"), "return {}").unwrap();
     std::fs::rename(dotfiles.join("init.lua.tmp"), dotfiles.join("init.lua")).unwrap();
-    rx.recv_timeout(common::CEILING)
-        .expect("a rename over the target is seen");
+    assert_eq!(w.calls(), 1, "a rename over the target");
     std::fs::write(dotfiles.join("lua/keys.lua"), "return { 1 }").unwrap();
-    rx.recv_timeout(common::CEILING)
-        .expect("a module in a symlinked folder is seen");
+    assert_eq!(w.calls(), 1, "a module in a symlinked folder");
     // The rest of the dotfiles folder isn't the Config.
-    while rx.recv_timeout(Duration::from_millis(400)).is_ok() {}
     std::fs::write(dotfiles.join("other.txt"), "x").unwrap();
-    assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
+    assert_eq!(w.calls(), 0, "other.txt");
 }
 
 /// A tool that keeps writing (a sync, a formatter on a loop) mustn't hold the reload back
@@ -1310,20 +1342,15 @@ fn sourcing_a_broken_file_keeps_the_last_good_config() {
 #[test]
 fn folders_yml_is_only_read_and_a_save_of_it_is_no_config_change() {
     use roster_core::config::folders;
-    use std::sync::mpsc;
-    use std::time::Duration;
     let dir = temp_dir("folders");
     assert_eq!(folders::read(&dir).unwrap(), None);
-    let (tx, rx) = mpsc::channel();
-    let _w = watch_alone(&dir, move || {
-        let _ = tx.send(());
-    });
+    let mut w = HeldWatcher::new(&dir);
     // Read once, to move its Folders into the Folders Plugin (decision Q93): saving it reloads nothing.
     std::fs::write(folders::path(&dir), "Lab:\n  - esx\n").unwrap();
     assert_eq!(folders::read(&dir).unwrap().as_deref(), Some("Lab:\n  - esx\n"));
-    assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
+    assert_eq!(w.calls(), 0, "folders.yml");
     std::fs::write(dir.join("init.lua"), "return {}").unwrap();
-    rx.recv_timeout(common::CEILING).expect("a save of init.lua is seen");
+    assert_eq!(w.calls(), 1, "a save of init.lua");
 }
 
 #[test]

@@ -460,7 +460,7 @@ def refresh_roster_md(inv: Inventories | None = None, skip: Any = NOTHING) -> No
     touched, so syncing one Inventory leaves the others' alone. SKIP: the Inventory (a name, or None for the unnamed
     one) a sync writes it for already. Each is built for its own Inventory by name: this process's Inventory (which
     serve's other threads read) is never switched. Never fails the command: one that doesn't load is left as it is."""
-    from .claude import roster_md
+    from .claude import roster_md, written_by_the_mesh
     from .config import load_config
     inv = inv if inv is not None else load()
     todo: list[tuple[str | None, Path]] = [(x.name, x.path) for x in inv.inventories]
@@ -469,7 +469,7 @@ def refresh_roster_md(inv: Inventories | None = None, skip: Any = NOTHING) -> No
         todo.append((None, unnamed))
     for name, path in todo:
         md = path.parent / "ROSTER.md"
-        if (skip is not NOTHING and name == skip) or not md.is_file():
+        if (skip is not NOTHING and name == skip) or not md.is_file() or written_by_the_mesh(md):
             continue
         try:
             text = roster_md(load_config(path), name)
