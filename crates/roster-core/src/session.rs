@@ -432,9 +432,11 @@ impl SessionManager {
     /// what it connected to, and returns the secret (serve's `session.fill`, which judges `prompt`
     /// and `hop`), and a refusal there types nothing; then the probe, [`PROBE`], goes to the
     /// prompt: Ctrl+U (the line-kill key, which empties whatever was typed there already) around a
-    /// letter. A prompt that doesn't echo, as sudo's, su's and ssh's don't, prints nothing for it;
-    /// one that echoes prints the letter (and takes it back). So if anything was printed from the
-    /// probe through `wait`, or what was printed between the check and the probe left the
+    /// letter, in two steps (Ctrl+U and the letter, `wait`, the last Ctrl+U, `wait` again: ticket
+    /// 155, decision Q151 (h)), so an echoed letter stands on the line for a whole `wait` and a
+    /// terminal that sends only frame diffs (ConPTY) draws it. A prompt that doesn't echo, as
+    /// sudo's, su's and ssh's don't, prints nothing for it; one that echoes prints the letter (and
+    /// takes it back). So if anything was printed from the probe through the second `wait`, or what was printed between the check and the probe left the
     /// Session's whole screen or its cursor other than they were at the check (ConPTY repaints
     /// what it already drew: ticket 155, decision Q151), or a key was sent meanwhile, the secret
     /// isn't typed ([`FillError::Echoes`], [`FillError::Typed`]). The one exception (ticket 154,
@@ -482,10 +484,50 @@ impl SessionManager {
             }
             (shown.total, shown.total == printed || shown.screen.matches(&checked))
         };
+        // The probe in two steps (ticket 155, decision Q151 (h)): Ctrl+U and the letter, then,
+        // after a whole wait, the last Ctrl+U. A terminal that sends only what changed between its
+        // frames (ConPTY) would send nothing for a letter echoed and taken back within one frame;
+        // left on the line for the wait, an echoed letter is drawn in a frame and seen here.
+        let (first, last) = PROBE.split_at(PROBE_SPLIT);
         {
             let mut w = running.writer.lock().unwrap();
             let w = w.as_mut().ok_or(FillError::NotFound(id))?;
-            w.write_all(PROBE).and_then(|_| w.flush()).map_err(fill_io)?;
+            w.write_all(first).and_then(|_| w.flush()).map_err(fill_io)?;
+        }
+        std::thread::sleep(wait);
+        // With the letter pending: nothing printed at all, or at sudo's own prompt for the own
+        // Host, the line is the prompt alone or the prompt and sudo's one `*`, the cursor right
+        // after it, and the mask watch has seen nothing it doesn't allow.
+        let pending = {
+            let mut shown = running.shown.lock().unwrap();
+            let starred = format!("{} *", prompt.trim_end());
+            let ok = if maskable {
+                let s = &shown.screen;
+                s.mask_pending(PROBE_KEYS)
+                    && ((s.line_is(prompt) && s.cursor_after(prompt))
+                        || (s.line_is(&starred) && s.cursor_after(&starred)))
+            } else {
+                shown.total == probed
+            };
+            if repainted && ok {
+                None
+            } else {
+                Some(maskable.then(|| shown.screen.end_mask_watch(PROBE_KEYS)))
+            }
+        };
+        {
+            // Always: it takes the letter back, so a refusal leaves the line empty.
+            let mut w = running.writer.lock().unwrap();
+            let w = w.as_mut().ok_or(FillError::NotFound(id))?;
+            w.write_all(last).and_then(|_| w.flush()).map_err(fill_io)?;
+        }
+        if let Some(watched) = pending {
+            return Err(FillError::Echoes(watched.map(|w| {
+                let mut drawn = w.drawn;
+                drawn.before = probed - printed;
+                drawn.why = if repainted { Why::Pending } else { Why::Repaint };
+                drawn
+            })));
         }
         std::thread::sleep(wait);
         let mut w = running.writer.lock().unwrap();
@@ -569,7 +611,8 @@ impl SessionManager {
 /// doesn't echo (the terminal's line discipline with echo off, as sudo sets it) the
 /// first Ctrl+U silently empties what was typed there, the letter is silently taken, and the
 /// last Ctrl+U silently takes it back: nothing is printed and the line is empty. At a prompt that
-/// echoes, the letter is printed, which is how roster tells.
+/// echoes, the letter is printed, which is how roster tells. It goes in two writes, a wait apart
+/// (`PROBE_SPLIT`, decision Q151 (h)).
 pub const PROBE: &[u8] = b"\x15x\x15";
 
 /// Whether `prompt` is exactly sudo's own prompt for `user` (`[sudo] password for USER:`, read
@@ -584,6 +627,10 @@ fn sudo_prompt_for(prompt: &str, user: &str) -> bool {
         && words[..3] == ["[sudo]", "password", "for"]
         && words[3].strip_suffix(':') == Some(user)
 }
+
+/// Where [`PROBE`] is split: Ctrl+U and the letter go first, the last Ctrl+U a wait later
+/// (ticket 155, decision Q151 (h)).
+const PROBE_SPLIT: usize = 2;
 
 /// The printable keys in [`PROBE`]: sudo's `pwfeedback` draws a `*` for each (ticket 154).
 const PROBE_KEYS: usize = 1;
@@ -674,16 +721,27 @@ impl<E> FillError<E> {
             Why::Repaint => format!(
                 "prompt fill refused at sudo's prompt: what was printed before the probe ({before} bytes) changed the screen; the probe drew {drawn}"
             ),
+            Why::Pending => format!(
+                "prompt fill refused at sudo's prompt: with the probe's letter pending, the line showed more than sudo's prompt and its `*`; the probe drew {drawn}{}",
+                repainted(before)
+            ),
             Why::Line => format!(
                 "prompt fill refused at sudo's prompt: the cursor's line isn't only sudo's prompt; the probe drew {drawn}"
             ),
-            Why::Probe if before > 0 => format!(
-                "prompt fill refused at sudo's prompt: the probe drew {drawn}, not sudo's pwfeedback mask as roster takes it; {before} bytes printed before the probe repainted the screen as it was"
-            ),
             Why::Probe => format!(
-                "prompt fill refused at sudo's prompt: the probe drew {drawn}, not sudo's pwfeedback mask as roster takes it"
+                "prompt fill refused at sudo's prompt: the probe drew {drawn}, not sudo's pwfeedback mask as roster takes it{}",
+                repainted(before)
             ),
         })
+    }
+}
+
+/// The log's note that output before the probe only repainted the screen, when there was some.
+fn repainted(before: u64) -> String {
+    if before > 0 {
+        format!("; {before} bytes printed before the probe repainted the screen as it was")
+    } else {
+        String::new()
     }
 }
 

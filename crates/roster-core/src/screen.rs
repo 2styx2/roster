@@ -172,6 +172,9 @@ pub(crate) enum Why {
     Repaint,
     /// The cursor's line isn't sudo's prompt and nothing else.
     Line,
+    /// With the probe's letter pending (before the last Ctrl+U), the screen showed more than
+    /// sudo's prompt and its one `*` (Q151 (h)).
+    Pending,
 }
 
 /// What [`Screen::end_mask_watch`] found.
@@ -369,6 +372,24 @@ impl Screen {
                 why: Why::Probe,
             },
         }
+    }
+
+    /// Whether, so far, the mask watch has seen at most `stars` `*`s and otherwise only what it
+    /// allows, on a screen of the same size with every line but the prompt's as it was and the
+    /// cursor on the prompt's line: sudo's mask for the probe's letter, before it's taken back
+    /// (ticket 155, decision Q151 (h)). The caller checks the prompt's line itself.
+    pub(crate) fn mask_pending(&self, stars: usize) -> bool {
+        let Some(w) = &self.mask else { return false };
+        let at = &w.at;
+        !w.other
+            && w.stars <= stars
+            && (self.rows, self.cols, self.main.is_some(), self.row) == (at.rows, at.cols, at.alternate, at.row)
+            && self
+                .grid
+                .iter()
+                .zip(&at.grid)
+                .enumerate()
+                .all(|(i, (now, was))| i == at.row || now == was)
     }
 
     /// Notes something the watch saw (ticket 155), unless it has seen [`SEEN_MAX`] things.

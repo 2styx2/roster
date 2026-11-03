@@ -735,10 +735,18 @@ fn output_before_the_probe_that_changes_the_screen_refuses() {
 #[test]
 fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
     let repaint = same_screen_repaints(SUDO_OPS).remove(0).1;
-    for (name, mask) in [("an echo", "x"), ("a colour", "\\033[1m*\\033[0m")] {
+    const PENDING: &str =
+        "with the probe's letter pending, the line showed more than sudo's prompt and its `*`; the probe drew ";
+    const PROBED: &str = "the probe drew ";
+    // Each: name, what it draws per key, how it takes one back, the rule the log names.
+    for (name, mask, erase, rule) in [
+        ("an echo", "x", "\\b \\b", PENDING),
+        ("a colour", "\\033[1m*\\033[0m", "\\b \\b", PENDING),
+        ("a colour in the erase", "*", "\\b \\b\\033[1m", PROBED),
+    ] {
         let script = erasing(
             SUDO_OPS,
-            "\\b \\b",
+            erase,
             "",
             mask,
             &format!("(sleep 0.2; printf '{repaint}') & :"),
@@ -755,8 +763,8 @@ fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
             .unwrap_err();
         let log = err.log_line().unwrap_or_default();
         assert!(
-            log.starts_with("prompt fill refused at sudo's prompt: the probe drew ")
-                && log.contains("not sudo's pwfeedback mask as roster takes it; ")
+            log.starts_with(&format!("prompt fill refused at sudo's prompt: {rule}"))
+                && (rule == PENDING || log.contains("not sudo's pwfeedback mask as roster takes it; "))
                 && log.ends_with(" bytes printed before the probe repainted the screen as it was"),
             "{name}: {log}"
         );
@@ -774,6 +782,113 @@ fn after_a_conpty_repaint_the_probe_must_still_draw_nothing() {
     let (got, out) = fill_pwfeedback(&script, "[sudo] password for ops:", None);
     assert!(matches!(got, Err(FillError::Echoes(Some(_)))), "{got:?} {out:?}");
     assert!(!out.contains(SECRET), "{out:?}");
+}
+
+/// A stand-in for what Windows' ConPTY sends (ticket 155, #284, Q151 (h)): the tty in raw mode
+/// (no echo of its own), and the prompt's line drawn only once per 50 ms frame, and only if it
+/// changed since the last frame drawn: a key echoed and taken back within one frame sends
+/// nothing. `mode` is what the line shows for what was typed: `echo` (the keys), `mask` (sudo's
+/// `*` per key) or `silent` (nothing). Enter ends it and it reports what it read.
+const FRAMES: &str = r#"
+import os, select, sys, termios, time, tty
+prompt, mode = sys.argv[1], sys.argv[2]
+saved = termios.tcgetattr(0)
+tty.setraw(0)
+os.write(1, b"\x1b[2J\x1b[H" + prompt.encode())
+line = b""
+shown = b""
+frame = 0.05
+last = time.monotonic()
+while True:
+    r, _, _ = select.select([0], [], [], frame)
+    if r:
+        c = os.read(0, 1)
+        if c in (b"\r", b"\n", b""):
+            break
+        line = b"" if c == b"\x15" else line + c
+    now = time.monotonic()
+    if now - last >= frame:
+        last = now
+        drawn = {"echo": line, "mask": b"*" * len(line), "silent": b""}[mode]
+        if drawn != shown:
+            os.write(1, b"\x1b[%dG" % (len(prompt) + 1) + drawn + b"\x1b[K")
+            shown = drawn
+termios.tcsetattr(0, termios.TCSADRAIN, saved)
+os.write(1, b"\r\ngot:[" + line + b"]\r\n")
+time.sleep(5)
+"#;
+
+fn frames(prompt: &str, mode: &str) -> SessionCommand {
+    let mut cmd = host_sh("");
+    cmd.argv = vec!["python3".into(), "-c".into(), FRAMES.into(), prompt.into(), mode.into()];
+    cmd
+}
+
+/// Ticket 155 (#284, the coordinator's review of #299): under a terminal that sends only frame
+/// diffs, an echoing prompt's echo of the probe's letter mustn't vanish within one frame. The
+/// probe's letter stays on the line through a whole wait before it's taken back, so a frame
+/// draws it: refused, the secret never typed. pwfeedback's `*` and a silent prompt still fill.
+#[test]
+fn an_echo_cant_hide_inside_one_frame_of_a_diff_only_terminal() {
+    for (prompt, line, mode, fills) in [
+        ("Password: ", "Password:", "echo", false),
+        (SUDO_OPS, "[sudo] password for ops:", "echo", false),
+        ("Password: ", "Password:", "silent", true),
+        (SUDO_OPS, "[sudo] password for ops:", "silent", true),
+        (SUDO_OPS, "[sudo] password for ops:", "mask", true),
+    ] {
+        let m = SessionManager::new();
+        let (id, rx) = open(&m, frames(prompt, mode));
+        until(&rx, prompt.trim_end());
+        std::thread::sleep(Duration::from_millis(200));
+        let got = m.fill(id, WAIT, line, None, |_| secret());
+        if fills {
+            assert_eq!(got.as_deref().ok(), Some("esx"), "{line} {mode}: {got:?}");
+        } else {
+            assert!(matches!(got, Err(FillError::Echoes(_))), "{line} {mode}: {got:?}");
+            m.write(id, b"\r").unwrap();
+        }
+        let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(200));
+        m.close(id).unwrap();
+        let want = if fills {
+            format!("got:[{SECRET}]")
+        } else {
+            "got:[]".to_string()
+        };
+        assert!(out.contains(&want), "{line} {mode}: {out:?}");
+        if !fills {
+            assert!(!out.contains(SECRET), "{line} {mode}: {out:?}");
+        }
+    }
+}
+
+/// The probe goes in two writes, each followed by a wait: Ctrl+U and the letter, then the last
+/// Ctrl+U (Q151 (h)). A refusal still types nothing else, and the line ends empty.
+#[test]
+fn the_probe_goes_in_two_steps_with_a_wait_between() {
+    let script = "stty raw -echo min 0 time 20; printf 'Password: '; \
+                  a=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'); s=$(date +%s%N); \
+                  b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); e=$(date +%s%N); \
+                  stty sane; echo; echo \"got:[$a $b $(( (e - s) / 1000000 ))]\"; sleep 5";
+    let m = SessionManager::new();
+    let (id, rx) = open(&m, host_sh(script));
+    until(&rx, "Password: ");
+    std::thread::sleep(Duration::from_millis(150));
+    let _ = m.fill(id, WAIT, "Password:", None, |_| secret());
+    let out = until(&rx, "got:") + &quiet_for(&rx, Duration::from_millis(100));
+    m.close(id).unwrap();
+    let got = out
+        .split("got:[")
+        .nth(1)
+        .and_then(|r| r.split(']').next())
+        .unwrap_or_default();
+    let parts: Vec<&str> = got.split(' ').collect();
+    assert_eq!(&parts[..2], ["1578", "15"], "{out:?}");
+    let gap: u64 = parts[2].parse().unwrap();
+    assert!(
+        gap >= WAIT.as_millis() as u64 - 20,
+        "the last Ctrl+U came {gap} ms after the letter: {out:?}"
+    );
 }
 
 /// Ticket 154 (the review of #283, #3): a cursor hide or show inside another sequence isn't one.
@@ -1003,7 +1118,7 @@ fn a_refused_mask_says_what_was_drawn_for_the_log_only() {
     assert_eq!(
         err.log_line().as_deref(),
         Some(
-            "prompt fill refused at sudo's prompt: the probe drew CSI[1m '*' CSI[0m BS ' ' BS, not sudo's pwfeedback mask as roster takes it"
+            "prompt fill refused at sudo's prompt: with the probe's letter pending, the line showed more than sudo's prompt and its `*`; the probe drew CSI[1m '*' CSI[0m; the cursor moved from 1:26 to 1:27; the line changed"
         ),
         "{err:?}"
     );
