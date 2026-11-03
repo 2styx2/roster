@@ -66,7 +66,7 @@ fn list(rows: &[(&str, &str, &str)]) -> String {
     out
 }
 
-const FOUND: &str = "roster=/home/u/.local/bin/roster\ninventory=/home/u/infra/roster.yml\n";
+const FOUND: &str = "roster=/home/u/.local/bin/roster\ninventory=/home/u/team-inventory/roster.yml\n";
 
 #[test]
 fn on_windows_the_first_distro_with_roster_and_an_inventory_wins() {
@@ -97,7 +97,7 @@ fn on_windows_the_first_distro_with_roster_and_an_inventory_wins() {
             "--exec",
             "/home/u/.local/bin/roster",
             "-c",
-            "/home/u/infra/roster.yml",
+            "/home/u/team-inventory/roster.yml",
             "serve"
         ])
     );
@@ -129,7 +129,7 @@ fn an_override_command_keeps_its_arguments_and_resolves_only_the_program() {
         distros: Some(list(&[("*", "FedoraLinux-44", "Stopped")])),
         probes: HashMap::from([(
             "FedoraLinux-44".into(),
-            "roster=/usr/bin/uv\ninventory=/home/u/infra/roster.yml\n".into(),
+            "roster=/usr/bin/uv\ninventory=/home/u/team-inventory/roster.yml\n".into(),
         )]),
         ..Default::default()
     };
@@ -147,7 +147,7 @@ fn an_override_command_keeps_its_arguments_and_resolves_only_the_program() {
             "/home/u/work/roster",
             "roster",
             "-c",
-            "/home/u/infra/roster.yml",
+            "/home/u/team-inventory/roster.yml",
             "serve"
         ])[..]
     );
@@ -227,7 +227,12 @@ fn on_linux_roster_runs_locally() {
     assert_eq!(c.target, Target::Local);
     assert_eq!(
         c.serve_argv,
-        s(&["/home/u/.local/bin/roster", "-c", "/home/u/infra/roster.yml", "serve"])
+        s(&[
+            "/home/u/.local/bin/roster",
+            "-c",
+            "/home/u/team-inventory/roster.yml",
+            "serve"
+        ])
     );
     assert_eq!(r.calls.borrow()[0][..2], s(&["bash", "-lc"])[..]);
 }
@@ -263,7 +268,7 @@ fn serve_gets_the_login_shells_path_so_it_finds_the_vault_cli() {
             "PATH=/home/u/.local/bin:/usr/local/bin:/usr/bin:/bin",
             "/home/u/.local/bin/roster",
             "-c",
-            "/home/u/infra/roster.yml",
+            "/home/u/team-inventory/roster.yml",
             "serve"
         ])
     );
@@ -407,7 +412,7 @@ fn a_leading_tilde_in_the_override_means_the_targets_home() {
         distros: Some(list(&[("*", "FedoraLinux-44", "Running")])),
         probes: HashMap::from([(
             "FedoraLinux-44".into(),
-            "roster=/usr/bin/uv\nhome=/home/u\ninventory=/home/u/infra/roster.yml\n".into(),
+            "roster=/usr/bin/uv\nhome=/home/u\ninventory=/home/u/team-inventory/roster.yml\n".into(),
         )]),
         ..Default::default()
     };
