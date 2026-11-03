@@ -13,7 +13,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -243,7 +243,7 @@ fn it_installs_from_a_git_url_showing_its_author_and_what_it_asks_and_cancel_lea
 
     // The install prompt: read from the clone before any of its code runs.
     let (dir, _) = w.packages.loadable(&w.specs, NAME).unwrap();
-    let m = read_manifest(&dir).unwrap();
+    let m = common::read_manifest(&dir).unwrap();
     assert_eq!((m.name.as_str(), m.version.as_str()), (NAME, "1.0.0"));
     assert_eq!(m.author.as_deref(), Some("A. N. Author"));
     assert_eq!(m.permissions, perms(&["terminal.read"]));
@@ -697,7 +697,7 @@ fn a_version_that_asks_for_network_without_a_site_or_a_secret_doesnt_install() {
         w.repo.publish("ask for more");
         w.packages.sync(&w.specs);
         let (dir, _) = w.packages.loadable(&w.specs, NAME).unwrap();
-        let e = read_manifest(&dir).unwrap_err();
+        let e = common::read_manifest(&dir).unwrap_err();
         assert!(e.message.contains(says), "{permission}: {e}");
         assert_eq!(e.file.as_deref(), Some("roster-plugin.lua"));
     }

@@ -1934,44 +1934,48 @@ mod tests {
     /// #225 item 6: a redirect to a name going through the proxy is looked up first, and a slow
     /// lookup holds up neither the Plugin's thread nor its other requests, and still ends when
     /// the request's time is up.
+    ///
+    /// T161: no stopwatch. The `slow.example` lookups are held until the test ends, so: requests
+    /// with no timeout of their own (30 s) can't answer while the test runs, and every answer
+    /// that comes is one the held lookups didn't hold up.
     #[test]
     fn a_slow_lookup_at_a_redirect_holds_up_nothing_and_still_times_out() {
+        let ceiling = Duration::from_secs(20); // only how long a broken test takes to say so
         let (port, seen) = fake_proxy();
         let (net, _, _slow) = proxied_net(
             port,
             &["http://a.example", "http://slow.example", "http://fast.example"],
         );
         let (tx, rx) = std::sync::mpsc::channel();
-        let started = std::time::Instant::now();
-        for _ in 0..3 {
-            send(&net, "http://a.example/302/slow.example/x", Some(0.5), "slow", &tx);
+        for _ in 0..2 {
+            send(&net, "http://a.example/302/slow.example/x", None, "held", &tx);
         }
+        send(&net, "http://a.example/302/slow.example/x", Some(0.5), "slow", &tx);
         send(&net, "http://fast.example/ok", None, "fast", &tx);
-        assert!(
-            started.elapsed() < Duration::from_millis(500),
-            "the Plugin's thread waited {:?}",
-            started.elapsed()
+        // The Plugin's thread is back (each send returned) with the lookups still held: had a
+        // send waited for its request, a held one would have answered (at its 30 s) by now.
+        let mut answers: Vec<(&str, String)> = (0..2)
+            .map(|_| {
+                let (tag, answer) = rx.recv_timeout(ceiling).expect("the slow lookup held them up");
+                (tag, body(&answer))
+            })
+            .collect();
+        answers.sort();
+        assert_eq!(
+            answers,
+            [
+                ("fast", "200 ok http://fast.example/ok".to_string()),
+                ("slow", "failed: no answer within 0.5 s".to_string())
+            ]
         );
-        let (tag, answer) = rx.recv_timeout(Duration::from_secs(2)).expect("no answer at all");
-        assert_eq!((tag, body(&answer).as_str()), ("fast", "200 ok http://fast.example/ok"));
-        for _ in 0..3 {
-            let (tag, answer) = rx
-                .recv_timeout(Duration::from_secs(2))
-                .expect("the slow lookup outlived the request's timeout");
-            assert_eq!(
-                (tag, body(&answer).as_str()),
-                ("slow", "failed: no answer within 0.5 s")
-            );
-        }
-        assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+        assert!(rx.try_recv().is_err(), "a held request answered");
         // The first request's own lookup ends with its time too.
-        let again = std::time::Instant::now();
         send(&net, "http://slow.example/x", Some(0.5), "first", &tx);
-        let (_, answer) = rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("the lookup outlived the timeout");
-        assert_eq!(body(&answer), "failed: no answer within 0.5 s");
-        assert!(again.elapsed() < Duration::from_secs(2), "{:?}", again.elapsed());
+        let (tag, answer) = rx.recv_timeout(ceiling).expect("the lookup outlived the timeout");
+        assert_eq!(
+            (tag, body(&answer).as_str()),
+            ("first", "failed: no answer within 0.5 s")
+        );
         // The name that wasn't looked up in time never reached the proxy.
         assert!(
             !seen

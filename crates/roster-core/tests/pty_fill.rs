@@ -1033,13 +1033,16 @@ fn an_echo_cant_hide_inside_one_frame_of_a_diff_only_terminal() {
 }
 
 /// The probe goes in two writes, each followed by a wait: Ctrl+U and the letter, then the last
-/// Ctrl+U (Q151 (h)). A refusal still types nothing else, and the line ends empty.
+/// Ctrl+U (Q151 (h)). A refusal still types nothing else, and the line ends empty. That the two
+/// are a whole wait apart is timed where they're written (session.rs's
+/// `the_probes_two_writes_are_a_whole_wait_apart`): timed here, where the stand-in reads them, a
+/// loaded machine that ran it late saw them closer together than they were written (T161).
 #[test]
 fn the_probe_goes_in_two_steps_with_a_wait_between() {
     let script = "stty raw -echo min 0 time 20; printf 'Password: '; \
-                  a=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'); s=$(date +%s%N); \
-                  b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); e=$(date +%s%N); \
-                  stty sane; echo; echo \"got:[$a $b $(( (e - s) / 1000000 ))]\"; sleep 5";
+                  a=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
+                  b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
+                  stty sane; echo; echo \"got:[$a $b]\"; sleep 5";
     let m = SessionManager::new();
     let (id, rx) = open(&m, host_sh(script));
     until(&rx, "Password: ");
@@ -1052,13 +1055,7 @@ fn the_probe_goes_in_two_steps_with_a_wait_between() {
         .nth(1)
         .and_then(|r| r.split(']').next())
         .unwrap_or_default();
-    let parts: Vec<&str> = got.split(' ').collect();
-    assert_eq!(&parts[..2], ["1578", "15"], "{out:?}");
-    let gap: u64 = parts[2].parse().unwrap();
-    assert!(
-        gap >= WAIT.as_millis() as u64 - 20,
-        "the last Ctrl+U came {gap} ms after the letter: {out:?}"
-    );
+    assert_eq!(got.split(' ').collect::<Vec<_>>(), ["1578", "15"], "{out:?}");
 }
 
 /// Ticket 154 (the review of #283, #3): a cursor hide or show inside another sequence isn't one.

@@ -12,6 +12,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`roster discover --write` and `roster mesh cut` sync this Box** after they change `roster.yml`, as the app's changes do: its ssh config and Claude files follow, so a Host they wrote needs no `roster sync` by hand. If the sync fails, the edit stays, and a `warning:` on stderr says why and to run `roster sync`; the command's exit status is the edit's. See [Commands](cli-reference.md#commands).
 
+- **Quitting mid-Mesh run records what it didn't finish on a busy computer too:** closing `roster serve` (quitting the app) during a Mesh plan or apply gives the job a moment to note in `mesh.json` which Hosts are left; on a loaded or slow machine that moment was spent loading the SSH library, so serve could exit with nothing noted and `mesh.status` didn't say those Hosts were pending. The library now loads when the run starts.
+
 **App**
 
 - **A huge count in a terminal sequence no longer freezes a tab** (#305): a Host (or a crafted file you `cat` there) printing `ESC[99999999L` ran the terminal out of memory, and `ESC[99999999M` held the whole app for over a minute. Every count is now capped at 9999 before the tab's terminal, the fill key's prompt check and the Plugins' `terminal_output` read it, more than any screen's rows or columns, so what's drawn is the same; OSC 52 and everything else in the output is untouched (decision Q153).

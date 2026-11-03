@@ -4,7 +4,7 @@
 
 mod common;
 
-use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -316,7 +316,7 @@ fn roster_has_answers_for_a_site_and_for_any_site() {
 #[test]
 fn a_bare_network_permission_names_no_site_and_doesnt_install() {
     let dir = plugin_dir("bare", &["network"], "");
-    let e = read_manifest(&dir).unwrap_err();
+    let e = common::read_manifest(&dir).unwrap_err();
     assert!(e.message.contains("network:api.example.com"), "{e}");
 }
 
@@ -782,7 +782,7 @@ fn the_install_prompt_shows_each_site_flagged() {
         ],
         "",
     );
-    let m = read_manifest(&dir).unwrap();
+    let m = common::read_manifest(&dir).unwrap();
     let v = serde_json::to_value(&m).unwrap();
     let ps = v["permissions"].as_array().unwrap();
     assert_eq!(ps[0]["name"], "network:api.example.com");
@@ -865,7 +865,7 @@ fn a_name_is_either_private_or_public_in_one_manifest() {
         &["network:nas.example.com", "network:private:http://nas.example.com:8080"],
         "",
     );
-    let e = read_manifest(&dir).unwrap_err();
+    let e = common::read_manifest(&dir).unwrap_err();
     assert!(
         e.message.contains("nas.example.com") && e.message.contains("private:"),
         "{e}"
@@ -880,12 +880,12 @@ fn one_site_has_one_pin_or_none() {
         format!("network:10.0.0.5:8443#sha256:{}", PIN.replace('0', "1")),
     ] {
         let dir = plugin_dir("pins", &[&pinned, &other], "");
-        let e = read_manifest(&dir).unwrap_err();
+        let e = common::read_manifest(&dir).unwrap_err();
         assert!(e.message.contains("10.0.0.5:8443"), "{e}");
     }
     // Another port is another site.
     let dir = plugin_dir("pins-ok", &[&pinned, "network:10.0.0.5"], "");
-    assert!(read_manifest(&dir).is_ok());
+    assert!(common::read_manifest(&dir).is_ok());
 }
 
 /// A self-signed appliance over https on 127.0.0.1 (a made-up certificate for

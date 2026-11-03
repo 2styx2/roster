@@ -554,6 +554,9 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
     the end; STOPPED() true leaves the Hosts not yet visited pending, as serve's deadline does. VISITS: what
     visits_of(cfg, with_mesh_dirs(cfg)) said just before, so serve works out a big Mesh once for a job.
     Returns the result serve and the CLI show (docs/serve-api.md, mesh.plan)."""
+    # The host-key lookups (recorded_host_keys) need paramiko: load it now, not after a stop. serve gives a stopped
+    # job CLOSE_WAIT (0.8 s) to record what it didn't do; the import alone took longer on a busy box (T161).
+    import paramiko  # noqa: F401
     say = say or (lambda msg: None)
     progress = progress or (lambda done, total, host: None)
     stopped = stopped or (lambda: False)

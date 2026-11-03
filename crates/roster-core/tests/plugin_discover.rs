@@ -13,7 +13,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -381,7 +381,7 @@ fn scanned(w: &World, loaded: &Reply) -> (Reply, u64) {
 #[test]
 fn it_installs_from_its_folder_asks_for_the_discover_methods_and_flags_the_scan() {
     let w = World::new("install", json!({}));
-    let manifest = read_manifest(&w.dir).unwrap();
+    let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
     assert_eq!(manifest.api, 5);
     let asked: Vec<String> = manifest.permissions.iter().map(Permission::to_string).collect();

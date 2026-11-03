@@ -4,24 +4,62 @@
 
 mod common;
 
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Serve, Source};
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// A stand-in `roster serve`: answers the read and write methods, records every call, and can
-/// be made slow.
+/// be held until the test lets it answer.
 #[derive(Default)]
 struct FakeServe {
     calls: Mutex<Vec<(String, Value)>>,
-    delay: Option<Duration>,
+    held: Option<Arc<Held>>,
+}
+
+/// Holds every call into a [`FakeServe`] until [`Held::release`]: a signal, not a guess at how
+/// slow is slow enough (T161).
+#[derive(Default)]
+struct Held {
+    released: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl Held {
+    fn wait(&self) {
+        // The ceiling is only how long a test that never lets it go keeps a thread.
+        let _ = self
+            .cv
+            .wait_timeout_while(self.released.lock().unwrap(), CEILING, |r| !*r)
+            .unwrap();
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+}
+
+/// How long a test waits for something it expects, at most: only how long a broken test takes
+/// to say so, never how long it should take.
+const CEILING: Duration = Duration::from_secs(60);
+
+/// `f`'s answer, run on a thread of its own: a test fails after [`CEILING`] rather than hang
+/// when `f` waits for something that never comes.
+fn within_ceiling<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(CEILING)
+        .unwrap_or_else(|_| panic!("{what} didn't come in {CEILING:?}"))
 }
 
 impl Serve for FakeServe {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
-        if let Some(d) = self.delay {
-            std::thread::sleep(d);
+        if let Some(held) = &self.held {
+            held.wait();
         }
         match method {
             "hosts.list" => Ok(json!({
@@ -80,7 +118,7 @@ fn handler(op: &Value, key: &str) -> u64 {
 #[test]
 fn the_manifest_says_who_it_is_and_what_it_asks_for_with_the_risks() {
     let dir = plugin_dir("manifest", &manifest("recent-alerts", &["terminal.read"]), "");
-    let m = read_manifest(&dir).unwrap();
+    let m = common::read_manifest(&dir).unwrap();
     assert_eq!(m.name, "recent-alerts");
     assert_eq!(m.version, "1.0.0");
     assert_eq!(m.permissions, perms(&["terminal.read"]));
@@ -100,23 +138,36 @@ fn a_manifest_cant_ask_for_a_secret_or_what_doesnt_exist() {
         ("vault.read", "isn't a permission"),
     ] {
         let dir = plugin_dir("secret-manifest", &manifest("greedy", &[perm]), "");
-        let e = read_manifest(&dir).unwrap_err();
+        let e = common::read_manifest(&dir).unwrap_err();
         assert!(e.message.contains(says), "{perm}: {e}");
         assert_eq!(e.file.as_deref(), Some("roster-plugin.lua"));
     }
     let dir = plugin_dir("mesh-manifest", &manifest("mesh", &["serve:mesh.status"]), "");
-    assert_eq!(read_manifest(&dir).unwrap().permissions, perms(&["serve:mesh.status"]));
+    assert_eq!(
+        common::read_manifest(&dir).unwrap().permissions,
+        perms(&["serve:mesh.status"])
+    );
 }
 
 #[test]
 fn a_manifest_names_a_newer_api_or_a_bad_name() {
     let dir = plugin_dir("newer", r#"return { name = "x", version = "1", api = 99 }"#, "");
-    assert!(read_manifest(&dir).unwrap_err().message.contains("update the app"));
+    assert!(
+        common::read_manifest(&dir)
+            .unwrap_err()
+            .message
+            .contains("update the app")
+    );
     let dir = plugin_dir("badname", r#"return { name = "Bad Name", version = "1", api = 2 }"#, "");
-    assert!(read_manifest(&dir).unwrap_err().message.contains("isn't a Plugin name"));
+    assert!(
+        common::read_manifest(&dir)
+            .unwrap_err()
+            .message
+            .contains("isn't a Plugin name")
+    );
     let dir = plugin_dir("code", r#"os.exit() return {}"#, "");
     assert!(
-        read_manifest(&dir).is_err(),
+        common::read_manifest(&dir).is_err(),
         "the manifest runs in the sandbox, with no os.exit"
     );
 }
@@ -577,12 +628,9 @@ fn a_hook_that_loops_runs_out_of_time_and_a_repeat_offender_is_disabled() {
     let (host, _) = host();
     let (_, reply) = host.load(&Source::Dir(dir.to_path_buf()), &[]).unwrap();
     let (spin, fine) = (handler(&reply.ops[0], "run"), handler(&reply.ops[1], "run"));
-    let started = Instant::now();
+    // The budget stopped it (its message, at its line), not the host giving up on it (that
+    // disables it at once, "didn't answer"). T161: no stopwatch, which a paused process overran.
     let r = host.call("loopy", spin, json!({}));
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "the budget is a quarter second"
-    );
     let e = r.error.unwrap();
     assert!(e.message.contains("took longer than 250 ms"), "{e}");
     assert_eq!(e.line, Some(2));
@@ -632,13 +680,13 @@ fn a_plugin_that_eats_memory_is_stopped() {
 
 #[test]
 fn a_slow_plugin_is_given_up_on_and_the_others_keep_working() {
-    let host = PluginHost::new(
+    let host = Arc::new(PluginHost::new(
         Arc::new(FakeServe::default()),
         Limits {
             grace: Duration::from_millis(300),
             ..Limits::default()
         },
-    );
+    ));
     // One long C call (a pattern that backtracks): the time budget can't stop it inside.
     let slow = plugin_dir(
         "slow",
@@ -653,9 +701,12 @@ fn a_slow_plugin_is_given_up_on_and_the_others_keep_working() {
     );
     let (_, slow_load) = host.load(&Source::Dir(slow.to_path_buf()), &[]).unwrap();
     let (_, quick_load) = host.load(&Source::Dir(quick.to_path_buf()), &[]).unwrap();
-    let started = Instant::now();
-    let r = host.call("slow", handler(&slow_load.ops[0], "run"), json!({}));
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // The C call runs for hours: an answer at all is the host giving up on it (T161: not timed).
+    let r = {
+        let host = Arc::clone(&host);
+        let h = handler(&slow_load.ops[0], "run");
+        within_ceiling("the host giving up", move || host.call("slow", h, json!({})))
+    };
     assert!(r.disabled.unwrap().contains("didn't answer"));
     assert_eq!(
         host.call("quick", handler(&quick_load.ops[0], "run"), json!({})).result,
@@ -666,17 +717,16 @@ fn a_slow_plugin_is_given_up_on_and_the_others_keep_working() {
 /// Waiting for roster serve is serve's time, not the Plugin's (decision Q103).
 #[test]
 fn a_plugin_waiting_for_a_slow_serve_isnt_given_up_on_and_the_others_keep_working() {
+    let held = Arc::new(Held::default());
     let slow_serve = Arc::new(FakeServe {
-        delay: Some(Duration::from_millis(1500)),
+        held: Some(Arc::clone(&held)),
         ..FakeServe::default()
     });
-    let host = Arc::new(PluginHost::new(
-        slow_serve,
-        Limits {
-            grace: Duration::from_millis(300),
-            ..Limits::default()
-        },
-    ));
+    let limits = Limits {
+        grace: Duration::from_millis(300),
+        ..Limits::default()
+    };
+    let host = Arc::new(PluginHost::new(Arc::clone(&slow_serve) as Arc<dyn Serve>, limits));
     let slow = plugin_dir(
         "waits",
         &manifest("waits", &["inventory.read"]),
@@ -696,14 +746,23 @@ fn a_plugin_waiting_for_a_slow_serve_isnt_given_up_on_and_the_others_keep_workin
         let h = handler(&slow_load.ops[0], "run");
         std::thread::spawn(move || host.call("waits", h, json!({})))
     };
-    std::thread::sleep(Duration::from_millis(50));
-    let started = Instant::now();
-    assert_eq!(
-        host.call("quick2", handler(&quick_load.ops[0], "run"), json!({}))
-            .result,
-        1
-    );
-    assert!(started.elapsed() < Duration::from_millis(500));
+    // T161: signals, not a 50 ms sleep and a stopwatch. It's waiting for serve once serve has
+    // the call; the other Plugin answers meanwhile, not queued behind it.
+    let asked = Instant::now() + CEILING;
+    while slow_serve.methods().is_empty() {
+        assert!(Instant::now() < asked, "the Plugin never called serve");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let quick = {
+        let host = Arc::clone(&host);
+        let h = handler(&quick_load.ops[0], "run");
+        within_ceiling("the other Plugin's answer", move || host.call("quick2", h, json!({})))
+    };
+    assert_eq!(quick.result, 1);
+    // Held past the Plugin's budget and the host's grace (a sleep only ever lasts longer), and
+    // still not given up on: serve's time isn't the Plugin's.
+    std::thread::sleep(limits.call + limits.grace + Duration::from_millis(200));
+    held.release();
     let r = waiting.join().unwrap();
     assert!(r.disabled.is_none(), "{:?}", r.disabled);
     assert_eq!(r.result, 1);
@@ -819,7 +878,12 @@ fn a_folder_plugin_cant_take_a_built_in_or_reserved_name() {
             .contains("built into roster")
     );
     let dir = plugin_dir("builtin-name", &manifest("builtin", &[]), "");
-    assert!(read_manifest(&dir).unwrap_err().message.contains("kept for roster"));
+    assert!(
+        common::read_manifest(&dir)
+            .unwrap_err()
+            .message
+            .contains("kept for roster")
+    );
 }
 
 /// examples/plugins/pinned, the example docs/plugins.md walks through, loads and works.
