@@ -136,6 +136,7 @@ export function deriveConfig(c: Config): Derived {
     scrollback: t.scrollback,
     copyOnSelect: t.copyOnSelect,
     rightClickCopyPaste: t.rightClickPaste,
+    osc52: t.osc52,
     ...(Object.keys(t.colors).length > 0 ? { colors: t.colors } : {}),
   };
   return { options, appearance, terminalOptions, layouts: layoutsOf(c.modes) };

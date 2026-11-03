@@ -4,8 +4,7 @@
 // sets and reads. Each path in #294 has a test here; docs/app/dev/copy-paste-checklist.md is what
 // only the Windows build can show (WebView2, ConPTY, voice typing, real programs).
 //
-// Tests marked `skip` with #293 are the behaviour T157 brings (OSC 52 writes, right-click under
-// mouse reporting): they turn on when it lands.
+// Tests marked #293 are T157's (OSC 52 writes, right-click under mouse reporting, decision Q149).
 import type { Browser } from "playwright-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ALT, CTRL, launch, openHarness, type Harness } from "./browser";
@@ -326,11 +325,11 @@ describe("content", () => {
     expect(await h.sent()).toEqual(["one\rtwo\rthree\r"]);
   });
 
-  // A bug, left for T157's files (clipboard.ts, input.ts): xterm.js 6 puts the text between the
-  // marks as it is, so text holding the end mark ends the bracketed paste early and what follows
-  // runs as typed (a paste "injection"). Windows Terminal and most terminals take ESC out of a
-  // bracketed paste. Reported in T158's PR as a follow-up.
-  it.skip("a bracketed paste can't be ended early by an end mark inside the text", async () => {
+  // xterm.js 6 puts the text between the marks as it is, so text holding the end mark would end
+  // the bracketed paste early and run what follows as typed (a paste "injection"). Every paste
+  // goes through clipboard.ts pasteFilter, which takes control characters out as Windows
+  // Terminal does (ControlCore::PasteText, FilterStringForPaste).
+  it("a bracketed paste can't be ended early by an end mark inside the text", async () => {
     await h.output(BRACKETED);
     await clip("safe\x1b[201~rm -rf /tmp/x\n");
     await h.page.keyboard.press("Control+Shift+v");
@@ -408,11 +407,10 @@ describe("content", () => {
     expect(copied!.split(/\r?\n/)).toEqual(["first", "second", "third"]);
   });
 
-  // For the owner: spaces a program printed at the end of a line are copied (xterm.js keeps
-  // them; it drops only cells nothing was written to). Windows Terminal trims trailing whitespace
-  // off each line of a multi-line copy. The trim would go in clipboard.ts (T157's file), so this
-  // waits for a decision; reported in T158's PR.
-  it.skip("copies several lines without the spaces printed at their ends, as Windows Terminal does", async () => {
+  // xterm.js keeps spaces a program printed at the end of a line (it drops only cells nothing
+  // was written to); clipboard.ts copiedText trims them off each line, as Windows Terminal does
+  // (TextBuffer CopyRequest, trimTrailingWhitespace).
+  it("copies several lines without the spaces printed at their ends, as Windows Terminal does", async () => {
     const { cols } = await h.size();
     await h.output("first   \r\nsecond\r\nthird\r\n");
     await h.drag([0, 0], [cols - 1, 2]);
@@ -476,8 +474,9 @@ describe("programs", () => {
   });
 
   // #293: right-click with no selection while the program reports the mouse goes to the program,
-  // as in Windows Terminal (it pastes today); Shift+right-click still pastes.
-  it.skip("with mouse reporting on and no selection, right-click goes to the program, not a paste (#293)", async () => {
+  // as in Windows Terminal (ControlInteractivity.cpp PointerPressed: _canSendVTMouseInput comes
+  // before its copy-or-paste rule); Shift+right-click still pastes.
+  it("with mouse reporting on and no selection, right-click goes to the program, not a paste (#293)", async () => {
     await h.output(`${ALT_SCREEN}${MOUSE_ON}`);
     await clip("not pasted");
     await h.rightClick(2, 0);
@@ -537,14 +536,14 @@ describe("OSC 52", () => {
     expect(await h.reads()).toBe(0);
   });
 
-  it.skip("a program's write (Claude Code, tmux, vim) sets the clipboard (#293)", async () => {
+  it("a program's write (Claude Code, tmux, vim) sets the clipboard (#293)", async () => {
     await h.output(osc52("copied by the program\n日本語"));
     expect(await h.copiedCount(1)).toEqual(["copied by the program\n日本語"]);
     await h.settled();
     expect(await h.sent()).toEqual([]);
   });
 
-  it.skip("a write from a Session that isn't on screen doesn't set the clipboard (#293)", async () => {
+  it("a write from a Session that isn't on screen doesn't set the clipboard (#293)", async () => {
     await h.setActive(false);
     await h.output(osc52("from a hidden tab"));
     await h.setActive(true);
@@ -552,7 +551,7 @@ describe("OSC 52", () => {
     expect(await h.copiedCount(1)).toEqual(["from the tab on screen"]);
   });
 
-  it.skip("a write and then a read request: the write lands, the read is still not answered (#293)", async () => {
+  it("a write and then a read request: the write lands, the read is still not answered (#293)", async () => {
     await h.output(osc52("written") + "\x1b]52;c;?\x07");
     expect(await h.copiedCount(1)).toEqual(["written"]);
     await h.page.keyboard.press("j");

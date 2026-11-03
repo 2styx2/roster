@@ -1543,6 +1543,7 @@
             "terminal.scrollback",
             "terminal.copy_on_select",
             "terminal.right_click_paste",
+            "terminal.osc52",
             "terminal.colors",
             "terminal.shell_hooks"
           ],
@@ -1823,6 +1824,28 @@
             "roster.o.terminal.right_click_paste = value",
             "roster.o.terminal.right_click_paste",
             "roster.o.reset(\"terminal.right_click_paste\")"
+          ],
+          "listed": true
+        },
+        {
+          "tag": "terminal.osc52",
+          "heading": "terminal.osc52",
+          "what": "option",
+          "kind": "leaf",
+          "written": "roster.o.terminal.osc52",
+          "ty": "boolean",
+          "default": "true",
+          "about": "A program in the Session on screen may set the clipboard with OSC 52 (write only, at most 1 MiB), as in Windows Terminal: how Claude Code, vim or tmux copy what you select in them.",
+          "takes": "",
+          "names": [],
+          "item": null,
+          "fields": [],
+          "rows": [],
+          "example": "roster.o.terminal.osc52 = false",
+          "methods": [
+            "roster.o.terminal.osc52 = value",
+            "roster.o.terminal.osc52",
+            "roster.o.reset(\"terminal.osc52\")"
           ],
           "listed": true
         },
@@ -3528,6 +3551,7 @@
     "roster.o.terminal.cursor_style": "terminal.cursor_style",
     "roster.o.terminal.font": "terminal.font",
     "roster.o.terminal.line_height": "terminal.line_height",
+    "roster.o.terminal.osc52": "terminal.osc52",
     "roster.o.terminal.renderer": "terminal.renderer",
     "roster.o.terminal.right_click_paste": "terminal.right_click_paste",
     "roster.o.terminal.scrollback": "terminal.scrollback",
