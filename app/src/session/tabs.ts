@@ -392,9 +392,9 @@ export class Tabs {
     if (exit.closed) return null;
     const host = entry.tab.host;
     if (!this.windowOpen(entry)) {
-      return exit.code === 255 ? classifyDrop({ host, tail: terminalTail(entry.late) }) : null;
+      return exit.code === 255 ? classifyDrop({ host, tail: terminalTail(entry.late, 30, { strippedAtCapture: true }) }) : null;
     }
-    return classifyExit({ exitCode: exit.code, tail: terminalTail(entry.preAuth), host, auth: entry.tab.auth });
+    return classifyExit({ exitCode: exit.code, tail: terminalTail(entry.preAuth, 30, { strippedAtCapture: true }), host, auth: entry.tab.auth });
   }
 
   /** "host", or "host (n)" with the smallest n no other tab to `host` uses. */

@@ -75,7 +75,7 @@ export function wireOsc52(t: Pick<Terminal, "parser">, deps: Osc52Deps): () => v
  * sequence starts, not where xterm.js calls the handler, at its end (#295 review). OSC 52 draws
  * nothing, so the screen is as it would be (decision Q37 holds). xterm ends an OSC at BEL, at
  * C1 ST (U+009C) and at any ESC (with `\`, that's ST; else it starts the next sequence); CAN
- * and SUB abort it. Output that wasn't held passes untouched, except to finish one begun held. */
+ * and SUB abort it; any other C1 control leaves it and is acted on. Output that wasn't held passes untouched, except to finish one begun held. */
 export class HeldOsc52Filter {
   private state: "text" | "start" | "drop" | "dropEsc" | "dropC2" = "text";
   /** The bytes of a possible start read so far, and how many of `ESC ] 5 2 ;` they make. */
@@ -131,9 +131,25 @@ export class HeldOsc52Filter {
           i--;
         }
       } else {
-        // dropC2: U+009C (C2 9C) is ST.
-        this.state = b === 0x9c ? "text" : "drop";
-        if (this.state === "drop") i--;
+        // dropC2: a C1 control (C2 80 to C2 9F) ends it, as in xterm.js. ST (C2 9C) is used up;
+        // any other is acted on, so it goes out, and a C1 OSC (C2 9D) in held output may be
+        // another OSC 52 to drop.
+        if (b === 0x9c) {
+          this.state = "text";
+        } else if (b >= 0x80 && b <= 0x9f) {
+          if (held && b === 0x9d) {
+            this.state = "start";
+            this.pending = [0xc2, 0x9d];
+            this.matched = 2;
+          } else {
+            this.state = "text";
+            out.push(0xc2);
+            i--;
+          }
+        } else {
+          this.state = "drop";
+          i--;
+        }
       }
     }
     if (out.length === 0 && i >= data.length) return new Uint8Array(0);
@@ -209,8 +225,15 @@ export class Osc52Stripper {
           break;
         }
         case "drop":
-          if (ch === "\x07" || ch === "\x9c") this.state = "text";
+          // Where xterm.js ends an OSC (EscapeSequenceParser.ts): BEL, ST, CAN and SUB end it and
+          // are used up; ESC ends it and starts what follows; any other C1 control leaves it and
+          // is acted on, so it's kept.
+          if (ch === "\x07" || ch === "\x9c" || ch === "\x18" || ch === "\x1a") this.state = "text";
           else if (ch === "\x1b") this.state = "dropEsc";
+          else if (ch >= "\x80" && ch <= "\x9f") {
+            this.state = "text";
+            i--;
+          }
           break;
         case "dropEsc":
           // ST ends it; any other ESC cuts it off and starts a sequence of its own.

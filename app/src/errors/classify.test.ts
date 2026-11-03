@@ -130,7 +130,7 @@ describe("terminalTail drops what's left of an escape sequence cut off at its st
     expect(terminalTail("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\x07Timeout, server 10.0.0.6 not responding.")).toBe(
       "Timeout, server 10.0.0.6 not responding.",
     );
-    expect(terminalTail("QUJDREVG\x1b\\done")).toBe("done");
+    expect(terminalTail("c;QUJDREVGR0hJSktM\x1b\\done")).toBe("done");
   });
 
   it("keeps the text before a whole OSC", () => {
@@ -143,5 +143,20 @@ describe("terminalTail drops what's left of an escape sequence cut off at its st
     // A host key fingerprint (43 characters) stays.
     const fp = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
     expect(terminalTail(fp)).toBe(fp);
+  });
+});
+
+describe("terminalTail keeps the lines before a shell's bell (#295 second pass)", () => {
+  it("a bell after a prompt erases nothing", () => {
+    const out = "line one\r\nadmin@web-1:~$ \x07\r\nConnection to 10.0.0.5 closed by remote host.";
+    expect(terminalTail(out)).toBe("line one\nadmin@web-1:~$\nConnection to 10.0.0.5 closed by remote host.");
+  });
+
+  it("nor a bell right after a short word", () => {
+    expect(terminalTail("ls\x07\r\ndone")).toBe("ls\ndone");
+  });
+
+  it("output already stripped at capture (preAuth, late) keeps what's before a payload-shaped BEL too", () => {
+    expect(terminalTail("QUJDREVGR0hJSktMTU5P\x07after", 30, { strippedAtCapture: true })).toBe("QUJDREVGR0hJSktMTU5Pafter");
   });
 });

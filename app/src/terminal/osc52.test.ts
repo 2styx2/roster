@@ -288,3 +288,64 @@ describe("screenWriter when xterm refuses a write (#295 review)", () => {
     expect(got).toEqual(["next", "held", "live"]);
   });
 });
+
+// #295 second pass: the drop ends exactly where xterm.js ends an OSC (EscapeSequenceParser.ts:
+// BEL, ST, ESC, CAN and SUB end it; any other C1 control leaves it and is acted on).
+describe("OSC 52 is dropped only as far as xterm.js reads it", () => {
+  it.each([
+    ["CAN", "\x18"],
+    ["SUB", "\x1a"],
+  ])("Osc52Stripper: %s ends it, and the error line after it is kept for the tail", (_, end) => {
+    const s = new Osc52Stripper();
+    const kept = s.strip(`\x1b]52;c;QUJD${end}ssh: connect to host esx-02 port 22: Connection refused\r\n`);
+    expect(kept).toBe("ssh: connect to host esx-02 port 22: Connection refused\r\n");
+  });
+
+  it("Osc52Stripper: any other C1 control ends it and is kept (it starts what comes next)", () => {
+    const s = new Osc52Stripper();
+    expect(s.strip("\x1b]52;c;QUJD\x9b31mred")).toBe("\x9b31mred");
+    expect(s.strip("\x1b]52;c;QUJD\x85next")).toBe("\x85next");
+    expect(s.strip(`\x1b]52;c;QUJD\x9d52;c;${b64("x")}\x07after`)).toBe("after");
+  });
+
+  const screenAfter = async (held: string, live = "") => {
+    const t = new Terminal({ allowProposedApi: true });
+    const screen = screenWriter(t);
+    const gate = holdWhileHidden(screen.write);
+    const enc = (x: string) => new TextEncoder().encode(x);
+    gate.hide();
+    gate.write(enc(held));
+    gate.show();
+    if (live) gate.write(enc(live));
+    await new Promise<void>((done) => t.write("", done));
+    return t.buffer.active.getLine(0)?.translateToString(true);
+  };
+
+  it("HeldOsc52Filter: a C1 CSI (C2 9B) ends one begun in held output, and what follows is shown", async () => {
+    expect(await screenAfter("ab\x1b]52;c;QUJD\u009b31mcd")).toBe("abcd");
+  });
+
+  it("HeldOsc52Filter: CAN ends it, and the text after is shown", async () => {
+    expect(await screenAfter("ab\x1b]52;c;QUJD\x18cd")).toBe("abcd");
+  });
+
+  it("HeldOsc52Filter: a C1 OSC (C2 9D) ends it and starts another, dropped too while held", async () => {
+    const writes: string[] = [];
+    const t = new Terminal({ allowProposedApi: true });
+    const titles: string[] = [];
+    t.onTitleChange((x) => titles.push(x));
+    const clipboard = { readText: async () => "", writeText: async (text: string) => void writes.push(text) };
+    wireOsc52(t, { enabled: () => true, onScreen: () => true, clipboard: () => clipboard });
+    const screen = screenWriter(t);
+    const enc = (x: string) => new TextEncoder().encode(x);
+    screen.write(enc(`ab\x1b]52;c;QUJD\u009d52;c;${b64("held")}\x07\u009d0;esx-02\x07cd`), true);
+    await new Promise<void>((done) => t.write("", done));
+    expect(writes).toEqual([]);
+    expect(titles).toEqual(["esx-02"]);
+    expect(t.buffer.active.getLine(0)?.translateToString(true)).toBe("abcd");
+  });
+
+  it("HeldOsc52Filter: in output that wasn't held, a sequence after the end is left to xterm", async () => {
+    expect(await screenAfter("ab\x1b]52;c;QU", `JD\u009b31mcd\x1b]52;c;${b64("live")}\x07ef`)).toBe("abcdef");
+  });
+});
