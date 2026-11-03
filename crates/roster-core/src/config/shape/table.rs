@@ -839,11 +839,19 @@ pub(super) const API: &[ApiItem] = &[
             "roster.api_version",
             None,
             "integer",
-            "The version of this table, raised when it changes.",
-            "Read-only. The Plugin API's version too: it rises with that.",
-            "if roster.api_version >= 4 then roster.o.vim = false end",
+            "The Plugin API's version, which init.lua's table shows too.",
+            "Read-only. It rises when only the Plugin API changes, so it doesn't tell what init.lua has: roster.config_version does.",
+            "print(\"Plugin API \" .. roster.api_version)",
         )
     },
+    item(
+        "roster.config_version",
+        None,
+        "integer",
+        "init.lua's own version: 4 is v0.3.0's (roster.o and the collections' functions).",
+        "Read-only. It rises when a name is removed or renamed, or keeps its name but takes, gives or does something else; not for a new name (check that it isn't nil) and not for a Plugin API change. For the rare case a name can't tell. An app from before it (v0.4.0 and older) reads it as nil.",
+        "if (roster.config_version or 0) >= 4 then\n  roster.o.terminal.size = \"16pt\"\nelse\n  roster.set(\"terminal.size\", \"16pt\")\nend",
+    ),
     item(
         "roster.version",
         None,
