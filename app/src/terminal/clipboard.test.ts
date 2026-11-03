@@ -1,10 +1,10 @@
 // Copy and paste in the terminal (iteration 3 feedback): the keys, right-click as Windows Terminal
 // does it, and pastes that reach the shell as xterm.js sends them (bracketed, line ends as Enter).
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { resolveKeymap } from "../keymap";
 import { memoryPlatform } from "../platform/memory";
-import { copyIfSelected, copySelection, pasteClipboard, programHasMouse, rightClick, type Selectable } from "./clipboard";
+import { copiedText, copyIfSelected, copySelection, pasteClipboard, programHasMouse, rightClick, type Selectable } from "./clipboard";
 
 /** A terminal's selection and what it sends to the shell, without a screen. */
 function fakeTerm(selection = ""): Selectable & { sent: string[]; selection: string } {
@@ -62,6 +62,8 @@ describe("The terminal's copy and paste keys", () => {
 });
 
 describe("Copying and pasting", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("copies the selection, and nothing when there's none", async () => {
     const platform = memoryPlatform({ clipboard: "before" });
     expect(copySelection(fakeTerm(""), platform.clipboard)).toBe(false);
@@ -131,6 +133,31 @@ describe("Copying and pasting", () => {
     expect(copySelection(fakeTerm("ab        \nxy     z   \n  indented  "), platform.clipboard)).toBe(true);
     await Promise.resolve();
     expect(platform.clipboardText()).toBe("ab\nxy     z\n  indented");
+  });
+
+  // T160 (#302): Windows Terminal ends each copied line with \r\n (TextBuffer::GetPlainText);
+  // terminals elsewhere with \n. roster decides by its own OS test, not xterm.js's.
+  it("ends copied lines with \\r\\n on Windows and \\n elsewhere, whatever xterm gave", () => {
+    expect(copiedText("first  \nsecond\nthird", "\r\n")).toBe("first\r\nsecond\r\nthird");
+    expect(copiedText("first\r\nsecond  \r\nthird", "\r\n")).toBe("first\r\nsecond\r\nthird");
+    expect(copiedText("first  \r\nsecond\r\nthird", "\n")).toBe("first\nsecond\nthird");
+    expect(copiedText("one line  ", "\r\n")).toBe("one line");
+  });
+
+  it("copies with \\r\\n when the app runs on Windows (WebView2's user agent)", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0", platform: "Linux x86_64" });
+    const platform = memoryPlatform({ clipboard: "" });
+    copySelection(fakeTerm("ls -la\n/etc"), platform.clipboard);
+    await Promise.resolve();
+    expect(platform.clipboardText()).toBe("ls -la\r\n/etc");
+  });
+
+  it("copies with \\n off Windows", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", platform: "MacIntel" });
+    const platform = memoryPlatform({ clipboard: "" });
+    copySelection(fakeTerm("ls -la\r\n/etc"), platform.clipboard);
+    await Promise.resolve();
+    expect(platform.clipboardText()).toBe("ls -la\n/etc");
   });
 
   it("a selection of nothing but spaces copies nothing", () => {

@@ -117,6 +117,10 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       // A right-click never selects a word first (xterm's default on macOS), as in Windows
       // Terminal: under mouse reporting it's the program's, and otherwise it copies or pastes.
       rightClickSelectsWord: false,
+      // On macOS, Option takes the mouse back from a program with mouse reporting on (Option+drag
+      // selects, Option+right-click copies or pastes), as Shift does elsewhere and Option does in
+      // iTerm2 and Terminal.app. xterm then has no Option+drag block selection (decision Q155).
+      macOptionClickForcesSelection: true,
       fontFamily: options.fontFamily,
       fontSize: cb.current.env.fontSize,
       fontWeight: options.fontWeight,

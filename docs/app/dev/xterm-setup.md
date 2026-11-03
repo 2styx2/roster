@@ -24,6 +24,7 @@ const term = new Terminal({
   scrollback: 10000,
   windowsPty: isWindows ? { backend: "conpty", buildNumber } : undefined, // this box: 26200 (>=21376 keeps reflow)
   macOptionIsMeta: true,
+  macOptionClickForcesSelection: true, // Option takes the mouse back from a program on macOS (Q155)
 });
 term.open(el);                         // el must be visible and have a size
 const fit = new FitAddon(); term.loadAddon(fit); fit.fit();
