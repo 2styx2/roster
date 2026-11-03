@@ -195,6 +195,8 @@ app/src/docs-site/    the docs website and PDF (ticket 46, ADR 0008): site.tsx r
                       matching over search-index.js; entry.ts is bundled into the site's search.js
 app/scripts/gen-docs-site.ts  `npm run docs` (`-- --out DIR`, `--pdf FILE`): writes it, and bundles search.js; run through vite-run.mjs
                       (Vite's module runner, so the app's `?raw` imports work)
+app/scripts/notices-plugin.mjs  `virtual:third-party-notices`: THIRD-PARTY-NOTICES's text for `:version`'s help page
+                      (T180), in vite.config.ts and vite-run.mjs
 app/scripts/check-docs-a11y.ts  `npm run docs:a11y -- DIR`: axe-core over the built site in headless Chrome (dark, light,
                       the search box open); fails on any WCAG 2.x A/AA problem. docs.yml runs it on every PR
 app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [--build]`, `serve`;

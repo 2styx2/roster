@@ -6,9 +6,9 @@ The usual flow for bringing a new network or box into roster: scan it, review it
 
 ```bash
 cd ~/infra
-roster discover 10.19.77.0/24             # preview, nothing written
-roster discover 10.19.77.0/24 --write     # adds a discovered-YYYYMMDD group
-roster discover 10.19.77.0/24 --json      # the preview as JSON, for a script
+roster discover 10.0.0.0/24             # preview, nothing written
+roster discover 10.0.0.0/24 --write     # adds a discovered-YYYYMMDD group
+roster discover 10.0.0.0/24 --json      # the preview as JSON, for a script
 ```
 
 `--write` does the following:
@@ -20,7 +20,7 @@ roster discover 10.19.77.0/24 --json      # the preview as JSON, for a script
 
 Each host gets a guessed `type`, a `title` from its web page, its services, and a description of every open port.
 
-From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.19.77.0/24`, keep the Hosts you want, and they're added unreviewed as Pending changes for you to Publish.
+From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.0.0.0/24`, keep the Hosts you want, and they're added unreviewed as Pending changes for you to Publish.
 
 Tell your security team before scanning big ranges.
 
@@ -80,7 +80,7 @@ Going the other way, `roster info HOST` shows a host's address and which item ea
 
 ## 3. Work out which box is which
 
-Discovered hosts are named by address (`server-10-19-77-202`), and several can share a web title. Ways to tell them apart before any login:
+Discovered hosts are named by address (`server-10-0-0-202`), and several can share a web title. Ways to tell them apart before any login:
 
 | Clue | How |
 |---|---|
@@ -95,12 +95,12 @@ Certificates can mislead: a cert copied from another box names that box. The SSH
 For each host you're bringing in, set its login and mark it reviewed:
 
 ```yaml
-      server-10-19-77-202:
+      server-10-0-0-202:
         reviewed: true
         user: ops
         auth: "bw:lab-hub3 ssh"
         enroll: false            # password logins for now; true = setup installs the key
-        ip: "10.19.77.202"
+        ip: "10.0.0.202"
         ...
 ```
 
@@ -110,8 +110,8 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 ```yaml
         services:
-          https: { url: "https://10.19.77.206", verify: false }
-          api:   { url: "https://10.19.77.206", verify: false, login: vsphere }   # ESXi / vCenter SOAP API
+          https: { url: "https://10.0.0.206", verify: false }
+          api:   { url: "https://10.0.0.206", verify: false, login: vsphere }   # ESXi / vCenter SOAP API
           admin: { port: 8443, user: webadmin, auth: "bw:esxi-02 admin" }        # its own login
 ```
 
@@ -158,7 +158,7 @@ Commit and push the updated `roster.yml` to [yourteam/infra](https://example.com
 ## Adding a login to a host that's already on the map
 
 1. Create the vault item (named as in step 2, address in its URI field) in the shared collection.
-2. Find the host by address: `grep -n "10.19.77.XX" ~/infra/roster.yml`.
+2. Find the host by address: `grep -n "10.0.0.XX" ~/infra/roster.yml`.
 3. Set `auth: "bw:<item>"` on the host, on its `ssh:` block, or on one service. A scanned host also gets its real name and `reviewed: true` (step 4).
 4. `roster auth-check --only HOST`, then `roster run HOST -- hostname` (step 5).
 5. Commit and push (step 6).
