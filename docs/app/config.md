@@ -75,7 +75,17 @@ if roster.themes.update then
 end
 ```
 
-For the rare case a name can't tell, `roster.version` is the app's version (`"0.2.0"`): compare its numbers, not the string. `roster.api_version` is the Plugin API's version too, so it rises when only that changes; it's not the way to tell what `init.lua` has.
+For the rare case a name can't tell (a name that stays but takes or does something else), `roster.config_version` is `init.lua`'s own version (decision Q165). It's 4 for v0.3.0's shape (`roster.o` and the collections' functions) and rises when a name is removed or renamed or changes what it takes, gives or does; a new name doesn't raise it (check that the name isn't nil). An app from before it (v0.4.0 and older) reads it as nil. `roster.api_version` is the Plugin API's version: it rises when only that changes, so it's not the way to tell what `init.lua` has.
+
+```lua
+if (roster.config_version or 0) >= 4 then
+  roster.o.terminal.size = "16pt"
+else
+  roster.set("terminal.size", "16pt")
+end
+```
+
+`roster.version` is the app's version (`"0.2.0"`), for a message or a bug report: compare its numbers, not the string.
 
 ```lua
 local major, minor = roster.version:match("^(%d+)%.(%d+)")
@@ -127,7 +137,7 @@ A global, and also `require("roster")`. A Plugin gets another table with more in
 
 | Name | What |
 |---|---|
-| `roster.os`, `roster.version`, `roster.config_dir`, `roster.api_version` | Read-only: the OS (`"windows"`, `"linux"` or `"macos"`), the app's version, the config folder, and the table's version (`4`, shared with the Plugin API) |
+| `roster.os`, `roster.version`, `roster.config_dir`, `roster.config_version`, `roster.api_version` | Read-only: the OS (`"windows"`, `"linux"` or `"macos"`), the app's version, the config folder, `init.lua`'s own version (`4`, [Feature detection](#feature-detection)), and the Plugin API's version (`5`; it rises with Plugin-only changes) |
 | `roster.o` | Every option, Neovim style: `roster.o.terminal.size = "16pt"`. Nested objects need no setup; reading gives the value set so far (a copy) or nil, so `if roster.o.vim then` works; `roster.o.get("terminal.size")` reads one by its dotted name and `roster.o.reset("terminal.size")` puts one back to its default |
 | `roster.set(name, value)` | Any option by its dotted name: `roster.set("terminal.size", "16pt")`. The same store as `roster.o`, checked the same way; for a name built at run time, and older Configs. `roster.o` is the usual way |
 | `roster.keymap` | `set(context, keys, action)`, `del(context, keys)`, `get(context, keys)`, `list(context)`: key bindings, as in `keys` below. `action` is a command line, or `false` to unbind one of roster's |
