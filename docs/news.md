@@ -14,6 +14,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- With `auto_reload` on, an outside edit of `roster.yml` saved just as the app started watching it (at start, on a busy computer) is applied too: it could be taken for how the file already was and never applied until `:source`.
 - A Plugin's request through `plugin_proxy` that's redirected to a name this computer is slow to look up now ends at the request's `timeout` ("no answer within N s") instead of waiting on the lookup, and holds up none of the Plugin's other requests. Every redirect is still checked the same way before it's followed. A user or password in a redirect's address is never sent, and on to another site only a Plugin's headers that carry no credential go along (`Accept`, `User-Agent`, …): a token in `X-Api-Key` or any other header stays with the site it was sent to. Each hop of a redirect counts in `:plugins` under its own site. See [The network](plugins.md#the-network).
 - `:options` names the returned table's line for an option it sets over a `roster.o` line (after `:config import-terminal`, it named the import block's line), and an error in that value is reported there too.
 - The editor types' `roster.config.OptionName` (what `roster.o.get` and `roster.o.reset` take) says so, and takes a map's own keys (`"views.files.width"`) as well as the names it lists. Run `:config types` again to update them.

@@ -1053,21 +1053,25 @@ def test_serve_plans_applies_cuts_and_reports_status(net, serve, monkeypatch):
     json.dumps(cut)
 
 
-def wait_for(s, job, until=lambda j: j["state"] != "running", seconds=20):
-    """Polls mesh.job, as the Mesh controls Plugin does, until UNTIL holds; returns the last answer."""
+def wait_for(s, job, until=lambda j: j["state"] != "running", seconds=100):
+    """Polls mesh.job, as the Mesh controls Plugin does, until UNTIL holds; returns that answer. SECONDS is only how
+    long a broken test takes to say so: a Mesh job on Windows' CI runner takes many times as long as here (T151)."""
     import time
     end = time.monotonic() + seconds
     while True:
         j = s.call("mesh.job", {"job": job})["result"]
-        if until(j) or time.monotonic() > end:
+        if until(j):
             return j
+        if time.monotonic() > end:
+            pytest.fail(f"mesh job {job} didn't get there in {seconds} s: {j}")
         time.sleep(0.05)
 
 
 def test_serve_runs_a_mesh_job_in_the_background_and_answers_meanwhile(net, serve):
     s = serve("-c", str(net.cfg_path))
     assert s.call("mesh.job")["result"] is None                         # no job yet
-    (net.host("orion-2") / "slow").write_text("1")                      # its step takes a second
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")                                                 # its step waits until we let it go
     started = s.call("mesh.plan", {"background": True})["result"]
     assert started["action"] == "plan" and started["total"] > 0 and isinstance(started["job"], int)
     # serve answers other requests while the job runs, and another Mesh run is refused
@@ -1075,6 +1079,7 @@ def test_serve_runs_a_mesh_job_in_the_background_and_answers_meanwhile(net, serv
     busy = s.call("mesh.apply", {"background": True})["error"]
     assert busy["code"] == 111 and busy["data"]["job"] == started["job"]
     assert s.call("mesh.apply")["error"]["code"] == 111
+    hold.unlink()
     j = wait_for(s, started["job"])
     assert j["state"] == "done" and j["done"] == j["total"] == started["total"]
     assert j["result"]["applied"] is False and not j["result"]["already"]
@@ -1089,18 +1094,23 @@ def test_serve_runs_a_mesh_job_in_the_background_and_answers_meanwhile(net, serv
 
 def test_a_background_job_reports_how_far_it_has_got(net, serve):
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("1")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     started = s.call("mesh.apply", {"background": True})["result"]
     j = wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2" or j["state"] != "running")
     assert j["state"] == "running" and 0 <= j["done"] < j["total"] and "result" not in j
+    hold.unlink()
+    wait_for(s, started["job"])
 
 
 def test_stopping_a_job_leaves_the_rest_pending_for_the_next_run(net, serve):
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("1")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     started = s.call("mesh.apply", {"background": True})["result"]
     wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2")
     assert s.call("mesh.stop", {"job": started["job"]})["result"] == {"job": started["job"], "stopping": True}
+    hold.unlink()
     j = wait_for(s, started["job"])
     assert j["state"] == "done" and j["stopped"] is True
     assert j["result"]["pending"] and all("stopped" in why for why in j["result"]["pending"].values())
@@ -1316,10 +1326,12 @@ def test_a_mesh_job_pushes_its_progress_and_its_end(net, serve):
 
 def test_jobs_stop_stops_a_mesh_job_as_mesh_stop_does(net, serve):
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("1")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     started = s.call("mesh.apply", {"background": True})["result"]
     wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2")
     assert s.call("jobs.stop", {"kind": "mesh", "job": started["job"]})["result"]["stopping"] is True
+    hold.unlink()
     j = wait_for(s, started["job"])
     assert j["state"] == "done" and j["stopped"] is True and j["result"]["pending"]
 
