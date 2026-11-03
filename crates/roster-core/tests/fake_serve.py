@@ -42,9 +42,9 @@ if mode == "unknown-command":
     sys.exit(2)
 
 HOSTS = [
-    {"name": "esxi-02", "ip": "10.19.77.10", "group": "lab", "type": "esxi", "product": "", "title": "ESXi lab",
+    {"name": "esxi-02", "ip": "10.0.0.10", "group": "lab", "type": "esxi", "product": "", "title": "ESXi lab",
      "reviewed": True},
-    {"name": "scan-1", "ip": "10.19.77.99", "group": "lab", "type": "linux", "product": "", "title": "",
+    {"name": "scan-1", "ip": "10.0.0.99", "group": "lab", "type": "linux", "product": "", "title": "",
      "reviewed": False},
     {"name": "sw-core", "ip": "10.19.1.2", "group": "lab", "type": "switch", "product": "", "title": "",
      "reviewed": True, "password": True},
@@ -60,7 +60,7 @@ minted = 0
 FILL_PASSWORD = "fill-pw-9d2e"   # session.fill's (ticket 119): tests check it's never in Debug or errors
 FINGERPRINT = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8"
 trusted = mode != "unknown-key"
-CHECKED = {"host": "esxi-02", "ok": True, "steps": [{"step": "inventory", "status": "ok", "message": "root@10.19.77.10"}]}
+CHECKED = {"host": "esxi-02", "ok": True, "steps": [{"step": "inventory", "status": "ok", "message": "root@10.0.0.10"}]}
 checks, polls, stops = [], [], []
 
 
@@ -112,13 +112,13 @@ def answer(req):
                 return {"result": h}
         return {"error": {"code": 2, "message": f"unknown host {req['params'].get('name')!r}"}}
     if m == "host.scan_key":
-        return {"result": {"host": "esxi-02", "address": "10.19.77.10", "port": 22, "key_type": "ssh-ed25519",
+        return {"result": {"host": "esxi-02", "address": "10.0.0.10", "port": 22, "key_type": "ssh-ed25519",
                            "fingerprint": FINGERPRINT, "recorded": "match" if trusted else "none"}}
     if m == "host.trust_key":
         if req["params"].get("fingerprint") != FINGERPRINT:
             return {"error": {"code": 23, "message": "esxi-02's host key changed while roster was asking - nothing was recorded"}}
         was, trusted = trusted, True
-        return {"result": {"host": "esxi-02", "address": "10.19.77.10", "port": 22, "key_type": "ssh-ed25519",
+        return {"result": {"host": "esxi-02", "address": "10.0.0.10", "port": 22, "key_type": "ssh-ed25519",
                            "fingerprint": FINGERPRINT, "recorded": not was}}
     if m == "quick.prepare":
         p = req.get("params", {})

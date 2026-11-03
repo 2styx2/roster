@@ -140,7 +140,7 @@ A Session to a Host whose host key isn't in roster's known hosts asks before any
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
 | 60 | 44 (from `session.prepare`, not shown as an error) | No key recorded for the Host's address: it reached `roster.yml` by a hand edit or a teammate's Publish | Box | The question: "roster hasn't seen this Host's key before" | Compare the fingerprint with the Host's console or owner, then Trust and connect, or Cancel |
-| 61 | 40, 41, 42 | Couldn't fetch the key: the address doesn't resolve, the port refused, or no answer (on 10.19.x often the SSH rate limiter) | Network / Host | "esxi-02 (10.19.77.10:22) didn't answer within 5 s" | Rows 15-17's fixes: check the address or port; for 10.19.x wait a few minutes, don't retry in a loop |
+| 61 | 40, 41, 42 | Couldn't fetch the key: the address doesn't resolve, the port refused, or no answer (a network's SSH rate limiter can cause this) | Network / Host | "esxi-02 (10.0.0.10:22) didn't answer within 5 s" | Rows 15-17's fixes: check the address or port; if a network's SSH rate limiter is the cause, wait a few minutes, don't retry in a loop |
 | 62 | 23 | The key changed between the question and Trust | Host / network | "esxi-02's host key changed while roster was asking - nothing was recorded" | Don't trust it blindly: compare the new fingerprint with the Host's console or owner, then open the Session again to see it |
 | 63 | 43 | A different key got recorded for the address meanwhile (another Session's question, `roster setup`) | Host / network | "esxi-02's host key changed - not connecting" | Row 13's: compare the fingerprints; never accepted automatically |
 
@@ -150,7 +150,7 @@ A Session to `user@address[:port]`, a box that isn't in the Inventory (decision 
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 64 | 40, 41, 42 | Couldn't fetch the key: the name doesn't resolve, the port refused, or no answer (on 10.19.x and 10.19.x often the SSH rate limiter) | Network / the box | "root@10.0.0.5 (10.0.0.5:22) didn't answer within 5 s" | Rows 15-17's: check the address or port; for a rate-limited network wait a few minutes, don't retry in a loop |
+| 64 | 40, 41, 42 | Couldn't fetch the key: the name doesn't resolve, the port refused, or no answer (a network's SSH rate limiter can cause this) | Network / the box | "root@10.0.0.5 (10.0.0.5:22) didn't answer within 5 s" | Rows 15-17's: check the address or port; if a network's SSH rate limiter is the cause, wait a few minutes, don't retry in a loop |
 | 65 | 43 | roster recorded a different key for that address (a Host there, or `roster setup`) | the box / network | "root@10.0.0.5's host key changed - not connecting" | Compare the fingerprints with the box's console or owner; if the change is expected (a reinstall), delete its line in `~/.ssh/roster_known_hosts`. Never asked about |
 | 66 | 23 | The key changed between the question and Enter | the box / network | "root@10.0.0.5's host key changed while roster was asking - not connecting" | Row 62's: compare it, then Retry, which asks again with the new key |
 | 67 | none (ssh's) | The box refused the password, or this Box's keys when it was left empty | the box | Rows 11-12's, naming `root@10.0.0.5` | Check the user and password, then Reconnect (it asks again) |

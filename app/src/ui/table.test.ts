@@ -114,8 +114,8 @@ describe("filterRows (ticket 78)", () => {
 
 describe("middle truncation (ticket 91)", () => {
   it("keeps a long value's end, so names that differ only at the end still differ", () => {
-    expect(splitMiddle("server-10-19-77-203")).toEqual(["server-10-19", "-77-203"]);
-    expect(splitMiddle("server-10-19-77-203-long-and-longer")).toEqual(["server-10-19-77-203-long-an", "d-longer"]);
+    expect(splitMiddle("server-10-0-0-203")).toEqual(["server-10-0", "-0-203"]);
+    expect(splitMiddle("server-10-0-0-203-long-and-longer")).toEqual(["server-10-0-0-203-long-an", "d-longer"]);
     expect(splitMiddle("esx-02")).toEqual(["esx-02", ""]);
     expect(splitMiddle("🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂")).toEqual(["🙂".repeat(8), "🙂".repeat(5)]);
   });

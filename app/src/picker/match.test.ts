@@ -30,7 +30,7 @@ describe("searchHosts", () => {
   it("matches address, type, product, title and group", () => {
     const list = {
       hosts: [
-        host("a", { ip: "10.19.77.237" }),
+        host("a", { ip: "10.0.0.237" }),
         host("b", { type: "switch" }),
         host("c", { product: "ALPHA" }),
         host("d", { title: "Contoso lab mini" }),
@@ -38,7 +38,7 @@ describe("searchHosts", () => {
       ],
       groups,
     };
-    expect(names(list, "77.237")).toEqual(["a"]);
+    expect(names(list, "0.0.237")).toEqual(["a"]);
     expect(names(list, "switch")).toEqual(["b"]);
     expect(names(list, "alph")).toEqual(["c"]);
     expect(names(list, "contoso")).toEqual(["d"]);
