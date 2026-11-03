@@ -3,6 +3,10 @@
 // be looked at, and broken (break-ui), in a plain browser. Made-up addresses only.
 import type { FakePlugin } from "./fakePlugins";
 
+/** A button's probe ("would open …") shows whatever `ui.messages` says: it's how a dev page
+ * shows the button ran (decision Q126 quiets a plain info notice; issue #228). */
+const PROBE = { quiet: false };
+
 export const VIEWS_PATH = "~/plugins/demo-scan";
 
 const TONES = [undefined, undefined, undefined, "muted", "warn", "error"] as const;
@@ -50,12 +54,12 @@ export function demoScanPlugin(worst = false, count = 600): FakePlugin {
           rows,
           sort: "address",
           empty: "Nothing found yet.",
-          open: (e: Record<string, unknown>) => roster.notify(`would open ${String(e.row)}`),
+          open: (e: Record<string, unknown>) => roster.notify(`would open ${String(e.row)}`, "info", PROBE),
           actions: [
             { label: "Keep", key: "a", icon: "add", run: (e: Record<string, unknown>) => roster.views.update("demo-scan", { rows: [{ id: e.row, cells: { address: e.row, title: "kept", ports: 0, state: "kept" } }] }) },
             { label: "Skip", key: "x", icon: "close", run: (e: Record<string, unknown>) => roster.views.update("demo-scan", { remove: [e.row] }) },
             { label: "Copy address", key: "c", icon: "copy", run: (e: Record<string, unknown>) => roster.clipboard.copy(String(e.row)) },
-            { label: "Cut", key: "u", when: { state: "changed" }, run: (e: Record<string, unknown>) => roster.notify(`would cut ${String(e.row)}`) },
+            { label: "Cut", key: "u", when: { state: "changed" }, run: (e: Record<string, unknown>) => roster.notify(`would cut ${String(e.row)}`, "info", PROBE) },
           ],
         },
       });
@@ -69,7 +73,7 @@ export function demoScanPlugin(worst = false, count = 600): FakePlugin {
       // stronger form), a section's buttons, a float's buttons and links.
       const long = worst ? " of 10.0.0.0/16 across every group, gently, with a title that goes on" : "";
       roster.toolbar.set("demo-scan", { label: "Scan a network", text: worst ? "Scan the whole lab" : "Scan", icon: "map", run: "view demo-scan" });
-      roster.progress.set("demo-scan", { title: `Scanning 10.0.0.0/22${long}`, done: 384, total: 1024, cancel: () => roster.notify("stopping") });
+      roster.progress.set("demo-scan", { title: `Scanning 10.0.0.0/22${long}`, done: 384, total: 1024, cancel: () => roster.notify("stopping", "info", PROBE) });
       roster.progress.set("demo-wait", { title: worst ? "Waiting for roster serve to answer a very long request" : "Waiting for the mesh" });
       const ask = (danger: boolean) => () =>
         roster.confirm({
@@ -79,7 +83,7 @@ export function demoScanPlugin(worst = false, count = 600): FakePlugin {
           action: "Cut",
           danger,
           ...(danger ? { typed: worst ? "storage-appliance-in-the-far-rack-with-a-long-name" : "esx-02" } : {}),
-          run: () => roster.notify("cut"),
+          run: () => roster.notify("cut", "info", PROBE),
         });
       roster.commands.add("demo-cut", { desc: "Ask before a Cut (the stronger form)", run: ask(true) });
       roster.commands.add("demo-apply", { desc: "Ask before applying", run: ask(false) });
@@ -90,8 +94,8 @@ export function demoScanPlugin(worst = false, count = 600): FakePlugin {
             title: "esx-02",
             lines: worst ? Array.from({ length: 40 }, (_, i) => `ERROR ${"disk full ".repeat(i % 5)}${i}`) : ["ERROR disk full", "at 10:42"],
             actions: [
-              { label: "Go to the line", key: "g", run: () => roster.notify("went") },
-              { label: worst ? "Dismiss this alert and every one like it" : "Dismiss", key: "d", run: () => roster.notify("dismissed") },
+              { label: "Go to the line", key: "g", run: () => roster.notify("went", "info", PROBE) },
+              { label: worst ? "Dismiss this alert and every one like it" : "Dismiss", key: "d", run: () => roster.notify("dismissed", "info", PROBE) },
             ],
             links: [{ label: "Runbook", url: worst ? "https://a-very-long-wiki-host-name.example.com/runbooks/storage/disk-full-on-the-far-rack" : "https://wiki.example.com/disk-full" }],
           }),
@@ -100,7 +104,7 @@ export function demoScanPlugin(worst = false, count = 600): FakePlugin {
         title: "Recent alerts",
         rows: [{ id: "a", label: "ERROR disk full", detail: "esx-02", host: "linux-1-000" }],
         actions: [
-          { label: "Dismiss all", icon: "close", run: () => roster.notify("dismissed all") },
+          { label: "Dismiss all", icon: "close", run: () => roster.notify("dismissed all", "info", PROBE) },
           { label: "Show the alerts", icon: "info", run: "view demo-scan" },
         ],
       });
@@ -114,7 +118,7 @@ export function demoScanPlugin(worst = false, count = 600): FakePlugin {
               { id: "how", label: "How" },
             ],
             rows: Array.from({ length: worst ? 40 : 3 }, (_, i) => ({ id: String(i), cells: { peer: `web-${i}`, how: i % 2 ? "key" : "password" }, ...(i === 1 ? { tone: "warn" } : {}) })),
-            actions: [{ label: "Cut", key: "x", icon: "close", run: (e: Record<string, unknown>) => roster.notify(`would cut ${String(e.host)}`) }],
+            actions: [{ label: "Cut", key: "x", icon: "close", run: (e: Record<string, unknown>) => roster.notify(`would cut ${String(e.host)}`, "info", PROBE) }],
           },
         });
       }
