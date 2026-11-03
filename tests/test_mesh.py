@@ -2,8 +2,10 @@
 (tests/fakes/ssh with FAKE_HOSTS). Nothing here connects anywhere: each Host is a directory."""
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1053,7 +1055,10 @@ def test_serve_plans_applies_cuts_and_reports_status(net, serve, monkeypatch):
     json.dumps(cut)
 
 
-def wait_for(s, job, until=lambda j: j["state"] != "running", seconds=100):
+WAIT = 100      # s: how long a test waits for a Mesh job at most; Windows' CI runner takes many times as long as here
+
+
+def wait_for(s, job, until=lambda j: j["state"] != "running", seconds=WAIT):
     """Polls mesh.job, as the Mesh controls Plugin does, until UNTIL holds; returns that answer. SECONDS is only how
     long a broken test takes to say so: a Mesh job on Windows' CI runner takes many times as long as here (T151)."""
     import time
@@ -1230,18 +1235,67 @@ def test_a_via_link_whose_jump_host_has_no_recorded_host_key_is_not_written(net,
     assert "ProxyJump" not in net.file("orion-3", "home/.ssh/roster-mesh/config")
 
 
+STOPPED_PART_WAY = r"""
+import sys
+from roster import mesh
+from roster.config import load_config
+at_stop = []
+real = mesh.on_host
+
+
+def on_host(h, script, timeout=mesh.STEP_TIMEOUT):
+    if h["name"] == "orion-2" and not at_stop:          # serve closes while its ssh runs: close() ends it
+        at_stop.append(set(sys.modules))
+        return None, mesh.CLOSED
+    return real(h, script, timeout)
+
+
+mesh.on_host = on_host
+mesh.run(load_config(sys.argv[1]), apply=True, stopped=lambda: bool(at_stop))
+print(" ".join(sorted(m for m in set(sys.modules) - at_stop[0] if "." not in m)))
+"""
+
+
+def test_a_run_stopped_part_way_loads_nothing_before_it_records(net):
+    # T161: serve gives a stopped job CLOSE_WAIT (0.8 s) to record what it didn't do, then exits. The first host-key
+    # lookup after the stop imported paramiko (0.13 s on an idle box, past 0.8 s on a busy one or on Windows), so
+    # serve could exit before mesh.json said which Hosts were left. A fresh process, so nothing is loaded already.
+    r = subprocess.run([sys.executable, "-c", STOPPED_PART_WAY, str(net.cfg_path)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == [], f"loaded after the stop: {r.stdout}"
+    assert "orion-2" in mesh.load_state()["pending"]
+
+
+def connected(net, name, seconds=WAIT):
+    """Waits until a connection to stand-in Host NAME has started (the stand-in ssh logs it before it waits on the
+    Host's hold file), so its ssh is running. SECONDS is only how long a broken test takes to say so."""
+    import time
+    end = time.monotonic() + seconds
+    while f"start {name}" not in net.connections():
+        if time.monotonic() > end:
+            pytest.fail(f"no connection to {name} in {seconds} s: {net.connections()}")
+        time.sleep(0.02)
+
+
+def serve_waits_for_the_app_at_most():
+    """How long the app gives serve to exit after closing its stdin (EXIT_GRACE in rpc.rs), in seconds."""
+    rpc = (Path(__file__).parents[1] / "crates/roster-core/src/rpc.rs").read_text()
+    return int(re.search(r"pub const EXIT_GRACE: Duration = Duration::from_secs\((\d+)\);", rpc)[1])
+
+
 def test_serve_closing_mid_job_stops_it_and_records_what_it_didnt_finish(net, serve):
     # review 8 #4: closing serve (the app closes its stdin, then kills it a second later) stopped a scan but left a
     # Mesh job's daemon thread to die mid-apply, so mesh.json never said which Hosts were left to do
-    import time
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("60")                     # its step would take a minute
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")                                                 # its step waits until we let it go: never
     started = s.call("mesh.apply", {"background": True})["result"]
     assert wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2")["state"] == "running"
-    time.sleep(0.3)                                                     # its ssh has started
-    t = time.monotonic()
+    connected(net, "orion-2")                                           # its ssh has started
     code, _, _ = s.close()
-    assert code == 0 and time.monotonic() - t < 5                     # not after the step (a minute)
+    assert code == 0
+    # T161: serve ended the step's ssh rather than wait for it (the step never ended; nobody let it go)
+    assert hold.exists() and "end orion-2" not in net.connections()
     pending = mesh.load_state()["pending"]
     assert "orion-2" in pending and "serve closed" in pending["orion-2"]
     assert set(pending) >= {"orion-3", "nas-1"}                         # not visited: the next run finishes them
@@ -1250,18 +1304,19 @@ def test_serve_closing_mid_job_stops_it_and_records_what_it_didnt_finish(net, se
 def test_serve_closing_mid_foreground_apply_stops_it_and_records_it_too(net, serve):
     # T104 (#182): the waiting form (no background) is a job as well, so quitting the app stops it and mesh.json
     # says what it didn't do, as for a background run
-    import time
+    from roster import serve as rpc
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("60")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     s.request("mesh.apply")                                             # waits for its result: never answered here
-    end = time.monotonic() + 15
     while not any(n["params"].get("at") == "orion-2" for n in s.notes if n["method"] == "job.progress"):
-        assert time.monotonic() < end, "never got to orion-2"
-        s.notes.append(json.loads(s.p.stdout.readline()))
-    time.sleep(0.3)                                                     # its ssh has started
-    t = time.monotonic()
+        s.notes.append(json.loads(s.p.stdout.readline()))               # pytest-timeout ends it if it never comes
+    connected(net, "orion-2")
     code, out, _ = s.close()
-    assert code == 0 and time.monotonic() - t < 3                     # inside the app's EXIT_GRACE
+    assert code == 0
+    assert hold.exists() and "end orion-2" not in net.connections()     # it didn't wait for the step
+    # inside the app's EXIT_GRACE, from serve's own waits (T161: not a stopwatch, which a busy runner overran)
+    assert rpc.DRAIN_WAIT + rpc.CLOSE_WAIT < serve_waits_for_the_app_at_most()
     pending = mesh.load_state()["pending"]
     assert "orion-2" in pending and "serve closed" in pending["orion-2"]
     assert set(pending) >= {"orion-3", "nas-1"}
@@ -1283,7 +1338,7 @@ def test_a_background_run_works_out_the_mesh_once_while_serve_waits(net, monkeyp
                                           "params": {"background": True}}))
         assert len(calls) == 1
     job = state.jobs.latest("mesh")
-    assert job.wait(20)
+    assert job.wait(WAIT), f"the job didn't end in {WAIT} s: {job.view()}"      # T161: was 20 s, past on Windows
     assert len(calls) == 1 and job.result["pending"] == {}
     assert r["result"]["total"] == job.total == job.done
 

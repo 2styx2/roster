@@ -934,6 +934,8 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::time::Instant;
 
     #[test]
     fn the_mask_counts_only_at_sudos_own_prompt_for_the_user() {
@@ -953,5 +955,94 @@ mod tests {
         ] {
             assert_eq!(sudo_prompt_for(prompt, user), ok, "{prompt:?} for {user:?}");
         }
+    }
+
+    /// A Session's PTY writer that passes every write on and notes when it came: the probe's
+    /// writes timed where they're made, not where a stand-in Host reads them (T161).
+    #[cfg(unix)]
+    struct Tap {
+        inner: Box<dyn Write + Send>,
+        seen: Arc<Mutex<Vec<Written>>>,
+    }
+
+    /// One write to the PTY, and when it was made.
+    #[cfg(unix)]
+    type Written = (Instant, Vec<u8>);
+
+    #[cfg(unix)]
+    impl Write for Tap {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.seen.lock().unwrap().push((Instant::now(), buf.to_vec()));
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    /// The probe goes in two writes a whole wait apart: Ctrl+U and the letter, then the last
+    /// Ctrl+U (Q151 (h)). Timed by the writer's own clock: a stand-in Host that reads the
+    /// first write late under load sees the two closer together than they were written (T161,
+    /// pty_fill.rs's `the_probe_goes_in_two_steps_with_a_wait_between` checks the bytes).
+    #[cfg(unix)]
+    #[test]
+    fn the_probes_two_writes_are_a_whole_wait_apart() {
+        use std::sync::mpsc::channel;
+        let wait = Duration::from_millis(300);
+        let mut cmd = SessionCommand::new(
+            vec![
+                "sh".into(),
+                "-c".into(),
+                "stty raw -echo; printf 'Password: '; sleep 30".into(),
+            ],
+            vec![],
+        );
+        cmd.fill_as = Some(FillTarget {
+            host: "esx".into(),
+            login: LoginAs {
+                address: "10.0.0.6".into(),
+                port: 22,
+                user: "ops".into(),
+            },
+        });
+        let m = SessionManager::with_conpty_rules(false);
+        let (tx, rx) = channel();
+        let id = m
+            .open(&cmd, Size { cols: 80, rows: 24 }, move |e| {
+                let _ = tx.send(e);
+            })
+            .expect("spawn");
+        let mut printed = Vec::new();
+        while !String::from_utf8_lossy(&printed).contains("Password: ") {
+            // The ceiling is only how long a broken test takes to say so.
+            match rx.recv_timeout(Duration::from_secs(60)).expect("no prompt") {
+                SessionEvent::Output(b) => printed.extend_from_slice(&b),
+                other => panic!("{other:?} before the prompt"),
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        {
+            let running = m.get(id).unwrap();
+            let mut w = running.writer.lock().unwrap();
+            let inner = w.take().unwrap();
+            *w = Some(Box::new(Tap {
+                inner,
+                seen: Arc::clone(&seen),
+            }));
+        }
+        let typed = m.fill(id, wait, "Password:", None, |_| {
+            Ok::<_, String>(Secret::new("s3cret-pw".into()))
+        });
+        m.close(id).unwrap();
+        assert_eq!(typed.ok().as_deref(), Some("esx"));
+        let seen = seen.lock().unwrap();
+        let (first, last) = PROBE.split_at(PROBE_SPLIT);
+        assert_eq!(
+            seen[..2].iter().map(|(_, b)| b.as_slice()).collect::<Vec<_>>(),
+            [first, last]
+        );
+        let gap = seen[1].0 - seen[0].0;
+        assert!(gap >= wait, "the last Ctrl+U was written {gap:?} after the letter");
     }
 }

@@ -14,7 +14,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -596,7 +596,7 @@ fn it_installs_from_roster_s_repo_with_dir_and_asks_for_exactly_its_permissions(
     let packages = Packages::new(&root.join("data"), &root.join("config"));
     assert_eq!(packages.sync(&specs)[0].error, None);
     let (dir, _) = packages.loadable(&specs, NAME).unwrap();
-    let m = read_manifest(&dir).unwrap();
+    let m = common::read_manifest(&dir).unwrap();
     assert_eq!(m.name, NAME);
     assert_eq!(m.api, 5);
     let mut asked: Vec<String> = m.permissions.iter().map(|p| p.to_string()).collect();

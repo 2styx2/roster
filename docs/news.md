@@ -12,6 +12,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`roster discover --write` and `roster mesh cut` sync this Box** after they change `roster.yml`, as the app's changes do: its ssh config and Claude files follow, so a Host they wrote needs no `roster sync` by hand. If the sync fails, the edit stays, and a `warning:` on stderr says why and to run `roster sync`; the command's exit status is the edit's. See [Commands](cli-reference.md#commands).
 
+- **Quitting mid-Mesh run records what it didn't finish on a busy computer too:** closing `roster serve` (quitting the app) during a Mesh plan or apply gives the job a moment to note in `mesh.json` which Hosts are left; on a loaded or slow machine that moment was spent loading the SSH library, so serve could exit with nothing noted and `mesh.status` didn't say those Hosts were pending. The library now loads when the run starts.
+
 **App**
 
 - **Copy and paste match Windows Terminal more closely** (#302): on Windows, copied lines end with CR LF, as Windows Terminal's do, roster's own rule now rather than xterm.js's (LF on Linux and macOS, as their terminals). On macOS, Option takes the mouse back from a program with mouse reporting on (Claude Code, vim with `mouse=a`, tmux), as Shift does elsewhere and Option does in iTerm2 and Terminal.app: Option+drag selects in the terminal and Option+right-click pastes; nothing did before. Option+drag there now selects lines instead of a block (decision Q155). See [Copy and paste](app/keyboard.md#copy-and-paste).

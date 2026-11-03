@@ -961,8 +961,9 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, PluginError> {
     read_manifest_within(dir, Limits::default())
 }
 
-/// [`read_manifest`] within `limits`' time to load (a host's own, [`PluginHost::new`]).
-fn read_manifest_within(dir: &Path, limits: Limits) -> Result<Manifest, PluginError> {
+/// [`read_manifest`] within `limits`' time to load (a host's own, [`PluginHost::new`]; a test's
+/// generous ones, T161).
+pub fn read_manifest_within(dir: &Path, limits: Limits) -> Result<Manifest, PluginError> {
     let shown = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

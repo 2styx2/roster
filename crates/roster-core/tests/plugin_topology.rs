@@ -15,7 +15,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -503,7 +503,7 @@ fn on(node: &str) -> Value {
 #[test]
 fn it_installs_from_its_folder_asking_for_what_its_readme_explains() {
     let w = World::new("manifest");
-    let manifest = read_manifest(&w.dir).unwrap();
+    let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
     assert_eq!(manifest.api, 5);
     let asked: Vec<String> = manifest.permissions.iter().map(|p| p.to_string()).collect();
