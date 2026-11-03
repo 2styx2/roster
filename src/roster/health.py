@@ -115,6 +115,14 @@ def named(cfg):
              if here else "this roster.yml isn't one of the named Inventories")
     out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.inventories)}")]
     out += [check("inventory", "warn", w["message"], w["fix"], f"E{w['row']}") for w in inventories.overlaps(cfg)]
+    for f in inventories.foreign_legacy_files(inv):
+        out.append(check("inventory", "warn", f"{f} has the name roster once used for a named Inventory's ssh config, "
+                                              "but roster didn't write it, so it's left as it is",
+                         "nothing to do if it's yours; rename it if `Include` picks it up by mistake"))
+    if inventories.stale():
+        out.append(check("inventory", "warn", f"{inventories.ssh_index_file()} is older than this Box's ssh config "
+                                              "files and couldn't be rewritten", "make it writable, then run "
+                                              "`roster sync`", "E206"))
     return out
 
 

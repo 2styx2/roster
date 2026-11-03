@@ -576,8 +576,8 @@ def test_the_name_clash_warning_doesnt_suggest_inv_run(two, capsys, isolated):
     assert "run" not in w["fix"] and "roster inv use home" in w["fix"]
 
 
-@pytest.mark.parametrize("field,value", [("ip", '10.0.0.5"'), ("ip", "%h.evil"), ("user", 'ops"'), ("user", "%d"),
-                                         ("user", "ops\x7f")])
+@pytest.mark.parametrize("field,value", [("ip", '10.0.0.5"'), ("ip", "%h.evil"), ("user", 'ops"'),
+                                         ("user", "ops\x7f"), ("ip", "10.0.0.5%eth0")])
 def test_values_written_raw_into_ssh_config_are_refused_at_load(write_config, field, value):
     """Second pass N2: HostName and User go into the ssh config as they are: a quote broke every ssh on the Box, a %
     expands as a token."""
@@ -660,3 +660,144 @@ def test_inv_use_names_it_as_it_was_named(two, capsys):
     run(capsys, "inv", "add", "Work", str(two["work"]))
     run(capsys, "inv", "add", "home", str(two["home"]))
     assert run(capsys, "inv", "use", "WORK")[1].startswith("Work is the active Inventory")
+
+
+# ---------------------------------------------------------------- PR #335's third review pass
+
+def test_roster_md_doesnt_tell_claude_to_ssh_to_a_left_out_host(two, capsys, isolated):
+    """Third pass T1: home's ROSTER.md must not send Claude to `ssh pi` while that name reaches work's pi; it says so,
+    and it follows `roster inv use`."""
+    clashing(two, capsys)
+    md = (two["home"].parent / "ROSTER.md").read_text()
+    row = next(ln for ln in md.splitlines() if ln.startswith("| pi |"))
+    assert "| key |" not in row and "roster inv use home" in row
+    work_md = (two["work"].parent / "ROSTER.md").read_text()
+    assert "| key |" in next(ln for ln in work_md.splitlines() if ln.startswith("| pi |"))
+    run(capsys, "inv", "use", "home")                     # now work's pi is the one left out
+    assert "| key |" in next(ln for ln in (two["home"].parent / "ROSTER.md").read_text().splitlines()
+                             if ln.startswith("| pi |"))
+    assert "roster inv use work" in next(ln for ln in (two["work"].parent / "ROSTER.md").read_text().splitlines()
+                                         if ln.startswith("| pi |"))
+
+
+def test_syncing_one_still_leaves_the_others_roster_md_alone_when_nothing_changes_for_it(two, capsys):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "--inv", "home", "sync")
+    before = (two["home"].parent / "ROSTER.md").stat().st_mtime_ns
+    run(capsys, "sync")
+    assert (two["home"].parent / "ROSTER.md").stat().st_mtime_ns == before
+
+
+def make_stale(isolated, name="work"):
+    import time
+    own = ssh(isolated) / f"roster-inventories/{name}"
+    time.sleep(0.02)
+    own.write_text(own.read_text().replace("Host esx", "Host esx-renamed"))
+    os.utime(own, None)
+
+
+def test_a_read_never_writes_ssh_config(two, capsys, isolated):
+    """Third pass T2: the user took roster's Include out of ~/.ssh/config; `roster hosts` rebuilds only the index."""
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    cfg = ssh(isolated) / "config"
+    cfg.write_text("Host *\n    ServerAliveInterval 60\n")
+    make_stale(isolated)
+    run(capsys, "hosts")
+    assert cfg.read_text() == "Host *\n    ServerAliveInterval 60\n"
+    assert "Host esx-renamed" in (ssh(isolated) / "config.d/roster.inventories").read_text()
+
+
+def test_a_read_with_none_named_left_doesnt_clean_up(two, capsys, isolated):
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    list_path().unlink()
+    before = (ssh(isolated) / "config").read_text()
+    run(capsys, "-c", str(two["work"]), "hosts")
+    assert (ssh(isolated) / "config").read_text() == before
+
+
+@posix_modes
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root writes anywhere")
+def test_an_unwritable_ssh_folder_never_stops_a_command(two, capsys, isolated, serve):
+    """Third pass T3: a stale index that can't be rebuilt is a warning (code 148); reads, --json and serve go on."""
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    make_stale(isolated)
+    d = ssh(isolated) / "config.d"
+    d.chmod(0o500)
+    try:
+        code, out, err = run(capsys, "hosts", "--json")
+        assert code == 0 and json.loads(out)["hosts"]
+        assert "[148]" in err and "roster.inventories" in err
+        assert serve().call("inventory.info")["result"]["host_count"] == 2
+    finally:
+        d.chmod(0o700)
+
+
+def test_a_users_own_file_by_the_old_name_is_never_moved_or_deleted(two, capsys, isolated):
+    """Third pass T4: only a config.d/roster-NAME that roster wrote (its header) is roster's to move or delete."""
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    own = ssh(isolated) / "config.d/roster-home"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text("Host myhomebox\n    HostName 192.168.1.30\n")
+    run(capsys, "sync")
+    assert own.read_text() == "Host myhomebox\n    HostName 192.168.1.30\n"
+    run(capsys, "inv", "remove", "home")
+    assert own.exists()
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    main(["check", "--box", "--json"])
+    checks = json.loads(capsys.readouterr().out)["checks"]
+    assert any("roster-home" in c["message"] and c["level"] == "warn" for c in checks)
+
+
+def test_migration_tolerates_a_file_another_process_moved(two, capsys, isolated, monkeypatch):
+    """Third pass T5: two roster processes may both see the old file; the one that loses the race carries on."""
+    from roster import inventories
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    old = ssh(isolated) / "config.d/roster-work"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text("# Generated by roster from x\n")
+    real = os.replace
+
+    def raced(a, b):
+        Path(a).unlink()                                    # the other process got there first
+        return real(a, b)
+    monkeypatch.setattr(inventories.os, "replace", raced)
+    inventories.migrate(inventories.load())              # no FileNotFoundError
+
+
+def test_an_ipv6_zone_loads_and_is_escaped_for_ssh(write_config, capsys, isolated):
+    """Third pass T6: `%` is an IPv6 zone's, written %% (ssh expands % in HostName and User)."""
+    write_config("groups:\n  lab:\n    user: '50%'\n    auth: agent\n    hosts:\n      ll: {ip: 'fe80::1%eth0'}\n")
+    assert main(["sync"]) == 0
+    text = (ssh(isolated) / "config.d/roster").read_text()
+    assert "    HostName fe80::1%%eth0" in text and "    User 50%%" in text
+
+
+@pytest.mark.skipif(os.name == "nt" or not shutil.which("perl") or not shutil.which("bash"),
+                    reason="runs the app's probe with perl's alarm (no timeout on PATH)")
+def test_the_probes_perl_fallback_stops_a_wrappers_children(isolated, tmp_path):
+    """Third pass T7: with no `timeout`, the probe's perl stops the whole process group: a wrapper that runs roster
+    without exec can't keep the probe waiting."""
+    import re
+    import time
+    rust = (Path(__file__).parent.parent / "crates/roster-core/src/detect.rs").read_text()
+    probe = re.search(r'const PROBE: &str = r#"(.*?)"#;', rust, re.S).group(1)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for t in ("perl", "sh", "sleep"):
+        (tools / t).symlink_to(shutil.which(t))
+    home = isolated["home"]
+    (home / "infra").mkdir()
+    (home / "infra/roster.yml").write_text(WORK)
+    wrapper = home / "roster"
+    wrapper.write_text("#!/bin/sh\nsleep 30\necho never\n")          # its child holds the output pipe
+    wrapper.chmod(0o755)
+    env = {"HOME": str(home), "PATH": str(tools), "ROSTER_PROBE_SECS": "1"}
+    start = time.monotonic()
+    out = subprocess.run([shutil.which("bash"), "-c", probe, "probe", str(wrapper)], env=env, capture_output=True,
+                         text=True, timeout=60).stdout
+    assert time.monotonic() - start < 15
+    assert f"inventory={home}/infra/roster.yml" in out.splitlines()

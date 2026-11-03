@@ -306,6 +306,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `145` | A `box.check` warning: a Host here and one in another named Inventory have the same host key (the same machine?) |
 | `146` | A `box.check` warning: the same Host name in two named Inventories; `ssh NAME` reaches the active one's |
 | `147` | A `box.check` warning: the same address and port in two named Inventories, with different host keys |
+| `148` | A warning (stderr, and `box.check`): the named Inventories' ssh config index is out of date and couldn't be rewritten (a read-only `~/.ssh`); everything else goes on |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

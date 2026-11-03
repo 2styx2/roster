@@ -36,7 +36,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **`key_path:` in roster.yml can no longer add lines to this Box's ssh config** (security): a `key_path` with a quote or a newline in it could add directives, such as `ProxyCommand`, for every `ssh` on every Box that synced that roster.yml. roster now refuses such a `key_path` when it loads, and every path it writes into an ssh config goes through one check that refuses quotes and control characters (and writes a `%` as `%%` where ssh expands tokens). A Host's `ip` or `user` with a quote, a `%` or a control character is refused too (they're written into the ssh config as they are: a quote broke every `ssh` on the Box, a `%` was read as a token), and so are Host and group names with a trailing newline.
+- **`key_path:` in roster.yml can no longer add lines to this Box's ssh config** (security): a `key_path` with a quote or a newline in it could add directives, such as `ProxyCommand`, for every `ssh` on every Box that synced that roster.yml. roster now refuses such a `key_path` when it loads, and every path it writes into an ssh config goes through one check that refuses quotes and control characters (and writes a `%` as `%%` where ssh expands tokens). A Host's `ip` or `user` with a quote or a control character is refused too (a quote broke every `ssh` on the Box), and a `%` in them (an IPv6 zone such as `fe80::1%eth0`) is written so ssh doesn't read it as a token, and so are Host and group names with a trailing newline.
 
 ### Fixed
 

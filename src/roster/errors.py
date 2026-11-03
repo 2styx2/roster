@@ -139,6 +139,8 @@ OTHER_DOESNT_LOAD = 144     # warning: another named Inventory's roster.yml isn'
 SAME_MACHINE = 145          # warning: a Host here and one in another Inventory have the same host key
 SAME_HOST_NAME = 146        # warning: the same Host name in two Inventories (`ssh NAME` reaches the active one's)
 SAME_ADDRESS = 147          # warning: the same address and port in two Inventories, with different host keys
+INDEX_NOT_WRITTEN = 148     # warning: the named Inventories' ssh config index is stale and couldn't be rewritten
+                            #   (a read-only ~/.ssh); the command goes on (catalog row 206)
 
 
 class Problem(Exception):

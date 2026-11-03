@@ -199,8 +199,8 @@ def comment(text):
 def host_block(cfg, name, h):
     """The `Host NAME` block roster writes for one Host, as lines (no comments)."""
     out = [f"Host {name}",
-           f"    HostName {h['ip']}",
-           f"    User {h['ssh']['user']}",
+           f"    HostName {h['ip'].replace('%', '%%')}",              # ssh expands %-tokens in both
+           f"    User {str(h['ssh']['user']).replace('%', '%%')}",
            f"    Port {h['ssh']['port']}",
            f"    UserKnownHostsFile {q(known_hosts_file())}",
            "    StrictHostKeyChecking accept-new",
@@ -269,6 +269,8 @@ def finish_ssh_config(cfg):
             unnamed.unlink()
     if inventories.in_use():
         inventories.refresh_index()
+        if inventories.list_file().exists():
+            inventories.refresh_roster_md(skip=current_inventory())
         return
     main = ssh_dir() / "config"
     text = main.read_text() if main.exists() else ""

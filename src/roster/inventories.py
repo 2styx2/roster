@@ -194,6 +194,7 @@ def add(name: str, path: str | Path) -> bool:
     save(inv)
     seed_known_hosts(name)
     refresh_index(inv)
+    refresh_roster_md(inv)
     return first
 
 
@@ -215,6 +216,7 @@ def use(name: str) -> None:
     inv = inv.model_copy(update={"active": found.name})
     save(inv)
     refresh_index(inv)
+    refresh_roster_md(inv)
 
 
 def remove(name: str) -> tuple[bool, Path | None]:
@@ -230,12 +232,14 @@ def remove(name: str) -> tuple[bool, Path | None]:
                       inventories=tuple(y for y in inv.inventories if y.name != x.name))
     save(inv)
     ssh_config_file(x.name).unlink(missing_ok=True)
-    legacy_ssh_config_file(x.name).unlink(missing_ok=True)
+    if generated(legacy_ssh_config_file(x.name)):
+        legacy_ssh_config_file(x.name).unlink(missing_ok=True)
     kept = None
     if known_hosts_file(x.name).exists():
         kept = known_hosts_file(x.name).with_name(f"{known_hosts_file(x.name).name}.removed-{time.strftime('%Y%m%d-%H%M%S')}")
         os.replace(known_hosts_file(x.name), kept)
     refresh_index(inv)
+    refresh_roster_md(inv)
     return was_active, kept
 
 
@@ -301,7 +305,7 @@ def index_order(inv: Inventories) -> list[Path]:
 def refresh_index(inv: Inventories | None = None) -> None:
     """Rewrite the index and point ~/.ssh/config at it, once roster has written any ssh config here. With no named
     Inventories left (or inventories.json deleted by hand), ~/.ssh/config includes roster's one file again and the
-    index goes."""
+    index goes. Only sync, setup and `roster inv add/use/remove` call this: they may write ~/.ssh/config."""
     inv = inv if inv is not None else (load() if list_file().exists() else Inventories())
     main = ssh_dir() / "config"
     text = main.read_text() if main.exists() else ""
@@ -313,12 +317,29 @@ def refresh_index(inv: Inventories | None = None) -> None:
                 text = "".join(include_line(default) + "\n" if ssh_path(index) in include_targets(ln) else ln
                                for ln in lines)
                 replace_file(main, text, 0o600)
-            index.unlink()
+            index.unlink(missing_ok=True)
         return
     migrate(inv)
+    if not write_index(inv):
+        return                                  # nothing synced here yet: the first sync writes it
+    if includes(text, index):
+        return
+    lines = text.splitlines(keepends=True)
+    if any(ssh_path(default) in include_targets(ln) for ln in lines):   # roster's one file: the index takes its place
+        text = "".join(include_line(index) + "\n" if ssh_path(default) in include_targets(ln) else ln for ln in lines)
+    else:                                       # an Include must sit above any Host block, so prepend it
+        text = f"{include_line(index)}\n\n{text}"
+    main.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    replace_file(main, text, 0o600)
+
+
+def write_index(inv: Inventories) -> bool:
+    """Write the index file alone (nothing else) from the Inventories' ssh config files; False when there's nothing
+    to write it from yet."""
+    index = ssh_index_file()
     files = [f for f in index_order(inv) if f.is_file()]
     if not (index.exists() or files):
-        return                                  # nothing synced here yet: the first sync writes it
+        return False
     seen: set[str] = set()
     out = [INDEX_HEAD]
     for f in files:
@@ -332,49 +353,97 @@ def refresh_index(inv: Inventories | None = None) -> None:
                 kept.append(b.text)
         note = f" (left out, as an earlier one has them: {', '.join(left)})" if left else ""
         out.append(f"\n{SECTION}{ssh_path(f)}{note}\n\n" + "".join(t + "\n\n" for t in kept))
-    index.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     replace_file(index, "".join(out).rstrip("\n") + "\n", 0o600)
-    if includes(text, index):
-        return
-    lines = text.splitlines(keepends=True)
-    if any(ssh_path(default) in include_targets(ln) for ln in lines):   # roster's one file: the index takes its place
-        text = "".join(include_line(index) + "\n" if ssh_path(default) in include_targets(ln) else ln for ln in lines)
-    else:                                       # an Include must sit above any Host block, so prepend it
-        text = f"{include_line(index)}\n\n{text}"
-    main.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    replace_file(main, text, 0o600)
+    return True
+
+
+def refresh_roster_md(inv: Inventories | None = None, skip: str | None = None) -> None:
+    """Each named Inventory's ROSTER.md (where one was written) again, when what it should say changed: which of its
+    Hosts are left out of this Box's ssh config depends on the active Inventory and the others' Hosts. A file whose
+    text stays the same isn't touched, so syncing one Inventory leaves the others' alone. SKIP: the Inventory a sync is
+    writing it for already. Never fails the command: an Inventory that doesn't load is left as it is."""
+    from .claude import roster_md
+    from .common import current_inventory, use_inventory
+    from .config import load_config
+    inv = inv if inv is not None else load()
+    here = current_inventory()
+    try:
+        for x in inv.inventories:
+            md = x.path.parent / "ROSTER.md"
+            if x.name == skip or not md.is_file():
+                continue
+            use_inventory(x.name)
+            try:
+                text = roster_md(load_config(x.path))
+                if md.read_text() != text:
+                    md.write_text(text)
+            except (SystemExit, OSError):
+                continue
+    finally:
+        use_inventory(here)
+
+
+def generated(path: Path) -> bool:
+    """Did roster write the ssh config file at PATH (its first line is roster's header)? A file by an old name of
+    roster's could be the user's own: only roster's are moved or deleted."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            return f.readline().startswith("# Generated by roster from ")
+    except OSError:
+        return False
+
+
+def foreign_legacy_files(inv: Inventories) -> list[Path]:
+    """config.d/roster-NAME files of named Inventories that roster didn't write (left alone, said in check --box)."""
+    return [legacy_ssh_config_file(x.name) for x in inv.inventories
+            if legacy_ssh_config_file(x.name).is_file() and not generated(legacy_ssh_config_file(x.name))]
 
 
 def migrate(inv: Inventories) -> None:
     """A named Inventory's ssh config written in config.d by the first version of this (roster-NAME there) moves to
-    its own folder, where a user's `Include ~/.ssh/config.d/*` doesn't read it."""
+    its own folder, where a user's `Include ~/.ssh/config.d/*` doesn't read it. Only a file roster wrote (its header);
+    another roster process may move it first, which is fine."""
     for x in inv.inventories:
         old, new = legacy_ssh_config_file(x.name), ssh_config_file(x.name)
-        if not old.is_file():
+        if not old.is_file() or not generated(old):
             continue
-        if new.exists():
-            old.unlink()
-        else:
-            new.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            os.replace(old, new)
+        try:
+            if new.exists():
+                old.unlink()
+            else:
+                new.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                os.replace(old, new)
+        except FileNotFoundError:
+            pass
 
 
 def stale() -> bool:
-    """Is the index older than a file it copies Hosts from, or are there files to move? An older roster (another
-    install on this Box) writing roster's unnamed ssh config doesn't know the index: the next roster run catches up."""
+    """Is the index older than a file it copies Hosts from? An older roster (another install on this Box) writing
+    roster's unnamed ssh config doesn't know the index: the next roster run rebuilds it."""
     index = ssh_index_file()
     if not index.is_file() or not list_file().exists():
         return False
     inv = load()
-    if any(legacy_ssh_config_file(x.name).is_file() for x in inv.inventories):
-        return True
+    if not inv.inventories:
+        return False
     built = index.stat().st_mtime_ns
     return any(f.is_file() and f.stat().st_mtime_ns > built for f in index_order(inv))
 
 
+INDEX_NOT_WRITTEN = 148         # errors.py's code (row 206)
+
+
 def rebuild_if_stale() -> None:
-    if stale():
-        refresh_index()
+    """On any command (reads too): rewrite a stale index file, and nothing else (never ~/.ssh/config). A failure is
+    a warning on stderr (code 148), never the command's end: a read-only ~/.ssh must not stop roster or serve."""
+    import sys
+    try:
+        if stale():
+            write_index(load())
+    except OSError as e:
+        print(f"warning: [{INDEX_NOT_WRITTEN}] {ssh_index_file()} is older than this Box's ssh config files and "
+              f"couldn't be rewritten ({e.strerror or type(e).__name__}): `ssh NAME` may use Hosts as they were "
+              "- run `roster sync` once it can be written", file=sys.stderr, flush=True)
 
 
 def index_hosts() -> dict[str, set[str]] | None:

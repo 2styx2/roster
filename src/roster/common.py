@@ -30,7 +30,7 @@ _inventory: str | None = None
 _CURRENT = object()
 
 
-def use_inventory(name):
+def use_inventory(name: str | None) -> None:
     global _inventory
     _inventory = name
 

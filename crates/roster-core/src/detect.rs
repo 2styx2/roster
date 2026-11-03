@@ -125,7 +125,8 @@ pub trait Runner {
 /// before detection gives up on it and looks where it used to: a roster that hangs (an antivirus
 /// scan, a home folder on a network drive) must not leave the app connecting forever. The WSL
 /// probe holds `roster inv which` to the same, with `timeout` (or, where there's none, as on macOS,
-/// perl's `alarm`; with neither it waits, as it did before).
+/// perl's `alarm` over its own process group, so a wrapper's children stop too; with neither it
+/// waits, as it did before).
 pub const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Run `argv` in `dir` and wait at most `limit`: past it the process is killed and the answer is
@@ -243,11 +244,16 @@ while [ "$n" -gt 0 ]; do
   case $a in "~" | "~/"*) a="$HOME${a#"~"}" ;; esac
   set -- "$@" "$a"
 done
-t=
-if command -v timeout >/dev/null 2>&1; then t="timeout ${ROSTER_PROBE_SECS:-15}"
-elif command -v perl >/dev/null 2>&1; then t="perl -e alarm(shift);exec(@ARGV)||exit(127) ${ROSTER_PROBE_SECS:-15}"
-fi
-f=$(cd "$HOME" && $t "$p" "$@" inv which 2>/dev/null)
+# perl, where there's no timeout (macOS): its own process group, so the alarm stops a wrapper's children too
+PL='setpgrp(0,0);my $s=shift;my $c=fork;if(!$c){exec(@ARGV)||exit(127)}$SIG{ALRM}=sub{kill("TERM",-$$);exit(124)};alarm($s);waitpid($c,0);exit($?>>8)'
+ask() {
+  cd "$HOME" || return 1
+  if command -v timeout >/dev/null 2>&1; then timeout "${ROSTER_PROBE_SECS:-15}" "$@"
+  elif command -v perl >/dev/null 2>&1; then perl -e "$PL" "${ROSTER_PROBE_SECS:-15}" "$@"
+  else "$@"
+  fi
+}
+f=$(ask "$p" "$@" inv which 2>/dev/null)
 case $f in /*) if [ -e "$f" ]; then echo "inventory=$f"; exit 0; fi ;; esac
 for f in "$ROSTER_CONFIG" "$HOME/roster.yml" "$HOME/.config/roster/roster.yml" "$HOME/infra/roster.yml"; do
   if [ -n "$f" ] && [ -e "${f/#\~/$HOME}" ]; then echo "inventory=${f/#\~/$HOME}"; exit 0; fi

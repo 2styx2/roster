@@ -24,6 +24,7 @@ SSH_KEYS = ("port", "user", "auth")
 SERVICE_KEYS = ("port", "url", "scheme", "user", "auth", "verify", "login")
 WEB_LOGINS = ("basic", "bearer", "vsphere", "unifi", "openvpnas", "hub", "none")          # how `roster web` sends the service's credentials
 SERVICE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+IPV6_ZONE = re.compile(r"^[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*%[A-Za-z0-9._-]+\Z")   # fe80::1%eth0
 HTTPS_PORTS, HTTP_PORTS = (443, 8443), (80, 8000, 8008, 8080, 8888)
 
 
@@ -124,9 +125,11 @@ def parse_inventory(text, path):
             if re.search(r"\s", m["ip"] + m["ssh"]["user"]):
                 die(f"host {hname!r}: ip/user can't contain spaces")
             for field, value in (("ip", m["ip"]), ("user", m["ssh"]["user"])):
-                if SSH_UNSAFE.search(str(value)) or "%" in str(value):    # written into the ssh config as they are
-                    die(f"host {hname!r}: {field} can't hold a quote, a % or a control character (it goes into "
-                        "this Box's ssh config)")
+                if SSH_UNSAFE.search(str(value)):   # written into the ssh config: a quote or newline would break it
+                    die(f"host {hname!r}: {field} can't hold a quote or a control character (it goes into this "
+                        "Box's ssh config)")
+            if "%" in m["ip"] and not IPV6_ZONE.match(m["ip"]):     # a % is an IPv6 zone's, or none (written %%)
+                die(f"host {hname!r}: ip can't hold a % except as an IPv6 address's zone (fe80::1%eth0)")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working
             m["user"], m["port"], m["auth"] = m["ssh"]["user"], m["ssh"]["port"], m["ssh"]["auth"]
             m["login"] = {"user": as_user(first(layers, "user")), "auth": as_auth(first(layers, "auth"))}  # for services

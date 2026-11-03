@@ -1,6 +1,7 @@
 """Instructions for Claude: ROSTER.md, the CLAUDE.md import, Claude Code settings."""
 
 import json
+from typing import Any
 
 from .common import roster_command, say
 from .config import access_label
@@ -15,7 +16,25 @@ def stored_login(s):
 
 def write_claude_files(cfg):
     proj = cfg["path"].parent
+    (proj / "ROSTER.md").write_text(roster_md(cfg))
+    write_claude_settings(cfg)
+
+
+def roster_md(cfg: dict[str, Any]) -> str:
+    """ROSTER.md's text for the Inventory CFG, for this run's Inventory (common.current_inventory). A Host whose name
+    reaches another named Inventory's Host from this Box (left out of its ssh config, ticket 115) is marked so: Claude
+    must not `ssh` to it by name."""
+    from .common import current_inventory
+    from .inventories import left_out_hosts
+    left = left_out_hosts()
+    this = current_inventory()
     run = roster_command()
+
+    def access(h):
+        if h["name"] in left and h["enroll"]:
+            return (f"left out: `ssh {h['name']}` reaches another Inventory's Host from this Box; "
+                    f"`{run} inv use {this}` first")
+        return access_label(h)
     hosts = sorted(cfg["hosts"].values(), key=lambda h: (h["group"], h["name"]))
     groups = {}
     for h in hosts:
@@ -42,6 +61,9 @@ def write_claude_files(cfg):
           f"- **To read roster's data rather than show it** (to pick a Host, parse a check, script something), add "
           f"`--json`: `{run} hosts --json`, `{run} info <name> --json`, `{run} check <name> --json`. One JSON "
           "document, Logins as references only; prefer it to parsing the tables.",
+          *([f"- **access = left out**: another named Inventory on this Box has a Host by that name, and a plain "
+             f"`ssh <name>` reaches that one. Never `ssh` to it; the user makes this Inventory the active one first "
+             f"(`{run} inv use {this}`)."] if any(n in left for n in cfg["hosts"]) else []),
           "- **access = unreviewed**: found by a network scan, not set up yet. Don't try to log in; "
           "tell the user it needs reviewing in roster.yml.",
           "- Web UIs: open the URL in the browser. If it shows a login page, ask the user to sign in.",
@@ -75,7 +97,7 @@ def write_claude_files(cfg):
             svc = ", ".join(f"{k}:{s['port']}" + (" (login)" if stored_login(s) else "")
                             for k, s in h["services"].items() if k != "web" or s["override"])
             md.append(f"| {h['name']} | {cell(h['title'])} | {cell(h['type'])} | {cell(h['product'])} | "
-                      f"{h['user']}@{h['ip']}:{h['port']} | {access_label(h)} | "
+                      f"{h['user']}@{h['ip']}:{h['port']} | {access(h)} | "
                       f"{cell(h['web'])} | {cell(svc)} | {cell(h['description'])} |")
     else:
         def counts(field):
@@ -91,7 +113,11 @@ def write_claude_files(cfg):
                "|---|---|---|---|---|---|---|"]
         md += [f"| {r['name']} | {r['type']} | {cell(r['group'])} | {cell(summary(r))} | {cell(login(r))} | "
                f"{cell(r['title'])} | {cell(r['description'])} |" for r in resources]
-    (proj / "ROSTER.md").write_text("\n".join(md) + "\n")
+    return "\n".join(md) + "\n"
+
+
+def write_claude_settings(cfg):
+    proj = cfg["path"].parent
 
     claude_md = proj / "CLAUDE.md"
     text = claude_md.read_text() if claude_md.exists() else ""
