@@ -486,6 +486,12 @@ pub fn fill_refusal(e: FillError<CallError>) -> CallError {
             message: FillError::<CallError>::NotPrinted.to_string(),
             data: Some(json!({ "fix": "press the key again while the prompt is at the cursor" })),
         },
+        // Nothing was typed: the prompt stays offered (the review of #299, #3).
+        e @ FillError::Changed { .. } => CallError::Rpc {
+            code: FILL_REFUSED,
+            message: e.to_string(),
+            data: Some(json!({ "fix": "press the key again once the Session's screen is still" })),
+        },
         other => CallError::Io {
             message: other.to_string(),
         },
