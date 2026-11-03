@@ -361,7 +361,7 @@ What a Plugin written for Plugin API 5 (`api = 5` in its manifest) gets when it 
 
 ## Named Inventories
 
-One person may have several Inventories, the team's for work and their own for home, with one active (ticket 115, decision Q157; [`roster inv`](../cli-reference.md#named-inventories)). Naming one, switching and `roster --inv NAME` refuse a name or a file roster can't use. The same machine in two Inventories is never an error: `roster check --box` and `:check` (the `inventory` section), `setup` and `sync` warn and name both entries. They compare each Host's host-key fingerprints, as recorded in each Inventory's own known_hosts, and nothing else: no Login or secret is compared.
+One person may have several Inventories, the team's for work and their own for home, with one active ([`roster inv`](../cli-reference.md#named-inventories)). Naming one, switching and `roster --inv NAME` refuse a name or a file roster can't use. The same machine in two Inventories is never an error: `roster check --box` and `:check` (the `inventory` section), `setup` and `sync` warn and name both entries. They compare each Host's host-key fingerprints, as recorded in each Inventory's own known_hosts, and nothing else: no Login or secret is compared.
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|

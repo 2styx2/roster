@@ -285,7 +285,7 @@ The checks of [`roster check --box`](cli-reference.md#roster-check---box), in se
 
 ## Named Inventories: `inventories.list`, `inventories.use`
 
-One person may have several Inventories, the team's for work and their own for home, and one is active (ticket 115; [`roster inv`](cli-reference.md#named-inventories)). A `serve` runs on one of them for its whole life: `inventories.list` says which (`name`, `path`) and which is active, and `inventories.use` makes another one the active one. The app then restarts `serve` (as it does for a new `backend`), which finds the active one, or starts it with `--inv NAME`. `inventories.use` changes nothing else: no vault is locked or unlocked and no Session is touched; those are the app's to do around the restart.
+One person may have several Inventories, the team's for work and their own for home, and one is active ([`roster inv`](cli-reference.md#named-inventories)). A `serve` runs on one of them for its whole life: `inventories.list` says which (`name`, `path`) and which is active, and `inventories.use` makes another one the active one. The app then restarts `serve` (as it does for a new `backend`), which finds the active one, or starts it with `--inv NAME`. `inventories.use` changes nothing else: no vault is locked or unlocked and no Session is touched; those are the app's to do around the restart.
 
 <!-- BEGIN generated:methods inventories.list inventories.use -->
 
