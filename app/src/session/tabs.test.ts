@@ -1383,3 +1383,43 @@ describe("shell hooks (ticket 121, #210)", () => {
     expect(await tabs.integrate(999)).toBe("not-open");
   });
 });
+
+describe("Sessions from another named Inventory (ticket 115)", () => {
+  it("stay open, marked with theirs, and are never filled or reconnected until roster runs on it again", async () => {
+    const backend = fakeBackend({ ...unlocked, hosts });
+    let ev: SessionEvents | null = null;
+    const asked: string[] = [];
+    backend.openSession = async (_host, _size, events) => {
+      ev = events;
+      const done = async () => {};
+      return { id: 1, auth: "key", write: done, resize: done, close: done, fill: async (p: string) => (asked.push(p), { host: "h" }) };
+    };
+    const tabs = new Tabs(backend);
+    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    // Opened before the app knew where roster runs: it counts as opened there.
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory("work");
+    await settle();
+    (ev as SessionEvents | null)?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
+    await settle();
+    const tab = () => tabs.snapshot().tabs[0]!;
+    expect(tab().label).toBe(reviewed[0]);
+    expect(tab().prompt).not.toBeNull();
+
+    tabs.setInventory("home");
+    expect(tab()).toMatchObject({ label: `${reviewed[0]} · work`, from: "work", prompt: null });
+    await expect(tabs.fill(id)).rejects.toThrow(/came from work/);
+    expect(asked).toEqual([]);
+    (ev as SessionEvents | null)?.exit({ code: 0, closed: false });
+    await settle();
+    expect(tabs.reconnect(id)).toBe(false);
+
+    // A Session opened on home isn't marked; back on work, the first one isn't either.
+    tabs.open(reviewed[1]!);
+    expect(tabs.snapshot().tabs[1]?.label).toBe(reviewed[1]);
+    tabs.setInventory("work");
+    expect(tab().label).toBe(reviewed[0]);
+    expect(tabs.snapshot().tabs[1]).toMatchObject({ label: `${reviewed[1]} · home`, from: "home" });
+    expect(tabs.reconnect(id)).toBe(true);
+  });
+});

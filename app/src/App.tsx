@@ -47,6 +47,8 @@ import {
   FILL_API_VERSION,
   NESTED_FILL_API_VERSION,
   SIGN_OUT_API_VERSION,
+  INVENTORIES_API_VERSION,
+  type Inventories,
   type VaultAccount,
   type VaultSettings,
 } from "./backend/types";
@@ -131,6 +133,7 @@ import { chosenAppearance, registerThemePicker, stateChoiceWins, ThemeChoice } f
 import { useTheme } from "./theme/useTheme";
 import { Logo } from "./chrome/Logo";
 import { countOf } from "./ui/format";
+import { afterSwitch, NONE_NAMED, switchPlan, type SwitchPlan } from "./inventory/switch";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
 import { PromptWatch } from "./session/prompt";
 import { XtermPromptScreen } from "./session/promptScreen";
@@ -441,6 +444,10 @@ function Workspace({
   const [confirming, setConfirming] = useState<{ host: string; group: string } | null>(null);
   // Ticket 42: `:vault signout` asks first, naming the account.
   const [signingOut, setSigningOut] = useState<VaultAccount | null>(null);
+  // Ticket 115: the named Inventories as serve last listed them (null until it has, or before API
+  // 27), and `:inventory NAME`'s question while it's up.
+  const [inventories, setInventories] = useState<Inventories | null>(null);
+  const [switching, setSwitching] = useState<Extract<SwitchPlan, { kind: "confirm" }> | null>(null);
   const [keyState, setKeyState] = useState<KeyState>(terminalMode);
   const keyRef = useRef<KeyState>(terminalMode);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -1042,6 +1049,43 @@ function Workspace({
   }, [registries, backend, canLive, reloadHosts, refreshPending, setStale]);
   const pendingCount = pending?.state === "done" ? pending.changes.count : 0;
 
+  // Named Inventories (ticket 115, API 27): asked of each serve once it's up, so the status bar
+  // names the one it runs on and Sessions are marked with theirs. Forgotten while serve (re)starts.
+  const listsInventories = apiVersion >= INVENTORIES_API_VERSION;
+  useEffect(() => {
+    if (!connInfo || !listsInventories) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- forgetting the last serve's list is the effect
+      setInventories(null);
+      return;
+    }
+    let live = true;
+    backend.listInventories().then(
+      (list) => live && setInventories(list),
+      () => live && setInventories(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [backend, connInfo, listsInventories]);
+  useEffect(() => {
+    if (!connInfo) return;
+    if (!listsInventories) tabs.setInventory(null);
+    else if (inventories) tabs.setInventory(inventories.name);
+  }, [tabs, connInfo, listsInventories, inventories]);
+  // Said when it changes, so a screen reader hears it too (the message line is a status region).
+  const lastInventory = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!inventories) return;
+    const was = lastInventory.current;
+    lastInventory.current = inventories.name;
+    if (was === undefined || was === inventories.name) return;
+    setMessage(
+      inventories.name !== null
+        ? afterSwitch(inventories, inventories.name)
+        : `roster runs on ${inventories.path ?? "no roster.yml"} now, which isn't a named Inventory`,
+    );
+  }, [inventories, setMessage]);
+
   // The State file and the Windows build, once. What changed before the file was read (Hosts
   // picked) is replayed over it.
   // What's new (ticket 47): said once after an upgrade, when the workspace first shows.
@@ -1338,6 +1382,14 @@ function Workspace({
     setSigningOut(null);
     restoreFocus();
   };
+  const closeSwitch = () => {
+    setSwitching(null);
+    restoreFocus();
+  };
+  /** Sessions a switch leaves open (ended ones stay too, but aren't open). */
+  const openSessions = () => sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").length;
+  /** The Pending changes now, asked again (a switch is blocked by them); the last count if roster can't say. */
+  const pendingNow = async () => (canEdit ? ((await backend.pendingChanges().catch(() => null))?.count ?? pendingCount) : 0);
   const closeChanges = () => {
     setChangesView(null);
     restoreFocus();
@@ -1555,6 +1607,7 @@ function Workspace({
       if (packagesOpen) return closePackages();
       if (keysOpen) return closeKeys();
       if (signingOut) return closeSignOut();
+      if (switching) return closeSwitch();
       if (confirming) return closeConfirm();
       if (editing !== null) return closeEdit();
       if (adding) return closeAdd();
@@ -1732,6 +1785,22 @@ function Workspace({
       setPending((p) => p ?? { state: "loading" });
       refreshPending();
       setChangesView({ step: then ?? "diff" });
+    },
+    switchInventory: (name) => {
+      if (!listsInventories) {
+        return setMessage(`:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`);
+      }
+      backend.listInventories().then(
+        async (list) => {
+          setInventories(list);
+          if (name === null) return list.inventories.length === 0 ? setMessage(NONE_NAMED) : ctx.openCommandLine("inventory ");
+          const plan = switchPlan(list, name, { sessions: openSessions(), pending: await pendingNow() });
+          if (plan.kind === "say") return setMessage(plan.message);
+          if (!switching) rememberFocus();
+          setSwitching(plan);
+        },
+        (e: unknown) => setMessage(`Couldn't list the named Inventories: ${e instanceof Error ? e.message : String(e)}`),
+      );
     },
     pull: () => {
       if (!canEdit) return setMessage(`:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
@@ -2069,6 +2138,15 @@ function Workspace({
             <span className="box-mark" aria-hidden="true" />
             <span className="statusbar-cut">{info.inventory.box}</span>
           </span>
+        );
+      case "inventory":
+        // The named Inventory serve runs on (ticket 115): always in sight while there is one.
+        return (
+          inventories?.name && (
+            <span key={id} className="box" title={`Inventory ${inventories.name}: ${inventories.path ?? ""}`}>
+              <span className="statusbar-cut">{inventories.name} Inventory</span>
+            </span>
+          )
         );
       case "path":
         return (
@@ -2528,6 +2606,49 @@ function Workspace({
             onClose={closeConfirm}
           />
         )}
+        {switching && (
+          <ConfirmPanel
+            key={switching.to}
+            title="Switch Inventory"
+            body={switching.body}
+            more={switching.more}
+            action={switching.action}
+            keep={switching.action === null ? "Close" : "Stay"}
+            danger={false}
+            onConfirm={async () => {
+              const to = switching.to;
+              // Pending changes made while it asked still block it.
+              const list = await backend.listInventories().catch(() => inventories);
+              const again = list ? switchPlan(list, to, { sessions: openSessions(), pending: await pendingNow() }) : null;
+              if (!again) {
+                closeSwitch();
+                return setMessage("Couldn't list the named Inventories: nothing switched");
+              }
+              if (again.kind === "say") {
+                closeSwitch();
+                return setMessage(again.message);
+              }
+              if (again.action === null) return setSwitching(again);
+              // Only one Inventory's vault is ever unlocked: this one locks (covering the Sessions)
+              // before serve is asked to switch, and the new serve starts locked.
+              await vault.lockNow();
+              try {
+                await backend.useInventory(to);
+              } catch (e) {
+                closeSwitch();
+                return setMessage(`Couldn't switch to ${to}: ${e instanceof Error ? e.message : String(e)}`);
+              }
+              closeSwitch();
+              // serve starts again as for a new backend: its start asks roster which file to use.
+              await connect(true);
+              const now = await backend.listInventories().catch(() => null);
+              if (!now) return;
+              setInventories(now);
+              if (now.name !== to) setMessage(afterSwitch(now, to));
+            }}
+            onClose={closeSwitch}
+          />
+        )}
         {signingOut && (
           <ConfirmPanel
             title={signOutQuestion(signingOut)}
@@ -2615,6 +2736,7 @@ function Workspace({
               foldIds: rows.filter((r) => r.foldable).map((r) => r.id),
               sessions: sessions.tabs.map((t) => t.host),
               groupNames,
+              inventoryNames: inventories?.inventories.map((i) => i.name) ?? [],
               webServices: (name) => {
                 const h = hostByName.get(name ?? details ?? ctx.selectedHost() ?? "");
                 return h ? webServices(h) : [];

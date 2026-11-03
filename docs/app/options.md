@@ -1261,7 +1261,7 @@ roster.o.modes.standard.sessionbar = "top"
 
 The status bar, and its segments.
 
-Takes true, false, or segments in order: `"backend"`, `"box"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
+Takes true, false, or segments in order: `"backend"`, `"box"`, `"inventory"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
 
 Methods: `roster.o.modes.standard.statusbar = { … }` · `:get()` · `:append(value, …)` · `:prepend(value, …)` · `:insert(i, value)` · `:remove(value)` · `:has(value)` · `:clear()` · `:reset()`.
 
@@ -1381,7 +1381,7 @@ roster.o.modes.focus.sessionbar = "top"
 
 The status bar, and its segments.
 
-Takes true, false, or segments in order: `"backend"`, `"box"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
+Takes true, false, or segments in order: `"backend"`, `"box"`, `"inventory"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
 
 Methods: `roster.o.modes.focus.statusbar = { … }` · `:get()` · `:append(value, …)` · `:prepend(value, …)` · `:insert(i, value)` · `:remove(value)` · `:has(value)` · `:clear()` · `:reset()`.
 

@@ -9,16 +9,25 @@ export interface ConfirmPanelProps {
   title: string;
   /** What will happen, in a sentence or two. */
   body: React.ReactNode;
-  /** The confirming button's label ("Remove"). */
-  action: string;
+  /** What else it affects, a paragraph each (`:inventory`'s Sessions and Pending changes). */
+  more?: readonly string[];
+  /** The confirming button's label ("Remove"); null when nothing can go ahead yet: only the
+   * cancel button, which then has the focus. */
+  action: string | null;
+  /** The cancel button's label (default "Keep it"). */
+  keep?: string;
+  /** The confirming button breaks something (removing, deleting): the danger colour. Otherwise
+   * it's the primary button, as switching Inventories is. */
+  danger?: boolean;
   onConfirm(): Promise<void>;
   onClose(): void;
 }
 
-export function ConfirmPanel({ title, body, action, onConfirm, onClose }: ConfirmPanelProps) {
+export function ConfirmPanel({ title, body, more = [], action, keep = "Keep it", danger = true, onConfirm, onClose }: ConfirmPanelProps) {
   const yes = useRef<HTMLButtonElement>(null);
+  const no = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => yes.current?.focus(), []);
+  useEffect(() => (yes.current ?? no.current)?.focus(), []);
   return (
     <section
       tabIndex={-1}
@@ -40,24 +49,34 @@ export function ConfirmPanel({ title, body, action, onConfirm, onClose }: Confir
       </header>
       <div className="changes-confirm">
         <p>{body}</p>
+        {more.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
         <div className="edit-actions">
-          <button
-            ref={yes}
-            type="button"
-            className="danger"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void onConfirm().finally(() => setBusy(false));
-            }}
-          >
-            {action}
-          </button>
-          <button type="button" onClick={onClose} disabled={busy}>
-            Keep it
+          {action !== null && (
+            <button
+              ref={yes}
+              type="button"
+              className={danger ? "danger" : "primary"}
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void onConfirm().finally(() => setBusy(false));
+              }}
+            >
+              {action}
+            </button>
+          )}
+          <button ref={no} type="button" onClick={onClose} disabled={busy}>
+            {keep}
           </button>
           <span className="edit-keys muted key-hint">
-            <Keys keys="Enter" /> {action.toLowerCase()} <Keys keys="Escape" /> keep
+            {action !== null && (
+              <>
+                <Keys keys="Enter" /> {action.toLowerCase()}{" "}
+              </>
+            )}
+            <Keys keys="Escape" /> {keep.toLowerCase()}
           </span>
         </div>
       </div>

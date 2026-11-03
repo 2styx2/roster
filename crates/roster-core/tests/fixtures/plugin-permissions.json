@@ -68,7 +68,7 @@
     "serve:vault.status",
     "serve:session.open",
     "serve:quick.connect",
-    "serve:changes.publish",
+    "serve:changes.publish", "serve:inventories.use", "serve:inventories.list",
     "serve:mesh.",
     "serve:mesh.Status",
     "serve:mesh.a-b",

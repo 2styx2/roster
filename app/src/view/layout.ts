@@ -36,7 +36,7 @@ export interface ModeLayout {
 }
 
 /** The status bar's segments, in their default order. */
-export const STATUS_SEGMENTS = ["backend", "box", "hosts", "path", "changes", "hints", "mode"] as const;
+export const STATUS_SEGMENTS = ["backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode"] as const;
 
 /** One mode's pieces as the Config says them (roster-core config schema.rs ModeLayout). */
 export interface ModePieces {
