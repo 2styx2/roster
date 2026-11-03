@@ -176,7 +176,7 @@ describe("outside edits to roster.yml", () => {
   it("a broken edit keeps the last good Inventory and says the line", async () => {
     const { backend } = await ready({ config: configWith({ autoReload: true }) });
     await waitFor(() => expect(backend.watching()).toBe(true));
-    act(() => backend.outsideEdit({ error: { message: "mapping values are not allowed here", path: "~/infra/roster.yml", line: 12 } }));
+    act(() => backend.outsideEdit({ error: { message: "mapping values are not allowed here", path: "~/team-inventory/roster.yml", line: 12 } }));
     await said(/roster\.yml:12 has an error \(mapping values are not allowed here\): the last good Inventory is still in use/);
     expect(item("linux-1-000")).not.toBeNull();
   });

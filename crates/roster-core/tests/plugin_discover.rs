@@ -165,7 +165,7 @@ impl FakeServe {
                     })
                     .collect();
                 Ok(
-                    json!({ "group": "discovered-20261031", "added": added, "backup": "/infra/.git/roster/roster.yml.bak" }),
+                    json!({ "group": "discovered-20261031", "added": added, "backup": "/team-inventory/.git/roster/roster.yml.bak" }),
                 )
             }
             other => Err(format!("unknown method '{other}' (code -32601)")),

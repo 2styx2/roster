@@ -708,7 +708,7 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
           f.added = f.name;
           return { address: a, name: f.name ?? a };
         });
-        return { group, added, backup: "/home/you/infra/.git/roster/roster.yml.bak" };
+        return { group, added, backup: "/home/you/team-inventory/.git/roster/roster.yml.bak" };
       }
       default:
         throw new BackendCallError(`unknown method '${method}'`, -32601);
