@@ -1839,18 +1839,57 @@ mod tests {
         (port, lines)
     }
 
+    /// The OS's answer to `slow.example`, held until the test lets it go ([`Slow::answer`]) or
+    /// the `Slow` is dropped, rather than a sleep the test then has to wait out (T151).
+    struct Slow {
+        answered: Arc<(Mutex<bool>, std::sync::Condvar)>,
+        log: Arc<Log>,
+    }
+
+    impl Slow {
+        /// Lets every `slow.example` lookup answer, then waits until each has given its
+        /// [`LookupSlot`] back.
+        fn answer(&self) {
+            let (done, cv) = &*self.answered;
+            *done.lock().unwrap() = true;
+            cv.notify_all();
+            let end = std::time::Instant::now() + Duration::from_secs(30);
+            while self.log.lookups.load(Ordering::SeqCst) > 0 {
+                assert!(
+                    std::time::Instant::now() < end,
+                    "the lookups never gave their slots back"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+
+    impl Drop for Slow {
+        fn drop(&mut self) {
+            let (done, cv) = &*self.answered;
+            *done.lock().unwrap() = true;
+            cv.notify_all();
+        }
+    }
+
     /// A Plugin's client for `list`, through the proxy on `port`, whose lookups (each name kept, in
-    /// order) give: `slow.example` 45.10.20.30 after 5 s, `inside.example` 10.0.0.5,
-    /// `unknown.example` nothing, any other name 45.10.20.30 at once.
-    fn proxied_net(port: u16, list: &[&str]) -> (Net, Arc<Mutex<Vec<String>>>) {
+    /// order) give: `slow.example` 45.10.20.30 once the test lets it ([`Slow`]), `inside.example`
+    /// 10.0.0.5, `unknown.example` nothing, any other name 45.10.20.30 at once.
+    fn proxied_net(port: u16, list: &[&str]) -> (Net, Arc<Mutex<Vec<String>>>, Slow) {
         let looked = Arc::new(Mutex::new(Vec::new()));
         let names = Arc::clone(&looked);
+        let answered = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let held = Arc::clone(&answered);
         // Blocking, as the system's resolver is: a lookup given up on runs on to its end.
         let lookup: Lookup = Arc::new(move |host: &str| {
             names.lock().unwrap().push(host.to_string());
             match host {
                 "slow.example" => {
-                    std::thread::sleep(Duration::from_secs(5));
+                    let (done, cv) = &*held;
+                    // The ceiling is only how long a test that never lets it go keeps a thread.
+                    let _ = cv
+                        .wait_timeout_while(done.lock().unwrap(), Duration::from_secs(60), |d| !*d)
+                        .unwrap();
                     Ok(addrs(&["45.10.20.30"]))
                 }
                 "inside.example" => Ok(addrs(&["10.0.0.5"])),
@@ -1858,13 +1897,15 @@ mod tests {
                 _ => Ok(addrs(&["45.10.20.30"])),
             }
         });
+        let log: Arc<Log> = Arc::default();
         let setup = Setup {
             proxy: Arc::new(ProxyCell::new(Some(
                 Proxy::parse(&format!("http://127.0.0.1:{port}")).unwrap(),
             ))),
-            log: Arc::default(),
+            log: Arc::clone(&log),
         };
-        (Net::with_lookup(sites(list), setup, lookup).unwrap(), looked)
+        let net = Net::with_lookup(sites(list), setup, lookup).unwrap();
+        (net, looked, Slow { answered, log })
     }
 
     /// Sends a GET to `url` (with `timeout`), its answer to `tx` under `tag`.
@@ -1896,7 +1937,7 @@ mod tests {
     #[test]
     fn a_slow_lookup_at_a_redirect_holds_up_nothing_and_still_times_out() {
         let (port, seen) = fake_proxy();
-        let (net, _) = proxied_net(
+        let (net, _, _slow) = proxied_net(
             port,
             &["http://a.example", "http://slow.example", "http://fast.example"],
         );
@@ -1953,7 +1994,7 @@ mod tests {
             "http://inside.example",
             "http://unknown.example",
         ];
-        let (net, looked) = proxied_net(port, &list);
+        let (net, looked, _slow) = proxied_net(port, &list);
         let (tx, rx) = std::sync::mpsc::channel();
         let answer = |url: &str| {
             send(&net, url, None, "", &tx);
@@ -1996,7 +2037,7 @@ mod tests {
     #[test]
     fn lookups_given_up_on_cant_pile_up() {
         let (port, _) = fake_proxy();
-        let (net, _) = proxied_net(port, &["http://slow.example", "http://fast.example"]);
+        let (net, _, slow) = proxied_net(port, &["http://slow.example", "http://fast.example"]);
         let (tx, rx) = std::sync::mpsc::channel();
         for _ in 0..MAX_LOOKUPS {
             send(&net, "http://slow.example/x", Some(0.2), "slow", &tx);
@@ -2017,7 +2058,7 @@ mod tests {
         );
         assert!(started.elapsed() < Duration::from_secs(1));
         // Once the OS answers them, the slots are free again.
-        std::thread::sleep(Duration::from_secs(5));
+        slow.answer();
         send(&net, "http://fast.example/ok", None, "fast", &tx);
         let (_, answer) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(body(&answer), "200 ok http://fast.example/ok");

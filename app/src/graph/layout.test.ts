@@ -170,12 +170,17 @@ describe("the graph's layout", () => {
     expect(closest(healed)).toBeGreaterThan(SPACING * 0.75);
   });
 
-  it("lays out 2,000 nodes in 40 clusters quickly", () => {
+  it("lays out 2,000 nodes in 40 clusters", () => {
+    const l = layoutGraph(bigGraph(2000, 40));
+    expect(l.nodes.size).toBe(2001);
+    expect(overlaps(l)).toEqual([]);
+  });
+
+  budget("lays out 2,000 nodes in 40 clusters quickly", () => {
     const g = bigGraph(2000, 40);
     const t = performance.now();
-    const l = layoutGraph(g);
+    layoutGraph(g);
     expect(performance.now() - t).toBeLessThan(150);
-    expect(l.nodes.size).toBe(2001);
   });
 
   it("a node whose cluster is unknown is loose", () => {
