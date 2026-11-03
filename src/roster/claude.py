@@ -1,6 +1,7 @@
 """Instructions for Claude: ROSTER.md, the CLAUDE.md import, Claude Code settings."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 from .common import CURRENT, current_inventory, roster_command, say
@@ -14,9 +15,25 @@ def stored_login(s):
     return bool(s["auth"]) and s["auth"] not in ("prompt", *NO_PASSWORD)
 
 
+def written_by_the_mesh(md: Path) -> bool:
+    """Is the ROSTER.md at MD the Mesh's (T193)? On a Host that is a roster Box too, with its roster.yml in its home
+    folder, its own ROSTER.md and the one `roster mesh` writes there for its peers are the same file: neither writer
+    overwrites the other's."""
+    try:
+        with md.open(encoding="utf-8", errors="replace") as f:
+            return f.readline().startswith("<!-- roster-mesh:")
+    except OSError:
+        return False
+
+
 def write_claude_files(cfg):
     proj = cfg["path"].parent
-    (proj / "ROSTER.md").write_text(roster_md(cfg))
+    md = proj / "ROSTER.md"
+    if written_by_the_mesh(md):
+        say(f"warning      {md} is the Mesh's (another Box's `roster mesh` lists this Host's peers in it), so roster "
+            "left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
+    else:
+        md.write_text(roster_md(cfg))
     write_claude_settings(cfg)
 
 

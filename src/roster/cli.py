@@ -222,6 +222,58 @@ def mesh_apply(cfg):
     return r["pending"]
 
 
+def mesh_cut_all(cfg, args):
+    """`roster mesh cut --all` (T193): every Mesh entry off every Host, before removing roster from this Box."""
+    n = sum(1 for h in cfg["hosts"].values() if h["enroll"] and h["reviewed"])
+    if not args.yes:
+        ans = input(f"Take every Mesh key and file off all {plural(n, 'Host')} now, at once, including any other "
+                    "Box's or other Inventory's Mesh entries on them (roster's tag doesn't say whose they are)? "
+                    "roster.yml isn't changed: the next `roster mesh` puts this one's Mesh back. [y/N] ")
+        if ans.strip().lower() != "y":
+            return 1
+    r = mesh.cut_all(cfg, cfg["workers"])
+    say(f"cut the Mesh: confirmed on {', '.join(r['confirmed']) or 'no Host'}")
+    for host, why in r["pending"].items():
+        say(f"  not confirmed  {host}: {why}")
+    for w in r["warnings"]:
+        say(f"warning: {w}")
+    if r["pending"]:
+        say(f"not finished on {plural(len(r['pending']), 'Host')}: `roster mesh cut --all` again once they answer, "
+            "before removing roster from this Box")
+    return 1 if r["pending"] else 0
+
+
+def mesh_leftovers(cfg, args):
+    """`roster mesh --find-leftovers` / `--remove-leftovers` (T193, #372's review B1): Mesh entries on the Hosts that
+    this roster.yml doesn't ask for. Never automatic: they may be another Box's Mesh."""
+    if args.remove_leftovers and (others := mesh.others_here()):
+        die(f"another Inventory's Mesh state is on this Box ({', '.join(others)}), and roster's tag doesn't say which "
+            "Inventory a line is from, so --remove-leftovers could take that Inventory's Mesh: remove them by hand, or "
+            "`roster mesh cut --all` from each Inventory when uninstalling")
+    r = mesh.find_leftovers(cfg, say=say)
+    for host, found in r["hosts"].items():
+        say(f"{host}: {', '.join(mesh.leftover_words(found))}")
+    for host, why in r["pending"].items():
+        say(f"  not looked at  {host}: {why}")
+    if not r["hosts"]:
+        say("no Mesh entries this roster.yml doesn't ask for" + (" on the Hosts that answered" if r["pending"] else ""))
+        return 1 if r["pending"] else 0
+    say(f"\nMesh entries this roster.yml doesn't ask for, on {plural(len(r['hosts']), 'Host')}. {mesh.LEFTOVERS_WHOSE}.")
+    if not args.remove_leftovers:
+        say("`roster mesh --remove-leftovers` removes them, once you know they're leftovers (it asks first)")
+        return 1 if r["pending"] else 0
+    if not args.yes:
+        ans = input(f"Remove them from {plural(len(r['hosts']), 'Host')}? If another Box or Inventory still uses them, "
+                    "its Mesh stops working there. [y/N] ")
+        if ans.strip().lower() != "y":
+            return 1
+    done = mesh.remove_leftovers(cfg, r)
+    say(f"removed on {', '.join(done['removed']) or 'no Host'}")
+    for host, why in done["pending"].items():
+        say(f"  not removed  {host}: {why}")
+    return 1 if done["pending"] or r["pending"] else 0
+
+
 def cmd_mesh(cfg, args):
     from .errors import Problem
     if args.action == "status":
@@ -236,10 +288,23 @@ def cmd_mesh(cfg, args):
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         warn_cut(st["cut_pending"])
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
+        if not mesh.load_state()["known"]:         # T193: new here, or roster removed and installed again
+            say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "
+                "Box's); `roster mesh --find-leftovers` looks on every Host and changes nothing")
         return 0
+    if args.action == "cut" and args.all:
+        if args.target:
+            die("roster mesh cut --all takes no Host: it cuts every Host")
+        return mesh_cut_all(cfg, args)
+    if args.all:
+        die("--all goes with cut: roster mesh cut --all")
+    if args.find_leftovers or args.remove_leftovers:
+        if args.action or args.target or args.dry_run or args.rotate:
+            die("--find-leftovers and --remove-leftovers go alone: roster mesh --find-leftovers")
+        return mesh_leftovers(cfg, args)
     if args.action == "cut":
         if not args.target:
-            die("usage: roster mesh cut HOST")
+            die("usage: roster mesh cut HOST, or roster mesh cut --all")
         if args.target not in cfg["hosts"]:
             die(f"unknown host {args.target!r} (see `roster hosts`)")
         if not args.yes:
@@ -281,7 +346,10 @@ def cmd_mesh(cfg, args):
 
 
 def cmd_check(cfg, args):
-    hosts = skip_left_out(selected(cfg, args.only), to_stderr=args.json)
+    wanted = selected(cfg, args.only)
+    hosts = skip_left_out(wanted, to_stderr=args.json)
+    # T194 (#371): a Host skipped (ssh NAME doesn't reach it), or nothing checked at all, isn't a pass
+    skipped = len(wanted) - len(hosts) or not hosts
     if not args.json:
         warn_problems(hosts)
 
@@ -298,7 +366,7 @@ def cmd_check(cfg, args):
         drift = mesh.drift(cfg) if not args.only else None
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
-        ok = all(r["ok"] for r in results) and not broken
+        ok = all(r["ok"] for r in results) and not broken and not skipped
         from . import jsondocs
         jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "ok": ok}))
         return 0 if ok else 1
@@ -319,7 +387,9 @@ def cmd_check(cfg, args):
                     or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
-    return 1 if bad else 0
+    if skipped:
+        say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
+    return 1 if bad or skipped else 0
 
 
 def cmd_check_host(args):
@@ -673,7 +743,8 @@ def check_ssh_takes(script):
 
 
 def cmd_revoke(cfg, args):
-    hosts = skip_left_out([h for h in selected(cfg, args.only) if h["enroll"]])
+    keyed = [h for h in selected(cfg, args.only) if h["enroll"]]
+    hosts = skip_left_out(keyed)
     script = "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))
     if hosts:
         check_ssh_takes(script)
@@ -686,9 +757,23 @@ def cmd_revoke(cfg, args):
         for h, ok in zip(hosts, ex.map(lambda h: revoke_on(h, script), hosts), strict=True):
             bad += not ok
             say(f"  {'ok  ' if ok else 'FAIL'}  {h['name']}")
-    say(f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts. "
-        f"To finish, delete {cfg['key']}, {cfg['pub']} and {ssh_config_file()} on this box.")
-    return 1 if bad else 0
+    done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
+    # T194 (#371): the files go only once every Host this file names has lost the key; with any skipped, failed or
+    # left to --only, deleting the key would leave it on those for good
+    every = len(hosts) == len(keyed) and not args.only
+    if bad or not hosts or not every:
+        why = ("nothing was revoked" if not hosts else "hosts above were skipped or failed" if bad or len(hosts) <
+               len(keyed) else "--only left this file's other hosts with the key")
+        say(f"{done} Not finished: {why}. Keep this box's key and ssh config files until every host of this "
+            "roster.yml has lost the key (`roster revoke` without --only names them then).")
+    else:
+        from .inventories import unnamed_from_elsewhere
+        files = [str(cfg["key"]), str(cfg["pub"])]
+        # never another roster.yml's config.d/roster (#371): its Hosts still need it
+        if unnamed_from_elsewhere() is None:
+            files.append(str(ssh_config_file()))
+        say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box.")
+    return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
 
 def revoke_targets():
@@ -718,7 +803,7 @@ def cmd_revoke_all(args):
         return 1
     plan: list[tuple[str, dict[str, Any], list[dict[str, Any]]]] = []
     problems = 0
-    left_alone = 0                          # left-out Hosts: skipped, not a failure (as plain revoke)
+    left_alone = 0                          # left-out Hosts: skipped, so not finished (exit 1, T194)
     for label, name, path in targets:
         again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(str(path))}"
         try:
@@ -786,7 +871,7 @@ def cmd_revoke_all(args):
             f"{done} To finish, delete {files[0]} on this box.")
     else:
         say(done)
-    return 1 if bad or problems else 0
+    return 1 if bad or problems or left_alone or not total else 0
 
 
 AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
@@ -1098,6 +1183,12 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="show the plan; change nothing on any Host")
     s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)")
     s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
+    s.add_argument("--all", action="store_true", help="with cut: every Mesh entry off every Host, roster.yml "
+                   "unchanged (before removing roster from this Box)")
+    s.add_argument("--find-leftovers", action="store_true", help="look on every Host, once, for Mesh entries this "
+                   "roster.yml doesn't ask for (an earlier install's, or another Box's); changes nothing")
+    s.add_argument("--remove-leftovers", action="store_true", help="the same, then remove them after a question "
+                   "(-y doesn't ask): they may be another Box's Mesh")
     s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
