@@ -191,6 +191,13 @@ describe("off Windows (Linux and macOS terminals' keys, decision Q138)", () => {
     await linux.page.keyboard.press("Control+Shift+v");
     expect(await linux.sentCount(1)).toEqual(["pasted"]);
   });
+
+  it("copies several lines joined by \\n, as Linux terminals do (#302)", async () => {
+    const { cols } = await linux.size();
+    await linux.output("first  \r\nsecond\r\nthird\r\n");
+    await linux.drag([0, 0], [cols - 1, 2]);
+    expect(await linux.copiedCount(1)).toEqual(["first\nsecond\nthird"]);
+  });
 });
 
 describe("copy", () => {
@@ -288,6 +295,33 @@ describe("copy", () => {
     await h.settled();
     expect(await h.sent()).toEqual([]);
     expect(await h.reads()).toBe(0);
+  });
+
+  // T160 (#302): Windows Terminal ends copied lines with \r\n (TextBuffer::GetPlainText), so
+  // every copy route does on Windows: copy-on-select, Ctrl+C, right-click and the WebView's copy.
+  it("on Windows, several lines copy with \\r\\n line ends, by every copy route (#302)", async () => {
+    const { cols } = await h.size();
+    await h.mount({ windows: true, copyOnSelect: true });
+    await h.output("first  \r\nsecond\r\nthird\r\n");
+    const lines = "first\r\nsecond\r\nthird";
+    await h.drag([0, 0], [cols - 1, 2]);
+    expect(await h.copiedCount(1)).toEqual([lines]);
+    await h.page.keyboard.press("Control+c");
+    expect(await h.copiedCount(2)).toEqual([lines, lines]);
+    await h.drag([0, 0], [cols - 1, 2]);
+    await h.copiedCount(3);
+    await h.rightClick(1, 0);
+    expect(await h.copiedCount(4)).toEqual([lines, lines, lines, lines]);
+    await h.drag([0, 0], [cols - 1, 2]);
+    await h.copiedCount(5);
+    const viaCopyEvent = await h.page.evaluate(() => {
+      let text = "";
+      const e = new Event("copy", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+      e.clipboardData = { setData: (_: string, v: string) => void (text = v), getData: () => "" };
+      document.querySelector(".xterm-helper-textarea")!.dispatchEvent(e);
+      return text;
+    });
+    expect(viaCopyEvent).toBe(lines);
   });
 
   it("copy then Ctrl+V pastes what was copied", async () => {
@@ -536,6 +570,8 @@ describe("OSC 52", () => {
     expect(await h.reads()).toBe(0);
   });
 
+  // Its text is set as the program sent it, line ends too (\n stays \n on Windows), as Windows
+  // Terminal's OSC 52 (Terminal::CopyToClipboard passes it on unchanged; #302).
   it("a program's write (Claude Code, tmux, vim) sets the clipboard (#293)", async () => {
     await h.output(osc52("copied by the program\n日本語"));
     expect(await h.copiedCount(1)).toEqual(["copied by the program\n日本語"]);
@@ -557,5 +593,49 @@ describe("OSC 52", () => {
     await h.page.keyboard.press("j");
     expect(await h.sentCount(1)).toEqual(["j"]);
     expect(await h.reads()).toBe(0);
+  });
+});
+
+// T160 (#302): on macOS, Option takes the mouse back from a program, as Shift does elsewhere
+// (xterm's macOptionClickForcesSelection, on in roster; iTerm2 and Terminal.app use Option too).
+describe("macOS: Option takes the mouse back from a program (#302)", () => {
+  let mac: Harness;
+  beforeAll(async () => {
+    mac = await openHarness(browser, { os: "mac" });
+    pages.push(mac);
+  });
+  beforeEach(() => mac.mount({ windows: false }));
+
+  it("with mouse reporting on, Option+drag selects (and copies), and the program hears nothing", async () => {
+    await mac.output(`${ALT_SCREEN}${MOUSE_ON}some text here\r\n`);
+    await mac.drag([0, 0], [3, 0], { alt: true });
+    expect(await mac.selection()).toBe("some");
+    expect(await mac.copiedCount(1)).toEqual(["some"]);
+    await mac.settled();
+    expect(await mac.sent()).toEqual([]);
+  });
+
+  it("with mouse reporting on, Option+right-click with no selection pastes", async () => {
+    await mac.output(`${ALT_SCREEN}${MOUSE_ON}`);
+    secrets.add("pasted on a mac");
+    await mac.setClipboard("pasted on a mac");
+    await mac.rightClick(2, 0, { alt: true });
+    expect(await mac.sentCount(1)).toEqual(["pasted on a mac"]);
+  });
+
+  it("with mouse reporting on and no selection, a plain right-click is still the program's", async () => {
+    await mac.output(`${ALT_SCREEN}${MOUSE_ON}`);
+    secrets.add("not pasted on a mac");
+    await mac.setClipboard("not pasted on a mac");
+    await mac.rightClick(2, 0);
+    expect((await mac.sentCount(2)).join("")).toBe("\x1b[<2;3;1M\x1b[<2;3;1m");
+    expect(await mac.reads()).toBe(0);
+  });
+
+  it("copies several lines joined by \\n, as macOS terminals do", async () => {
+    const { cols } = await mac.size();
+    await mac.output("first\r\nsecond\r\nthird\r\n");
+    await mac.drag([0, 0], [cols - 1, 2]);
+    expect(await mac.copiedCount(1)).toEqual(["first\nsecond\nthird"]);
   });
 });
