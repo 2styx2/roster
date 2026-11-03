@@ -5,20 +5,11 @@
 // the cursor at the last column of the bottom row while nothing has scrolled off the screen yet:
 // `eraseInDisplay` clears the next line's wrap flag at `lines.get(y + 1)`, the screen row without
 // the scrollback's offset, which isn't there. A throw inside xterm.js's write queue stops that
-// queue for good: the rest of that write and every later one never reach the screen.
+// queue for good: the rest of that write and every later one never reach the screen. So each of
+// the xterm's handlers runs inside a try/catch (xterm.js has no public hook for it), and an ED 1
+// that throws is run again as the ED 2 a correct terminal's ED 1 amounts to there (decision Q158).
 
 import type { Terminal } from "@xterm/xterm";
-
-/** The second parameter roster gives the ED 1 and ED 2 it writes in place of a Session's ED 1:
- * past CSI_PARAM_MAX (csiClamp.ts), so no sequence a Session prints reaches an xterm with it. */
-export const ED1_TAG = 10000;
-
-/** Bytes standing for one ED 1 (`?` for DECSED): an ED 1 and an ED 2, both tagged. At most one of
- * them is drawn: the ED 2 only where xterm.js would throw on the ED 1, where a correct terminal's
- * ED 1 erases every row anyway (the cursor at the end of the bottom row, nothing above the screen). */
-export function ed1Pair(prefix: string): string {
-  return `\x1b[${prefix}1;${ED1_TAG}J\x1b[${prefix}2;${ED1_TAG}J`;
-}
 
 /** The methods xterm.js 6's InputHandler runs for what it parses: a print, a control, an escape,
  * a CSI, an OSC or a DCS. */
@@ -48,59 +39,73 @@ function inputHandler(t: Terminal): Methods | null {
   return core?._inputHandler ?? null;
 }
 
-const guarded = new WeakSet<Terminal>();
+const guardedXterms = new WeakSet<Terminal>();
 /** The handlers catchThrows put in place. */
 const wrappers = new WeakSet<object>();
+/** The xterms whose first throw has been logged. */
+const logged = new WeakSet<object>();
 
-/** Makes `t` safe for a Session's output: the tagged ED 1 pair (ed1Pair) drawn as one ED 1, and
- * any handler that throws inside xterm.js skipped, so what follows it in the write (and every
- * later write) is still drawn. The first throw is logged, once per xterm, by name only: never the
- * message or the output, which may hold what the Session printed. Once per xterm. */
+/** Logs `e` for `t`'s first throw only, by the error's type: never its message or the output,
+ * which may hold what the Session printed. */
+function logOnce(t: object, e: unknown) {
+  if (logged.has(t)) return;
+  logged.add(t);
+  const kind = e instanceof Error ? e.name : typeof e;
+  console.warn(`roster: a handler threw (${kind}) on a sequence in a Session's output; it was skipped`);
+}
+
+/** Makes `t` safe for a Session's output: any of xterm.js's handlers that throws skips just that
+ * sequence, so what follows it in the write (and every later write) is still drawn, and an ED 1
+ * that throws (above) is drawn as a correct terminal draws it. Once per xterm. */
 export function guardXterm(t: Terminal) {
-  if (guarded.has(t)) return;
-  guarded.add(t);
+  if (guardedXterms.has(t)) return;
+  guardedXterms.add(t);
   catchThrows(t);
-  // ED 1 where xterm.js would throw: skipped, and the tagged ED 2 after it drawn instead.
-  let erase = false;
-  const ed = (params: (number | number[])[]) => {
-    if (params.length !== 2 || params[1] !== ED1_TAG) return false;
-    if (params[0] === 1) {
-      erase = ed1Throws(t);
-      return erase;
-    }
-    const draw = erase;
-    erase = false;
-    return !draw;
-  };
-  t.parser.registerCsiHandler({ final: "J" }, ed);
-  t.parser.registerCsiHandler({ prefix: "?", final: "J" }, ed);
 }
 
-/** Whether xterm.js 6.0.0's ED 1 throws here: the cursor (as ED moves it into the screen) at the
- * last column, and no buffer line after its row. */
-function ed1Throws(t: Terminal): boolean {
-  const b = t.buffer.active;
-  const x = Math.min(t.cols, Math.max(0, b.cursorX));
-  const y = Math.min(t.rows - 1, Math.max(0, b.cursorY));
-  return x + 1 >= t.cols && b.getLine(y + 1) === undefined;
+/** `run`, a handler roster registers on an xterm a Session's output reaches (an OSC 133 mark, OSC
+ * 52), made safe: a throw skips that sequence (it's used up), logged as guardXterm logs. */
+export function guarded<A extends unknown[]>(t: object, run: (...args: A) => boolean): (...args: A) => boolean {
+  return (...args: A) => {
+    try {
+      return run(...args);
+    } catch (e) {
+      logOnce(t, e);
+      return true;
+    }
+  };
 }
+
+/** xterm.js's parameters for a CSI (its `Params`): the first is ED's mode. */
+type Params = { params: Int32Array };
 
 function catchThrows(t: Terminal) {
   const handler = inputHandler(t);
   if (!handler) return;
-  let logged = false;
   for (const name of HANDLERS) {
     const run = handler[name];
     if (typeof run !== "function") continue;
+    const call = (args: unknown[]): unknown => (run as (...a: unknown[]) => unknown).apply(handler, args);
     const wrapped = (...args: unknown[]): unknown => {
       try {
-        return (run as (...a: unknown[]) => unknown).apply(handler, args);
+        return call(args);
       } catch (e) {
-        if (!logged) {
-          logged = true;
-          const kind = e instanceof Error ? e.name : typeof e;
-          console.warn(`roster: xterm.js threw (${kind}) on a sequence in a Session's output; it was skipped`);
+        // ED 1 throws only with the cursor (where ED moves it) at the end of the bottom row and
+        // nothing scrolled off: a correct ED 1 erases every row there, so it's drawn as ED 2
+        // (the same protect flag for DECSED), no log. It had erased the cursor's row already.
+        const params = args[0] as Params | undefined;
+        if (name === "eraseInDisplay" && params?.params[0] === 1) {
+          params.params[0] = 2;
+          try {
+            return call(args);
+          } catch (again) {
+            logOnce(t, again);
+            return true;
+          } finally {
+            params.params[0] = 1;
+          }
         }
+        logOnce(t, e);
         return true;
       }
     };

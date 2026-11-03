@@ -30,6 +30,7 @@
 //   shell runs. Nothing nested.
 import { Terminal } from "@xterm/xterm";
 import { CsiClamp } from "../terminal/csiClamp";
+import { guarded } from "../terminal/xtermGuard";
 import type { NestedHost, TermSize } from "../backend/types";
 import type { Breadcrumb } from "./breadcrumb";
 import { mayReachElsewhere, sudoOnly } from "./commandLine";
@@ -168,10 +169,14 @@ export class PromptWatch {
     this.term = new Terminal({ cols: size.cols, rows: size.rows, scrollback: SCROLLBACK, allowProposedApi: false });
     this.clamp = new CsiClamp(this.term);
     this.term.onLineFeed(() => this.lineFeed());
-    this.term.parser.registerOscHandler(133, (data) => {
-      this.mark(data);
-      return true;
-    });
+    // A throw in it skips that mark rather than stopping this terminal (xtermGuard.ts).
+    this.term.parser.registerOscHandler(
+      133,
+      guarded(this.term, (data: string) => {
+        this.mark(data);
+        return true;
+      }),
+    );
   }
 
   /** Feeds the terminal; resolves once it has taken in `data`. */

@@ -8,6 +8,7 @@
 import type { IDisposable, Terminal } from "@xterm/xterm";
 import type { Clipboard } from "../platform/types";
 import { CsiClamp } from "./csiClamp";
+import { guarded } from "./xtermGuard";
 
 /** The most a program may put on the clipboard at once, decoded: 1 MiB. Far more than anyone
  * copies from a screen (a full 10,000-line scrollback at 100 columns is about 1 MB), and small
@@ -62,12 +63,16 @@ export interface Osc52Deps {
 /** Handles OSC 52 in `t`; returns unwire. The sequence is always used up (never printed), whether
  * or not it sets the clipboard. */
 export function wireOsc52(t: Pick<Terminal, "parser">, deps: Osc52Deps): () => void {
-  const handler: IDisposable = t.parser.registerOscHandler(52, (body) => {
-    if (!deps.enabled() || !deps.onScreen()) return true;
-    const text = osc52Text(body);
-    if (text !== null) void deps.clipboard().writeText(text).catch(() => {});
-    return true;
-  });
+  // A throw in it skips that sequence rather than stopping the terminal (xtermGuard.ts).
+  const handler: IDisposable = t.parser.registerOscHandler(
+    52,
+    guarded(t, (body: string) => {
+      if (!deps.enabled() || !deps.onScreen()) return true;
+      const text = osc52Text(body);
+      if (text !== null) void deps.clipboard().writeText(text).catch(() => {});
+      return true;
+    }),
+  );
   return () => handler.dispose();
 }
 
