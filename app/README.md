@@ -253,8 +253,9 @@ already Running (`wsl -l -v`); it never starts a stopped non-default distro, bec
 interop for every distro (OracleLinux_9's systemd-binfmt removed `WSLInterop`, see `docs/app/dev/tauri-pty-wsl.md`).
 To use a stopped distro, set `ROSTER_APP_WSL_DISTRO=<name>`: only that distro is probed, and started if needed
 (`app/scripts/app-dev.sh` passes it through `WSLENV`). Each probe runs `bash -lc` to find
-roster's absolute path (`~/.local/bin` added) and a `roster.yml` (`$ROSTER_CONFIG`, `~/roster.yml`,
-`~/.config/roster/roster.yml`, `~/infra/roster.yml`), then starts
+roster's absolute path (`~/.local/bin` added) and asks that roster which `roster.yml` it uses (`roster inv which`,
+from `$HOME`, so the app and the CLI agree, named Inventories included; a roster too old to answer, or one that
+finds none, falls back to `$ROSTER_CONFIG`, `~/roster.yml`, `~/.config/roster/roster.yml`, `~/infra/roster.yml`), then starts
 `wsl.exe -d <distro> --cd ~ --exec /usr/bin/env PATH=<login PATH> <roster> -c <roster.yml> serve` with no console window (the login PATH so roster finds `bw` in `~/.local/bin`). On Linux it starts
 roster locally the same way. To use another roster command, set `roster_command` in `init.lua`
 (docs/app/config.md), or `ROSTER_APP_ROSTER`, split on spaces, which wins over it (as `ROSTER_APP_WSL_DISTRO`

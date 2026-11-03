@@ -13,13 +13,14 @@ import time
 from contextlib import nullcontext
 
 from . import askpass, errors, providers
-from .common import not_reviewed, time_left
+from .common import known_hosts_label, not_reviewed, time_left
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
 from .providers import PROVIDERS
 from .sshops import (
     fingerprint,
     host_block,
     in_ssh_config,
+    left_out,
     offered_host_key,
     recorded_host_keys,
     start_transport,
@@ -184,6 +185,10 @@ def step_ssh_config(ctx):
                       fix="install OpenSSH (openssh-client)")
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
     if not in_ssh_config(h["name"]):
+        why = left_out(h["name"])
+        if why:
+            raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
+                                                       "Inventory the active one (`roster inv use`)")
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
     want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
     if have != want:
@@ -274,7 +279,7 @@ def changed_key(h, recorded, key):
     data = {"recorded": [fingerprint(k) for k in recorded.values()], "offered": fingerprint(key) if key else None}
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
-                       "If the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts "
+                       f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
                        f"and run `roster setup --only {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 

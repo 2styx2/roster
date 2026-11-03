@@ -8,6 +8,10 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ### New
 
+**CLI**
+
+- **Several Inventories, one active** (#201): name the team's Inventory and your own with `roster inv add work ~/infra/roster.yml` and `roster inv add home ~/home-net/roster.yml`, switch with `roster inv use home`, and run one command against the other with `roster --inv work …`. Each one's `setup` and `sync` write its own ssh config, known_hosts and `ROSTER.md`, so syncing home never touches work's, and `ssh pi` works for a Host in any of them (on a name clash only the active one's is there). Each one starts with the host keys this Box already recorded, so nothing is trusted anew. Upgrade every roster on a Box together (the CLI and the app's): an older one syncing there doesn't know the named Inventories' ssh config, though the next run of a new one puts it right. `roster check --box`, `setup` and `sync` warn when the same machine (the same host key) is in two of them, or two use the same Host name or address. With no named Inventories nothing changes. `roster inv which` prints the file roster uses, and the app now asks roster for it, so the two always agree. serve API 27 adds `inventories.list` and `inventories.use`.
+
 **App**
 
 - **Fix buttons in `:packages` and `:plugins`** (#213): a Package that can't be fetched has **Try again**, a cancelled one **Install…** (both run `:packages install NAME`, which fetches it again and shows the install prompt for one not installed: nothing installs without it), and a stopped Plugin **Reload** (`:plugins reload NAME`), with **Check for an update** for a Package's. Each button's tooltip shows the command it runs. See [errors](app/errors.md#packages).
@@ -28,6 +32,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A Host's row in the Sidebar has a menu instead of buttons** (#314): selecting a Host no longer shows ⓘ, ✓, ✎ and × on its row. Right-click it, or press the Menu key or Shift+F10 on it in App mode (`menu`), for Open, New Session, Details, Check, Edit, Rename, Move to another group, Add to a Folder, Remove from the Inventory and any Plugin's own actions on that row (a Folder's "Remove from Lab"), each running the same command its button or key did, with the keys shown beside it. It's a keyboard and screen-reader menu: arrows, Home/End, a letter, Enter, Esc (decision Q156). Groups, Folders and Sessions keep their buttons. See [The Sidebar](app/keyboard.md#the-sidebar).
 - **Right-click in a terminal works as in Windows Terminal** (#302): with `terminal.copy_on_select` on (the default), a right-click always pastes: on a selection it copies it, clears it and then pastes it, where it only copied before; if that copy fails, nothing is pasted, never the clipboard's old text (with `copy_on_select = false`, a right-click still copies a selection or pastes when there's none). While a program has mouse reporting on (Claude Code, vim with `mouse=a`, tmux), a plain right-click is the program's even with a terminal selection (a Shift+drag) on screen; Shift+right-click (Option on macOS) copies or pastes it (decision Q166). See [Copy and paste](app/keyboard.md#copy-and-paste).
 - **A Plugin's quiet notice no longer hides an error** (#228): a quiet info notice a Plugin gives from a timer, an event or a request's answer, when you asked for nothing, leaves the message line as it is when it shows something, so an error stays on screen; `:messages` still lists the notice. A notice from something you ran replaces the line as before (decision Q162). See [`roster.notify`](plugin-api.md#rosternotifytext-level-opts).
+
+### Security
+
+**CLI**
+
+- **`key_path:` in roster.yml can no longer add lines to this Box's ssh config** (security): a `key_path` with a quote or a newline in it could add directives, such as `ProxyCommand`, for every `ssh` on every Box that synced that roster.yml. roster now refuses such a `key_path` when it loads, and every path it writes into an ssh config goes through one check that refuses quotes and control characters (and writes a `%` as `%%` where ssh expands tokens). A Host's `ip` or `user` with a quote or a control character is refused too (a quote broke every `ssh` on the Box), and so is a `%` in a `user` (an IPv6 zone's `%` in an `ip`, such as `fe80::1%eth0`, is written so ssh doesn't read it as a token), and so are Host and group names with a trailing newline.
 
 ### Fixed
 
