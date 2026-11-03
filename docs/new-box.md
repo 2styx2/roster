@@ -133,7 +133,7 @@ roster --inv home setup                      # its own ssh config, known_hosts a
 roster inv list                              # * marks the active one; `roster inv use home` switches
 ```
 
-`ssh pi` then works for a Host in either one (the active one's wins if both have that name), and `roster check --box` warns if the same machine is in both. See [Named Inventories](cli-reference.md#named-inventories).
+`ssh pi` then works for a Host in either one (the active one's wins if both have that name), and `roster check --box` warns if the same machine is in both. `ROSTER.md` (and the `CLAUDE.md` import) is written for this Box: it marks Hosts another Inventory's name shadows here, so keep it out of the shared repo (add `ROSTER.md` to its `.gitignore`). See [Named Inventories](cli-reference.md#named-inventories).
 
 ## Keeping it up to date
 

@@ -128,6 +128,8 @@ def parse_inventory(text, path):
                 if SSH_UNSAFE.search(str(value)):   # written into the ssh config: a quote or newline would break it
                     die(f"host {hname!r}: {field} can't hold a quote or a control character (it goes into this "
                         "Box's ssh config)")
+            if "%" in str(m["ssh"]["user"]):     # older OpenSSH (Windows' own) takes a %% in User literally
+                die(f"host {hname!r}: user can't hold a % (it goes into this Box's ssh config)")
             if "%" in m["ip"] and not IPV6_ZONE.match(m["ip"]):     # a % is an IPv6 zone's, or none (written %%)
                 die(f"host {hname!r}: ip can't hold a % except as an IPv6 address's zone (fe80::1%eth0)")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working

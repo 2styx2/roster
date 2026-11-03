@@ -770,10 +770,10 @@ def test_migration_tolerates_a_file_another_process_moved(two, capsys, isolated,
 
 def test_an_ipv6_zone_loads_and_is_escaped_for_ssh(write_config, capsys, isolated):
     """Third pass T6: `%` is an IPv6 zone's, written %% (ssh expands % in HostName and User)."""
-    write_config("groups:\n  lab:\n    user: '50%'\n    auth: agent\n    hosts:\n      ll: {ip: 'fe80::1%eth0'}\n")
+    write_config("groups:\n  lab:\n    user: ops\n    auth: agent\n    hosts:\n      ll: {ip: 'fe80::1%eth0'}\n")
     assert main(["sync"]) == 0
     text = (ssh(isolated) / "config.d/roster").read_text()
-    assert "    HostName fe80::1%%eth0" in text and "    User 50%%" in text
+    assert "    HostName fe80::1%%eth0" in text and "    User ops" in text
 
 
 @pytest.mark.skipif(os.name == "nt" or not shutil.which("perl") or not shutil.which("bash"),
@@ -801,3 +801,57 @@ def test_the_probes_perl_fallback_stops_a_wrappers_children(isolated, tmp_path):
                          text=True, timeout=60).stdout
     assert time.monotonic() - start < 15
     assert f"inventory={home}/infra/roster.yml" in out.splitlines()
+
+
+# ---------------------------------------------------------------- PR #335's fourth review pass
+
+def test_switching_or_refreshing_never_changes_another_threads_inventory(two, capsys, isolated):
+    """Fourth pass F1: serve answers requests on several threads; `inventories.use` (and every edit's sync) rewrites
+    the other Inventories' ROSTER.md, and must never switch this process's Inventory to do it: a concurrent
+    record_host_key would write the other Inventory's known_hosts."""
+    import threading
+
+    from roster import inventories
+    from roster.common import known_hosts_file
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "--inv", "home", "sync")
+    run(capsys, "sync")                                   # this process now runs on work, as a serve would
+    seen, stop = set(), threading.Event()
+
+    def reader():
+        while not stop.is_set():
+            seen.add(known_hosts_file().name)
+    t = threading.Thread(target=reader)
+    t.start()
+    try:
+        for _ in range(5):
+            inventories.use("home")
+            inventories.use("work")
+    finally:
+        stop.set()
+        t.join()
+    assert seen == {"roster_known_hosts-work"}
+
+
+def test_an_unnamed_inventorys_roster_md_follows_a_named_one_taking_its_name(two, capsys, isolated):
+    """Fourth pass F2: an unnamed roster.yml's `pi` left out once a named Inventory gains a `pi`: its ROSTER.md says
+    so at once, not at its next sync."""
+    other = isolated["home"] / "other"
+    other.mkdir()
+    (other / "roster.yml").write_text("groups:\n  o:\n    user: ops\n    auth: agent\n    hosts:\n      pi: {ip: 172.16.0.9}\n")
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "sync")
+    run(capsys, "-c", str(other / "roster.yml"), "sync")
+    row = lambda: next(ln for ln in (other / "ROSTER.md").read_text().splitlines() if ln.startswith("| pi |"))  # noqa: E731
+    assert "| key |" in row()
+    two["work"].write_text(CLASH_WORK)
+    run(capsys, "sync")
+    assert "| key |" not in row() and "left out" in row()
+
+
+def test_a_percent_in_a_user_is_refused_again(write_config):
+    """Fourth pass F4: older OpenSSH (Windows' own) takes `%%` in User literally, so a `%` there can't be written."""
+    write_config("groups:\n  lab:\n    user: 'o%ps'\n    auth: agent\n    hosts:\n      b: {ip: 10.0.0.5}\n")
+    with pytest.raises(SystemExit, match="user"):
+        main(["hosts"])

@@ -200,7 +200,7 @@ def host_block(cfg, name, h):
     """The `Host NAME` block roster writes for one Host, as lines (no comments)."""
     out = [f"Host {name}",
            f"    HostName {h['ip'].replace('%', '%%')}",              # ssh expands %-tokens in both
-           f"    User {str(h['ssh']['user']).replace('%', '%%')}",
+           f"    User {h['ssh']['user']}",
            f"    Port {h['ssh']['port']}",
            f"    UserKnownHostsFile {q(known_hosts_file())}",
            "    StrictHostKeyChecking accept-new",

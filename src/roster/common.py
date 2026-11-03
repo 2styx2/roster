@@ -28,6 +28,7 @@ def ssh_dir() -> Path:
 # config.find_config sets it as it finds roster.yml; one process uses one Inventory (serve restarts to switch).
 _inventory: str | None = None
 _CURRENT = object()
+CURRENT = _CURRENT          # "this run's Inventory", for a function that takes an Inventory's name or this default
 
 
 def use_inventory(name: str | None) -> None:

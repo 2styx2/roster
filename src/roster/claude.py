@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from .common import roster_command, say
+from .common import CURRENT, current_inventory, roster_command, say
 from .config import access_label
 from .providers import NO_PASSWORD
 from .resources import login, summary
@@ -20,20 +20,19 @@ def write_claude_files(cfg):
     write_claude_settings(cfg)
 
 
-def roster_md(cfg: dict[str, Any]) -> str:
-    """ROSTER.md's text for the Inventory CFG, for this run's Inventory (common.current_inventory). A Host whose name
-    reaches another named Inventory's Host from this Box (left out of its ssh config, ticket 115) is marked so: Claude
-    must not `ssh` to it by name."""
-    from .common import current_inventory
+def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
+    """ROSTER.md's text for the Inventory CFG, whose name among the named Inventories is NAME (None: unnamed; default:
+    this run's). A Host whose name reaches another Inventory's Host from this Box (left out of its ssh config, ticket
+    115) is marked so: Claude must not `ssh` to it by name."""
     from .inventories import left_out_hosts
-    left = left_out_hosts()
-    this = current_inventory()
+    this = current_inventory() if name is CURRENT else name
+    left = left_out_hosts(this)
     run = roster_command()
+    first = f"`{run} inv use {this}` first" if this else f"name this roster.yml (`{run} inv add`) and use it first"
 
     def access(h):
         if h["name"] in left and h["enroll"]:
-            return (f"left out: `ssh {h['name']}` reaches another Inventory's Host from this Box; "
-                    f"`{run} inv use {this}` first")
+            return f"left out: `ssh {h['name']}` reaches another Inventory's Host from this Box; {first}"
         return access_label(h)
     hosts = sorted(cfg["hosts"].values(), key=lambda h: (h["group"], h["name"]))
     groups = {}
@@ -63,7 +62,7 @@ def roster_md(cfg: dict[str, Any]) -> str:
           "document, Logins as references only; prefer it to parsing the tables.",
           *([f"- **access = left out**: another named Inventory on this Box has a Host by that name, and a plain "
              f"`ssh <name>` reaches that one. Never `ssh` to it; the user makes this Inventory the active one first "
-             f"(`{run} inv use {this}`)."] if any(n in left for n in cfg["hosts"]) else []),
+             f"({first})."] if any(n in left for n in cfg["hosts"]) else []),
           "- **access = unreviewed**: found by a network scan, not set up yet. Don't try to log in; "
           "tell the user it needs reviewing in roster.yml.",
           "- Web UIs: open the URL in the browser. If it shows a login page, ask the user to sign in.",
