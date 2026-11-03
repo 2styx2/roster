@@ -169,6 +169,12 @@ describe("runLine", () => {
     expect(calls).toEqual(["check esxi-02", "check current"]);
   });
 
+  it("completes :check's stop (#361) after the Hosts, and names what it does", () => {
+    expect(complete("check st", ["esxi-02", "stor-01"])).toEqual(["check stor-01", "check stop"]);
+    expect(complete("check st", ["stop"])).toEqual(["check stop"]);
+    expect(describeLine("check stop").label).toBe("Stop the app's own check that's running, as the check panel's Stop (x) does");
+  });
+
   it("runs a command by its name, with its argument", () => {
     const { ctx, calls } = recorder();
     runLine(ctx, "connect esxi-02");
