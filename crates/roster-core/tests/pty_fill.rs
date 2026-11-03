@@ -927,6 +927,15 @@ fn same_screen_repaints(prompt: &str) -> Vec<(&'static str, String)> {
             ),
         ),
         ("the cursor alone", format!("\\033[?25l\\033[2;{col}H\\033[?25h")),
+        (
+            // Ticket 155c (#284 item 5): ConPTY's own forms (microsoft/terminal's VtEngine):
+            // blanks erased or written in whatever colour its buffer holds, SGR resets as
+            // `ESC[m`, a title, the cursor's blink.
+            "ConPTY's forms: coloured blanks, a title, the cursor's blink",
+            format!(
+                "\\033[?25l\\033]0;sudo\\007\\033[H$ sudo -v\\033[37m\\033[1m\\033[60X\\033[m\\r\\n{prompt}\\033[93m   \\033[39m\\033[2;{col}H\\033[?12h\\033[?25h"
+            ),
+        ),
     ]
 }
 
@@ -1078,17 +1087,31 @@ fn output_before_the_probe_refuses_before_anything_is_typed() {
         let log = err.log_line().unwrap_or_default();
         assert!(
             log.starts_with("prompt fill refused before the probe: what was printed after the prompt check (")
-                && log.ends_with(" bytes) changed the screen")
+                && log.contains(" bytes) changed the screen: ")
                 && !log.contains("Sorry")
-                && !log.contains("motd"),
+                && !log.contains("motd")
+                && !log.contains("sudo -k"),
             "{name}: {log}"
         );
-        let FillError::Changed { before } = err else {
+        // What differed (ticket 155c), under ConPTY's rule: never the text.
+        if rules {
+            let what = log.split_once("changed the screen: ").map_or("", |(_, w)| w);
+            let expected = match name.split(", ").next().unwrap_or_default() {
+                "sudo's retry" => {
+                    "the cursor moved from 2:26 to 4:26; row 3 characters (columns 1-17); row 4 characters (columns 1-24)"
+                }
+                "another line" => "row 1 characters (column 9)",
+                "a line below" => "row 5 characters (columns 1-4)",
+                _ => "the cursor moved from 2:26 to 3:1",
+            };
+            assert_eq!(what, expected, "{name}");
+        }
+        let FillError::Changed { before, diff } = err else {
             unreachable!()
         };
         let refusal = format!(
             "{:?}",
-            roster_core::backend::fill_refusal(FillError::Changed { before })
+            roster_core::backend::fill_refusal(FillError::Changed { before, diff })
         );
         assert!(refusal.contains("130"), "{name}: {refusal}");
         assert_eq!(recorded(&m, id, &rx), "", "{name}: something was typed");

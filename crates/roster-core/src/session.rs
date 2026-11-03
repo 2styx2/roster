@@ -10,7 +10,7 @@
 //! readable by other processes and logged by process auditing for its whole life).
 
 use crate::detect::Target;
-pub use crate::screen::Drawn;
+pub use crate::screen::{Drawn, ScreenDiff};
 use crate::screen::{Screen, Why};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -604,6 +604,7 @@ impl SessionManager {
             if !same {
                 return Err(FillError::Changed {
                     before: shown.total - printed,
+                    diff: Box::new(shown.screen.diff(&checked)),
                 });
             }
             if maskable {
@@ -810,8 +811,9 @@ pub enum FillError<E> {
     Typed,
     /// Between the prompt check and the probe, the Session printed something (under ConPTY:
     /// something that changed its screen or cursor) or was resized (the review of #299, #3, #4
-    /// and #6): `before` bytes. Nothing was typed.
-    Changed { before: u64 },
+    /// and #6): `before` bytes. Nothing was typed. `diff` says what differs on the core's screen,
+    /// for the log only ([`FillError::log_line`], ticket 155c): never text.
+    Changed { before: u64, diff: Box<ScreenDiff> },
     /// Under Windows' ConPTY, a prompt other than sudo's own for the Session's own Host (decision
     /// Q151 (i)): an echo can't be told there. Nothing was looked up or typed.
     ConPty,
@@ -866,11 +868,11 @@ impl<E> FillError<E> {
     /// screen, a line that isn't only sudo's prompt, or what the probe drew; and how many bytes
     /// were printed before the probe, never what they were.
     pub fn log_line(&self) -> Option<String> {
-        if let FillError::Changed { before } = self {
-            // Only a count: no text (the review of #299, #3).
-            return Some(format!(
-                "prompt fill refused before the probe: what was printed after the prompt check ({before} bytes) changed the screen"
-            ));
+        if let FillError::Changed { before, diff } = self {
+            // A count and what differs, never text (the review of #299, #3; ticket 155c).
+            return Some(capped(format!(
+                "prompt fill refused before the probe: what was printed after the prompt check ({before} bytes) changed the screen: {diff}"
+            )));
         }
         let FillError::Echoes(Some(drawn)) = self else {
             return None;
@@ -890,6 +892,22 @@ impl<E> FillError<E> {
             ),
         })
     }
+}
+
+/// The longest log line a fill's refusal makes (ticket 155c): past it, it's cut and says so.
+const LOG_MAX: usize = 1200;
+
+/// `line`, cut to [`LOG_MAX`] bytes (on a character's boundary) with ` …(cut)` when longer.
+fn capped(mut line: String) -> String {
+    if line.len() > LOG_MAX {
+        let mut at = LOG_MAX;
+        while !line.is_char_boundary(at) {
+            at -= 1;
+        }
+        line.truncate(at);
+        line.push_str(" …(cut)");
+    }
+    line
 }
 
 /// The log's note that output before the probe only repainted the screen, when there was some.
@@ -990,6 +1008,15 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::time::Instant;
+
+    /// Ticket 155c: a refusal's log line is at most [`LOG_MAX`] bytes and says when it was cut.
+    #[test]
+    fn a_long_log_line_is_cut_and_says_so() {
+        assert_eq!(capped("short".into()), "short");
+        let long = capped("é".repeat(LOG_MAX));
+        assert!(long.ends_with(" …(cut)"), "{long}");
+        assert!(long.len() <= LOG_MAX + " …(cut)".len(), "{}", long.len());
+    }
 
     /// Ticket 162 (#284 item 4): a fill that finds the PTY's writer gone (the Session closed while
     /// it checked, after the mask watch started) leaves no fill state set: no mask watch, no keys
