@@ -15,6 +15,7 @@
 
 mod render;
 mod table;
+pub mod version;
 
 pub use render::{
     CHECK_PATH, COMMAND, DOC_PATH, Entry, JSON_PATH, Reference, Row, STUBS_PATH, Section, check_lua, json_text,
