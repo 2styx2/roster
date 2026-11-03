@@ -6,6 +6,15 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### New
+
+**App**
+
+- **Fix buttons in `:packages` and `:plugins`** (#213): a Package that can't be fetched has **Try again**, a cancelled one **Install…** (both run `:packages install NAME`, which fetches it again and shows the install prompt for one not installed: nothing installs without it), and a stopped Plugin **Reload** (`:plugins reload NAME`), with **Check for an update** for a Package's. Each button's tooltip shows the command it runs. See [errors](app/errors.md#packages).
+- **`:packages update NAME` on a Package that isn't installed shows the install prompt** (#213), as `:packages install NAME` does, instead of pointing you there. See [Packages](plugins.md#packages).
+- **`:plugins` says when a Plugin was written before api 4** (#228): its info notices are quiet now unless it marks them `quiet = false`, and **What changed** opens [the note for its author](plugins.md#upgrading-a-plugin-written-before-api-4).
+- **A collapsed cluster on a graph moves whole** (#237): `m` on it, then `h` `j` `k` `l` until Enter keeps the place (Esc puts it back), or drag it. Its nodes go with it and keep their places in it, so it opens looking as it did. It stays where you put it and is remembered as yours: a cluster you put it on moves to the nearest free place, and nothing else does. Before, `m` there said to open the cluster first. See [Graphs](plugins.md#graphs).
+
 ### Changed
 
 **CLI**
@@ -14,7 +23,9 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **`init.lua` has a version of its own:** `roster.config_version` (read-only, `4` for v0.3.0's `roster.o` shape) rises only when a name in `init.lua`'s `roster` table or an option is removed, renamed or changes what it does, so a Config can tell what a name can't. `roster.api_version` is the Plugin API's version, which rises with Plugin-only changes too; it's no longer the way to tell what `init.lua` has (decision Q165). See [Feature detection](app/config.md#feature-detection) and `:help roster.config_version`.
 - **A Host's row in the Sidebar has a menu instead of buttons** (#314): selecting a Host no longer shows ⓘ, ✓, ✎ and × on its row. Right-click it, or press the Menu key or Shift+F10 on it in App mode (`menu`), for Open, New Session, Details, Check, Edit, Rename, Move to another group, Add to a Folder, Remove from the Inventory and any Plugin's own actions on that row (a Folder's "Remove from Lab"), each running the same command its button or key did, with the keys shown beside it. It's a keyboard and screen-reader menu: arrows, Home/End, a letter, Enter, Esc (decision Q156). Groups, Folders and Sessions keep their buttons. See [The Sidebar](app/keyboard.md#the-sidebar).
+- **A Plugin's quiet notice no longer hides an error** (#228): a quiet info notice a Plugin gives from a timer, an event or a request's answer, when you asked for nothing, leaves the message line as it is when it shows something, so an error stays on screen; `:messages` still lists the notice. A notice from something you ran replaces the line as before (decision Q162). See [`roster.notify`](plugin-api.md#rosternotifytext-level-opts).
 
 ### Fixed
 
@@ -27,7 +38,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - **A terminal no longer stops drawing after an "erase above" at the bottom-right corner** (#323): a Session printing `ESC[1J` (erase above) with the cursor at the end of the bottom row, before anything had scrolled off the screen (a full-screen program's first redraw in a new tab, say), stopped that tab's terminal for good: nothing printed after it was ever shown, and the same froze the fill's prompt check and the shell hooks' screen for that Session. A bug in the terminal library (xterm.js 6.0.0); roster now draws that erase as any terminal does, and if the library fails on anything else a Session prints, it skips that one sequence and goes on (decision Q158).
-
+- **The app's downloads carry `THIRD-PARTY-NOTICES`** (#321): the Windows `.zip` and the Linux and macOS `.tar.gz` now ship it next to `LICENSE`, with the licence of the code roster's terminal took from xterm.js. See [Third-party notices](releasing.md#third-party-notices).
 - **sudo's prompt fill on Windows no longer refuses a repaint of the same screen** (#284): ConPTY repaints what it already drew while the vault answers, and drew blank cells in whatever colour its own buffer held, which roster took as a changed screen (`prompt fill refused before the probe: … changed the screen`). roster's screen now compares styles as a terminal shows them: a blank shows only its background, every form of the same SGR is the same style, and ConPTY's scrollback clear draws nothing; anything that shows differently still refuses before anything is typed. That refusal's log line now says what differed (the cursor, the size, which rows and whether characters or only styles, and any sequence roster's screen doesn't model), never the text. Wherever roster's screen can't follow the terminal exactly (a wide character, an emoji with a variation selector, a curses program's line-drawing charset, a mode it doesn't model), it no longer guesses: on every platform, the fill key refuses in that Session, before anything is looked up or typed, until `reset` in it, and the message line says so. See [Filling a password prompt](app/security.md#filling-a-password-prompt).
 - **Copy and paste match Windows Terminal more closely** (#302): on Windows, copied lines end with CR LF, as Windows Terminal's do, roster's own rule now rather than xterm.js's (LF on Linux and macOS, as their terminals). On macOS, Option takes the mouse back from a program with mouse reporting on (Claude Code, vim with `mouse=a`, tmux), as Shift does elsewhere and Option does in iTerm2 and Terminal.app: Option+drag selects in the terminal and Option+right-click pastes; nothing did before. Option+drag there now selects lines instead of a block (decision Q155). See [Copy and paste](app/keyboard.md#copy-and-paste).
 - **A huge count in a terminal sequence no longer freezes a tab** (#305): a Host (or a crafted file you `cat` there) printing `ESC[99999999L` ran the terminal out of memory, and `ESC[99999999M` held the whole app for over a minute. Every count is now capped at 9999 before the tab's terminal, the fill key's prompt check and the Plugins' `terminal_output` read it, more than any screen's rows or columns, so what's drawn is the same; OSC 52 and everything else in the output is untouched (decision Q153).

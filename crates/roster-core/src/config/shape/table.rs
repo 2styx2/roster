@@ -839,11 +839,19 @@ pub(super) const API: &[ApiItem] = &[
             "roster.api_version",
             None,
             "integer",
-            "The version of this table, raised when it changes.",
-            "Read-only. The Plugin API's version too: it rises with that.",
-            "if roster.api_version >= 4 then roster.o.vim = false end",
+            "The Plugin API's version, which init.lua's table shows too.",
+            "Read-only. It rises when only the Plugin API changes, so it doesn't tell what init.lua has: roster.config_version does.",
+            "print(\"Plugin API \" .. roster.api_version)",
         )
     },
+    item(
+        "roster.config_version",
+        None,
+        "integer",
+        "init.lua's own version: 4 is v0.3.0's (roster.o and the collections' functions).",
+        "Read-only. It rises when a name is removed or renamed, or keeps its name but takes, gives or does something else; not for a new name (check that it isn't nil) and not for a Plugin API change. For the rare case a name can't tell. An app from before it (v0.4.0 and older) reads it as nil.",
+        "if (roster.config_version or 0) >= 4 then\n  roster.o.terminal.size = \"16pt\"\nelse\n  roster.set(\"terminal.size\", \"16pt\")\nend",
+    ),
     item(
         "roster.version",
         None,
@@ -877,8 +885,8 @@ pub(super) const API: &[ApiItem] = &[
         )]),
         "any",
         "Reads any option by its dotted name: a copy of what init.lua set there, or nil.",
-        "The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.",
-        "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end",
+        "The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line. A map's key that holds a dot can't be named with dots (\"keys.leader..\" is an unknown name): read it with brackets, the key as a string, as the example's last line does.",
+        "local views = roster.o.get(\"views\") or {}\nfor id in pairs(views) do print(id) end\nprint(roster.o.keys.leader[\".\"]) -- a key that is a dot",
     ),
     item(
         "roster.o.reset",
@@ -889,8 +897,8 @@ pub(super) const API: &[ApiItem] = &[
         )]),
         "",
         "Puts an option back to its default: what init.lua set there is taken away.",
-        "Any option: a value, an object, a map or a list. An unknown name is an error at its line.",
-        "roster.o.reset(\"terminal.size\")",
+        "Any option: a value, an object, a map or a list. An unknown name is an error at its line. A map's key that holds a dot can't be named with dots: take it away with brackets, the key as a string, set to nil, as the example's last line does.",
+        "roster.o.reset(\"terminal.size\")\nroster.o.keys.leader[\".\"] = nil -- a key that is a dot",
     ),
     ApiItem {
         neovim_style: false,
@@ -906,8 +914,8 @@ pub(super) const API: &[ApiItem] = &[
             ]),
             "",
             "Sets any option by its dotted name, as roster.o does.",
-            "The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option.",
-            "roster.set(\"terminal.size\", \"16pt\")",
+            "The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option. A map's key that holds a dot can't be named with dots: set it through roster.o with brackets, the key as a string, as the example's last line does.",
+            "roster.set(\"terminal.size\", \"16pt\")\nroster.o.keys.leader[\".\"] = \"connect esx-02\" -- a key that is a dot",
         )
     },
     ApiItem {

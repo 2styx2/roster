@@ -1053,6 +1053,7 @@ pub(crate) fn roster_table(lua: &Lua, env: &Env, dir: &Path, ctx: Rc<Ctx>) -> R<
     let roster = lua.create_table()?;
     roster.raw_set("os", env.os.as_str())?;
     roster.raw_set("api_version", super::API_VERSION)?;
+    roster.raw_set("config_version", super::CONFIG_VERSION)?;
     roster.raw_set("version", env!("CARGO_PKG_VERSION"))?;
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     roster.raw_set("config_dir", dir.display().to_string())?;
