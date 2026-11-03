@@ -7,6 +7,7 @@ import json
 import pytest
 
 from roster.cli import main
+from roster.common import ssh_path
 
 WORK = """\
 groups:
@@ -82,6 +83,11 @@ def ssh(isolated):
     return isolated["home"] / ".ssh"
 
 
+def inc(path):
+    """An Include line as roster writes it (forward slashes on Windows)."""
+    return f'Include "{ssh_path(path)}"'
+
+
 def test_each_inventory_has_its_own_files_and_syncing_one_leaves_the_other_alone(two, capsys, isolated):
     run(capsys, "inv", "add", "work", str(two["work"]))
     run(capsys, "inv", "add", "home", str(two["home"]))
@@ -96,15 +102,15 @@ def test_each_inventory_has_its_own_files_and_syncing_one_leaves_the_other_alone
     assert not (d / "config.d/roster").exists()                              # no unnamed file was written
     index = (d / "config.d/roster.inventories").read_text().splitlines()
     assert [ln for ln in index if ln.startswith("Include")] == [
-        f'Include "{d}/config.d/roster-work"', f'Include "{d}/config.d/roster-home"']
+        inc(d / "config.d/roster-work"), inc(d / "config.d/roster-home")]
     main_config = (d / "config").read_text()
-    assert f'Include "{d}/config.d/roster.inventories"' in main_config and "config.d/roster-" not in main_config
+    assert inc(d / "config.d/roster.inventories") in main_config and "config.d/roster-" not in main_config
     # each Inventory's Hosts check their keys in its own known_hosts
-    assert f"UserKnownHostsFile \"{d}/roster_known_hosts-home\"" in (d / "config.d/roster-home").read_text()
+    assert f"UserKnownHostsFile \"{ssh_path(d / 'roster_known_hosts-home')}\"" in (d / "config.d/roster-home").read_text()
 
     run(capsys, "inv", "use", "home")                     # the active one comes first: it wins a name clash
     index = (d / "config.d/roster.inventories").read_text().splitlines()
-    assert [ln for ln in index if ln.startswith("Include")][0] == f'Include "{d}/config.d/roster-home"'
+    assert [ln for ln in index if ln.startswith("Include")][0] == inc(d / "config.d/roster-home")
 
 
 def test_inv_runs_one_command_against_another_inventory(two, capsys):
@@ -132,7 +138,7 @@ def test_without_named_inventories_sync_writes_what_it_always_did(two, capsys, i
     assert run(capsys, "-c", str(two["work"]), "sync")[0] == 0
     d = ssh(isolated)
     assert (d / "config.d/roster").exists() and not (d / "config.d/roster.inventories").exists()
-    assert (d / "config").read_text().startswith(f'Include "{d}/config.d/roster"\n')
+    assert (d / "config").read_text().startswith(inc(d / "config.d/roster") + "\n")
     assert not (isolated["home"] / ".config/roster/inventories.json").exists()
 
 
@@ -147,7 +153,7 @@ def test_naming_a_synced_inventory_keeps_its_host_keys_and_takes_its_include(two
     main_config = (d / "config").read_text()
     assert main_config.count("Include") == 1 and "roster.inventories" in main_config
     run(capsys, "inv", "remove", "work")                  # none named: back to roster's one file
-    assert (d / "config").read_text().count(f'Include "{d}/config.d/roster"') == 1
+    assert (d / "config").read_text().count(inc(d / "config.d/roster")) == 1
 
 
 KEY_A = "AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"   # made up
