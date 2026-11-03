@@ -114,7 +114,7 @@ What's done is kept in the State, so `:tutor` comes back at the first lesson you
 
 Tutorials are a registry too (`registries.tutorials`), so a Plugin can ship one (`roster.tutor.set`, [plugins.md](../plugins.md#a-plugins-tutorial)); `:tutor NAME` runs it and `:help tutor-NAME` shows its page.
 
-Your Plugins come along. The ones running in your workspace load in the demo too, with the permissions you granted them, so a Plugin's tutorial can have you run the Plugin itself. There they see the demo's Hosts, not yours: roster serve answers only the demo's Host list, a request to the network is never sent, and what a Plugin keeps in its files starts empty and is thrown away when you leave. Your workspace's copy of each keeps running behind, untouched. One that fails to load in the demo says so in a notice, and the tutorial goes on without it ([errors](errors.md#a-plugin-on-the-demo-inventory)).
+Your Plugins come along. The ones running in your workspace load in the demo too, with the permissions you granted them, so a Plugin's tutorial can have you run the Plugin itself. There they see the demo's Hosts, not yours: roster serve answers only the demo's Host list, a request to the network is never sent, and what a Plugin keeps in its files starts empty and is thrown away when you leave. Your workspace's copy of each keeps running behind, untouched. One that fails to load in the demo says so in a notice, marked "(in the demo)" after its name, and the tutorial goes on without it ([errors](errors.md#a-plugin-on-the-demo-inventory)).
 
 ## Plugins add pages
 

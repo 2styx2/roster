@@ -312,7 +312,7 @@ Your Plugin is loaded in the demo too, with the permissions the user granted it,
 - **`roster.http`** is there if they granted you a site, and checks each request as ever (a bad one is an error at once, and at most 4 go at a time), but nothing is sent: your function gets `nil` and "URL wasn't sent: the tutorial's demo reaches no network", as for a request that failed.
 - **`roster.storage`** is a throwaway folder that starts empty and is removed when the demo ends; your real files aren't read or written.
 
-A Plugin that fails to load in the demo gets its usual notice there, and the tutorial runs on. If the demo can't run Plugins at all, it says so in one notice and runs with roster's own (decision Q123).
+A Plugin that fails to load in the demo gets its usual notice there, its name marked "(in the demo)" (`coach (in the demo): init.lua:3: …`) so it isn't taken for a failure in your workspace, and the tutorial runs on. If the demo can't run Plugins at all, it says so in one notice and runs with roster's own (decision Q123).
 
 ### Shell integration
 
