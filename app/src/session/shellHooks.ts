@@ -14,17 +14,48 @@
  * nothing in another POSIX shell), one for fish, one for PowerShell. */
 export type ShellKind = "posix" | "fish" | "pwsh";
 
-/** CSI, OSC and other escape sequences, so a coloured prompt reads as its text. */
-const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[^[\]]/g;
+/** CSI, OSC and other escape sequences (charset designators such as `ESC ( B` whole), so
+ * coloured text reads as its text. */
+const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-Z\\^-~]/g;
+/** The cursor's line on the Session's screen, as a terminal draws it (ticket 159, #296). */
+export interface CursorLine {
+  /** The line up to the cursor, from where it starts (a long one wraps onto more rows). */
+  text: string;
+  /** What's on it after the cursor (its rows wrapped on included), blanks at the end left out. */
+  rest: string;
+  /** The two rows above the line, as drawn. */
+  above: string[];
+  /** The row below the line, as drawn (a prompt drawn there with the cursor put back). */
+  below: string;
+  /** The screen is the alternate one (a full-screen program: an editor, a pager, a menu). */
+  alt: boolean;
+}
 
-/** The text of the line the cursor is on: what follows the last line feed or carriage return. */
-export function lastLine(out: string): string {
-  const plain = out.replace(ESCAPES, "");
-  return plain.slice(Math.max(plain.lastIndexOf("\n"), plain.lastIndexOf("\r")) + 1);
+/** The Session's screen the prompt is read off (promptScreen.ts: xterm, as the tab draws it),
+ * fed all its output at its size. This module takes it as a value so it loads without a terminal. */
+export interface PromptScreen {
+  write(data: Uint8Array | string): void;
+  /** It has drawn everything written to it. */
+  settled(): boolean;
+  /** Resolves once it has drawn everything written so far. */
+  flushed(): Promise<void>;
+  resize(size: { cols: number; rows: number }): void;
+  line(): CursorLine;
+  dispose(): void;
 }
 
 const PWSH = /^PS \S.*> $/;
-const FISH = /^[^\s@[\]:]+@[^\s@[\]:]+ [~/]\S*(?: \([^)]*\))?[>#] $/;
+/** fish's default prompt: `user@host cwd`, then its version control's ` (branch)` (no space or
+ * parenthesis, `<` or `>` in it but one nested pair: a detached HEAD is `((f5c479ed))`), then the last
+ * status when it failed (` [1]`, a pipeline's ` [1|0]`), then `>` or `#` (root). */
+const FISH = /^[^\s@[\]:]+@[^\s@[\]:]+ [~/]\S*(?: \((?:[^()\s<>]|\([^()\s<>]*\))+\))?(?: \[\d+(?:\|\d+)*\])?[>#] $/;
+/** Words that ask for a secret, in a few languages: with one on the prompt's line, the two rows
+ * above it or the row below, whatever the line ends with, it's no prompt roster sends to. */
+const SECRET =
+  /pass(?:word|phrase|code)|passwort|kennwort|mot de passe|contrase\u00f1a|senha|\u5bc6\u7801|\u30d1\u30b9\u30ef\u30fc\u30c9|one[- ]time|verification code/i;
+/** Short words that ask for a secret only as a word of their own at the end of what's asked
+ * (`Enter your PIN`, `OTP code: `, `Token? `), not inside a name (a branch `(pin-deps)`). */
+const SECRET_WORD = /(?<![\p{L}\p{N}_-])(?:PIN|OTP|token)(?:\s+code)?(?![\p{L}\p{N}_-])\s*(?:[:?>#$%]|$)/imu;
 /** `$`, `#` or `%` right after the prompt's text (`user@web-01:~$ `, `web-01% `), or a `$` on
  * its own (a two-line prompt's second line). Not after a space, which is tcsh's (`web-01:~ % `)
  * and a menu's (`Choice # `). */
@@ -87,9 +118,13 @@ export function newNonce(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The shell whose idle prompt ends `out`, or null when it isn't a prompt roster knows. */
-export function promptShell(out: string): ShellKind | null {
-  const line = lastLine(out);
+/** The shell whose idle prompt the cursor is at, or null when it isn't a prompt roster knows: the
+ * cursor at the end of the prompt with nothing after it, on the normal screen, and no word asking
+ * for a secret on its line, the two rows above or the row below (Q150). */
+export function promptShell(at: CursorLine): ShellKind | null {
+  if (at.alt || at.rest.trim() !== "") return null;
+  for (const line of [...at.above, at.text, at.below]) if (SECRET.test(line) || SECRET_WORD.test(line)) return null;
+  const line = at.text;
   if (PWSH.test(line)) return "pwsh";
   if (FISH.test(line)) return "fish";
   if (POSIX.test(line)) return "posix";
@@ -200,10 +235,13 @@ export class ShellHooks {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private holdTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly windowTimer: ReturnType<typeof setTimeout>;
+  /** The Session's screen, where the prompt is read; null: none, so nothing is ever sent. */
+  private readonly screen: PromptScreen | null;
 
-  constructor(io: ShellHooksIo, nonce: string) {
+  constructor(io: ShellHooksIo, nonce: string, screen: PromptScreen | null) {
     this.io = io;
     this.nonce = nonce;
+    this.screen = screen;
     this.windowTimer = setTimeout(() => {
       this.armed = false;
       clearTimeout(this.idleTimer);
@@ -213,6 +251,7 @@ export class ShellHooks {
   /** The Session printed `data` (`text`, decoded by a streaming decoder). Returns what to show
    * now, or null: held. */
   output(data: Uint8Array, text: string): Uint8Array | null {
+    this.screen?.write(data);
     this.scanFolder(text);
     if (this.held) {
       this.held.push(data);
@@ -247,14 +286,24 @@ export class ShellHooks {
     // Marks that aren't roster's (the shell's own integration) don't stop it: the user asked, and
     // roster's marks, with the token, go round them.
     if (this.ours) return Promise.resolve("marked");
-    const kind = promptShell(this.tail);
+    const screen = this.screen;
+    if (!screen) return Promise.resolve("no-prompt");
+    // The prompt as the screen draws it once it has drawn all the output so far.
+    if (!screen.settled()) return screen.flushed().then(() => this.integrate());
+    const kind = promptShell(screen.line());
     if (!kind) return Promise.resolve("no-prompt");
     if (!this.send(kind)) return Promise.resolve("not-open");
     return new Promise((resolve) => this.waiting.push(resolve));
   }
 
+  /** The Session's size changed. */
+  resize(size: { cols: number; rows: number }) {
+    this.screen?.resize(size);
+  }
+
   /** The Session ended or its tab closed: what's held shows, and nothing more is sent. */
   stop() {
+    this.screen?.dispose();
     clearTimeout(this.windowTimer);
     clearTimeout(this.idleTimer);
     this.armed = false;
@@ -263,7 +312,14 @@ export class ShellHooks {
 
   private idle() {
     if (!this.armed || this.typedYet || this.marked || this.sentLine !== null || !this.io.enabled()) return;
-    const kind = promptShell(this.tail);
+    const screen = this.screen;
+    if (!screen) return;
+    // Output the screen hasn't drawn yet: look again once it's quiet.
+    if (!screen.settled()) {
+      this.idleTimer = setTimeout(() => this.idle(), IDLE_MS);
+      return;
+    }
+    const kind = promptShell(screen.line());
     if (kind && !this.send(kind)) this.idleTimer = setTimeout(() => this.idle(), IDLE_MS);
   }
 
@@ -271,7 +327,7 @@ export class ShellHooks {
     const line = hookLine(kind, this.nonce);
     if (!this.io.write(line + "\r")) return false;
     this.sentLine = line;
-    this.sentAt = lastLine(this.tail);
+    this.sentAt = this.screen?.line().text ?? "";
     this.armed = false;
     clearTimeout(this.idleTimer);
     this.held = [];
@@ -327,7 +383,7 @@ export class ShellHooks {
     const clean =
       lf >= 0 &&
       squash(between).startsWith(squash(this.sentLine ?? "")) &&
-      lastLine(text) === this.sentAt &&
+      (this.screen?.line().text ?? null) === this.sentAt &&
       (between.match(/\n/g) ?? []).length <= 4 &&
       squash(between).length - squash(this.sentLine ?? "").length <= 240;
     if (!clean) return this.giveUp();

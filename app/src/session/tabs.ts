@@ -22,7 +22,7 @@ import { formatQuickTarget, type QuickTarget } from "../quick/target";
 // Types only: the watch itself (xterm) comes from setFillPrompts, so this module loads without a
 // terminal (the docs site's generator reads tabs.ts's helpers in Node).
 import type { Breadcrumb, PasswordPrompt, PromptWatch } from "./prompt";
-import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult } from "./shellHooks";
+import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult, type PromptScreen } from "./shellHooks";
 import { hopWords } from "./breadcrumb";
 import { Osc52Stripper } from "../terminal/osc52";
 
@@ -213,6 +213,9 @@ export class Tabs {
   private fillPrompts: FillPrompts | null = null;
   /** Whether roster sends the shell hook line to a tab's Session by itself (ticket 121). */
   private shellHooksOn: (tab: Tab) => boolean = () => false;
+  /** Makes the screen a Session's shell hooks read its prompt off (promptScreen.ts); null: none,
+   * and no hook line is ever sent. */
+  private promptScreen: ((size: TermSize) => PromptScreen) | null = null;
   private readonly now: () => number;
 
   /** Held ids serve said logged in before their tab knew it held them. */
@@ -301,9 +304,12 @@ export class Tabs {
   }
 
   /** Whether roster may send the shell hook line to a tab's Session by itself (`shell_hooks`,
-   * ticket 121): asked when the login goes quiet at a prompt, so a Config reload counts. */
-  setShellHooks(on: (tab: Tab) => boolean) {
+   * ticket 121): asked when the login goes quiet at a prompt, so a Config reload counts. `screen`
+   * makes the screen each Session started after it's set reads its prompt off (ticket 159: xterm,
+   * fed the Session's output at its size, so it's there for a tab that isn't on screen too). */
+  setShellHooks(on: (tab: Tab) => boolean, screen: ((size: TermSize) => PromptScreen) | null) {
     this.shellHooksOn = on;
+    this.promptScreen = screen;
   }
 
   /** Whether roster can fill a password prompt (`session.fill`, ticket 119): `userOf` gives a
@@ -645,7 +651,7 @@ export class Tabs {
       settled: () => {
         if (current()) entry.echoWindow = null;
       },
-    }, nonce);
+    }, nonce, this.promptScreen?.(entry.size) ?? null);
   }
 
   /** The tab's Session couldn't start: roster refused, or a step before it failed. */
@@ -935,6 +941,7 @@ export class Tabs {
     if (!session || (size.cols === sentSize.cols && size.rows === sentSize.rows)) return;
     entry.sentSize = { ...size };
     entry.watch?.resize(size);
+    entry.hooks?.resize(size);
     void session.resize(size).catch(() => {});
   }
 

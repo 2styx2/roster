@@ -12,7 +12,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { hookLine, lastLine, promptShell, type ShellKind } from "./shellHooks";
+import { XtermPromptScreen } from "./promptScreen";
+import { hookLine, promptShell, type CursorLine, type ShellKind } from "./shellHooks";
 
 const has = (shell: string) => spawnSync("sh", ["-c", `command -v ${shell}`]).status === 0;
 const ENV = { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: "/tmp", TERM: "xterm-256color", SHELL: "/bin/sh" };
@@ -47,28 +48,50 @@ const shown = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07
  * console waits for a cursor-position answer is lost). Then Enter, on its own, once the shell has
  * drawn the line. Each step waits for a sign, never for the shell to go quiet: on a busy machine
  * a shell still starting is quiet too. */
-function runPty(argv: string[], lines: string[], ready: (since: string) => boolean): Promise<string> {
+/** The cursor's line once a terminal of the pty's size (120 by 40) has drawn `out`. */
+async function screenLine(out: string): Promise<CursorLine> {
+  const screen = new XtermPromptScreen({ cols: 120, rows: 40 });
+  screen.write(out);
+  await screen.flushed();
+  const at = screen.line();
+  screen.dispose();
+  return at;
+}
+
+/** What the shell printed since the last Enter, and the cursor's line on a screen it's drawn on. */
+type Ready = (since: string, at: CursorLine) => boolean;
+
+function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
-    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV });
+    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV, cwd });
     let out = "";
     let answered = 0;
     // Where the last thing typed went in: what the shell printed after it is its answer.
     let mark = 0;
     let line: string | undefined;
+    let checking = false;
     const next = () => {
-      const since = out.slice(mark);
-      if (line === undefined) {
-        if (!lines.length || !ready(since)) return;
-        line = lines.shift()!;
-        child.stdin.write(line);
-      } else {
-        if (!shown(since).includes(line.trim())) return;
+      if (line !== undefined) {
+        if (!shown(out.slice(mark)).includes(line.trim())) return;
         line = undefined;
         child.stdin.write("\r");
+        mark = out.length;
+        return;
       }
-      mark = out.length;
+      if (checking || !lines.length) return;
+      // Is it ready: what it printed since the last Enter, drawn on a screen of its own.
+      checking = true;
+      const since = out.slice(mark);
+      void screenLine(since).then((at) => {
+        checking = false;
+        if (out.length !== mark + since.length) return next(); // more came meanwhile: look again
+        if (line !== undefined || !ready(since, at)) return;
+        line = lines.shift()!;
+        child.stdin.write(line);
+        mark = out.length;
+      });
     };
     const timer = setTimeout(() => child.kill("SIGKILL"), 40_000);
     child.stdout.setEncoding("utf8");
@@ -89,14 +112,14 @@ function runPty(argv: string[], lines: string[], ready: (since: string) => boole
 
 /** PSReadLine waits for keys once it has drawn the prompt and then asked where the cursor is,
  * or at `>> `, the next line of an unfinished command (no question there). */
-const pwshReady = (since: string) =>
-  lastLine(since) === ">> " || (promptShell(since) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
+const pwshReady: Ready = (since, at) =>
+  at.text === ">> " || (promptShell(at) === "pwsh" && since.slice(since.lastIndexOf("PS ")).includes("\x1b[6n"));
 /** fish once it has drawn its prompt (`… ~> `, `… [1]> `; it then puts the cursor back with a
  * carriage return and a move right, so this looks at the text, not the last line), or, in an
  * unfinished command, once it has drawn the next line (a line feed, then it clears that line).
  * When it runs a command it prints a line feed too, then sets the window title (OSC 0): that line
  * feed isn't a sign, the next prompt is. */
-const fishReady = (since: string) =>
+const fishReady: Ready = (since) =>
   shown(since).endsWith("> ") || (!since.includes("\x1b]0;") && since.includes("\n\x1b[K"));
 
 /** The end of what a shell printed, escaped, for a failed test's message. */
@@ -113,7 +136,7 @@ interface Shell {
   argv: string[];
   kind: ShellKind;
   /** On a pty (or else piped in): when it waits for the next line typed. */
-  pty?: (since: string) => boolean;
+  pty?: Ready;
 }
 const SHELLS: Shell[] = [
   { name: "bash", argv: ["bash", "--norc", "--noprofile", "-i"], kind: "posix" },
@@ -135,6 +158,27 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
     expect(out, tail(out)).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
   }, 60_000);
 });
+
+// Ticket 159 (#296): the auto-send must see each shell's own idle prompt as it draws it (fish
+// moves the cursor back over its prompt with `\r ESC[<n>C`), in a folder with no git and in this
+// repo's checkout (fish's prompt then shows the branch, or `((f5c479ed))` on CI's detached HEAD).
+// Every shell runs on a pty here, as in a Session. One whose prompt it doesn't see is killed at 40 s.
+const REPO = new URL("../../..", import.meta.url).pathname;
+describe.each(SHELLS.flatMap((s) => [[s.name, "/tmp", s] as const, [s.name, "a git checkout", s] as const]))(
+  "promptShell at %s's first prompt, in %s",
+  (_, where, shell) => {
+    it.skipIf(!has(shell.name) || !hasPty)("knows the shell", async () => {
+      let seen = false;
+      const ready: Ready = (since, at) => {
+        if (promptShell(at) !== shell.kind || (shell.pty && !shell.pty(since, at))) return false;
+        seen = true;
+        return true;
+      };
+      const out = await runPty(shell.argv, ["exit"], ready, where === "/tmp" ? "/tmp" : REPO);
+      expect(seen, tail(out)).toBe(true);
+    }, 60_000);
+  },
+);
 
 /** The rc-file snippet for `lang` in docs/plugins.md's "Shell integration": its first block. */
 function snippet(lang: string): string {
