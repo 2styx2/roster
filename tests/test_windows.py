@@ -240,7 +240,7 @@ def test_the_meshs_script_reaches_the_remote_sh_with_unix_newlines(as_windows, m
     seen = {}
     monkeypatch.setattr(mesh.subprocess, "Popen", fake_popen_answering(seen, "SAME include\nROSTER_DONE\n"))
     h = {"name": "esx-02", "ip": "10.0.0.12", "ssh": {"user": "root", "port": 22}, "enroll": True}
-    lines, err = mesh.on_host(h, mesh.write_script(h, "apply", None, [], set()))
+    lines, err = mesh.on_host(h, mesh.write_script(h, "apply", None, [], set(), "box"))
     assert err is None and lines == ["SAME include", "ROSTER_DONE"]
     sent = sent_on_windows(seen)
     assert b"ROSTER_MESH_EOF\n" in sent and b"\r" not in sent
