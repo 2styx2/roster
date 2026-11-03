@@ -49,9 +49,12 @@ KB = 1000
 # JS 2,550 -> 2,600 raw, 745 -> 760 gzipped on 2026-11-03: serve-api.md's Host, Login, service and group tables,
 # now generated from the models (T174, #332) and bundled for :help, took dev's 744.6 gzipped to 745.9 (2,544.5
 # raw). Text :help reads, not a dependency, so the budgets follow it with room for the next small feature.
+# JS 2,600 -> 2,650 raw, 760 -> 775 gzipped on 2026-11-03: Windows Hosts (T195, #375: adding-hosts.md's section,
+# error rows 212-216, serve's error codes and the Host's os field, all bundled for :help) took dev's 2,580.4 raw /
+# 758.9 gzipped to 2,591.5 / 762.8. Text :help reads, not a dependency, so the budgets follow it, as above.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2600, "gzip": 760},
+    "js": {"raw": 2650, "gzip": 775},
     "css": {"raw": 85, "gzip": 15.5},
 }
 
