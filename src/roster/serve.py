@@ -2,7 +2,8 @@
 one JSON object per line. Only responses go to stdout; anything else roster prints goes to stderr.
 The one other channel is askpass (roster/askpass.py): a private Unix socket, open while serve runs, that
 hands a password Session's ssh its password.
-It answers with the Host, group and resource objects load_config already builds - no new schema.
+It answers with the Host, group and resource objects roster.yml loads into (models.py); hosts.list's and host.get's
+params and results are models in servemodels.py (T174, Q113), and the others move there as tickets touch them.
 Logins come back as references (bw:ITEM), never as values. Requests are handled concurrently (API 20, decision Q112):
 a pool of workers, two more for the quick reads (QUICK), and a lock per resource each method claims (LOCKS), so
 answers can come back in another order than asked. Background work (a Mesh run, a scan) is a job (jobs.py).
@@ -56,7 +57,7 @@ from .common import (
     ssh_config_file,
     ssh_path,
 )
-from .config import find_config, load_config
+from .config import find_config, load_config, load_inventory
 from .errors import (  # noqa: F401 (the codes are part of serve's API)
     ALREADY_SIGNED_OUT,
     BUSY,
@@ -109,6 +110,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     write_problem,
 )
 from .providers import PROVIDERS, setup_providers
+from .servemodels import HostGetParams, HostsListResult, InventoryError, NoParams, dump
 from .sshops import fingerprint, in_ssh_config, left_out, record_host_key, recorded_host_keys
 
 API_VERSION = 27            # bump when a method or result changes in a way the app has to know about
@@ -137,6 +139,7 @@ class State:
 
     def __init__(self, config_arg, inv=None):
         self.cfg, self.path, self.error = None, None, None
+        self.inv: Any = None                # the loaded Inventory's models (cfg is their dict view, Q113)
         self.digest = None                  # what roster.yml held at the last load (good or not): the watcher's base
         self.noticed = None                 # an outside edit already reported as not applied (auto off)
         self.auto = False                   # inventory.watch: apply outside edits as they're saved
@@ -175,11 +178,12 @@ class State:
         with self.lock:                     # a write holding it may reload; anyone else waits for the write
             self.digest, self.noticed = file_digest(self.path), None
             try:
-                cfg = load_config(self.path)
+                inv = load_inventory(self.path)
             except SystemExit as e:
                 self.error = die_message(e)
                 return
-            self.cfg, self.path, self.error = cfg, cfg["path"], None
+            cfg = inv.as_config()
+            self.inv, self.cfg, self.path, self.error = inv, cfg, cfg["path"], None
             setup_providers(cfg)
 
     def problem(self):
@@ -251,8 +255,11 @@ def hosts_list(state, params):
         ones
     Since: API 1
     """
-    cfg = state.inventory()
-    return {"hosts": list(cfg["hosts"].values()), "groups": cfg["groups"], "error": broken(state)}
+    NoParams.parse(params)
+    state.inventory()
+    inv, error = state.inv, broken(state)
+    return dump(HostsListResult(hosts=list(inv.hosts.values()), groups=dict(inv.groups),
+                                error=None if error is None else InventoryError.model_validate(error)))
 
 
 def host_get(state, params):
@@ -268,18 +275,17 @@ def host_get(state, params):
     Errors: 2, 4
     Since: API 20
     """
-    name = text_param(params, "name")
-    settled = params.get("settled", False)
-    if not isinstance(settled, bool):
-        raise RpcError(INVALID_PARAMS, "params.settled must be true or false")
-    if settled:
+    p = HostGetParams.parse(params)
+    if p.settled:
         with claimed(state, [("inventory", False)], "host.get"):
-            h = state.inventory()["hosts"].get(name)
+            state.inventory()
+            h = state.inv.hosts.get(p.name)
     else:
-        h = state.inventory()["hosts"].get(name)
+        state.inventory()
+        h = state.inv.hosts.get(p.name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
-    return h
+        raise RpcError(UNKNOWN_HOST, f"unknown host {p.name!r}")
+    return dump(h)
 
 
 def text_param(params, key):

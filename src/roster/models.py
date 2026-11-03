@@ -29,37 +29,38 @@ class SshLogin(Model, frozen=True):
     """How `ssh NAME` logs in: the most specific of the Host's, its group's and the defaults' ssh: block or plain
     user/port/auth."""
 
-    port: int
-    user: str | None
-    auth: str | None = Field(repr=False)
+    port: int = Field(description="The port (22 unless set).")
+    user: str | None = Field(description="The user.")
+    auth: str | None = Field(repr=False, description="Its Login reference (`prompt` unless set).")
 
 
 class Login(Model, frozen=True):
     """The Host's default Login for its services (user and auth, unresolved)."""
 
-    user: str | None
-    auth: str | None = Field(repr=False)
+    user: str | None = Field(description="The user; `null` if unset.")
+    auth: str | None = Field(repr=False, description="The Login reference; `null` if unset.")
 
 
 class Service(Model, frozen=True):
     """One of a Host's services, merged defaults <- group <- host. `override`: it sets its own user or auth."""
 
-    port: int
-    url: str | None
-    scheme: str | None
-    user: str | None
-    auth: str | None = Field(repr=False)
-    verify: bool
-    login: str
-    override: bool
+    port: int = Field(description="Its port.")
+    url: str | None = Field(description="Its URL, for http and https services.")
+    scheme: str | None = Field(description="`http`, `https`, or `null` when roster can't tell.")
+    user: str | None = Field(description="Its user: its own, else the Host's `login.user`.")
+    auth: str | None = Field(repr=False, description="Its Login reference: its own, else the Host's `login.auth`.")
+    verify: bool = Field(description="Whether its TLS certificate is checked.")
+    login: str = Field(description="How `roster web` signs in, resolved (never a `web_login_names` alias): `basic`, "
+                       "`bearer`, `vsphere`, `unifi`, `openvpnas`, `hub` or `none`.")
+    override: bool = Field(description="`true` when it has a Login of its own; `false` when it uses the Host's.")
 
 
 class ServiceProblem(Model, frozen=True):
     """A service entry roster left out of the Inventory, and why: the rest of the Host still loads."""
 
-    service: str
-    message: str
-    fix: str
+    service: str = Field(description="The service's name.")
+    message: str = Field(description="What's wrong, naming the service.")
+    fix: str = Field(description="What to change.")
 
 
 class Host(Model, frozen=True):
@@ -68,31 +69,36 @@ class Host(Model, frozen=True):
     model_config = ConfigDict(extra="allow")
 
     # in the order the dicts had before the models (HOST_DEFAULTS', then what each Host adds), so --json reads the same
-    user: str | None
-    port: int
-    enroll: bool
-    auth: str | None = Field(repr=False)
-    web: str | None
-    services: dict[str, Service]
-    notes: Any = Field(repr=False)
-    title: str
-    description: str
-    type: str
-    product: str
-    reviewed: bool
-    mac: Any = Field(repr=False)
-    mesh: bool | None
-    ip: str
-    name: str
-    group: str
-    ssh: SshLogin
-    login: Login
-    problems: list[ServiceProblem]
+    user: str | None = Field(description="The same as `ssh.user` (kept for older code).")
+    port: int = Field(description="The same as `ssh.port`.")
+    enroll: bool = Field(description="Whether `roster setup` puts this Box's key on it (`false`: password Sessions).")
+    auth: str | None = Field(repr=False, description="The same as `ssh.auth`.")
+    web: str | None = Field(description="Its web UI's URL: the `web` service's, else the first service given a URL.")
+    services: dict[str, Service] = Field(description="Its services by name (`web`, `postgres`); `{}` when none.")
+    notes: Any = Field(repr=False, description="The older name for `description`, as roster.yml has it.")
+    title: str = Field(description="One line; `\"\"` if unset.")
+    description: str = Field(description="One line; `\"\"` if unset.")
+    type: str = Field(description="What it is (`esxi`, `linux`); `\"\"` if unset.")
+    product: str = Field(description="Its product; `\"\"` if unset.")
+    reviewed: bool = Field(description="`false` for a Host `discover` added and no one has reviewed: it can't be "
+                           "opened until it is.")
+    mac: Any = Field(repr=False, description="Its MAC address; `\"\"` if unset.")
+    mesh: bool | None = Field(description="`mesh:` as roster.yml sets it; `null` if nothing does.")
+    ip: str = Field(description="Its address (an IP or a DNS name).")
+    name: str = Field(description="Its name in the Inventory, unique.")
+    group: str = Field(description="The group it's in.")
+    ssh: SshLogin = Field(description="How roster logs in to it over ssh: the most specific of the Host's, its "
+                          "group's and `defaults:`.")
+    login: Login = Field(description="The default Login for its services.")
+    problems: list[ServiceProblem] = Field(description="Service entries roster left out because it can't use them; "
+                                           "`[]` when there are none.")
 
 
 class Group(Model, frozen=True):
-    title: str
-    description: str
+    """A group of Hosts, by its name in `hosts.list`'s `groups`."""
+
+    title: str = Field(description="One line; `\"\"` if unset.")
+    description: str = Field(description="One line; `\"\"` if unset.")
 
 
 class Link(Model, frozen=True):
