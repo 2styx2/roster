@@ -41,6 +41,12 @@ def two(isolated):
     return out
 
 
+def list_path():
+    """roster's list of named Inventories (in %APPDATA%\\roster on Windows)."""
+    from roster.inventories import list_file
+    return list_file()
+
+
 def run(capsys, *argv):
     code = main(list(argv))
     out = capsys.readouterr()
@@ -140,7 +146,7 @@ def test_without_named_inventories_sync_writes_what_it_always_did(two, capsys, i
     d = ssh(isolated)
     assert (d / "config.d/roster").exists() and not (d / "config.d/roster.inventories").exists()
     assert (d / "config").read_text().startswith(inc(d / "config.d/roster") + "\n")
-    assert not (isolated["home"] / ".config/roster/inventories.json").exists()
+    assert not (list_path()).exists()
 
 
 def test_naming_a_synced_inventory_keeps_its_host_keys_and_takes_its_include(two, capsys, isolated):
@@ -328,7 +334,7 @@ def test_after_naming_both_plain_ssh_checks_each_host_against_its_recorded_key(t
 @pytest.mark.parametrize("name", ['x"\nProxyCommand touch pwned\n#', "work\n", "../up", "work.", "a b"])
 def test_a_hand_edited_name_in_the_list_is_refused_when_it_loads(two, capsys, isolated, name):
     """Review 2: a name from inventories.json reaches ssh config lines and file names: checked as add checks it."""
-    lst = isolated["home"] / ".config/roster/inventories.json"
+    lst = list_path()
     lst.parent.mkdir(parents=True)
     lst.write_text(json.dumps({"active": name, "inventories": [{"name": name, "path": str(two["work"])}]}))
     with pytest.raises(SystemExit, match="inventories.json doesn't load"):
@@ -337,7 +343,7 @@ def test_a_hand_edited_name_in_the_list_is_refused_when_it_loads(two, capsys, is
 
 
 def test_a_relative_path_in_the_list_is_refused(two, isolated):
-    lst = isolated["home"] / ".config/roster/inventories.json"
+    lst = list_path()
     lst.parent.mkdir(parents=True)
     lst.write_text(json.dumps({"active": None, "inventories": [{"name": "w", "path": "work/roster.yml"}]}))
     with pytest.raises(SystemExit, match="inventories.json doesn't load"):
@@ -399,7 +405,7 @@ def test_deleting_the_list_by_hand_means_none_are_named(two, capsys, isolated):
     two["work"].write_text(WORK + "      pi: {ip: 10.0.0.9}\n")
     run(capsys, "inv", "add", "h", str(two["home"]))
     run(capsys, "sync")
-    (isolated["home"] / ".config/roster/inventories.json").unlink()
+    (list_path()).unlink()
     run(capsys, "-c", str(two["work"]), "sync")
     assert resolved(isolated, "pi")["hostname"] == ["10.0.0.9"]
     assert not (ssh(isolated) / "config.d/roster.inventories").exists()
@@ -437,13 +443,13 @@ def test_file_modes(two, capsys, isolated):
     run(capsys, "sync")
     d = ssh(isolated)
     mode = lambda p: stat.S_IMODE(p.stat().st_mode)  # noqa: E731
-    assert mode(isolated["home"] / ".config/roster/inventories.json") == 0o600
+    assert mode(list_path()) == 0o600
     assert mode(d / "config") == 0o600 and mode(d / "config.d/roster.inventories") == 0o600
     assert mode(d / "config.d") == 0o700 and mode(d / "config.d/roster-work") == 0o600
     (d / "config").chmod(0o640)                            # a mode the user chose is kept
     run(capsys, "inv", "add", "home", str(two["home"]))
     assert mode(d / "config") == 0o640
-    assert not list((isolated["home"] / ".config/roster").glob("*.new*"))       # no temp file left behind
+    assert not list(list_path().parent.glob("*.new*"))       # no temp file left behind
 
 
 def test_removing_the_last_one_says_to_sync(two, capsys, isolated):
