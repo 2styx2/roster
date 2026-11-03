@@ -70,12 +70,23 @@ def test_the_shared_redaction_vectors_for_json_values(case):
 
 def test_emit_cuts_what_isnt_plain_json_and_every_key(capsys):
     # iteration 9 review, item 8: a set, a Path or an object went out as json.dumps(default=str) made it, and a
-    # dict's keys were never cut
+    # dict's keys were never cut. T176: documents are models now, but a free-form field (a check step's `data`) is
+    # still Any
+    from typing import Any
+
+    from roster.jsondocs import Part
+
     class Thing:
         def __str__(self):
             return "env:LAB_PW"
-    emit({"keys": {"cmd:printf s3cret-in-key": 1}, "set": {"cmd:printf s3cret-in-set"},
-          "path": Path("cmd:printf s3cret-in-path"), "thing": Thing()})
+
+    class Doc(Part, frozen=True):
+        keys: dict[str, int]
+        set: Any
+        path: Any
+        thing: Any
+    emit(Doc(keys={"cmd:printf s3cret-in-key": 1}, set={"cmd:printf s3cret-in-set"},
+             path=Path("cmd:printf s3cret-in-path"), thing=Thing()))
     out = capsys.readouterr().out
     assert "s3cret" not in out and "LAB_PW" not in out
     assert json.loads(out) == {"version": JSON_VERSION, "keys": {"cmd:": 1}, "set": "{'cmd:'", "path": "cmd:",

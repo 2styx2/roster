@@ -223,7 +223,8 @@ def cmd_mesh(cfg, args):
     if args.action == "status":
         st = mesh.status(cfg)
         if args.json:
-            jsonout.emit(st)
+            from . import jsondocs
+            jsonout.emit(jsondocs.MeshStatusDoc.model_validate(st))
             return 0
         for n in st["members"]:
             say(f"  {n:<16} can reach {plural(st['reach'].get(n, 0), 'Host')}")
@@ -259,8 +260,9 @@ def cmd_mesh(cfg, args):
     if args.target:
         die(f"unexpected {args.target!r}: roster mesh [--dry-run] [--rotate HOST], or roster mesh cut HOST")
     if args.json:                       # --dry-run: mesh.plan's result; a Problem is the JSON error (main)
+        from . import jsondocs
         r = mesh.run(cfg, apply=False, rotate=args.rotate or ())
-        jsonout.emit(r)
+        jsonout.emit(jsondocs.MeshPlanDoc.model_validate(r))
         return 1 if r["pending"] else 0
     try:
         r = mesh.run(cfg, apply=not args.dry_run, rotate=args.rotate or (), say=say)
@@ -293,7 +295,8 @@ def cmd_check(cfg, args):
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         ok = all(r["ok"] for r in results) and not broken
-        jsonout.emit({"hosts": results, "mesh": drift, "ok": ok})
+        from . import jsondocs
+        jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "ok": ok}))
         return 0 if ok else 1
     bad = 0
     width = max((len(h["name"]) for h in hosts), default=0)
@@ -334,7 +337,8 @@ def cmd_check_host(args):
     with askpass.Channel(diagnose.askpass_lookup) as channel:
         result = diagnose.check_host(args.host, inventory, channel)
     if args.json:
-        jsonout.emit(result)
+        from . import jsondocs
+        jsonout.emit(jsondocs.CheckHostDoc.model_validate(result))
         return 0 if result["ok"] else 1
     words = {"ok": "ok", "fail": "FAIL", "skipped": "skip"}
     width = max(len(s["step"]) for s in result["steps"])
@@ -367,7 +371,8 @@ def cmd_check_box(args):
     checks = health.check_box(path, cfg, error, channel)
     errors = sum(c["level"] == "error" for c in checks)
     if args.json:
-        jsonout.emit({"checks": checks, "ok": not errors})
+        from . import jsondocs
+        jsonout.emit(jsondocs.BoxCheckDoc.model_validate({"checks": checks, "ok": not errors}))
         return 1 if errors else 0
     section = None
     for c in checks:
@@ -456,8 +461,9 @@ def hosts_json(cfg, args, hosts, rs):
         hosts = [h for h in hosts if matches(h, args.find)]
         rs = [r for r in rs if resource_matches(r, args.find)]
     hidden = [] if args.all or args.find or args.only else [h for h in hosts if not h["reviewed"]]
-    jsonout.emit({"hosts": [h for h in hosts if h not in hidden], "resources": rs, "groups": cfg["groups"],
-                  "hidden": len(hidden)})
+    from . import jsondocs
+    jsonout.emit(jsondocs.HostsDoc.model_validate({"hosts": [h for h in hosts if h not in hidden], "resources": rs,
+                                                   "groups": cfg["groups"], "hidden": len(hidden)}))
     return 1 if args.find and not hosts and not rs else 0
 
 
@@ -497,7 +503,8 @@ def cmd_resources(cfg, args):
     if args.find:
         rs = [r for r in rs if resource_matches(r, args.find)]
     if args.json:
-        jsonout.emit({"resources": rs})
+        from . import jsondocs
+        jsonout.emit(jsondocs.ResourcesDoc.model_validate({"resources": rs}))
         return 1 if cfg["resources"] and not rs else 0
     if not rs:
         if cfg["resources"]:
@@ -548,7 +555,9 @@ def cmd_info(cfg, args):
         g = cfg["groups"].get(h["group"], {})
         group = {"name": h["group"], "title": g.get("title", ""), "description": g.get("description", "")} \
             if h["group"] else None
-        jsonout.emit({"host" if "ip" in h else "resource": h, "group": group})
+        from . import jsondocs
+        doc = jsondocs.HostInfoDoc if "ip" in h else jsondocs.ResourceInfoDoc
+        jsonout.emit(doc.model_validate({"host" if "ip" in h else "resource": h, "group": group}))
         return 0
     if "ip" not in h:
         return show_resource(cfg, h)
@@ -685,7 +694,8 @@ def cmd_providers(cfg, args):
                  "used_by": sorted(used.get(name, ()))} for name in sorted(PROVIDERS)]
         rows.append({"name": "agent", "kind": "built-in", "help": AGENT_HELP, "tool": None, "installed": None,
                      "used_by": sorted(used.get("agent", ()))})
-        jsonout.emit({"providers": rows, "unknown": unknown, "ok": not unknown})
+        from . import jsondocs
+        jsonout.emit(jsondocs.ProvidersDoc.model_validate({"providers": rows, "unknown": unknown, "ok": not unknown}))
         return 1 if unknown else 0
     say("password providers (use as  auth: NAME:SPEC  in roster.yml):\n")
     for name in sorted(PROVIDERS):
@@ -750,7 +760,8 @@ def auth_check_json(uses):
                 row |= {"status": "fail", "error": str(e)}
         rows.append(row)
     ok = all(r["status"] != "fail" for r in rows)
-    jsonout.emit({"logins": rows, "ok": ok})
+    from . import jsondocs
+    jsonout.emit(jsondocs.LoginsDoc.model_validate({"logins": rows, "ok": ok}))
     return 0 if ok else 1
 
 
@@ -796,7 +807,8 @@ def cmd_inv(args):
         path = locate_config(args.config, args.inv)
         name = args.inv or inventories.name_of(path)
         if args.json:
-            jsonout.emit({"path": str(path.expanduser().resolve()), "name": name, "exists": path.is_file()})
+            from . import jsondocs
+            jsonout.emit(jsondocs.WhichDoc(path=str(path.expanduser().resolve()), name=name, exists=path.is_file()))
             return 0 if path.is_file() else 1
         if not path.is_file():
             die(f"roster would use {path}, but it isn't there")
@@ -805,7 +817,8 @@ def cmd_inv(args):
     if act == "list":
         inv = inventories.load()
         if args.json:
-            jsonout.emit(inv.view())
+            from . import jsondocs
+            jsonout.emit(jsondocs.InventoriesDoc.model_validate(inv.view()))
             return 0
         if not inv.inventories:
             say("no named Inventories (roster inv add NAME PATH names one)")

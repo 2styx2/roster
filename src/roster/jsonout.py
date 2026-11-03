@@ -12,6 +12,7 @@ output"); a new field doesn't change it."""
 import json
 import re
 import sys
+from typing import Any, TextIO, cast
 
 JSON_VERSION = 1
 
@@ -21,18 +22,19 @@ _KINDS = ("cmd:", "env:")
 _CODE = re.compile(r" \(code -?[0-9]+\)\Z")      # serve's error code, last in a message
 
 
-def _kind_at(text, i):
+def _kind_at(text: str, i: int) -> str | None:
     if i > 0 and text[i - 1] not in _BEFORE:
         return None
     word = text[i:i + 4].lower()
     return word if word in _KINDS else None
 
 
-def redact_text(text):
+def redact_text(text: str) -> str:
     """TEXT with each `cmd:`/`env:` reference cut to its kind. A reference starts the text or follows a space, a
     quote or one of `=:,({[`, in any case. A `cmd:` one runs to the end of its line (a closing quote is put back),
     an `env:` one is the variable's name. `cmd: is ready` is the kind alone, kept."""
-    out, copied, i, n = [], 0, 0, len(text)
+    out: list[str] = []
+    copied, i, n = 0, 0, len(text)
     while i < n:
         kind = _kind_at(text, i)
         if kind is None:
@@ -58,7 +60,7 @@ def redact_text(text):
     return "".join(out) + text[copied:] if out else text
 
 
-def redact_error(message):
+def redact_error(message: str) -> str:
     """An error MESSAGE with its references cut, as redact_text, but a trailing ` (code N)` stays even after a
     `cmd:` reference that runs to the end of the line: it tells errors apart (Q92; runtime.rs redact_error)."""
     m = _CODE.search(message)
@@ -66,25 +68,28 @@ def redact_error(message):
     return redact_text(message[:at]) + message[at:]
 
 
-def redact(v):
+def redact(v: Any) -> Any:
     """A copy of V (plain JSON data: what json.loads gives) with every string cut by redact_text, a key as much as
     a value."""
     if isinstance(v, str):
         return redact_text(v)
     if isinstance(v, dict):
-        return {redact_text(k) if isinstance(k, str) else k: redact(x) for k, x in v.items()}
+        return {redact_text(k) if isinstance(k, str) else k: redact(x) for k, x in cast(dict[Any, Any], v).items()}
     if isinstance(v, (list, tuple)):
-        return [redact(x) for x in v]
+        return [redact(x) for x in cast("list[Any] | tuple[Any, ...]", v)]
     return v
 
 
-def emit(payload, stream=None):
-    """PAYLOAD as one JSON document, `version` first, every string cut. It's made plain JSON first (a set, a Path or
-    any other object becomes what json.dumps makes of it, a key a string), so nothing reaches stdout uncut."""
-    plain = json.loads(json.dumps({"version": JSON_VERSION, **payload}, default=str))
-    print(json.dumps(redact(plain)), file=stream or sys.stdout, flush=True)
+def emit(doc: Any, stream: TextIO | None = None) -> None:
+    """DOC (a document model, jsondocs.py) as one JSON document, `version` first, every string cut. It's made plain
+    JSON first (a Path or any other object in a free-form field becomes what json.dumps makes of it, a key a
+    string), so nothing reaches stdout uncut."""
+    from .jsondocs import plain  # Pydantic: only when a --json command prints
+    data = json.loads(json.dumps({"version": JSON_VERSION, **plain(doc)}, default=str))
+    print(json.dumps(redact(data)), file=stream or sys.stdout, flush=True)
 
 
-def fail(code, message, fix=None):
+def fail(code: int, message: str, fix: str | None = None) -> None:
     """An error on stderr: {"version", "error": {code, message, fix}}. code is errors.py's (serve's) number."""
-    emit({"error": {"code": code, "message": redact_error(message), "fix": fix}}, sys.stderr)
+    from .jsondocs import Error, ErrorDoc
+    emit(ErrorDoc(error=Error(code=code, message=redact_error(message), fix=fix)), sys.stderr)

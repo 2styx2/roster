@@ -69,4 +69,5 @@ ignore = ["E501", "B904", "UP031", "S603", "S607"]
 include = ["src/roster"]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
-strict = ["src/roster/models.py", "src/roster/inventories.py"]
+strict = ["src/roster/models.py", "src/roster/inventories.py", "src/roster/servemodels.py", "src/roster/jsondocs.py",
+          "src/roster/jsonout.py"]
