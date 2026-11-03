@@ -85,3 +85,43 @@ def test_a_table_naming_an_unknown_method_is_refused():
 def test_a_docstring_without_its_fields_is_refused(doc, says):
     with pytest.raises(gen.DocError, match=says):
         gen.render("<!-- BEGIN generated:methods a.b -->\n<!-- END generated:methods -->\n", {"a.b": handler(doc)})
+
+
+def test_a_models_region_is_a_table_of_each_models_fields():
+    """T174: the objects serve answers with are documented from their models (servemodels.py, models.py), so a field
+    added to a model can't be missing from the doc."""
+    from pydantic import BaseModel, Field
+
+    class Ping(BaseModel):
+        """Answers a ping."""
+        pong: bool = Field(description="Always `true`.")
+        at: str | None = Field(None, alias="when", description="When | it answered.")
+
+    doc = "<!-- BEGIN generated:models Ping -->\nstale\n<!-- END generated:models -->\n"
+    assert gen.render(doc, {}, {"Ping": Ping}) == (
+        "<!-- BEGIN generated:models Ping -->\n\n"
+        "**Ping**: answers a ping.\n\n"
+        "| Field | Type | What |\n"
+        "|---|---|---|\n"
+        "| `pong` | `boolean` | Always `true`. |\n"
+        "| `when` | `string \\| null` | When \\| it answered. |\n\n"
+        "<!-- END generated:models -->\n")
+
+
+def test_a_model_field_without_a_description_is_refused():
+    from pydantic import BaseModel
+
+    class Bare(BaseModel):
+        """A model."""
+        x: int
+
+    with pytest.raises(gen.DocError, match="Bare.x"):
+        gen.render("<!-- BEGIN generated:models Bare -->\n<!-- END generated:models -->\n", {}, {"Bare": Bare})
+
+
+def test_the_host_object_is_documented_from_its_model():
+    from roster import models
+    text = DOC.read_text(encoding="utf-8")
+    assert "<!-- BEGIN generated:models Host SshLogin Login Service ServiceProblem Group InventoryError -->" in text
+    for name in models.Host.model_fields:
+        assert f"| `{name}` |" in text

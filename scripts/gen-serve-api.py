@@ -25,12 +25,24 @@ A handler's docstring is prose for whoever reads serve.py, plus these fields, ea
 `Params:` starts a row: a method that takes two shapes of params has two `Params:` lines, each followed by
 its own `Result:`, `Errors:` (optional: the codes particular to it) and `Since:` (the API version that added
 that form). Text is Markdown, as it shows in the table; a `|` is escaped for you.
+
+The objects the results are made of are documented from their Pydantic models (ticket T174, decision Q113), between
+markers that name the models (from src/roster/models.py and servemodels.py):
+
+    <!-- BEGIN generated:models Host SshLogin -->
+    (for each: **Name**: its docstring's first paragraph, then Field | Type | What, from each field's description)
+    <!-- END generated:models -->
+
+A field with no `description=` is refused, so a field added to a model can't be missing from the doc.
 """
 
 import argparse
 import inspect
+import json
 import re
 import sys
+import types
+import typing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +51,8 @@ COMMAND = "uv run python scripts/gen-serve-api.py"
 
 BEGIN = re.compile(r"^<!-- BEGIN generated:methods ([^>]*?) -->$", re.M)
 END = "<!-- END generated:methods -->"
+MODELS_BEGIN = re.compile(r"^<!-- BEGIN generated:models ([^>]*?) -->$", re.M)
+MODELS_END = "<!-- END generated:models -->"
 FIELD = re.compile(r"^(Params|Result|Errors|Since):\s*(.*)$")
 HEAD = "| Method | Params | Result | Errors | Since API |\n|---|---|---|---|---|\n"
 
@@ -128,8 +142,74 @@ def table(names, methods):
     return HEAD + "".join(rows)
 
 
-def render(doc, methods):
-    """The doc with every generated region rewritten from `methods` (serve.METHODS: name -> handler)."""
+def doc_models():
+    """The models serve's results are made of, by name: models.py's and servemodels.py's."""
+    from pydantic import BaseModel
+
+    from roster import models, servemodels
+    return {name: cls for mod in (models, servemodels) for name, cls in vars(mod).items()
+            if isinstance(cls, type) and issubclass(cls, BaseModel) and cls.__module__ == mod.__name__}
+
+
+def type_text(t):
+    """A field's type as JSON has it: `string | null`, `{string: Service}`, `ServiceProblem[]`."""
+    origin, args = typing.get_origin(t), typing.get_args(t)
+    if origin is typing.Annotated:
+        return type_text(args[0])
+    if origin in (typing.Union, types.UnionType):
+        return " | ".join(type_text(a) for a in args)
+    if origin is typing.Literal:
+        return " | ".join(json.dumps(a) for a in args)
+    if origin in (list, tuple):
+        return f"{type_text(args[0])}[]"
+    if origin is dict:
+        return f"{{{type_text(args[0])}: {type_text(args[1])}}}"
+    return JSON_TYPES.get(t, getattr(t, "__name__", str(t)))
+
+
+JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean", type(None): "null", typing.Any: "any"}
+
+
+def model_table(name, cls):
+    where = f"model {name!r} (src/roster/models.py or servemodels.py)"
+    text = cls.__dict__.get("__doc__")
+    if not text:
+        raise DocError(f"{where} has no docstring: its first paragraph introduces the table")
+    intro = " ".join(inspect.cleandoc(text).split("\n\n")[0].split())
+    rows = []
+    for field, info in cls.model_fields.items():
+        if not info.description:
+            raise DocError(f"{name}.{field} has no description: give it Field(description=...) in {where}")
+        key = info.alias or field
+        rows.append(f"| `{key}` | `{cell(type_text(info.annotation))}` | {cell(info.description)} |\n")
+    return (f"**{name}**: {intro[:1].lower()}{intro[1:]}\n\n| Field | Type | What |\n|---|---|---|\n"
+            + "".join(rows))
+
+
+def render_models(doc, models):
+    out, pos = [], 0
+    for m in MODELS_BEGIN.finditer(doc):
+        if m.start() < pos:
+            continue
+        end = doc.find(MODELS_END, m.end())
+        if end < 0:
+            raise DocError(f"docs/serve-api.md: {m.group(0)} has no {MODELS_END} after it")
+        tables = []
+        for name in m.group(1).split():
+            if name not in models:
+                raise DocError(f"docs/serve-api.md lists model {name!r}, but models.py and servemodels.py have none "
+                               "by that name")
+            tables.append(model_table(name, models[name]))
+        out += [doc[pos:m.end()], "\n\n", "\n".join(tables), "\n"]
+        pos = end
+    out.append(doc[pos:])
+    return "".join(out)
+
+
+def render(doc, methods, models=None):
+    """The doc with every generated region rewritten from `methods` (serve.METHODS: name -> handler) and `models`
+    (name -> Pydantic model; models.py's and servemodels.py's when not given)."""
+    doc = render_models(doc, doc_models() if models is None else models)
     out, pos, placed = [], 0, {}
     for m in BEGIN.finditer(doc):
         if m.start() < pos:
