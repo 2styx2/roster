@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from ..common import WINDOWS
@@ -107,6 +108,25 @@ class Terminal:
 
     text = ""                   # what bw showed since the last answer, as plain text
     out = b""                   # its stdout, where it's apart from the terminal (Pty: --raw puts the session key there)
+    answered: set[str]          # the prompts answered so far
+
+    def ended(self) -> int | None:
+        """bw's exit code once it has exited and everything it showed is read, else None."""
+        raise NotImplementedError
+
+    def _read(self, timeout: float) -> None:
+        raise NotImplementedError
+
+    def _write(self, text: str) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+    def listening(self, ports) -> bool:
+        """bw's SSO callback server listens on one of PORTS (native Windows only, where it's how roster knows bw
+        opened the page)."""
+        return False
 
     def prompt(self):
         """The prompt bw is showing now, if it's one not answered yet (an answer re-renders its prompt)."""
@@ -172,16 +192,16 @@ class Pty(Terminal):
                 chunk = os.read(f if isinstance(f, int) else f.fileno(), 65536)
             except OSError:                             # EIO: the PTY's other side has gone (bw exited)
                 chunk = b""
-            if f is self.fd:
+            if isinstance(f, int):                      # the PTY
                 if chunk:
                     self.text += plain(chunk.decode("utf-8", "replace"))
                 else:
-                    os.close(self.fd)
+                    os.close(f)
                     self.fd = None
             elif chunk:
                 self.out += chunk
             else:
-                self.proc.stdout.close()
+                f.close()
                 self.proc.stdout = None
 
     def ended(self):
@@ -193,6 +213,8 @@ class Pty(Terminal):
         return None
 
     def _write(self, text):
+        if self.fd is None:
+            raise OSError("bw's terminal is closed")
         os.write(self.fd, text.encode())
 
     def close(self):
@@ -326,7 +348,7 @@ class BwLogin:
         self.email = self.password = None   # held only for the sign-in's life, to restart after a wrong code
         self.method = None                  # the chosen method's index in bw's list, once picked
         self.methods = []
-        self.step = None                    # the step the person is on
+        self.step: dict[str, Any] | None = None   # the step the person is on
         self.server = CLOUD
         self.secrets = []                   # every value the person gave, scrubbed from anything shown
         self.shim = None
@@ -369,19 +391,19 @@ class BwLogin:
 
     def answer(self, params):
         self.touched = time.monotonic()
-        kind = self.step["step"]
+        kind = (self.step or {}).get("step")
         if kind == "two_factor_method":
             index = params["method"]
             if not isinstance(index, int) or not 0 <= index < len(self.methods):
                 raise ValueError(f"params.method must be one of the listed methods' index (0-{len(self.methods) - 1})")
             self.method = index
-            self.bw.answer(METHOD, "\x1b[B" * index + "\r")              # arrow down to it, Enter
+            self.term.answer(METHOD, "\x1b[B" * index + "\r")              # arrow down to it, Enter
             return self.next_step(METHOD)
         if kind in ("two_factor_code", "new_device_code"):
             code = params["code"].strip()
             self.secrets.append(code)
             prompt = CODE if kind == "two_factor_code" else NEW_DEVICE
-            self.bw.answer(prompt, code + "\r")
+            self.term.answer(prompt, code + "\r")
             return self.next_step(prompt)
         if kind == "sso":
             return self.sso_wait()
@@ -395,6 +417,13 @@ class BwLogin:
                 raise
             return self.finish()
         raise ValueError(f"nothing to answer at step {kind!r}")
+
+    @property
+    def term(self):
+        """bw on its terminal: there while a sign-in runs it."""
+        if self.bw is None:
+            raise LoginError("bw isn't running (the sign-in ended)")
+        return self.bw
 
     def close(self):
         if self.bw:
@@ -419,17 +448,17 @@ class BwLogin:
         self.close_bw()
         self.bw = terminal(["bw", "login", "--raw", "--passwordenv", "ROSTER_BW_MASTER"],
                       self.env({"ROSTER_BW_MASTER": self.password}))
-        how, what = self.bw.wait(ANSWER_WAIT)
+        how, what = self.term.wait(ANSWER_WAIT)
         if (how, what) != ("prompt", EMAIL):
             return self.outcome(how, what, None)
-        self.bw.answer(EMAIL, self.email + "\r")
+        self.term.answer(EMAIL, (self.email or "") + "\r")
         return self.next_step(EMAIL)
 
     def next_step(self, after):
-        how, what = self.bw.wait(ANSWER_WAIT)
+        how, what = self.term.wait(ANSWER_WAIT)
         if how == "prompt" and what == METHOD and self.method is not None and after == EMAIL and self.methods:
-            self.bw.answer(METHOD, "\x1b[B" * self.method + "\r")      # a restart: the same method again
-            how, what = self.bw.wait(ANSWER_WAIT)
+            self.term.answer(METHOD, "\x1b[B" * self.method + "\r")      # a restart: the same method again
+            how, what = self.term.wait(ANSWER_WAIT)
             after = METHOD
         try:
             return self.outcome(how, what, after)
@@ -439,7 +468,7 @@ class BwLogin:
     def outcome(self, how, what, after):
         if how == "prompt":
             if what == METHOD:
-                self.methods = parse_methods(self.bw.text)
+                self.methods = parse_methods(self.term.text)
                 if not self.methods:
                     raise self.fail(LoginError("couldn't read the list of two-step methods bw offered"))
                 return self.at({"step": "two_factor_method", "methods": self.methods})
@@ -505,7 +534,7 @@ class BwLogin:
         self.bw = terminal(["bw", "login", "--sso", *([identifier] if identifier else [])],
                       self.env({"PATH": f"{self.shim}{os.pathsep}{path}", "ROSTER_SSO_PATH": path,
                                 "ROSTER_SSO_URL_FILE": str(url_file)}))
-        how, what = self.bw.wait(SSO_URL_WAIT, until=lambda: url_file.is_file() and url_file.read_text().strip())
+        how, what = self.term.wait(SSO_URL_WAIT, until=lambda: url_file.is_file() and url_file.read_text().strip())
         if how != "until":
             if how == "timeout":
                 raise self.fail(BrowserLoginFailed("bw didn't start the SSO sign-in (no link to open)"))
@@ -519,7 +548,7 @@ class BwLogin:
         stand in for: so there's no link to hand over (`url` null), and bw having opened it is known by its
         callback server listening (it opens the page as that server starts), as Windows' TCP table shows it."""
         self.bw = terminal(["bw", "login", "--sso", *([identifier] if identifier else [])], self.env())
-        how, what = self.bw.wait(SSO_URL_WAIT, until=lambda: self.bw.listening(SSO_PORTS))
+        how, what = self.term.wait(SSO_URL_WAIT, until=lambda: self.term.listening(SSO_PORTS))
         if how != "until":
             if how == "timeout":
                 raise self.fail(BrowserLoginFailed("bw didn't start the SSO sign-in (its sign-in page didn't open)"))
@@ -529,7 +558,7 @@ class BwLogin:
 
     def sso_wait(self):
         left = self.sso_deadline - time.monotonic()
-        how, what = self.bw.wait(max(0.0, min(SSO_POLL, left)))
+        how, what = self.term.wait(max(0.0, min(SSO_POLL, left)))
         if how == "timeout":
             if time.monotonic() >= self.sso_deadline:
                 raise self.fail(BrowserLoginFailed("the SSO sign-in wasn't finished in the browser within "

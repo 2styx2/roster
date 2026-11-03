@@ -47,7 +47,7 @@ The sources: `crates/roster-core/src/config/shape` for `init.lua`'s `roster` tab
 - Messages say what changed and why, scoped by area, and name the ticket: `feat(picker): fuzzy match on name, address, group (ticket 03)`.
 - No `Co-Authored-By` trailers and no AI attribution lines in commits or pull request descriptions.
 - Every commit passes the checks of the half it touches; CI (`.github/workflows/ci.yml`) runs all of them on every pull request:
-  - CLI: `uv run ruff check src tests scripts app/scripts` and `uv run pytest`.
+  - CLI: `uv run ruff check src tests scripts app/scripts`, `uv run pyright` and `uv run pytest`.
   - App: in `app/`, `npm run check` (tsc, ESLint, Vitest); at the root, `cargo test`, `cargo clippy -p roster-core --all-targets -- -D warnings` and `cargo fmt --check`.
 - Tickets are GitHub issues, grouped by iteration milestones; the issue is the ticket and its open or closed state is its status. Filing or changing a ticket needs no pull request. Merges into `dev` don't fire "Closes #N", so the issue is closed when its pull request is merged.
 
