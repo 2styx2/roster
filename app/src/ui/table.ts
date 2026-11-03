@@ -117,7 +117,7 @@ export function windowOf(o: { count: number; rowHeight: number; scrollTop: numbe
 export const MIN_CH: Record<ColumnKind, number> = { text: 8, data: 10, number: 5 };
 
 /** A data value split for middle truncation (ticket 91): the head gives way with an ellipsis and
- * the tail always shows, so `server-10-19-77-203` and `server-10-19-77-204` still differ when cut.
+ * the tail always shows, so `server-10-0-0-203` and `server-10-0-0-204` still differ when cut.
  * Short values aren't split. */
 export function splitMiddle(text: string): [string, string] {
   const chars = [...text];

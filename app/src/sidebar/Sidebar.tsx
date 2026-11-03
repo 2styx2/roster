@@ -187,7 +187,7 @@ export function rowFacts(row: SidebarRow): string[] {
 /** A Plugin badge's name, for its tooltip and the row's accessible name: "recent-alerts: 2". */
 const tagName = (t: { source: string; text: string }) => `${t.source}: ${t.text}`;
 
-/** The row's accessible name: "esxi-02, password login, 10.19.77.5". */
+/** The row's accessible name: "esxi-02, password login, 10.0.0.5". */
 export const rowName = (row: SidebarRow) => [row.label, ...rowFacts(row)].join(", ");
 
 const SearchIcon = () => (

@@ -202,7 +202,7 @@ fn an_unknown_host_key_is_asked_about_then_trusted_then_the_session_opens() {
             let data = data.expect("data");
             assert_eq!(
                 (data["address"].as_str(), data["port"].as_i64()),
-                (Some("10.19.77.10"), Some(22))
+                (Some("10.0.0.10"), Some(22))
             );
         }
         other => panic!("{other:?}"),

@@ -95,7 +95,7 @@ interface FieldDef {
 
 const FIELDS: readonly FieldDef[] = [
   { name: "name", label: "Name", mono: true, placeholder: "e.g. esx-02" },
-  { name: "address", label: "Address", mono: true, placeholder: "e.g. 10.19.77.5" },
+  { name: "address", label: "Address", mono: true, placeholder: "e.g. 10.0.0.5" },
   { name: "port", label: "Port", mono: true },
   { name: "user", label: "User", mono: true, placeholder: "e.g. root" },
   { name: "group", label: "Group", mono: true },
