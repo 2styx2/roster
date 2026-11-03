@@ -382,9 +382,8 @@ fn an_endless_loop_runs_out_of_time() {
         },
         ..config::Env::default()
     };
-    let started = std::time::Instant::now();
+    // The error is the limit's: an endless loop has no other way out (no stopwatch, T165).
     let e = config::load_with(&dir, &env).unwrap_err();
-    assert!(started.elapsed() < std::time::Duration::from_secs(2));
     assert_eq!(e.line, Some(2), "{e}");
     assert!(e.message.contains("took longer"), "{e}");
 }
@@ -851,13 +850,9 @@ fn a_slow_pattern_is_cut_off_by_the_watchdog() {
         },
         ..config::Env::default()
     };
-    let started = std::time::Instant::now();
+    // "took too long" is only what the watchdog says when it gives up waiting for the call, so
+    // the load came back without waiting for the pattern (no stopwatch, T165).
     let e = config::load_with(&dir, &env).unwrap_err();
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(1),
-        "{:?}",
-        started.elapsed()
-    );
     assert!(e.message.starts_with("took too long"), "{e}");
     assert_eq!(e.to_string().matches("init.lua").count(), 1, "{e}");
 }
@@ -950,17 +945,34 @@ fn generous() -> config::Env {
 
 /// The Tauri shell reads the Config from async commands (backend_connect, config_load) while a
 /// reload may be running Lua on another thread: reading must never wait for Lua.
+///
+/// The test knows the reload is under way because its init.lua is a named pipe: the reload's
+/// read of it can't open the pipe until the test opens the other end, and by then the reload
+/// holds the loader (T165: a 100 ms sleep let a busy machine read, and call `settled`, before
+/// the reload had begun). Unix only: Windows has no named pipe in a folder, and the loader is
+/// the same code there.
+#[cfg(unix)]
 #[test]
 fn reading_the_config_never_waits_for_a_reload_in_progress() {
+    use std::io::Write;
     use std::sync::Arc;
     use std::time::Duration;
     let (loader, held) = held_loader("loader-busy");
+    let init = held.0.join("init.lua");
+    let script = std::fs::read(&init).unwrap();
+    std::fs::remove_file(&init).unwrap();
+    let path = std::ffi::CString::new(init.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a valid C string, and mkfifo keeps no pointer to it.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0, "mkfifo");
     let loader = Arc::new(loader);
     let l = Arc::clone(&loader);
     let reload = std::thread::spawn(move || l.reload());
-    // Time for the reload to get into Lua (nothing outside shows it has). On a machine too busy
-    // for that, the read below comes before the reload instead: it still passes, proving less.
-    std::thread::sleep(Duration::from_millis(100));
+    // Opening the pipe to write returns once the reload has opened it to read.
+    let mut pipe = common::within_ceiling("the reload reading init.lua", move || {
+        std::fs::OpenOptions::new().write(true).open(init).unwrap()
+    });
+    pipe.write_all(&script).unwrap();
+    drop(pipe);
 
     // Read on another thread while init.lua is held: a read that waited for Lua would never come
     // back until it's let go, so the answer can't come at all before then.
