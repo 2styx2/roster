@@ -4,6 +4,8 @@
 
 mod common;
 
+use common::{CEILING, within_ceiling};
+
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Serve, Source};
 use serde_json::{Value, json};
 use std::sync::{Arc, Condvar, Mutex};
@@ -38,21 +40,6 @@ impl Held {
         *self.released.lock().unwrap() = true;
         self.cv.notify_all();
     }
-}
-
-/// How long a test waits for something it expects, at most: only how long a broken test takes
-/// to say so, never how long it should take.
-const CEILING: Duration = Duration::from_secs(60);
-
-/// `f`'s answer, run on a thread of its own: a test fails after [`CEILING`] rather than hang
-/// when `f` waits for something that never comes.
-fn within_ceiling<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(f());
-    });
-    rx.recv_timeout(CEILING)
-        .unwrap_or_else(|_| panic!("{what} didn't come in {CEILING:?}"))
 }
 
 impl Serve for FakeServe {

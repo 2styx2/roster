@@ -315,7 +315,7 @@ impl Serve for FakeMesh {
 // ------------------------------------------------------------------- driving it
 
 struct Run {
-    host: PluginHost,
+    host: Arc<PluginHost>,
     serve: Arc<FakeMesh>,
     /// Every op so far, in order.
     ops: Vec<Value>,
@@ -329,8 +329,10 @@ struct Run {
 }
 
 impl Run {
+    /// With generous limits ([`common::unhurried`]): a test about the Plugin's budget says so with
+    /// [`Run::new_with`] (T165: a 250 ms call ran out of time on a busy machine, 1 run in 800).
     fn new(world: World, grants: &[&str]) -> Run {
-        Run::new_with(world, grants, Limits::default())
+        Run::new_with(world, grants, common::unhurried())
     }
 
     fn new_with(world: World, grants: &[&str], limits: Limits) -> Run {
@@ -342,11 +344,11 @@ impl Run {
 
     /// A host with `serve`, nothing loaded yet.
     fn with(serve: Arc<FakeMesh>) -> Run {
-        Run::with_limits(serve, Limits::default())
+        Run::with_limits(serve, common::unhurried())
     }
 
     fn with_limits(serve: Arc<FakeMesh>, limits: Limits) -> Run {
-        let host = PluginHost::new(serve.clone(), limits);
+        let host = Arc::new(PluginHost::new(serve.clone(), limits));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -371,7 +373,7 @@ impl Run {
         let started = Instant::now();
         while self.host.requests(NAME) > 0 {
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < common::CEILING,
                 "roster serve's answers didn't come"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -758,15 +760,24 @@ fn plan_shows_the_changes_and_apply_comes_only_after_a_question() {
 /// for a minute or two: the controls keep answering meanwhile (decision Q103).
 #[test]
 fn the_controls_answer_while_roster_serve_is_busy_and_catch_up_after() {
-    let mut run = started(World::default());
+    // A call's budget and grace that the wait for serve below (2.6 s) outlasts, but four times
+    // the app's 250 ms budget for the Lua itself, which a busy machine ran out of (T165).
+    let limits = Limits {
+        call: Duration::from_secs(1),
+        grace: Duration::from_secs(1),
+        ..Limits::default()
+    };
+    let mut run = Run::new_with(World::default(), ALL, limits);
+    run.tick();
     run.serve.take();
     let publish = run.serve.busy.lock().unwrap();
     let c = run.last(|o| o["op"] == "command" && o["name"] == NAME);
-    let started = Instant::now();
-    let reply = run
-        .host
-        .call(NAME, handler(&c["run"]), json!({ "args": "plan", "words": ["plan"] }));
-    assert!(started.elapsed() < Duration::from_millis(500));
+    // It answers while serve is still busy (`publish` is held until below): a call that waited
+    // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
+    let (host, run_handler) = (Arc::clone(&run.host), handler(&c["run"]));
+    let reply = common::within_ceiling("the plan command's answer", move || {
+        host.call(NAME, run_handler, json!({ "args": "plan", "words": ["plan"] }))
+    });
     assert!(reply.error.is_none() && reply.disabled.is_none(), "{reply:?}");
     assert_eq!(of(&reply.ops, "view_open")[0]["id"], "mesh-plan");
     // Asked again before serve answers: it says it's starting, and asks nothing more.
@@ -1026,12 +1037,13 @@ fn a_thousand_hosts_get_their_details_in_batches_until_every_one_has_its_section
 fn a_thousand_hosts_draw_inside_the_apps_own_limits() {
     let t = Instant::now();
     // Default limits: a call over its budget is an error, which `take` fails on.
-    let mut run = Run::new(
+    let mut run = Run::new_with(
         World {
             lab: 1000,
             ..World::default()
         },
         ALL,
+        Limits::default(),
     );
     eprintln!("1,000 Hosts: loaded in {:?}", t.elapsed());
     let mut calls = 0;

@@ -13,6 +13,8 @@
 
 mod common;
 
+use common::unhurried;
+
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
@@ -239,7 +241,7 @@ impl Serve for FakeServe {
         match method {
             "hosts.list" => {
                 if let Some(gate) = self.hosts_gate.lock().unwrap().take() {
-                    let _ = gate.recv_timeout(Duration::from_secs(5));
+                    let _ = gate.recv_timeout(common::CEILING);
                 }
                 Ok(self.hosts.lock().unwrap().clone())
             }
@@ -288,17 +290,6 @@ fn limits() -> Limits {
     Limits::default()
 }
 
-/// Limits far beyond what any machine needs, for a test that checks what the Plugin builds, not
-/// how long it takes: the 2,000-Host one failed 19 of 48 runs on a loaded machine with the app's
-/// own (T146). [`two_thousand_hosts_load_inside_the_apps_own_limits`] times it, on request.
-fn unhurried() -> Limits {
-    Limits {
-        load: Duration::from_secs(60),
-        call: Duration::from_secs(60),
-        ..Limits::default()
-    }
-}
-
 fn perms(names: &[&str]) -> Vec<Permission> {
     names.iter().map(|n| Permission::parse(n).unwrap()).collect()
 }
@@ -306,7 +297,7 @@ fn perms(names: &[&str]) -> Vec<Permission> {
 /// Topology installed as a user installs it, from `dir = "plugins/topology"`.
 struct World {
     dir: PathBuf,
-    host: PluginHost,
+    host: Arc<PluginHost>,
     serve: Arc<FakeServe>,
     /// What the Plugin did when its roster serve requests answered (the Tauri shell's
     /// `plugin-reply`).
@@ -316,8 +307,10 @@ struct World {
 }
 
 impl World {
+    /// With generous limits ([`common::unhurried`]): these tests check what the Plugin builds,
+    /// not how long it takes (T165).
     fn with(test: &str, serve: FakeServe) -> World {
-        World::within(test, serve, limits())
+        World::within(test, serve, unhurried())
     }
 
     /// [`World::with`] under `limits`.
@@ -345,7 +338,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(serve);
-        let host = PluginHost::new(serve.clone(), limits);
+        let host = Arc::new(PluginHost::new(serve.clone(), limits));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -399,7 +392,7 @@ impl World {
         let started = Instant::now();
         while self.host.requests(NAME) > 0 {
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < common::CEILING,
                 "roster serve's answers didn't come"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -937,20 +930,19 @@ fn it_reads_the_inventory_without_holding_up_its_own_calls() {
     let started = Instant::now();
     while w.serve.called("hosts.list").len() == before {
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < common::CEILING,
             "it never asked for the Hosts again"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
-    // While serve hasn't answered, the user's :topology still answers at once (#239).
-    let started = Instant::now();
-    let r = w.host.call(NAME, run, json!({ "args": "", "words": [] }));
+    // While serve hasn't answered, the user's :topology still answers (#239): serve stays held
+    // until `release` below, so a call that waited for it wouldn't come back at all, and fails at
+    // the ceiling instead of hanging.
+    let host = Arc::clone(&w.host);
+    let r = common::within_ceiling(":topology's answer", move || {
+        host.call(NAME, run, json!({ "args": "", "words": [] }))
+    });
     ok(&r);
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        ":topology waited {:?} for roster serve",
-        started.elapsed()
-    );
     // Once serve answers, the new Host is on the map.
     release.send(()).unwrap();
     let after = w.settle(Reply {
