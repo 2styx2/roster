@@ -46,9 +46,13 @@ KB = 1000
 # already replaced) and merged rules repeated for one selector, with every element's computed style
 # and a screenshot of 44 fixture states unchanged. That's 653 B raw, 49 B gzipped: the stylesheet
 # has no dead rules worth 1 KB gzipped, so the gzipped budget stays 71 bytes away. Not raised.
+# JS 2,550 -> 2,600 raw, 745 -> 760 gzipped on 2026-11-03: switching named Inventories (T115 part 2, #369:
+# inventory/switch.ts, `:inventory` and its help text, the status segment, the fake Backend's
+# inventories.*) took CI's build from dev's ~2,540 raw / ~744.7 gzipped (already at the budget) to
+# 2,548.6 / 747.7. The app's own code and the text :help reads, not a dependency. CSS unchanged.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2550, "gzip": 745},
+    "js": {"raw": 2600, "gzip": 760},
     "css": {"raw": 85, "gzip": 15.5},
 }
 
