@@ -2,6 +2,7 @@
 // between the clipboard and the terminal: never into a log, the State or a message
 // (docs/app/security.md; a paste may well be a password).
 import type { Clipboard } from "../platform/types";
+import { runsOnWindows } from "../platform/os";
 
 /** What copy and paste need from a terminal (xterm.js's Terminal has all of it). `paste` is
  * xterm's: line ends become Enter (CR), and the text goes inside bracketed-paste marks when the
@@ -13,12 +14,21 @@ export interface Selectable {
   paste(text: string): void;
 }
 
+/** The line end a copy uses: \r\n on Windows, as Windows Terminal's copy
+ * (microsoft/terminal src/buffer/out/textBuffer.cpp, TextBuffer::GetPlainText adds L"\r\n"
+ * after every row but the last that didn't wrap), and \n elsewhere, as macOS and Linux
+ * terminals. Decided by roster's own OS test (platform/os.ts, the one Ctrl+V's binding uses),
+ * not xterm.js's (it joins rows with \r\n when `navigator.platform` says Windows). */
+export function copyLineEnd(): "\r\n" | "\n" {
+  return runsOnWindows() ? "\r\n" : "\n";
+}
+
 /** The selection as it's copied: each line without the spaces after its end, as Windows
- * Terminal trims them (TextBuffer's CopyRequest, trimTrailingWhitespace). A full-screen program
- * pads its rows with spaces, which xterm keeps. A line that wrapped comes as one line, so the
- * spaces where it wrapped stay; xterm ends lines with \r\n on Windows. */
-export function copiedText(selection: string): string {
-  return selection.replace(/ +(?=\r?\n)| +$/g, "");
+ * Terminal trims them (TextBuffer's CopyRequest, trimTrailingWhitespace), and ended with `eol`
+ * (copyLineEnd). A full-screen program pads its rows with spaces, which xterm keeps. A line that
+ * wrapped comes as one line, so the spaces where it wrapped stay. */
+export function copiedText(selection: string, eol: "\r\n" | "\n" = copyLineEnd()): string {
+  return selection.replace(/ +(?=\r?\n)| +$/g, "").replace(/\r?\n/g, eol);
 }
 
 /** Copies the selection; false (and the clipboard untouched) when nothing is selected. */
