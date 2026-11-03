@@ -565,6 +565,8 @@ function Workspace({
         openCommandLine: (text) => openCommandLineRef.current(text),
         // Folders (ticket 61, decision Q93): init.lua's Folders, and the ones to move in once.
         builtinSettings: async (name) => (name === "folders" ? foldersSettings(registries.folders, platform.folders, store) : null),
+        // On `:tutor`'s demo, a load failure says so (#233).
+        demo: Boolean(tutor?.demo),
       }),
   );
   const pluginSnap = useSyncExternalStore(plugins.subscribe, plugins.snapshot);

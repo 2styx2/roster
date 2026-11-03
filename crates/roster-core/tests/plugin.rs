@@ -594,6 +594,29 @@ fn a_hook_that_loops_runs_out_of_time_and_a_repeat_offender_is_disabled() {
     assert!(host.call("loopy", fine, json!({})).error.is_some());
 }
 
+/// Its manifest is read within the host's load limits, as its init.lua is, not a fixed second
+/// (T151): a test can give a loaded machine generous ones. Shown here the other way, with none.
+#[test]
+fn a_manifest_is_read_within_the_hosts_load_limit() {
+    let busy = "for i = 1, 5000 do end\n".to_string() + &manifest("busy", &[]);
+    let dir = plugin_dir("manifest-limit", &busy, "");
+    let host = PluginHost::new(
+        Arc::new(FakeServe::default()),
+        Limits {
+            load: Duration::ZERO,
+            ..Limits::default()
+        },
+    );
+    let e = host.load(&Source::Dir(dir.to_path_buf()), &[]).unwrap_err();
+    assert_eq!(e.file.as_deref(), Some("roster-plugin.lua"), "{e}");
+    assert!(e.message.contains("took longer than 0 ms"), "{e}");
+    // With the default limits the same manifest reads fine.
+    let (m, _) = host_with(Arc::new(FakeServe::default()))
+        .load(&Source::Dir(dir.to_path_buf()), &[])
+        .unwrap();
+    assert_eq!(m.name, "busy");
+}
+
 #[test]
 fn a_plugin_that_eats_memory_is_stopped() {
     let dir = plugin_dir(

@@ -14,6 +14,8 @@
 #                                                   (/etc/ssh/keys-USER, /vmfs/volumes) are DIR/NAME/etc/..., DIR/NAME/vmfs/...
 #                                 DIR/NAME/blocked  ip:port lines this Host can't reach (its `nc -z` fails)
 #                                 DIR/NAME/slow     seconds each connection to it takes before it runs anything
+#                                 DIR/NAME/hold     each connection to it waits while this file is there (the test
+#                                                   deletes it to let them go: a signal, not a guess at how long)
 #                               FAKE_HOST_PATH=DIR goes first on every stand-in Host's PATH (a test's own tools)
 #                               Each run appends "start NAME" and "end NAME" to DIR/connections.
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
@@ -58,6 +60,9 @@ if hosts:
             print(f"ssh: connect to host {dest} port 22: Connection timed out", file=sys.stderr)
             sys.exit(255)
         open(log, "a").write(f"start {dest}\n")
+        hold, held_until = os.path.join(root, "hold"), time.monotonic() + 120    # pytest-timeout's, at most
+        while os.path.exists(hold) and time.monotonic() < held_until:
+            time.sleep(0.02)
         slow = os.path.join(root, "slow")
         if os.path.exists(slow):
             time.sleep(float(open(slow).read() or 1))

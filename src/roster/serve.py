@@ -1627,6 +1627,9 @@ class Watcher(threading.Thread):
     def __init__(self, state):
         super().__init__(daemon=True, name="roster-watch")
         self.state, self.stop = state, threading.Event()
+        # The first look is taken here, before inventory.watch answers: taken when the thread got to run, it could
+        # see an edit saved in between as how the file already was, and never apply it (T151).
+        self.first = self.look(state.path)
 
     @staticmethod
     def look(path):
@@ -1637,7 +1640,7 @@ class Watcher(threading.Thread):
         return st.st_mtime_ns, st.st_size, st.st_ino
 
     def run(self):
-        last = settling = self.look(self.state.path)
+        last = settling = self.first
         wait = WATCH_EVERY
         while not self.stop.wait(wait):
             now = self.look(self.state.path)

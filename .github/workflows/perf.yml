@@ -1,0 +1,53 @@
+# The performance budgets (T151, #270), once a week and by hand: never on a pull request, so they gate
+# nothing. A budget times the machine as much as the code (docs/app/dev/testing.md, "Tests that pass on a
+# busy machine too"), so the ordinary runs leave them out: Vitest's budget() tests run only with ROSTER_PERF
+# set, roster-core's only with --ignored. Here each runs on a runner of its own with nothing else in the job,
+# the nearest CI has to an idle machine. A red run here is a hint to time it again on an idle machine,
+# before and after the change it points at, not a broken build.
+name: Performance budgets
+
+on:
+  schedule:
+    - cron: "41 5 * * 1"        # Mondays, 05:41 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: Frontend budgets (Vitest, ROSTER_PERF=1)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      # The whole suite with the budgets in: they're named by what they time, not by one word to filter on.
+      - run: npm test
+        env:
+          ROSTER_PERF: "1"
+
+  core:
+    name: Core budgets (cargo test --ignored)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Every #[ignore]d test of roster-core's is a budget (the Topology and Mesh Plugins'); their limits
+      # are set for this debug build, as docs/app/dev/testing.md runs them.
+      - run: cargo test -p roster-core -- --ignored

@@ -118,7 +118,7 @@ def test_an_outside_edit_applied_by_the_watcher_is_synced(live_s, repo, isolated
     s = live_s
     s.ok("inventory.watch", {"auto": True})
     save(repo, repo.read_text().replace("      plain:", "      plain2:"))
-    assert s.note(timeout=2.0)["params"] == {"applied": True, "error": None, "sync": {"ok": True}}
+    assert s.note()["params"] == {"applied": True, "error": None, "sync": {"ok": True}}
     assert "Host plain2\n" in ssh_config(isolated) and "Host plain\n" not in ssh_config(isolated)
 
 
@@ -127,10 +127,10 @@ def test_a_broken_outside_edit_syncs_nothing_until_it_loads(live_s, repo, isolat
     s.ok("inventory.watch", {"auto": True})
     good = repo.read_text()
     save(repo, good.replace("      flow: {ip: 10.0.0.2", "      flow: {ip: 10.0.0.2,,"))
-    n = s.note(timeout=2.0)["params"]
+    n = s.note()["params"]
     assert n["error"]["line"] and "sync" not in n and ssh_config(isolated) == ""
     save(repo, good.replace("      plain:", "      fixed:"))
-    assert s.note(timeout=2.0)["params"]["sync"] == {"ok": True}
+    assert s.note()["params"]["sync"] == {"ok": True}
     assert "Host fixed\n" in ssh_config(isolated)
 
 
@@ -138,7 +138,7 @@ def test_an_outside_edit_not_applied_syncs_nothing_until_source_applies_it(live_
     s = live_s
     s.ok("inventory.watch", {"auto": False})
     save(repo, repo.read_text().replace("      plain:", "      plain2:"))
-    assert s.note(timeout=2.0)["params"] == {"applied": False, "error": None}
+    assert s.note()["params"] == {"applied": False, "error": None}
     assert ssh_config(isolated) == ""
     r = s.ok("inventory.reload")
     assert r["changed"] is True and r["sync"] == {"ok": True} and "Host plain2\n" in ssh_config(isolated)
