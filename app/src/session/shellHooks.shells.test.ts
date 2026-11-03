@@ -48,7 +48,17 @@ const shown = (out: string) => out.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07
  * console waits for a cursor-position answer is lost). Then Enter, on its own, once the shell has
  * drawn the line. Each step waits for a sign, never for the shell to go quiet: on a busy machine
  * a shell still starting is quiet too. */
-/** What the shell printed since the last Enter, and the cursor's line on its screen now. */
+/** The cursor's line once a terminal of the pty's size (120 by 40) has drawn `out`. */
+async function screenLine(out: string): Promise<CursorLine> {
+  const screen = new XtermPromptScreen({ cols: 120, rows: 40 });
+  screen.write(out);
+  await screen.flushed();
+  const at = screen.line();
+  screen.dispose();
+  return at;
+}
+
+/** What the shell printed since the last Enter, and the cursor's line on a screen it's drawn on. */
 type Ready = (since: string, at: CursorLine) => boolean;
 
 function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Promise<string> {
@@ -56,25 +66,32 @@ function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Pr
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
     const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV, cwd });
-    // The shell's screen, as the tab's terminal draws it (120 by 40, as stty says).
-    const screen = new XtermPromptScreen({ cols: 120, rows: 40 });
     let out = "";
     let answered = 0;
     // Where the last thing typed went in: what the shell printed after it is its answer.
     let mark = 0;
     let line: string | undefined;
+    let checking = false;
     const next = () => {
-      const since = out.slice(mark);
-      if (line === undefined) {
-        if (!lines.length || !ready(since, screen.line())) return;
-        line = lines.shift()!;
-        child.stdin.write(line);
-      } else {
-        if (!shown(since).includes(line.trim())) return;
+      if (line !== undefined) {
+        if (!shown(out.slice(mark)).includes(line.trim())) return;
         line = undefined;
         child.stdin.write("\r");
+        mark = out.length;
+        return;
       }
-      mark = out.length;
+      if (checking || !lines.length) return;
+      // Is it ready: what it printed since the last Enter, drawn on a screen of its own.
+      checking = true;
+      const since = out.slice(mark);
+      void screenLine(since).then((at) => {
+        checking = false;
+        if (out.length !== mark + since.length) return next(); // more came meanwhile: look again
+        if (line !== undefined || !ready(since, at)) return;
+        line = lines.shift()!;
+        child.stdin.write(line);
+        mark = out.length;
+      });
     };
     const timer = setTimeout(() => child.kill("SIGKILL"), 40_000);
     child.stdout.setEncoding("utf8");
@@ -82,14 +99,12 @@ function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Pr
       out += d;
       const asks = out.match(ASK) ?? [];
       for (; answered < asks.length; answered++) child.stdin.write(asks[answered] === "\x1b[6n" ? "\x1b[1;1R" : "\x1b[?62;22c");
-      screen.write(d);
-      void screen.flushed().then(next);
+      next();
     });
     child.stderr.on("data", (d: Buffer) => (out += d.toString()));
     child.stdin.on("error", () => {});
     child.on("close", () => {
       clearTimeout(timer);
-      screen.dispose();
       resolve(out);
     });
   });
