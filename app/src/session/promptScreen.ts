@@ -12,10 +12,11 @@ const SCROLLBACK = 50;
 export class XtermPromptScreen implements PromptScreen {
   private readonly term: Terminal;
   private pending = 0;
-  private readonly clamp = new CsiClamp();
+  private readonly clamp: CsiClamp;
 
   constructor(size: TermSize) {
     this.term = new Terminal({ cols: size.cols, rows: size.rows, scrollback: SCROLLBACK, allowProposedApi: false });
+    this.clamp = new CsiClamp(this.term);
   }
 
   write(data: Uint8Array | string) {

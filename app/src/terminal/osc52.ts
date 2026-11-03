@@ -8,6 +8,7 @@
 import type { IDisposable, Terminal } from "@xterm/xterm";
 import type { Clipboard } from "../platform/types";
 import { CsiClamp } from "./csiClamp";
+import { guarded } from "./xtermGuard";
 
 /** The most a program may put on the clipboard at once, decoded: 1 MiB. Far more than anyone
  * copies from a screen (a full 10,000-line scrollback at 100 columns is about 1 MB), and small
@@ -62,12 +63,16 @@ export interface Osc52Deps {
 /** Handles OSC 52 in `t`; returns unwire. The sequence is always used up (never printed), whether
  * or not it sets the clipboard. */
 export function wireOsc52(t: Pick<Terminal, "parser">, deps: Osc52Deps): () => void {
-  const handler: IDisposable = t.parser.registerOscHandler(52, (body) => {
-    if (!deps.enabled() || !deps.onScreen()) return true;
-    const text = osc52Text(body);
-    if (text !== null) void deps.clipboard().writeText(text).catch(() => {});
-    return true;
-  });
+  // A throw in it skips that sequence rather than stopping the terminal (xtermGuard.ts).
+  const handler: IDisposable = t.parser.registerOscHandler(
+    52,
+    guarded(t, (body: string) => {
+      if (!deps.enabled() || !deps.onScreen()) return true;
+      const text = osc52Text(body);
+      if (text !== null) void deps.clipboard().writeText(text).catch(() => {});
+      return true;
+    }),
+  );
   return () => handler.dispose();
 }
 
@@ -167,15 +172,26 @@ const OSC52_BYTES = [0x1b, 0x5d, 0x35, 0x32, 0x3b];
 
 /** Writes a Session's output to `t`, from the output gate (hold.ts: `held` is output that came
  * while the tab was hidden), with every OSC 52 begun in held output taken out (HeldOsc52Filter)
- * and every CSI count capped (csiClamp.ts: a huge one would freeze the tab). Nothing is kept per
- * write, so a write that throws leaves nothing behind. */
-export function screenWriter(t: Pick<Terminal, "write">): { write(data: Uint8Array, held: boolean): void } {
+ * and every CSI count capped and ED 1 made safe (csiClamp.ts: a huge count would freeze the tab,
+ * an ED 1 at the screen's end stop it). Nothing is kept per write, so a write that throws leaves
+ * nothing behind; a throw out of xterm.js's `write` itself (it refuses a write past 50 MB queued)
+ * is logged once, without the output, and the next write goes on (ticket 172). */
+export function screenWriter(t: Terminal): { write(data: Uint8Array, held: boolean): void } {
   const filter = new HeldOsc52Filter();
-  const clamp = new CsiClamp();
+  const clamp = new CsiClamp(t);
+  let logged = false;
   return {
     write(data, held) {
       const bytes = clamp.clamp(filter.filter(data, held));
-      if (bytes.length > 0) t.write(bytes);
+      if (bytes.length === 0) return;
+      try {
+        t.write(bytes);
+      } catch (e) {
+        if (logged) return;
+        logged = true;
+        const kind = e instanceof Error ? e.name : typeof e;
+        console.warn(`roster: the terminal refused a Session's output (${kind}); it was dropped`);
+      }
     },
   };
 }
