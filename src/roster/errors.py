@@ -141,6 +141,9 @@ SAME_HOST_NAME = 146        # warning: the same Host name in two Inventories (`s
 SAME_ADDRESS = 147          # warning: the same address and port in two Inventories, with different host keys
 INDEX_NOT_WRITTEN = 148     # warning: the named Inventories' ssh config index is stale and couldn't be rewritten
                             #   (a read-only ~/.ssh); the command goes on (catalog row 206)
+SSH_REFUSES_SCRIPT = 149    # revoke: this Box's ssh is a batch file (a .cmd/.bat shim on Windows), and roster won't
+                            #   hand it the key-removal script, which holds characters cmd.exe acts on; nothing is
+                            #   revoked (catalog row 207)
 
 
 class Problem(Exception):

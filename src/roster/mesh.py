@@ -418,9 +418,9 @@ grep -qE "$T" "$AK" 2>/dev/null && echo "ERROR a roster-mesh line is still there
 def on_host(h, script, timeout=STEP_TIMEOUT):
     """Run SCRIPT on H over the Box's ssh (its key, roster's ssh config). Returns (report lines, None) or
     (None, why it didn't finish). The script goes as bytes: text mode on Windows would hand sh "\r\n" line ends."""
-    from .sshops import left_out
-    why = left_out(h["name"])
-    if why:                             # `ssh NAME` would reach another named Inventory's Host (ticket 115)
+    from .sshops import not_reached
+    why = not_reached(h["name"])
+    if why:                             # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
         return None, why
     with _ssh["lock"]:
         if _ssh["closed"]:

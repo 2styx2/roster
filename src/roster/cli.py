@@ -44,17 +44,28 @@ def cmd_init(args):
 
 LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
             "so `ssh {name}` reaches that one; skipped (`roster inv use` this Inventory to reach it)")
+NOT_SYNCED = ("not in this Box's ssh config for this Inventory, so `ssh {name}` wouldn't reach it; skipped "
+              "(`roster{again} sync` writes it)")
+
+
+def again():
+    """How to run roster on this run's Inventory again, for a fix: ` --inv NAME`, or nothing for the unnamed one."""
+    from .common import current_inventory
+    name = current_inventory()
+    return f" --inv {name}" if name else ""
 
 
 def skip_left_out(hosts, to_stderr=False):
     """HOSTS without the key Hosts a plain `ssh NAME` wouldn't reach (ticket 115): another named Inventory's Host by
-    that name is the one in this Box's ssh config, so roster must never ssh to it by name. Each skipped one is said."""
-    from .sshops import left_out
+    that name is the one in this Box's ssh config, or this Inventory's part of it doesn't have NAME (not synced here),
+    so roster must never ssh to it by name. Each skipped one is said."""
+    from .sshops import left_out, not_reached
     keep = []
     for h in hosts:
-        if h["enroll"] and left_out(h["name"]):
-            print(f"  {h['name']}: " + LEFT_OUT.format(name=h["name"]), file=sys.stderr if to_stderr else sys.stdout,
-                  flush=True)
+        if h["enroll"] and not_reached(h["name"]):
+            words = LEFT_OUT if left_out(h["name"]) else NOT_SYNCED
+            print(f"  {h['name']}: " + words.format(name=h["name"], again=again()),
+                  file=sys.stderr if to_stderr else sys.stdout, flush=True)
         else:
             keep.append(h)
     return keep
@@ -62,12 +73,13 @@ def skip_left_out(hosts, to_stderr=False):
 
 def refuse_left_out(h):
     """`roster run` (and --sudo) over ssh: never by a name that reaches another Inventory's Host (its sudo password
-    would go there)."""
-    from .sshops import left_out
-    why = left_out(h["name"])
+    would go there), or that this Inventory's part of this Box's ssh config doesn't have."""
+    from .sshops import left_out, not_reached
+    why = not_reached(h["name"])
     if why:
-        die(f"{why} - not running anything: make this Inventory the active one (`roster inv use`), or rename one of "
-            "the two in its roster.yml")
+        fix = ("make this Inventory the active one (`roster inv use`), or rename one of the two in its roster.yml"
+               if left_out(h["name"]) else f"`roster{again()} sync` writes this Inventory's ssh config here")
+        die(f"{why} - not running anything: {fix}")
 
 
 def cmd_setup(cfg, args):
@@ -649,13 +661,25 @@ def revoke_on(h, script):
     return "ROSTER_OK" in r.stdout
 
 
+def check_ssh_takes(script):
+    """Before revoke asks or connects: an ssh roster won't hand SCRIPT (on Windows, a batch file, as cmd.exe would act
+    on the script's characters) is a clean error (code 149), not a traceback half way through the Hosts."""
+    from .errors import SSH_REFUSES_SCRIPT
+    try:
+        program_argv(["ssh", "-o", "BatchMode=yes", "host", script])
+    except ValueError as e:
+        die(f"[{SSH_REFUSES_SCRIPT}] {e} - nothing was revoked: put OpenSSH's ssh.exe first on PATH")
+
+
 def cmd_revoke(cfg, args):
     hosts = skip_left_out([h for h in selected(cfg, args.only) if h["enroll"]])
+    script = "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))
+    if hosts:
+        check_ssh_takes(script)
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
-    script = "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))
     bad = 0
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, ok in zip(hosts, ex.map(lambda h: revoke_on(h, script), hosts), strict=True):
@@ -723,6 +747,9 @@ def cmd_revoke_all(args):
                 problems += 1
         plan.append((label, cfg, hosts))
     total = sum(len(hosts) for _, _, hosts in plan)
+    for _, cfg, hosts in plan:
+        if hosts:
+            check_ssh_takes("sh -c " + shlex.quote(remove_key_script(cfg["tag_re"])))
     if not args.yes:
         tags = ", ".join(sorted({f"'{cfg['tag']}'" for _, cfg, _ in plan})) or "this box's key"
         counts = ", ".join(f"{label} {len(hosts)}" for label, _, hosts in plan)

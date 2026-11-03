@@ -1462,6 +1462,8 @@ def test_naming_the_inventory_the_mesh_state_is_from_moves_it_once(net, isolated
     assert "Mesh state" in capsys.readouterr().out
     assert (config_dir() / "mesh-lab.json").read_bytes() == before
     assert not (config_dir() / "mesh.json").exists()
+    main(["sync"])                                  # named: its own ssh config, as after any `inv add`
+    capsys.readouterr()
     assert main(["mesh"]) == 0 and "already in the mesh" in capsys.readouterr().out
 
 
@@ -1507,3 +1509,18 @@ def test_removing_a_named_inventory_sets_its_mesh_state_aside(net, capsys):
     kept = list(config_dir().glob("mesh-lab.json.removed-*"))
     assert len(kept) == 1 and str(kept[0]) in out
     assert not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_the_mesh_never_reaches_a_host_of_an_inventory_not_synced_here(net, isolated, capsys):
+    """#367's review: with the index in ~/.ssh/config, a name not in this Inventory's part of it reaches another
+    Inventory's Host or nothing roster wrote: the Mesh leaves it pending and never runs `ssh NAME`."""
+    other = isolated["home"] / "other"
+    other.mkdir()
+    (other / "roster.yml").write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      orion-2: 10.0.9.2\n")
+    main(["inv", "add", "lab", str(net.cfg_path)])
+    main(["inv", "add", "other", str(other / "roster.yml")])
+    main(["--inv", "other", "sync"])
+    capsys.readouterr()
+    assert main(["--inv", "lab", "mesh"]) == 1
+    assert net.connections() == []
+    assert "orion-2 is not in this Box's ssh config for this Inventory" in capsys.readouterr().out

@@ -940,3 +940,58 @@ def test_revoke_all_takes_no_only_inv_or_config(two, capsys, argv):
     with pytest.raises(SystemExit):
         main(argv)
     assert "--all" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- an Inventory not synced here (#367's review)
+
+def home_not_synced(two, capsys):
+    """work and home named, only work synced: ~/.ssh/config includes the index, which has none of home's Hosts, so
+    `ssh pi` doesn't reach home's pi."""
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    run(capsys, "sync")
+
+
+@pytest.mark.parametrize("which", [["--inv", "home"], ["-c", "HOME"]])
+def test_revoke_never_reaches_a_host_of_an_inventory_not_synced_here(two, capsys, ssh_log, which):
+    home_not_synced(two, capsys)
+    which = [str(two["home"]) if w == "HOME" else w for w in which]
+    code, out, _ = run(capsys, *which, "revoke", "-y")
+    assert ssh_log() == []
+    assert "pi: not in this Box's ssh config" in out
+
+
+def test_check_never_reaches_a_host_of_an_inventory_not_synced_here(two, capsys, ssh_log):
+    home_not_synced(two, capsys)
+    _, out, _ = run(capsys, "--inv", "home", "check")
+    assert ssh_log() == []
+    assert "pi: not in this Box's ssh config" in out
+
+
+@pytest.mark.parametrize("argv", [["run", "pi", "--", "id"], ["run", "--sudo", "pi", "--", "id"]])
+def test_run_never_reaches_a_host_of_an_inventory_not_synced_here(two, capsys, ssh_log, monkeypatch, argv):
+    two["home"].write_text(CLASH_HOME)
+    monkeypatch.setenv("HOMEPW", "hunter2")
+    home_not_synced(two, capsys)
+    with pytest.raises(SystemExit, match="not in this Box's ssh config"):
+        main(["--inv", "home", *argv])
+    assert ssh_log() == []
+
+
+def test_a_synced_inventory_that_isnt_the_active_one_is_still_reached(two, capsys, ssh_log):
+    home_not_synced(two, capsys)
+    run(capsys, "--inv", "home", "sync")
+    run(capsys, "--inv", "home", "check")
+    assert any(ln.split()[-2:] == ["pi", "true"] for ln in ssh_log())
+
+
+@pytest.mark.parametrize("argv", [["revoke"], ["revoke", "--all"]])
+def test_an_ssh_roster_wont_hand_the_script_is_a_clean_error(two, capsys, monkeypatch, argv):
+    home_not_synced(two, capsys)
+
+    def refuse(argv):
+        raise ValueError("ssh.CMD is a batch file, and roster won't pass it an argument with any of ...")
+    monkeypatch.setattr("roster.cli.program_argv", refuse)
+    with pytest.raises(SystemExit) as e:
+        main([*argv, "-y"])
+    assert "[149]" in str(e.value.code) and "batch file" in str(e.value.code)
