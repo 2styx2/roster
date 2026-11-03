@@ -29,7 +29,7 @@ The Release notes start with that version's section of [news.md](news.md) (what'
 The app binaries carry code copied or ported from other projects (today `crates/roster-core/src/wcwidth.rs`, character widths from xterm.js, MIT). Their licences ask that the notice ship with every copy, so `THIRD-PARTY-NOTICES` at the repo root lists each such part with its copyright and licence text, and every app download carries it next to `LICENSE`:
 
 - **The archives** (the Windows `.zip`, the Linux and macOS `.tar.gz`) pack both next to the binary.
-- **The installers** carry both as app resources (`bundle.resources` in `app/src-tauri/tauri.conf.json`), so they land on disk with the installed app: next to `roster-app.exe` in the install folder (the `-setup.exe` and the `.msi`), in `/usr/lib/Roster/` (the `.deb`, and inside the `.AppImage`), in `Roster.app/Contents/Resources/` (the `.dmg`). `bundle.licenseFile` is `LICENSE`, the licence the Windows installers show.
+- **The installers** carry both as app resources (`bundle.resources` in `app/src-tauri/tauri.conf.json`), so they land on disk with the installed app: next to `roster-app.exe` in the install folder (the `-setup.exe` and the `.msi`), in `/usr/lib/Roster/` (the `.deb`, and inside the `.AppImage`), in `Roster.app/Contents/Resources/` (the `.dmg`). `bundle.licenseFile` is `LICENSE`, the licence the Windows installers show before installing and the `.dmg` shows as its licence agreement when it's opened.
 - **The app** shows them: `:version` (`:help license`, `:help notices`) is a help page with the version, roster's licence, where each download puts the files and the notices' text, bundled from `THIRD-PARTY-NOTICES` when the app is built (`app/src/help/guides.ts`).
 
 The CLI's files carry no third-party code, so they ship `LICENSE` alone.
@@ -40,7 +40,7 @@ The CLI's files carry no third-party code, so they ship `LICENSE` alone.
 
 - The Version job checks `tauri.conf.json` bundles both files (`--config`), before anything is built.
 - After packing, the `app` job checks its archives: each fails when it holds `LICENSE` without `THIRD-PARTY-NOTICES` beside it.
-- Then it unpacks every installer it built (the `-setup.exe` with 7-Zip, the `.msi` with `msiexec /a`, the `.deb` with `dpkg-deb -x`, the `.AppImage` with `--appimage-extract`, the `.dmg` mounted read-only, and `Roster.app`) and fails when one has no folder with both files; its log names the folder each was found in.
+- Then it unpacks every installer it built (the `-setup.exe` with 7-Zip, the `.msi` with `msiexec /a`, the `.deb` with `dpkg-deb -x`, the `.AppImage` with `--appimage-extract`, the `.dmg` mounted read-only (agreeing to its licence), and `Roster.app`) and fails when one has no folder with both files; its log names the folder each was found in.
 
 `tests/test_release_notices.py` (run by `uv run pytest` on every pull request) fails if the bundle config loses either file, if a step of `release.yml` that packs `LICENSE` into an app archive doesn't pack the notices too, or if a check step is gone. A pull request that touches `release.yml`, the check script or `tauri.conf.json` runs the whole release as a dry run, installers included.
 

@@ -19,7 +19,7 @@ import os
 import sys
 import tarfile
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 NOTICES = "THIRD-PARTY-NOTICES"
 
@@ -66,10 +66,10 @@ def config_gaps(path):
 
 
 def together(folder):
-    """The first folder under FOLDER (itself included) that holds both LICENSE and THIRD-PARTY-NOTICES."""
+    """The first folder under FOLDER (itself included) that holds both LICENSE and THIRD-PARTY-NOTICES, with /."""
     for dirpath, _dirs, files in sorted(os.walk(folder)):
         if "LICENSE" in files and NOTICES in files:
-            return dirpath
+            return Path(dirpath).as_posix()    # the same log on every OS
     return None
 
 

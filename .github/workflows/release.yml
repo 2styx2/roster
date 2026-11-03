@@ -215,7 +215,8 @@ jobs:
         run: |
           p="roster-app-$VERSION-macos"
           mkdir -p unpacked/dmg
-          hdiutil attach -nobrowse -readonly -mountpoint unpacked/dmg "out/$p-universal.dmg" > /dev/null
+          # The .dmg shows roster's licence as its agreement (bundle.licenseFile): agree to it to mount it.
+          { yes || true; } | PAGER=cat hdiutil attach -nobrowse -readonly -mountpoint unpacked/dmg "out/$p-universal.dmg" > /dev/null
           s=0
           python -I scripts/check-release-notices.py unpacked/dmg "${{ matrix.target_dir }}/bundle/macos/Roster.app" || s=$?
           hdiutil detach unpacked/dmg > /dev/null
