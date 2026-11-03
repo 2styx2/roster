@@ -296,9 +296,10 @@ function Main {
         $new = New-Text $old $Pub
         $created = $null -eq $old
         $secure = if ($mine -eq $adminFile) { $adminSecure } elseif ($created) { $userSecure } else { $null }
+        # an existing user file's ACL, as it is (File.Replace keeps it): never changed, only said
+        if ($mine -ne $adminFile -and -not $created) { User-AclWarnings $mine $me }
         if ($created -or $new -cne $old) { Write-Keys $mine $new $secure }
         if ($mine -eq $adminFile) { Set-AdminAcl $mine; Say 'SCOPE admins' }
-        elseif (-not $created) { User-AclWarnings $mine $me }
         Say "FILE $mine"
     } elseif ($Mode -eq 'remove') {
         # both files sshd could have read this account's keys from (it may have joined or left Administrators since)
