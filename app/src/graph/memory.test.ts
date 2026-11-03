@@ -61,4 +61,36 @@ describe("one open graph's places", () => {
     places.persist();
     expect(new GraphMemory(store).load("p/v").layout).toMatchObject({ nodes: { a: [500, 600], b: [b.x, b.y] }, moved: ["a"] });
   });
+
+  it("a cluster the user moves takes its nodes along, keeps their shape, and is kept as theirs (#237)", () => {
+    const store = fakeStore();
+    const places = new GraphPlaces(new GraphMemory(store), "p/v");
+    const l = places.layout(g);
+    const c = l.clusters.get("web")!;
+    const a = l.nodes.get("a")!;
+    const b = l.nodes.get("b")!;
+    places.moveCluster("web", c.x + 500, c.y - 200);
+    const after = places.layout(g);
+    expect(after.clusters.get("web")).toMatchObject({ x: c.x + 500, y: c.y - 200 });
+    expect(after.nodes.get("a")).toEqual({ x: a.x + 500, y: a.y - 200 });
+    expect(after.nodes.get("b")).toEqual({ x: b.x + 500, y: b.y - 200 });
+    expect(places.clusterPlacedByUser("web")).toBe(true);
+    places.persist();
+    const kept = new GraphMemory(store).load("p/v").layout;
+    expect(kept).toMatchObject({ clusters: { web: [c.x + 500, c.y - 200] }, movedClusters: ["web"] });
+    // A State read back gives the same places.
+    const again = new GraphPlaces(new GraphMemory(store), "p/v").layout(g);
+    expect(again.nodes.get("a")).toEqual({ x: a.x + 500, y: a.y - 200 });
+    // Put back where it was, it's the layout's again.
+    places.moveCluster("web", c.x, c.y, false);
+    expect(places.layout(g).nodes.get("b")).toEqual(b);
+    expect(places.clusterPlacedByUser("web")).toBe(false);
+  });
+
+  it("ignores a moved-clusters list it can't read", () => {
+    const store = fakeStore({ [GRAPHS_KEY]: [{ key: "p/v", nodes: { a: [1, 2] }, clusters: { web: [0, 0] }, movedClusters: ["web", 3], folds: {} }, { key: "q/v", nodes: { a: [1, 2] }, clusters: {}, movedClusters: "web", folds: {} }] });
+    const m = new GraphMemory(store);
+    expect(m.load("p/v").layout?.movedClusters).toEqual(["web"]);
+    expect(m.load("q/v").layout?.movedClusters).toBeUndefined();
+  });
 });

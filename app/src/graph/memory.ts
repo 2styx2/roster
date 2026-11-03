@@ -1,6 +1,7 @@
 // A graph's layout in the State (ticket 77): where each node and cluster was placed, and which
 // clusters the user collapsed or opened, per view, so the graph opens the same way next time, and
-// which nodes the user placed themselves (`moved`, #237; a State from before it has none). The
+// which nodes and clusters the user placed themselves (`moved` and `movedClusters`, #237; a State
+// from before them has none). The
 // State is untrusted (another app version may have written it): what can't be read is ignored.
 import { layoutGraph, type Layout, type SavedLayout } from "./layout";
 import type { GraphData } from "./model";
@@ -21,6 +22,7 @@ interface Stored {
   nodes: Record<string, [number, number]>;
   clusters: Record<string, [number, number]>;
   moved: string[];
+  movedClusters: string[];
   folds: Record<string, boolean>;
 }
 
@@ -48,7 +50,7 @@ export class GraphMemory {
   private all(): Stored[] {
     const v = this.store.get(GRAPHS_KEY);
     if (!Array.isArray(v)) return [];
-    return v.filter(isObj).flatMap((g) => (typeof g.key === "string" ? [{ key: g.key, nodes: points(g.nodes), clusters: points(g.clusters), moved: ids(g.moved), folds: folds(g.folds) }] : []));
+    return v.filter(isObj).flatMap((g) => (typeof g.key === "string" ? [{ key: g.key, nodes: points(g.nodes), clusters: points(g.clusters), moved: ids(g.moved), movedClusters: ids(g.movedClusters), folds: folds(g.folds) }] : []));
   }
 
   /** View `key`'s graph as last saved (`source/id`). */
@@ -56,12 +58,12 @@ export class GraphMemory {
     const g = this.all().find((x) => x.key === key);
     if (!g) return { folds: {} };
     const placed = Object.keys(g.nodes).length > 0 || Object.keys(g.clusters).length > 0;
-    const layout: SavedLayout = { nodes: g.nodes, clusters: g.clusters, ...(g.moved.length ? { moved: g.moved } : {}) };
+    const layout: SavedLayout = { nodes: g.nodes, clusters: g.clusters, ...(g.moved.length ? { moved: g.moved } : {}), ...(g.movedClusters.length ? { movedClusters: g.movedClusters } : {}) };
     return { ...(placed ? { layout } : {}), folds: g.folds };
   }
 
   save(key: string, memo: GraphMemo) {
-    const g: Stored = { key, nodes: memo.layout?.nodes ?? {}, clusters: memo.layout?.clusters ?? {}, moved: memo.layout?.moved ?? [], folds: memo.folds };
+    const g: Stored = { key, nodes: memo.layout?.nodes ?? {}, clusters: memo.layout?.clusters ?? {}, moved: memo.layout?.moved ?? [], movedClusters: memo.layout?.movedClusters ?? [], folds: memo.folds };
     this.store.set(GRAPHS_KEY, [g, ...this.all().filter((x) => x.key !== key)].slice(0, KEPT_GRAPHS));
   }
 }
@@ -73,6 +75,10 @@ export class GraphPlaces {
   private saved: SavedLayout | undefined;
   private folds: Record<string, boolean>;
   private dirty = false;
+  /** The graph last laid out: which nodes are in which cluster, for moving one whole. */
+  private graph: GraphData | undefined;
+  /** The cluster being moved (`hold`): it stays under the user and pushes nothing until let go. */
+  private holding: string | undefined;
 
   constructor(
     private readonly memory: GraphMemory | undefined,
@@ -84,7 +90,8 @@ export class GraphPlaces {
   }
 
   layout(g: GraphData): Layout {
-    const l = layoutGraph(g, this.saved);
+    this.graph = g;
+    const l = layoutGraph(g, this.saved, { holding: this.holding });
     if (!this.saved || placedMore(this.saved, l.saved)) this.dirty = true;
     this.saved = l.saved;
     return l;
@@ -96,8 +103,41 @@ export class GraphPlaces {
     if (!this.saved) return;
     const moved = (this.saved.moved ?? []).filter((m) => m !== id);
     if (mine) moved.push(id);
-    this.saved = { nodes: { ...this.saved.nodes, [id]: [Math.round(x), Math.round(y)] }, clusters: this.saved.clusters, ...(moved.length ? { moved } : {}) };
+    this.saved = { ...this.saved, nodes: { ...this.saved.nodes, [id]: [Math.round(x), Math.round(y)] } };
+    if (moved.length) this.saved.moved = moved;
+    else delete this.saved.moved;
     this.dirty = true;
+  }
+
+  /** Puts cluster `id`'s centre at (x, y), its nodes with it (each as far as the centre went, those
+   * the user placed too), kept from now on. `mine`: the user placed it, so it stays there; false when
+   * it's put back where the layout had it. */
+  moveCluster(id: string, x: number, y: number, mine = true) {
+    const was = this.saved?.clusters[id];
+    if (!this.saved || !was) return;
+    const dx = Math.round(x) - was[0];
+    const dy = Math.round(y) - was[1];
+    const nodes = { ...this.saved.nodes };
+    for (const n of this.graph?.nodes ?? []) {
+      const p = n.cluster === id ? nodes[n.id] : undefined;
+      if (p) nodes[n.id] = [p[0] + dx, p[1] + dy];
+    }
+    const movedClusters = (this.saved.movedClusters ?? []).filter((m) => m !== id);
+    if (mine) movedClusters.push(id);
+    this.saved = { ...this.saved, nodes, clusters: { ...this.saved.clusters, [id]: [was[0] + dx, was[1] + dy] } };
+    if (movedClusters.length) this.saved.movedClusters = movedClusters;
+    else delete this.saved.movedClusters;
+    this.dirty = true;
+  }
+
+  /** Holds cluster `id` while it's being moved (null lets go: then a neighbour it's on makes room). */
+  hold(id: string | null) {
+    this.holding = id ?? undefined;
+  }
+
+  /** Whether the user placed cluster `id` whole. */
+  clusterPlacedByUser(id: string): boolean {
+    return this.saved?.movedClusters?.includes(id) ?? false;
   }
 
   /** Whether the user placed node `id`. */

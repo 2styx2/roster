@@ -13,6 +13,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **Fix buttons in `:packages` and `:plugins`** (#213): a Package that can't be fetched has **Try again**, a cancelled one **Install…** (both run `:packages install NAME`, which fetches it again and shows the install prompt for one not installed: nothing installs without it), and a stopped Plugin **Reload** (`:plugins reload NAME`), with **Check for an update** for a Package's. Each button's tooltip shows the command it runs. See [errors](app/errors.md#packages).
 - **`:packages update NAME` on a Package that isn't installed shows the install prompt** (#213), as `:packages install NAME` does, instead of pointing you there. See [Packages](plugins.md#packages).
 - **`:plugins` says when a Plugin was written before api 4** (#228): its info notices are quiet now unless it marks them `quiet = false`, and **What changed** opens [the note for its author](plugins.md#upgrading-a-plugin-written-before-api-4).
+- **A collapsed cluster on a graph moves whole** (#237): `m` on it, then `h` `j` `k` `l` until Enter keeps the place (Esc puts it back), or drag it. Its nodes go with it and keep their places in it, so it opens looking as it did. It stays where you put it and is remembered as yours: a cluster you put it on moves to the nearest free place, and nothing else does. Before, `m` there said to open the cluster first. See [Graphs](plugins.md#graphs).
 
 ### Changed
 
