@@ -14,6 +14,7 @@ import {
   type HostAdd,
   type HostChanges,
   type BoxCheck,
+  type CheckStarted,
   type HostCheck,
   type HostKeyScan,
   type HostKeyTrust,
@@ -185,7 +186,12 @@ export function tauriBackend(): Backend {
     },
     openSession,
     openQuickSession,
-    checkHost: (host) => call<HostCheck>("host_check", { host }),
+    checkHost: (host, onStarted) => {
+      const started = new Channel<CheckStarted>();
+      if (onStarted) started.onmessage = onStarted;
+      return call<HostCheck>("host_check", { host, started });
+    },
+    stopCheck: (job) => call<{ stopping: boolean }>("host_check_stop", { job }).then((r) => r.stopping),
     checkBox: () => call<BoxCheck>("box_check"),
     listJobs: () => call<{ jobs: JobProgress[] }>("jobs_list").then((r) => r.jobs),
     pullInventory: () => call<PullResult>("inventory_pull"),

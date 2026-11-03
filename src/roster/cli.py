@@ -15,7 +15,7 @@ from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
 from .config import access_label, find_config, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
-from .errors import ROSTER_ERROR, UNKNOWN_HOST, Problem, inventory_problem
+from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
 from .providers import NO_PASSWORD, PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
@@ -42,6 +42,34 @@ def cmd_init(args):
     say(f"wrote {path} - edit it, then run: roster setup")
 
 
+LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
+            "so `ssh {name}` reaches that one; skipped (`roster inv use` this Inventory to reach it)")
+
+
+def skip_left_out(hosts, to_stderr=False):
+    """HOSTS without the key Hosts a plain `ssh NAME` wouldn't reach (ticket 115): another named Inventory's Host by
+    that name is the one in this Box's ssh config, so roster must never ssh to it by name. Each skipped one is said."""
+    from .sshops import left_out
+    keep = []
+    for h in hosts:
+        if h["enroll"] and left_out(h["name"]):
+            print(f"  {h['name']}: " + LEFT_OUT.format(name=h["name"]), file=sys.stderr if to_stderr else sys.stdout,
+                  flush=True)
+        else:
+            keep.append(h)
+    return keep
+
+
+def refuse_left_out(h):
+    """`roster run` (and --sudo) over ssh: never by a name that reaches another Inventory's Host (its sudo password
+    would go there)."""
+    from .sshops import left_out
+    why = left_out(h["name"])
+    if why:
+        die(f"{why} - not running anything: make this Inventory the active one (`roster inv use`), or rename one of "
+            "the two in its roster.yml")
+
+
 def cmd_setup(cfg, args):
     hosts = selected(cfg, args.only)
     waiting = [h for h in hosts if not h["reviewed"]]
@@ -57,7 +85,7 @@ def cmd_setup(cfg, args):
     no_answer = record_fingerprints(cfg, hosts)
     write_ssh_config(cfg)
 
-    key_hosts = [h for h in hosts if h["enroll"] and h["name"] not in no_answer]
+    key_hosts = skip_left_out([h for h in hosts if h["enroll"] and h["name"] not in no_answer])
     pw_hosts = [h for h in hosts if not h["enroll"]]
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         works = dict(zip([h["name"] for h in key_hosts], ex.map(lambda h: ssh_ok(h["name"]), key_hosts), strict=True))
@@ -95,6 +123,7 @@ def cmd_setup(cfg, args):
                     say(f"  FAIL  {h['name']}: {e}")
 
     write_claude_files(cfg)
+    warn_overlaps(cfg)
     if mesh.graph(cfg)["links"]:
         if args.only:
             say("mesh         not applied with --only (it covers the whole Mesh): run `roster mesh`")
@@ -111,9 +140,17 @@ def cmd_setup(cfg, args):
     return 1 if failed else 0
 
 
+def warn_overlaps(cfg):
+    """The same machine in two named Inventories (ticket 115): a warning each, never an error."""
+    from .inventories import overlaps
+    for w in overlaps(cfg):
+        say(f"warning: {w['message']} (fix: {w['fix']})")
+
+
 def cmd_sync(cfg, args):
     write_ssh_config(cfg)
     write_claude_files(cfg)
+    warn_overlaps(cfg)
     say("note: new hosts still need `roster setup` (it only touches hosts that aren't ready)")
     if mesh.status(cfg)["out_of_date"]:
         say("mesh out of date: roster.yml changed the Mesh since its last apply here - run `roster mesh`")
@@ -238,7 +275,7 @@ def cmd_mesh(cfg, args):
 
 
 def cmd_check(cfg, args):
-    hosts = selected(cfg, args.only)
+    hosts = skip_left_out(selected(cfg, args.only), to_stderr=args.json)
     if not args.json:
         warn_problems(hosts)
 
@@ -259,7 +296,7 @@ def cmd_check(cfg, args):
         jsonout.emit({"hosts": results, "mesh": drift, "ok": ok})
         return 0 if ok else 1
     bad = 0
-    width = max(len(h["name"]) for h in hosts)
+    width = max((len(h["name"]) for h in hosts), default=0)
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, res in sorted(ex.map(check, hosts), key=lambda r: r[0]["name"]):
             line = "  ".join(f"{k}:{'ok' if v else 'FAIL'}" for k, v in res.items())
@@ -287,7 +324,7 @@ def cmd_check_host(args):
     def inventory():
         path = None
         try:
-            path = find_config(args.config)
+            path = find_config(args.config, args.inv)
             cfg = load_config(path)
             setup_providers(cfg)
             return cfg
@@ -317,7 +354,7 @@ def cmd_check_box(args):
 
     path = cfg = error = None
     try:
-        path = find_config(args.config)
+        path = find_config(args.config, args.inv)
         cfg = load_config(path)
         setup_providers(cfg)
     except SystemExit as e:
@@ -561,6 +598,7 @@ def cmd_run(cfg, args):
     if args.sudo:
         return run_sudo(h, command)
     if h["enroll"]:
+        refuse_left_out(h)
         return run_instead(["ssh", "-o", "BatchMode=yes", h["name"], command])
     try:
         rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
@@ -585,6 +623,7 @@ def run_sudo(h, command):
             "(set auth: to the vault item that holds the password)")
     wrapped = sudo_wrap(command)
     if h["enroll"]:
+        refuse_left_out(h)
         # bytes: text mode on Windows would send "password\r\n", and sudo would take the "\r" as part of it
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], wrapped]),
                            input=(secret + "\n").encode(), capture_output=True)
@@ -603,7 +642,7 @@ def run_sudo(h, command):
 
 
 def cmd_revoke(cfg, args):
-    hosts = [h for h in selected(cfg, args.only) if h["enroll"]]
+    hosts = skip_left_out([h for h in selected(cfg, args.only) if h["enroll"]])
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
@@ -741,6 +780,66 @@ def cmd_bw(args):
         die("bw (the Bitwarden CLI) isn't installed")
 
 
+def cmd_inv(args):
+    """`roster inv`: name Inventories, pick the active one, forget one, and say which roster.yml roster uses."""
+    from . import inventories
+    from .config import locate_config
+    act = args.action
+    takes = {"list": 0, "which": 0, "use": 1, "remove": 1, "add": 2}[act]
+    given = [x for x in (args.name, args.path) if x is not None]
+    if len(given) != takes:
+        build_parser().error({0: f"inv {act} takes no NAME or PATH", 1: f"usage: roster inv {act} NAME",
+                              2: "usage: roster inv add NAME PATH"}[takes])
+    if args.json and act not in ("list", "which"):
+        build_parser().error("--json goes with inv list or inv which")
+    if act == "which":
+        path = locate_config(args.config, args.inv)
+        name = args.inv or inventories.name_of(path)
+        if args.json:
+            jsonout.emit({"path": str(path.expanduser().resolve()), "name": name, "exists": path.is_file()})
+            return 0 if path.is_file() else 1
+        if not path.is_file():
+            die(f"roster would use {path}, but it isn't there")
+        say(str(path.expanduser().resolve()))
+        return 0
+    if act == "list":
+        inv = inventories.load()
+        if args.json:
+            jsonout.emit(inv.view())
+            return 0
+        if not inv.inventories:
+            say("no named Inventories (roster inv add NAME PATH names one)")
+        width = max((len(x.name) for x in inv.inventories), default=0)
+        for x in inv.inventories:
+            missing = "" if x.path.is_file() else "  (not there)"
+            say(f"{'*' if x.name == inv.active else ' '} {x.name:<{width}}  {x.path}{missing}")
+        return 0
+    if act == "add":
+        first = inventories.add(args.name, args.path)
+        say(f"named {args.name}: {inventories.path_of(args.name)}"
+            + (f"; {args.name} is the active Inventory" if first else f" (`roster inv use {args.name}` makes it "
+               "the active one)"))
+        say(f"note: `roster --inv {args.name} sync` writes its ssh config and ROSTER.md here "
+            f"(`roster --inv {args.name} setup` on a new Box)")
+        return 0
+    if act == "use":
+        inventories.use(args.name)
+        name = inventories.canonical(args.name)
+        say(f"{name} is the active Inventory: {inventories.path_of(name)}")
+        if os.environ.get("ROSTER_CONFIG"):
+            say(f"note: ROSTER_CONFIG is set ({os.environ['ROSTER_CONFIG']}), and it comes before the active "
+                "Inventory: unset it for roster to use this one")
+        return 0
+    was_active, kept = inventories.remove(args.name)
+    say(f"forgot {args.name} (its roster.yml stays where it is)"
+        + ("; no Inventory is active now (`roster inv use NAME` picks one)" if was_active else ""))
+    if kept:
+        say(f"its host keys are in {kept} now, so another Inventory named {args.name} starts without them")
+    if not inventories.load().inventories:
+        say("note: no named Inventories are left: run `roster sync` so ~/.ssh/config reaches this Box's Hosts again")
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     words = argv[:argv.index("--")] if "--" in argv else argv
@@ -783,7 +882,11 @@ def build_parser():
     p = Parser(prog="roster",
                description="Give this box (and Claude) access to the hosts in roster.yml.")
     p.add_argument("--version", action="version", version=f"roster {__version__}")
-    p.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, ./roster.yml, then ~/.config/roster/roster.yml)")
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, "
+                       "./roster.yml, the active named Inventory, then ~/.config/roster/roster.yml)")
+    which.add_argument("--inv", metavar="NAME", help="use the named Inventory NAME for this one command "
+                       "(`roster inv list` names them)")
     sub = p.add_subparsers(dest="cmd", required=True)
     only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
     as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
@@ -863,6 +966,14 @@ def build_parser():
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
     s.add_argument("--only", **only)
     s.add_argument("-y", "--yes", action="store_true", help="don't ask first")
+    s = sub.add_parser("inv", help="named Inventories (work, home): list, add NAME PATH, use NAME, remove NAME, "
+                       "or which (the roster.yml roster uses)")
+    s.add_argument("action", choices=["list", "add", "use", "remove", "which"],
+                   help="list (the active one marked *), add NAME PATH, use NAME (make it the active one), "
+                        "remove NAME (forget the name; the file stays), which (print the roster.yml roster uses)")
+    s.add_argument("name", nargs="?", metavar="NAME", help="the Inventory's name: letters, digits, . _ -")
+    s.add_argument("path", nargs="?", metavar="PATH", help="with add: its roster.yml")
+    s.add_argument("--json", **as_json)
     sub.add_parser("serve", help="JSON-RPC API on stdin/stdout for the desktop app (see docs/serve-api.md)")
     s = sub.add_parser("askpass", help="SSH_ASKPASS helper for a `roster serve` password Session (ssh runs it)")
     s.add_argument("prompt", nargs="?", default="", help="the prompt ssh shows")
@@ -877,11 +988,14 @@ def inventory(args):
     """roster.yml, loaded. With --json, one that isn't found or doesn't load is a Problem (code 1, with its fix)."""
     path = None
     try:
-        path = find_config(args.config)
+        path = find_config(args.config, args.inv)
         return load_config(path)
     except SystemExit as e:
         if not getattr(args, "json", False):
             raise
+        message = str(e.code).removeprefix("error: ")
+        if message.startswith("no Inventory named "):
+            raise Problem(UNKNOWN_INVENTORY, message, fix="`roster inv list` lists them") from None
         raise inventory_problem(str(e.code).removeprefix("error: "), path) from None
 
 
@@ -903,6 +1017,8 @@ def _main(argv=None):
         return cmd_discover(args)
     if args.cmd == "bw":
         return cmd_bw(args)
+    if args.cmd == "inv":
+        return cmd_inv(args)
     if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
         build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
     if args.cmd == "check" and args.box:
@@ -913,10 +1029,10 @@ def _main(argv=None):
         return cmd_check_host(args)
     if args.cmd == "serve":
         from .serve import serve
-        return serve(args.config)            # loads roster.yml itself, so a bad one becomes an API error
+        return serve(args.config, args.inv)  # loads roster.yml itself, so a bad one becomes an API error
     if args.cmd == "providers":
         try:
-            cfg = load_config(find_config(args.config))
+            cfg = load_config(find_config(args.config, args.inv))
         except SystemExit:
             cfg = None                              # no roster.yml yet: still list what's available
         setup_providers(cfg)

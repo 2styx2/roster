@@ -42,6 +42,8 @@ The owner's rule: every object or collection exposed in Lua (`init.lua`'s `roste
 
 The sources: `crates/roster-core/src/config/shape` for `init.lua`'s `roster` table ("Docs", above) and `crates/roster-core/src/plugin/api.rs` for the Plugin API. Each has a test that fails when the runtime has a name the source doesn't declare, or a declared name has no help entry or stub.
 
+`roster.config_version` (`CONFIG_VERSION` in `crates/roster-core/src/config/mod.rs`, decision Q165) is init.lua's own version. Raise it when an init.lua name is removed or renamed, or keeps its name but takes, gives or does something else (an option's new type, a function's new parameters or return); a new name doesn't raise it. `crates/roster-core/tests/config_version.rs` holds you to that: `cargo run -p roster-core --example gen_config_options` keeps a snapshot of every name with its type or signature per version (`crates/roster-core/tests/fixtures/config-version/N.json`, built from the generated `config-options.json`), and the test fails when a name in the current version's snapshot is gone or changed. Regenerating adds new names to the snapshot but never rewrites or drops the ones it has, so it can't hide a change. When it fails: if the change is meant, raise `CONFIG_VERSION`, add a `docs/news.md` bullet under "## Unreleased" that names the new number and what changed, and run the generator (it starts `N+1.json`; the old snapshots stay as they are); if it isn't, put the name back. Don't edit or delete a snapshot by hand.
+
 ## Commits
 
 - Messages say what changed and why, scoped by area, and name the ticket: `feat(picker): fuzzy match on name, address, group (ticket 03)`.

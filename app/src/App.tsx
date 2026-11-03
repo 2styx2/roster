@@ -62,12 +62,12 @@ import { ImportPanel } from "./config/ImportPanel";
 import { foldersSettings } from "./folders/file";
 import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
-import type { BoxSync, InventoryFileError } from "./backend/types";
+import type { BoxSync, CheckStarted, InventoryFileError } from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkJoined, checkProgressed, checkStarted } from "./errors/checkProgress";
+import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping, stopTarget } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -512,7 +512,7 @@ function Workspace({
   const [messagesChoice] = useState(() => new MessagesChoice(store));
   messagesChoice.setConfig(config?.ui.messages ?? null);
   // A quiet message from the background (a Plugin's notice from a timer, an event or a request's
-  // answer) keeps a line that shows, an error above all (decision Q162).
+  // answer, or roster's own unasked one) keeps a line that shows, an error above all (decision Q162).
   const setMessage = useCallback(
     (m: Message) => {
       setMessageNow((now) => lineAfter(now, m, messagesChoice.all()));
@@ -1379,6 +1379,19 @@ function Workspace({
   };
 
   // What commands act on. Rebuilt each render, so it always sees the current state.
+  /** Stops the app's own check (#221 item 1): the panel's Stop, its `x`, and `:check stop` (#361).
+   * serve stops it at its next step, and the check's own answer then says where. A stop that
+   * doesn't reach serve offers Stop again (errors.md row 203). */
+  const stopCheck = (job: string) => {
+    const run = checkRun.current;
+    setCheck(checkStopping);
+    backend.stopCheck(job).catch((e: unknown) => {
+      if (run !== checkRun.current) return;
+      setCheck(checkStopFailed);
+      setMessage(`The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+
   /** `:check` with no Host (ticket 49): every health section, shown as `:help health` (open at once,
    * saying it's checking, then filled in). roster's own sections need `box.check` (API 16). */
   const checkBox = () => {
@@ -1448,6 +1461,11 @@ function Workspace({
     },
     check: (name) => {
       if (name === null) return checkBox();
+      // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
+      if (name === "stop" && !hostByName.has(name)) {
+        const target = stopTarget(check, conn.state === "ready" ? conn.info.inventory.api_version : 0);
+        return "job" in target ? stopCheck(target.job) : setMessage(target.message);
+      }
       // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
       const current = onScreenTab && !onScreenTab.quick ? onScreenTab.host : null;
       if (name === "%" && current === null) {
@@ -1470,7 +1488,9 @@ function Workspace({
       }
       // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
       const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
-      backend.checkHost(host).then(
+      // The core hands over the check's job as it starts: the app's own can be stopped (#221).
+      const started = (s: CheckStarted) => run === checkRun.current && setCheck((c) => checkOwned(c, host, s));
+      backend.checkHost(host, started).then(
         (result) => run === checkRun.current && setCheck((prev) => ({ state: "done", host, result, at: at(prev) })),
         (e: unknown) =>
           run === checkRun.current &&
@@ -2349,6 +2369,7 @@ function Workspace({
               checkRun.current++;
               setCheck(null);
             }}
+            onStop={stopCheck}
           />,
         )}
         {editing !== null && hostByName.get(editing) && framed("edit", "Edit", "edit", 

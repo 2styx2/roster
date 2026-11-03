@@ -360,3 +360,27 @@ describe("help and finders, for a screen reader", () => {
   });
 });
 
+
+describe(":version (T180)", () => {
+  it("opens this build's version, roster's licence, where the third-party notices are installed, and their text", async () => {
+    const user = await ready();
+    await user.keyboard(`${LEADER}:version{Enter}`);
+    expect(heading()).toHaveTextContent(/^roster \d+\.\d+\.\d+$/);
+    const text = help().textContent ?? "";
+    expect(text).toMatch(/GNU General Public License, version 3 or later/);
+    expect(text).toMatch(/Roster\.app\/Contents\/Resources/);
+    expect(text).toMatch(/\/usr\/lib\/Roster/);
+    // The notices themselves, from THIRD-PARTY-NOTICES as the build had it.
+    expect(within(help()).getByText(/The xterm\.js authors/)).toBeInTheDocument();
+    expect(text).toMatch(/wcwidth\.rs/);
+  });
+
+  it("the page answers :help license and :help notices too", async () => {
+    const user = await ready();
+    for (const topic of ["license", "notices", "third-party-notices"]) {
+      await user.keyboard(`${LEADER}:help ${topic}{Enter}`);
+      expect(heading()).toHaveTextContent(/^roster \d+\.\d+\.\d+$/);
+      await user.keyboard("{Escape}");
+    }
+  });
+});

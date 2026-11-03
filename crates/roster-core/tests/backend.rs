@@ -202,7 +202,7 @@ fn an_unknown_host_key_is_asked_about_then_trusted_then_the_session_opens() {
             let data = data.expect("data");
             assert_eq!(
                 (data["address"].as_str(), data["port"].as_i64()),
-                (Some("10.19.77.10"), Some(22))
+                (Some("10.0.0.10"), Some(22))
             );
         }
         other => panic!("{other:?}"),
@@ -350,6 +350,79 @@ fn a_check_given_up_on_is_stopped_only_when_the_core_started_it() {
         let info = b.call("inventory.info", serde_json::json!({})).unwrap();
         assert_eq!(info["stops"], stops, "{how}");
     }
+}
+
+/// Stop in the :check panel (#221 item 1): the core hands the app its check's job as it starts,
+/// and stops it on asking, so the check ends at its next step with the rest skipped.
+#[test]
+fn a_check_the_core_started_can_be_stopped_by_its_job() {
+    use std::time::Duration;
+    let mut candidate = fake("stuck-check");
+    candidate.serve_argv.push("started".into());
+    let b = std::sync::Arc::new(Backend::start(&candidate).unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let checking = {
+        let b = b.clone();
+        std::thread::spawn(move || {
+            b.check_host_with("esxi-02", Duration::from_secs(20), |s| tx.send(s.clone()).unwrap())
+        })
+    };
+    let started = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(started.job, "check-1");
+    assert!(started.own);
+    let stop = b.stop_check("check-1").unwrap();
+    assert_eq!(stop["stopping"], true);
+    let r = checking.join().unwrap().unwrap();
+    assert_eq!(r["ok"], false);
+    assert_eq!(r["steps"][1]["message"], "the check was stopped");
+    let info = b.call("inventory.info", serde_json::json!({})).unwrap();
+    assert_eq!(
+        info["stops"],
+        serde_json::json!([{ "kind": "check", "job": "check-1" }])
+    );
+}
+
+/// Asking again while the core's own check runs joins it (serve says `joined`), and it's still
+/// the app's to stop: the app started it.
+#[test]
+fn a_check_the_core_joined_its_own_check_of_is_still_its_own() {
+    use std::time::Duration;
+    let mut candidate = fake("stuck-check");
+    candidate.serve_argv.push("started".into());
+    let b = std::sync::Arc::new(Backend::start(&candidate).unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    for _ in 0..2 {
+        let b = b.clone();
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            b.check_host_with("esxi-02", Duration::from_secs(20), |s| tx.send(s.clone()).unwrap())
+        });
+        let started = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(started.job, "check-1");
+        assert!(started.own, "{started:?}");
+    }
+    assert_eq!(b.stop_check("check-1").unwrap()["stopping"], true);
+}
+
+/// A check another caller started (a Plugin's `host.check`) isn't the app's to stop: the core
+/// says so as it starts, and refuses to stop it without asking serve.
+#[test]
+fn a_check_another_caller_started_is_not_the_cores_to_stop() {
+    use std::time::Duration;
+    let mut candidate = fake("stuck-check");
+    candidate.serve_argv.push("joined".into());
+    let b = Backend::start(&candidate).unwrap();
+    let mut seen = None;
+    let err = b
+        .check_host_with("esxi-02", Duration::from_millis(300), |s| seen = Some(s.clone()))
+        .unwrap_err();
+    assert!(matches!(err, roster_core::rpc::CallError::Timeout), "{err:?}");
+    let seen = seen.unwrap();
+    assert_eq!(seen.job, "check-1");
+    assert!(!seen.own);
+    assert_eq!(b.stop_check("check-1").unwrap()["stopping"], false);
+    let info = b.call("inventory.info", serde_json::json!({})).unwrap();
+    assert_eq!(info["stops"], serde_json::json!([]));
 }
 
 #[test]

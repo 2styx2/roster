@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, die, oneline, user_config_dir
+from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, SSH_UNSAFE, die, oneline, use_inventory, user_config_dir
 from .providers import NO_PASSWORD
 from .resources import load_resources
 
@@ -24,19 +24,40 @@ SSH_KEYS = ("port", "user", "auth")
 SERVICE_KEYS = ("port", "url", "scheme", "user", "auth", "verify", "login")
 WEB_LOGINS = ("basic", "bearer", "vsphere", "unifi", "openvpnas", "hub", "none")          # how `roster web` sends the service's credentials
 SERVICE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+IPV6_ZONE = re.compile(r"^[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*%[A-Za-z0-9._-]+\Z")   # fe80::1%eth0
 HTTPS_PORTS, HTTP_PORTS = (443, 8443), (80, 8000, 8008, 8080, 8888)
 
 
 # ---------------------------------------------------------------- config
 
-def find_config(arg):
+def find_config(arg, inv=None):
+    """The roster.yml this run uses: `-c PATH` (ARG), `--inv NAME` (INV), $ROSTER_CONFIG, ./roster.yml, the active named
+    Inventory, then ~/.config/roster/roster.yml (ticket 115). It also picks the generated ssh config and known_hosts
+    this run reads and writes: the named Inventory's own when the file is one (common.use_inventory)."""
+    from . import inventories  # Pydantic: only once a roster.yml is looked for
+    path = locate_config(arg, inv)
+    use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path))
+    inventories.rebuild_if_stale()
+    return path
+
+
+def locate_config(arg, inv=None):
+    """find_config's lookup alone."""
+    from . import inventories
     if arg:
         return Path(arg).expanduser()
+    if inv:
+        return inventories.path_of(inv)
     if os.environ.get("ROSTER_CONFIG"):
         return Path(os.environ["ROSTER_CONFIG"]).expanduser()
-    for p in (Path.cwd() / "roster.yml", user_config_dir() / "roster.yml"):
-        if p.exists():
-            return p
+    here = Path.cwd() / "roster.yml"
+    if here.exists():
+        return here
+    active = inventories.active_path()
+    if active is not None:
+        return active
+    if (user_config_dir() / "roster.yml").exists():
+        return user_config_dir() / "roster.yml"
     die("no roster.yml found here or in ~/.config/roster/ - run `roster init`, "
         "or pass -c PATH / set ROSTER_CONFIG")
 
@@ -49,7 +70,7 @@ def load_inventory(path):
     return parse_inventory(path.read_text(), path)
 
 
-def load_config(path):
+def load_config(path: Any) -> dict[str, Any]:
     """load_inventory's dict view, for the code that still reads dicts (it moves to the models when a ticket
     touches it)."""
     return load_inventory(path).as_config()
@@ -103,6 +124,14 @@ def parse_inventory(text, path):
                 die(f"host {hname!r} has no user (set it on the host, its group, or defaults)")
             if re.search(r"\s", m["ip"] + m["ssh"]["user"]):
                 die(f"host {hname!r}: ip/user can't contain spaces")
+            for field, value in (("ip", m["ip"]), ("user", m["ssh"]["user"])):
+                if SSH_UNSAFE.search(str(value)):   # written into the ssh config: a quote or newline would break it
+                    die(f"host {hname!r}: {field} can't hold a quote or a control character (it goes into this "
+                        "Box's ssh config)")
+            if "%" in str(m["ssh"]["user"]):     # older OpenSSH (Windows' own) takes a %% in User literally
+                die(f"host {hname!r}: user can't hold a % (it goes into this Box's ssh config)")
+            if "%" in m["ip"] and not IPV6_ZONE.match(m["ip"]):     # a % is an IPv6 zone's, or none (written %%)
+                die(f"host {hname!r}: ip can't hold a % except as an IPv6 address's zone (fe80::1%eth0)")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working
             m["user"], m["port"], m["auth"] = m["ssh"]["user"], m["ssh"]["port"], m["ssh"]["auth"]
             m["login"] = {"user": as_user(first(layers, "user")), "auth": as_auth(first(layers, "auth"))}  # for services
@@ -131,7 +160,10 @@ def parse_inventory(text, path):
     if not hosts:
         die(f"{path} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
-    key = Path(os.path.expanduser(str(raw.get("key_path") or "~/.ssh/roster_ed25519")))
+    key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
+    if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
+        die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
+    key = Path(os.path.expanduser(key_path))
     # matches this box's key line in authorized_keys, including tags from older versions
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
     try:

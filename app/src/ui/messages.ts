@@ -38,7 +38,8 @@ export interface Quiet {
   /** The whole line shown with every message on: what changed, and what it teaches. */
   text: string;
   /** Said when nothing was asked (a Plugin's notice from a timer, an event or a request's
-   * answer): it never takes the place of a line that shows (decision Q162). */
+   * answer, or roster's own unasked notice): it never takes the place of a line that shows
+   * (decision Q162, #349). */
   background?: true;
 }
 
@@ -49,7 +50,8 @@ export function quiet(said: string, text: string = said): Quiet {
   return { kind: "quiet", said, text };
 }
 
-/** A quiet message said when nothing was asked, from the background. */
+/** A quiet message said when nothing was asked, from the background: a Plugin's or roster's own.
+ * Every quiet message roster says without the user asking is made with this, not `quiet`. */
 export function backgroundQuiet(said: string, text: string = said): Quiet {
   return { kind: "quiet", said, text, background: true };
 }

@@ -115,13 +115,13 @@ describe("the tree finder (␣ e in Focus)", () => {
 
 describe("searchItems", () => {
   const items: FinderItem[] = [
-    { id: "1", label: "net-sw-core-01", detail: "10.19.77.2", command: "x" },
-    { id: "2", label: "esxi-02", detail: "10.19.77.237", command: "x" },
+    { id: "1", label: "net-sw-core-01", detail: "10.0.0.2", command: "x" },
+    { id: "2", label: "esxi-02", detail: "10.0.0.237", command: "x" },
     { id: "3", label: "orion3", path: "Folders › esxi lab", command: "x" },
   ];
   it("needs every word to match, ranks the name above the path, and keeps order on ties", () => {
     expect(labels(searchItems(items, "esxi"))).toEqual(["esxi-02", "orion3"]);
-    expect(labels(searchItems(items, "77 core"))).toEqual(["net-sw-core-01"]);
+    expect(labels(searchItems(items, "10.0.0 core"))).toEqual(["net-sw-core-01"]);
     expect(labels(searchItems(items, ""))).toEqual(["net-sw-core-01", "esxi-02", "orion3"]);
     expect(searchItems(items, "zzz")).toEqual([]);
   });

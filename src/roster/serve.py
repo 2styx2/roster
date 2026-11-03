@@ -29,13 +29,29 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
 
-from . import __version__, askpass, boxsync, changes, diagnose, discover, edit, fill, health, jobs, mesh, providers
+from . import (
+    __version__,
+    askpass,
+    boxsync,
+    changes,
+    diagnose,
+    discover,
+    edit,
+    fill,
+    health,
+    inventories,
+    jobs,
+    mesh,
+    providers,
+)
 from .common import (
     current_deadline,
+    current_inventory,
     deadline,
     deadline_at,
     die_message,
     failure_text,
+    known_hosts_label,
     not_reviewed,
     ssh_config_file,
     ssh_path,
@@ -54,6 +70,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     HOST_KEY_UNKNOWN,
     INVALID_EDIT,
     INVALID_HOST,
+    INVENTORIES_UNREADABLE,
     INVENTORY_ERROR,
     ITEM_EXISTS,
     LOGIN_NOT_SEEN,
@@ -78,6 +95,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     TOO_MANY_ADDRESSES,
     UNKNOWN_GROUP,
     UNKNOWN_HOST,
+    UNKNOWN_INVENTORY,
     UNKNOWN_TARGET,
     UNSUPPORTED,
     VAULT_LOCKED,
@@ -91,9 +109,9 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     write_problem,
 )
 from .providers import PROVIDERS, setup_providers
-from .sshops import fingerprint, in_ssh_config, record_host_key, recorded_host_keys
+from .sshops import fingerprint, in_ssh_config, left_out, record_host_key, recorded_host_keys
 
-API_VERSION = 26            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 27            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -117,7 +135,7 @@ def closing_error():
 class State:
     """What serve holds for its lifetime: the loaded Inventory, or why it didn't load."""
 
-    def __init__(self, config_arg):
+    def __init__(self, config_arg, inv=None):
         self.cfg, self.path, self.error = None, None, None
         self.digest = None                  # what roster.yml held at the last load (good or not): the watcher's base
         self.noticed = None                 # an outside edit already reported as not applied (auto off)
@@ -145,7 +163,7 @@ class State:
         self.closing = False                # serve's stdin closed: nothing new starts (a sign-in least of all)
         only_vault_unlock_unlocks()
         try:
-            self.path = find_config(config_arg)
+            self.path = find_config(config_arg, inv)
         except SystemExit as e:
             self.error = die_message(e)
             return
@@ -306,6 +324,10 @@ def session_prepare(state, params):
     if ssh is None:
         raise RpcError(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
     if not in_ssh_config(h["name"]):
+        why = left_out(h["name"])
+        if why:
+            raise RpcError(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
+                                                "active one (`roster inv use`)")
         raise RpcError(NOT_SET_UP, f"{h['name']} isn't in this box's ssh config ({ssh_config_file()}) - "
                                    "run `roster sync`, or `roster setup` if this box isn't set up yet")
     # What the Session connects to (API 25): the core sends it back with a prompt fill, so a Host edited since isn't
@@ -588,8 +610,57 @@ def box_check(state, params):
     return {"checks": checks, "ok": not any(c["level"] == "error" for c in checks), **versions()}
 
 
+def inventories_list(state, params):
+    """The named Inventories (ticket 115): which is active, and which file this serve runs on, so the app can show
+    where you are and offer the others. Switching is inventories.use, then restarting serve.
+
+    Params: none
+    Result: `{inventories: [{name, path, active, exists}], active, name, path}`: `active` is the active Inventory's
+        name (or `null`), `name` the named Inventory this serve runs on (`null` when its `roster.yml` isn't one) and
+        `path` its `roster.yml` (`null` when none was found). With no named Inventories, `inventories` is `[]`
+    Errors: 143
+    Since: API 27
+    """
+    try:
+        inv = inventories.load()
+    except SystemExit as e:
+        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    path = state.path.expanduser().resolve() if state.path else None
+    return {**inv.view(), "name": current_inventory(), "path": str(path) if path else None}
+
+
+def inventories_use(state, params):
+    """Make the named Inventory `name` the active one (`roster inv use`). This serve keeps running on the one it
+    started with: the app restarts serve (as for a new `backend`), which then finds the active one. Nothing else
+    changes here: no vault is locked or unlocked, no Session is touched.
+
+    Params: `{name}`
+    Result: `{active, path, restart: true}`: `path` is its `roster.yml`
+    Errors: 140, 143
+    Since: API 27
+    """
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        raise RpcError(INVALID_PARAMS, "params.name: the named Inventory to make the active one")
+    try:
+        inv = inventories.load()
+    except SystemExit as e:
+        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    chosen = inv.get(name)
+    if chosen is None:
+        names = [x.name for x in inv.inventories]
+        raise RpcError(UNKNOWN_INVENTORY, f"no Inventory named '{name}'", {"names": names},
+                       fix="pick one of " + (", ".join(names) or "none: `roster inv add NAME PATH` names one"))
+    inventories.use(name)
+    return {"active": name, "path": str(chosen.path), "restart": True}
+
+
 METHODS = {
     "inventory.info": inventory_info,
+    "inventories.list": inventories_list,
+    "inventories.use": inventories_use,
     "box.check": box_check,
     "hosts.list": hosts_list,
     "host.get": host_get,
@@ -971,7 +1042,7 @@ def quick_prepare(state, params):
     if recorded == "changed":
         p = diagnose.changed_key(h, recorded_host_keys(h), key)
         fix = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
-               "the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts")
+               f"the change is expected (reinstall), delete its line in {known_hosts_label()}")
         p.data = {**(p.data or {}), "fix": fix}
         raise p
     offered = still_offered(asked, key, label, "not connecting", "box", "Quick Connect again")
@@ -1257,7 +1328,7 @@ def save_quick(state, params):
     try:                                        # the key the user confirmed for this Session, never a fresh scan
         record_host_key(h, q["key_type"], q["base64"])
     except Exception as e:
-        warnings.append(f"{name} was added, but its host key couldn't be recorded in ~/.ssh/roster_known_hosts "
+        warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
                         f"({failure_text(e)}) - the first Session to it will ask about the key")
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
@@ -1387,7 +1458,7 @@ def add_host(state, params):
         try:
             record_host_key(h, k["type"], k["base64"])
         except Exception as e:
-            warnings.append(f"{name} was added, but its host key couldn't be recorded in ~/.ssh/roster_known_hosts "
+            warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
                             f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "verify": verify,
@@ -3106,7 +3177,7 @@ class Server:
         return True
 
 
-def serve(config_arg):
+def serve(config_arg, inv=None):
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
     for stream in (sys.stdin, sys.stdout):
@@ -3114,7 +3185,7 @@ def serve(config_arg):
             stream.reconfigure(encoding="utf-8", newline="\n")
     out = sys.stdout
     sys.stdout = sys.stderr             # whatever else roster prints (warnings, say()) must not corrupt the stream
-    state = State(config_arg)
+    state = State(config_arg, inv)
     out_lock = threading.Lock()
 
     def send(message):

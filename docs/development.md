@@ -21,9 +21,11 @@ src/roster/
   jsonout.py        `--json` on the read commands: one document with a version, `cmd:`/`env:` references cut (Q92, Q110)
   common.py         small shared helpers: output, paths, text, starting programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login
-  config.py         loading/validating roster.yml, search, --only
+  config.py         loading/validating roster.yml, search, --only; find_config: which roster.yml (-c, --inv, ...)
   models.py         roster.yml's Inventory as Pydantic models (Host, its Logins and services, group, Link, resource);
                     load_inventory returns them, load_config their dict view (Inventory.as_config)
+  inventories.py    named Inventories (`roster inv`, inventories.json, its Pydantic models): the active one, each one's
+                    own ssh config and known_hosts, the ssh config index, and the warnings for the same machine in two
   example.py        the `roster init` template
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
@@ -61,6 +63,8 @@ scripts/            gen-serve-api.py: docs/serve-api.md's method tables from ser
                     bump-version.sh: one version everywhere;
                     news_check.py and news_section.py: the news reminder on pull requests and a Release's notes;
                     check-bundle-size.py: the app's JS/CSS budget
+                    check-release-notices.py: every app download (archives, installers, the bundle config) carries
+                    LICENSE and THIRD-PARTY-NOTICES (docs/releasing.md)
                     gen-repaint-cases.py: the repaints the core's screen and xterm.js are both checked on
                     (crates/roster-core/tests/fixtures/repaints.json, repaint-fuzz.json; Q151 (l))
 docs/               team guides: setting up a new box, adding hosts; docs/app/ for the app, docs/adr/ for decisions

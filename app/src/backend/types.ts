@@ -152,6 +152,13 @@ export interface CheckStep {
   data?: Record<string, unknown>;
 }
 
+/** A check under way as serve's job (API 21): its id, and whether it's the app's own to stop
+ * (`stopCheck`, #221 item 1): the app started it, not another caller (a Plugin's `host.check`). */
+export interface CheckStarted {
+  job: string;
+  own: boolean;
+}
+
 /** `host.check {host}`: every step, stopping (the rest `skipped`) at the first failure. */
 export interface HostCheck {
   host: string;
@@ -905,8 +912,13 @@ export interface Backend {
   /** Calls `onLogin` with the held id each time a Session that holds a typed password for "Save to
    * vault" logs in with it (serve's `session.logged_in`); returns stop. */
   onLoggedIn(onLogin: (held: string) => void): () => void;
-  /** `host.check`: roster's diagnostics for one Host (at most one connection and one login). */
-  checkHost(host: string): Promise<HostCheck>;
+  /** `host.check`: roster's diagnostics for one Host (at most one connection and one login).
+   * `onStarted` hears its job once serve has it under way (API 21; an older serve has none). */
+  checkHost(host: string, onStarted?: (started: CheckStarted) => void): Promise<HostCheck>;
+  /** Stops a check of the app's own (`CheckStarted.own`) at its next step (serve's `jobs.stop`):
+   * its `checkHost` then answers with the steps that ran, the rest skipped. False when it isn't
+   * running (over) or isn't the app's own (#221 item 1). */
+  stopCheck(job: string): Promise<boolean>;
   /** `box.check` (API 16, ticket 49): this Box's health, a section at a time. Every check is
    * local; nothing connects to a Host. */
   checkBox(): Promise<BoxCheck>;

@@ -76,15 +76,12 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 
 .muted { color: var(--muted); }
 .grow { flex: 1; }
-.visually-hidden {
-  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
-}
-
 /* `ui.hints = false` / `:hints off`: every keycap hint goes out of sight, and stays in what
    assistive tech reads, so names like "Find a Host, Leader f" don't change. `.key-hint` is a
    whole hint (a footer's "↵ choose", an empty state's "Press ␣ n to add one."); `.keys` is a
    keycap on its own (a button's, a menu's shortcut column). The Key bindings panel lists the
    bindings themselves, so its keys stay. */
+.visually-hidden,
 :root[data-hints="off"] .key-hint,
 :root[data-hints="off"] .keys:not(.binding-keys) {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
@@ -219,7 +216,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 
 /* ---------- Standard layout: [Sidebar | workspace | side panel], command line, status bar ---------- */
 
-.body { flex: 1; display: flex; min-height: 0; }
+.body { flex: 1; display: flex; min-height: 0; position: relative; }
 .body.sidebar-right .sidebar { order: 3; border-right: 0; border-left: 1px solid var(--line); }
 .workspace {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -433,9 +430,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.password circle, .dot.ended circle, .dot.off circle { fill: none; stroke-width: 1.5px; }
 .dot.password circle { stroke: var(--accent); }
 .dot.ended circle { stroke: var(--muted); }
-.dot.off circle { stroke: var(--tone); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
-.dot.off circle { stroke-dasharray: 2.55 2.55; }
+.dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78): an accent ring, not filled yet; it fills (key) or stays a ring
    (password) once the shell answers. What tells it from a password node is the edge below. */
 .dot.connecting circle { fill: none; stroke: var(--accent); stroke-width: 1.5px; }
@@ -447,7 +443,6 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-row[class*="link-"] .sb-item::after {
   content: ""; position: absolute; left: 12px; right: 6px; bottom: 2px; height: 1px; border-radius: 1px;
   background: var(--accent); transform-origin: left center; pointer-events: none;
-  transform: scaleX(0); opacity: 0;
 }
 .sb-row.link-connecting .sb-item::after {
   transform: scaleX(1); opacity: 1;
@@ -508,13 +503,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 
 /* ---------- Side panels: Key bindings, :check ---------- */
 
+/* A panel's place and width (and where it floats in Focus or a narrow window) are its frame's
+   (Panels, below): the rules here give it its look. Unframed panels (a question, a Plugin's
+   prompt or float) still place themselves. */
+
 .keys-panel {
-  width: var(--keys-width); flex: none; display: flex; flex-direction: column; min-height: 0;
+  flex: none; display: flex; flex-direction: column; min-height: 0;
   background: var(--sidebar); border-left: 1px solid var(--line); font-size: var(--text-sm);
 }
 .keys-panel header { display: flex; align-items: center; padding: 10px 10px 8px 14px; }
 .keys-panel h2 { margin: 0; font-size: var(--text-md); font-weight: 600; }
-.keys-close { margin-left: auto; }
 .keys-filter { margin: 0 12px 8px; height: 28px; padding: 0 8px; font-size: var(--text-sm); }
 .keys-scroll { flex: 1; overflow: auto; }
 .keys-panel table { width: 100%; border-collapse: collapse; }
@@ -556,7 +554,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .check-ok { color: var(--text); margin: 0 0 8px; }
 .check-panel > p { margin: 0 0 8px; }
 .check-steps { list-style: none; margin: 0; padding: 0; }
-.check-step { padding: 6px 0; border-top: 1px solid var(--line); }
+.check-step { position: relative; padding: 6px 0; border-top: 1px solid var(--line); }
 .check-line { display: flex; gap: 8px; align-items: baseline; }
 .check-mark { width: 14px; flex: none; text-align: center; font-family: var(--font-mono); }
 .check-step.ok .check-mark { color: var(--text); }
@@ -571,7 +569,6 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    the accent as it starts (taste.md "Connect": an edge, not a spinner; 120 ms, strong ease-out,
    from the node's side) and goes at once when the next starts, so steps 200 ms apart never queue
    motion. Transform only; reduced motion (--dur-draw 0) shows it at once. */
-.check-step { position: relative; }
 .check-step.pending { color: var(--muted); }
 .check-step.stopped .check-mark { color: var(--text); font-size: 0.75em; }
 /* One line while it runs and once it's over, so the rows below never move (the Host's whole name
@@ -676,8 +673,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   margin: 0 0 10px; padding: 6px 0; overflow: auto; font: var(--text-xs)/1.55 var(--font-mono);
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); tab-size: 2;
 }
-.diff-line { display: block; padding: 0 8px; white-space: pre; min-width: max-content; }
-.diff-line.add { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.diff-line { display: block; padding: 0 16px; white-space: pre; min-width: max-content; }
 .diff-line.del { background: color-mix(in srgb, var(--error) 14%, transparent); }
 .diff-line.hunk, .diff-line.meta { color: var(--muted); }
 .changes-confirm { border-top: 1px solid var(--line); padding-top: 8px; }
@@ -700,11 +696,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .cmdline-candidates { border-bottom: 1px solid var(--line); }
 .cmdline-candidates ul { list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto; }
 /* A fixed line height: a fallback font (Arabic, CJK) mustn't make its row taller than the rest. */
-.cmdline-candidates li { line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default; }
+.cmdline-candidates li { display: flex; align-items: center; gap: 12px; line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default; }
 .cmdline-candidates li.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--raised-line); }
 .cmdline-candidates .more { margin: 0; padding: 0 12px 4px; line-height: 20px; color: var(--muted); }
 /* A candidate: the command, what it does, its key (S8). */
-.cmdline-candidates li { display: flex; align-items: center; gap: 12px; }
 .cmd-id { flex: none; min-width: 12ch; white-space: pre; }
 .cmd-label {
   flex: 1 1 auto; min-width: 0; color: var(--muted); font: var(--text-sm) var(--font-ui);
@@ -986,10 +981,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   padding: 14px 16px; box-shadow: 0 8px 24px var(--shadow); font-size: var(--text-md);
 }
 .check-problem .problem, .check-panel .problem { box-shadow: none; }
-.problem h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--text-md); font-weight: 600; }
+.problem h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--text-md); font-weight: 600; overflow-wrap: anywhere; }
 .problem h2::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--error); flex: none; }
 .problem h2 .muted { font-weight: 400; flex: none; }
-.problem h2 { overflow-wrap: anywhere; }
 .problem-message { margin: 0 0 12px; color: var(--text); }
 .problem-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 12px; }
 .problem-facts dt { color: var(--muted); }
@@ -1026,7 +1020,6 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 
 /* Focus: only the terminal; panels float over it instead of beside it, so opening one doesn't
    resize the terminal. */
-.body { position: relative; }
 .screen[data-view="focus"] .keys-panel,
 .screen[data-view="focus"] .check-panel,
 .screen[data-view="focus"] .side-panel {
@@ -1035,7 +1028,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* Host details sit opposite the Sidebar in Focus too (decision Q71). */
 .screen[data-view="focus"] .body.sidebar-right .host-details {
-  left: 0; right: auto; border-left: 0; border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
+  border-left: 0; border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
 }
 /* Focus with the Sidebar shown (␣ e, issue #78): over the terminal on its side, so showing it
    doesn't resize the terminal. It comes from a key, so it doesn't animate. */
@@ -1056,7 +1049,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
     border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
   }
   .body.sidebar-right .host-details {
-    left: 0; right: auto; border-left: 0; border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
+    border-left: 0; border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
   }
 }
 
@@ -1188,7 +1181,6 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   border-top: 1px solid var(--line); background: var(--bg);
   font: var(--text-sm)/1.5 var(--font-mono); color: var(--muted); white-space: pre;
 }
-.diff-line { display: block; padding: 0 16px; }
 .diff-sign { display: inline-block; width: 1.5ch; }
 .diff-line.add { color: var(--text); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .diff-line.remove { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); }
@@ -1201,7 +1193,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* A side panel like Key bindings, wider for prose. It opens from a key, so nothing animates;
    in Focus and narrow windows it floats over the terminal (below). */
 .help-panel {
-  width: clamp(var(--keys-width), 40vw, 600px); flex: none; display: flex; flex-direction: column; min-height: 0;
+  flex: none; display: flex; flex-direction: column; min-height: 0;
   background: var(--sidebar); border-left: 1px solid var(--line); font-size: var(--text-sm);
 }
 /* The topic you're on keeps room: the buttons go to a second line before it's cut. */
@@ -1224,15 +1216,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 
 /* The page itself (`.help-doc`): help/doc.css, which the docs website uses too. */
 
-.screen[data-view="focus"] .help-panel {
-  position: absolute; top: 0; right: 0; bottom: 0; z-index: var(--z-float);
-  border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
-}
+.screen[data-view="focus"] .help-panel { border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow); }
 @media (max-width: 1040px) {
-  .help-panel {
-    position: absolute; top: 0; right: 0; bottom: 0; z-index: var(--z-float); max-width: 100%;
-    border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
-  }
+  .help-panel { border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow); }
 }
 
 /* ---------- Plugins (ticket 23): the prompt, :plugins, a Plugin's float and notices ---------- */
@@ -1262,16 +1248,15 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    never beside it: a docked panel narrows the terminal, and a resized Session prints its screen
    again (ConPTY on Windows), which Plugins that read the output took for new lines (ticket 73).
    It opens from a click or a key and closes with Esc, so like the other panels it doesn't animate. */
-/* Above a full view too (--z-over-full), whose table's actions open it (ticket 44: Discover's details). */
+/* Above a full view too (--z-over-full), whose table's actions open it (ticket 44: Discover's details).
+   Its lines scroll and its buttons stay at the foot, however many lines it has (ticket 78). */
 .side-panel.plugin-float {
-  position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%;
+  position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%; display: flex; flex-direction: column; overflow: hidden;
   border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow); overscroll-behavior: contain;
 }
 .body.sidebar-right .side-panel.plugin-float {
   left: 0; right: auto; border-left: 0; border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
 }
-/* Its lines scroll and its buttons stay at the foot, however many lines it has (ticket 78). */
-.side-panel.plugin-float { display: flex; flex-direction: column; overflow: hidden; }
 /* A question and a Plugin's float come over a full view as well as the terminal: a Cut asked from
    the Mesh controls' full view must be seen before it's typed (ticket 50). One rule for all of
    them: --z-over-full (ticket 95). */
@@ -1354,10 +1339,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .side-panel.view-panel {
   display: flex; flex-direction: column; min-height: 0; overflow: hidden;
 }
-.view-full {
-  position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0;
-  padding: 10px 18px; background: var(--bg); font-size: var(--text-sm);
-}
+.view-full { padding: 10px 18px; font-size: var(--text-sm); }
 .view-full:focus, .view-panel:focus { outline: none; }
 .view-full header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .view-full h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
@@ -1561,7 +1543,6 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 
 /* The header's buttons: full window (or docked), then close. */
 .panel-head-buttons { display: inline-flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
-.keys-panel .panel-head-buttons .keys-close { margin-left: 0; }
 
 /* Full window: over the whole window but the title and status bars, as a full view always was.
    The frame keeps the width it had docked (none if it opened full), so the terminal underneath
