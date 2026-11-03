@@ -20,17 +20,31 @@ notify = "8"
 # with ring as its crypto (no aws-lc build) and the OS's trust store (rustls-platform-verifier).
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util"] }
 url = "2"
 # A request's body, sent again at a 307/308 redirect without a copy; reqwest already builds it.
 bytes = "1"
 # A pinned certificate's SHA-256 (decision Q116); rustls already builds ring, so no new crate.
 ring = "0.17"
+# Through the user's proxy, the core opens the CONNECT tunnel to the address it checked and speaks
+# HTTP/1.1 (and TLS, with the name as SNI) over it itself (#225 item 5, decision Q161); reqwest
+# can't be told which address to CONNECT to. All already in the lock through reqwest.
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
+rustls-platform-verifier = "0.7"
 
 # Polling the PTY master so a Session's reader can stop (session.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[features]
+# Lets tests stand in for this computer's resolver (`PluginHost::with_lookup`); never on in the app.
+test-hooks = []
+
 [dev-dependencies]
+# Its own tests build it with the test hooks on.
+roster-core = { path = ".", features = ["test-hooks"] }
 # A test's temp folder is deleted when the test ends, even when it panics (tests/common/mod.rs).
 tempfile = "3"

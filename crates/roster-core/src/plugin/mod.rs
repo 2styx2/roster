@@ -297,6 +297,9 @@ pub struct PluginHost {
     /// The app's built-in commands, as it last said ([`PluginHost::set_builtins`]): shared with
     /// every Plugin's runtime, so none is a Plugin's own to run (issue #184).
     builtins: Builtins,
+    /// Stands in for this computer's resolver in tests ([`PluginHost::with_lookup`]); None, the
+    /// system's, everywhere else.
+    lookup: Option<network::Lookup>,
 }
 
 /// The app's built-in command names, shared by a host and its Plugins' runtimes: None until the
@@ -318,7 +321,16 @@ impl PluginHost {
             offline: false,
             sessions: Arc::default(),
             builtins: Builtins::default(),
+            lookup: None,
         }
+    }
+
+    /// The host, whose Plugins look names up with `lookup` instead of this computer's resolver
+    /// before a request goes through the proxy. Tests only: the feature is never on in the app.
+    #[cfg(feature = "test-hooks")]
+    pub fn with_lookup(mut self, lookup: network::Lookup) -> Self {
+        self.lookup = Some(lookup);
+        self
     }
 
     /// The host, with no Plugin reaching the network ([`demo`]): a `roster.http` request is checked
@@ -707,6 +719,7 @@ impl PluginHost {
         let network = network::Setup {
             proxy: Arc::clone(proxy),
             log: Arc::clone(self.logs.lock().expect("plugin logs").entry(name.clone()).or_default()),
+            lookup: self.lookup.clone(),
         };
         let asks = |p: &Permission| {
             matches!(
