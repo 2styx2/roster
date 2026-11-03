@@ -1,6 +1,6 @@
 # Copy and paste: the hand-test checklist (Windows build)
 
-Copy and paste in a Session is tested end to end in headless Chromium on every pull request (`app/e2e/copy-paste.e2e.ts`, `npm run e2e`; see [testing.md](testing.md#end-to-end-copy-and-paste-headless-chromium)). That run is the real xterm.js and roster's terminal code, with real key and mouse events and the browser's own paste, but not WebView2, not ConPTY, not keys injected by another program and not a real remote program. This list is what only the Windows build can show. Run it after a change to `app/src/terminal/` and before a Release.
+Copy and paste in a Session is tested end to end in headless Chromium on every pull request (`app/e2e/copy-paste.e2e.ts`, `npm run e2e`; see [testing.md](testing.md#end-to-end-headless-chromium)). That run is the real xterm.js and roster's terminal code, with real key and mouse events and the browser's own paste, but not WebView2, not ConPTY, not keys injected by another program and not a real remote program. This list is what only the Windows build can show. Run it after a change to `app/src/terminal/` and before a Release.
 
 Set up: the Windows build (`app/scripts/app-build.sh --run`, [windows-build-loop.md](windows-build-loop.md)), a Session on a test Host (`esx-02` or any made-up lab box) with bash, and one on WSL. Notepad for copying text in and out. Use made-up text only; for the password step, a throwaway account on the test Host.
 

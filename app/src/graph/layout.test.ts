@@ -170,6 +170,70 @@ describe("the graph's layout", () => {
     expect(closest(healed)).toBeGreaterThan(SPACING * 0.75);
   });
 
+  it("a cluster the user placed stays where they put it, and a neighbour it lands on makes room (#237)", () => {
+    const g = bigGraph(120, 3);
+    const l = layoutGraph(g);
+    const a = l.clusters.get("g0")!;
+    const b = l.clusters.get("g1")!;
+    // g1 moved whole, by the user, right on top of g0: its nodes went with it.
+    const saved = structuredClone(l.saved);
+    const dx = a.x + 10 - b.x;
+    const dy = a.y - b.y;
+    saved.clusters["g1"] = [a.x + 10, a.y];
+    for (const n of g.nodes.filter((n) => n.cluster === "g1")) saved.nodes[n.id] = [saved.nodes[n.id]![0] + dx, saved.nodes[n.id]![1] + dy];
+    saved.movedClusters = ["g1"];
+    const after = layoutGraph(g, saved);
+    expect(overlaps(after)).toEqual([]);
+    expect(after.clusters.get("g1")).toMatchObject({ x: a.x + 10, y: a.y });
+    for (const n of g.nodes.filter((n) => n.cluster === "g1")) expect(at(after, n.id)).toEqual({ x: at(l, n.id)!.x + dx, y: at(l, n.id)!.y + dy });
+    expect(after.clusters.get("g0")).not.toMatchObject({ x: a.x, y: a.y });
+    // The flag is kept, for the next time.
+    expect(after.saved.movedClusters).toEqual(["g1"]);
+  });
+
+  it("a cluster put on a neighbour moves only that neighbour, to a place no other cluster has (#237)", () => {
+    const g = bigGraph(320, 16);
+    const l = layoutGraph(g);
+    const a = l.clusters.get("g10")!;
+    const b = l.clusters.get("g15")!;
+    const saved = structuredClone(l.saved);
+    saved.clusters["g15"] = [a.x + 5, a.y + 5];
+    for (const n of g.nodes.filter((n) => n.cluster === "g15")) saved.nodes[n.id] = [saved.nodes[n.id]![0] + a.x + 5 - b.x, saved.nodes[n.id]![1] + a.y + 5 - b.y];
+    saved.movedClusters = ["g15"];
+    const after = layoutGraph(g, saved);
+    expect(overlaps(after)).toEqual([]);
+    const moved = g.clusters.filter((c) => c.id !== "g15" && (after.clusters.get(c.id)!.x !== l.clusters.get(c.id)!.x || after.clusters.get(c.id)!.y !== l.clusters.get(c.id)!.y)).map((c) => c.id);
+    expect(moved).toEqual(["g10"]);
+  });
+
+  it("of two clusters the user placed on each other, the one placed last stays (#237)", () => {
+    const g = bigGraph(120, 3);
+    const l = layoutGraph(g);
+    const a = l.clusters.get("g0")!;
+    const b = l.clusters.get("g1")!;
+    const saved = structuredClone(l.saved);
+    saved.clusters["g1"] = [a.x + 10, a.y];
+    for (const n of g.nodes.filter((n) => n.cluster === "g1")) saved.nodes[n.id] = [saved.nodes[n.id]![0] + a.x + 10 - b.x, saved.nodes[n.id]![1] + a.y - b.y];
+    saved.movedClusters = ["g1", "g0"];
+    const after = layoutGraph(g, saved);
+    expect(overlaps(after)).toEqual([]);
+    expect(after.clusters.get("g0")).toMatchObject({ x: a.x, y: a.y });
+  });
+
+  it("a cluster held while it's being moved pushes nothing and stays exactly under the user (#237)", () => {
+    const g = bigGraph(120, 3);
+    const l = layoutGraph(g);
+    const a = l.clusters.get("g0")!;
+    const saved = structuredClone(l.saved);
+    const b = l.clusters.get("g1")!;
+    saved.clusters["g1"] = [a.x + 10, a.y];
+    for (const n of g.nodes.filter((n) => n.cluster === "g1")) saved.nodes[n.id] = [saved.nodes[n.id]![0] + a.x + 10 - b.x, saved.nodes[n.id]![1] + a.y - b.y];
+    saved.movedClusters = ["g1"];
+    const held = layoutGraph(g, saved, { holding: "g1" });
+    expect(held.clusters.get("g1")).toMatchObject({ x: a.x + 10, y: a.y });
+    for (const c of ["g0", "g2"]) expect(held.clusters.get(c)).toMatchObject({ x: l.clusters.get(c)!.x, y: l.clusters.get(c)!.y });
+  });
+
   it("lays out 2,000 nodes in 40 clusters", () => {
     const l = layoutGraph(bigGraph(2000, 40));
     expect(l.nodes.size).toBe(2001);

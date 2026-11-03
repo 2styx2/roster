@@ -148,6 +148,22 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("closes on a scroll, but not on the late event of one from before it opened (T173)", async () => {
+    await ready();
+    const tree = screen.getByRole("tree");
+    // The App-mode cursor scrolls its row into view at once, but the browser fires that scroll's
+    // event on the next frame: a menu key pressed in between opened the menu, then that event
+    // closed it.
+    tree.scrollTop = 40;
+    rightClick(item("linux-1-000"));
+    fireEvent.scroll(tree);
+    expect(menu()).toBeInTheDocument();
+    // A scroll after it opened closes it.
+    tree.scrollTop = 80;
+    fireEvent.scroll(tree);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("stays inside the window", async () => {
     await ready();
     rightClick(item("linux-1-000"), { clientX: window.innerWidth - 2, clientY: window.innerHeight - 2 });
