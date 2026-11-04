@@ -94,17 +94,21 @@ describe("classifyExit", () => {
     });
   });
 
-  it("names the address and port it couldn't reach, and the 10.19 rate limiter when it applies", () => {
-    const p = classifyExit({
-      exitCode: 255,
-      tail: "ssh: connect to host 10.19.1.5 port 22: Connection timed out",
-      host: "esxi-02",
-      auth: "key",
-    });
-    expect(p?.message).toBe("esxi-02 (10.19.1.5:22) didn't answer");
-    expect(p?.fix).toMatch(/rate limiter/);
-    const q = classifyExit({ exitCode: 255, tail: "ssh: connect to host 10.1.1.1 port 22: Connection timed out", host: "x" });
-    expect(q?.fix).not.toMatch(/rate limiter/);
+  it("names the address and port it couldn't reach, and that a network's rate limiter can cause it", () => {
+    // Which networks have one is roster.yml's `rate_limited:` (#363), which the app never reads: the hint is the
+    // generic one for every address, and `:check HOST` names the listed network.
+    for (const address of ["10.0.0.5", "192.0.2.10"]) {
+      const p = classifyExit({
+        exitCode: 255,
+        tail: `ssh: connect to host ${address} port 22: Connection timed out`,
+        host: "esxi-02",
+        auth: "key",
+      });
+      expect(p?.message).toBe(`esxi-02 (${address}:22) didn't answer`);
+      expect(p?.fix).toBe(
+        "Retry later: is the Host up, and the network path open? If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in a loop.",
+      );
+    }
   });
 });
 

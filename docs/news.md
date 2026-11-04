@@ -19,8 +19,14 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **Which networks have an SSH rate limiter is your setting** (#363): list them as `rate_limited: [10.0.0.0/8]` at the top of `roster.yml` (empty by default), and a Host there that doesn't answer is told its network's rate limiter may be why. With no list, a no-answer's fix says a rate limiter on the network can cause this; roster no longer assumes one fixed address range has one. See [Networks with an SSH rate limiter](cli-reference.md#networks-with-an-ssh-rate-limiter).
+- **The Mesh's one-time re-tag takes only this Box's own older lines** (#384): on the first `roster mesh` after upgrading to this release (v0.5.1), an untagged `authorized_keys` line (from a roster before v0.5.0) is taken as this Box's only when it's exactly the line this Box writes there, the same key, `from=` and options; another older Box's line for the same source stays, the apply warns about it (and, with `--rotate`, says when it still lets the replaced key in), and `roster mesh --find-leftovers` lists it. v0.5.0's first `roster mesh` took every untagged line for a source it writes, another older Box's too. `roster check --box` warns when this Box's name is an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …): Boxes with the same name are one owner, so each one's `setup` and `revoke` take the other's key and each one's `roster mesh` the other's entries; set `box_name:` (on a Box already set up: `roster revoke` first, then set it and run `roster setup` again). **Upgrading Boxes that share Hosts:** upgrade them together, straight from v0.4 to this release, skipping v0.5.0, and run each one's `roster mesh` once. A Box that already ran v0.5.0's `roster mesh` may have taken another older Box's untagged line for a source it writes; that Box's next `roster mesh` puts it back, and `roster mesh --find-leftovers` lists the untagged lines still there. A roster older than v0.5.0 still running on another Box leaves the new tagged lines alone, but still removes untagged lines, and Mesh files on a Host it doesn't make a source, on every apply. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
 - **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
 - **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
+
+**App**
+
+- A Session that gets no answer says a rate limiter on the network can cause this, for any address; `:check HOST` names the network when it's in `rate_limited:` (#363).
 
 **`roster serve` API 28**
 

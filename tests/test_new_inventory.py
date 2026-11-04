@@ -308,7 +308,8 @@ def test_no_hosts_loads_only_in_the_blank_shape(write_config, text):
 
 
 @pytest.mark.parametrize("text", ["groups:\n  servers:\n    hosts:\n", "groups:\n  a:\n    hosts: {}\n  b:\n    hosts:\n",
-                                  "groups: {}\n", "key_path: ~/.ssh/k\ngroups:\n  servers:\n    title: x\n    hosts: {}\n"])
+                                  "groups: {}\n", "key_path: ~/.ssh/k\ngroups:\n  servers:\n    title: x\n    hosts: {}\n",
+                                  "rate_limited: [10.0.0.0/8]\ngroups:\n  servers:\n    hosts:\n"])
 def test_the_blank_shape_loads(write_config, text):
     assert load_config(write_config(text))["hosts"] == {}
 
@@ -410,3 +411,14 @@ def test_a_file_that_doesnt_load_shows_where_never_its_lines(isolated, capsys, t
         main(["init", "--inventory", f"file:{src}"])
     said = str(e.value.code)
     assert "SUPERSECRETVALUE456" not in said and "line" in said
+
+
+def test_the_blank_shape_knows_every_top_level_key_roster_reads():
+    """C2's 'no unknown key' rule stays in step with roster: every raw.get("KEY") in src/roster is in TOP_KEYS."""
+    import re
+    from pathlib import Path
+
+    from roster.config import TOP_KEYS
+    src = Path(__file__).parents[1] / "src" / "roster"
+    read = {k for f in src.glob("*.py") for k in re.findall(r'raw(?:\.get\(|\[)"([a-z_]+)"', f.read_text("utf-8"))}
+    assert read and read <= TOP_KEYS, read - TOP_KEYS

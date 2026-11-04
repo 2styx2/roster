@@ -64,6 +64,8 @@ workers: 32                  # how many hosts to work on in parallel
 claude_inline_limit: 60      # list hosts inside Claude's instructions up to this many
 # web_login_names:           # your team's own names for roster's login types: login: appliance
 #   appliance: hub           # on a service then works exactly like login: hub
+# rate_limited: [10.0.0.0/8] # networks whose SSH rate limiter stops answering after many
+#                            # connections: a Host there that doesn't answer is told so
 
 providers:
   bw:
