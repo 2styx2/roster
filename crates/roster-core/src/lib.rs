@@ -18,4 +18,5 @@ pub mod slot;
 pub mod state;
 mod wcwidth;
 pub mod window;
+pub mod wipe;
 pub mod wt;

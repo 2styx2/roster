@@ -280,7 +280,9 @@ async fn vault_status(state: tauri::State<'_, Arc<BackendState>>) -> Result<Valu
 /// request and dropped with it: never logged, stored or put in an error.
 #[tauri::command]
 async fn vault_unlock(state: tauri::State<'_, Arc<BackendState>>, password: String) -> Result<Value, CallError> {
-    call(&state, "vault.unlock", json!({ "password": password })).await
+    let mut params = serde_json::Map::new();
+    params.insert("password".into(), Value::String(password));
+    call(&state, "vault.unlock", Value::Object(params)).await
 }
 
 /// One step of signing the vault CLI in (`vault.login`, ticket 31): start, answer or cancel.
