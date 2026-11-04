@@ -246,3 +246,16 @@ def test_discover_json_errors(scanned, capsys):
         main(["discover", "10.0.0.0/28", "--write", "--json"])
     out, err = capsys.readouterr()
     assert e.value.code == 2 and out == "" and "--write" in json.loads(err)["error"]["message"]
+
+
+def test_a_host_discover_takes_for_windows_gets_os_windows_too(isolated):
+    """T195: os: is what roster acts on (PowerShell for setup, revoke, check); type: stays the free label."""
+    win = rec("10.0.0.5", [P(22, "ssh", "OpenSSH for_Windows"), P(3389, "ms-wbt-server")], hostname="dc-01.example.local")
+    name, e = scan_entry(win, set(), "2026-11-03")
+    assert (name, e["type"], e["os"]) == ("dc-01", "windows", "windows")
+    _, e = scan_entry(rec("10.0.0.6", [P(22, "ssh", "OpenSSH")]), set(), "2026-11-03")
+    assert "os" not in e
+    path = isolated["work"] / "roster.yml"
+    write_discovered(path, "discovered-20261103", [(name, scan_entry(win, set(), "2026-11-03")[1])], "found", True,
+                     "2026-11-03")
+    assert "os: \"windows\"" in path.read_text()

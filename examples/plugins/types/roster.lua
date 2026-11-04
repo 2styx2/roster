@@ -471,6 +471,7 @@
 ---@field enroll boolean Whether `roster setup` puts this Box's key on it (`false`: password Sessions).
 ---@field reviewed boolean `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is.
 ---@field mesh? boolean `mesh:` as roster.yml sets it; `nil` if nothing does.
+---@field os? string `os:` as roster.yml sets it: `"windows"` (setup, revoke and check run PowerShell there) or `"posix"`; `nil` if nothing does, which is posix.
 ---@field title string One line; `""` if unset.
 ---@field description string One line; `""` if unset.
 ---@field type string What it is (`esxi`, `linux`); `""` if unset.

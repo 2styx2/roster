@@ -15,6 +15,10 @@
 #   product      which product it belongs to
 #   (type and product cascade from the group; a group's own title/description describe the group)
 #
+# os: windows on a host (or group, or defaults) marks a Windows Host with OpenSSH Server: setup, revoke
+#   and check run PowerShell there, and its key goes in the file sshd reads (an administrator's is
+#   %ProgramData%\ssh\administrators_authorized_keys). Unset is posix. type: stays a free label.
+#
 # shell_hooks: true on a host (or group, or defaults) lets the roster app send its shell one line
 #   after login that marks its prompts and says its folder, in that shell only; false keeps a host
 #   out. Off unless set. The app's `:help shell-hooks` shows exactly what's sent.

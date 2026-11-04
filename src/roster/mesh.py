@@ -31,11 +31,16 @@ from .common import (
     program_argv,
     time_left,
 )
+from .config import is_windows
+from .errors import MESH_WINDOWS
 from .sshops import hk_name, recorded_host_keys
 
 TAG = "roster-mesh"
 OPTIONS = 'from="{ip}",no-agent-forwarding,no-X11-forwarding'
 CLAUDE_IMPORT = "@~/ROSTER.md"
+# T196 (#376, decision Q176): every Mesh script is sh, which a Windows Host (os: windows) can't run
+WINDOWS_LEFT_OUT = (f"[{MESH_WINDOWS}] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's "
+                    "left out (a Link or meshed group naming it isn't an error)")
 MARK = "# roster-mesh: the Mesh's ssh config (roster mesh adds and removes these two lines)"
 CONNECT_TIMEOUT = 10
 STEP_TIMEOUT = 120          # s: one Host's script, at most
@@ -63,6 +68,8 @@ def graph(cfg):
             excluded[h["name"]] = "not reviewed (reviewed: false)"
         elif h["mesh"] is False:
             excluded[h["name"]] = "mesh: false"
+        elif is_windows(h):
+            excluded[h["name"]] = WINDOWS_LEFT_OUT
         else:
             return True
         return False
@@ -84,9 +91,12 @@ def graph(cfg):
     for link in cfg.get("links", []):
         for a in expand(link["from"]):
             for b in expand(link["to"]):
+                via = link.get("via")
+                if via and is_windows(hosts[via]):         # roster can't test a hop it can't run sh on
+                    excluded[via] = WINDOWS_LEFT_OUT
+                    continue
                 if a != b and eligible(hosts[a]) and eligible(hosts[b]):
                     for pair in ((a, b), (b, a)) if link["both"] else ((a, b),):
-                        via = link.get("via")
                         if via and via not in pair:
                             pairs[pair] = via
                         else:
@@ -102,6 +112,11 @@ def graph(cfg):
     visit = sorted(set(sources) | {x["to"] for x in live if x["kind"] == "key"})
     return {"links": links, "excluded": dict(sorted(excluded.items())), "sources": sources, "visit": visit,
             "meshed": groups}
+
+
+def visitable(h):
+    """Can the Mesh log in to Host H and run its sh scripts there: a key Host, reviewed, and not Windows (T196)?"""
+    return h["enroll"] and h["reviewed"] and not is_windows(h)
 
 
 def reach(g):
@@ -666,14 +681,14 @@ def visits_of(cfg, hosts):
     st = load_state()
     # Hosts roster wrote on before and still knows how to reach: visited too, so what's no longer asked for goes
     ex = sorted(n for n in set(st["members"]) | set(st["pending"]) if n not in g["visit"] and n in hosts
-                and hosts[n]["enroll"] and hosts[n]["reviewed"])
+                and visitable(hosts[n]))
     links = [dict(x) for x in g["links"]]
     live = {(x["from"], x["to"]) for x in links if "skip" not in x}
     hops = {}                                   # jump Host: the peers it's tested against (a hop to them)
     for x in links:
         if x.get("via") and "skip" not in x and (x["from"], x["via"]) in live:
             hops.setdefault(x["via"], {})[x["to"]] = hosts[x["to"]]
-    hop_only = [n for n in sorted(set(hops) - set(g["sources"])) if hosts[n]["enroll"]]
+    hop_only = [n for n in sorted(set(hops) - set(g["sources"])) if visitable(hosts[n])]
     visits = sorted(set(g["visit"]) | set(ex))
     return g, st, ex, links, hops, hop_only, visits
 
@@ -996,8 +1011,8 @@ def cut_hosts(cfg, name):
     g = graph(cfg)
     st = load_state()
     peers = sorted(n for n in (set(g["visit"]) | set(st["members"]) | set(st["cut"].get(name, [])))
-                   if n in hosts and n != name and hosts[n]["enroll"] and hosts[n]["reviewed"])
-    return [(n, False) for n in peers] + ([(name, True)] if h["enroll"] and h["reviewed"] else [])
+                   if n in hosts and n != name and visitable(hosts[n]))
+    return [(n, False) for n in peers] + ([(name, True)] if visitable(h) else [])
 
 
 def cut(cfg, name, workers=16, progress=None, stopped=None):
@@ -1058,7 +1073,7 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
     progress = progress or (lambda done, total, host: None)
     stopped = stopped or (lambda: False)
     hosts = with_mesh_dirs(cfg)
-    todo = sorted(n for n, h in hosts.items() if h["enroll"] and h["reviewed"])
+    todo = sorted(n for n, h in hosts.items() if visitable(h))
     at = current_deadline()
     owner, was = owner_of(cfg), earlier_owner(cfg, load_state())
 
@@ -1147,7 +1162,7 @@ def find_leftovers(cfg, say=None):
         if x["kind"] == "key" and "skip" not in x:
             wanted.setdefault(x["to"], set()).add(x["from"])
     out: dict[str, Any] = {"hosts": {}, "pending": {}}
-    for name in sorted(n for n, h in hosts.items() if h["enroll"] and h["reviewed"]):
+    for name in sorted(n for n, h in hosts.items() if visitable(h)):
         say(f"  look   {name}")
         lines, err = on_host(hosts[name], preamble(hosts[name], "check", own, ["-"]) + LOOK)
         if err or lines is None:

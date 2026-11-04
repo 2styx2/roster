@@ -16,7 +16,8 @@ from .resources import load_resources
 
 HOST_DEFAULTS = {"user": None, "port": 22, "enroll": True, "auth": "prompt",
                  "web": None, "services": {}, "notes": "",
-                 "title": "", "description": "", "type": "", "product": "", "reviewed": True, "mac": "", "mesh": None}
+                 "title": "", "description": "", "type": "", "product": "", "reviewed": True, "mac": "", "mesh": None,
+                 "os": None}
 TEXT_FIELDS = ("title", "description", "type", "product")
 GROUP_ONLY = ("hosts", "title", "description")   # describe the group itself, not copied onto hosts
 LOGIN = ("user", "auth")
@@ -141,6 +142,7 @@ def parse_inventory(text, path):
             m["mesh"] = first(layers, "mesh")
             if m["mesh"] is not None and not isinstance(m["mesh"], bool):
                 die(f"host {hname!r}: mesh: must be true or false")
+            m["os"] = host_os(hname, first(layers, "os"))
             # The app sends this Host's shell its hook line (ticket 121); roster only checks it.
             if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
                 die(f"host {hname!r}: shell_hooks: must be true or false")
@@ -176,6 +178,24 @@ def parse_inventory(text, path):
              "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])})
     except ValidationError as e:
         die(f"{path}: {problem(e)}")
+
+
+OS_VALUES = ("windows", "posix")
+
+
+def host_os(hname, v):
+    """A Host's `os:` (T195, decision Q174): `windows` (setup, revoke and check run PowerShell there) or `posix` (sh,
+    as for every Host before os:), any case; None when nothing sets it, which is posix."""
+    if v is None:
+        return None
+    if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
+        die(f"host {hname!r}: os: must be windows or posix (unset is posix), not {oneline(v)!r}")
+    return v.strip().lower()
+
+
+def is_windows(h):
+    """Does roster treat Host H (a Host dict) as Windows? Only `os: windows` says so: type: is a free label."""
+    return h.get("os") == "windows"
 
 
 # ---------------------------------------------------------------- the Mesh's links (decision Q63)

@@ -27,6 +27,8 @@ links:
   - { from: lab, to: nas-1, both: true }      # and nas-1 reaches the lab back
 ```
 
+A Windows Host (`os: windows`) is left out: see [Windows Hosts](#windows-hosts).
+
 A Link that names something that isn't a Host or a group, links a name to itself, or has a key other than `from`, `to`, `both` and `via` stops `roster.yml` from loading, with the entry's number in the message. A name that is both a Host's and a group's is refused too.
 
 ### Through a jump Host
@@ -129,6 +131,16 @@ HOST's own Mesh files go from the directory its `mesh_dir:` names now, and from 
 ## roster check
 
 `roster check` (without `--only`) also checks the Mesh, read-only: whatever a `roster mesh` would change is **drift**, something on a Host that isn't what roster wrote, and is listed per Host (`nas-1: add key from orion-2`), in a [`mesh_dir:`](#esxi) too. Links that don't work (unreachable, no recorded host key, no Link to their hop) and pending Hosts make it fail too.
+
+## Windows Hosts
+
+The Mesh's scripts are sh, so an `os: windows` Host is left out of it (code 160): it's never a source, a peer or a hop, and roster never logs in to it for the Mesh (`roster mesh`, `--dry-run`, `cut`, `cut --all`, `--find-leftovers`, `check`). That isn't an error: a meshed group with a Windows Host in it meshes the others, a Link from or to one is skipped, and a Link `via:` one is skipped too (roster can't test the hop), so the pair is linked only if something else links it. `roster mesh --dry-run`, `roster mesh status` and `roster check` say so:
+
+```text
+left out: dc-01 ([160] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's left out (a Link or meshed group naming it isn't an error))
+```
+
+The Mesh never wrote anything on a Windows Host (sh isn't there), so nothing is left to take off one. `mesh.plan` and `mesh.status` give the same reason in `excluded`.
 
 ## ESXi
 
