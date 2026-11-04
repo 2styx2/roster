@@ -164,3 +164,18 @@ def test_check_box_reports_an_askpass_channel_that_opens_but_cannot_work(write_c
     write_config(INVENTORY)
     code, _, found = box_check(capsys)
     assert found["askpass"] == [("error", "roster-askpass.exe isn't installed next to roster")] and code == 1
+
+
+@pytest.mark.parametrize("name, box_name, shared", [("ubuntu", "", True), ("raspberrypi", "", True),
+                                                    ("localhost", "", True), ("ubuntu", "lab-laptop", False),
+                                                    ("ops-laptop-7", "", False), ("x", "debian", True)])
+def test_a_box_name_other_boxes_likely_share_is_a_warning(write_config, capsys, fakes, monkeypatch, name, box_name,
+                                                          shared):
+    """#384: two Boxes with one name are one owner: each one's revoke and Mesh take the other's entries."""
+    monkeypatch.setattr("socket.gethostname", lambda: name)
+    write_config((f"box_name: {box_name}\n" if box_name else "") + INVENTORY)
+    code, out, found = box_check(capsys)
+    warned = [m for lvl, m in found["ssh"] if lvl == "warn" and "a common default" in m]
+    assert bool(warned) == shared, out
+    if shared:
+        assert (box_name or name) in warned[0] and "box_name:" in out and "E222" in out
