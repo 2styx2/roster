@@ -142,12 +142,13 @@ impl RpcClient {
         self.call_timeout(method, params, DEFAULT_TIMEOUT)
     }
 
-    pub fn call_timeout(&self, method: &str, params: Value, timeout: Duration) -> Reply {
+    pub fn call_timeout(&self, method: &str, mut params: Value, timeout: Duration) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         {
             let mut s = self.shared.lock().unwrap();
             if let Some(err) = &s.dead {
+                wipe_value(&mut params);
                 return Err(err.clone());
             }
             s.pending.insert(id, tx);
@@ -168,8 +169,10 @@ impl RpcClient {
         if let Err(e) = written {
             // A broken pipe usually means the child has exited: prefer that explanation, which
             // the reader thread delivers once it sees stdout close.
-            if let Ok(Err(err)) = rx.recv_timeout(Duration::from_secs(2)) {
-                return Err(err);
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(Err(err)) => return Err(err),
+                Ok(Ok(mut value)) => wipe_value(&mut value),
+                Err(_) => {}
             }
             self.shared.lock().unwrap().pending.remove(&id);
             return Err(CallError::Io {
@@ -180,6 +183,10 @@ impl RpcClient {
             Ok(reply) => reply,
             Err(_) => {
                 self.shared.lock().unwrap().pending.remove(&id);
+                // An answer that came in between the timeout and the line above: wiped too.
+                if let Ok(Ok(mut value)) = rx.try_recv() {
+                    wipe_value(&mut value);
+                }
                 self.cancel(id);
                 Err(CallError::Timeout)
             }

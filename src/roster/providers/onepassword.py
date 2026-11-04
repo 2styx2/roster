@@ -15,7 +15,12 @@ def _op_base(ctx):
 
 def _op(ctx, args, **kw):
     """Run op with this run's sign-in (OP_SESSION_*) in its own env only: never os.environ, which every other program
-    roster starts would inherit. The sign-in lives in the provider's state, which a lock forgets."""
+    roster starts would inherit. The sign-in lives in the provider's state, which a lock forgets; one inherited from the
+    shell (`eval $(op signin)`) is moved there on first use."""
+    inherited = {k: os.environ.pop(k, None) for k in [k for k in os.environ if k.startswith("OP_SESSION_")]}
+    inherited = {k: v for k, v in inherited.items() if v is not None}
+    if inherited:
+        ctx.state["env"] = {**inherited, **ctx.state.get("env", {})}
     return ctx.run(args, env=ctx.state.get("env"), **kw)
 
 

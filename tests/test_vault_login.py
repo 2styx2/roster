@@ -3,6 +3,8 @@ through `roster serve`, against the fake bw (tests/fakes/bw), which prompts on i
 native Windows, ticket 63). Every test checks that no secret reached a command line, serve's stdout or its stderr."""
 
 import json
+import threading
+import time
 
 import pytest
 from conftest import WINDOWS
@@ -347,8 +349,10 @@ def test_a_sign_in_left_unanswered_ends_without_waiting_for_a_request(signin, is
     assert state.login is not None
 
     flow.touched -= rpc.SIGN_IN_IDLE + 1                               # ten minutes with no answer
-    assert rpc.housekeeping(state) is None
-    assert state.login is None and flow.password is None and flow.bw is None   # bw login stopped, password gone
+    assert rpc.housekeeping(state) is None and state.login is None
+    for t in [t for t in threading.enumerate() if t.name == "sign-in-timeout"]:
+        t.join(10)
+    assert flow.password is None and flow.bw is None                   # bw login stopped, password gone
     err = call({"action": "answer", "login": step["login"], "code": TOTP})["error"]
     assert err["code"] == 55
 
@@ -357,15 +361,20 @@ def test_the_sign_in_timeout_waits_while_a_request_holds_the_vault(signin, isola
     from roster import serve as rpc
 
     class Flow:
-        touched, closed = 0.0, False
+        closed = False
+        touched = time.monotonic() - rpc.SIGN_IN_IDLE - 1     # idle past its time (monotonic counts from boot)
 
         def close(self):
             self.closed = True
+    flow = Flow()
     state = rpc.State(str(isolated["work"] / "roster.yml"))
-    state.login = rpc.SignIn("bw", Flow())
+    state.login = rpc.SignIn("bw", flow)
     assert state.vault.acquire(True, 0, "a lookup")
     try:
         assert rpc.prune_sign_in(state) == 1.0 and state.login is not None    # tried again soon, not ended mid-step
     finally:
         state.vault.release()
     assert rpc.prune_sign_in(state) is None and state.login is None
+    for t in [t for t in threading.enumerate() if t.name == "sign-in-timeout"]:
+        t.join(10)
+    assert flow.closed

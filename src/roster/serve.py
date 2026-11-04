@@ -2217,11 +2217,16 @@ def prune_sign_in(state):
         return left
     if not state.vault.acquire(False, 0, "the sign-in's timeout"):
         return 1.0                              # a request has the vault (maybe this sign-in's step): look again soon
+    ended = None
     try:
         if state.login is login and time.monotonic() - login.flow.touched > SIGN_IN_IDLE:
-            end_sign_in(state)
+            ended, state.login = login, None    # no answer can reach it from here on
     finally:
         state.vault.release()
+    if ended is not None:
+        # Stopping `bw login` can take a few seconds: not on the askpass channel's thread. Not a daemon either, so
+        # serve can't exit and leave it running with the password in its env.
+        threading.Thread(target=ended.flow.close, name="sign-in-timeout").start()
     return None if state.login is None else 1.0
 
 

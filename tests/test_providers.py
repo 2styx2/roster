@@ -229,6 +229,14 @@ def test_onepassword_sign_in_reaches_op_only_and_lock_forgets_it(isolated, fakes
     assert "env" not in providers.PROVIDER_STATE.get("op", {})
 
 
+def test_an_inherited_onepassword_sign_in_is_moved_out_of_the_env(isolated, fakes, monkeypatch):
+    monkeypatch.setenv("OP_SESSION_test", "tok")                        # `eval $(op signin)` in the shell
+    setup_providers(cfg_with(isolated))
+    assert get_secret("op:Network gear", "g") == "pw-netops"          # op still gets it
+    assert "OP_SESSION_test" not in os.environ
+    assert not any(v.startswith("OP_SESSION_") for v in _child_env("op"))
+
+
 def test_onepassword_items_and_references(isolated, fakes):
     setup_providers(cfg_with(isolated, {"op": {"vault": "Infra"}}))
     assert get_secret("op:Network gear", "g") == "pw-netops"
