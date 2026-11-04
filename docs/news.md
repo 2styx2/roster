@@ -16,6 +16,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **`:tutor topology`** (#233): the Topology Plugin ships a tutorial of its own. On the demo Inventory, open the map, show one group, and go from a node to its Host's details and a Session; each step ticks as you do it. The demo has no Mesh, and the tutorial says so.
 - **No Inventory yet? The app makes one** (#401): on a Box with no `roster.yml`, **Start your Inventory** offers a blank one, a copy of a `roster.yml` you have, or a clone of your team's repo, in a folder you pick (`~/infra` by default). `roster serve` writes it and names it, and the app starts on it. With a roster older than serve API 28 it says to run `roster init --blank` instead.
 - **A plain `roster.yml` says "saved"** (#401): an edit to an Inventory that isn't in a team repo says it was saved to `roster.yml`, never "a Pending change", the toolbar has no Changes button, and `:changes`, `:discard` and `:publish` say there's nothing to publish.
 

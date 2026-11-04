@@ -383,7 +383,53 @@ roster.help.set("topology", {
     "",
     "Keys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).",
     "",
+    "`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.",
+    "",
     "It needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
+  }, "\n"),
+})
+
+-- `:tutor topology` (#233): the map, learned by using it on the tutorial's demo Inventory. Its
+-- steps name the demo's Hosts and groups (demo-01 to demo-06, demo-lab and demo-office). The demo
+-- answers no Mesh, so the tutorial teaches what the map shows without one and says so.
+roster.tutor.set("topology", {
+  title = "Topology",
+  summary = "Learn the Topology view: open the map, show one group, go from a node to its Host",
+  intro = table.concat({
+    "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.",
+    "",
+    "The demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+  }, "\n"),
+  lessons = {
+    {
+      title = "Open the map",
+      text = "`:topology` opens the map as a full view"
+        .. (settings.leader and (", and so does `␣ " .. settings.leader .. "`") or "")
+        .. ". This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.",
+      steps = {
+        { id = "open", text = "Open the map with `:topology`.", on = { event = "command", id = "topology", arg = "" } },
+        {
+          id = "group",
+          text = "Show only the lab with `:topology demo-lab`. `:topology` alone shows every group again.",
+          on = { event = "command", id = "topology", arg = "demo-lab" },
+        },
+      },
+    },
+    {
+      title = "From a node to its Host",
+      text = "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
+      steps = {
+        { id = "details", text = "Find `demo-03` with `/`, then press `i` for its details.", on = { event = "command", id = "info", arg = "demo-03" } },
+        { id = "session", text = "Open the map again, find `demo-03` and press Enter: a Session to it opens.", on = { event = "session_open", host = "demo-03" } },
+      },
+    },
+  },
+  outro = table.concat({
+    "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.",
+    "",
+    "- `f` filters the map by group, kind or state, and `t` lists every node and edge.",
+    "- On your own Inventory, select a Host to light up what it can reach and what can reach it.",
+    "- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
   }, "\n"),
 })
 
