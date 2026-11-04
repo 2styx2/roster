@@ -30,6 +30,13 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes. `inventory.create` makes a new Inventory when serve found none (the app's first run): blank, a copy or a clone, named after its folder and made the active one.
 
+### Security
+
+**CLI**
+
+- **A saved Bitwarden session is read only if it's yours alone** (#411): roster no longer follows a symlink at `~/.config/roster/bw-session`, ignores one another user owns, and checks and reads it through the same open file, so it can't be swapped in between. On Windows it checks the file's owner and permissions too: one others may open is ignored with a warning.
+- **On Windows, roster never runs a program from the current folder** (#411): `bw`, `ssh`, `git`, `nmap` and every other program roster runs are found on `PATH` alone, so a `bw.exe` left in the folder you start roster from can't run with your vault's session.
+
 ## v0.5.1
 
 ### New

@@ -10,7 +10,7 @@ import signal
 import subprocess
 from pathlib import Path
 
-from .common import WINDOWS, kill_tree, time_left
+from .common import WINDOWS, kill_tree, program_argv, time_left
 from .edit import keep_backup, load_text, read_text
 from .errors import (
     COMMIT_FAILED,
@@ -51,7 +51,7 @@ def git(repo, *args, timeout=GIT_TIMEOUT, floor=1):
     argv = ["git", "-C", str(repo), "-c", "core.fsmonitor=false", *args]
     timeout = round(time_left(timeout, floor), 1)          # held to serve's deadline for the whole request
     try:
-        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+        p = subprocess.Popen(program_argv(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                              text=True, env=env, start_new_session=True)
     except FileNotFoundError:
         raise Problem(NOT_A_REPO, "git isn't installed on this box, so roster can't keep Pending changes",

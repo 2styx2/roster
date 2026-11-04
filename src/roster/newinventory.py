@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from .common import NAME_RE
+from .common import NAME_RE, find_program, program_argv
 from .config import load_config_text
 from .errors import CLONE_FAILED, FOLDER_NOT_WRITABLE, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
 
@@ -171,14 +171,14 @@ def clone(path, url, interactive, stop=None):
     if busy:
         raise Problem(CLONE_FAILED, f"{folder} isn't empty, so roster won't clone into it", {"path": str(folder)},
                       fix="pick an empty or new folder (-c FOLDER/roster.yml)")
-    if shutil.which("git") is None:
+    if find_program("git") is None:
         raise Problem(CLONE_FAILED, "git isn't installed on this Box, so roster can't clone the repo",
                       fix="install git, or copy roster.yml over and use file:PATH")
     from .changes import GIT_LOCATION
     env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
     if not interactive:                             # nobody to answer: a passphrase, a password or a new host key
         env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": env.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
-    argv = ["git", "clone", "-q", "--", url, str(folder)]
+    argv = program_argv(["git", "clone", "-q", "--", url, str(folder)])
     made_folder = not folder.exists()               # what a stopped clone leaves is taken away, never more
     if stop is not None:
         r = stoppable(argv, env, folder, made_folder, stop)

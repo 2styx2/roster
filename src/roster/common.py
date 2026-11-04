@@ -99,6 +99,45 @@ def user_config_dir() -> Path:
 SSH_UNSAFE = re.compile(r'["\x00-\x1f\x7f]')
 
 
+class NotPrivate(Exception):
+    """read_private: the file is there, but it isn't only yours (the message says how)."""
+
+
+def read_private(path: Path) -> str:
+    """PATH's text, read only if it's yours alone (#411), as a secret's file must be: opened without following a link,
+    then checked and read through that one open file, so it can't be swapped between the check and the read. On Linux
+    and macOS: a plain file (not a link, FIFO or device), owned by you, with no group or other bits. On Windows
+    (roster/winfile.py): a plain file (not a link or other reparse point), owned by you, that no one but you, SYSTEM
+    and Administrators may open. FileNotFoundError if there's nothing there; NotPrivate if it isn't yours alone."""
+    if WINDOWS:
+        from . import winfile
+        return winfile.read_private(str(path))
+    import stat
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOCTTY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        if isinstance(e, FileNotFoundError):
+            raise
+        if os.path.islink(path):
+            raise NotPrivate(f"{path} is a symlink (roster never follows one here)") from None
+        raise NotPrivate(f"{path} can't be read ({e.strerror})") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise NotPrivate(f"{path} isn't a plain file")
+        if st.st_uid != os.getuid():
+            raise NotPrivate(f"{path} isn't yours (another user owns it)")
+        if st.st_mode & 0o077:
+            raise NotPrivate(f"{path} is readable by others (chmod 600 {path})")
+        chunks = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", "replace")
+    finally:
+        os.close(fd)
+
+
 def replace_file(path: Path, text: str, mode: int = 0o600) -> None:
     """Write TEXT to PATH whole or not at all: a new file beside it (a name of its own, so two writers can't take each
     other's), then renamed over it, with MODE (0600: ~/.ssh/config as roster always left it, since OpenSSH refuses one
@@ -131,13 +170,40 @@ def ssh_path(path: str | Path) -> str:
 CMD_SPECIAL = re.compile(r'["%^&|<>!\r\n]')
 
 
+def find_program(name: str) -> str | None:
+    """The program roster runs as NAME, as a path, or None: shutil.which, except on Windows, where it's looked up on
+    PATH alone, never in the current folder (#411). Windows' own lookup (CreateProcess, and shutil.which before
+    Python 3.12; from 3.12 unless NoDefaultCurrentDirectoryInExePath is set) tries the current folder first, so a bw.exe
+    or ssh.cmd left in whatever folder roster was started from would run in its place, with the vault's session in its
+    env. A relative PATH entry (empty, ".") is the current folder too, so it's skipped. A NAME with a folder in it is
+    taken as named."""
+    if not WINDOWS or "/" in name or "\\" in name:
+        return shutil.which(name)
+    exts = [e.lower() for e in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";") if e]
+    names = [name] if name.lower().endswith(tuple(exts)) else [name + e for e in exts]
+    for folder in (os.environ.get("PATH") or "").split(os.pathsep):
+        folder = folder.strip().strip('"')
+        if not folder or not os.path.isabs(folder):
+            continue
+        for n in names:
+            path = os.path.join(folder, n)
+            if os.path.isfile(path):
+                return path
+    return None
+
+
 def program_argv(argv):
-    """ARGV ready for subprocess. On Windows the program is looked up on PATH with its extension (a tool installed as
-    bw.cmd is found as bw), and a .cmd or .bat program is refused an argument cmd.exe would act on: roster passes
-    item names and paths there, and those come from roster.yml and the vault."""
+    """ARGV ready for subprocess. On Windows the program is looked up on PATH alone with its extension (find_program: a
+    tool installed as bw.cmd is found as bw, one in the current folder never is; FileNotFoundError if it isn't on
+    PATH, as subprocess would raise, rather than leave Windows to look in the current folder), and a .cmd or .bat
+    program is refused an argument cmd.exe would act on: roster passes item names and paths there, and those come from
+    roster.yml and the vault."""
     if not WINDOWS:
         return list(argv)
-    found = shutil.which(argv[0]) or argv[0]
+    named = "/" in argv[0] or "\\" in argv[0]
+    found = (shutil.which(argv[0]) or argv[0]) if named else find_program(argv[0])
+    if found is None:
+        raise FileNotFoundError(f"{argv[0]} isn't on PATH")
     if found.lower().endswith((".cmd", ".bat")):
         bad = next((a for a in argv[1:] if CMD_SPECIAL.search(a)), None)
         if bad is not None:
@@ -151,7 +217,10 @@ def kill_tree(p):
     """Kill P and everything it started. On Windows a tool is often a batch file (npm's bw.cmd) whose real program is
     its child, which would outlive a plain kill and keep the output pipes open."""
     if WINDOWS:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        try:
+            subprocess.run(program_argv(["taskkill", "/F", "/T", "/PID", str(p.pid)]), capture_output=True)
+        except FileNotFoundError:
+            pass
     try:
         p.kill()
     except OSError:
@@ -189,7 +258,7 @@ def run_instead(argv):
 
 def roster_command():
     """How Claude (or anyone) should invoke roster on this box."""
-    if shutil.which("roster"):
+    if find_program("roster"):
         return "roster"
     return f"{shlex.quote(sys.executable)} -m roster"     # e.g. inside a uv venv that isn't on PATH
 

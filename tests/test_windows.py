@@ -23,7 +23,7 @@ def as_windows(monkeypatch):
 
 
 def test_a_tool_is_found_by_its_extension_and_an_exe_takes_any_argument(as_windows, monkeypatch):
-    monkeypatch.setattr(common.shutil, "which", lambda name: rf"C:\tools\{name}.exe")
+    monkeypatch.setattr(common, "find_program", lambda name: rf"C:\tools\{name}.exe")
     assert common.program_argv(["git", "commit", "-m", 'say "hi" & 100%']) == \
         [r"C:\tools\git.exe", "commit", "-m", 'say "hi" & 100%']
 
@@ -61,7 +61,7 @@ def test_the_console_sign_in_stops_reading_once_bw_has_exited_even_if_the_consol
 def test_a_batch_file_is_never_handed_what_cmd_would_act_on(as_windows, monkeypatch, arg):
     """npm installs bw as bw.cmd, which runs through cmd.exe: an item name from roster.yml or the vault with one of
     these could run something else, so roster refuses it and says why."""
-    monkeypatch.setattr(common.shutil, "which", lambda name: rf"C:\npm\{name}.cmd")
+    monkeypatch.setattr(common, "find_program", lambda name: rf"C:\npm\{name}.cmd")
     assert common.program_argv(["bw", "get", "item", "esx ssh"]) == [r"C:\npm\bw.cmd", "get", "item", "esx ssh"]
     with pytest.raises(ValueError, match="batch file"):
         common.program_argv(["bw", "get", "item", arg])
@@ -69,7 +69,7 @@ def test_a_batch_file_is_never_handed_what_cmd_would_act_on(as_windows, monkeypa
 
 def test_a_batch_file_refusal_is_a_provider_error_not_a_crash(as_windows, monkeypatch):
     from roster import providers
-    monkeypatch.setattr(common.shutil, "which", lambda name: rf"C:\npm\{name}.cmd")
+    monkeypatch.setattr(common, "find_program", lambda name: rf"C:\npm\{name}.cmd")
     with pytest.raises(providers.SecretError, match="batch file"):
         providers.Ctx("bw", "g").run(["bw", "get", "item", "a & b"])
 
@@ -236,6 +236,7 @@ def fake_popen_answering(seen, stdout):
 
 
 def test_the_meshs_script_reaches_the_remote_sh_with_unix_newlines(as_windows, monkeypatch):
+    monkeypatch.setattr(common, "find_program", lambda name: rf"C:\Windows\System32\OpenSSH\{name}.exe")
     from roster import mesh
     seen = {}
     monkeypatch.setattr(mesh.subprocess, "Popen", fake_popen_answering(seen, "SAME include\nROSTER_DONE\n"))
@@ -247,6 +248,7 @@ def test_the_meshs_script_reaches_the_remote_sh_with_unix_newlines(as_windows, m
 
 
 def test_sudos_password_reaches_the_remote_sh_without_a_carriage_return(as_windows, monkeypatch, write_config):
+    monkeypatch.setattr(common, "find_program", lambda name: rf"C:\Windows\System32\OpenSSH\{name}.exe")
     from test_cli import SUDO_CFG
 
     from roster import cli
@@ -358,3 +360,114 @@ def test_bws_sso_listener_is_seen_without_touching_its_port_and_without_ipv6(mon
         outsider.close()
     finally:
         con.close()
+
+
+# ---- a secret's file must be this user's alone (#411): the bw-session file
+
+ME = "S-1-5-21-1000-2000-3000-1001"
+ALLOW, DENY, INHERIT_ONLY = 0x00, 0x01, 0x08
+
+
+@pytest.mark.parametrize("owner,aces", [
+    (ME, [(ALLOW, 0, ME), (ALLOW, 0x10, "S-1-5-18"), (ALLOW, 0x10, "S-1-5-32-544")]),   # what %APPDATA% gives it
+    ("S-1-5-32-544", [(ALLOW, 0, ME)]),                   # made from an elevated shell: Administrators own it
+    (ME, [(ALLOW, 0, ME), (DENY, 0, "S-1-1-0")]),         # a deny entry only narrows
+    (ME, [(ALLOW, 0, ME), (ALLOW, INHERIT_ONLY, "S-1-1-0")]),   # applies to children, not to the file
+])
+def test_a_file_only_this_user_system_and_administrators_may_open_is_private(owner, aces):
+    from roster import winfile
+    assert winfile.problem(owner, aces, ME) is None
+
+
+@pytest.mark.parametrize("owner,aces,why", [
+    ("S-1-5-21-1000-2000-3000-1002", [(ALLOW, 0, ME)], "isn't yours"),
+    (ME, None, "everyone may open it"),
+    (ME, [(ALLOW, 0, ME), (ALLOW, 0x10, "S-1-5-32-545")], "opened by others (S-1-5-32-545)"),    # Users
+    (ME, [(ALLOW, 0, ME), (ALLOW, 0, "S-1-1-0")], "opened by others (S-1-1-0)"),                  # Everyone
+    (ME, [(ALLOW, 0, ME), (0x05, 0, None)], "can't check"),     # an object entry: refused, not guessed at
+    (ME, [(ALLOW, 0, None)], "can't check"),
+])
+def test_a_file_anyone_else_owns_or_may_open_isnt_private(owner, aces, why):
+    from roster import winfile
+    assert why in winfile.problem(owner, aces, ME)
+
+
+@windows_only
+def test_the_bw_session_file_is_read_only_while_its_acl_is_this_users_alone(isolated, fakes, capsys):
+    from roster.providers import get_secret
+    f = common.user_config_dir() / "bw-session"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("fake-session-key\n")
+    assert common.read_private(f) == "fake-session-key\n"
+    assert get_secret("bw:Network gear", "g") == "pw-netops"
+    subprocess.run(["icacls", str(f), "/grant", "*S-1-1-0:R"], check=True, capture_output=True)
+    with pytest.raises(common.NotPrivate, match=r"opened by others \(S-1-1-0\)"):
+        common.read_private(f)
+
+
+@windows_only
+def test_the_bw_session_file_that_is_a_link_is_never_followed(isolated, tmp_path):
+    real = tmp_path / "elsewhere"
+    real.write_text("fake-session-key\n")
+    link = tmp_path / "bw-session"
+    try:
+        link.symlink_to(real)
+    except OSError:
+        pytest.skip("this account can't make a symlink")
+    with pytest.raises(common.NotPrivate, match="is a link"):
+        common.read_private(link)
+
+
+def test_a_missing_private_file_is_not_found_on_windows_too(as_windows, isolated):
+    with pytest.raises(FileNotFoundError):
+        common.read_private(isolated["home"] / "nothing-here")
+
+
+# ---- a program is found on PATH, never in the current folder (#411)
+
+@pytest.fixture
+def planted(as_windows, tmp_path, monkeypatch):
+    """A real bw.cmd in a PATH folder, and a planted one in the current folder (which Windows' own lookup, and
+    shutil.which before Python 3.12, try first)."""
+    tools, here = tmp_path / "tools", tmp_path / "here"
+    tools.mkdir()
+    here.mkdir()
+    (here / "bw.cmd").write_text("@echo planted\r\n")
+    (here / "ssh.exe").write_text("")
+    monkeypatch.chdir(here)
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setenv("PATH", os.pathsep.join(["", ".", "here", str(tools)]))   # cwd-relative entries are skipped
+    return tools, here
+
+
+def test_a_program_in_the_current_folder_is_never_run(planted):
+    tools, _ = planted
+    (tools / "bw.cmd").write_text("@echo real\r\n")
+    assert common.find_program("bw") == str(tools / "bw.cmd")
+    assert common.program_argv(["bw", "status"]) == [str(tools / "bw.cmd"), "status"]
+
+
+def test_a_program_only_in_the_current_folder_is_not_found(planted):
+    assert common.find_program("ssh") is None
+    with pytest.raises(FileNotFoundError):
+        common.program_argv(["ssh", "-V"])
+
+
+def test_a_program_named_with_its_extension_or_a_folder_is_taken_as_named(planted):
+    tools, here = planted
+    (tools / "ssh.exe").write_text("")
+    assert common.find_program("ssh.exe") == str(tools / "ssh.exe")
+    assert common.program_argv([str(here / "ssh.exe"), "-V"]) == [str(here / "ssh.exe"), "-V"]
+
+
+def test_a_git_in_the_current_folder_is_never_run_for_the_inventorys_repo(planted, monkeypatch):
+    """Every program roster runs goes through the same lookup: git (for Pending changes) too."""
+    from roster import changes
+    from roster.errors import Problem
+    _, here = planted
+    (here / "git.exe").write_text("")
+    started = []
+    monkeypatch.setattr(changes.subprocess, "Popen", lambda argv, **kw: started.append(argv))
+    with pytest.raises(Problem, match="git isn't installed"):
+        changes.git(here, "status")
+    assert started == []

@@ -299,6 +299,39 @@ def test_bw_session_file_readable_by_others_is_ignored(isolated, fakes, capsys):
     assert "readable by others" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(WINDOWS, reason="a symlink needs a privilege there; the Windows check has its own tests")
+def test_bw_session_file_that_is_a_symlink_is_ignored(isolated, fakes, capsys):
+    """#411: a link is never followed, even to a file only you can read: whoever made it chose what roster reads."""
+    real = _session_file(isolated, "fake-session-key\n")
+    link = real.with_name("bw-session")
+    moved = real.rename(real.with_name("elsewhere"))
+    link.symlink_to(moved)
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "ignored" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(WINDOWS, reason="a uid; Windows checks the file's owner SID (test_windows.py)")
+def test_bw_session_file_someone_else_owns_is_ignored(isolated, fakes, capsys, monkeypatch):
+    """#411: only you can read it means it's yours too: a file another user owns (mode 600 or not) is theirs to
+    change."""
+    _session_file(isolated, "fake-session-key\n")
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(user_config_dir()).st_uid + 1)
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "isn't yours" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(WINDOWS, reason="a FIFO is POSIX")
+def test_bw_session_file_that_isnt_a_plain_file_is_ignored_without_hanging(isolated, fakes, capsys):
+    f = user_config_dir() / "bw-session"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(f, 0o600)
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "ignored" in capsys.readouterr().out
+
+
 def test_bw_expired_session_file_says_refresh(isolated, fakes):
     _session_file(isolated, "stale-key\n")
     with pytest.raises(SecretError, match="has expired.*bw unlock --raw >"):

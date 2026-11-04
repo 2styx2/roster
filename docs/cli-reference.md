@@ -333,7 +333,7 @@ Vault
 
 ### `roster bw`
 
-`roster bw [--write] [--] BW_ARGS…` runs the Bitwarden CLI with this Box's unlocked vault, so a script, another terminal or a Claude session doesn't have to unlock it again. The session comes from `~/.config/roster/bw-session` (used only if only you can read it) or a `BW_SESSION` in your shell, and goes to `bw` in its environment, never on its command line. bw's input and output are your terminal's: roster never reads, keeps or logs what bw prints. It adds `--nointeraction`, so bw never waits for an answer, except for `login` and `unlock`, which ask for the master password themselves. It exits with bw's status (decision Q178).
+`roster bw [--write] [--] BW_ARGS…` runs the Bitwarden CLI with this Box's unlocked vault, so a script, another terminal or a Claude session doesn't have to unlock it again. The session comes from `~/.config/roster/bw-session` (used only if it's yours alone: not a symlink, owned by you, only you can read it) or a `BW_SESSION` in your shell, and goes to `bw` in its environment, never on its command line. bw's input and output are your terminal's: roster never reads, keeps or logs what bw prints. It adds `--nointeraction`, so bw never waits for an answer, except for `login` and `unlock`, which ask for the master password themselves. It exits with bw's status (decision Q178).
 
 **Read-only unless you say so.** Read-only means bw changes nothing in the vault and writes no file on this Box. roster checks bw's command against a list and refuses anything else before bw starts:
 
@@ -482,7 +482,7 @@ Each script is short: on every Tab it asks roster (`roster __complete`, hidden) 
 |---|---|
 | `./roster.yml` | The Inventory: hosts, groups, resources and vault references, never passwords. roster looks for it in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml` (`%APPDATA%\roster\roster.yml` on Windows) |
 | `~/.config/roster/` | This box's roster folder (on Windows, `%APPDATA%\roster`, next to the app's `init.lua`): `roster.yml` if you keep it here, `providers/` for provider plugins, `bw-session` |
-| `~/.config/roster/bw-session` | A saved Bitwarden session (`bw unlock --raw`), used only if only you can read it |
+| `~/.config/roster/bw-session` | A saved Bitwarden session (`bw unlock --raw`), used only if it's yours alone: not a symlink, owned by you, and only you can read it (on Windows: owned by you, and nobody but you, SYSTEM and Administrators may open it) |
 | `~/.ssh/roster_ed25519` | This box's SSH key (`key_path:` in `roster.yml` moves it), made by `roster setup` |
 | `~/.ssh/roster_known_hosts` | Host keys recorded on first contact (a named Inventory's: `~/.ssh/roster_known_hosts-NAME`) |
 | `~/.ssh/config.d/roster` | The SSH config entries `roster setup` and `roster sync` write (a named Inventory's: `~/.ssh/roster-inventories/NAME`) |
@@ -511,6 +511,8 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 - roster uses Windows' built-in OpenSSH (`ssh.exe`, `ssh-keygen.exe`, `ssh-keyscan.exe`). `roster setup` writes the same files under `%USERPROFILE%\.ssh`, with forward slashes in the config, and without connection sharing (`ControlMaster`), which Windows' OpenSSH doesn't have.
 - roster's own folder is `%APPDATA%\roster` (where the app's `init.lua` is too), so `roster.yml` can live there, as can `providers/` and `bw-session`.
 - `roster run` waits for ssh and exits with its status (Windows has no `exec`).
+- roster finds every program it runs (`ssh`, `bw`, `git`, `nmap`, …) on `PATH` alone, never in the current folder, which Windows itself looks in first: a `bw.exe` or `ssh.cmd` in the folder you start roster from is never run. A relative `PATH` entry (empty, `.`) is skipped for the same reason.
+- `bw-session` is used only if it's yours alone: owned by you (or Administrators), not a link, and nobody but you, SYSTEM and Administrators may open it (what a file in your own `%APPDATA%` gets). One you've shared with others, say with Everyone or Users, is ignored with a warning.
 - A vault CLI installed as a batch file (npm installs `bw` as `bw.cmd`) runs through `cmd.exe`, so roster won't pass it an argument with `"`, `%`, `^`, `&`, `|`, `<`, `>` or `!` in it: rename the item, or install the tool as an `.exe`.
 - Signing the vault in from the app with a password or SSO drives `bw login` on a pseudoconsole (ConPTY, Windows 10 1809 or later), as Linux does on a PTY. For SSO, bw opens the sign-in page in your default browser itself, so the app has no link to show or copy, and `ROSTER_NO_BROWSER` can't stop it opening there.
 - Commands that run a shell script on this machine (a `cmd:` provider, a provider's `command:`) run it with `cmd.exe`.
@@ -557,7 +559,7 @@ roster reveal lab-guest --wifi | qrencode -t ansiutf8
 - **`CLAUDE.md`** gets an `@ROSTER.md` line added, and its existing content is kept.
 - **`.claude/settings.json`** gets deny rules for reading and editing `~/.ssh`. These are a guardrail, not a wall.
 
-For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster bw …` runs other `bw` commands with it, read-only unless `--write` ([`roster bw`](#roster-bw)). roster ignores the file unless only you can read it. `bw lock` ends the session, and the file goes stale with it.
+For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster bw …` runs other `bw` commands with it, read-only unless `--write` ([`roster bw`](#roster-bw)). roster ignores the file, with a warning, unless it's yours alone: a plain file, not a symlink, owned by you, that only you can read. `bw lock` ends the session, and the file goes stale with it.
 
 For password-only gear, start Claude from a shell where your password manager is unlocked, for example `export BW_SESSION=$(bw unlock --raw)`. `roster run` can then fetch the password without Claude ever seeing it.
 
