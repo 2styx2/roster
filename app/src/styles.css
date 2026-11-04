@@ -249,13 +249,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   margin: 0 0 8px; padding-left: 2px; color: var(--muted);
   font-size: max(11px, calc(var(--text-xs) - 1px)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
 }
-.recent-map { display: grid; grid-template-columns: auto 48px minmax(0, 340px); align-items: center; max-width: 100%; }
+.recent-map { display: grid; grid-template-columns: auto 48px minmax(0, 300px); align-items: center; max-width: 100%; }
 /* The Box's name, then its square, where every edge starts. */
 .recent-box { display: flex; align-items: center; gap: 8px; }
 .recent-box .box-mark { width: 8px; height: 8px; border-radius: 1.6px; }
 .recent-box-name { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 var(--text-xs) var(--font-mono); }
 .recent-edges { align-self: stretch; width: 48px; height: 100%; overflow: visible; }
-.recent-edges path { fill: none; stroke: var(--line-strong); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.recent-edges path { fill: none; stroke: var(--faint); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 .recent-edges path.on { stroke: var(--muted); }
 .recent-list { list-style: none; margin: 0; padding: 0; }
 .recent-row {
@@ -314,6 +314,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar .hint + .hint { margin-left: 16px; }
 /* A hint that names a command is also its button, for the mouse: the same words, quiet until the
    pointer is on it (taste.md: chrome recedes). */
+/* A Plugin's segment that runs a command fits the bar (24 px) like the rest of the line. */
+.statusbar button.statusbar-plugin {
+  height: 20px; padding: 0 6px; border-color: transparent; background: transparent; color: inherit; font: inherit;
+}
+.statusbar button.statusbar-plugin:active:not(:disabled) { transform: none; }
 .statusbar button.hint {
   height: var(--statusbar-h); padding: 0; border: 0; border-radius: 0; background: transparent;
   color: inherit; font: inherit; font-weight: inherit;
@@ -1035,9 +1040,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   opacity: 0; pointer-events: none;
   transition: opacity var(--dur-fade) ease var(--dur-fade);
 }
-/* The terminal waits behind the card until the shell's first byte, then fades in under it. */
-.pane .term-wrap { transition: opacity var(--dur-fade) ease; }
-.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; }
+/* The terminal waits behind the card until the shell's first byte, then comes in once the card
+   has gone (the ring's 120 ms beat, then the card's 120 ms fade), so the card's words never sit
+   on the first output. Hidden again at once when a card comes back. */
+.pane .term-wrap { transition: opacity var(--dur-fade) ease calc(var(--dur-fade) * 2); }
+.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; transition-delay: 0s; }
 /* Words break between words; only a Host name too long for the pane breaks inside itself. */
 .connect-card p { margin: 0; overflow-wrap: break-word; text-wrap: balance; }
 .connect-map { overflow: visible; margin-bottom: 12px; }
@@ -1151,7 +1158,12 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 
 /* xterm's own scrollbar follows the Theme. */
-.xterm .xterm-viewport { scrollbar-color: var(--raised-line) transparent; }
+/* The terminal's scrollbar is out of sight until the pointer is on the pane (the terminal is the
+   hero; a grey slab beside two lines of output isn't). */
+.xterm .xterm-viewport { scrollbar-color: transparent transparent; }
+@media (hover: hover) and (pointer: fine) {
+  .pane:hover .xterm .xterm-viewport { scrollbar-color: var(--raised-line) transparent; }
+}
 
 /* ---------- View modes (ticket 22) ---------- */
 
@@ -1310,7 +1322,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .config-toast-head { display: flex; align-items: center; gap: 8px; }
 .config-toast-title { flex: 1; font-weight: 500; }
 .config-toast-close {
-  display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: var(--radius-sm);
+  display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: var(--radius-sm);
   color: var(--muted); background: transparent; cursor: pointer;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -1486,6 +1498,12 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .statusbar .statusbar-progress-stop svg,
 .corner-progress .statusbar-progress-stop svg { width: 10px; height: 10px; }
+/* A narrow window shows the latest notice only, its title alone (the rest is in :messages), so
+   notices never cover half the terminal. */
+@media (max-width: 640px) {
+  .plugin-notices > .config-toast:not(:last-child) { display: none; }
+  .config-toast .config-toast-lines { display: none; }
+}
 /* Out of sight while the Picker is open (a modal search), back when it closes. */
 .window:has(.picker-backdrop) :is(.plugin-notices, .config-toast) { visibility: hidden; }
 /* Above the status bar, never over it: it carries the live state. */

@@ -305,7 +305,7 @@ export function ConnectCard({
         {fills && <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />}
       </svg>
       <p className="connect-title">
-        <span className="muted">{again ? "Reconnecting to " : "Connecting to "}</span>
+        <span className="muted">{phase === null ? "Logged in to " : again ? "Reconnecting to " : "Connecting to "}</span>
         <span className="connect-name">{host}</span>
         {where && <span className="connect-address"> {where}</span>}
       </p>
@@ -425,7 +425,7 @@ export function ConnectCard({
       ) : (
         <p className="connect-phase muted">
           {/* As the ring closes the words say so, so the two never disagree. */}
-          {phase === null ? "Logged in" : PHASE_WORDS[words]}
+          {phase === null ? "" : PHASE_WORDS[words]}
           {/* Not announced: a status that changed every second would talk over everything. */}
           {waiting && seconds >= 3 && (
             <span className="connect-elapsed" aria-hidden="true">
