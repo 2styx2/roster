@@ -129,7 +129,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         title: "Folders",
         order: 200,
         count: shown,
-        empty: problem ? `Folders can't be read: ${problem}` : "No Folders yet. Drag a Host here or press `␣ a`.",
+        empty: problem ? `Folders can't be read: ${problem}` : "No Folders yet. Drag a Host here, or `␣ a`.",
         actions: [{ label: "New Folder", icon: "add", run: "folder new" }],
         drop: (e: Ctx) => {
           if (typeof e.dropped === "string") roster.cmdline(`folder add ${e.dropped} `);

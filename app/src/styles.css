@@ -236,6 +236,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .empty p { margin: 0; }
 .empty-mark { opacity: 0.35; margin-bottom: 6px; }
 .empty-title { font-weight: 500; color: var(--muted); }
+.empty-path { max-width: min(56ch, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
+.empty-path code { direction: ltr; unicode-bidi: isolate; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
 
 .statusbar {

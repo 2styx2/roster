@@ -2455,8 +2455,18 @@ function Workspace({
             <div className="empty">
               <Logo size={48} className="empty-mark" />
               <p className="empty-title">No Hosts in the Inventory yet.</p>
-              <p className="empty-hint">
-                Add them to <code>{info.inventory.path}</code> and they show up here.
+              {/* The file on its own line, as data (Iosevka), cut in the middle if it must be. */}
+              <p className="empty-path" title={info.inventory.path}>
+                <code>{info.inventory.path}</code>
+              </p>
+              <p className="empty-hint key-hint">
+                {addHost.keys && !addHost.tooOld ? (
+                  <>
+                    Press <Keys keys={addHost.keys} leader={options.leader} /> to add one, or edit the file.
+                  </>
+                ) : (
+                  "Add Hosts to this file and they show up here."
+                )}
               </p>
             </div>
           ) : noSessions ? (

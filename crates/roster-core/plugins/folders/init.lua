@@ -303,7 +303,7 @@ show = function()
     title = "Folders",
     order = 200,
     count = shown,
-    empty = problem and ("Folders can't be read: " .. problem) or "No Folders yet. Drag a Host here or press `␣ a`.",
+    empty = problem and ("Folders can't be read: " .. problem) or "No Folders yet. Drag a Host here, or `␣ a`.",
     actions = { { label = "New Folder", icon = "add", run = "folder new" } },
     drop = function(e)
       if e.dropped then roster.cmdline("folder add " .. e.dropped .. " ") end
