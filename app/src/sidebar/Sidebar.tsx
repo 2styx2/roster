@@ -641,7 +641,7 @@ export function Sidebar({
           // row's own handler took a right-click on it already.
           if (e.target !== e.currentTarget || e.defaultPrevented || e.button === 2) return;
           e.preventDefault();
-          if ((cursorRow?.menu || cursorRow?.actions?.length) && menu?.row !== cursorRow?.id) openMenu(cursorRow!.id, null);
+          if (cursorRow && (cursorRow.menu || cursorRow.actions?.length) && menu?.row !== cursorRow.id) openMenu(cursorRow.id, null);
         }}
         onDragOver={(e) => drag.over(e, undefined)}
         onDrop={(e) => drag.drop(e, undefined)}
