@@ -1070,15 +1070,17 @@ def used_for(uses):
 def cmd_bw(args):
     """The Bitwarden CLI with this box's vault session (~/.config/roster/bw-session), so scripts and
     Claude sessions don't each carry BW_SESSION around. Never prompts: --nointeraction is added."""
-    from .providers.bitwarden import load_session_file
+    from .providers.bitwarden import load_session_file, session_key
     argv = args.args[1:] if args.args[:1] == ["--"] else list(args.args)
     if not argv:
         die("usage: roster bw <bw arguments>   e.g.  roster bw list items --search proxmox")
     load_session_file()
     if "--nointeraction" not in argv:
         argv.append("--nointeraction")
+    key = session_key()
+    env = {**os.environ, **({"BW_SESSION": key} if key else {})}
     try:
-        return subprocess.run(program_argv(["bw", *argv])).returncode
+        return subprocess.run(program_argv(["bw", *argv]), env=env).returncode
     except ValueError as e:
         die(str(e))
     except FileNotFoundError:

@@ -323,7 +323,8 @@ impl Backend {
     /// moved into the request and dropped with it; it comes back only as an askpass token. With
     /// `save`, serve holds it for "Save to vault" and only its id comes back, as `held`.
     pub fn typed_session_command(&self, host: &str, password: String, save: bool) -> Result<HostSession, CallError> {
-        let mut params = json!({ "host": host, "password": password });
+        let mut params = json!({ "host": host });
+        params["password"] = Value::String(password);
         if save {
             params["save"] = Value::Bool(true);
         }

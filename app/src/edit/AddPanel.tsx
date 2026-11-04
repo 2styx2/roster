@@ -36,6 +36,7 @@ import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import { useFormPull, type PullGate } from "./pull";
 import { PullStatus } from "./PullStatus";
+import { useForgetOnLock } from "../lock/forgetOnLock";
 import { SaveToField, useSaveTo } from "./SaveTo";
 import {
   addParams,
@@ -180,8 +181,21 @@ export function AddPanel({
     // Emptied on purpose: no "type the password" nag until the next try.
     setTouched((t) => new Set([...t].filter((f) => f !== "password" && f !== "*")));
   };
+  // And when the app locks: a password typed here but not sent yet doesn't outlast the lock. A host
+  // key waiting to be confirmed goes back to the form, since confirming would send that password.
+  useForgetOnLock(() => {
+    if (password.current) password.current.value = "";
+    setHasPassword(false);
+    setPhase((p) => (p.at === "confirm-key" ? { at: "ready" } : p));
+  });
 
   const add = async (hostKey?: string) => {
+    if (login === "password" && !password.current?.value) {
+      setPhase({ at: "ready" });
+      setTouched((t) => new Set([...t, "password"]));
+      password.current?.focus();
+      return;
+    }
     const params = addParams(draft, hosts, login === "password" ? password.current?.value : undefined, target?.save_to);
     if (!params) return;
     setPhase({ at: "adding" });

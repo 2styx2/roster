@@ -174,11 +174,16 @@ def session_file(h, name, s):
 
 
 def load_session(path):
+    """The kept session, or None. One past its time is deleted, so an expired cookie doesn't stay on disk (under
+    ~/.cache, without $XDG_RUNTIME_DIR, nothing else removes it)."""
     try:
         sess = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
-    return sess if isinstance(sess, dict) and sess.get("expires", 0) > time.time() else None
+    if isinstance(sess, dict) and sess.get("expires", 0) > time.time():
+        return sess
+    drop_session(path)
+    return None
 
 
 def save_session(path, sess):

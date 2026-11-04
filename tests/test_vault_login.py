@@ -3,6 +3,8 @@ through `roster serve`, against the fake bw (tests/fakes/bw), which prompts on i
 native Windows, ticket 63). Every test checks that no secret reached a command line, serve's stdout or its stderr."""
 
 import json
+import threading
+import time
 
 import pytest
 from conftest import WINDOWS
@@ -325,3 +327,65 @@ def test_missing_cli(signin, monkeypatch, tmp_path):
     err = login(s, email=EMAIL, password=PASSWORD)["error"]
     assert err["code"] == 12 and "`bw` is not installed" in err["message"]
     no_secrets(s, files)
+
+
+# ---- a sign-in nobody answers ends by itself, with the password it held
+
+@pytest.mark.skipif(WINDOWS, reason="signing in with a password needs a PTY: not on native Windows yet")
+def test_a_sign_in_left_unanswered_ends_without_waiting_for_a_request(signin, isolated, monkeypatch):
+    from roster import serve as rpc
+    monkeypatch.setenv("FAKE_BW_ACCOUNT", json.dumps({"email": EMAIL, "password": PASSWORD,
+                                                      "methods": ["authenticator"], "codes": {"authenticator": TOTP}}))
+    state = rpc.State(str(isolated["work"] / "roster.yml"))
+
+    def call(params):
+        return rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": "vault.login", "params": params}))
+
+    step = call({"email": EMAIL, "password": PASSWORD})["result"]
+    assert step["step"] != "done"
+    flow = state.login.flow
+    assert flow.password == PASSWORD and flow.bw is not None
+    assert 0 < rpc.housekeeping(state) <= rpc.SIGN_IN_IDLE           # not due yet: the channel wakes for it then
+    assert state.login is not None
+
+    flow.touched -= rpc.SIGN_IN_IDLE + 1                               # ten minutes with no answer
+    assert rpc.housekeeping(state) is None and state.login is None
+    for t in [t for t in threading.enumerate() if t.name == "sign-in-timeout"]:
+        t.join(10)
+    assert flow.password is None and flow.bw is None                   # bw login stopped, password gone
+    err = call({"action": "answer", "login": step["login"], "code": TOTP})["error"]
+    assert err["code"] == 55
+
+
+def test_the_sign_in_timeout_waits_while_a_request_holds_the_vault(signin, isolated):
+    from roster import serve as rpc
+
+    class Flow:
+        closed = False
+        touched = time.monotonic() - rpc.SIGN_IN_IDLE - 1     # idle past its time (monotonic counts from boot)
+
+        def close(self):
+            self.closed = True
+    flow = Flow()
+    state = rpc.State(str(isolated["work"] / "roster.yml"))
+    state.login = rpc.SignIn("bw", flow)
+    assert state.vault.acquire(True, 0, "a lookup")
+    try:
+        assert rpc.prune_sign_in(state) == 1.0 and state.login is not None    # tried again soon, not ended mid-step
+    finally:
+        state.vault.release()
+    assert rpc.prune_sign_in(state) is None and state.login is None
+    for t in [t for t in threading.enumerate() if t.name == "sign-in-timeout"]:
+        t.join(10)
+    assert flow.closed
+
+
+def test_a_sign_in_flow_without_touched_never_breaks_the_tick(signin, isolated):
+    from roster import serve as rpc
+
+    class PluginFlow:                                               # a Plugin provider's flow: no `touched`
+        def close(self):
+            pass
+    state = rpc.State(str(isolated["work"] / "roster.yml"))
+    state.login = rpc.SignIn("keeper", PluginFlow())
+    assert rpc.housekeeping(state) is None and state.login is not None

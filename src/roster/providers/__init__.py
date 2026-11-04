@@ -260,9 +260,10 @@ def not_installed(name, tool=None):
     return f"`{tool}` is not installed on this box" + (f" ({hint})" if hint else "")
 
 
-def errtext(r, limit=160):
-    """A tool's error output minus noise (node deprecation warnings etc.), shortened."""
-    lines = [line for line in (r.stderr + "\n" + r.stdout).splitlines()
+def errtext(r, limit=160, stdout=True):
+    """A tool's error output minus noise (node deprecation warnings etc.), shortened. stdout=False leaves its stdout out:
+    for a command whose stdout is the secret itself, which it may print and then fail."""
+    lines = [line for line in (r.stderr + "\n" + (r.stdout if stdout else "")).splitlines()
              if line.strip() and not line.startswith(("(node", "(Use "))]
     return " ".join(lines)[:limit]
 
@@ -553,7 +554,8 @@ def add_template_provider(name, conf):
         # S604: the template is the user's own command (roster.yml's providers:); what roster puts in is shlex-quoted
         r = ctx.run(line, shell=True, interactive=bool(conf.get("interactive")))  # noqa: S604
         if r.returncode != 0:
-            raise SecretError(f"provider '{name}' failed for '{item}' (exit {r.returncode}): {errtext(r)}")
+            raise SecretError(f"provider '{name}' failed for '{item}' (exit {r.returncode}): "
+                              f"{errtext(r, stdout=False)}")
         out = r.stdout.rstrip("\r\n")
         return out.splitlines()[0] if conf.get("first_line") and out else out
 

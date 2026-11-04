@@ -4,6 +4,23 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Security
+
+**CLI**
+
+- **The vault's session reaches only `bw` and `op`** (#388): `BW_SESSION` and `OP_SESSION_*` no longer go to ssh (or its `ProxyCommand`), git hooks or other programs roster starts. One exported in your shell still works, and `roster serve` forgets it at `vault.lock`. A `providers:` command that runs `bw` or `op` itself no longer gets it: use a `bw:` or `op:` reference, or `roster bw`.
+- **A failing provider command's error shows its stderr only** (#391), never its stdout, which is the password.
+- **An unanswered sign-in ends after 10 minutes** (#389), stopping `bw login` and forgetting the master password.
+- **The askpass channel checks who connects on macOS** (#390), as on Linux.
+- **`roster web` deletes an expired kept login** (#395).
+
+**App**
+
+- **A password typed but not sent is emptied when the app locks** (#393).
+- **Passwords crossing the app's core are moved, not copied, and wiped after use** (#392).
+
 ## v0.5.0
 
 ### New

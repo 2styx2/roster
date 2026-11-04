@@ -620,6 +620,9 @@ class Channel:
         if reason is not None:
             self.log(f"askpass: {label}: {reason}")
             return f"no {code}\n{reason}".encode()
+        if password is None:                    # a typed password forgotten since (vault.forget_typed): its token is too
+            self.log(f"askpass: {label}: refused a token whose typed password was forgotten")
+            return (f"no {TOKEN_SPENT}\nthe typed password was forgotten - open the Session again").encode()
         self.log(f"askpass: {label}: password handed to ssh")
         if isinstance(login, Typed) and login.on_login is not None:
             with self.lock:
@@ -667,20 +670,46 @@ class Channel:
 
 
 def same_user(conn):
-    """Is the other end this user? The directory's 0700 already says so on Linux, and the pipe's DACL lets nobody else
-    open it on Windows; this checks the client itself: its uid (SO_PEERCRED) on Linux, its process's token user on
-    Windows (ticket 63). What can't be told is refused."""
+    """Is the other end this user? The directory's 0700 already says so on Linux and macOS, and the pipe's DACL lets
+    nobody else open it on Windows; this checks the client itself: its uid (SO_PEERCRED on Linux, getpeereid on macOS
+    and the BSDs), its process's token user on Windows (ticket 63). What can't be told is refused."""
     if WINDOWS:
         from . import winpipe
         try:
             return winpipe.client_sid(conn) == winpipe.user_sid()
         except OSError:
             return False
-    if not hasattr(socket, "SO_PEERCRED"):
-        return True
+    if not hasattr(socket, "SO_PEERCRED"):                   # macOS and the BSDs
+        return peer_uid_bsd(conn) in (os.getuid(), None)
     _pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
                                                           struct.calcsize("3i")))
     return uid == os.getuid()
+
+
+def peer_uid_bsd(conn):
+    """The peer's uid on a system without SO_PEERCRED (macOS, the BSDs), from libc's getpeereid: -1 if it can't say
+    (refused), None if there's no getpeereid to ask (then the 0700 folder and the 0600 socket are the check)."""
+    import ctypes
+    fn = getpeereid()
+    if fn is None:
+        return None
+    uid, gid = ctypes.c_uint32(), ctypes.c_uint32()
+    if fn(conn.fileno(), ctypes.byref(uid), ctypes.byref(gid)) != 0:
+        return -1
+    return uid.value
+
+
+def getpeereid():
+    """libc's getpeereid(int, uid_t *, gid_t *), or None where libc has none (glibc)."""
+    import ctypes
+    import ctypes.util
+    try:
+        fn = ctypes.CDLL(ctypes.util.find_library("c")).getpeereid
+    except (OSError, AttributeError, TypeError):
+        return None
+    fn.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+    fn.restype = ctypes.c_int
+    return fn
 
 
 def write_helper(path, login=False):

@@ -16,6 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::wipe::{Wiped, wipe_value};
+
 /// How much of the child's stderr is kept.
 const STDERR_TAIL: usize = 4096;
 /// How long one call may take before it's given up on.
@@ -140,26 +142,37 @@ impl RpcClient {
         self.call_timeout(method, params, DEFAULT_TIMEOUT)
     }
 
-    pub fn call_timeout(&self, method: &str, params: Value, timeout: Duration) -> Reply {
+    pub fn call_timeout(&self, method: &str, mut params: Value, timeout: Duration) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         {
             let mut s = self.shared.lock().unwrap();
             if let Some(err) = &s.dead {
+                wipe_value(&mut params);
                 return Err(err.clone());
             }
             s.pending.insert(id, tx);
         }
-        let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string() + "\n";
+        // The params may hold a typed password: they're moved in (never copied), and the request
+        // and the line it's written as are wiped once it's sent.
+        let mut request = json!({"jsonrpc": "2.0", "id": id, "method": method});
+        request["params"] = params;
+        let mut line = Wiped::with_capacity(1024);
+        serde_json::to_writer(&mut line, &request).expect("writing to memory doesn't fail");
+        wipe_value(&mut request);
+        line.extend(b"\n");
         let written = match self.stdin.lock().unwrap().as_mut() {
-            Some(w) => w.write_all(line.as_bytes()).and_then(|_| w.flush()),
+            Some(w) => w.write_all(line.as_slice()).and_then(|_| w.flush()),
             None => Err(std::io::Error::other("stdin is closed")),
         };
+        drop(line);
         if let Err(e) = written {
             // A broken pipe usually means the child has exited: prefer that explanation, which
             // the reader thread delivers once it sees stdout close.
-            if let Ok(Err(err)) = rx.recv_timeout(Duration::from_secs(2)) {
-                return Err(err);
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(Err(err)) => return Err(err),
+                Ok(Ok(mut value)) => wipe_value(&mut value),
+                Err(_) => {}
             }
             self.shared.lock().unwrap().pending.remove(&id);
             return Err(CallError::Io {
@@ -170,6 +183,10 @@ impl RpcClient {
             Ok(reply) => reply,
             Err(_) => {
                 self.shared.lock().unwrap().pending.remove(&id);
+                // An answer that came in between the timeout and the line above: wiped too.
+                if let Ok(Ok(mut value)) = rx.try_recv() {
+                    wipe_value(&mut value);
+                }
                 self.cancel(id);
                 Err(CallError::Timeout)
             }
@@ -215,15 +232,46 @@ impl Drop for RpcClient {
     }
 }
 
+/// One line from `reader` into `into` (cleared first), its newline included: false at the end.
+/// `into` is a [`Wiped`], so an answer that holds a password (`session.fill`'s) leaves no copy
+/// in a freed line buffer.
+fn read_line(reader: &mut impl BufRead, into: &mut Wiped) -> std::io::Result<bool> {
+    into.clear();
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if available.is_empty() {
+            return Ok(!into.is_empty());
+        }
+        let (take, done) = match available.iter().position(|&b| b == b'\n') {
+            Some(i) => (i + 1, true),
+            None => (available.len(), false),
+        };
+        into.extend(&available[..take]);
+        reader.consume(take);
+        if done {
+            return Ok(true);
+        }
+    }
+}
+
 fn read_answers(stdout: impl Read, shared: &Mutex<Shared>, notify: Option<&Notify>) {
-    for line in BufReader::new(stdout).lines() {
-        let Ok(line) = line else { break };
+    let mut reader = BufReader::new(stdout);
+    let mut buf = Wiped::with_capacity(64 * 1024);
+    while let Ok(true) = read_line(&mut reader, &mut buf) {
+        let Ok(line) = std::str::from_utf8(buf.as_slice()) else {
+            break;
+        };
         if line.trim().is_empty() {
             continue;
         }
-        let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+        let Ok(mut msg) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        buf.clear();
         let Some(id) = msg.get("id").and_then(Value::as_u64) else {
             if msg.get("id").is_none()
                 && let (Some(method), Some(notify)) = (msg.get("method").and_then(Value::as_str), notify)
@@ -238,10 +286,20 @@ fn read_answers(stdout: impl Read, shared: &Mutex<Shared>, notify: Option<&Notif
                 message: e.get("message").and_then(Value::as_str).unwrap_or("").to_string(),
                 data: e.get("data").cloned(),
             }),
-            None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
+            // Moved out of the answer, never copied: session.fill's holds a password.
+            None => Ok(msg
+                .as_object_mut()
+                .and_then(|m| m.remove("result"))
+                .unwrap_or(Value::Null)),
         };
-        if let Some(tx) = shared.lock().unwrap().pending.remove(&id) {
-            let _ = tx.send(reply);
+        let tx = shared.lock().unwrap().pending.remove(&id);
+        // An answer nobody waits for any more (given up on), or whose caller is gone: wiped.
+        let unclaimed = match tx {
+            Some(tx) => tx.send(reply).err().map(|e| e.0),
+            None => Some(reply),
+        };
+        if let Some(Ok(mut value)) = unclaimed {
+            wipe_value(&mut value);
         }
     }
 }
@@ -276,3 +334,20 @@ pub fn no_console_window(cmd: &mut Command) {
 
 #[cfg(not(windows))]
 pub fn no_console_window(_cmd: &mut Command) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_line_splits_lines_across_small_reads_and_keeps_a_last_unterminated_one() {
+        let mut reader = BufReader::with_capacity(3, &b"{\"a\":1}\r\n\n{\"b\":\"hunter2\"}"[..]);
+        let mut buf = Wiped::with_capacity(1);
+        let mut lines = Vec::new();
+        while read_line(&mut reader, &mut buf).unwrap() {
+            lines.push(String::from_utf8(buf.as_slice().to_vec()).unwrap());
+        }
+        assert_eq!(lines, ["{\"a\":1}\r\n", "\n", "{\"b\":\"hunter2\"}"]);
+        assert!(buf.is_empty());
+    }
+}
