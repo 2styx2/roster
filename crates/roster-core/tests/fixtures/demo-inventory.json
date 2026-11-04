@@ -1,0 +1,146 @@
+{
+  "hosts": [
+    {
+      "name": "demo-01",
+      "group": "demo-lab",
+      "ip": "10.0.0.11",
+      "type": "linux",
+      "product": "",
+      "title": "A Linux box to practise on",
+      "description": "",
+      "reviewed": true,
+      "enroll": true,
+      "ssh": {
+        "user": "admin",
+        "port": 22,
+        "auth": "key"
+      },
+      "services": {},
+      "login": {
+        "user": null,
+        "auth": null
+      },
+      "web": null
+    },
+    {
+      "name": "demo-02",
+      "group": "demo-lab",
+      "ip": "10.0.0.12",
+      "type": "linux",
+      "product": "",
+      "title": "Another one, for a second Session",
+      "description": "",
+      "reviewed": true,
+      "enroll": true,
+      "ssh": {
+        "user": "admin",
+        "port": 22,
+        "auth": "key"
+      },
+      "services": {},
+      "login": {
+        "user": null,
+        "auth": null
+      },
+      "web": null
+    },
+    {
+      "name": "demo-03",
+      "group": "demo-lab",
+      "ip": "10.0.0.13",
+      "type": "proxmox",
+      "product": "",
+      "title": "A hypervisor",
+      "description": "",
+      "reviewed": true,
+      "enroll": true,
+      "ssh": {
+        "user": "admin",
+        "port": 22,
+        "auth": "key"
+      },
+      "services": {},
+      "login": {
+        "user": null,
+        "auth": null
+      },
+      "web": null
+    },
+    {
+      "name": "demo-04",
+      "group": "demo-lab",
+      "ip": "10.0.0.14",
+      "type": "switch",
+      "product": "",
+      "title": "A switch in the lab rack",
+      "description": "",
+      "reviewed": true,
+      "enroll": true,
+      "ssh": {
+        "user": "admin",
+        "port": 22,
+        "auth": "key"
+      },
+      "services": {},
+      "login": {
+        "user": null,
+        "auth": null
+      },
+      "web": null
+    },
+    {
+      "name": "demo-05",
+      "group": "demo-office",
+      "ip": "10.0.0.15",
+      "type": "nas",
+      "product": "",
+      "title": "The lab's file server",
+      "description": "",
+      "reviewed": true,
+      "enroll": true,
+      "ssh": {
+        "user": "admin",
+        "port": 22,
+        "auth": "key"
+      },
+      "services": {},
+      "login": {
+        "user": null,
+        "auth": null
+      },
+      "web": null
+    },
+    {
+      "name": "demo-06",
+      "group": "demo-office",
+      "ip": "10.0.0.16",
+      "type": "printer",
+      "product": "",
+      "title": "The office printer",
+      "description": "",
+      "reviewed": true,
+      "enroll": true,
+      "ssh": {
+        "user": "admin",
+        "port": 22,
+        "auth": "key"
+      },
+      "services": {},
+      "login": {
+        "user": null,
+        "auth": null
+      },
+      "web": null
+    }
+  ],
+  "groups": {
+    "demo-lab": {
+      "title": "The demo lab (made up)",
+      "description": ""
+    },
+    "demo-office": {
+      "title": "The demo office (made up)",
+      "description": ""
+    }
+  }
+}

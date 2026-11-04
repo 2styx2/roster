@@ -307,6 +307,8 @@ roster.tutor.set("alerts", {
 })
 ```
 
+The Topology Plugin's tutorial (`:tutor topology`, in [plugins/topology](../plugins/topology/README.md)'s `init.lua`) is a worked example on the demo's Hosts and groups.
+
 Your Plugin is loaded in the demo too, with the permissions the user granted it, so the tutorial can have them run it. The Plugins running in their workspace come along (local ones and Packages, from the clones they have); one stopped or waiting for a prompt's answer doesn't, and the demo never asks anything. Your Plugin's copy in their workspace keeps running behind the demo, untouched; the demo's copy is a second load, with its own Lua state, stopped when they leave. On the demo:
 
 - **`roster.inventory`** sees the demo's Hosts (`demo-01` to `demo-06`), and the events name them. Write your steps and examples for those.
