@@ -8,7 +8,7 @@ You need three things:
 2. **The team's `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It lives in [yourteam/infra](https://example.com/yourteam/infra).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage. The rest of this page is what it does, done by hand.
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -137,6 +137,8 @@ roster inv list                              # * marks the active one; `roster i
 
 ## Keeping it up to date
 
+`./update.sh` in the roster checkout does the first two lines: it pulls the checkout, reinstalls roster with its man page, pulls the map and runs `roster sync`. By hand:
+
 ```bash
 cd ~/roster && git pull && uv tool install --force .     # new roster version
 ~/infra/bin/roster-pull                                  # new host list (git pull + roster sync)
@@ -145,7 +147,10 @@ roster setup                                             # new key hosts get thi
 
 ## Removing a box
 
+`./uninstall.sh` in the roster checkout does all of this, in this order: the Mesh and this box's key off the hosts first, then the cron job, the shell startup lines, the files below, the vault session, roster and its man page, and the `ROSTER.md` next to `roster.yml`. While a host still has the key (it was down), it keeps the key, the ssh config and roster, so running it again finishes. `--keep-hosts` leaves the hosts alone, and `--purge` also removes `bw`, the `~/.local/bin` PATH line and the config folder (never one with changes not pushed, under `--yes`). By hand:
+
 ```bash
+roster mesh cut --all      # this box's Mesh entries off every host (with a Mesh)
 roster revoke --all        # removes this box's key from every host, in every Inventory here
 ```
 
