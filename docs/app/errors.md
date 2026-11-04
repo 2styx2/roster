@@ -433,6 +433,16 @@ The app, started on a Box with no `roster.yml`, offers the same first three in p
 | 234 | -32601 | The app's **Start your Inventory**, with a roster from before serve API 28: it has no `inventory.create` | Box | "This roster can't make one from the app (that needs serve API 28)" | `roster init --blank` in a terminal (copy button), then Retry; or upgrade roster |
 | 235 | 174 | The folder for the new `roster.yml` can't be made or written in (no permission, a read-only disk), or can't be read (a clone's). Nothing written | Box | "roster can't write in /srv/infra: Permission denied" | Pick a folder you can write to, or make this one writable |
 
+## Adding one Host
+
+`roster add` and the app's add-Host form (serve's `host.add`) add a Host with one implementation (T220, #427, decision Q190): a bad name or address is `80`, a name another Host has `81`, for either. Nothing is written for any of these.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 245 | 184 | `roster add`: another Host has that address and SSH port already (compared without case). The app's form allows it (two Logins on one machine) | Inventory | "[184] 10.0.0.9 is already printer's address (group office), so nas wasn't added" | Use that Host, or give the new one another address or `--port` |
+| 246 | 185 | `roster add` with `-y`, or without a terminal, missing a value it can't default: the address, or a user or Login that neither the group nor `defaults:` sets (`--from-vault` with an item that has no URI needs `--ip` too) | Box | "[185] nas needs an address: give --ip" | Give the flag it names, or run it in a terminal to be asked |
+| 247 | 186 | `roster add --from-vault` or `vault.item_fields` with a vault that can't give an item's address and username without roster reading its password too (every provider but Bitwarden's) | Vault | "[186] provider 'op' can't give an item's address and username without roster reading its password too, so roster doesn't ask it" | Give `--ip` and `--user` yourself |
+
 ## See also
 
 [The error catalog](errors) · [`roster check HOST`](../cli-reference.md#roster-check-host) · [The roster serve API](../serve-api.md)

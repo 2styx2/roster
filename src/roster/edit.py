@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from .common import NAME_RE, oneline
-from .config import GROUP_ONLY, first, load_config_text, resolve_ssh
+from .config import GROUP_ONLY, OS_VALUES, first, host_os, load_config_text, resolve_ssh
 from .errors import (
     GROUP_NOT_EMPTY,
     HOST_EXISTS,
@@ -33,14 +33,14 @@ SSH_KEYS = ("user", "port", "auth")                 # can live in the Host's ssh
 
 
 FLAGS = ("enroll", "reviewed")
-NEW_FIELDS = ("ip", "user", "port", "auth", *FLAGS, *TEXT)          # what host.add can set
+NEW_FIELDS = ("ip", "user", "port", "auth", *FLAGS, *TEXT, "os")    # what host.add and `roster add` can set
 
 
 def current(h):
     """The editable fields of a loaded Host, as the edit form shows them, and its flags."""
     return {"title": h["title"], "description": h["description"], "type": h["type"], "ip": h["ip"],
             "user": h["ssh"]["user"], "port": h["ssh"]["port"], "auth": h["ssh"]["auth"],
-            "enroll": h["enroll"], "reviewed": h["reviewed"], "mesh": h["mesh"]}
+            "enroll": h["enroll"], "reviewed": h["reviewed"], "mesh": h["mesh"], "os": h.get("os")}
 
 
 def check_value(field, v):
@@ -368,6 +368,10 @@ def check_new(field, v):
         return v
     if field not in NEW_FIELDS:
         raise ValueError(f"{field!r} can't be set here (only {', '.join(NEW_FIELDS)})")
+    if field == "os":
+        if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
+            raise ValueError(f"os must be {' or '.join(OS_VALUES)}")
+        return v.strip().lower()
     return check_value(field, v)
 
 
@@ -382,7 +386,8 @@ def inherited(text, group):
     layers = [{}, {k: v for k, v in g.items() if k not in GROUP_ONLY}, raw.get("defaults") or {}]
     ssh = resolve_ssh("new", layers)
     out = {k: ssh[k] for k in SSH_KEYS} | {k: bool(first(layers, k, True)) for k in FLAGS}
-    return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")}
+    return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")} \
+        | {"os": host_os("new", first(layers, "os"))}
 
 
 def last_value(node):
@@ -461,6 +466,8 @@ def added(path, group, name, fields):
         raise invalid("group", f"bad group name {group!r} (use letters, digits, . _ -)")
     if not fields.get("ip"):
         raise invalid("ip", f"host {name!r} has no ip")
+    if not good_address(fields["ip"]):
+        raise invalid("ip", f"bad address {fields['ip']!r} for {name} (an IPv4 or IPv6 address, or a DNS name)")
     text = read_text(path)
     before = load_text(path, text)
     if name in before["hosts"]:
@@ -478,6 +485,34 @@ def added(path, group, name, fields):
             or not same_plus(before, after, name):
         raise refuse("the result loads differently than asked")
     return text, new_text, h
+
+
+# An address (Q190): what Quick Connect opens, the form and `roster add` write, one rule (serve's quick_target uses it
+# too, so a Quick Connect that logged in can always be saved). Labels may hold '_' (compose and mDNS names), as ssh
+# resolves them; an IPv6 zone is letters, digits, '_', '.' and '-', never starting with '-'.
+LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+HOSTNAME_RE = re.compile(rf"^(?=.{{1,253}}\Z){LABEL}(?:\.{LABEL})*\.?\Z")
+ZONE_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\Z")
+
+
+def ip_of(v):
+    """V as an ipaddress address (an IPv6 zone checked), or None when it isn't an IP address."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(v)
+    except ValueError:
+        return None
+    zone = getattr(ip, "scope_id", None)
+    return ip if zone is None or ZONE_RE.match(zone) else None
+
+
+def good_address(v):
+    """V is an IPv4 or IPv6 address or a DNS name (what ssh can be pointed at), not a URL or a typo with a slash."""
+    if not isinstance(v, str):
+        return False
+    if ip_of(v) is not None:
+        return True
+    return "%" not in v and ":" not in v and bool(HOSTNAME_RE.match(v)) and not re.fullmatch(r"[\d.]+", v)
 
 
 # ---------------------------------------------------------------- the Live Inventory (ticket 28)

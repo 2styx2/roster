@@ -32,6 +32,9 @@ src/roster/
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
   claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
+  addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
+                    (checks, the write through store.py, this Box's sync), and a vault item's address and user
+                    without its password (`--from-vault`, vault.item_fields)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
                     requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),
@@ -44,7 +47,7 @@ src/roster/
   edit.py           editing one Host in roster.yml as text, adding, removing, renaming or moving one, and groups (comments and other entries kept), checked before it's written
   changes.py        Pending changes: the infra repo's git (pull fast-forward only, roster.yml's diff, discard, the .bak, publish)
   store.py          how roster.yml is kept (T212, Q182): a team repo or a plain file, decided per file; every write saves
-                    through it (serve, discover --write, mesh cut), and pull/diff/discard/publish ask it
+                    through it (serve, add, discover --write, mesh cut), and pull/diff/discard/publish ask it
   newinventory.py   a new Inventory (`roster init --inventory`): blank, a copy, a clone, Hosts from an ssh config
   clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
                     and the nearest name for a mistyped command or option
