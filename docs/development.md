@@ -63,6 +63,7 @@ src/roster/
   web.py            roster web: HTTP requests logged in with a service's stored credentials
   winhost.py        Windows Hosts (os: windows): the PowerShell scripts setup, revoke and check send on stdin (the key file, its ACL)
   winpipe.py        Windows named pipes for askpass: a pipe only this user can open (its DACL), the client end (ctypes, stdlib only)
+  winfile.py        Windows: read a secret's file only if it's this user's alone (its owner and DACL, through one handle; #411)
   providers/        password providers: registry + plugins + templates, builtin, bitwarden, onepassword,
                     keepassxc (a local .kdbx through keepassxc-cli);
                     bw_login: `bw login` driven a step at a time on a PTY (serve's vault.login); ConPTY on Windows

@@ -8,7 +8,6 @@ import ipaddress
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import threading
@@ -17,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from . import boxsync, jsonout, store
-from .common import die, oneline, say, tcp_ok
+from .common import die, find_program, oneline, program_argv, say, tcp_ok
 from .config import find_config, load_config, load_config_text
 from .edit import write_over
 
@@ -47,7 +46,7 @@ def nmap_scan(targets, args):
 def nmap_run(targets, args, family=()):
     # no --open, so a Host that answered with none of the ports open is counted (quiet); with -Pn every address
     # counts as up, so there it's left out (--open)
-    cmd = [shutil.which("nmap") or "nmap", "-oX", "-", "-T4", "-sV", "--version-light", "--script", "http-title"]
+    cmd = ["nmap", "-oX", "-", "-T4", "-sV", "--version-light", "--script", "http-title"]
     cmd += ["--top-ports", str(args.top_ports)] if args.top_ports else ["-p", args.ports]
     if args.no_ping:
         cmd += ["-Pn", "--open"]
@@ -59,7 +58,7 @@ def nmap_run(targets, args, family=()):
     cmd += [*family, *targets]
     say(f"nmap         {' '.join(['nmap', *cmd[1:]])}")
     say("             (this can take a few minutes on a big network)")
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(program_argv(cmd), capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         die(f"nmap failed: {(r.stderr or r.stdout).strip()[:400]}")
     return parse_nmap_xml(r.stdout)
@@ -311,7 +310,7 @@ def cmd_discover(args):
     known = {h["ip"]: h["name"] for h in cfg["hosts"].values()} if cfg else {}
     taken = set(cfg["hosts"]) if cfg else set()
 
-    use_nmap = not args.builtin and shutil.which("nmap") is not None
+    use_nmap = not args.builtin and find_program("nmap") is not None
     with contextlib.redirect_stdout(io.StringIO()) if args.json else contextlib.nullcontext():
         if not use_nmap and not args.builtin:
             say("note         nmap isn't installed - using the built-in scanner. For service versions,")
@@ -483,7 +482,7 @@ def check_ports(ports):
 
 def scanner():
     """"nmap" when it's installed, else roster's own "built-in" TCP connect scanner."""
-    return "nmap" if shutil.which("nmap") else "built-in"
+    return "nmap" if find_program("nmap") else "built-in"
 
 
 def batches(ips, step):
@@ -549,9 +548,9 @@ class Scan:
 
     def nmap(self, batch):
         # no --open: it only leaves out of the output the Hosts that answered with none of the ports open (quiet)
-        cmd = [shutil.which("nmap") or "nmap", "-oX", "-", "-T4", "-sV", "--version-light", "--script", "http-title",
+        cmd = ["nmap", "-oX", "-", "-T4", "-sV", "--version-light", "--script", "http-title",
                "-p", self.ports, *(["-6"] if ":" in batch[0] else []), *batch]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.proc = subprocess.Popen(program_argv(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if self.halt.is_set():
             self.proc.kill()
         out, err = self.proc.communicate()
