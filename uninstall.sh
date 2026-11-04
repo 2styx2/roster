@@ -344,6 +344,9 @@ else
 fi
 if (( ! keep_roster )); then
 [[ ${page:-} == "$HOME/.local/share/man/man1/roster.1" ]] || remove "the man page" "$HOME/.local/share/man/man1/roster.1"
+remove "the roster source install.sh unpacked" "${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"
+remove "install.sh's kept answers" "$CONF_DIR/install-choices"
+(( DRY )) || rmdir "${XDG_DATA_HOME:-$HOME/.local/share}/roster" 2>/dev/null || true
 # roster's own folder: what roster wrote (Mesh state, the Inventory list) goes; what you put there is asked about.
 # Kept with roster: revoke --all and mesh cut --all need them.
 mine=()

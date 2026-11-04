@@ -1281,7 +1281,7 @@ def build_parser():
     """Every command and option. The man page (roster.manpage) is generated from this too."""
     p = Parser(prog="roster", usage=clihelp.USAGE, formatter_class=clihelp.Formatter,
                description="Give this box (and Claude) access to the hosts in roster.yml.")
-    p.add_argument("--version", action="version", version=f"roster {__version__}")
+    p.add_argument("-v", "--version", action="version", version=f"roster {__version__}")
     which = p.add_mutually_exclusive_group()
     values(which.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, "
                        "./roster.yml, the active named Inventory, then ~/.config/roster/roster.yml)"), FILES)
