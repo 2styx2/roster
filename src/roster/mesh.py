@@ -433,6 +433,11 @@ if [ -n "$UNT" ]; then
     done
 fi
 grep -vxFf "$W" "$H" | while read -r l; do t=${l##*:}; echo "DROP ${t%%@*}"; done
+# each with its key and from=, so the Box can say when its line is for a key the source no longer has (T217)
+grep -vxFf "$W" "$H" | while read -r l; do
+  t=${l##*:}; f=$(printf '%s\n' "$l" | sed -n 's/^from="\([^"]*\)".*/\1/p'); k=$(printf '%s\n' "$l" | awk '{ print $(NF-1) }')
+  echo "OLDLINE ${t%%@*} $k $f"
+done
 grep -vxFf "$H" "$W" | while read -r l; do t=${l##*:}; echo "ADD ${t%%@*}"; done
 while read -r l; do t=${l##*:}; echo "RETAG ${t%%@*}"; done < "$OL"
 S1=$(mktemp); S2=$(mktemp); sort "$H" > "$S1"; sort "$W" > "$S2"
@@ -897,6 +902,15 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                 out.setdefault("warnings", []).append(
                     f"{name}: a roster-mesh:{src} line with no Box in its tag isn't the one this Box writes (another "
                     "Box's, or other options), so roster left it: roster mesh --find-leftovers lists it")
+        if not apply:       # T217: the source's key changed since (another Box rotated or cut it): it still gets in
+            for x in report(lines, "OLDLINE "):
+                src, key, frm = (x.split(" ", 2) + ["", ""])[:3]
+                now = ((out["probe"].get(src) or {}).get("pub") or "").split()[1:2]
+                if src in writes and src not in rotate and key and [key] != now and "error" not in out["probe"].get(src, {}):
+                    out.setdefault("warnings", []).append(
+                        f"{name}: this Box's line for {src}'s Mesh key is for a key {src} no longer has (replaced or "
+                        f"removed since, as by the Box whose Mesh files they are), and it still lets that key in "
+                        f"(from={frm or '?'}) until this Box's next roster mesh replaces it")
         for path in report(lines, "CONFLICT "):
             out.setdefault("warnings", []).append(
                 f"{name}: {path} isn't roster's, so roster left it alone (move it away and apply again)")

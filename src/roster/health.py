@@ -164,10 +164,9 @@ def ssh(cfg):
                                         "default, so another Box may have it too: Boxes with the same name are one "
                                         "owner, so each one's setup and revoke take the other's key, and each one's "
                                         "Mesh the other's entries, off the Hosts they share",
-                         "on a new Box, set box_name: in roster.yml to a name no other Box uses before `roster setup`; "
-                         "on a Box already set up, first `roster revoke` (under the old name: it also takes a "
-                         "same-named Box's key, which then runs `roster setup` again), then set box_name: and run "
-                         "`roster setup` again", "E222"))
+                         "set box_name: in roster.yml to a name no other Box uses, then run `roster setup` (on a Box "
+                         "already set up, it re-tags this Box's key under the new name where it works; a same-named "
+                         "Box whose key was taken runs `roster setup` again)", "E222"))
     if any(h["enroll"] for h in hosts):
         if cfg["key"].exists():
             out.append(check("ssh", "ok", f"this Box's key: {cfg['key']}"))
