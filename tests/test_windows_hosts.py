@@ -808,5 +808,24 @@ def test_setup_on_a_renamed_box_says_when_a_windows_host_has_no_line_to_retag(wi
     capsys.readouterr()
     main(["setup", "--only", "dc-01"])
     out = capsys.readouterr().out
-    assert "note  dc-01: the key works, but no roster-managed line for it" in out and "(re-tagged)" not in out
+    # T226 (#435, 7; #423's S3): the file sshd reads for this administrator, not ~/.ssh/authorized_keys
+    note = next(ln for ln in out.splitlines() if ln.startswith("  note  dc-01: the key works, but no roster-managed"))
+    assert "administrators_authorized_keys" in note and "~/.ssh" not in note and "(re-tagged)" not in out
     assert win.admin_file("dc-01").read_bytes() == OTHER
+
+
+@needs_powershell
+def test_renaming_onto_a_name_another_box_uses_on_a_windows_host_needs_force(win, capsys, write_config):
+    """T226 (#435, 2): another key's line is already tagged with the new name: setup leaves the file as it is and says
+    so; --force re-tags (and keeps one copy of this Box's line, #435 6)."""
+    assert main(["setup", "--only", "dc-01"]) == 0
+    mine = key_line(win)
+    theirs = b"ssh-ed25519 AAAAtheirs roster-managed:box2\r\n"
+    win.admin_file("dc-01").write_bytes(OTHER + mine + mine + theirs)
+    write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
+    capsys.readouterr()
+    assert main(["setup", "--only", "dc-01"]) == 1
+    assert "FAIL  dc-01: [190] another key's line there is tagged roster-managed:box2" in capsys.readouterr().out
+    assert win.admin_file("dc-01").read_bytes() == OTHER + mine + mine + theirs
+    assert main(["setup", "--only", "dc-01", "--force"]) == 0
+    assert win.admin_file("dc-01").read_bytes() == OTHER + mine.replace(b":box", b":box2") + theirs

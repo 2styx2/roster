@@ -10,7 +10,17 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, SSH_UNSAFE, die, oneline, use_inventory, user_config_dir
+from .common import (
+    KEY_TAG,
+    KEY_TRAIL,
+    LEGACY_KEY_TAGS,
+    NAME_RE,
+    SSH_UNSAFE,
+    die,
+    oneline,
+    use_inventory,
+    user_config_dir,
+)
 from .providers import NO_PASSWORD
 from .resources import load_resources
 
@@ -183,8 +193,9 @@ def parse_inventory(text, path):
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
         die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
     key = Path(os.path.expanduser(key_path))
-    # matches this box's key line in authorized_keys, including tags from older versions
-    tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
+    # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
+    # or spaces (T226, #435: sshd still reads it)
+    tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}{KEY_TRAIL}"
     try:
         return Inventory.model_validate(
             {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,

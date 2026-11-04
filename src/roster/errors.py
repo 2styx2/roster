@@ -183,6 +183,9 @@ ADDRESS_TAKEN = 184         # a Host at that address (and SSH port) is in roster
 NEEDS_FLAG = 185            # roster add without a terminal (or with --yes): a value it can't guess; the flag is named
 NO_ITEM_FIELDS = 186        # the vault can't give an item's address and user without reading its password
 
+# A Box's key (T226, #435, decision Q193; catalog row 251)
+BOX_NAME_TAKEN = 190        # setup on a renamed Box: another key's line on that Host has the new name; --force goes on
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -16,6 +17,7 @@ from .addhost import cmd_add
 from .claude import write_claude_files
 from .common import (
     KEY_TAG,
+    KEY_TRAIL,
     die,
     find_program,
     key_name_file,
@@ -36,6 +38,7 @@ from .example import EXAMPLE_CONFIG
 from .providers import NO_PASSWORD, PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import (
+    NameTaken,
     box_key_re,
     enroll,
     ensure_key,
@@ -139,6 +142,13 @@ def refuse_left_out(h):
         die(f"{why} - not running anything: {fix}")
 
 
+def name_taken(cfg):
+    from .errors import BOX_NAME_TAKEN
+    return (f"[{BOX_NAME_TAKEN}] another key's line there is tagged {cfg['tag']}: another Box already uses that "
+            "name, and this Box's setup and revoke would take that line too (one name, one owner), so nothing was "
+            "changed there. Give this Box another box_name:, or run roster setup --force to go ahead")
+
+
 def cmd_setup(cfg, args):
     names = getattr(args, "names", None)    # `roster add --setup`: exactly these Hosts, not what --only would match
     hosts = [cfg["hosts"][n] for n in names] if names else selected(cfg, args.only)
@@ -182,15 +192,20 @@ def cmd_setup(cfg, args):
             say(f"  would re-tag key on {h['name']}")
         return 0
 
+    # T226 (#435, 2): renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
+    # and install take a name's lines) would take that Box's line, so that Host is left, said, unless --force
+    taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not getattr(args, "force", False) else None
     if retag:
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub), retag), strict=True):
+            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub, taken), retag), strict=True):
                 if why is None:
                     say(f"  ok    {h['name']} (re-tagged)")
-                elif why is NO_LINE:        # (agent) nothing roster can re-tag there: done, said once
-                    say(f"  note  {h['name']}: the key works, but no {KEY_TAG} line for it is in "
-                        "~/.ssh/authorized_keys (a key file roster doesn't manage, as ESXi's /etc/ssh/keys-USER, or "
-                        "a line written by hand): left as is; change or remove that line by hand")
+                elif isinstance(why, NoLine):   # (agent) nothing roster can re-tag there: done, said once
+                    say(f"  note  {h['name']}: the key works, but no {KEY_TAG} line for it is in {why.file} (a line "
+                        "written by hand): left as is; change or remove that line by hand")
+                elif why is TAKEN:
+                    failed[h["name"]] = name_taken(cfg)
+                    say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
                 else:
                     failed[h["name"]] = f"re-tag: {why}"
                     say(f"  FAIL  {h['name']}: re-tag: {why}")
@@ -208,7 +223,7 @@ def cmd_setup(cfg, args):
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            futs = {ex.submit(enroll, h, pub, box_key_re(cfg)): h for h in todo}
+            futs = {ex.submit(enroll, h, pub, box_key_re(cfg), taken): h for h in todo}
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
@@ -217,6 +232,9 @@ def cmd_setup(cfg, args):
                     say(f"  ok    {h['name']}")
                     for note in notes or ():
                         say(f"        {note}")
+                except NameTaken:
+                    failed[h["name"]] = name_taken(cfg)
+                    say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
                 except Exception as e:
                     failed[h["name"]] = str(e)
                     say(f"  FAIL  {h['name']}: {e}")
@@ -905,7 +923,7 @@ def revoke_on(h, tag_re):
         other_names(h, tag_re, done.tags)
         return None
     r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                     remove_script(tag_re)]),
+                                     remove_script(tag_re, h["ssh"]["user"])]),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
     subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
     if "ROSTER_OK" in r.stdout:
@@ -918,33 +936,46 @@ def revoke_on(h, tag_re):
 
 def tag_name(tag_re):
     """The Box name in TAG_RE (cfg's tag_re, or box_key_re's, which starts with it)."""
-    m = re.search(r":([A-Za-z0-9_-]+)[$]", tag_re)
+    m = re.search(r":([A-Za-z0-9_-]+)" + re.escape(KEY_TRAIL), tag_re)
     return m[1] if m else "?"
 
 
-NO_LINE = "no line"     # retag_on: the key works there, but no roster-managed line for it was found
+@dataclass(frozen=True)
+class NoLine:
+    """retag_on: the key works there, but no roster-managed line for it is in FILE (the key file sshd reads there)."""
+    file: str
 
 
-def retag_on(h, pub):
+TAKEN = "name taken"        # retag_on: another key's line is under the new name there (T226): nothing changed
+
+
+def retag_on(h, pub, taken=None):
     """Re-tag this Box's key lines on key Host H with PUB's tag (T217), in place, found by its public key under any
-    roster-managed name, over `ssh NAME` with the key itself: None when done, NO_LINE when there's none to re-tag,
-    else why not. A Windows Host's warnings go to stderr, as revoke's do."""
+    roster-managed name, over `ssh NAME` with the key itself: None when done, a NoLine when there's none to re-tag,
+    TAKEN when TAKEN (the new name's tag_re) matches another key's line there, else why not. A Windows Host's
+    warnings go to stderr, as revoke's do."""
     from . import winhost
     kind, key = pub.split()[:2]
     try:
         if is_windows(h):
-            done = winhost.over_key(h, "retag", key_ere(kind, key), pub=pub)
+            done = winhost.over_key(h, "retag", key_ere(kind, key), pub=pub, taken=taken or "",
+                                    own=key_ere(kind, key) if taken else "")
             from .errors import KEY_FILE
             for w in done.warnings:
                 print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
-            return NO_LINE if done.noline else None
+            if done.taken:
+                return TAKEN
+            return NoLine(done.files[0] if done.files else "its key file") if done.noline else None
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                         "sh -c " + shlex.quote(retag_key_script(pub))]),
+                                         "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken))]),
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
         return str(e)
-    if "ROSTER_NONE" in r.stdout.split():
-        return NO_LINE
+    if "ROSTER_TAKEN" in r.stdout.split():
+        return TAKEN
+    none = [ln for ln in r.stdout.splitlines() if ln.split()[:1] == ["ROSTER_NONE"]]
+    if none:
+        return NoLine(none[0].partition(" ")[2].strip() or "~/.ssh/authorized_keys")
     if "ROSTER_OK" in r.stdout:
         return None
     return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
@@ -960,9 +991,9 @@ def other_names(h, tag_re, names):
               file=sys.stderr, flush=True)
 
 
-def remove_script(tag_re):
-    """The POSIX key-removal command: sh with the script as its argument."""
-    return "sh -c " + shlex.quote(remove_key_script(tag_re))
+def remove_script(tag_re, user):
+    """The POSIX key-removal command for the Login's USER: sh with the script as its argument."""
+    return "sh -c " + shlex.quote(remove_key_script(tag_re, user))
 
 
 def revoke_line(label, h, why):
@@ -984,8 +1015,8 @@ def cmd_revoke(cfg, args):
     hosts = skip_left_out(keyed)
     warn_os(hosts)
     mine = box_key_re(cfg)                  # T217: its key under an earlier name too
-    if any(not is_windows(h) for h in hosts):
-        check_ssh_takes(remove_script(mine))
+    for user in sorted({h["ssh"]["user"] for h in hosts if not is_windows(h)}):
+        check_ssh_takes(remove_script(mine, user))
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
@@ -1010,6 +1041,8 @@ def cmd_revoke(cfg, args):
         # never another roster.yml's config.d/roster (#371): its Hosts still need it
         if unnamed_from_elsewhere() is None:
             files.append(str(ssh_config_file()))
+        if key_name_file().is_file():       # the name setup recorded the key's lines under (T226, #435)
+            files.append(str(key_name_file()))
         say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box.")
     return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
@@ -1074,8 +1107,8 @@ def cmd_revoke_all(args):
         plan.append((label, cfg, hosts))
     total = sum(len(hosts) for _, _, hosts in plan)
     for _, cfg, hosts in plan:
-        if any(not is_windows(h) for h in hosts):
-            check_ssh_takes(remove_script(box_key_re(cfg)))
+        for user in sorted({h["ssh"]["user"] for h in hosts if not is_windows(h)}):
+            check_ssh_takes(remove_script(box_key_re(cfg), user))
     if not args.yes:
         tags = ", ".join(sorted({f"'{cfg['tag']}'" for _, cfg, _ in plan})) or "this box's key"
         counts = ", ".join(f"{label} {len(hosts)}" for label, _, hosts in plan)
@@ -1093,6 +1126,7 @@ def cmd_revoke_all(args):
     for _, cfg, _ in plan:
         files += [str(cfg["key"]), str(cfg["pub"])]
     files += [str(ssh_config_file(name)) for _, name, _ in targets if ssh_config_file(name).is_file()]
+    files += [str(key_name_file(name)) for _, name, _ in targets if key_name_file(name).is_file()]
     from .common import ssh_index_file
     if ssh_index_file().is_file():
         files.append(str(ssh_index_file()))
@@ -1447,6 +1481,8 @@ def build_parser():
     s = sub.add_parser("setup", help="one-time setup of this box")
     values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
+    s.add_argument("--force", action="store_true", help="on a renamed Box, go ahead on a Host where another Box's "
+                   "key line has the new name (its line is then this Box's to replace or revoke)")
     sub.add_parser("sync", help="rewrite ssh config and Claude files from roster.yml")
     s = sub.add_parser("check", help="test reachability; with HOST, why a Session to it would fail, step by step; "
                        "with --box, this Box's health")
