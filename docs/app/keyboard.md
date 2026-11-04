@@ -7,6 +7,8 @@ Keyboard first, with vim keys and full mouse support. Every binding lives in one
 - **Terminal mode:** every key goes to the shell, including Esc, Ctrl+C and Ctrl+W. Only the **Leader** (Ctrl+Space by default), the keymap's `global` keys (F11) and its `terminal` keys (copy, paste, find, zoom; below) are caught. Ctrl+C is caught only while text is selected, as in Windows Terminal.
 - **App mode:** after the Leader, or whenever the Picker, a panel or the command line has focus. Vim bindings apply. Esc goes back to the terminal you came from.
 
+The status bar shows the keys that work in the mode you're in. In Terminal mode: find, help, keys and hiding the bar, after the Leader. In App mode: moving in the list (`j` `k`, or the arrows with vim keys off), opening, the row's menu and Esc back to the terminal. They come from your keymap, so a binding you change shows there too.
+
 The same keys on Windows and Linux: Ctrl, never a Windows-only key. While an input method (IBus or Fcitx on Linux, the Windows IME) is composing, its keys are its own: the Enter that commits a word doesn't also choose a Picker row or run a binding. Some input methods take Ctrl+Space to switch languages (Fcitx does by default) and the app never sees it; set another Leader in `init.lua` (`roster.o.leader = "ctrl+b"`, [config.md](config.md)) or change the input method's switch key.
 
 ## How keys become actions

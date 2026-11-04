@@ -274,7 +274,7 @@ describe("Lock, by every path (one command)", () => {
   it.each([
     ["␣ L", (user: ReturnType<typeof userEvent.setup>) => user.keyboard(`${LEADER}L`)],
     [":lock", (user: ReturnType<typeof userEvent.setup>) => user.keyboard(`${LEADER}:lock{Enter}`)],
-    ["the Sidebar's button", (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: "Lock" }))],
+    ["the Sidebar's button", (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: /^Lock\b/ }))],
   ])("locks with %s", async (_, how) => {
     const user = await ready();
     await connect(user, h0);
@@ -318,7 +318,7 @@ describe("The Key bindings panel", () => {
     const user = await ready();
     await user.keyboard(`${LEADER}K{Escape}`);
     expect(screen.queryByRole("complementary", { name: "Key bindings" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Keys" }));
+    await user.click(screen.getByRole("button", { name: /^Keys\b/ }));
     expect(panel()).toBeInTheDocument();
     await user.keyboard(`${LEADER}K`);
     expect(screen.queryByRole("complementary", { name: "Key bindings" })).toBeNull();

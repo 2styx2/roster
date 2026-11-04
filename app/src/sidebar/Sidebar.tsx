@@ -144,6 +144,9 @@ export interface SidebarProps {
   leaderHint: string;
   /** The keys that open the Picker ("␣ f"), if the keymap has them. */
   findKeys?: string | null;
+  /** The keys of the footer's buttons (Key bindings, Lock), shown beside them as on every other
+   * control (taste.md: keycaps sit next to the things they do). */
+  footKeys?: { keys: string | null; lock: string | null };
   /** Runs a command line: for rows, and the buttons at the top and bottom. */
   run(line: CommandLine): void;
   /** Gets the tree element (App focuses it in App mode). */
@@ -491,6 +494,7 @@ export function Sidebar({
   onSelect,
   leaderHint,
   findKeys = "␣ f",
+  footKeys = { keys: null, lock: null },
   run,
   treeRef,
   onTreeFocus,
@@ -661,9 +665,21 @@ export function Sidebar({
       <div className="sb-foot">
         <button type="button" onMouseDown={keepFocus} onClick={() => run("keys")}>
           Keys
+          {footKeys.keys && (
+            <>
+              <span className="visually-hidden">,</span>
+              <Keys keys={footKeys.keys} leader={leaderHint} />
+            </>
+          )}
         </button>
         <button type="button" onMouseDown={keepFocus} onClick={() => run("lock")}>
           Lock
+          {footKeys.lock && (
+            <>
+              <span className="visually-hidden">,</span>
+              <Keys keys={footKeys.lock} leader={leaderHint} />
+            </>
+          )}
         </button>
       </div>
     </nav>

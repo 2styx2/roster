@@ -16,6 +16,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **The status bar teaches the keys that work now** (#418): in App mode it shows moving, opening, the row's menu and the way back to the terminal instead of the Leader's keys, and in Terminal mode it adds `␣ ?` for help. The Sidebar's Keys and Lock buttons show their keys too.
 - **The app works at its smallest size** (#418): in a window under 720 px the Sidebar floats over the terminal instead of squeezing it, under 640 px the title bar's buttons show their icons only, and Minimize, Maximize and Close are never pushed out of the window. The title bar spells the name as **roster**.
 - **Only what's live is apricot** (#418): a Host's node is grey at rest, in the same shape as before (filled for a key login, a ring for a password one), and turns apricot while the Host has a Session that's connected or connecting, in the Sessions list, the Inventory and Folders. An idle Inventory is calm, and the live Session stands out.
 - **Connecting looks like the connection coming up** (#418): the pane shows this Box, an edge and the Host on the pane itself, not in a box over a blank terminal. The edge reaches part-way while ssh starts and the whole way while it logs in, the Host's ring fills when the shell answers, and the terminal appears with its first output. The Sidebar row no longer draws a line under itself while it connects. Words in the card no longer break mid-word in a narrow window.

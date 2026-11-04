@@ -183,6 +183,11 @@ function hintFor(keymap: Keymap, line: Line): string | null {
   return key ? `␣ ${key}` : null;
 }
 
+/** The first key a table binds to `action` (a list's "down", the Leader's "terminal"). */
+function listKeyFor(table: Record<string, { action: string }>, action: string): string | null {
+  return Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null;
+}
+
 /** The global keys (no Leader) bound to any of `lines`. */
 function globalKeysFor(keymap: Keymap, lines: readonly Line[]): string[] {
   return Object.entries(keymap.global)
@@ -2155,11 +2160,28 @@ function Workspace({
   const appMode = keyState.mode === "app" && overlay === null;
   const findKeys = hintFor(keymap, "find");
   const sourceKeys = hintFor(keymap, "source");
-  const hints = [
-    [findKeys, "find"],
-    [hintFor(keymap, "keys"), "keys"],
-    [hintFor(keymap, "statusbar"), "hide this bar"],
-  ].filter((h): h is [string, string] => h[0] !== null);
+  // The status bar teaches the keys that work now (taste.md: keycaps are the onboarding). In
+  // Terminal mode: find, help, keys and hiding the bar, after the Leader. In App mode the Leader's
+  // keys aren't the ones you need: moving in the list, opening, the row's menu and going back to
+  // the terminal, as the keymap binds them (vim keys when they're on). They drop out last first.
+  const listKey = (action: string) =>
+    (options.vim ? listKeyFor(keymap.listVim, action) : null) ?? listKeyFor(keymap.list, action);
+  const moveKeys = [listKey("down"), listKey("up")].filter((k): k is string => k !== null);
+  const hints: [string | string[], string][] = (
+    appMode
+      ? [
+          [moveKeys, "move"],
+          [listKey("choose"), "open"],
+          [listKey("menu"), "menu"],
+          [listKeyFor(keymap.leader, "terminal"), "terminal"],
+        ]
+      : [
+          [findKeys, "find"],
+          [hintFor(keymap, "help"), "help"],
+          [hintFor(keymap, "keys"), "keys"],
+          [hintFor(keymap, "statusbar"), "hide this bar"],
+        ]
+  ).filter((h): h is [string | string[], string] => h[0] !== null && h[0] !== undefined && h[0].length > 0);
 
   const modeKeys = [hintFor(keymap, "mode"), hintFor(keymap, "focus"), ...globalKeysFor(keymap, ["mode", "focus"])].filter(
     (k): k is string => k !== null,
@@ -2252,7 +2274,10 @@ function Workspace({
             )}
             {hints.map(([k, what]) => (
               <span key={what} className="hint key-hint">
-                <Keys keys={k} leader={options.leader} /> {what}
+                {(Array.isArray(k) ? k : [k]).map((one) => (
+                  <Keys key={one} keys={one} leader={options.leader} />
+                ))}{" "}
+                {what}
               </span>
             ))}
           </span>
@@ -2327,6 +2352,7 @@ function Workspace({
             onSelect={setSelected}
             leaderHint={options.leader}
             findKeys={hintFor(keymap, "find")}
+            footKeys={{ keys: hintFor(keymap, "keys"), lock: hintFor(keymap, "lock") }}
             run={(line) => {
               setMode(terminalMode);
               run(line);
