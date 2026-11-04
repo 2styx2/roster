@@ -67,6 +67,8 @@ export interface SidebarRow {
   hop?: Breadcrumb;
   /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
   count?: number;
+  /** A Session's number, the one `␣ 1`–`9` jumps to: right-aligned and faint, a key hint (Q196). */
+  index?: number;
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
    * cursor, and always in the tooltip. */
   badge?: string;
@@ -393,6 +395,11 @@ const Row = memo(function Row({
           {row.detail && <span className="sb-detail"> {row.detail}</span>}
         </span>
         {row.count !== undefined && <span className="sb-num">{formatCount(row.count)}</span>}
+        {row.index !== undefined && (
+          <span className="sb-num sb-index key-hint" aria-hidden="true">
+            {row.index}
+          </span>
+        )}
       </div>
       {buttons && row.actions && <Actions actions={row.actions} run={run} />}
     </li>
@@ -599,14 +606,22 @@ export function Sidebar({
     else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + row.offsetHeight - list.clientHeight;
   }, [liveRow]);
 
+  const restRef = useRef<HTMLDivElement | null>(null);
+
   // The capped Sessions list says when more are out of sight: a hairline on that edge (Q194).
+  // The tree under them does the same at its top edge, so a scrolled tree reads as scrolled.
   useLayoutEffect(() => {
-    const list = scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"] > .sb-rows');
-    if (!list) return;
-    const mark = () => markOverflow(list);
-    mark();
-    list.addEventListener("scroll", mark, { passive: true });
-    return () => list.removeEventListener("scroll", mark);
+    const lists = [
+      scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"] > .sb-rows'),
+      restRef.current,
+    ].filter((el): el is HTMLElement => el != null);
+    const marks = lists.map((list) => {
+      const mark = () => markOverflow(list);
+      mark();
+      list.addEventListener("scroll", mark, { passive: true });
+      return [list, mark] as const;
+    });
+    return () => marks.forEach(([list, mark]) => list.removeEventListener("scroll", mark));
   });
 
   // A Session opening or closing changes the Sessions section's height, above everything else in
@@ -614,7 +629,6 @@ export function Sidebar({
   // opening a neighbour), so the scroll moves by the same amount and the row stays put.
   const pointerIn = useRef(false);
   const sessionsHeight = useRef<number | null>(null);
-  const restRef = useRef<HTMLDivElement | null>(null);
   const borrowed = useRef(0);
   // How far the scroll-keeping has moved the tree, given back when the pointer leaves (Q194).
   const shifted = useRef(0);

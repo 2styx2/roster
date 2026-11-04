@@ -46,6 +46,26 @@ describe("the Lock", () => {
     expect((await backend.vaultStatus()).status).toBe("unlocked");
   });
 
+  it("sends a password entered while roster still checks the vault once the check ends", async () => {
+    const backend = fakeBackend({ hosts: makeHosts(12) });
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const status = backend.vaultStatus.bind(backend);
+    backend.vaultStatus = async () => {
+      await gate;
+      return status();
+    };
+    const user = userEvent.setup();
+    render(<App backend={backend} clock={manualClock()} />);
+    const field = await screen.findByLabelText<HTMLInputElement>(/master password/i);
+    expect(screen.getByRole("button", { name: "Checking…" })).toHaveAttribute("aria-disabled", "true");
+    await user.type(field, `${FAKE_PASSWORD}{Enter}`);
+    expect(lockScreen()).not.toBeNull();
+    await act(async () => release());
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(lockScreen()).toBeNull();
+  });
+
   it("says when the password is wrong, clears the field and stays locked", async () => {
     const { user, backend } = await start();
     await unlock(user, "hunter2");

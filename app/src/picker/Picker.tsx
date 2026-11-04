@@ -3,21 +3,50 @@
 // else. Tab and Shift+Tab move too, wrapping (ticket 34); before you've moved, Tab first fills the
 // query with what the matching names share, as a shell does. Enter or a click opens the selected Host, Esc closes. Unreviewed Hosts are listed but
 // marked and never opened (spec story 14).
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type { Host, HostList } from "../backend/types";
-import { chordOf, defaultKeymap, type Keymap, type KeyTable, type PickerAction } from "../keymap";
+import {
+  chordOf,
+  defaultKeymap,
+  type Keymap,
+  type KeyTable,
+  type PickerAction,
+} from "../keymap";
 import { Announce } from "../ui/Announce";
-import { countOf, formatCount } from "../ui/format";
+import { addressCut, countOf, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
 import { prefixFill } from "../ui/completion";
 import { searchHosts } from "./match";
-import { formatQuickTarget, parseQuickTarget, type QuickTarget } from "../quick/target";
+import {
+  formatQuickTarget,
+  parseQuickTarget,
+  type QuickTarget,
+} from "../quick/target";
 import { hostDot } from "../sidebar/sections";
 import { StateDot, type Light } from "../ui/StateDot";
 
+/** An address column's most characters; a longer address (IPv6) drops groups from its middle. */
+const IP_CHARS = 22;
+
 /** An i in a ring: a Host's details (ticket 18). */
 export const InfoGlyph = () => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
+  <svg
+    viewBox="0 0 16 16"
+    width="12"
+    height="12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.3"
+    strokeLinecap="round"
+    aria-hidden="true"
+  >
     <circle cx="8" cy="8" r="5.75" />
     <path d="M8 7.25v3.5M8 5.25v.01" />
   </svg>
@@ -89,16 +118,40 @@ export function marked(text: string, query: string): React.ReactNode {
 }
 
 /** A Host's node in the list, drawn as the Sidebar draws it. */
-function HostNode({ host, how }: { host: Host; how: Light | "connecting" | undefined }) {
-  if (!host.reviewed || how === undefined) return <StateDot dot={hostDot(host)} />;
-  return how === "connecting" ? <StateDot dot="connecting" /> : <StateDot dot={hostDot(host)} lit={how} />;
+function HostNode({
+  host,
+  how,
+}: {
+  host: Host;
+  how: Light | "connecting" | undefined;
+}) {
+  if (!host.reviewed || how === undefined)
+    return <StateDot dot={hostDot(host)} />;
+  return how === "connecting" ? (
+    <StateDot dot="connecting" />
+  ) : (
+    <StateDot dot={hostDot(host)} lit={how} />
+  );
 }
 
 /** The first key bound to `action`, for the footer's hints. */
 const keyFor = (table: KeyTable<PickerAction>, action: PickerAction) =>
   Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null;
 
-export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onReview, onClose, onQuick, quickFirst = false, onInfo, onHelp, live }: PickerProps) {
+export function Picker({
+  hosts,
+  recent,
+  vim,
+  keymap = defaultKeymap,
+  onOpen,
+  onReview,
+  onClose,
+  onQuick,
+  quickFirst = false,
+  onInfo,
+  onHelp,
+  live,
+}: PickerProps) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [inList, setInList] = useState(false);
@@ -106,18 +159,44 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
 
-  const results = useMemo(() => searchHosts(hosts, query, recent), [hosts, query, recent]);
+  const results = useMemo(
+    () => searchHosts(hosts, query, recent),
+    [hosts, query, recent],
+  );
   const shown = results.slice(0, MAX_ROWS);
   // A Quick Connect address is row 0, ahead of any Host it happens to match.
   const quick = onQuick ? parseQuickTarget(query) : null;
   const offset = quick ? 1 : 0;
   const rowCount = shown.length + offset;
   const current = Math.min(index, Math.max(0, rowCount - 1));
+  const selected =
+    current >= offset ? shown[current - offset]?.host : undefined;
+  // The widest address, group and type in the whole Inventory, in a hidden row: the columns are
+  // sized by every Host, not by the ones a query leaves, so they hold still while you type.
+  const widest = useMemo(() => {
+    const longest = (pick: (h: Host) => string) =>
+      hosts.hosts.reduce(
+        (a, h) => (pick(h).length > a.length ? pick(h) : a),
+        "",
+      );
+    return {
+      ip: addressCut(
+        longest((h) => h.ip),
+        IP_CHARS,
+      ),
+      group: longest((h) => h.group),
+      type: longest((h) => h.type),
+      badge: hosts.hosts.some((h) => !h.reviewed),
+    };
+  }, [hosts.hosts]);
   /** The Host at row `i` (none for the Quick Connect row). */
-  const hostAt = (i: number) => (i < offset ? undefined : shown[i - offset]?.host);
+  const hostAt = (i: number) =>
+    i < offset ? undefined : shown[i - offset]?.host;
 
   useLayoutEffect(() => {
-    const row = listRef.current?.querySelector<HTMLElement>(`[data-index="${current}"]`);
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-index="${current}"]`,
+    );
     row?.scrollIntoView?.({ block: "nearest" });
   }, [current]);
 
@@ -143,7 +222,10 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     const chord = chordOf(e);
-    const action = (keymap.picker[chord] ?? (vim && inList ? keymap.pickerVim[chord] : undefined))?.action;
+    const action = (
+      keymap.picker[chord] ??
+      (vim && inList ? keymap.pickerVim[chord] : undefined)
+    )?.action;
     if (!action) {
       if (chord.length === 1 || chord === "Backspace") setInList(false);
       return;
@@ -161,7 +243,13 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
         break;
       case "picker.next":
       case "picker.prev": {
-        const fill = action === "picker.next" && !inList ? prefixFill(query, shown.map((r) => r.host.name)) : null;
+        const fill =
+          action === "picker.next" && !inList
+            ? prefixFill(
+                query,
+                shown.map((r) => r.host.name),
+              )
+            : null;
         if (fill !== null) {
           setQuery(fill);
           setIndex(0);
@@ -169,7 +257,9 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
           break;
         }
         if (rowCount === 0) break;
-        setIndex((current + (action === "picker.next" ? 1 : -1) + rowCount) % rowCount);
+        setIndex(
+          (current + (action === "picker.next" ? 1 : -1) + rowCount) % rowCount,
+        );
         setInList(true);
         break;
       }
@@ -182,7 +272,8 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
       case "picker.review": {
         const host = hostAt(current);
         if (host && !host.reviewed && onReview) onReview(host);
-        else if (host) setNotice(onReview ? `${host.name} is already reviewed.` : "");
+        else if (host)
+          setNotice(onReview ? `${host.name} is already reviewed.` : "");
         break;
       }
       case "picker.info": {
@@ -202,7 +293,12 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
 
   const info = keyFor(keymap.picker, "picker.info");
   const activeId = current < rowCount ? `${listId}-${current}` : undefined;
-  const move = [keyFor(keymap.picker, "picker.up"), keyFor(keymap.picker, "picker.down")].filter((k) => k !== null).join(" ");
+  const move = [
+    keyFor(keymap.picker, "picker.up"),
+    keyFor(keymap.picker, "picker.down"),
+  ]
+    .filter((k) => k !== null)
+    .join(" ");
   const hints: [string | null, string][] = [
     [move, "move"],
     [keyFor(keymap.picker, "picker.choose"), "open"],
@@ -210,40 +306,58 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
   ];
 
   return (
-    <div className="picker-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="picker-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="picker" role="dialog" aria-label="Find a Host">
         <div className="picker-search">
-          <svg className="picker-search-icon" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+          <svg
+            className="picker-search-icon"
+            viewBox="0 0 16 16"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            aria-hidden="true"
+          >
             <circle cx="7" cy="7" r="4.5" />
             <path d="M10.5 10.5L14 14" strokeLinecap="round" />
           </svg>
           <input
-          className="picker-query"
-          role="combobox"
-          aria-expanded="true"
-          aria-controls={listId}
-          aria-activedescendant={activeId}
-          aria-autocomplete="list"
-          placeholder={
-            quickFirst
-              ? "Quick Connect: user@address[:port], or find a Host"
-              : onQuick
-                ? "Find a Host, or user@address to Quick Connect"
-                : "Find a Host: name, address, type, product, group…"
-          }
-          autoFocus
-          spellCheck={false}
-          autoComplete="off"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setIndex(0);
-            setNotice("");
-          }}
-          onKeyDown={onKeyDown}
+            className="picker-query"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={activeId}
+            aria-autocomplete="list"
+            placeholder={
+              quickFirst
+                ? "Quick Connect: user@address[:port], or find a Host"
+                : onQuick
+                  ? "Find a Host, or user@address to Quick Connect"
+                  : "Find a Host: name, address, type, product, group…"
+            }
+            autoFocus
+            spellCheck={false}
+            autoComplete="off"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setIndex(0);
+              setNotice("");
+            }}
+            onKeyDown={onKeyDown}
           />
         </div>
-        <ul className="picker-list" role="listbox" id={listId} ref={listRef} aria-label="Hosts">
+        <ul
+          className="picker-list"
+          role="listbox"
+          id={listId}
+          ref={listRef}
+          aria-label="Hosts"
+        >
           {quick && (
             <li
               id={`${listId}-0`}
@@ -281,11 +395,19 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
               <span className="host-name" title={host.name}>
                 {marked(host.name, query)}
                 {host.reviewed && live?.has(host.name) && (
-                  <span className="visually-hidden">{live.get(host.name) === "connecting" ? ", connecting" : ", has a Session"}</span>
+                  <span className="visually-hidden">
+                    {live.get(host.name) === "connecting"
+                      ? ", connecting"
+                      : ", has a Session"}
+                  </span>
                 )}
               </span>
               <span className="host-ip" title={host.ip || undefined}>
-                {marked(host.ip, query)}
+                {/* A long address drops whole groups from its middle, never cut mid-token; the
+                    strip below shows the selected Host's whole address. */}
+                {host.ip.length > IP_CHARS
+                  ? addressCut(host.ip, IP_CHARS)
+                  : marked(host.ip, query)}
               </span>
               <span className="host-group" title={host.group}>
                 {host.group}
@@ -294,7 +416,10 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
                 {host.type}
               </span>
               {!host.reviewed && (
-                <span className="badge" title="unreviewed: can't be opened until it's reviewed in roster">
+                <span
+                  className="badge"
+                  title="unreviewed: can't be opened until it's reviewed in roster"
+                >
                   unreviewed
                 </span>
               )}
@@ -304,7 +429,11 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
                   tabIndex={-1}
                   className="picker-info"
                   aria-label={`Show ${host.name}'s details`}
-                  title={info ? `Show ${host.name}'s details (${info})` : `Show ${host.name}'s details`}
+                  title={
+                    info
+                      ? `Show ${host.name}'s details (${info})`
+                      : `Show ${host.name}'s details`
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     onInfo(host);
@@ -315,13 +444,43 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
               )}
             </li>
           ))}
+          <li
+            className="picker-row picker-sizer"
+            aria-hidden="true"
+            role="presentation"
+          >
+            <span />
+            <span />
+            <span className="host-ip">{widest.ip}</span>
+            <span className="host-group">{widest.group}</span>
+            <span className="host-type">{widest.type}</span>
+            {widest.badge && <span className="badge">unreviewed</span>}
+          </li>
         </ul>
+        {/* The selected Host whole, on one steady line: rows never wrap, so the list never jumps
+            as the selection moves (Q195). The option itself carries the name for screen readers. */}
+        {rowCount > 0 && (
+          <div className="picker-detail" aria-hidden="true">
+            {selected && (
+              <>
+                <span className="host-name">{selected.name}</span>
+                {selected.ip && <span className="host-ip">{selected.ip}</span>}
+                {selected.group && <span>{selected.group}</span>}
+                {selected.type && <span>{selected.type}</span>}
+              </>
+            )}
+          </div>
+        )}
         {rowCount === 0 && (
           <p className="picker-empty">
             {query.trim() === "" && hosts.hosts.length === 0
               ? "The Inventory has no Hosts yet. Add them to roster.yml and they show up here."
               : `No Hosts match “${query}”.`}
-            {onQuick && query.trim() !== "" && <span className="picker-empty-next">To reach a box that isn't in the Inventory, type user@address.</span>}
+            {onQuick && query.trim() !== "" && (
+              <span className="picker-empty-next">
+                To reach a box that isn't in the Inventory, type user@address.
+              </span>
+            )}
           </p>
         )}
         <div className="picker-footer">
@@ -329,7 +488,15 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
             {notice}
           </span>
           {/* The count, said once typing pauses (ticket 54); the one beside it is only seen. */}
-          <Announce text={results.length ? countOf(results.length, "Host") : query.trim() ? "No Hosts match" : ""} />
+          <Announce
+            text={
+              results.length
+                ? countOf(results.length, "Host")
+                : query.trim()
+                  ? "No Hosts match"
+                  : ""
+            }
+          />
           <span className="picker-count" aria-hidden="true">
             {results.length > shown.length
               ? `${formatCount(shown.length)} of ${countOf(results.length, "Host")}`

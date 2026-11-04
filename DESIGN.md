@@ -221,7 +221,7 @@ The whole scale follows one `--ui-size` (15px by default, `fonts.ui_size`), and 
 ### Named Rules
 **The Paste Test Rule.** If it's something you could paste into a shell, it's in Iosevka. Everything else is Inter.
 
-**The Never-Cut-Mid-Token Rule.** IPs, ports and fingerprints are never truncated mid-token. Data cells use tabular numbers, and the selected row shows its whole name, wrapped.
+**The Never-Cut-Mid-Token Rule.** IPs, ports and fingerprints are never truncated mid-token. Data cells use tabular numbers. A long address drops whole groups from its middle (`fe80::…:4567:890a%eth0`), and the whole value is one step away (a tooltip, the Picker's detail strip).
 
 ## Layout
 
@@ -307,8 +307,9 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 
 ### Picker (signature)
 - **Container:** Panel Graphite, Strong Hairline border, 10px radius, Overlay shadow, over a dimmed backdrop.
-- **Rows:** one shared grid (subgrid) of node, name, IP, group, type, badge and info, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its contents; under 600px only the node, name and IP stay.
-- **Selected:** a raised fill with a 1px accent outline (the Sidebar cursor's), since it's the row Enter opens. It wraps the full Host name inside the row and reveals the info button.
+- **Rows:** one shared grid (subgrid) of node, name, IP, group, type, badge and info, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its widest value in the whole Inventory, so it holds still while you type; an IPv6 address drops whole groups from its middle. Under 600px only the node, name and IP stay.
+- **Selected:** a raised fill with a 1px accent outline (the Sidebar cursor's), since it's the row Enter opens. It reveals the info button. Rows never wrap (Q195).
+- **Detail strip:** between the list and the footer, the selected Host whole on one steady line: its name and address in Iosevka, then its group and type, muted, separated by faint dots.
 - **Matches:** what the query matched is underlined in the text colour (never the accent).
 - **Footer:** 34px, with a tabular Host count and keycap hints (move, open, close). Warnings in the footer use Signal Yellow.
 

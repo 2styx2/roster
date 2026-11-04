@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -54,8 +55,19 @@ import {
 } from "./backend/types";
 import { publishChecked } from "./backend/afterTimeout";
 import { CommandLine } from "./cmdline/CommandLine";
-import { complete, runLine, type CommandContext, type Commands, type FoldHow } from "./commands/table";
-import { deriveConfig, layoutWarnings, registerConfig, type ConfigWarning } from "./config/apply";
+import {
+  complete,
+  runLine,
+  type CommandContext,
+  type Commands,
+  type FoldHow,
+} from "./commands/table";
+import {
+  deriveConfig,
+  layoutWarnings,
+  registerConfig,
+  type ConfigWarning,
+} from "./config/apply";
 import { ConfigToast } from "./config/ConfigToast";
 import { initLuaReloader } from "./config/source";
 import type { ConfigReport, ImportPreview } from "./config/types";
@@ -64,13 +76,29 @@ import { ImportPanel } from "./config/ImportPanel";
 import { foldersSettings } from "./folders/file";
 import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
-import type { BoxSync, CheckStarted, InventoryFileError } from "./backend/types";
+import type {
+  BoxSync,
+  CheckStarted,
+  InventoryFileError,
+} from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping, stopTarget } from "./errors/checkProgress";
-import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
+import {
+  checkJoined,
+  checkOwned,
+  checkProgressed,
+  checkStarted,
+  checkStopFailed,
+  checkStopping,
+  stopTarget,
+} from "./errors/checkProgress";
+import {
+  ChangesPanel,
+  type ChangesState,
+  type ChangesStep,
+} from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
 import { TitleBar } from "./chrome/TitleBar";
@@ -88,9 +116,23 @@ import { press, terminalMode, type KeyState } from "./keyboard/mode";
 import { realClock, type Clock } from "./lock/idle";
 import { afterPull, pullGate, syncFailed } from "./edit/pull";
 import { forgetTypedOnLock } from "./lock/forgetOnLock";
-import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
+import {
+  LockGate,
+  noAccountWords,
+  serverName,
+  SIGN_OUT_WHAT,
+  signOutQuestion,
+} from "./lock/LockScreen";
 import { useVault } from "./lock/useVault";
-import { actionsOf, chordOf, defaultOptions, keymapOf, type CommandLine as Line, type Keymap, type Options } from "./keymap";
+import {
+  actionsOf,
+  chordOf,
+  defaultOptions,
+  keymapOf,
+  type CommandLine as Line,
+  type Keymap,
+  type Options,
+} from "./keymap";
 import { Picker } from "./picker/Picker";
 import { builtinRegistries, type Registries } from "./registries";
 import { BUILTIN } from "./registry";
@@ -102,10 +144,20 @@ import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
-import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
+import {
+  allRows,
+  moveCursor,
+  Sidebar,
+  type OpenMenu,
+  type SidebarRow,
+} from "./sidebar/Sidebar";
 import { hostMenu } from "./sidebar/hostMenu";
 import { hostDot, hostLights, sectionBuilder } from "./sidebar/sections";
-import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
+import {
+  cancelCommand,
+  packagesCommand,
+  pluginsCommand,
+} from "./plugins/command";
 import { PluginManager, type DemoPlugins } from "./plugins/manager";
 import { ViewPanel } from "./view/ViewContent";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
@@ -113,15 +165,36 @@ import { PanelFrame } from "./panel/PanelFrame";
 import { registerPanel } from "./panel/command";
 import { GraphMemory } from "./graph/memory";
 import { registerViews, sectionsFor, ViewHost } from "./view/views";
-import { PackagesPanel, PluginConfirmPanel, PluginFloatPanel, PluginNotices, PluginProgressItems, PluginPrompt, PluginsPanel } from "./plugins/PluginsPanel";
+import {
+  PackagesPanel,
+  PluginConfirmPanel,
+  PluginFloatPanel,
+  PluginNotices,
+  PluginProgressItems,
+  PluginPrompt,
+  PluginsPanel,
+} from "./plugins/PluginsPanel";
 import { badgesByHost } from "./view/status";
-import { TerminalView, type TerminalEnv, type TerminalViewComponent } from "./terminal/TerminalView";
+import {
+  TerminalView,
+  type TerminalEnv,
+  type TerminalViewComponent,
+} from "./terminal/TerminalView";
 import { rendererLabel, type RendererInUse } from "./terminal/renderer";
 import { pickerTimer } from "./picker/timing";
 import { isLeaderKey } from "./terminal/keys";
 import { fontFound, fontInUse } from "./terminal/fonts";
-import { runHealth, type HealthContext, type HealthReport } from "./health/health";
-import { defaultTerminalOptions, zoom, type TerminalOptions, type ZoomAction } from "./terminal/options";
+import {
+  runHealth,
+  type HealthContext,
+  type HealthReport,
+} from "./health/health";
+import {
+  defaultTerminalOptions,
+  zoom,
+  type TerminalOptions,
+  type ZoomAction,
+} from "./terminal/options";
 import { memoryPlatform } from "./platform/memory";
 import type { Platform } from "./platform/types";
 import { currentFoldId, setFolded, usedHost } from "./state/appState";
@@ -129,17 +202,48 @@ import { StateStore } from "./state/store";
 import { tutorCommand } from "./tutor/command";
 import { DemoBanner } from "./tutor/DemoBanner";
 import { demoBackend, demoPlatform } from "./tutor/demo";
-import { resumeAt, TutorProgress, tutorPage, type TutorEvent, type TutorialDef } from "./tutor/tutor";
-import { defaultAppearance, terminalTheme, type AppearanceOptions } from "./theme/theme";
-import { chosenAppearance, registerThemePicker, stateChoiceWins, ThemeChoice } from "./theme/picker";
+import {
+  resumeAt,
+  TutorProgress,
+  tutorPage,
+  type TutorEvent,
+  type TutorialDef,
+} from "./tutor/tutor";
+import {
+  defaultAppearance,
+  terminalTheme,
+  type AppearanceOptions,
+} from "./theme/theme";
+import {
+  chosenAppearance,
+  registerThemePicker,
+  stateChoiceWins,
+  ThemeChoice,
+} from "./theme/picker";
 import { useTheme } from "./theme/useTheme";
 import { Logo } from "./chrome/Logo";
 import { countOf, middleCut } from "./ui/format";
-import { afterSwitch, NONE_NAMED, switchPlan, type SwitchPlan } from "./inventory/switch";
+import {
+  afterSwitch,
+  NONE_NAMED,
+  switchPlan,
+  type SwitchPlan,
+} from "./inventory/switch";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
 import { PromptWatch } from "./session/prompt";
 import { XtermPromptScreen } from "./session/promptScreen";
-import { MESSAGES_VIEW, MessageLog, MessagesChoice, lineAfter, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
+import {
+  MESSAGES_VIEW,
+  MessageLog,
+  MessagesChoice,
+  lineAfter,
+  logView,
+  quiet,
+  registerMessages,
+  shownText,
+  spokenText,
+  type Message,
+} from "./ui/messages";
 import { Keys } from "./ui/Keys";
 import {
   defaultLayouts,
@@ -162,7 +266,12 @@ type Conn =
   | { state: "ready"; info: BackendInfo; hosts: HostList };
 
 /** An overlay with its own input, which takes the keys while it's open. */
-type Overlay = "picker" | "quick" | { cmdline: string; caret?: number } | { finder: string; query?: string } | null;
+type Overlay =
+  | "picker"
+  | "quick"
+  | { cmdline: string; caret?: number }
+  | { finder: string; query?: string }
+  | null;
 
 /** How long the hint on entering a mode stays. */
 const HINT_MS = 2000;
@@ -170,23 +279,42 @@ const HINT_MS = 2000;
 const noSubscribe = () => () => {};
 const noSnapshot = () => undefined;
 
-const MODIFIERS = new Set(["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock"]);
+const MODIFIERS = new Set([
+  "Control",
+  "Shift",
+  "Alt",
+  "Meta",
+  "AltGraph",
+  "CapsLock",
+]);
 
 function asProblem(e: unknown): BackendProblem {
   if (e instanceof BackendStartError) return e.problem;
   const message = e instanceof Error ? e.message : String(e);
-  return { kind: "failed", message, hint: "Retry, or run the backend command in a terminal to see why.", detail: null };
+  return {
+    kind: "failed",
+    message,
+    hint: "Retry, or run the backend command in a terminal to see why.",
+    detail: null,
+  };
 }
 
 /** The first key bound to `line` after the Leader, as the status bar hints write it. */
 function hintFor(keymap: Keymap, line: Line): string | null {
-  const key = Object.entries(keymap.leader).find(([, b]) => b.action === line)?.[0];
+  const key = Object.entries(keymap.leader).find(
+    ([, b]) => b.action === line,
+  )?.[0];
   return key ? `␣ ${key}` : null;
 }
 
 /** The first key a table binds to `action` (a list's "down", the Leader's "terminal"). */
-function listKeyFor(table: Record<string, { action: string }>, action: string): string | null {
-  return Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null;
+function listKeyFor(
+  table: Record<string, { action: string }>,
+  action: string,
+): string | null {
+  return (
+    Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null
+  );
 }
 
 /** The global keys (no Leader) bound to any of `lines`. */
@@ -257,7 +385,8 @@ const INTEGRATE_SAYS: Record<IntegrateResult, (label: string) => string> = {
   "no-marks": (t) =>
     `Sent ${t}'s shell the hook line, but no marked prompt came back: its shell or prompt framework doesn't take it (:help shell-hooks).`,
   marked: (t) => `${t}'s shell marks its prompts already: nothing to send.`,
-  "no-prompt": (t) => `${t} isn't at an empty prompt roster knows (bash, zsh, fish, PowerShell): nothing sent.`,
+  "no-prompt": (t) =>
+    `${t} isn't at an empty prompt roster knows (bash, zsh, fish, PowerShell): nothing sent.`,
   "not-open": (t) => `${t}'s Session isn't open: nothing sent.`,
 };
 
@@ -273,7 +402,12 @@ export function App(props: AppProps) {
   // runs on once its fake Backend has loaded.
   const [tutorial, setTutorial] = useState<TutorialDef | null>(null);
   const [plugins, setPlugins] = useState<DemoPlugins | null>(null);
-  const [loaded, setLoaded] = useState<{ backend: Backend; platform: Platform; problem: string | null; close(): Promise<void> } | null>(null);
+  const [loaded, setLoaded] = useState<{
+    backend: Backend;
+    platform: Platform;
+    problem: string | null;
+    close(): Promise<void>;
+  } | null>(null);
   // What stops the demo's Plugin manager (its workspace registers it), run before the demo goes.
   const [stoppers] = useState(() => new Set<() => void>());
   const realBackend = props.backend;
@@ -281,7 +415,17 @@ export function App(props: AppProps) {
     if (!tutorial || loaded) return;
     let live = true;
     void demoBackend(realBackend, plugins ?? undefined).then((demo) => {
-      if (live) setLoaded({ backend: demo.backend, platform: demoPlatform(platform, (k) => store.get(k), demo.plugins ?? undefined), problem: demo.problem, close: demo.close });
+      if (live)
+        setLoaded({
+          backend: demo.backend,
+          platform: demoPlatform(
+            platform,
+            (k) => store.get(k),
+            demo.plugins ?? undefined,
+          ),
+          problem: demo.problem,
+          close: demo.close,
+        });
       else void demo.close();
     });
     return () => {
@@ -313,11 +457,26 @@ export function App(props: AppProps) {
   const demo = tutorial && loaded ? { tutorial, ...loaded } : null;
   const real = useMemo(() => ({ progress, start }), [progress, start]);
   const problem = loaded?.problem ?? null;
-  const inDemo = useMemo(() => (tutorial ? { progress, demo: { tutorial, leave, switchTo: start, onStop, problem } } : null), [tutorial, progress, leave, start, onStop, problem]);
+  const inDemo = useMemo(
+    () =>
+      tutorial
+        ? {
+            progress,
+            demo: { tutorial, leave, switchTo: start, onStop, problem },
+          }
+        : null,
+    [tutorial, progress, leave, start, onStop, problem],
+  );
   return (
     <>
       <div className="app-slot" hidden={demo !== null} inert={demo !== null}>
-        <Workspace {...props} platform={platform} store={store} tutor={real} suspended={demo !== null} />
+        <Workspace
+          {...props}
+          platform={platform}
+          store={store}
+          tutor={real}
+          suspended={demo !== null}
+        />
       </div>
       {demo && inDemo && (
         <div className="app-slot">
@@ -326,7 +485,9 @@ export function App(props: AppProps) {
             platform={demo.platform}
             config={props.config ?? null}
             tutor={inDemo}
-            {...(props.terminalView ? { terminalView: props.terminalView } : {})}
+            {...(props.terminalView
+              ? { terminalView: props.terminalView }
+              : {})}
             {...(props.clock ? { clock: props.clock } : {})}
             {...(props.appVersion ? { appVersion: props.appVersion } : {})}
             {...(props.appearance ? { appearance: props.appearance } : {})}
@@ -364,11 +525,18 @@ function Workspace({
    * "roster.yml"): the status bar's quiet hint to `:source` (decision Q58). */
   const [stale, setStaleFiles] = useState<readonly string[]>([]);
   const setStale = useCallback((file: string, on: boolean) => {
-    setStaleFiles((s) => (s.includes(file) === on ? s : on ? [...s, file] : s.filter((f) => f !== file)));
+    setStaleFiles((s) =>
+      s.includes(file) === on
+        ? s
+        : on
+          ? [...s, file]
+          : s.filter((f) => f !== file),
+    );
   }, []);
   // The newest report wins: one that arrives late (or twice) never replaces a newer one.
   const takeReport = useCallback(
-    (r: ConfigReport) => setReport((cur) => (cur && cur.version >= r.version ? cur : r)),
+    (r: ConfigReport) =>
+      setReport((cur) => (cur && cur.version >= r.version ? cur : r)),
     [],
   );
   useEffect(() => {
@@ -399,7 +567,10 @@ function Workspace({
     };
   }, [platform, takeReport, setStale]);
   const config = report?.config ?? null;
-  const derived = useMemo(() => (config ? deriveConfig(config) : null), [config]);
+  const derived = useMemo(
+    () => (config ? deriveConfig(config) : null),
+    [config],
+  );
   const options = derived?.options ?? optionsProp;
   const appearance = derived?.appearance ?? appearanceProp;
   const terminalOptions = derived?.terminalOptions ?? terminalOptionsProp;
@@ -413,16 +584,39 @@ function Workspace({
     setWarnings(registered.warnings);
     return registered.dispose;
   }, [registries, config]);
-  const [toastClosedFor, setToastClosedFor] = useState<ConfigReport | null>(null);
+  const [toastClosedFor, setToastClosedFor] = useState<ConfigReport | null>(
+    null,
+  );
 
-  const commandList = useSyncExternalStore(registries.commands.subscribe, registries.commands.list);
-  const bindingList = useSyncExternalStore(registries.keymap.subscribe, registries.keymap.list);
-  const sectionDefs = useSyncExternalStore(registries.sidebar.subscribe, registries.sidebar.list);
-  const errorRows = useSyncExternalStore(registries.errors.subscribe, registries.errors.list);
-  const finderSources = useSyncExternalStore(registries.finders.subscribe, registries.finders.list);
-  const toolbarDefs = useSyncExternalStore(registries.toolbar.subscribe, registries.toolbar.list);
+  const commandList = useSyncExternalStore(
+    registries.commands.subscribe,
+    registries.commands.list,
+  );
+  const bindingList = useSyncExternalStore(
+    registries.keymap.subscribe,
+    registries.keymap.list,
+  );
+  const sectionDefs = useSyncExternalStore(
+    registries.sidebar.subscribe,
+    registries.sidebar.list,
+  );
+  const errorRows = useSyncExternalStore(
+    registries.errors.subscribe,
+    registries.errors.list,
+  );
+  const finderSources = useSyncExternalStore(
+    registries.finders.subscribe,
+    registries.finders.list,
+  );
+  const toolbarDefs = useSyncExternalStore(
+    registries.toolbar.subscribe,
+    registries.toolbar.list,
+  );
   const commands: Commands = useMemo(
-    () => ({ get: (id) => registries.commands.get(id), list: () => commandList }),
+    () => ({
+      get: (id) => registries.commands.get(id),
+      list: () => commandList,
+    }),
     [registries, commandList],
   );
   const keymap = useMemo(() => keymapOf(bindingList), [bindingList]);
@@ -435,11 +629,17 @@ function Workspace({
   const [health, setHealth] = useState<HealthReport | null>(null);
   const healthRun = useRef(0);
   /** `:config import-terminal`'s diff, while it's open (ticket 33). */
-  const [importing, setImporting] = useState<{ preview: ImportPreview; problem: string | null; writing: boolean } | null>(null);
+  const [importing, setImporting] = useState<{
+    preview: ImportPreview;
+    problem: string | null;
+    writing: boolean;
+  } | null>(null);
   const checkRun = useRef(0);
   // Ticket 10: the edit form (a Host's name), the Pending changes panel, and the last count.
   const [editing, setEditing] = useState<string | null>(null);
-  const [changesView, setChangesView] = useState<{ step: ChangesStep } | null>(null);
+  const [changesView, setChangesView] = useState<{ step: ChangesStep } | null>(
+    null,
+  );
   const [pending, setPending] = useState<ChangesState | null>(null);
   // Ticket 11: the add-Host form, with the group it starts in.
   const [adding, setAdding] = useState<{ group: string } | null>(null);
@@ -448,14 +648,23 @@ function Workspace({
   // Ticket 18: the Host details panel's Host (closed: null).
   const [details, setDetails] = useState<string | null>(null);
   // Ticket 28: removing a Host asks first.
-  const [confirming, setConfirming] = useState<{ host: string; group: string } | null>(null);
+  const [confirming, setConfirming] = useState<{
+    host: string;
+    group: string;
+  } | null>(null);
   // Ticket 42: `:vault signout` asks first, naming the account.
   const [signingOut, setSigningOut] = useState<VaultAccount | null>(null);
   // Ticket 115: the named Inventories as serve last listed them (null until it has, or before API
   // 27), and `:inventory NAME`'s question while it's up.
   // Kept with the serve it came from: one serve's answer never stands for the next one's.
-  const [inventoriesOf, setInventoriesOf] = useState<{ info: BackendInfo; list: Inventories } | null>(null);
-  const [switching, setSwitching] = useState<Extract<SwitchPlan, { kind: "confirm" }> | null>(null);
+  const [inventoriesOf, setInventoriesOf] = useState<{
+    info: BackendInfo;
+    list: Inventories;
+  } | null>(null);
+  const [switching, setSwitching] = useState<Extract<
+    SwitchPlan,
+    { kind: "confirm" }
+  > | null>(null);
   /** The Inventory a confirmed switch is going to, while it runs: its step can't be closed, and a
    * second `:inventory` waits for it. */
   const switchingTo = useRef<string | null>(null);
@@ -474,7 +683,9 @@ function Workspace({
     setSelected(id);
   };
   const [viewMode, setViewMode] = useState<ViewMode>(options.defaultMode);
-  const [layouts, setLayouts] = useState<Layouts>(() => layoutsProp ?? derived?.layouts ?? defaultLayouts(options));
+  const [layouts, setLayouts] = useState<Layouts>(
+    () => layoutsProp ?? derived?.layouts ?? defaultLayouts(options),
+  );
   // A Config whose layouts differ replaces them (and what `␣ e` / `␣ s` toggled); one that only
   // changed a colour keeps them.
   const modesKey = config ? JSON.stringify(config.modes) : null;
@@ -491,28 +702,47 @@ function Workspace({
   const appState = useSyncExternalStore(store.subscribe, store.snapshot);
   // The Sidebar shown or hidden (issue #78): what the toggle chose is kept in the State, per mode,
   // unless init.lua sets `modes.<mode>.sidebar`, which wins.
-  const configSetsSidebar = config?.modes[viewMode].set?.includes("sidebar") ?? false;
+  const configSetsSidebar =
+    config?.modes[viewMode].set?.includes("sidebar") ?? false;
   const storedSidebar = sidebarChoice(appState, viewMode);
   const layout = useMemo(() => {
     const base = layouts[viewMode];
-    if (configSetsSidebar || storedSidebar === null || isShown(base, "sidebar") === storedSidebar) return base;
+    if (
+      configSetsSidebar ||
+      storedSidebar === null ||
+      isShown(base, "sidebar") === storedSidebar
+    )
+      return base;
     return togglePiece(base, "sidebar");
   }, [layouts, viewMode, configSetsSidebar, storedSidebar]);
   // The Theme (ticket 30, decision Q69): a preview in the `themes` finder, else the choice kept in
   // the State while it wins (init.lua leaves the Theme to it, or still names the Theme it was made
   // over), else init.lua's `theme`, else the Config's (`auto` follows the OS).
-  const [themeChoice] = useState(() => new ThemeChoice(store, registries.themes));
-  const preview = useSyncExternalStore(themeChoice.subscribe, themeChoice.previewing);
+  const [themeChoice] = useState(
+    () => new ThemeChoice(store, registries.themes),
+  );
+  const preview = useSyncExternalStore(
+    themeChoice.subscribe,
+    themeChoice.previewing,
+  );
   const configTheme = config && config.theme !== "auto" ? config.theme : null;
   const configThemeAt = config?.lines.theme ?? null;
   // The State's choice (a registered Theme's id); appState re-renders when it changes.
   const stored = themeChoice.stored();
   const storedOver = themeChoice.storedOver();
   const chosen = useMemo(
-    () => chosenAppearance(appearance, { configTheme, stored, storedOver, preview }),
+    () =>
+      chosenAppearance(appearance, {
+        configTheme,
+        stored,
+        storedOver,
+        preview,
+      }),
     [appearance, configTheme, stored, storedOver, preview],
   );
-  const themeInEffect = stateChoiceWins({ configTheme, stored, storedOver }) ? stored : null;
+  const themeInEffect = stateChoiceWins({ configTheme, stored, storedOver })
+    ? stored
+    : null;
   const theme = useTheme(registries.themes, chosen, !suspended);
   useLayoutEffect(() => {
     themeChoice.setConfigTheme(configTheme, configThemeAt);
@@ -525,7 +755,8 @@ function Workspace({
   hintsChoice.setConfig(configHints);
   const hintsShown = hintsChoice.shown();
   useLayoutEffect(() => {
-    if (!suspended) document.documentElement.dataset.hints = hintsShown ? "on" : "off";
+    if (!suspended)
+      document.documentElement.dataset.hints = hintsShown ? "on" : "off";
   }, [hintsShown, suspended]);
   // The message line, as Neovim's (ticket 111, decision Q115): init.lua's `ui.messages`, else
   // `:messages`'s choice in the State, else quiet (routine confirmations and tips don't show).
@@ -562,13 +793,18 @@ function Workspace({
   const { recentShown, recentTitle } = useMemo(() => {
     const all = conn.state === "ready" ? conn.hosts.hosts : [];
     const byName = new Map(all.map((h) => [h.name, h]));
-    const recent = appState.recentHosts.flatMap((n) => {
-      const h = byName.get(n);
-      return h && h.reviewed ? [h] : [];
-    }).slice(0, 6);
+    const recent = appState.recentHosts
+      .flatMap((n) => {
+        const h = byName.get(n);
+        return h && h.reviewed ? [h] : [];
+      })
+      .slice(0, 6);
     return recent.length > 0
       ? { recentShown: recent, recentTitle: "Recent" }
-      : { recentShown: all.filter((h) => h.reviewed).slice(0, 6), recentTitle: "In the Inventory" };
+      : {
+          recentShown: all.filter((h) => h.reviewed).slice(0, 6),
+          recentTitle: "In the Inventory",
+        };
   }, [conn, appState.recentHosts]);
   // The window's title names the Session on screen ("esx-02 — roster"), as editors name the file.
   const titleOf = sessions.tabs.find((t) => t.id === sessions.active)?.label;
@@ -580,10 +816,18 @@ function Workspace({
   const runRef = useRef<(line: string) => void>(() => {});
   const openCommandLineRef = useRef<(text: string) => void>(() => {});
   // The Session on screen, for a Plugin handler's context (api 3): read when a handler runs.
-  const onScreenRef = useRef<{ session: number; host: string | null } | null>(null);
+  const onScreenRef = useRef<{ session: number; host: string | null } | null>(
+    null,
+  );
   // `roster.sessions.show` (ticket 78): the Session to go to, and the line to find in it.
-  const showSessionRef = useRef<(id: number, line: string | null) => boolean>(() => false);
-  const [reveal, setReveal] = useState<{ session: number; text: string; nonce: number } | null>(null);
+  const showSessionRef = useRef<(id: number, line: string | null) => boolean>(
+    () => false,
+  );
+  const [reveal, setReveal] = useState<{
+    session: number;
+    text: string;
+    nonce: number;
+  } | null>(null);
   const [viewHost] = useState(() => new ViewHost());
   // Graphs' places and folds (ticket 77), kept in the State.
   const [graphMemory] = useState(() => new GraphMemory(store));
@@ -593,9 +837,14 @@ function Workspace({
   // Drawn again when the panels' arrangement changes: the body says what the layering and the
   // terminal's minimum need, without CSS :has() (#176).
   // Only those two: focus moving between panels changes the layout too, and needn't redraw the app.
-  const bodyPanels = useSyncExternalStore(panelLayout.subscribe, () => `${panelLayout.anyDocked() ? "d" : ""}${panelLayout.anyFull() ? "f" : ""}`);
+  const bodyPanels = useSyncExternalStore(
+    panelLayout.subscribe,
+    () =>
+      `${panelLayout.anyDocked() ? "d" : ""}${panelLayout.anyFull() ? "f" : ""}`,
+  );
   const [plugins] = useState(
-    () => new PluginManager(backend, registries, store, {
+    () =>
+      new PluginManager(backend, registries, store, {
         run: (line) => runRef.current(line),
         send: (id, text) => tabs.write(id, text),
         copy: (text) => platform.clipboard.writeText(text),
@@ -612,7 +861,10 @@ function Workspace({
         log: (message) => messageLog.push(message),
         openCommandLine: (text) => openCommandLineRef.current(text),
         // Folders (ticket 61, decision Q93): init.lua's Folders, and the ones to move in once.
-        builtinSettings: async (name) => (name === "folders" ? foldersSettings(registries.folders, platform.folders, store) : null),
+        builtinSettings: async (name) =>
+          name === "folders"
+            ? foldersSettings(registries.folders, platform.folders, store)
+            : null,
         // On `:tutor`'s demo, a load failure says so (#233).
         demo: Boolean(tutor?.demo),
       }),
@@ -624,38 +876,80 @@ function Workspace({
   // And why your Plugins aren't there, if they aren't: one notice.
   const demoProblem = tutor?.demo?.problem ?? null;
   useEffect(() => {
-    if (demoProblem && !plugins.snapshot().notices.some((n) => n.text === demoProblem)) plugins.notify("tutor", "warn", demoProblem);
+    if (
+      demoProblem &&
+      !plugins.snapshot().notices.some((n) => n.text === demoProblem)
+    )
+      plugins.notify("tutor", "warn", demoProblem);
   }, [demoProblem, plugins]);
   // Views (ticket 76): the one open, and each Host's sections from Plugins.
   const viewAt = useSyncExternalStore(viewHost.subscribe, viewHost.snapshot);
   useEffect(() => registerViews(registries, viewHost), [registries, viewHost]);
-  const viewList = useSyncExternalStore(registries.views.subscribe, registries.views.list);
-  const openView = viewAt.at === null ? undefined : viewList.find((v) => v.id === viewAt.at);
-  const detailsList = useSyncExternalStore(registries.details.subscribe, registries.details.list);
+  const viewList = useSyncExternalStore(
+    registries.views.subscribe,
+    registries.views.list,
+  );
+  const openView =
+    viewAt.at === null ? undefined : viewList.find((v) => v.id === viewAt.at);
+  const detailsList = useSyncExternalStore(
+    registries.details.subscribe,
+    registries.details.list,
+  );
   // What a Plugin does when one of its HTTP requests answers comes from the core on its own.
-  useEffect(() => backend.onPluginReply((r) => plugins.replied(r)), [backend, plugins]);
-  const statusDefs = useSyncExternalStore(registries.status.subscribe, registries.status.list);
-  const badgeList = useSyncExternalStore(registries.badges.subscribe, registries.badges.list);
+  useEffect(
+    () => backend.onPluginReply((r) => plugins.replied(r)),
+    [backend, plugins],
+  );
+  const statusDefs = useSyncExternalStore(
+    registries.status.subscribe,
+    registries.status.list,
+  );
+  const badgeList = useSyncExternalStore(
+    registries.badges.subscribe,
+    registries.badges.list,
+  );
   const hostBadges = useMemo(() => badgesByHost(badgeList), [badgeList]);
   // The layouts' names are checked once the Plugins have loaded, and again as they come and go:
   // a Plugin's section or segment isn't there while the Config is applied (ticket 79).
   const layoutsJudged = pluginSnap.settled || conn.state === "failed";
   const warnings = useMemo(
-    () => (config && layoutsJudged ? [...configWarnings, ...layoutWarnings(registries, config)] : configWarnings),
+    () =>
+      config && layoutsJudged
+        ? [...configWarnings, ...layoutWarnings(registries, config)]
+        : configWarnings,
     // The registries' lists are what layoutWarnings reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config, configWarnings, layoutsJudged, registries, sectionDefs, statusDefs, toolbarDefs],
+    [
+      config,
+      configWarnings,
+      layoutsJudged,
+      registries,
+      sectionDefs,
+      statusDefs,
+      toolbarDefs,
+    ],
   );
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const openPlugins = useRef(() => {});
-  useEffect(() => registries.commands.register(pluginsCommand(plugins, () => openPlugins.current())), [registries, plugins]);
+  useEffect(
+    () =>
+      registries.commands.register(
+        pluginsCommand(plugins, () => openPlugins.current()),
+      ),
+    [registries, plugins],
+  );
   // `:tutor` (ticket 55): starts a tutorial on the demo Inventory, or, on it, opens the page again.
   const openTutorial = useRef((def: TutorialDef) => void def);
   useEffect(() => {
     if (!tutor) return;
     return registries.commands.register(
       tutorCommand(registries.tutorials, {
-        start: (def) => (tutor.demo ? (def.id === tutor.demo.tutorial.id ? openTutorial.current(def) : tutor.demo.switchTo(def)) : tutor.start?.(def, plugins.forDemo())),
+        start: (def) =>
+          tutor.demo
+            ? def.id === tutor.demo.tutorial.id
+              ? openTutorial.current(def)
+              : tutor.demo.switchTo(def)
+            : tutor.start?.(def, plugins.forDemo()),
         quit: () => {
           if (!tutor.demo) return false;
           tutor.demo.leave();
@@ -671,10 +965,21 @@ function Workspace({
   // Packages (ticket 24): `:packages`, and a sync whenever init.lua's `packages` change.
   const [packagesOpen, setPackagesOpen] = useState(false);
   const openPackages = useRef(() => {});
-  useEffect(() => registries.commands.register(packagesCommand(plugins, () => openPackages.current())), [registries, plugins]);
-  useEffect(() => registries.commands.register(cancelCommand(plugins)), [registries, plugins]);
+  useEffect(
+    () =>
+      registries.commands.register(
+        packagesCommand(plugins, () => openPackages.current()),
+      ),
+    [registries, plugins],
+  );
+  useEffect(
+    () => registries.commands.register(cancelCommand(plugins)),
+    [registries, plugins],
+  );
   useEffect(() => {
-    tabs.setOutputTap({ output: (id, host, data, size) => plugins.output(id, host, data, size) });
+    tabs.setOutputTap({
+      output: (id, host, data, size) => plugins.output(id, host, data, size),
+    });
     return () => tabs.setOutputTap(null);
   }, [tabs, plugins]);
   // `:tutor` (ticket 55): on the demo Inventory, what happens is fed to the tutorial running, whose
@@ -688,7 +993,9 @@ function Workspace({
   // Sessions opening and ending, and the Session on screen, as Plugin events.
   // Each tab's state and Host (a Quick Connect Session's is null), so a tab closed while it ran
   // still names its Host in `session_exit`.
-  const seenTabs = useRef(new Map<number, { state: "live" | "ended"; host: string | null }>());
+  const seenTabs = useRef(
+    new Map<number, { state: "live" | "ended"; host: string | null }>(),
+  );
   // The Sessions open now, in the order they opened (a reconnect is a new open, so it goes last):
   // the whole list goes to the core on start and whenever it changes, before the events that
   // changed it, for `roster.sessions.list()` (ticket 96, decision Q127).
@@ -696,7 +1003,10 @@ function Workspace({
   const sentOpen = useRef<string | null>(null);
   useEffect(() => {
     const before = seenTabs.current;
-    const now = new Map<number, { state: "live" | "ended"; host: string | null }>();
+    const now = new Map<
+      number,
+      { state: "live" | "ended"; host: string | null }
+    >();
     const events: [() => void, () => void][] = [];
     const order = openOrder.current;
     for (const t of sessions.tabs) {
@@ -707,18 +1017,34 @@ function Workspace({
         order.delete(t.id);
         order.set(t.id, host);
         // A Quick Connect Session's `host` is nil to a Plugin: it isn't a Host of the Inventory.
-        events.push([() => void plugins.event("session_open", { session: t.id, host }), () => tutorEvent("session_open", { host: t.host })]);
+        events.push([
+          () => void plugins.event("session_open", { session: t.id, host }),
+          () => tutorEvent("session_open", { host: t.host }),
+        ]);
       }
       if (ended && before.get(t.id)?.state === "live") {
         order.delete(t.id);
         const code = t.status.state === "ended" ? t.status.exit.code : null;
-        events.push([() => void plugins.event("session_exit", { session: t.id, host, code }), () => tutorEvent("session_exit", { host: t.host, code })]);
+        events.push([
+          () =>
+            void plugins.event("session_exit", { session: t.id, host, code }),
+          () => tutorEvent("session_exit", { host: t.host, code }),
+        ]);
       }
     }
     for (const [id, was] of before) {
       if (now.has(id)) continue;
       order.delete(id);
-      if (was.state === "live") events.push([() => void plugins.event("session_exit", { session: id, host: was.host, code: null }), () => {}]);
+      if (was.state === "live")
+        events.push([
+          () =>
+            void plugins.event("session_exit", {
+              session: id,
+              host: was.host,
+              code: null,
+            }),
+          () => {},
+        ]);
     }
     seenTabs.current = now;
     const open = [...order].map(([session, host]) => ({ session, host }));
@@ -734,12 +1060,18 @@ function Workspace({
   }, [sessions.tabs, plugins, tutorEvent]);
   const onScreenTab = sessions.tabs.find((t) => t.id === sessions.active);
   const onScreenHost = onScreenTab?.host ?? null;
-  onScreenRef.current = onScreenTab ? { session: onScreenTab.id, host: onScreenTab.quick ? null : onScreenTab.host } : null;
+  onScreenRef.current = onScreenTab
+    ? {
+        session: onScreenTab.id,
+        host: onScreenTab.quick ? null : onScreenTab.host,
+      }
+    : null;
   // A Quick Connect Session isn't on a Host: Plugins hear `host_selected` only for a Host's.
   const onScreenQuick = Boolean(onScreenTab?.quick);
   useEffect(() => {
     if (!onScreenHost) return;
-    if (!onScreenQuick) void plugins.event("host_selected", { host: onScreenHost });
+    if (!onScreenQuick)
+      void plugins.event("host_selected", { host: onScreenHost });
     tutorEvent("host_selected", { host: onScreenHost });
   }, [onScreenHost, onScreenQuick, plugins, tutorEvent]);
   const saveTab = sessions.tabs.find((t) => t.id === saving) ?? null;
@@ -754,13 +1086,20 @@ function Workspace({
   // lock screen asks where the vault stands (a KeePassXC database may be init.lua's), and again on
   // every `:source`.
   const connInfo = conn.state === "ready" ? conn.info : null;
-  const configuresVault = connInfo !== null && connInfo.inventory.api_version >= VAULT_CONFIG_API_VERSION;
+  const configuresVault =
+    connInfo !== null &&
+    connInfo.inventory.api_version >= VAULT_CONFIG_API_VERSION;
   const vaultSettingsKey = JSON.stringify(vaultSettingsOf(config?.vault));
-  const [vaultConfiguredFor, setVaultConfiguredFor] = useState<BackendInfo | null>(null);
+  const [vaultConfiguredFor, setVaultConfiguredFor] =
+    useState<BackendInfo | null>(null);
   /** Goes up when where "Save to vault" can go may have changed (ticket 35): the add form lists again. */
   const [targetsVersion, bumpTargets] = useReducer((n: number) => n + 1, 0);
-  const vaultActive = connInfo !== null && (!configuresVault || vaultConfiguredFor === connInfo);
-  const vault = useVault(backend, vaultActive, { idleMs: options.idleLockMinutes * 60_000, clock });
+  const vaultActive =
+    connInfo !== null && (!configuresVault || vaultConfiguredFor === connInfo);
+  const vault = useVault(backend, vaultActive, {
+    idleMs: options.idleLockMinutes * 60_000,
+    clock,
+  });
   const checkVault = vault.check;
   useEffect(() => {
     if (!connInfo || !configuresVault) return;
@@ -773,26 +1112,44 @@ function Workspace({
         // A KeePassXC database that changed forgot the master password: the lock screen again.
         if (r.locked.length) void checkVault();
         // A setting roster can't use is left out on its own; the rest apply.
-        const refused = (r.refused ?? []).map((x) => `roster left out init.lua's vault.${x.setting}: ${x.message}`);
+        const refused = (r.refused ?? []).map(
+          (x) => `roster left out init.lua's vault.${x.setting}: ${x.message}`,
+        );
         if (refused.length) setMessage(refused.join(" "));
       },
       (e: unknown) => {
         if (!live) return;
         setVaultConfiguredFor(connInfo);
-        setMessage(`roster didn't take init.lua's vault settings: ${e instanceof Error ? e.message : String(e)}`);
+        setMessage(
+          `roster didn't take init.lua's vault settings: ${e instanceof Error ? e.message : String(e)}`,
+        );
       },
     );
     return () => {
       live = false;
     };
-  }, [backend, connInfo, configuresVault, vaultSettingsKey, checkVault, setMessage]);
+  }, [
+    backend,
+    connInfo,
+    configuresVault,
+    vaultSettingsKey,
+    checkVault,
+    setMessage,
+  ]);
   // A password Host whose vault turns out locked (session.prepare code 14) brings up the lock
   // screen; the tab opens by itself once the vault is unlocked again.
   // `vault` is a new object each render; its `lock` is stable, so the handler is set once.
   const lockVault = vault.lock;
-  useEffect(() => tabs.setVaultLockedHandler(() => void lockVault()), [tabs, lockVault]);
-  const asksAboutKeys = conn.state === "ready" && conn.info.inventory.api_version >= HOST_KEY_API_VERSION;
-  const quickConnects = conn.state === "ready" && conn.info.inventory.api_version >= QUICK_CONNECT_API_VERSION;
+  useEffect(
+    () => tabs.setVaultLockedHandler(() => void lockVault()),
+    [tabs, lockVault],
+  );
+  const asksAboutKeys =
+    conn.state === "ready" &&
+    conn.info.inventory.api_version >= HOST_KEY_API_VERSION;
+  const quickConnects =
+    conn.state === "ready" &&
+    conn.info.inventory.api_version >= QUICK_CONNECT_API_VERSION;
   useEffect(() => tabs.setAsksAboutKeys(asksAboutKeys), [tabs, asksAboutKeys]);
   const vaultUnlocked = vault.view.state === "unlocked";
   const backendReady = conn.state === "ready";
@@ -819,41 +1176,73 @@ function Workspace({
     if (firstHosts.current === null) firstHosts.current = hosts;
     else void plugins.event("inventory_changed");
   }, [hosts, plugins]);
-  const hostByName = useMemo(() => new Map((hosts?.hosts ?? []).map((h) => [h.name, h])), [hosts]);
+  const hostByName = useMemo(
+    () => new Map((hosts?.hosts ?? []).map((h) => [h.name, h])),
+    [hosts],
+  );
   // Shell hooks (ticket 121): init.lua's terminal.shell_hooks and each Host's shell_hooks.
   const shellHooksInit = config?.terminal.shellHooks ?? null;
   useEffect(
     () =>
       tabs.setShellHooks(
-        (tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks),
+        (tab) =>
+          shellHooksOn(
+            shellHooksInit,
+            tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks,
+          ),
         (size) => new XtermPromptScreen(size),
       ),
     [tabs, shellHooksInit, hostByName],
   );
   const groupNames = useMemo(() => {
     const names = Object.keys(hosts?.groups ?? {});
-    for (const h of hosts?.hosts ?? []) if (!names.includes(h.group)) names.push(h.group);
+    for (const h of hosts?.hosts ?? [])
+      if (!names.includes(h.group)) names.push(h.group);
     return names;
   }, [hosts]);
   const folded = useMemo(() => new Set(appState.folded), [appState.folded]);
   // The Live Inventory (ticket 28, API 8): what's added and not Published yet shows dimmed.
-  const canLiveNow = conn.state === "ready" && conn.info.inventory.api_version >= LIVE_API_VERSION;
-  const canUnreview = conn.state === "ready" && conn.info.inventory.api_version >= UNREVIEW_API_VERSION;
+  const canLiveNow =
+    conn.state === "ready" &&
+    conn.info.inventory.api_version >= LIVE_API_VERSION;
+  const canUnreview =
+    conn.state === "ready" &&
+    conn.info.inventory.api_version >= UNREVIEW_API_VERSION;
   const live = useMemo(() => {
     if (!canLiveNow) return undefined;
     const changes = pending?.state === "done" ? pending.changes : null;
     return {
-      pendingHosts: new Set((changes?.hosts ?? []).filter((c) => c.change === "added").map((c) => c.host)),
+      pendingHosts: new Set(
+        (changes?.hosts ?? [])
+          .filter((c) => c.change === "added")
+          .map((c) => c.host),
+      ),
       // A review that's still only a Pending change can be taken back from the same ✓ (issue #78).
       pendingReviews: canUnreview
-        ? new Set((changes?.hosts ?? []).filter((c) => c.change === "changed" && c.fields.includes("reviewed")).map((c) => c.host))
+        ? new Set(
+            (changes?.hosts ?? [])
+              .filter(
+                (c) => c.change === "changed" && c.fields.includes("reviewed"),
+              )
+              .map((c) => c.host),
+          )
         : new Set<string>(),
-      pendingGroups: new Set((changes?.groups ?? []).filter((c) => c.change === "added").map((c) => c.group)),
+      pendingGroups: new Set(
+        (changes?.groups ?? [])
+          .filter((c) => c.change === "added")
+          .map((c) => c.group),
+      ),
     };
   }, [canLiveNow, canUnreview, pending]);
   // The mode's layout may pick and order the Sidebar's sections (decision Q39).
   const shownSectionDefs = useMemo(
-    () => (layout.sections ? [...pick(sectionDefs, layout.sections)].map((d, i) => ({ ...d, order: i })) : sectionDefs),
+    () =>
+      layout.sections
+        ? [...pick(sectionDefs, layout.sections)].map((d, i) => ({
+            ...d,
+            order: i,
+          }))
+        : sectionDefs,
     [sectionDefs, layout.sections],
   );
   // The Inventory heading's "Add a Host" (iteration 3 feedback): its keys, or why it can't.
@@ -861,7 +1250,10 @@ function Workspace({
   const addTooOld = `Adding a Host needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${addApi})`;
   const addKeys = hintFor(keymap, "host add");
   const addHost = useMemo(
-    () => ({ keys: addKeys, tooOld: addApi >= ADD_API_VERSION ? null : addTooOld }),
+    () => ({
+      keys: addKeys,
+      tooOld: addApi >= ADD_API_VERSION ? null : addTooOld,
+    }),
     [addKeys, addApi, addTooOld],
   );
   // Kept between renders: a Session's events rebuild only the sections that show Sessions (#62).
@@ -881,7 +1273,19 @@ function Workspace({
             badges: hostBadges,
           })
         : [],
-    [buildSections, shownSectionDefs, sessions, hosts, hostByName, options.sessions, appState, folded, live, addHost, hostBadges],
+    [
+      buildSections,
+      shownSectionDefs,
+      sessions,
+      hosts,
+      hostByName,
+      options.sessions,
+      appState,
+      folded,
+      live,
+      addHost,
+      hostBadges,
+    ],
   );
   const rows = useMemo(() => allRows(sections), [sections]);
   const sidebarAt = layout.pieces.find((p) => p.id === "sidebar")?.at;
@@ -892,12 +1296,15 @@ function Workspace({
   // App mode, where you use it; `sidebar` (␣ e) shows it anyway until the Session changes. Hidden,
   // not unmounted, so it keeps its scroll; keyboard-paced, so it doesn't animate.
   const narrow = useMediaMatch("(max-width: 720px)");
+  // A short window: the idle map keeps three Hosts, so its Find stays above the status bar.
+  const short = useMediaMatch("(max-height: 460px)");
   // The Session the Sidebar was shown over: switching Sessions tucks it away again.
   const [peekFor, setPeekFor] = useState<number | null>(null);
   // -1 stands for "no Session": the idle pane can be peeked over too.
   const sidebarPeek = peekFor !== null && peekFor === (sessions.active ?? -1);
   // With no Session too: the idle pane's map and Find are then what a narrow window shows.
-  const sidebarTucked = sidebarShown && narrow && keyState.mode !== "app" && !sidebarPeek;
+  const sidebarTucked =
+    sidebarShown && narrow && keyState.mode !== "app" && !sidebarPeek;
   const finderCtx = useMemo<FinderContext | null>(
     () =>
       hosts
@@ -912,7 +1319,15 @@ function Workspace({
             sidebar: sectionDefs,
           }
         : null,
-    [sessions, hosts, hostByName, options.sessions, appState, folded, sectionDefs],
+    [
+      sessions,
+      hosts,
+      hostByName,
+      options.sessions,
+      appState,
+      folded,
+      sectionDefs,
+    ],
   );
 
   // The window follows the mode: OS fullscreen, or not (only when that changes).
@@ -944,7 +1359,9 @@ function Workspace({
       // as another's until it says where it runs.
       tabs.serveStarting();
       try {
-        const info = await backend.connect(restart ? { restart: true } : undefined);
+        const info = await backend.connect(
+          restart ? { restart: true } : undefined,
+        );
         const hosts = await backend.listHosts();
         setConn({ state: "ready", info, hosts });
         const leftOut = servicesLeftOut(hosts);
@@ -967,7 +1384,9 @@ function Workspace({
   // when it starts serve, so a reload that changes either starts serve again, on the new Backend
   // (WSL to Windows and back). The first Config is the one the start used. Open Sessions keep
   // running where they are; the vault locks, since the new serve has never been unlocked.
-  const backendPlan = config ? JSON.stringify([config.backend, config.rosterCommand]) : null;
+  const backendPlan = config
+    ? JSON.stringify([config.backend, config.rosterCommand])
+    : null;
   const startedPlan = useRef<string | null>(null);
   useEffect(() => {
     if (backendPlan === null) return;
@@ -981,7 +1400,8 @@ function Workspace({
 
   // Pending changes (ticket 10): asked for once the Backend is up, and after every edit, discard
   // and pull. A roster older than API 5 has none to show.
-  const apiVersion = conn.state === "ready" ? conn.info.inventory.api_version : 0;
+  const apiVersion =
+    conn.state === "ready" ? conn.info.inventory.api_version : 0;
   // A prompt fill (ticket 119): Sessions to Hosts are watched for sudo's prompt for their login
   // user, only on a roster that can fill one.
   const canFill = apiVersion >= FILL_API_VERSION;
@@ -996,7 +1416,13 @@ function Workspace({
         canFill
           ? {
               userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
-              watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: () => inventoryNow.current, fill: canNestedFill }, nonce),
+              watch: (size, user, nonce) =>
+                new PromptWatch(
+                  size,
+                  user,
+                  { hosts: () => inventoryNow.current, fill: canNestedFill },
+                  nonce,
+                ),
             }
           : null,
       ),
@@ -1007,12 +1433,17 @@ function Workspace({
   const canAdd = apiVersion >= ADD_API_VERSION;
   const canLive = apiVersion >= LIVE_API_VERSION;
   const canJobs = apiVersion >= JOBS_API_VERSION;
-  const canSave = apiVersion >= SAVE_TO_VAULT_API_VERSION && vault.view.state === "unlocked";
+  const canSave =
+    apiVersion >= SAVE_TO_VAULT_API_VERSION && vault.view.state === "unlocked";
   const refreshPending = useCallback(() => {
     if (!canEdit) return;
     backend.pendingChanges().then(
       (changes) => setPending({ state: "done", changes }),
-      (e: unknown) => setPending({ state: "error", message: e instanceof Error ? e.message : String(e) }),
+      (e: unknown) =>
+        setPending({
+          state: "error",
+          message: e instanceof Error ? e.message : String(e),
+        }),
     );
   }, [backend, canEdit]);
   useEffect(() => refreshPending(), [refreshPending]);
@@ -1062,23 +1493,39 @@ function Workspace({
       refreshPending();
       bumpTargets();
       if (change.error) setMessage(inventoryBroken(change.error));
-      else if (change.sync && !change.sync.ok) setMessage(`roster.yml changed outside the app and was applied, but ${syncFailed(change.sync)}.`);
+      else if (change.sync && !change.sync.ok)
+        setMessage(
+          `roster.yml changed outside the app and was applied, but ${syncFailed(change.sync)}.`,
+        );
     });
     backend.watchInventory(autoReload).catch(() => {});
     return stop;
-  }, [backend, conn.state, canLive, autoReload, reloadHosts, refreshPending, setStale, setMessage]);
+  }, [
+    backend,
+    conn.state,
+    canLive,
+    autoReload,
+    reloadHosts,
+    refreshPending,
+    setStale,
+    setMessage,
+  ]);
   // serve's jobs push their progress (API 20, decision Q112): each is a `job_progress` for the
   // Plugins that may ask about that kind of job (the core checks which), so they needn't poll.
   useEffect(() => {
     if (conn.state !== "ready" || !canJobs) return;
-    return backend.onJobProgress((job) => void plugins.event("job_progress", job));
+    return backend.onJobProgress(
+      (job) => void plugins.event("job_progress", job),
+    );
   }, [backend, conn.state, canJobs, plugins]);
   // `:check HOST` as it runs (ticket 110): serve's check job says which step it's on (API 21; an
   // older serve sends nothing, and the panel waits for the answer as before).
   const checking = check?.state === "running";
   useEffect(() => {
     if (conn.state !== "ready" || !checking) return;
-    return backend.onJobProgress((job) => setCheck((c) => checkProgressed(c, job, Date.now())));
+    return backend.onJobProgress((job) =>
+      setCheck((c) => checkProgressed(c, job, Date.now())),
+    );
   }, [backend, conn.state, checking]);
   // `:source` reloads roster.yml too.
   useEffect(() => {
@@ -1096,7 +1543,9 @@ function Workspace({
         refreshPending();
         bumpTargets();
         if (r.error) return inventoryBroken(r.error);
-        return r.sync && !r.sync.ok ? `Reloaded roster.yml, but ${syncFailed(r.sync)}.` : null;
+        return r.sync && !r.sync.ok
+          ? `Reloaded roster.yml, but ${syncFailed(r.sync)}.`
+          : null;
       },
     });
   }, [registries, backend, canLive, reloadHosts, refreshPending, setStale]);
@@ -1105,8 +1554,15 @@ function Workspace({
   // Named Inventories (ticket 115, API 27): asked of each serve once it's up, so the status bar
   // names the one it runs on and Sessions are marked with theirs. Forgotten while serve (re)starts.
   const listsInventories = apiVersion >= INVENTORIES_API_VERSION;
-  const inventories = inventoriesOf && connInfo && inventoriesOf.info === connInfo ? inventoriesOf.list : null;
-  const setInventories = useCallback((info: BackendInfo, list: Inventories | null) => setInventoriesOf(list && { info, list }), []);
+  const inventories =
+    inventoriesOf && connInfo && inventoriesOf.info === connInfo
+      ? inventoriesOf.list
+      : null;
+  const setInventories = useCallback(
+    (info: BackendInfo, list: Inventories | null) =>
+      setInventoriesOf(list && { info, list }),
+    [],
+  );
   useEffect(() => {
     if (!connInfo || !listsInventories) return;
     let live = true;
@@ -1122,8 +1578,10 @@ function Workspace({
     if (!connInfo) return;
     // Before API 27 there are no named Inventories: the file inventory.info names is where it runs.
     // A list that fails never says, so Sessions opened before this serve stay another's.
-    if (!listsInventories) tabs.setInventory({ name: null, path: connInfo.inventory.path });
-    else if (inventories) tabs.setInventory({ name: inventories.name, path: inventories.path });
+    if (!listsInventories)
+      tabs.setInventory({ name: null, path: connInfo.inventory.path });
+    else if (inventories)
+      tabs.setInventory({ name: inventories.name, path: inventories.path });
   }, [tabs, connInfo, listsInventories, inventories]);
   // Said when it changes, so a screen reader hears it too (the message line is a status region).
   const lastInventory = useRef<string | null | undefined>(undefined);
@@ -1160,18 +1618,37 @@ function Workspace({
   }, [platform, store, appVersion]);
 
   // The window's size and place go in the State; the Tauri shell restores them at the next start.
-  useEffect(() => platform.window?.watchGeometry((g) => store.set("window", g)), [platform, store]);
+  useEffect(
+    () => platform.window?.watchGeometry((g) => store.set("window", g)),
+    [platform, store],
+  );
 
   // Folders (GLOSSARY) is a built-in Plugin (ticket 61, decision Q93): init.lua's Folders are its
   // settings, so a change to them loads it again.
-  useEffect(() => registries.folders.subscribe(() => void plugins.reloadBuiltin("folders")), [registries, plugins]);
-  useEffect(() => registerThemePicker(registries, themeChoice), [registries, themeChoice]);
-  useEffect(() => registerHints(registries, hintsChoice), [registries, hintsChoice]);
   useEffect(
-    () => registerMessages(registries, messagesChoice, messageLog, () => viewHost.open(MESSAGES_VIEW)),
+    () =>
+      registries.folders.subscribe(() => void plugins.reloadBuiltin("folders")),
+    [registries, plugins],
+  );
+  useEffect(
+    () => registerThemePicker(registries, themeChoice),
+    [registries, themeChoice],
+  );
+  useEffect(
+    () => registerHints(registries, hintsChoice),
+    [registries, hintsChoice],
+  );
+  useEffect(
+    () =>
+      registerMessages(registries, messagesChoice, messageLog, () =>
+        viewHost.open(MESSAGES_VIEW),
+      ),
     [registries, messagesChoice, messageLog, viewHost],
   );
-  const loggedMessages = useSyncExternalStore(messageLog.subscribe, messageLog.snapshot);
+  const loggedMessages = useSyncExternalStore(
+    messageLog.subscribe,
+    messageLog.snapshot,
+  );
   // The new list goes in before the old one comes out, so an open `:messages` view stays open.
   const messagesView = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -1186,38 +1663,68 @@ function Workspace({
     },
     [registries],
   );
-  useEffect(() => registerPanel(registries, panelLayout), [registries, panelLayout]);
+  useEffect(
+    () => registerPanel(registries, panelLayout),
+    [registries, panelLayout],
+  );
   const configPanel = config?.panel;
   const configViews = config?.views;
   useEffect(() => {
     const views = Object.fromEntries(
-      Object.entries(configViews ?? {}).map(([id, v]) => [id, { ...(v.place ? { place: v.place } : {}), ...(v.width !== null ? { width: v.width } : {}) }]),
+      Object.entries(configViews ?? {}).map(([id, v]) => [
+        id,
+        {
+          ...(v.place ? { place: v.place } : {}),
+          ...(v.width !== null ? { width: v.width } : {}),
+        },
+      ]),
     );
-    panelLayout.setDefaults(configPanel || configViews ? { width: configPanel?.width ?? null, views } : NO_DEFAULTS);
+    panelLayout.setDefaults(
+      configPanel || configViews
+        ? { width: configPanel?.width ?? null, views }
+        : NO_DEFAULTS,
+    );
   }, [panelLayout, configPanel, configViews]);
   // `:help` (ticket 37): its pages read the live registries and the Config each time they show.
   const [helpView] = useState(() => new HelpView());
   const helpAt = useSyncExternalStore(helpView.subscribe, helpView.snapshot);
   useEffect(() => registerHelp(registries, helpView), [registries, helpView]);
-  const themeList = useSyncExternalStore(registries.themes.subscribe, registries.themes.list);
-  const helpPages = useSyncExternalStore(registries.help.subscribe, registries.help.list);
-  const healthSections = useSyncExternalStore(registries.health.subscribe, registries.health.list);
+  const themeList = useSyncExternalStore(
+    registries.themes.subscribe,
+    registries.themes.list,
+  );
+  const helpPages = useSyncExternalStore(
+    registries.help.subscribe,
+    registries.help.list,
+  );
+  const healthSections = useSyncExternalStore(
+    registries.health.subscribe,
+    registries.health.list,
+  );
   const hintsStored = hintsChoice.stored();
   const messagesStored = messagesChoice.stored();
   const configPath = report?.path ?? null;
   // `:tutor`'s progress: a tick re-renders the tutorial's page.
-  const tutorDone = useSyncExternalStore(tutor?.progress.subscribe ?? noSubscribe, tutor?.progress.snapshot ?? noSnapshot);
+  const tutorDone = useSyncExternalStore(
+    tutor?.progress.subscribe ?? noSubscribe,
+    tutor?.progress.snapshot ?? noSnapshot,
+  );
   const running = tutor?.demo?.tutorial.id ?? null;
   const tutorCtx = useMemo(() => {
     void tutorDone;
     const progress = tutor?.progress;
-    return progress ? { done: (id: string) => progress.done(id), running } : undefined;
+    return progress
+      ? { done: (id: string) => progress.done(id), running }
+      : undefined;
   }, [tutor?.progress, running, tutorDone]);
   const helpCtx = useMemo(
     () =>
       helpContext(
         {
-          commands: { get: (id) => registries.commands.get(id), list: () => commandList },
+          commands: {
+            get: (id) => registries.commands.get(id),
+            list: () => commandList,
+          },
           themes: { list: () => themeList },
           finders: { list: () => finderSources },
           errors: { list: () => errorRows },
@@ -1228,21 +1735,50 @@ function Workspace({
           options,
           config: config ?? defaultConfig,
           configPath,
-          state: { theme: themeInEffect, hints: hintsStored, messages: messagesStored },
+          state: {
+            theme: themeInEffect,
+            hints: hintsStored,
+            messages: messagesStored,
+          },
           activeTheme: theme.id,
           health: { sections: healthSections, report: health },
           ...(tutorCtx ? { tutor: tutorCtx } : {}),
         },
       ),
-    [registries, commandList, keymap, options, config, configPath, themeInEffect, hintsStored, messagesStored, theme.id, themeList, helpPages, errorRows, finderSources, healthSections, health, tutorCtx],
+    [
+      registries,
+      commandList,
+      keymap,
+      options,
+      config,
+      configPath,
+      themeInEffect,
+      hintsStored,
+      messagesStored,
+      theme.id,
+      themeList,
+      helpPages,
+      errorRows,
+      finderSources,
+      healthSections,
+      health,
+      tutorCtx,
+    ],
   );
   helpView.setContext(() => helpCtx);
   // Where help went, for `:tutor`'s steps: a page opened, Ctrl+O back, Ctrl+I forward.
   useEffect(() => {
     const at = helpAt.at;
-    if (at && helpAt.moved) tutorEvent(`help_${helpAt.moved}`, { page: at.page, anchor: at.anchor ?? null });
+    if (at && helpAt.moved)
+      tutorEvent(`help_${helpAt.moved}`, {
+        page: at.page,
+        anchor: at.anchor ?? null,
+      });
   }, [helpAt, tutorEvent]);
-  const onHelpSearch = useCallback((page: string, query: string) => tutorEvent("help_search", { page, query }), [tutorEvent]);
+  const onHelpSearch = useCallback(
+    (page: string, query: string) => tutorEvent("help_search", { page, query }),
+    [tutorEvent],
+  );
   // `cmdline.help` (ticket 52): the command line to come back to when help closes, as it was.
   const backToLine = useRef<{ line: string; caret: number } | null>(null);
   // init.lua is what `:source` reloads (decision Q58); ticket 28 registers roster.yml.
@@ -1273,15 +1809,26 @@ function Workspace({
     if (pickerShown) pickerTime.shown();
   }, [pickerShown, pickerTime]);
   // The renderer the visible terminal draws with (ticket 20): WebGL, or DOM and why.
-  const [rendererInUse, setRendererInUse] = useState<RendererInUse | null>(null);
+  const [rendererInUse, setRendererInUse] = useState<RendererInUse | null>(
+    null,
+  );
   const onZoom = useCallback(
-    (action: ZoomAction) => setFontSize((size) => zoom(terminalOptions, size, action)),
+    (action: ZoomAction) =>
+      setFontSize((size) => zoom(terminalOptions, size, action)),
     [terminalOptions],
   );
   const terminalKeys = useMemo(() => actionsOf(keymap.terminal), [keymap]);
-  const termTheme = useMemo(() => terminalTheme(theme, terminalOptions.colors), [theme, terminalOptions.colors]);
+  const termTheme = useMemo(
+    () => terminalTheme(theme, terminalOptions.colors),
+    [theme, terminalOptions.colors],
+  );
   // What sits around the terminal: a change fits the terminal again and tells the Session.
-  const layoutKey = [viewMode, ...(["top", "bottom", "left", "right"] as const).map((at) => placed(layout, at).join(","))].join(" ");
+  const layoutKey = [
+    viewMode,
+    ...(["top", "bottom", "left", "right"] as const).map((at) =>
+      placed(layout, at).join(","),
+    ),
+  ].join(" ");
   const terminalEnv = useMemo<TerminalEnv>(
     () => ({
       options: terminalOptions,
@@ -1294,13 +1841,23 @@ function Workspace({
       layout: layoutKey,
       onRenderer: setRendererInUse,
     }),
-    [terminalOptions, termTheme, fontSize, windowsBuild, terminalKeys, platform, onZoom, layoutKey],
+    [
+      terminalOptions,
+      termTheme,
+      fontSize,
+      windowsBuild,
+      terminalKeys,
+      platform,
+      onZoom,
+      layoutKey,
+    ],
   );
 
   const openHost = useCallback(
     (host: string, here: boolean) => {
       const current = tabs.snapshot().active;
-      if (!(here && current !== null && tabs.reconnect(current, host))) tabs.open(host);
+      if (!(here && current !== null && tabs.reconnect(current, host)))
+        tabs.open(host);
       store.update((s) => usedHost(s, host));
     },
     [tabs, store],
@@ -1317,7 +1874,11 @@ function Workspace({
   // With the last Session closed, the keys need somewhere to go.
   const noSessions = sessions.tabs.length === 0;
   useEffect(() => {
-    if (noSessions && (document.activeElement === document.body || document.activeElement === null)) {
+    if (
+      noSessions &&
+      (document.activeElement === document.body ||
+        document.activeElement === null)
+    ) {
       mainRef.current?.focus();
     }
   }, [noSessions]);
@@ -1341,10 +1902,16 @@ function Workspace({
   // the demo's registries), and once the demo is up its page opens where you left off.
   const demoTutorial = tutor?.demo?.tutorial ?? null;
   useEffect(() => {
-    if (demoTutorial && registries.tutorials.get(demoTutorial.id) !== demoTutorial) return registries.tutorials.register(demoTutorial);
+    if (
+      demoTutorial &&
+      registries.tutorials.get(demoTutorial.id) !== demoTutorial
+    )
+      return registries.tutorials.register(demoTutorial);
   }, [registries, demoTutorial]);
   openTutorial.current = (def) => {
-    const anchor = tutor ? resumeAt(def, tutor.progress.done(def.id)) : undefined;
+    const anchor = tutor
+      ? resumeAt(def, tutor.progress.done(def.id))
+      : undefined;
     helpView.open({ page: tutorPage(def.id), ...(anchor ? { anchor } : {}) });
   };
   useEffect(() => {
@@ -1363,14 +1930,17 @@ function Workspace({
   // M4); `beforeTree` is where focus was (the terminal), and where it goes back to.
   const treeRef = useRef<HTMLDivElement | null>(null);
   const beforeTree = useRef<Element | null>(null);
-  const inTree = () => treeRef.current?.contains(document.activeElement) ?? false;
+  const inTree = () =>
+    treeRef.current?.contains(document.activeElement) ?? false;
   const setTree = useCallback((el: HTMLDivElement | null) => {
     treeRef.current = el;
   }, []);
 
   /** Remembers where focus was (the terminal), for when an overlay or panel closes. */
   const rememberFocus = () => {
-    returnFocus.current = inTree() ? beforeTree.current : document.activeElement;
+    returnFocus.current = inTree()
+      ? beforeTree.current
+      : document.activeElement;
   };
   const restoreFocus = () => {
     const el = returnFocus.current;
@@ -1382,16 +1952,23 @@ function Workspace({
   // Before the panel's own effect focuses its button (layout effects run first).
   const confirmId = pluginSnap.confirm?.id ?? null;
   useLayoutEffect(() => {
-    if (confirmId !== null && !document.activeElement?.closest(".plugin-confirm")) rememberFocus();
+    if (
+      confirmId !== null &&
+      !document.activeElement?.closest(".plugin-confirm")
+    )
+      rememberFocus();
     // Only when a new question comes up.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmId]);
 
   // A Plugin's float (opened from a table's action, say) takes the keys; closing it puts them back
   // where they were, in the table (ticket 91).
-  const floatKey = pluginSnap.float ? `${pluginSnap.float.plugin}:${pluginSnap.float.title}` : null;
+  const floatKey = pluginSnap.float
+    ? `${pluginSnap.float.plugin}:${pluginSnap.float.title}`
+    : null;
   useLayoutEffect(() => {
-    if (floatKey !== null && !document.activeElement?.closest(".plugin-float")) rememberFocus();
+    if (floatKey !== null && !document.activeElement?.closest(".plugin-float"))
+      rememberFocus();
     // Only when a new float comes up.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [floatKey]);
@@ -1447,31 +2024,48 @@ function Workspace({
     const lockFailed = await vault.lockNow();
     if (lockFailed !== null) {
       closeSwitch();
-      return setMessage(`Couldn't lock the vault (${lockFailed}): nothing switched`);
+      return setMessage(
+        `Couldn't lock the vault (${lockFailed}): nothing switched`,
+      );
     }
     try {
       await backend.useInventory(to);
     } catch (e) {
       closeSwitch();
-      return setMessage(`Couldn't switch to ${to}: ${e instanceof Error ? e.message : String(e)}`);
+      return setMessage(
+        `Couldn't switch to ${to}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
     closeSwitch();
     setMessage(`Restarting roster on ${to}…`);
     setStartNote(null);
     // serve starts again as for a new backend: its start asks roster which file to use.
     if (!(await connect(true))) {
-      return setStartNote(`${to} is the active Inventory now, but roster didn't start again on it: fix what's above, then Retry.`);
+      return setStartNote(
+        `${to} is the active Inventory now, but roster didn't start again on it: fix what's above, then Retry.`,
+      );
     }
-    const now = await backend.listInventories().catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+    const now = await backend
+      .listInventories()
+      .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
     if (typeof now === "string") {
-      return setMessage(`${to} is the active Inventory now, but roster couldn't say which Inventory it started on (${now}): its Sessions from before stay marked`);
+      return setMessage(
+        `${to} is the active Inventory now, but roster couldn't say which Inventory it started on (${now}): its Sessions from before stay marked`,
+      );
     }
     if (now.name !== to) setMessage(afterSwitch(now, to));
   };
   /** Sessions a switch leaves open (ended ones stay too, but aren't open). */
-  const openSessions = () => sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").length;
+  const openSessions = () =>
+    sessions.tabs.filter(
+      (t) => t.status.state !== "ended" && t.status.state !== "failed",
+    ).length;
   /** The Pending changes now, asked again (a switch is blocked by them); the last count if roster can't say. */
-  const pendingNow = async () => (canEdit ? ((await backend.pendingChanges().catch(() => null))?.count ?? pendingCount) : 0);
+  const pendingNow = async () =>
+    canEdit
+      ? ((await backend.pendingChanges().catch(() => null))?.count ??
+        pendingCount)
+      : 0;
   const closeChanges = () => {
     setChangesView(null);
     restoreFocus();
@@ -1487,7 +2081,8 @@ function Workspace({
   /** h, l and the chevrons: fold or unfold a row, or move to its parent or first child. */
   const fold = (given: string | null, how: FoldHow) => {
     const id = given === null ? null : currentFoldId(given);
-    const row = id === null ? cursorRow() : (rows.find((r) => r.id === id) ?? null);
+    const row =
+      id === null ? cursorRow() : (rows.find((r) => r.id === id) ?? null);
     const target = id ?? row?.id;
     if (!target) return;
     const isFolded = row ? row.folded === true : folded.has(target);
@@ -1496,7 +2091,8 @@ function Workspace({
       const next = how === "toggle" ? !isFolded : how === "fold";
       store.update((s) => setFolded(s, target, next));
       // The cursor doesn't vanish into a folded row.
-      if (next && cursor !== null && ancestorsOf(cursor).includes(target)) moveTo(target);
+      if (next && cursor !== null && ancestorsOf(cursor).includes(target))
+        moveTo(target);
       return;
     }
     if (id !== null || !row) return;
@@ -1508,7 +2104,12 @@ function Workspace({
   };
   const ancestorsOf = (id: string): string[] => {
     const out: string[] = [];
-    for (let r = rows.find((x) => x.id === id); r?.parent; r = rows.find((x) => x.id === r?.parent)) out.push(r.parent);
+    for (
+      let r = rows.find((x) => x.id === id);
+      r?.parent;
+      r = rows.find((x) => x.id === r?.parent)
+    )
+      out.push(r.parent);
     return out;
   };
 
@@ -1522,7 +2123,9 @@ function Workspace({
     backend.stopCheck(job).catch((e: unknown) => {
       if (run !== checkRun.current) return;
       setCheck(checkStopFailed);
-      setMessage(`The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`);
+      setMessage(
+        `The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`,
+      );
     });
   };
 
@@ -1534,18 +2137,38 @@ function Workspace({
     helpView.open({ page: "health" });
     const info = conn.state === "ready" ? conn.info : null;
     const api = info?.inventory.api_version ?? 0;
-    const finish = async (box: HealthContext["box"], boxProblem: string | null) => {
+    const finish = async (
+      box: HealthContext["box"],
+      boxProblem: string | null,
+    ) => {
       if (run !== healthRun.current) return;
       const hctx: HealthContext = {
         box,
         boxProblem,
-        backend: info ? { name: info.backend, rosterVersion: info.inventory.roster_version, apiVersion: api } : null,
-        config: { path: report?.path ?? null, error: report?.error ?? null, warnings },
-        font: { families: terminalOptions.fonts, inUse: fontFound(terminalOptions.fonts, platform.fontInstalled ?? (() => null)) },
+        backend: info
+          ? {
+              name: info.backend,
+              rosterVersion: info.inventory.roster_version,
+              apiVersion: api,
+            }
+          : null,
+        config: {
+          path: report?.path ?? null,
+          error: report?.error ?? null,
+          warnings,
+        },
+        font: {
+          families: terminalOptions.fonts,
+          inUse: fontFound(
+            terminalOptions.fonts,
+            platform.fontInstalled ?? (() => null),
+          ),
+        },
       };
       // A Plugin's section may answer later (ticket 60): the page says it's checking until then.
       const sections = await runHealth(registries.health.list(), hctx);
-      if (run === healthRun.current) setHealth({ state: "done", at: new Date(), sections });
+      if (run === healthRun.current)
+        setHealth({ state: "done", at: new Date(), sections });
     };
     if (!info || api < BOX_CHECK_API_VERSION) return void finish(null, null);
     backend.checkBox().then(
@@ -1569,21 +2192,32 @@ function Workspace({
     },
     quickConnect: (text) => {
       if (!quickConnects) {
-        const api = conn.state === "ready" ? conn.info.inventory.api_version : 0;
-        return setMessage(`Quick Connect needs a newer roster (API version ${QUICK_CONNECT_API_VERSION}; this one speaks ${api})`);
+        const api =
+          conn.state === "ready" ? conn.info.inventory.api_version : 0;
+        return setMessage(
+          `Quick Connect needs a newer roster (API version ${QUICK_CONNECT_API_VERSION}; this one speaks ${api})`,
+        );
       }
       if (text === null) {
         if (overlay === null) rememberFocus();
         return setOverlay("quick");
       }
       const to = parseQuickTarget(text);
-      if (!to) return setMessage(`${text} isn't a Quick Connect address: type user@address, or user@address:port`);
+      if (!to)
+        return setMessage(
+          `${text} isn't a Quick Connect address: type user@address, or user@address:port`,
+        );
       tabs.openQuick(to);
     },
     // A Host, or a web service in the default browser (ticket 18, decision Q71).
     open: (arg) => {
       const sessionHosts = sessions.tabs.map((t) => t.host);
-      const to = resolveOpen(arg, hostByName, details ?? ctx.selectedHost(), sessionHosts);
+      const to = resolveOpen(
+        arg,
+        hostByName,
+        details ?? ctx.selectedHost(),
+        sessionHosts,
+      );
       if (to.kind === "error") return setMessage(to.message);
       if (to.kind === "web") return openWeb(to.host, to.service, to.url);
       const tab = sessions.tabs.find((t) => t.host === to.host);
@@ -1597,57 +2231,91 @@ function Workspace({
       if (name === null) return checkBox();
       // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
       if (name === "stop" && !hostByName.has(name)) {
-        const target = stopTarget(check, conn.state === "ready" ? conn.info.inventory.api_version : 0);
-        return "job" in target ? stopCheck(target.job) : setMessage(target.message);
+        const target = stopTarget(
+          check,
+          conn.state === "ready" ? conn.info.inventory.api_version : 0,
+        );
+        return "job" in target
+          ? stopCheck(target.job)
+          : setMessage(target.message);
       }
       // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
-      const current = onScreenTab && !onScreenTab.quick ? onScreenTab.host : null;
+      const current =
+        onScreenTab && !onScreenTab.quick ? onScreenTab.host : null;
       if (name === "%" && current === null) {
-        return setMessage(onScreenTab ? ":check % needs a Host's Session: a Quick Connect Session isn't on one" : ":check % needs a Session on screen");
+        return setMessage(
+          onScreenTab
+            ? ":check % needs a Host's Session: a Quick Connect Session isn't on one"
+            : ":check % needs a Session on screen",
+        );
       }
       const host = name === "%" ? (current ?? "") : name;
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
       const api = conn.state === "ready" ? conn.info.inventory.api_version : 0;
       if (api < CHECK_API_VERSION) {
-        return setMessage(`:check needs a newer roster (API version ${CHECK_API_VERSION}; this one speaks ${api})`);
+        return setMessage(
+          `:check needs a newer roster (API version ${CHECK_API_VERSION}; this one speaks ${api})`,
+        );
       }
       const run = ++checkRun.current;
       setCheck((prev) => checkStarted(prev, host, Date.now()));
       // A check already running (serve joins it) sent its progress before now: ask once where it is.
       if (api >= CHECK_JOBS_API_VERSION) {
         backend.listJobs().then(
-          (jobs) => run === checkRun.current && setCheck((c) => checkJoined(c, jobs, Date.now())),
+          (jobs) =>
+            run === checkRun.current &&
+            setCheck((c) => checkJoined(c, jobs, Date.now())),
           () => undefined,
         );
       }
       // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
-      const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
+      const at = (prev: CheckState | null) =>
+        prev?.state === "running" && prev.host === host ? prev.at : null;
       // The core hands over the check's job as it starts: the app's own can be stopped (#221).
-      const started = (s: CheckStarted) => run === checkRun.current && setCheck((c) => checkOwned(c, host, s));
+      const started = (s: CheckStarted) =>
+        run === checkRun.current && setCheck((c) => checkOwned(c, host, s));
       backend.checkHost(host, started).then(
-        (result) => run === checkRun.current && setCheck((prev) => ({ state: "done", host, result, at: at(prev) })),
+        (result) =>
+          run === checkRun.current &&
+          setCheck((prev) => ({ state: "done", host, result, at: at(prev) })),
         (e: unknown) =>
           run === checkRun.current &&
-          setCheck((prev) => ({ state: "error", host, message: e instanceof Error ? e.message : String(e), at: at(prev) })),
+          setCheck((prev) => ({
+            state: "error",
+            host,
+            message: e instanceof Error ? e.message : String(e),
+            at: at(prev),
+          })),
       );
     },
     selectRelative: (delta) => tabs.selectRelative(delta),
     selectNth: (n) => tabs.selectNth(n),
     close: (n) => {
-      const id = n === null ? sessions.active : (sessions.tabs[n - 1]?.id ?? null);
+      const id =
+        n === null ? sessions.active : (sessions.tabs[n - 1]?.id ?? null);
       if (id !== null) tabs.close(id);
     },
     toggleSidebar: () => {
       if (sidebarTucked || (narrow && sidebarPeek)) {
         setPeekFor(sidebarPeek ? null : (sessions.active ?? -1));
-        return setMessage(quiet(sidebarPeek ? "Sidebar tucked away" : "Sidebar shown", sidebarPeek ? "Sidebar tucked away while the window is narrow" : "Sidebar shown over the terminal until you switch Sessions"));
+        return setMessage(
+          quiet(
+            sidebarPeek ? "Sidebar tucked away" : "Sidebar shown",
+            sidebarPeek
+              ? "Sidebar tucked away while the window is narrow"
+              : "Sidebar shown over the terminal until you switch Sessions",
+          ),
+        );
       }
       const shown = !isShown(layout, "sidebar");
       const name = `modes.${viewMode}.sidebar`;
       const said = `Sidebar ${shown ? "shown" : "hidden"}`;
       if (configSetsSidebar) {
         // init.lua sets it: this lasts until the Config is loaded again (or the app restarts).
-        setLayouts((l) => ({ ...l, [viewMode]: togglePiece(l[viewMode], "sidebar") }));
+        setLayouts((l) => ({
+          ...l,
+          [viewMode]: togglePiece(l[viewMode], "sidebar"),
+        }));
         return setMessage(
           quiet(
             said,
@@ -1655,8 +2323,16 @@ function Workspace({
           ),
         );
       }
-      store.set(SIDEBAR_KEY, { ...sidebarChoices(appState), [viewMode]: shown });
-      setMessage(quiet(said, `${said}, and kept that way. ${name} = ${String(shown)} in init.lua makes it the default`));
+      store.set(SIDEBAR_KEY, {
+        ...sidebarChoices(appState),
+        [viewMode]: shown,
+      });
+      setMessage(
+        quiet(
+          said,
+          `${said}, and kept that way. ${name} = ${String(shown)} in init.lua makes it the default`,
+        ),
+      );
     },
     toggleStatusBar: () => {
       const next = togglePiece(layout, layout.bar);
@@ -1673,22 +2349,36 @@ function Workspace({
       setKeysOpen(true);
     },
     lock: () => {
-      if (!vault.lock()) setMessage("Nothing to lock: no Host Login uses a vault with a master password.");
+      if (!vault.lock())
+        setMessage(
+          "Nothing to lock: no Host Login uses a vault with a master password.",
+        );
     },
     vault: () => {
       if (apiVersion < SIGN_OUT_API_VERSION) {
-        return setMessage(`:vault signout needs a newer roster (API version ${SIGN_OUT_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `:vault signout needs a newer roster (API version ${SIGN_OUT_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
       // Ask roster who the CLI is signed in as now: a sign-in from the lock screen doesn't say.
       backend.vaultStatus().then(
         (s) => {
-          if (!s.provider) return setMessage("Nothing to sign out of: no Host Login uses a vault with an account.");
+          if (!s.provider)
+            return setMessage(
+              "Nothing to sign out of: no Host Login uses a vault with an account.",
+            );
           if (!s.can_sign_out) return setMessage(noAccountWords(s.provider));
-          if (!s.account) return setMessage("The vault CLI isn't signed in on this Box, so there's no account to sign out of.");
+          if (!s.account)
+            return setMessage(
+              "The vault CLI isn't signed in on this Box, so there's no account to sign out of.",
+            );
           if (!signingOut) rememberFocus();
           setSigningOut(s.account);
         },
-        (e: unknown) => setMessage(`Couldn't ask the vault who's signed in: ${e instanceof Error ? e.message : String(e)}`),
+        (e: unknown) =>
+          setMessage(
+            `Couldn't ask the vault who's signed in: ${e instanceof Error ? e.message : String(e)}`,
+          ),
       );
     },
     toTerminal: () => {
@@ -1711,7 +2401,8 @@ function Workspace({
       if (packagesOpen) return closePackages();
       if (keysOpen) return closeKeys();
       if (signingOut) return closeSignOut();
-      if (switching) return switchingTo.current === null ? closeSwitch() : undefined;
+      if (switching)
+        return switchingTo.current === null ? closeSwitch() : undefined;
       if (confirming) return closeConfirm();
       if (editing !== null) return closeEdit();
       if (adding) return closeAdd();
@@ -1728,16 +2419,26 @@ function Workspace({
       const row = rows.find((r) => r.id === cursor);
       if (row) setSelected(row.id);
       // Enter on a group, Folder or heading folds it and stays in the Sidebar.
-      setMode(row && staysInAppMode(row.command) ? { mode: "app", pending: [] } : terminalMode);
+      setMode(
+        row && staysInAppMode(row.command)
+          ? { mode: "app", pending: [] }
+          : terminalMode,
+      );
       if (row) run(row.command);
     },
     fold,
     cursorRow,
     rowMenu: () => {
       const row = cursorRow();
-      if (!sidebarShown) return setMessage("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
+      if (!sidebarShown)
+        return setMessage(
+          "The Sidebar is hidden: show it to use a Host's menu (sidebar)",
+        );
       // A Host's row has its menu; a group's (or a Plugin row's) has its actions.
-      if (!row?.menu && !(row?.actions?.length)) return setMessage("This row has no menu: move the cursor to a Host or a group");
+      if (!row?.menu && !row?.actions?.length)
+        return setMessage(
+          "This row has no menu: move the cursor to a Host or a group",
+        );
       setRowMenu({ row: row.id, at: null });
     },
     selectedHost: () => {
@@ -1749,7 +2450,9 @@ function Workspace({
     groupNames: () => groupNames,
     inventory: (op) => {
       if (!canLive) {
-        return setMessage(`Changing the Inventory here needs a newer roster (API version ${LIVE_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `Changing the Inventory here needs a newer roster (API version ${LIVE_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
       if (op.op === "remove") {
         const h = hostByName.get(op.host);
@@ -1763,10 +2466,14 @@ function Workspace({
           // Where should they go? The command line asks, with the groups to complete.
           const others = groupNames.filter((g) => g !== op.group);
           if (others.length === 0) {
-            return setMessage(`${op.group} has ${countOf(members.length, "Host")} and there's no other group for them: make one first (:group new)`);
+            return setMessage(
+              `${op.group} has ${countOf(members.length, "Host")} and there's no other group for them: make one first (:group new)`,
+            );
           }
           ctx.openCommandLine(`group delete ${op.group} `);
-          return setMessage(`${op.group} has ${countOf(members.length, "Host")}: name the group they move to (Tab completes), or Esc to keep it`);
+          return setMessage(
+            `${op.group} has ${countOf(members.length, "Host")}: name the group they move to (Tab completes), or Esc to keep it`,
+          );
         }
       }
       void runInventory(op);
@@ -1779,31 +2486,46 @@ function Workspace({
         // The command too: it's the program the master password and sign-in codes go to.
         const { backend, command, inventory } = conn.info;
         // The terminal font in use (ticket 33): the first installed one in terminal.font.
-        const font = fontInUse(terminalOptions.fonts, platform.fontInstalled ?? (() => null));
+        const font = fontInUse(
+          terminalOptions.fonts,
+          platform.fontInstalled ?? (() => null),
+        );
         const size = `${Math.round(fontSize * 100) / 100} px`;
         // The visible terminal's, or with none on screen the one terminal.renderer asks for.
         const shown = sessions.active !== null && rendererInUse !== null;
-        const renderer = rendererLabel(shown ? rendererInUse : terminalOptions.renderer);
+        const renderer = rendererLabel(
+          shown ? rendererInUse : terminalOptions.renderer,
+        );
         const picked = pickerTime.last();
         setMessage(
           `Backend ${backend} · Box ${inventory.box} · Inventory ${inventory.path} · Command ${command.join(" ")} · ` +
             `Terminal ${font} ${size}, ${renderer}` +
-            (picked === null ? "" : ` · Picker opened in ${Math.round(picked)} ms`),
+            (picked === null
+              ? ""
+              : ` · Picker opened in ${Math.round(picked)} ms`),
         );
       }
     },
     details: (name) => {
-      if (name === null && details !== null && hostByName.has(details)) return setDetails(null);
+      if (name === null && details !== null && hostByName.has(details))
+        return setDetails(null);
       const host = name ?? ctx.selectedHost();
-      if (!host) return setMessage("No Host selected: pick one in the Sidebar or open its Session, or use :info HOST");
+      if (!host)
+        return setMessage(
+          "No Host selected: pick one in the Sidebar or open its Session, or use :info HOST",
+        );
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
       setDetails(host);
     },
     edit: (name) => {
       const host = name ?? ctx.selectedHost();
-      if (!host) return setMessage("edit needs a Host name (no Host is selected)");
+      if (!host)
+        return setMessage("edit needs a Host name (no Host is selected)");
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
-      if (!canEdit) return setMessage(`:edit needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canEdit)
+        return setMessage(
+          `:edit needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       if (editing === null && !changesView && !adding) rememberFocus();
       setChangesView(null);
       setAdding(null);
@@ -1814,7 +2536,11 @@ function Workspace({
       if (!canAdd) return setMessage(addTooOld);
       if (editing === null && !changesView && !adding) rememberFocus();
       const selected = ctx.selectedHost();
-      const group = inGroup ?? (selected && hostByName.get(selected)?.group) ?? Object.keys(hosts?.groups ?? {})[0] ?? "";
+      const group =
+        inGroup ??
+        (selected && hostByName.get(selected)?.group) ??
+        Object.keys(hosts?.groups ?? {})[0] ??
+        "";
       setChangesView(null);
       setEditing(null);
       setSaving(null);
@@ -1823,17 +2549,29 @@ function Workspace({
     integrate: () => {
       const tab = sessions.tabs.find((t) => t.id === sessions.active);
       if (!tab) return setMessage("No Session to integrate: open one first.");
-      void tabs.integrate(tab.id).then((r) => setMessage(INTEGRATE_SAYS[r](tab.label)));
+      void tabs
+        .integrate(tab.id)
+        .then((r) => setMessage(INTEGRATE_SAYS[r](tab.label)));
     },
     saveSession: () => {
       const tab = sessions.tabs.find((t) => t.id === sessions.active);
       if (apiVersion < SAVE_TO_VAULT_API_VERSION) {
-        return setMessage(`Save to vault needs a newer roster (API version ${SAVE_TO_VAULT_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `Save to vault needs a newer roster (API version ${SAVE_TO_VAULT_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
-      if (!tab?.save) return setMessage("Nothing to save: tick Save to vault when you type a Session's password.");
-      if (tab.save.saved !== null) return setMessage(`Already saved as ${tab.save.saved}.`);
-      if (!tab.save.loggedIn) return setMessage(`${tab.host} hasn't logged in yet: roster saves the password only after it works.`);
-      if (editing === null && !changesView && !adding && saving === null) rememberFocus();
+      if (!tab?.save)
+        return setMessage(
+          "Nothing to save: tick Save to vault when you type a Session's password.",
+        );
+      if (tab.save.saved !== null)
+        return setMessage(`Already saved as ${tab.save.saved}.`);
+      if (!tab.save.loggedIn)
+        return setMessage(
+          `${tab.host} hasn't logged in yet: roster saves the password only after it works.`,
+        );
+      if (editing === null && !changesView && !adding && saving === null)
+        rememberFocus();
       setChangesView(null);
       setEditing(null);
       setAdding(null);
@@ -1841,30 +2579,43 @@ function Workspace({
     },
     fillPrompt: () => {
       if (apiVersion < FILL_API_VERSION) {
-        return setMessage(`Filling a password prompt needs a newer roster (API version ${FILL_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `Filling a password prompt needs a newer roster (API version ${FILL_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
       const id = sessions.active;
       if (id === null) return setMessage("No Session to fill");
       tabs.fill(id).then(
         (host) => setMessage(quiet(`Filled ${host}'s password`)),
         (e: unknown) => {
-          const fix = e instanceof BackendCallError ? e.data?.["fix"] : undefined;
+          const fix =
+            e instanceof BackendCallError ? e.data?.["fix"] : undefined;
           const said = e instanceof Error ? e.message : String(e);
-          setMessage(typeof fix === "string" && fix ? `${said} - ${fix}` : said);
+          setMessage(
+            typeof fix === "string" && fix ? `${said} - ${fix}` : said,
+          );
         },
       );
     },
     review: (name, reviewed = true) => {
       const verb = reviewed ? "review" : "unreview";
       const host = name ?? ctx.selectedHost();
-      if (!host) return setMessage(`${verb} needs a Host name (no Host is selected)`);
+      if (!host)
+        return setMessage(`${verb} needs a Host name (no Host is selected)`);
       const h = hostByName.get(host);
       if (!h) return setMessage(`No Host named ${host}`);
-      if (!canAdd) return setMessage(`:${verb} needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canAdd)
+        return setMessage(
+          `:${verb} needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       if (!reviewed && apiVersion < UNREVIEW_API_VERSION) {
-        return setMessage(`:host unreview needs a newer roster (API version ${UNREVIEW_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `:host unreview needs a newer roster (API version ${UNREVIEW_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
-      const already = reviewed ? `${host} is already reviewed.` : `${host} isn't reviewed.`;
+      const already = reviewed
+        ? `${host} is already reviewed.`
+        : `${host} isn't reviewed.`;
       if (h.reviewed === reviewed) return setMessage(already);
       const done = reviewed
         ? `Marked ${host} reviewed, as a Pending change. It can be opened now.`
@@ -1873,16 +2624,31 @@ function Workspace({
         (r) => {
           reloadHosts();
           refreshPending();
-          setMessage(r.changed ? routine(`Marked ${host} ${reviewed ? "reviewed" : "unreviewed"}`, done, afterChange(r)) : already);
+          setMessage(
+            r.changed
+              ? routine(
+                  `Marked ${host} ${reviewed ? "reviewed" : "unreviewed"}`,
+                  done,
+                  afterChange(r),
+                )
+              : already,
+          );
         },
         (e: unknown) =>
-          setMessage(`Couldn't mark ${host} ${reviewed ? "reviewed" : "unreviewed"}: ${e instanceof Error ? e.message : String(e)}`),
+          setMessage(
+            `Couldn't mark ${host} ${reviewed ? "reviewed" : "unreviewed"}: ${e instanceof Error ? e.message : String(e)}`,
+          ),
       );
     },
     showChanges: (then) => {
-      if (!canEdit) return setMessage(`:changes needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canEdit)
+        return setMessage(
+          `:changes needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       if (then === "publish" && !canPublish) {
-        return setMessage(`:publish needs a newer roster (API version ${PUBLISH_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `:publish needs a newer roster (API version ${PUBLISH_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
       if (editing === null && !changesView && !adding) rememberFocus();
       setEditing(null);
@@ -1892,24 +2658,41 @@ function Workspace({
       setChangesView({ step: then ?? "diff" });
     },
     switchInventory: (name) => {
-      if (switchingTo.current !== null) return setMessage(`A switch to ${switchingTo.current} is already running`);
+      if (switchingTo.current !== null)
+        return setMessage(
+          `A switch to ${switchingTo.current} is already running`,
+        );
       if (!listsInventories) {
-        return setMessage(`:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`);
+        return setMessage(
+          `:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       }
       backend.listInventories().then(
         async (list) => {
           if (connInfo) setInventories(connInfo, list);
-          if (name === null) return list.inventories.length === 0 ? setMessage(NONE_NAMED) : ctx.openCommandLine("inventory ");
-          const plan = switchPlan(list, name, { sessions: openSessions(), pending: await pendingNow() });
+          if (name === null)
+            return list.inventories.length === 0
+              ? setMessage(NONE_NAMED)
+              : ctx.openCommandLine("inventory ");
+          const plan = switchPlan(list, name, {
+            sessions: openSessions(),
+            pending: await pendingNow(),
+          });
           if (plan.kind === "say") return setMessage(plan.message);
           if (!switching) rememberFocus();
           setSwitching(plan);
         },
-        (e: unknown) => setMessage(`Couldn't list the named Inventories: ${e instanceof Error ? e.message : String(e)}`),
+        (e: unknown) =>
+          setMessage(
+            `Couldn't list the named Inventories: ${e instanceof Error ? e.message : String(e)}`,
+          ),
       );
     },
     pull: () => {
-      if (!canEdit) return setMessage(`:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canEdit)
+        return setMessage(
+          `:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
+        );
       setMessage(quiet("Pulling the infra repo…"));
       gate.pull().then(
         (r) => {
@@ -1921,14 +2704,26 @@ function Workspace({
                 : `Up to date with ${r.upstream}.`,
           );
         },
-        (e: unknown) => setMessage(`Couldn't pull: ${e instanceof Error ? e.message : String(e)}`),
+        (e: unknown) =>
+          setMessage(
+            `Couldn't pull: ${e instanceof Error ? e.message : String(e)}`,
+          ),
       );
     },
     config: (what) => {
       const source = platform.config;
-      if (!source) return setMessage("There's no init.lua here: this window isn't the app (a plain browser)");
-      const failed = (e: unknown) => (e instanceof Error ? e.message : String(e));
-      if (what === "path") return setMessage(report ? `init.lua is at ${report.path}` : "init.lua hasn't been read yet");
+      if (!source)
+        return setMessage(
+          "There's no init.lua here: this window isn't the app (a plain browser)",
+        );
+      const failed = (e: unknown) =>
+        e instanceof Error ? e.message : String(e);
+      if (what === "path")
+        return setMessage(
+          report
+            ? `init.lua is at ${report.path}`
+            : "init.lua hasn't been read yet",
+        );
       if (what === "import-terminal") {
         rememberFocus();
         source.importPreview().then(
@@ -1939,25 +2734,33 @@ function Workspace({
       }
       if (what === "types") {
         source.writeTypes().then(
-          (file) => setMessage(`Wrote ${file}: init.lua's option types, for lua-language-server (:help options#editor-support)`),
+          (file) =>
+            setMessage(
+              `Wrote ${file}: init.lua's option types, for lua-language-server (:help options#editor-support)`,
+            ),
           (e: unknown) => setMessage(`Couldn't write the types: ${failed(e)}`),
         );
         return;
       }
       // `:config reload` is `:source init.lua` (decision Q58).
-      if (what === "reload") return void runLine(commands, ctx, "source init.lua");
+      if (what === "reload")
+        return void runLine(commands, ctx, "source init.lua");
       source.open().then(
         ({ path, created }) =>
           setMessage(
             created
               ? `Created ${path} with every option commented out. Uncomment one and save: it applies at once.`
-              : quiet(`Opened ${path}`, `Opened ${path}. Saving it applies it.`),
+              : quiet(
+                  `Opened ${path}`,
+                  `Opened ${path}. Saving it applies it.`,
+                ),
           ),
         (e: unknown) => setMessage(`Can't open init.lua: ${failed(e)}`),
       );
     },
     openFinder: (source, query) => {
-      if (!registries.finders.get(source)) return setMessage(`No finder named ${source}`);
+      if (!registries.finders.get(source))
+        return setMessage(`No finder named ${source}`);
       if (overlay === null) rememberFocus();
       setOverlay(query ? { finder: source, query } : { finder: source });
     },
@@ -1983,43 +2786,73 @@ function Workspace({
     switch (op.op) {
       case "remove": {
         const r = await backend.removeHost(op.host);
-        return routine(`Removed ${r.removed}`, `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`, afterChange(r));
+        return routine(
+          `Removed ${r.removed}`,
+          `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`,
+          afterChange(r),
+        );
       }
       case "rename": {
         const r = await backend.renameHost(op.host, op.to);
         return r.changed
-          ? routine(`Renamed ${op.host} to ${op.to}`, `Renamed ${op.host} to ${op.to} ${pendingNote}.`, afterChange(r))
+          ? routine(
+              `Renamed ${op.host} to ${op.to}`,
+              `Renamed ${op.host} to ${op.to} ${pendingNote}.`,
+              afterChange(r),
+            )
           : `${op.host} already has that name.`;
       }
       case "move": {
         const r = await backend.moveHost(op.host, op.group);
         if (!r.changed) return `${op.host} is already in ${op.group}.`;
         // What it keeps from its old group is worth knowing: said whatever the setting.
-        if (r.pinned.length) return `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` + butWarnings(afterChange(r));
-        return routine(`Moved ${op.host} to ${op.group}`, `Moved ${op.host} to ${op.group} ${pendingNote}.`, afterChange(r));
+        if (r.pinned.length)
+          return (
+            `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` +
+            butWarnings(afterChange(r))
+          );
+        return routine(
+          `Moved ${op.host} to ${op.group}`,
+          `Moved ${op.host} to ${op.group} ${pendingNote}.`,
+          afterChange(r),
+        );
       }
       case "group-new": {
         const r = await backend.newGroup(op.name);
-        return routine(`Added group ${op.name}`, `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`, afterChange(r));
+        return routine(
+          `Added group ${op.name}`,
+          `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`,
+          afterChange(r),
+        );
       }
       case "group-rename": {
         const r = await backend.renameGroup(op.group, op.to);
         return r.changed
-          ? routine(`Renamed group ${op.group} to ${op.to}`, `Renamed group ${op.group} to ${op.to} ${pendingNote}.`, afterChange(r))
+          ? routine(
+              `Renamed group ${op.group} to ${op.to}`,
+              `Renamed group ${op.group} to ${op.to} ${pendingNote}.`,
+              afterChange(r),
+            )
           : `${op.group} already has that name.`;
       }
       case "group-delete": {
         const r = await backend.deleteGroup(op.group, op.to);
         return r.moved.length
-          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.` + butWarnings(afterChange(r))
-          : routine(`Deleted group ${op.group}`, `Deleted group ${op.group} ${pendingNote}.`, afterChange(r));
+          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.` +
+              butWarnings(afterChange(r))
+          : routine(
+              `Deleted group ${op.group}`,
+              `Deleted group ${op.group} ${pendingNote}.`,
+              afterChange(r),
+            );
       }
     }
   }
 
   /** A refused Live Inventory change, said whole: roster's message and its fix. */
   function inventoryRefusal(e: unknown): string {
-    if (!(e instanceof BackendCallError)) return `Couldn't change the Inventory: ${e instanceof Error ? e.message : String(e)}`;
+    if (!(e instanceof BackendCallError))
+      return `Couldn't change the Inventory: ${e instanceof Error ? e.message : String(e)}`;
     if (e.code === LiveError.groupNotEmpty) return `${e.message}.`;
     const fix = e.data?.fix ? ` (${e.data.fix})` : "";
     return `Couldn't change the Inventory: ${e.message}${fix}`;
@@ -2029,11 +2862,24 @@ function Workspace({
    * here and again in the Tauri shell. */
   function openWeb(host: string, service: string, url: string) {
     const checked = webUrl(url);
-    if (!checked) return setMessage(`${host}'s ${service} has no http or https URL to open`);
-    if (!platform.openUrl) return setMessage(`There's no browser to hand ${checked} to here`);
+    if (!checked)
+      return setMessage(
+        `${host}'s ${service} has no http or https URL to open`,
+      );
+    if (!platform.openUrl)
+      return setMessage(`There's no browser to hand ${checked} to here`);
     platform.openUrl(checked).then(
-      () => setMessage(quiet(`Opened ${host}'s ${service} in the browser`, `Opened ${host}'s ${service} in the browser: ${checked}`)),
-      (e: unknown) => setMessage(`Couldn't open ${checked}: ${e instanceof Error ? e.message : String(e)}`),
+      () =>
+        setMessage(
+          quiet(
+            `Opened ${host}'s ${service} in the browser`,
+            `Opened ${host}'s ${service} in the browser: ${checked}`,
+          ),
+        ),
+      (e: unknown) =>
+        setMessage(
+          `Couldn't open ${checked}: ${e instanceof Error ? e.message : String(e)}`,
+        ),
     );
   }
 
@@ -2051,7 +2897,12 @@ function Workspace({
     if (!sessions.tabs.some((t) => t.id === id)) return false;
     tabs.select(id);
     ctx.toTerminal();
-    if (line) setReveal((r) => ({ session: id, text: line, nonce: (r?.nonce ?? 0) + 1 }));
+    if (line)
+      setReveal((r) => ({
+        session: id,
+        text: line,
+        nonce: (r?.nonce ?? 0) + 1,
+      }));
     return true;
   };
   openPlugins.current = () => {
@@ -2071,7 +2922,8 @@ function Workspace({
     restoreFocus();
   };
 
-  const staysInAppMode = (line: Line) => commands.get(line.split(" ")[0] ?? "")?.staysInAppMode ?? false;
+  const staysInAppMode = (line: Line) =>
+    commands.get(line.split(" ")[0] ?? "")?.staysInAppMode ?? false;
 
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (MODIFIERS.has(e.key)) return;
@@ -2084,13 +2936,20 @@ function Workspace({
     // A key the IME is composing with (chordOf names none) is the IME's.
     if (chord === "") return;
     const before = keyRef.current;
-    const r = press(before, chord, { keymap, leader: options.leader, vim: options.vim, staysInAppMode });
+    const r = press(before, chord, {
+      keymap,
+      leader: options.leader,
+      vim: options.vim,
+      staysInAppMode,
+    });
     if (!r.consumed) return;
     e.preventDefault();
     e.stopPropagation();
     if (before.mode === "terminal" && r.state.mode === "app") {
       setCursor(
-        (selected !== null && rows.some((row) => row.id === selected) ? selected : null) ??
+        (selected !== null && rows.some((row) => row.id === selected)
+          ? selected
+          : null) ??
           rows.find((row) => row.raised)?.id ??
           rows[0]?.id ??
           null,
@@ -2118,7 +2977,10 @@ function Workspace({
     beforeTree.current = null;
     // Focus is still on the tree, or was lost with it (the Sidebar hid with the view mode).
     const focused = document.activeElement;
-    const lost = !focused || focused === document.body || (tree?.contains(focused) ?? false);
+    const lost =
+      !focused ||
+      focused === document.body ||
+      (tree?.contains(focused) ?? false);
     if (!lost) return;
     if (back instanceof HTMLElement && back.isConnected) back.focus();
     if (document.activeElement === focused) mainRef.current?.focus();
@@ -2136,7 +2998,8 @@ function Workspace({
   // Back from the demo Inventory: the keys come back here.
   const wasSuspended = useRef(suspended);
   useEffect(() => {
-    if (wasSuspended.current && !suspended) (promptRef.current ?? mainRef.current)?.focus();
+    if (wasSuspended.current && !suspended)
+      (promptRef.current ?? mainRef.current)?.focus();
     wasSuspended.current = suspended;
   }, [suspended]);
 
@@ -2144,14 +3007,25 @@ function Workspace({
   // window can always be moved and closed; it shows nothing but the mark. The view mode's layout
   // says whether it shows at all (Focus is OS fullscreen without it).
   const toast = report !== toastClosedFor && (
-    <ConfigToast error={report?.error ?? null} warnings={warnings} onClose={() => setToastClosedFor(report)} />
+    <ConfigToast
+      error={report?.error ?? null}
+      warnings={warnings}
+      onClose={() => setToastClosedFor(report)}
+    />
   );
   // The toolbar (decision Q65): in the title bar once the app is ready and unlocked (the lock
   // screen shows nothing but the mark), else a bar of its own at the top.
   const detailsHost = details === null ? undefined : hostByName.get(details);
-  const toolbarCtx: ToolbarContext = { pendingCount, sidebarShown, quickConnect: quickConnects, detailsShown: detailsHost !== undefined };
+  const toolbarCtx: ToolbarContext = {
+    pendingCount,
+    sidebarShown,
+    quickConnect: quickConnects,
+    detailsShown: detailsHost !== undefined,
+  };
   const toolbarControls =
-    ready && isShown(layout, "toolbar") ? shownControls(toolbarDefs, layout.controls, toolbarCtx) : [];
+    ready && isShown(layout, "toolbar")
+      ? shownControls(toolbarDefs, layout.controls, toolbarCtx)
+      : [];
   const toolbar = (side: "start" | "end") => (
     <Toolbar
       controls={toolbarControls}
@@ -2168,7 +3042,13 @@ function Workspace({
   const frame = (content: React.ReactNode) => (
     <HintsShown value={hintsShown}>
       <div className="window">
-        {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
+        {isShown(layout, "titlebar") && (
+          <TitleBar
+            controls={platform.window}
+            start={toolbar("start")}
+            end={toolbar("end")}
+          />
+        )}
         {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
           <div className="toolbar-bar" data-tauri-drag-region>
             {toolbar("start")}
@@ -2176,10 +3056,20 @@ function Workspace({
             {toolbar("end")}
           </div>
         )}
-        {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
+        {tutor?.demo && (
+          <DemoBanner
+            tutorial={tutor.demo.tutorial}
+            done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null}
+            onLeave={tutor.demo.leave}
+          />
+        )}
         <div className="window-body">{content}</div>
         {toast}
-        <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
+        <PluginNotices
+          notices={pluginSnap.notices}
+          onClose={(id) => plugins.dismissNotice(id)}
+          onAction={(id, i) => plugins.noticeAction(id, i)}
+        />
       </div>
     </HintsShown>
   );
@@ -2192,7 +3082,14 @@ function Workspace({
     );
   }
   if (conn.state === "failed") {
-    return frame(<ErrorScreen problem={conn.problem} note={startNote} onRetry={() => void connect(true)} copy={copy} />);
+    return frame(
+      <ErrorScreen
+        problem={conn.problem}
+        note={startNote}
+        onRetry={() => void connect(true)}
+        copy={copy}
+      />,
+    );
   }
 
   const { info } = conn;
@@ -2205,30 +3102,45 @@ function Workspace({
   // keys aren't the ones you need: moving in the list, opening, the row's menu and going back to
   // the terminal, as the keymap binds them (vim keys when they're on). They drop out last first.
   const listKey = (action: string) =>
-    (options.vim ? listKeyFor(keymap.listVim, action) : null) ?? listKeyFor(keymap.list, action);
-  const moveKeys = [listKey("down"), listKey("up")].filter((k): k is string => k !== null);
+    (options.vim ? listKeyFor(keymap.listVim, action) : null) ??
+    listKeyFor(keymap.list, action);
+  const moveKeys = [listKey("down"), listKey("up")].filter(
+    (k): k is string => k !== null,
+  );
   // A hint with a command is also a button for it. With no Session open the empty state already
   // offers Find, so the bar doesn't say it a third time.
   type Hint = [string | string[], string, Line?];
-  const offered: [string | string[] | null | undefined, string, Line?][] = appMode
-    ? [
-        [moveKeys, "move"],
-        [listKey("choose"), "open"],
-        // The menu key people know: Shift+F10 over the Menu key's name ("ContextMenu").
-        [Object.keys(keymap.list).find((k) => keymap.list[k]?.action === "menu" && k.includes("F10")) ?? listKey("menu"), "menu"],
-        [listKeyFor(keymap.leader, "terminal"), "terminal"],
-      ]
-    : [
-        ...(sessions.tabs.length > 0 ? [[findKeys, "find", "find"] as [string | null, string, Line]] : []),
-        [hintFor(keymap, "help"), "help", "help"],
-        [hintFor(keymap, "keys"), "keys", "keys"],
-        // Hiding the bar is in ␣ K and :help, not a hint every day (Q193).
-      ];
-  const hints = offered.filter((h): h is Hint => h[0] !== null && h[0] !== undefined && h[0].length > 0);
-
-  const modeKeys = [hintFor(keymap, "mode"), hintFor(keymap, "focus"), ...globalKeysFor(keymap, ["mode", "focus"])].filter(
-    (k): k is string => k !== null,
+  const offered: [string | string[] | null | undefined, string, Line?][] =
+    appMode
+      ? [
+          [moveKeys, "move"],
+          [listKey("choose"), "open"],
+          // The menu key people know: Shift+F10 over the Menu key's name ("ContextMenu").
+          [
+            Object.keys(keymap.list).find(
+              (k) => keymap.list[k]?.action === "menu" && k.includes("F10"),
+            ) ?? listKey("menu"),
+            "menu",
+          ],
+          [listKeyFor(keymap.leader, "terminal"), "terminal"],
+        ]
+      : [
+          ...(sessions.tabs.length > 0
+            ? [[findKeys, "find", "find"] as [string | null, string, Line]]
+            : []),
+          [hintFor(keymap, "help"), "help", "help"],
+          [hintFor(keymap, "keys"), "keys", "keys"],
+          // Hiding the bar is in ␣ K and :help, not a hint every day (Q193).
+        ];
+  const hints = offered.filter(
+    (h): h is Hint => h[0] !== null && h[0] !== undefined && h[0].length > 0,
   );
+
+  const modeKeys = [
+    hintFor(keymap, "mode"),
+    hintFor(keymap, "focus"),
+    ...globalKeysFor(keymap, ["mode", "focus"]),
+  ].filter((k): k is string => k !== null);
   /** The pieces the layout places at `at`, in order. The title bar is drawn by `frame` above
    * every screen (the lock and error screens too); a Plugin's pieces come with ticket 23. */
   const pieces = (at: Place) =>
@@ -2237,15 +3149,21 @@ function Workspace({
       if (id === "sessionbar") {
         return (
           <div key={id} className="piece" data-place={at}>
-            <SessionBar box={info.inventory.box} snapshot={sessions} hostByName={hostByName} run={run} />
+            <SessionBar
+              box={info.inventory.box}
+              snapshot={sessions}
+              hostByName={hostByName}
+              run={run}
+            />
           </div>
         );
       }
       return null;
     });
-  const finderSource = overlay !== null && typeof overlay === "object" && "finder" in overlay
-    ? finderSources.find((s) => s.id === overlay.finder)
-    : undefined;
+  const finderSource =
+    overlay !== null && typeof overlay === "object" && "finder" in overlay
+      ? finderSources.find((s) => s.id === overlay.finder)
+      : undefined;
 
   // The status bar's segments, as the mode's layout picks and orders them (decision Q39); the
   // hints and the mode go to the right.
@@ -2272,12 +3190,20 @@ function Workspace({
         // name in Iosevka, so you know where you are with the Sidebar hidden or in Focus.
         const tab = sessions.tabs.find((t) => t.id === sessions.active);
         if (!tab) return null;
-        const ended = tab.status.state === "ended" || tab.status.state === "failed";
+        const ended =
+          tab.status.state === "ended" || tab.status.state === "failed";
         const known = hostByName.get(tab.host);
-        const dot = ended ? "ended" : connectPhase(tab) ? "connecting" : (tab.auth ?? (known ? hostDot(known) : "key"));
+        const dot = ended
+          ? "ended"
+          : connectPhase(tab)
+            ? "connecting"
+            : (tab.auth ?? (known ? hostDot(known) : "key"));
         return (
           <span key={id} className="session-seg" title={`Session ${tab.label}`}>
-            <StateDot dot={dot} lit={ended || connectPhase(tab) ? undefined : "current"} />
+            <StateDot
+              dot={dot}
+              lit={ended || connectPhase(tab) ? undefined : "current"}
+            />
             <span className="visually-hidden">Session </span>
             <span className="statusbar-cut" title={tab.label}>
               {middleCut(tab.label, 24)}
@@ -2289,14 +3215,24 @@ function Workspace({
         // The named Inventory serve runs on (ticket 115): always in sight while there is one.
         return (
           inventories?.name && (
-            <span key={id} className="box" title={`Inventory ${inventories.name}: ${inventories.path ?? ""}`}>
-              <span className="statusbar-cut">{inventories.name} Inventory</span>
+            <span
+              key={id}
+              className="box"
+              title={`Inventory ${inventories.name}: ${inventories.path ?? ""}`}
+            >
+              <span className="statusbar-cut">
+                {inventories.name} Inventory
+              </span>
             </span>
           )
         );
       case "path":
         return (
-          <span key={id} className="path" title={`${info.inventory.path}\n${info.command.join(" ")}`}>
+          <span
+            key={id}
+            className="path"
+            title={`${info.inventory.path}\n${info.command.join(" ")}`}
+          >
             <span className="path-text">{info.inventory.path}</span>
           </span>
         );
@@ -2322,7 +3258,10 @@ function Workspace({
         return (
           <span key={id} className="statusbar-hints">
             {stale.length > 0 && (
-              <span className="hint stale" title="Saved, not applied yet: auto_reload is off in init.lua">
+              <span
+                className="hint stale"
+                title="Saved, not applied yet: auto_reload is off in init.lua"
+              >
                 {stale.join(", ")} changed{" "}
                 {sourceKeys ? (
                   <span className="key-hint">
@@ -2345,7 +3284,14 @@ function Workspace({
                 </>
               );
               return command ? (
-                <button key={what} type="button" tabIndex={-1} className="hint key-hint" onMouseDown={(e) => e.preventDefault()} onClick={() => run(command)}>
+                <button
+                  key={what}
+                  type="button"
+                  tabIndex={-1}
+                  className="hint key-hint"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => run(command)}
+                >
                   {caps}
                 </button>
               ) : (
@@ -2360,7 +3306,10 @@ function Workspace({
         return (
           appMode && (
             <span key={id} className="mode">
-              APP{keyState.pending.length > 0 && <span className="pending"> {keyState.pending.join(" ")}</span>}
+              APP
+              {keyState.pending.length > 0 && (
+                <span className="pending"> {keyState.pending.join(" ")}</span>
+              )}
             </span>
           )
         );
@@ -2381,7 +3330,11 @@ function Workspace({
             {def.text}
           </button>
         ) : (
-          <span key={id} className={id === "hosts" ? "count" : "statusbar-plugin"} title={title}>
+          <span
+            key={id}
+            className={id === "hosts" ? "count" : "statusbar-plugin"}
+            title={title}
+          >
             {def.text}
           </span>
         );
@@ -2389,27 +3342,53 @@ function Workspace({
     }
   };
   // Segments Plugins add show after the layout's own, unless the layout lists them itself.
-  const segments =
-    layout.segments ?? [...STATUS_SEGMENTS, ...statusDefs.map((d) => d.id).filter((d) => !(STATUS_SEGMENTS as readonly string[]).includes(d))];
+  const segments = layout.segments ?? [
+    ...STATUS_SEGMENTS,
+    ...statusDefs
+      .map((d) => d.id)
+      .filter((d) => !(STATUS_SEGMENTS as readonly string[]).includes(d)),
+  ];
   const right = new Set(["hints", "mode"]);
   const statusBar = (
     <footer key="statusbar" className="statusbar">
       {segments.filter((id) => !right.has(id)).map(segment)}
-      <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => setMessage(plugins.cancelProgress(id))} />
-      <span className="statusbar-right">{segments.filter((id) => right.has(id)).map(segment)}</span>
+      <PluginProgressItems
+        progress={pluginSnap.progress}
+        onCancel={(id) => setMessage(plugins.cancelProgress(id))}
+      />
+      <span className="statusbar-right">
+        {segments.filter((id) => right.has(id)).map(segment)}
+      </span>
     </footer>
   );
 
   // Every docked panel and view goes in a frame: docked or full window, its width, its edge.
   const panelKeys = hintFor(keymap, "panel");
-  const framed = (id: string, title: string, kind: string, node: ReactNode, extra: { side?: "left" | "right"; fallback?: PanelPlace } = {}) => (
-    <PanelFrame key={`panel:${id}`} id={id} title={title} kind={kind} layout={panelLayout} keys={panelKeys} {...extra}>
+  const framed = (
+    id: string,
+    title: string,
+    kind: string,
+    node: ReactNode,
+    extra: { side?: "left" | "right"; fallback?: PanelPlace } = {},
+  ) => (
+    <PanelFrame
+      key={`panel:${id}`}
+      id={id}
+      title={title}
+      kind={kind}
+      layout={panelLayout}
+      keys={panelKeys}
+      {...extra}
+    >
       {node}
     </PanelFrame>
   );
 
   const shell = (
-    <div className={`screen app ${appMode ? "mode-app" : "mode-terminal"}`} data-view={viewMode}>
+    <div
+      className={`screen app ${appMode ? "mode-app" : "mode-terminal"}`}
+      data-view={viewMode}
+    >
       {pieces("top")}
       <div
         className={`body sidebar-${sidebarSide}`}
@@ -2435,7 +3414,8 @@ function Workspace({
             menu={rowMenu}
             onMenu={setRowMenu}
             rowMenu={(row: SidebarRow) => {
-              const h = row.host === undefined ? undefined : hostByName.get(row.host);
+              const h =
+                row.host === undefined ? undefined : hostByName.get(row.host);
               return hostMenu(row, {
                 reviewed: h ? h.reviewed : null,
                 live: canLive,
@@ -2451,17 +3431,23 @@ function Workspace({
               if (keyRef.current.mode !== "terminal") return;
               beforeTree.current = from;
               setCursor(
-        (selected !== null && rows.some((row) => row.id === selected) ? selected : null) ??
-          rows.find((row) => row.raised)?.id ??
-          rows[0]?.id ??
-          null,
-      );
+                (selected !== null && rows.some((row) => row.id === selected)
+                  ? selected
+                  : null) ??
+                  rows.find((row) => row.raised)?.id ??
+                  rows[0]?.id ??
+                  null,
+              );
               setMode({ mode: "app", pending: [] });
             }}
             onTreeBlur={(to) => {
               // Focus went elsewhere (Tab on, a click): keys are the terminal's again.
               // A Host row's menu is the tree's own: App mode stays while it's open.
-              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline, .row-menu")) {
+              if (
+                keyRef.current.mode === "app" &&
+                to !== null &&
+                !to.closest(".picker-backdrop, .cmdline, .row-menu")
+              ) {
                 // Focus is already on its way to `to` (Tab on): nothing to put back, or the restore
                 // below, running before it lands, would pull it back to where it came from.
                 beforeTree.current = null;
@@ -2476,31 +3462,53 @@ function Workspace({
           tabIndex={-1}
           aria-label="Workspace"
           onMouseDown={(e) => {
-            if ((e.target as HTMLElement).closest(".pane")) setMode(terminalMode);
+            if ((e.target as HTMLElement).closest(".pane"))
+              setMode(terminalMode);
           }}
         >
-          {options.sessions === "tabs" && !noSessions && <TabStrip snapshot={sessions} run={run} />}
+          {options.sessions === "tabs" && !noSessions && (
+            <TabStrip snapshot={sessions} run={run} />
+          )}
           {noSessions && conn.hosts.hosts.length === 0 ? (
             // Nothing to find yet: say where Hosts come from (S7), not "Find a Host".
             <div className="empty">
               <Logo size={48} className="empty-mark" />
               <p className="empty-title">No Hosts in the Inventory yet.</p>
-              {/* The file on its own line, as data (Iosevka), cut in the middle if it must be. */}
+              {/* The next step is the app's own (taste.md: an empty state carries it); the file is
+                  the other way, on its own line as data (Iosevka), cut in the middle if it must be. */}
+              {addHost.keys && !addHost.tooOld ? (
+                <>
+                  <button
+                    type="button"
+                    className="find primary"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => run("host add")}
+                  >
+                    Add a Host
+                  </button>
+                  <p className="empty-hint key-hint">
+                    or press{" "}
+                    <Keys keys={addHost.keys} leader={options.leader} />, or
+                    edit the file:
+                  </p>
+                </>
+              ) : (
+                <p className="empty-hint">
+                  Add Hosts to this file and they show up here.
+                </p>
+              )}
               <p className="empty-path" title={info.inventory.path}>
                 <code>{info.inventory.path}</code>
               </p>
-              <p className="empty-hint key-hint">
-                {addHost.keys && !addHost.tooOld ? (
-                  <>
-                    Press <Keys keys={addHost.keys} leader={options.leader} /> to add one, or edit the file.
-                  </>
-                ) : (
-                  "Add Hosts to this file and they show up here."
-                )}
-              </p>
               {/* The next action, with its command (taste.md: an empty state carries it). */}
-              <button type="button" className="empty-find" onMouseDown={(e) => e.preventDefault()} onClick={() => run("help adding-hosts")}>
-                How to add Hosts <span className="row-menu-cmd">:help adding-hosts</span>
+              <button
+                type="button"
+                className="empty-find"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => run("help adding-hosts")}
+              >
+                How to add Hosts{" "}
+                <span className="row-menu-cmd">:help adding-hosts</span>
               </button>
             </div>
           ) : noSessions ? (
@@ -2509,21 +3517,39 @@ function Workspace({
               <p className="empty-title">No Sessions open</p>
               {/* Your network, not just a button (Q188, Q191, Q193): the Hosts you opened last (or,
                   the first time, the Inventory's first ones), each one click away. */}
-              {recentShown.length > 0 && <RecentMap box={info.inventory.box} hosts={recentShown} title={recentTitle} open={(name) => run(`open ${name}`)} />}
+              {recentShown.length > 0 && (
+                <RecentMap
+                  box={info.inventory.box}
+                  hosts={short ? recentShown.slice(0, 3) : recentShown}
+                  title={recentTitle}
+                  open={(name) => run(`open ${name}`)}
+                />
+              )}
               {/* While the Sidebar shows its own Find field, the pane's Find is a quiet line, not a
                   second filled button (Q193); without the Sidebar it's the button. */}
               {sidebarShown && !sidebarTucked ? (
-                <button type="button" className="empty-find" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
+                <button
+                  type="button"
+                  className="empty-find"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => run("find")}
+                >
                   Find a Host
                   {findKeys && (
                     <span className="key-hint">
-                      <span className="visually-hidden">,</span> <Keys keys={findKeys} leader={options.leader} />
+                      <span className="visually-hidden">,</span>{" "}
+                      <Keys keys={findKeys} leader={options.leader} />
                     </span>
                   )}
                 </button>
               ) : (
                 <>
-                  <button type="button" className="find primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
+                  <button
+                    type="button"
+                    className="find primary"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => run("find")}
+                  >
                     Find a Host
                   </button>
                   {findKeys && (
@@ -2555,22 +3581,39 @@ function Workspace({
             />
           )}
         </main>
-        {detailsHost && conn.hosts && framed("details", "Host details", "details", 
-          <HostDetails
-            host={detailsHost}
-            groups={conn.hosts.groups}
-            onOpen={(service, url) => openWeb(detailsHost.name, service, url)}
-            onClose={() => setDetails(null)}
-            cmdlineKeys={hintFor(keymap, "cmdline")}
-            leader={options.leader}
-            sections={sectionsFor(detailsList, detailsHost.name)}
-          />,
-          { side: sidebarSide === "right" ? "left" : "right" },
-        )}
+        {detailsHost &&
+          conn.hosts &&
+          framed(
+            "details",
+            "Host details",
+            "details",
+            <HostDetails
+              host={detailsHost}
+              groups={conn.hosts.groups}
+              onOpen={(service, url) => openWeb(detailsHost.name, service, url)}
+              onClose={() => setDetails(null)}
+              cmdlineKeys={hintFor(keymap, "cmdline")}
+              leader={options.leader}
+              sections={sectionsFor(detailsList, detailsHost.name)}
+            />,
+            { side: sidebarSide === "right" ? "left" : "right" },
+          )}
         {openView &&
-          framed(`view:${openView.id}`, openView.title, "view", <ViewPanel view={openView} leader={options.leader} onClose={() => viewHost.close()} graphs={graphMemory} select={viewAt.select} />, {
-            fallback: openView.place,
-          })}
+          framed(
+            `view:${openView.id}`,
+            openView.title,
+            "view",
+            <ViewPanel
+              view={openView}
+              leader={options.leader}
+              onClose={() => viewHost.close()}
+              graphs={graphMemory}
+              select={viewAt.select}
+            />,
+            {
+              fallback: openView.place,
+            },
+          )}
         {importing && (
           <ImportPanel
             preview={importing.preview}
@@ -2589,7 +3632,9 @@ function Workspace({
                 () => {
                   setImporting(null);
                   restoreFocus();
-                  setMessage("Wrote Windows Terminal's profile into init.lua. Reloading it.");
+                  setMessage(
+                    "Wrote Windows Terminal's profile into init.lua. Reloading it.",
+                  );
                   // Applied now, whether or not a save reloads by itself.
                   source.reload().then(
                     (r) => {
@@ -2607,185 +3652,240 @@ function Workspace({
                       let note = "";
                       if (imported) {
                         const c = r?.config;
-                        themeChoice.setConfigTheme(c && c.theme !== "auto" ? c.theme : null, c?.lines.theme ?? null);
+                        themeChoice.setConfigTheme(
+                          c && c.theme !== "auto" ? c.theme : null,
+                          c?.lines.theme ?? null,
+                        );
                         note = themeChoice.keep(imported);
                       }
-                      setMessage(`Wrote Windows Terminal's profile into init.lua, and applied it${note ? `. ${note}` : ""}`);
+                      setMessage(
+                        `Wrote Windows Terminal's profile into init.lua, and applied it${note ? `. ${note}` : ""}`,
+                      );
                     },
                     () => {},
                   );
                 },
                 (e: unknown) =>
-                  setImporting({ ...importing, writing: false, problem: e instanceof Error ? e.message : String(e) }),
+                  setImporting({
+                    ...importing,
+                    writing: false,
+                    problem: e instanceof Error ? e.message : String(e),
+                  }),
               );
             }}
           />
         )}
-        {check && framed("check", "Check", "check", 
-          <CheckPanel
-            check={check}
-            rows={errorRows}
-            actions={{ run, copy }}
-            onClose={() => {
-              checkRun.current++;
-              setCheck(null);
-            }}
-            onStop={stopCheck}
-          />,
-        )}
-        {editing !== null && hostByName.get(editing) && framed("edit", "Edit", "edit", 
-          <EditPanel
-            key={editing}
-            backend={backend}
-            host={hostByName.get(editing) as Host}
-            pendingCount={pendingCount}
-            rows={errorRows}
-            actions={{ run, copy }}
-            pull={gate}
-            onSaved={(update) => {
-              closeEdit();
-              reloadHosts();
-              refreshPending();
-              setMessage(
-                update.changed
-                  ? routine(`Saved ${update.host.name}`, `Saved ${update.host.name} as a Pending change.`, afterChange(update))
-                  : `Nothing changed on ${update.host.name}.` + butWarnings(update.warnings),
-              );
-            }}
-            onClose={closeEdit}
-            {...(canAdd
-              ? {
-                  onReview: (name: string) => {
-                    closeEdit();
-                    run(`review ${name}`);
-                  },
-                }
-              : {})}
-            {...(apiVersion >= UNREVIEW_API_VERSION
-              ? {
-                  onUnreview: (name: string) => {
-                    closeEdit();
-                    run(`host unreview ${name}`);
-                  },
-                }
-              : {})}
-          />,
-        )}
-        {adding && hosts && framed("add", "Add a Host", "add", 
-          <AddPanel
-            backend={backend}
-            hosts={hosts}
-            group={adding.group}
-            pendingCount={pendingCount}
-            rows={errorRows}
-            actions={{ run, copy }}
-            pull={gate}
-            chooseTarget={configuresVault}
-            targetsVersion={targetsVersion}
-            onAdded={(r) => {
-              closeAdd();
-              reloadHosts();
-              refreshPending();
-              const where = `${r.host.name} to ${r.host.group}`;
-              // Unreviewed, it can't be opened yet: worth saying whatever the setting.
-              setMessage(
-                r.host.reviewed
-                  ? routine(
-                      `Added ${where}`,
-                      `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
-                      afterChange(r),
-                    )
-                  : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` + butWarnings(afterChange(r)),
-              );
-            }}
-            onClose={closeAdd}
-          />,
-        )}
-        {saveTab?.save && hosts && framed("save", "Save to vault", "save", 
-          <SavePanel
-            key={saveTab.id}
-            backend={backend}
-            hosts={hosts}
-            what={
-              saveTab.quick
-                ? { quick: { id: saveTab.save.held, to: saveTab.quick.to, hostname: saveTab.save.hostname } }
-                : { host: { held: saveTab.save.held, name: saveTab.host } }
-            }
-            group={Object.keys(hosts.groups)[0] ?? ""}
-            pendingCount={pendingCount}
-            rows={errorRows}
-            actions={{ run, copy }}
-            pull={gate}
-            chooseTarget={configuresVault}
-            targetsVersion={targetsVersion}
-            onSaved={(r) => {
-              tabs.saved(saveTab.id, r.host.name);
-              closeSave();
-              reloadHosts();
-              refreshPending();
-              setMessage(
-                "added" in r
-                  ? routine(
-                      `Saved ${r.host.name}`,
-                      `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
-                      afterChange(r),
-                    )
-                  : routine(
-                      `Saved ${r.host.name}'s password`,
-                      `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`,
-                      afterChange(r),
-                    ),
-              );
-            }}
-            onClose={closeSave}
-          />,
-        )}
-        {changesView && pending && framed("changes", "Pending changes", "changes", 
-          <ChangesPanel
-            key={changesView.step}
-            changes={pending}
-            step={changesView.step}
-            editKeys={hintFor(keymap, "edit")}
-            leader={options.leader}
-            canPublish={canPublish}
-            rows={errorRows}
-            actions={{ run, copy }}
-            onDiscard={async () => {
-              try {
-                const r = await backend.discardChanges();
+        {check &&
+          framed(
+            "check",
+            "Check",
+            "check",
+            <CheckPanel
+              check={check}
+              rows={errorRows}
+              actions={{ run, copy }}
+              onClose={() => {
+                checkRun.current++;
+                setCheck(null);
+              }}
+              onStop={stopCheck}
+            />,
+          )}
+        {editing !== null &&
+          hostByName.get(editing) &&
+          framed(
+            "edit",
+            "Edit",
+            "edit",
+            <EditPanel
+              key={editing}
+              backend={backend}
+              host={hostByName.get(editing) as Host}
+              pendingCount={pendingCount}
+              rows={errorRows}
+              actions={{ run, copy }}
+              pull={gate}
+              onSaved={(update) => {
+                closeEdit();
+                reloadHosts();
+                refreshPending();
                 setMessage(
-                  r.discarded
-                    ? routine("Discarded the Pending changes", "Discarded the Pending changes: roster.yml is as the last commit has it.", afterChange(r))
-                    : "Nothing to discard.",
+                  update.changed
+                    ? routine(
+                        `Saved ${update.host.name}`,
+                        `Saved ${update.host.name} as a Pending change.`,
+                        afterChange(update),
+                      )
+                    : `Nothing changed on ${update.host.name}.` +
+                        butWarnings(update.warnings),
                 );
-              } catch (e) {
-                setMessage(`Couldn't discard: ${e instanceof Error ? e.message : String(e)}`);
+              }}
+              onClose={closeEdit}
+              {...(canAdd
+                ? {
+                    onReview: (name: string) => {
+                      closeEdit();
+                      run(`review ${name}`);
+                    },
+                  }
+                : {})}
+              {...(apiVersion >= UNREVIEW_API_VERSION
+                ? {
+                    onUnreview: (name: string) => {
+                      closeEdit();
+                      run(`host unreview ${name}`);
+                    },
+                  }
+                : {})}
+            />,
+          )}
+        {adding &&
+          hosts &&
+          framed(
+            "add",
+            "Add a Host",
+            "add",
+            <AddPanel
+              backend={backend}
+              hosts={hosts}
+              group={adding.group}
+              pendingCount={pendingCount}
+              rows={errorRows}
+              actions={{ run, copy }}
+              pull={gate}
+              chooseTarget={configuresVault}
+              targetsVersion={targetsVersion}
+              onAdded={(r) => {
+                closeAdd();
+                reloadHosts();
+                refreshPending();
+                const where = `${r.host.name} to ${r.host.group}`;
+                // Unreviewed, it can't be opened yet: worth saying whatever the setting.
+                setMessage(
+                  r.host.reviewed
+                    ? routine(
+                        `Added ${where}`,
+                        `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
+                        afterChange(r),
+                      )
+                    : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` +
+                        butWarnings(afterChange(r)),
+                );
+              }}
+              onClose={closeAdd}
+            />,
+          )}
+        {saveTab?.save &&
+          hosts &&
+          framed(
+            "save",
+            "Save to vault",
+            "save",
+            <SavePanel
+              key={saveTab.id}
+              backend={backend}
+              hosts={hosts}
+              what={
+                saveTab.quick
+                  ? {
+                      quick: {
+                        id: saveTab.save.held,
+                        to: saveTab.quick.to,
+                        hostname: saveTab.save.hostname,
+                      },
+                    }
+                  : { host: { held: saveTab.save.held, name: saveTab.host } }
               }
-              reloadHosts();
-              refreshPending();
-            }}
-            onPublish={async (message) => {
-              // After a timeout, publishChecked asks roster whether it was published, and says so.
-              const r = await publishChecked(backend, message);
-              reloadHosts();
-              refreshPending();
-              setMessage(
-                `Published ${r.commit.slice(0, 7)} to ${r.upstream}.` +
-                  (r.sync.ok ? "" : " This Box's ssh config didn't follow: run roster sync."),
-              );
-              return r;
-            }}
-            onClose={closeChanges}
-          />,
-        )}
+              group={Object.keys(hosts.groups)[0] ?? ""}
+              pendingCount={pendingCount}
+              rows={errorRows}
+              actions={{ run, copy }}
+              pull={gate}
+              chooseTarget={configuresVault}
+              targetsVersion={targetsVersion}
+              onSaved={(r) => {
+                tabs.saved(saveTab.id, r.host.name);
+                closeSave();
+                reloadHosts();
+                refreshPending();
+                setMessage(
+                  "added" in r
+                    ? routine(
+                        `Saved ${r.host.name}`,
+                        `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
+                        afterChange(r),
+                      )
+                    : routine(
+                        `Saved ${r.host.name}'s password`,
+                        `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`,
+                        afterChange(r),
+                      ),
+                );
+              }}
+              onClose={closeSave}
+            />,
+          )}
+        {changesView &&
+          pending &&
+          framed(
+            "changes",
+            "Pending changes",
+            "changes",
+            <ChangesPanel
+              key={changesView.step}
+              changes={pending}
+              step={changesView.step}
+              editKeys={hintFor(keymap, "edit")}
+              leader={options.leader}
+              canPublish={canPublish}
+              rows={errorRows}
+              actions={{ run, copy }}
+              onDiscard={async () => {
+                try {
+                  const r = await backend.discardChanges();
+                  setMessage(
+                    r.discarded
+                      ? routine(
+                          "Discarded the Pending changes",
+                          "Discarded the Pending changes: roster.yml is as the last commit has it.",
+                          afterChange(r),
+                        )
+                      : "Nothing to discard.",
+                  );
+                } catch (e) {
+                  setMessage(
+                    `Couldn't discard: ${e instanceof Error ? e.message : String(e)}`,
+                  );
+                }
+                reloadHosts();
+                refreshPending();
+              }}
+              onPublish={async (message) => {
+                // After a timeout, publishChecked asks roster whether it was published, and says so.
+                const r = await publishChecked(backend, message);
+                reloadHosts();
+                refreshPending();
+                setMessage(
+                  `Published ${r.commit.slice(0, 7)} to ${r.upstream}.` +
+                    (r.sync.ok
+                      ? ""
+                      : " This Box's ssh config didn't follow: run roster sync."),
+                );
+                return r;
+              }}
+              onClose={closeChanges}
+            />,
+          )}
         {confirming && (
           <ConfirmPanel
             key={confirming.host}
             title={`Remove ${confirming.host}?`}
             body={
               <>
-                <code>{confirming.host}</code> leaves group {confirming.group} in roster.yml, as a Pending change you can
-                discard until it&rsquo;s Published. Its vault item, if it has one, stays in the vault.
+                <code>{confirming.host}</code> leaves group {confirming.group}{" "}
+                in roster.yml, as a Pending change you can discard until
+                it&rsquo;s Published. Its vault item, if it has one, stays in
+                the vault.
               </>
             }
             action="Remove"
@@ -2809,11 +3909,20 @@ function Workspace({
             onConfirm={async () => {
               const to = switching.to;
               // Pending changes made while it asked still block it.
-              const list = await backend.listInventories().catch(() => inventories);
-              const again = list ? switchPlan(list, to, { sessions: openSessions(), pending: await pendingNow() }) : null;
+              const list = await backend
+                .listInventories()
+                .catch(() => inventories);
+              const again = list
+                ? switchPlan(list, to, {
+                    sessions: openSessions(),
+                    pending: await pendingNow(),
+                  })
+                : null;
               if (!again) {
                 closeSwitch();
-                return setMessage("Couldn't list the named Inventories: nothing switched");
+                return setMessage(
+                  "Couldn't list the named Inventories: nothing switched",
+                );
               }
               if (again.kind === "say") {
                 closeSwitch();
@@ -2835,8 +3944,10 @@ function Workspace({
             title={signOutQuestion(signingOut)}
             body={
               <>
-                {SIGN_OUT_WHAT} Server: <span className="mono">{serverName(signingOut.server)}</span>. The app locks and
-                shows the sign-in form; open Sessions keep running behind it.
+                {SIGN_OUT_WHAT} Server:{" "}
+                <span className="mono">{serverName(signingOut.server)}</span>.
+                The app locks and shows the sign-in form; open Sessions keep
+                running behind it.
               </>
             }
             action="Sign out"
@@ -2860,8 +3971,33 @@ function Workspace({
             }}
           />
         )}
-        {pluginsOpen && framed("plugins", "Plugins", "plugins", <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} onRefresh={() => void plugins.refreshRequests()} onOpen={() => void plugins.refreshData()} onRun={run} />)}
-        {packagesOpen && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={closePackages} onRun={run} />)}
+        {pluginsOpen &&
+          framed(
+            "plugins",
+            "Plugins",
+            "plugins",
+            <PluginsPanel
+              snapshot={pluginSnap}
+              onGrant={(name, perm, on) =>
+                void plugins.setGrant(name, perm, on)
+              }
+              onClose={closePlugins}
+              onRefresh={() => void plugins.refreshRequests()}
+              onOpen={() => void plugins.refreshData()}
+              onRun={run}
+            />,
+          )}
+        {packagesOpen &&
+          framed(
+            "packages",
+            "Packages",
+            "packages",
+            <PackagesPanel
+              snapshot={pluginSnap}
+              onClose={closePackages}
+              onRun={run}
+            />,
+          )}
         {pluginSnap.confirm && (
           <PluginConfirmPanel
             key={pluginSnap.confirm.id}
@@ -2884,86 +4020,127 @@ function Workspace({
             }}
           />
         )}
-        {keysOpen && framed("keys", "Key bindings", "keys", 
-          <BindingsPanel
-            rows={bindingRows(keymap, options, commands)}
-            leader={options.leader}
-            onClose={closeKeys}
-            onHelp={(option) => {
-              closeKeys();
-              run(`help ${optionTopic(option, new Set(topics(helpCtx).map((t) => t.tag)))}`);
-            }}
-          />,
-        )}
-        {helpAt.at && framed("help", "Help", "help", 
-          <HelpPanel
-            view={helpView}
-            snapshot={helpAt}
-            ctx={helpCtx}
-            leader={options.leader}
-            vim={options.vim}
-            onFind={() => run("help")}
-            onOutline={() => run("finder outline")}
-            onSearch={onHelpSearch}
-          />,
-        )}
+        {keysOpen &&
+          framed(
+            "keys",
+            "Key bindings",
+            "keys",
+            <BindingsPanel
+              rows={bindingRows(keymap, options, commands)}
+              leader={options.leader}
+              onClose={closeKeys}
+              onHelp={(option) => {
+                closeKeys();
+                run(
+                  `help ${optionTopic(option, new Set(topics(helpCtx).map((t) => t.tag)))}`,
+                );
+              }}
+            />,
+          )}
+        {helpAt.at &&
+          framed(
+            "help",
+            "Help",
+            "help",
+            <HelpPanel
+              view={helpView}
+              snapshot={helpAt}
+              ctx={helpCtx}
+              leader={options.leader}
+              vim={options.vim}
+              onFind={() => run("help")}
+              onOutline={() => run("finder outline")}
+              onSearch={onHelpSearch}
+            />,
+          )}
       </div>
-      {overlay !== null && typeof overlay === "object" && "cmdline" in overlay && (
-        <CommandLine
-          key={overlay.cmdline}
-          initial={overlay.cmdline}
-          complete={(input) =>
-            complete(commands, input, hosts?.hosts.map((h) => h.name) ?? [], {
-              foldIds: rows.filter((r) => r.foldable).map((r) => r.id),
-              sessions: sessions.tabs.map((t) => t.host),
-              groupNames,
-              inventoryNames: inventories?.inventories.map((i) => i.name) ?? [],
-              webServices: (name) => {
-                const h = hostByName.get(name ?? details ?? ctx.selectedHost() ?? "");
-                return h ? webServices(h) : [];
-              },
-            })
-          }
-          describe={(candidate) => {
-            // A command name: its label and key. A Session's number: its Host.
-            const [id = "", arg = ""] = candidate.split(" ");
-            const command = commands.get(id);
-            if (command && arg === "") return { label: command.label(), keys: hintFor(keymap, id) };
-            const tab = command?.arg === "number" ? sessions.tabs[Number(arg) - 1] : undefined;
-            return tab ? { label: tab.host, keys: null } : null;
-          }}
-          keys={keymap.cmdline}
-          leader={options.leader}
-          {...(overlay.caret !== undefined ? { caret: overlay.caret } : {})}
-          onHelp={(line, caret) => {
-            const topic = lineTopic(commands, line);
-            if (!topic) return setMessage(`No command starts with ${line.trim().split(/\s+/)[0]}: Tab lists them`);
-            closeOverlay();
-            backToLine.current = { line, caret };
-            run(`help ${topic}`);
-            if (!helpView.snapshot().at) backToLine.current = null;
-          }}
-          onClose={closeOverlay}
-          onRun={(line) => {
-            closeOverlay();
-            run(line);
-          }}
-        />
-      )}
+      {overlay !== null &&
+        typeof overlay === "object" &&
+        "cmdline" in overlay && (
+          <CommandLine
+            key={overlay.cmdline}
+            initial={overlay.cmdline}
+            complete={(input) =>
+              complete(commands, input, hosts?.hosts.map((h) => h.name) ?? [], {
+                foldIds: rows.filter((r) => r.foldable).map((r) => r.id),
+                sessions: sessions.tabs.map((t) => t.host),
+                groupNames,
+                inventoryNames:
+                  inventories?.inventories.map((i) => i.name) ?? [],
+                webServices: (name) => {
+                  const h = hostByName.get(
+                    name ?? details ?? ctx.selectedHost() ?? "",
+                  );
+                  return h ? webServices(h) : [];
+                },
+              })
+            }
+            describe={(candidate) => {
+              // A command name: its label and key. A Session's number: its Host.
+              const [id = "", arg = ""] = candidate.split(" ");
+              const command = commands.get(id);
+              if (command && arg === "")
+                return { label: command.label(), keys: hintFor(keymap, id) };
+              const tab =
+                command?.arg === "number"
+                  ? sessions.tabs[Number(arg) - 1]
+                  : undefined;
+              return tab ? { label: tab.host, keys: null } : null;
+            }}
+            keys={keymap.cmdline}
+            leader={options.leader}
+            {...(overlay.caret !== undefined ? { caret: overlay.caret } : {})}
+            onHelp={(line, caret) => {
+              const topic = lineTopic(commands, line);
+              if (!topic)
+                return setMessage(
+                  `No command starts with ${line.trim().split(/\s+/)[0]}: Tab lists them`,
+                );
+              closeOverlay();
+              backToLine.current = { line, caret };
+              run(`help ${topic}`);
+              if (!helpView.snapshot().at) backToLine.current = null;
+            }}
+            onClose={closeOverlay}
+            onRun={(line) => {
+              closeOverlay();
+              run(line);
+            }}
+          />
+        )}
       {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
           line as visually hidden text, so a screen reader still hears what changed. */}
-      <div className={spokenMessage ? "message-line visually-hidden" : "message-line"} role="status">
+      <div
+        className={
+          spokenMessage ? "message-line visually-hidden" : "message-line"
+        }
+        role="status"
+      >
         {shownText(message, allMessages) || spokenMessage}
       </div>
       {pieces("bottom")}
       {/* Progress needs a place without the status bar (Focus hides it, ticket 85): a corner. */}
-      {pluginSnap.progress.length > 0 && !(["top", "bottom"] as const).some((at) => placed(layout, at).includes("statusbar")) && (
-        <div className="corner-progress" role="group" aria-label="What Plugins are doing">
-          <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => setMessage(plugins.cancelProgress(id))} />
-        </div>
-      )}
+      {pluginSnap.progress.length > 0 &&
+        !(["top", "bottom"] as const).some((at) =>
+          placed(layout, at).includes("statusbar"),
+        ) && (
+          <div
+            className="corner-progress"
+            role="group"
+            aria-label="What Plugins are doing"
+          >
+            <PluginProgressItems
+              progress={pluginSnap.progress}
+              onCancel={(id) => setMessage(plugins.cancelProgress(id))}
+            />
+          </div>
+        )}
       {hint && modeKeys.length > 0 && (
-        <div className="mode-hint key-hint" role="status" aria-label={`How to leave ${viewMode === "focus" ? "Focus" : "this mode"}`}>
+        <div
+          className="mode-hint key-hint"
+          role="status"
+          aria-label={`How to leave ${viewMode === "focus" ? "Focus" : "this mode"}`}
+        >
           {/* Two ways out, not one sequence: "␣ m or F11", never "␣ m F11". */}
           {modeKeys.map((k, i) => (
             <Fragment key={k}>
@@ -2978,7 +4155,12 @@ function Workspace({
         <Finder
           key={finderSource.id}
           source={finderSource}
-          {...(typeof overlay === "object" && overlay && "finder" in overlay && overlay.query ? { initialQuery: overlay.query } : {})}
+          {...(typeof overlay === "object" &&
+          overlay &&
+          "finder" in overlay &&
+          overlay.query
+            ? { initialQuery: overlay.query }
+            : {})}
           ctx={finderCtx}
           keymap={keymap}
           vim={options.vim}
@@ -3038,7 +4220,12 @@ function Workspace({
   // The lock screen is the mark, this Box and one field (taste.md): how long until it locks again
   // is :help lock's to say, not a line under the field.
   return frame(
-    <LockGate vault={vault} box={conn.state === "ready" ? conn.info.inventory.box : undefined} errorRows={errorRows} copy={copy}>
+    <LockGate
+      vault={vault}
+      box={conn.state === "ready" ? conn.info.inventory.box : undefined}
+      errorRows={errorRows}
+      copy={copy}
+    >
       {shell}
     </LockGate>,
   );
@@ -3054,7 +4241,9 @@ export function notReviewedMessage(name: string, canReview: boolean): string {
 /** Service entries roster left out of their Hosts (a bad port, url or login type in roster.yml):
  * the file still loaded, so this is said once, not shown as an error. Null when there are none. */
 export function servicesLeftOut(list: HostList): string | null {
-  const all = list.hosts.flatMap((h) => (h.problems ?? []).map((p) => ({ host: h.name, ...p })));
+  const all = list.hosts.flatMap((h) =>
+    (h.problems ?? []).map((p) => ({ host: h.name, ...p })),
+  );
   const [first] = all;
   if (!first) return null;
   if (all.length === 1) {
@@ -3070,7 +4259,10 @@ export function servicesLeftOut(list: HostList): string | null {
 /** " But WARNING; WARNING." after a result, or nothing. */
 /** What roster warned about after a change it wrote, with a `roster sync` that failed after it
  * (T150): the change stands, but this Box's ssh config didn't follow. */
-function afterChange(r: { warnings?: readonly string[]; sync?: BoxSync }): string[] {
+function afterChange(r: {
+  warnings?: readonly string[];
+  sync?: BoxSync;
+}): string[] {
   const warnings = [...(r.warnings ?? [])];
   if (r.sync && !r.sync.ok) warnings.push(syncFailed(r.sync));
   return warnings;
@@ -3082,7 +4274,11 @@ function butWarnings(warnings: readonly string[] | undefined): string {
 
 /** A routine action's confirmation: quiet (ticket 111), unless roster warned about something, which
  * always shows. */
-function routine(said: string, text: string, warnings: readonly string[] | undefined): Message {
+function routine(
+  said: string,
+  text: string,
+  warnings: readonly string[] | undefined,
+): Message {
   return warnings?.length ? text + butWarnings(warnings) : quiet(said, text);
 }
 
@@ -3100,27 +4296,50 @@ export function inventoryBroken(e: InventoryFileError): string {
  * node, and the Host as a button (its name in Iosevka, its address). The edges stretch with the
  * list, so they meet each row whatever the UI size; the one to the row under the pointer is drawn
  * in the text colour. Nothing animates: this screen comes back often. */
-function RecentMap({ box, hosts, title, open }: { box: string; hosts: readonly Host[]; title: string; open: (name: string) => void }) {
+function RecentMap({
+  box,
+  hosts,
+  title,
+  open,
+}: {
+  box: string;
+  hosts: readonly Host[];
+  title: string;
+  open: (name: string) => void;
+}) {
   const [hover, setHover] = useState<number | null>(null);
   const rows = hosts.length;
   return (
     <section className="recent" aria-labelledby="recent-title">
-      <h2 id="recent-title" className="recent-title">
-        {title}
-      </h2>
       <div className="recent-map">
+        {/* Over the Hosts it titles, not over the Box. */}
+        <h2 id="recent-title" className="recent-title">
+          {title}
+        </h2>
         <div className="recent-box" title={`This Box: ${box}`}>
           <span className="recent-box-name">{box}</span>
           <span className="box-mark" aria-hidden="true" />
         </div>
-        <svg className="recent-edges" viewBox={`0 0 48 ${rows * 10}`} preserveAspectRatio="none" aria-hidden="true">
+        <svg
+          className="recent-edges"
+          viewBox={`0 0 48 ${rows * 10}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
           {hosts.map((h, i) => {
             const y = i * 10 + 5;
             const mid = (rows * 10) / 2;
-            return <path key={h.name} className={hover === i ? "on" : undefined} d={`M0 ${mid} C 24 ${mid}, 24 ${y}, 48 ${y}`} />;
+            return (
+              <path
+                key={h.name}
+                className={hover === i ? "on" : undefined}
+                d={`M0 ${mid} C 24 ${mid}, 24 ${y}, 48 ${y}`}
+              />
+            );
           })}
         </svg>
-        <ul className="recent-list">
+        {/* Keys as in a list (j k, arrows) and Startify's digits: 1–9 opens that row. */}
+        <ul className="recent-list" onKeyDown={(e) => mapKey(e, open, hosts)}>
           {hosts.map((h, i) => (
             <li key={h.name}>
               <button
@@ -3135,7 +4354,12 @@ function RecentMap({ box, hosts, title, open }: { box: string; hosts: readonly H
               >
                 <StateDot dot={hostDot(h)} />
                 <span className="recent-name">{h.name}</span>
-                {h.ip && <span className="recent-ip">{h.ip}</span>}
+                <span className="recent-ip">{h.ip}</span>
+                {i < 9 && (
+                  <span className="recent-key key-hint" aria-hidden="true">
+                    {i + 1}
+                  </span>
+                )}
               </button>
             </li>
           ))}
@@ -3145,15 +4369,48 @@ function RecentMap({ box, hosts, title, open }: { box: string; hosts: readonly H
   );
 }
 
+/** The idle map's keys: j/k and the arrows move between rows, Home/End jump, a digit opens its row. */
+function mapKey(
+  e: ReactKeyboardEvent<HTMLUListElement>,
+  open: (name: string) => void,
+  hosts: readonly Host[],
+) {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const rows = [
+    ...e.currentTarget.querySelectorAll<HTMLButtonElement>(".recent-row"),
+  ];
+  const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+  const go = (i: number) => {
+    e.preventDefault();
+    rows[Math.max(0, Math.min(rows.length - 1, i))]?.focus();
+  };
+  if (e.key === "j" || e.key === "ArrowDown") go(at + 1);
+  else if (e.key === "k" || e.key === "ArrowUp") go(at - 1);
+  else if (e.key === "Home") go(0);
+  else if (e.key === "End") go(rows.length - 1);
+  else if (/^[1-9]$/.test(e.key)) {
+    const host = hosts[Number(e.key) - 1];
+    if (!host) return;
+    e.preventDefault();
+    open(host.name);
+  }
+}
+
 /** Whether a media query matches now, following it as the window changes. */
 function useMediaMatch(query: string): boolean {
   return useSyncExternalStore(
     (changed) => {
-      const mq = typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query) : null;
+      const mq =
+        typeof window !== "undefined" && window.matchMedia
+          ? window.matchMedia(query)
+          : null;
       mq?.addEventListener("change", changed);
       return () => mq?.removeEventListener("change", changed);
     },
-    () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query).matches : false),
+    () =>
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia(query).matches
+        : false,
   );
 }
 
@@ -3161,14 +4418,20 @@ function useMediaMatch(query: string): boolean {
 const SIDEBAR_KEY = "sidebar";
 
 /** What the State holds for the Sidebar, per mode (untrusted: only booleans count). */
-function sidebarChoices(state: Readonly<Record<string, unknown>>): Partial<Record<ViewMode, boolean>> {
+function sidebarChoices(
+  state: Readonly<Record<string, unknown>>,
+): Partial<Record<ViewMode, boolean>> {
   const v = state[SIDEBAR_KEY];
   if (typeof v !== "object" || v === null) return {};
   const out: Partial<Record<ViewMode, boolean>> = {};
-  for (const [mode, shown] of Object.entries(v)) if (typeof shown === "boolean") out[mode as ViewMode] = shown;
+  for (const [mode, shown] of Object.entries(v))
+    if (typeof shown === "boolean") out[mode as ViewMode] = shown;
   return out;
 }
 
-function sidebarChoice(state: Readonly<Record<string, unknown>>, mode: ViewMode): boolean | null {
+function sidebarChoice(
+  state: Readonly<Record<string, unknown>>,
+  mode: ViewMode,
+): boolean | null {
   return sidebarChoices(state)[mode] ?? null;
 }

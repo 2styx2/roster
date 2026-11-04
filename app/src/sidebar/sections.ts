@@ -228,6 +228,7 @@ export const sessionsSection: SidebarSectionDef = {
               ...(facts ? { title: facts } : {}),
               raised: tab.id === sessions.active,
               ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
+              ...(i < 9 ? { index: i + 1 } : {}),
               command: `session ${i + 1}`,
               actions: [{ label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` }],
             };

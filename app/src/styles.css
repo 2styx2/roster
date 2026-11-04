@@ -96,7 +96,7 @@ button {
   transition: background-color var(--dur-fade) ease, color var(--dur-fade) ease, border-color var(--dur-fade) ease,
     transform var(--dur-press) var(--ease-out);
 }
-button:active:not(:disabled) { transform: scale(var(--press-scale)); }
+button:active:not(:disabled, [aria-disabled="true"]) { transform: scale(var(--press-scale)); }
 button:disabled { opacity: 0.6; }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: none; }
 button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
@@ -105,7 +105,7 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
 @media (hover: hover) and (pointer: fine) {
-  button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+  button.primary:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
 }
 
 /* A borderless square button for a glyph (close a panel). */
@@ -256,7 +256,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 @media (max-height: 460px) { .empty .empty-mark { display: none; } .empty { padding-block: 8px; } }
 .empty { max-height: 100%; overflow-y: auto; }
 .recent-title {
-  margin: 0 0 8px; padding-left: 2px; color: var(--muted);
+  grid-column: 3; margin: 0 0 8px; padding-left: 10px; color: var(--muted);
   font-size: max(11px, calc(var(--text-xs) - 1px)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
 }
 .recent-map { display: grid; grid-template-columns: auto 48px minmax(0, 300px); align-items: center; max-width: 100%; }
@@ -269,7 +269,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .recent-edges path.on { stroke: var(--muted); }
 .recent-list { list-style: none; margin: 0; padding: 0; }
 .recent-row {
-  width: 100%; height: var(--row-h); display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 0 10px;
+  width: 100%; height: var(--row-h); display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 1ch; align-items: center; column-gap: 12px; padding: 0 10px;
   background: transparent; border: 0; border-radius: var(--radius); color: var(--text); font-weight: 400; text-align: left;
 }
 .recent-row:active:not(:disabled) { transform: none; }
@@ -278,6 +278,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .recent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-weight: 500; }
 .recent-ip { color: var(--muted); font: 500 var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; }
+/* The digit that opens the row (Startify's numbers). */
+.recent-key { color: var(--muted); font: 500 var(--text-xs) var(--font-mono); text-align: right; }
 .empty-path { max-width: min(56ch, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
 .empty-path code { direction: ltr; unicode-bidi: isolate; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
@@ -378,14 +380,17 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .sb-icon { flex: none; color: var(--faint); }
 
-/* overflow-anchor: none, as Sidebar.tsx keeps the row under the pointer itself when Sessions open
-   or close (the browser's own anchoring would move it a second time). */
 /* The tree: Sessions on top, fixed, and the rest scrolling under them (.sb-rest). overflow-anchor:
    none there, as Sidebar.tsx keeps the row under the pointer itself when Sessions open or close
    (the browser's own anchoring would move it a second time). */
 .sb-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 2px 6px 0; outline: none; }
 .sb-scroll > .sb-section[data-section="sessions"] { flex: none; }
-.sb-rest { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-bottom: 10px; }
+.sb-rest { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-bottom: 10px; border-top: 1px solid transparent; }
+/* Scrolled: a hairline under Sessions, and the section in view keeps its heading pinned whole at
+   the top, so holding the row under the pointer (Q192) never leaves a heading cut in half or a
+   Folders hint reading as Sessions'. */
+.sb-rest:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
+.sb-rest > .sb-section > .sb-heading { position: sticky; top: 0; z-index: 1; background: var(--sidebar); }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -478,6 +483,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   margin-left: auto; padding-left: 8px; flex: none;
   color: var(--muted); font: var(--text-xs) var(--font-mono); font-variant-numeric: tabular-nums;
 }
+/* A Session's number for ␣ 1–9 (Q196), like tmux's window numbers: in the address's muted
+   Iosevka (sb-num), so it reads as a key, never as data. */
 .sb-badge {
   display: none; margin-left: auto; flex: none; font-size: var(--text-xs); line-height: 15px; color: var(--warn);
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: var(--radius-sm); padding: 0 4px;
@@ -854,11 +861,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* The selection is a cursor, drawn as the Sidebar's App-mode cursor: raised, with a 1px accent
    outline, so the row Enter opens reads at a glance (3:1 against the panel). */
 .picker-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
-/* The selected row shows its whole name and address, wrapped (M6): two long Hosts that differ at
-   the end can be told apart from the keyboard. */
-/* Only the name (and an address) wraps on the selected row: the group and type stay one line, so
-   moving the selection doesn't make the list jump by whole lines of group. */
-.picker-row.selected > :is(.host-name, .host-ip) { white-space: normal; overflow-wrap: anywhere; overflow: visible; }
+/* Rows stay one line (Q195): the selected Host's whole name, address, group and type are in the
+   strip under the list, so two long Hosts that differ at the end can still be told apart. */
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
@@ -896,6 +900,17 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .picker-empty { margin: 0; padding: 18px 16px; color: var(--muted); }
 .picker-empty-next { display: block; margin-top: 4px; font-size: var(--text-sm); }
+/* The sizer: the Inventory's widest address, group and type, invisible and zero high, so the
+   columns are sized by every Host and hold still as a query narrows the list. */
+.picker-row.picker-sizer { visibility: hidden; height: 0; min-height: 0; padding-block: 0; overflow: hidden; }
+.picker-detail {
+  flex: none; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; min-height: 30px;
+  padding: 6px 16px; border-top: 1px solid var(--line); font-size: var(--text-sm); color: var(--muted);
+}
+.picker-detail > span { min-width: 0; overflow-wrap: anywhere; }
+.picker-detail > span + span::before { content: "·"; margin-right: 10px; color: var(--muted); }
+.picker-detail .host-name { font-family: var(--font-mono); color: var(--text); }
+.picker-detail .host-ip { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .picker-footer {
   display: flex; align-items: center; gap: 14px; padding: 0 14px; height: 34px; flex: none;
   border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
@@ -931,12 +946,16 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .lock-panel p { margin: 0; }
 .lock-form { display: flex; flex-direction: column; gap: 8px; }
-.lock-form > p { color: var(--muted); margin-bottom: 6px; }
+.lock-form > p:not(.lock-error) { color: var(--muted); margin-bottom: 6px; }
 .lock-form label { color: var(--muted); font-size: var(--text-xs); font-weight: 500; }
 .lock-row { display: flex; gap: 8px; }
 .lock-row input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; }
 .lock-row input[aria-invalid] { border-color: var(--error); }
-.lock-row button { height: 32px; }
+/* One width for Unlock, Checking… and Unlocking…, so the field never resizes under the typing.
+   While roster checks or unlocks, the button steps back to a plain one in the second tone (not a
+   faded apricot): it is waiting, not offered. aria-disabled keeps Enter queuing (LockScreen.tsx). */
+.lock-row button { height: 32px; min-width: 8.5em; }
+.lock-row button.primary[aria-disabled="true"] { background: var(--raised); color: var(--muted); border-color: var(--line-strong); }
 .lock-error { color: var(--error); font-size: var(--text-sm); }
 .lock-problem { color: var(--warn); }
 .lock-problem code, .lock-error code { color: var(--text); }

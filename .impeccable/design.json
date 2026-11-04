@@ -360,7 +360,7 @@
       },
       {
         "name": "The Never-Cut-Mid-Token Rule",
-        "body": "IPs, ports and fingerprints are never truncated mid-token. Data cells use tabular numbers, and the selected row shows its whole name, wrapped.",
+        "body": "IPs, ports and fingerprints are never truncated mid-token. Data cells use tabular numbers. A long address drops whole groups from its middle, and the whole value is one step away (a tooltip, the Picker's detail strip).",
         "section": "typography"
       },
       {

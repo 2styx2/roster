@@ -60,7 +60,8 @@ function cutWithoutTooltip(): string[] {
   for (const selector of cutSelectors()) {
     for (const el of document.querySelectorAll(selector)) {
       const text = el.textContent?.trim() ?? "";
-      if (!text) continue;
+      // Never shown: the Picker's sizer row only measures its columns.
+      if (!text || el.closest('[aria-hidden="true"]')) continue;
       const title = el.closest("[title]")?.getAttribute("title") ?? "";
       // A middle cut ("server-10…7-203") keeps the name's start and end; the tooltip has it whole.
       const [head = "", tail] = text.split("…");

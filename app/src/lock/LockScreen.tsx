@@ -82,7 +82,7 @@ function LockScreen({ vault, hint, box, errorRows, copy }: { vault: Vault; hint?
   return (
     <div className="lock" role="dialog" aria-modal="true" aria-labelledby="lock-title">
       <section className="lock-panel">
-        <Logo size={40} className="lock-mark" />
+        <Logo size={48} className="lock-mark" />
         {/* Locked, the screen is the mark, this Box and one field (taste.md "Lock screen"): the
             heading stays the dialog's name for assistive tech but isn't drawn. Every other state
             shows its heading, since there it says what's wrong. */}
@@ -176,6 +176,7 @@ function UnlockForm({
   const queued = useRef(false);
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
     if (checking) {
       queued.current = (field.current?.value ?? "") !== "";
       return;
@@ -199,7 +200,9 @@ function UnlockForm({
   useEffect(() => {
     if (checking || !queued.current) return;
     queued.current = false;
-    void send();
+    // After this commit's effects: useVault's own effect (it runs after this child's) is what
+    // tells `unlock` the vault is locked now; sent before it, the password was dropped.
+    queueMicrotask(() => void send());
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the check ends
   }, [checking]);
 
@@ -218,7 +221,9 @@ function UnlockForm({
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? "lock-error" : undefined}
         />
-        <button type="submit" className="primary" disabled={busy || checking}>
+        {/* aria-disabled, not disabled: a disabled default button stops Enter submitting the form,
+            and Enter during the check must queue the password. */}
+        <button type="submit" className="primary" aria-disabled={busy || checking || undefined}>
           {checking ? "Checking…" : busy ? "Unlocking…" : "Unlock"}
         </button>
       </div>
