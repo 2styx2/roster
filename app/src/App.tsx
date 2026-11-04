@@ -555,6 +555,15 @@ function Workspace({
   /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
    * lit wherever a Host is listed (taste.md: the accent means live, Q185). */
   const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
+  /** The idle pane's Recent list: the last Hosts opened that are still in the Inventory and
+   * reviewed, at most six. */
+  const recentShown = useMemo(() => {
+    const byName = new Map((conn.state === "ready" ? conn.hosts.hosts : []).map((h) => [h.name, h]));
+    return appState.recentHosts.flatMap((n) => {
+      const h = byName.get(n);
+      return h && h.reviewed ? [h] : [];
+    }).slice(0, 6);
+  }, [conn, appState.recentHosts]);
   // The window's title names the Session on screen ("esx-02 — roster"), as editors name the file.
   const titleOf = sessions.tabs.find((t) => t.id === sessions.active)?.label;
   useEffect(() => {
@@ -2476,6 +2485,26 @@ function Workspace({
             <div className="empty">
               <Logo size={48} className="empty-mark" />
               <p className="empty-title">No Sessions open</p>
+              {/* Your network, not just a button (Q188): the Hosts you opened last, each one click
+                  away, drawn as the Sidebar draws them. Left out until there's a history. */}
+              {recentShown.length > 0 && (
+                <section className="recent" aria-labelledby="recent-title">
+                  <h2 id="recent-title" className="recent-title">
+                    Recent
+                  </h2>
+                  <ul className="recent-list">
+                    {recentShown.map((h) => (
+                      <li key={h.name}>
+                        <button type="button" className="recent-row" onMouseDown={(e) => e.preventDefault()} onClick={() => run(`open ${h.name}`)}>
+                          <StateDot dot={hostDot(h)} />
+                          <span className="recent-name">{h.name}</span>
+                          {h.ip && <span className="recent-ip">{h.ip}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               <button type="button" className="find primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
                 Find a Host
               </button>
