@@ -22,7 +22,7 @@ Everything the `roster` command reads and does: the `roster.yml` format, resourc
 
 **Your `roster.yml` is private.** It lives in your team's own private git repo (or only on your box), never in a public one and never in this repo. It names your Hosts, addresses, users and vault items, so it says a lot about your network even though it holds no passwords. roster itself stays generic: anything specific to your team (names, device types, groups) belongs in your `roster.yml`, not in roster's code.
 
-Settings cascade `defaults` → group → host, with the most specific winning. Run `roster init` to get a fully commented example; there is also one at `examples/roster.example.yml`.
+Settings cascade `defaults` → group → host, with the most specific winning. Run `roster init` to get a fully commented example (`roster init --blank` for a short, empty one; [A new Inventory](#a-new-inventory) has the other ways); there is also one at `examples/roster.example.yml`. It may be a plain file or a file in your team's git repo: [A plain file or a team repo](#a-plain-file-or-a-team-repo).
 
 ```yaml
 defaults:
@@ -238,7 +238,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 
 | Command | What it does |
 |---|---|
-| `init` | Write the commented example `roster.yml` |
+| `init [--blank \| --inventory HOW] [--name NAME]` | Write the commented example `roster.yml` (to `-c PATH`, else `./roster.yml`), or a new Inventory: `--blank` (same as `--inventory blank`) a short one with an empty group and a Host to copy commented out; `--inventory file:PATH` a copy of that `roster.yml`, once it loads; `repo:URL` a `git clone` of the team's repo into `roster.yml`'s folder (empty or new); `ssh-config[:PATH]` the Hosts in `~/.ssh/config` (or PATH): see [A new Inventory](#a-new-inventory). A file already there is kept (170): make the new one in another folder, and `--name NAME` names it (`roster inv add`) |
 | `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`) |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
@@ -305,7 +305,7 @@ This Box's health, like Neovim's `:checkhealth`: the same checks as the app's `:
 | ssh | `ssh` is on `PATH`; roster's ssh config is written, included from `~/.ssh/config` and has every Host (else run `roster sync`); this Box's key exists if a Host uses key Logins; roster's known hosts has every Host's key |
 | Vault | Each provider the Logins use: its CLI is installed, logged in, and locked or unlocked (from its own status command, as the lock screen asks it) |
 | askpass | The askpass channel (the private socket password Sessions get their password through) opens on this Box |
-| Infra repo | `roster.yml` is in a git repo, and whether it has Pending changes, other uncommitted files, or commits the upstream doesn't have (as last fetched) |
+| Infra repo | How `roster.yml` is kept: a plain file (a note, never a warning: every edit saves straight to it), or committed in a git repo with a remote, and then whether it has Pending changes, other uncommitted files, or commits the upstream doesn't have (as last fetched). See [A plain file or a team repo](#a-plain-file-or-a-team-repo) |
 
 ```text
 ssh
@@ -319,6 +319,28 @@ Vault
 
 1 warning, no errors
 ```
+
+## A plain file or a team repo
+
+An Inventory is one `roster.yml`, and roster works the same whether it's a plain file or a file in your team's git repo. Which one is decided per file, each time roster writes it:
+
+- **A team repo**: `roster.yml` is committed in a git work tree that has a remote. The app's edits (and `roster discover --write`, `roster mesh cut`) are Pending changes: `:changes` shows them, `:publish` commits `roster.yml` alone and pushes it, `:discard` puts it back, and the app pulls before an edit form. The backup of what an edit replaced is kept in the repo's git dir (`.git/roster/roster.yml.bak`), never in the work tree.
+- **A plain file**: anything else (not in a git repo, git not installed, not committed yet, or a repo with no remote to publish to). Every edit is saved straight to the file; there's nothing to pull, discard or publish, and nothing asks for git. The backup is `roster.yml.bak` beside it (in the git dir when it's in a repo).
+
+`roster check --box` (and the app's `:check`) says which, in its Infra repo section. `git init` in the folder is optional: it gives you history to commit by hand, and edits still save in place until the repo has a remote.
+
+## A new Inventory
+
+`roster init` writes the commented example, as always. `roster init --inventory HOW` (or `install.sh --inventory HOW`) gets a new Inventory one of four ways, without a question:
+
+| HOW | What you get |
+|---|---|
+| `blank` (or `--blank`) | A short `roster.yml` that loads: a header, `key_path:`, and an empty group `servers` with a Host to copy commented out |
+| `file:PATH` | A copy of the `roster.yml` at PATH, made only once it loads (171 if it doesn't). To use it where it is instead, point roster at it (`-c PATH`, `ROSTER_CONFIG`, `roster inv add`) |
+| `repo:URL` | `git clone URL` into the folder `roster.yml` goes in, which must be empty or new (172); the clone must have `roster.yml` at its top (171). A team repo from the start |
+| `ssh-config[:PATH]` | The Hosts in `~/.ssh/config` (or PATH), in a group `imported`: each `Host` block's names, with its `HostName` (its address), `User`, `Port`, and `auth: agent` when it has an `IdentityFile` (named in a comment). Wildcards (`*`, `?`), negations (`!`) and `Match` blocks are skipped, `Include` isn't followed, and no other setting is read, so nothing secret is copied. The ssh config itself is only read, never changed (173 if it can't be). A Host with no `User` gets your login name, as ssh does |
+
+The new file goes to `-c PATH`, else `./roster.yml`. One that's already there is kept as it is (170): to start another beside it, give another folder and a name, `roster -c ~/home-net/roster.yml init --blank --name home`, which names it as `roster inv add` does. Then run `roster setup`.
 
 ## Named Inventories
 
@@ -435,6 +457,7 @@ With `--json`, the status is the same, and an error is JSON on stderr ([Machine-
 
 ```sh
 roster init                              # write a commented roster.yml to start from
+roster init --blank                      # ... or a short, empty one (--inventory ssh-config: your ~/.ssh/config's Hosts)
 roster setup --dry-run                   # which hosts would get this box's key
 roster hosts --find esx                  # search names, titles, types, addresses
 roster info esx-02                       # everything about one host

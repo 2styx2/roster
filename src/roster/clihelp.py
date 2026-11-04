@@ -23,7 +23,10 @@ GROUPS: list[tuple[str, list[str]]] = [
 
 EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "init": [("roster init", "write a commented example roster.yml here"),
-             ("roster -c ~/infra/roster.yml init", "or there")],
+             ("roster -c ~/infra/roster.yml init --blank", "a short, empty one there instead"),
+             ("roster init --inventory ssh-config", "the Hosts in ~/.ssh/config (it isn't changed)"),
+             ("roster -c ~/infra/roster.yml init --inventory repo:git@example.com:team/infra.git", "the team's repo"),
+             ("roster -c ~/home-net/roster.yml init --blank --name home", "a second one, named (roster inv)")],
     "setup": [("roster setup --dry-run", "what it would do, nothing changed on any host"),
               ("roster setup", "key, fingerprints, key on every key host, ssh config, ROSTER.md"),
               ("roster setup --only switch,router", "just these groups or types")],

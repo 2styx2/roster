@@ -225,6 +225,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`HostCheck`](#hostcheck) | `host.check`'s result: the steps of `roster check HOST` |
 | [`CheckJob`](#checkjob) | `host.check_job`'s result: a Host's check, and how it came out |
 | [`CheckStep`](#checkstep) | One step of a `host.check` |
+| [`InventoryStore`](#inventorystore) | How `roster.yml` is kept: a plain file or a team repo (serve API 28) |
 | [`ChangesDiff`](#changesdiff) | `changes.diff`'s result: the Pending changes |
 | [`HostChange`](#hostchange) | A Host in `changes.diff` |
 | [`GroupChange`](#groupchange) | A group in `changes.diff` |
@@ -4488,6 +4489,7 @@ What `roster.inventory.review` wrote.
 | `box` | `string` | yes | This Box's name. |
 | `host_count` | `integer` | yes | How many Hosts. |
 | `providers` | `string[]` | yes | The password providers roster has. |
+| `store` | [`InventoryStore`](#inventorystore) | no | How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before). |
 | `roster_version` | `string` | yes | roster's version. |
 | `api_version` | `integer` | yes | roster serve's API version (not `roster.api_version`). |
 
@@ -4555,6 +4557,18 @@ One step of a `host.check`.
 | `details` | `string` | no | The raw text, when there is one (ssh's stderr). |
 | `data` | `table` | no | What the code's row says it carries. |
 
+### `InventoryStore`
+
+How `roster.yml` is kept: a plain file or a team repo (serve API 28).
+
+Decided per file, each time: `repo` when `roster.yml` is committed in a git repo with a remote (edits are Pending changes until Publish), `file` otherwise (every edit is saved straight to it, and there's nothing to publish).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `kind` | `"repo"\|"file"` | yes | A team repo, or a plain file. |
+| `note` | `string` | yes | Which, in a sentence, as `roster check --box` says it. |
+| `repo` | `string` | no | The git work tree it's in; `nil` outside one. |
+
 ### `ChangesDiff`
 
 `changes.diff`'s result: the Pending changes.
@@ -4562,7 +4576,8 @@ One step of a `host.check`.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `path` | `string` | yes | `roster.yml`'s path. |
-| `repo` | `string` | yes | The infra repo's top folder. |
+| `repo` | `string` | no | The infra repo's top folder; `nil` for a plain file. |
+| `kind` | `"repo"\|"file"` | no | `file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before). |
 | `diff` | `string` | yes | git's diff of `roster.yml` against the last commit; `""` for none. A `cmd:` reference in it reaches a Plugin cut to `cmd:` (the rest of its line), an `env:` one to `env:`. |
 | `hosts` | [`HostChange`](#hostchange)`[]` | yes | The Hosts it changes. |
 | `groups` | [`GroupChange`](#groupchange)`[]` | yes | The groups it changes. |
@@ -4680,8 +4695,9 @@ The `mesh: false` a `mesh.cut` writes into `roster.yml`.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `written` | `boolean` | yes | Whether it was written now (`false` when it already was, or couldn't be). |
-| `backup` | `string` | no | The copy of `roster.yml` from before; `nil` when it isn't in a git repo. |
-| `note` | `string` | no | Why nothing was written, or that it went straight to a file outside git. |
+| `backup` | `string` | no | The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git). |
+| `kind` | `"repo"\|"file"` | no | A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before). |
+| `note` | `string` | no | Why nothing was written (before serve API 28, also that it went straight to a file outside git). |
 | `error` | `string` | no | Why it couldn't be written (the cut still happened). |
 | `fix` | `string` | no | What to do then, in a sentence. |
 

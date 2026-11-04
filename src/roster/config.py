@@ -59,15 +59,15 @@ def locate_config(arg, inv=None):
         return active
     if (user_config_dir() / "roster.yml").exists():
         return user_config_dir() / "roster.yml"
-    die("no roster.yml found here or in ~/.config/roster/ - run `roster init`, "
-        "or pass -c PATH / set ROSTER_CONFIG")
+    die("no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, or `roster init "
+        "--inventory file:PATH|repo:URL|ssh-config`), or pass -c PATH / set ROSTER_CONFIG")
 
 
 def load_inventory(path):
     """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
     path = Path(path).expanduser().resolve()
     if not path.exists():
-        die(f"{path} not found - run `roster init` to create one")
+        die(f"{path} not found - make one: roster -c {path} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
     return parse_inventory(path.read_text(), path)
 
 
@@ -159,8 +159,7 @@ def parse_inventory(text, path):
                 m[k] = oneline(m.get(k))
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
             hosts[hname] = m
-    if not hosts:
-        die(f"{path} defines no hosts")
+    # no Hosts at all is a valid Inventory (T212): a blank one (`roster init --blank`) before its first Host
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
     key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives

@@ -1699,6 +1699,7 @@
     "roster-HttpResponse": "plugin-api#httpresponse",
     "roster-InventoryError": "plugin-api#inventoryerror",
     "roster-InventoryInfo": "plugin-api#inventoryinfo",
+    "roster-InventoryStore": "plugin-api#inventorystore",
     "roster-JobProgressEvent": "plugin-api#jobprogressevent",
     "roster-KeyContext": "plugin-api#keycontext",
     "roster-LastCommit": "plugin-api#lastcommit",
@@ -1950,8 +1951,13 @@
         },
         {
           "name": "repo",
-          "required": true,
+          "required": false,
           "type": "string"
+        },
+        {
+          "name": "kind",
+          "required": false,
+          "type": "\"repo\"|\"file\""
         },
         {
           "name": "diff",
@@ -3319,6 +3325,11 @@
           "type": "string[]"
         },
         {
+          "name": "store",
+          "required": false,
+          "type": "InventoryStore"
+        },
+        {
           "name": "roster_version",
           "required": true,
           "type": "string"
@@ -3327,6 +3338,26 @@
           "name": "api_version",
           "required": true,
           "type": "integer"
+        }
+      ],
+      "open": false
+    },
+    "InventoryStore": {
+      "fields": [
+        {
+          "name": "kind",
+          "required": true,
+          "type": "\"repo\"|\"file\""
+        },
+        {
+          "name": "note",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "repo",
+          "required": false,
+          "type": "string"
         }
       ],
       "open": false
@@ -3541,6 +3572,11 @@
           "name": "backup",
           "required": false,
           "type": "string"
+        },
+        {
+          "name": "kind",
+          "required": false,
+          "type": "\"repo\"|\"file\""
         },
         {
           "name": "note",

@@ -118,7 +118,7 @@ from="10.0.0.2",no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA… roster
 
 `roster mesh cut HOST` takes HOST out of the Mesh **now**, without waiting for a Publish: on every Host at once (in parallel), HOST's key comes out of `authorized_keys`, every peer's key comes out of HOST's, and HOST's own Mesh files go. This Box's own access stays, so you can investigate; `roster revoke` is separate.
 
-It then writes `mesh: false` for HOST in `roster.yml` as a Pending change, so the cut survives the next Publish. (When `roster.yml` isn't in a git repo, it's written straight to the file.)
+It then writes `mesh: false` for HOST in `roster.yml` as a Pending change, so the cut survives the next Publish. (When `roster.yml` is a plain file, not in a team repo, it's saved straight to the file: [A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo).)
 
 Every Host is confirmed. One that's down or doesn't answer gets a loud warning, `CUT PENDING ON 2 HOSTS`, on every `roster mesh` run until the cut is finished there, by `roster mesh cut HOST` again or by the next `roster mesh`.
 

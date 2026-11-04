@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from . import boxsync, jsonout
+from . import boxsync, jsonout, store
 from .common import die, oneline, say, tcp_ok
 from .config import find_config, load_config
 
@@ -396,11 +396,12 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
     except SystemExit as e:
         tmp.unlink()
         die(f"the merged roster.yml didn't validate, nothing written ({e})")
-    if path.exists():
-        backup = path.with_name(path.name + ".bak")
-        backup.write_text(text)
+    if path.exists():                             # T212: saved as serve's edits are (store.py), repo or plain file
+        tmp.unlink()
+        backup = store.at(path).save(text, new_text)
         say(f"backup       {backup}")
-    tmp.replace(path)
+    else:
+        tmp.replace(path)
     say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
     boxsync.after_edit(path)                      # T153: this Box follows, as after serve's changes
     say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")

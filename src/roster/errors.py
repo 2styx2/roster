@@ -160,6 +160,12 @@ RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has n
 MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
 NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
 
+# A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233)
+INVENTORY_THERE = 170       # roster init: a roster.yml is there already, so it's kept as it is; nothing written
+NOT_AN_INVENTORY = 171      # roster init: the file to import isn't there or doesn't load, or a clone has no roster.yml
+CLONE_FAILED = 172          # roster init: git couldn't clone the repo (or isn't installed, or the folder isn't empty)
+SSH_CONFIG_UNREADABLE = 173  # roster init: the ssh config to import Hosts from can't be read; nothing written
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""
@@ -262,7 +268,8 @@ def inventory_problem(message, path=None):
     m = re.search(r"line (\d+)", message)
     data = {"path": str(path.resolve()) if path else None} | ({"line": int(m.group(1))} if m else {})
     where = f"{path or 'roster.yml'}" + (f" at line {data['line']}" if m else "")
-    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or run `roster init` if there's none yet")
+    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
+                                                                 "`roster init --blank` (`roster init --help`: the others)")
 
 
 def unknown_provider(h, auth, what="ssh"):

@@ -44,8 +44,12 @@ Opening a Session to an address that isn't a Host in the Inventory yet: `user@ad
 _Avoid_: ad-hoc session, direct connect
 
 **Pending change**:
-An edit to the Inventory made on this Box that hasn't been Published yet.
+An edit to the Inventory made on this Box that hasn't been Published yet. Only a team repo's Inventory has them: in a plain file every edit is saved straight away.
 _Avoid_: draft, unsaved edit
+
+**Plain file**:
+An Inventory that isn't in a team repo: a `roster.yml` outside any git repo, not committed, or in a repo with no remote. Every edit is saved straight to it; there's nothing to pull or Publish. The other kind is a **team repo** (committed in a git repo with a remote), where edits are Pending changes until Published. roster decides which per file, each time (`roster check --box` says).
+_Avoid_: local inventory, offline inventory
 
 **Publish**:
 Committing the Pending changes and pushing them to the infra repo, so every Box picks them up.

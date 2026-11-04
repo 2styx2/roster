@@ -377,7 +377,7 @@ else
     if (( YES )) && [[ -n $unsaved ]]; then
         printf '  %s?%s Delete the whole config folder %s? %s[y/N]%s no\n' "$C" "$N" "$(home "$cfg_dir")" "$D" "$N"
         del=1
-    elif ask "Delete the whole config folder $(home "$cfg_dir") (the team's map; a fresh clone brings it back)?" "$def"; then
+    elif ask "Delete the whole config folder $(home "$cfg_dir") ($([[ $unsaved == "not a git clone" ]] && echo "a plain roster.yml: this is its only copy" || echo "the team's map; a fresh clone brings it back"))?" "$def"; then
         del=0
     else del=1; fi
     if (( del == 0 )); then

@@ -232,14 +232,120 @@ def test_help_is_the_header_and_nothing_else(script):
     assert r.stdout.startswith(("Install", "Update", "Remove")) and "set -uo" not in r.stdout
 
 
+def install(tmp_path, *args, answers=None, home=None):
+    """install.sh --dry-run in a made-up HOME (never this machine's), with ANSWERS typed (else --yes)."""
+    env = {**os.environ, "HOME": str(home or tmp_path / "home"), "NO_COLOR": "1"}
+    for k in ("ROSTER_INFRA_REPO", "ROSTER_INVENTORY", "ROSTER_CONFIG"):
+        env.pop(k, None)
+    flags = ["--dry-run", *([] if answers is not None else ["--yes"]), *args]
+    return subprocess.run(["bash", str(INSTALL_SH), *flags], env=env, capture_output=True, text=True,
+                          input=answers or "", timeout=120, start_new_session=True)
+
+
 @posix_shell
-def test_install_without_a_team_map_skips_the_clone_under_yes(tmp_path):
-    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1"}
-    env.pop("ROSTER_INFRA_REPO", None)
-    r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
-    assert "no team map given - run again with --infra-repo URL" in r.stdout
+def test_install_with_nothing_given_creates_a_blank_inventory_under_yes(tmp_path):
+    """T212: with no repo given, the default is a new, blank Inventory (Y), not nothing."""
+    r = install(tmp_path)
+    cfg = tmp_path / "home" / "infra" / "roster.yml"
+    assert f"would run: roster -c {cfg} init --inventory blank" in r.stdout, r.stdout
     assert "git clone" not in r.stdout
+    assert "git init" not in r.stdout.replace("Keep its history in git (git init", "")    # offered, default No
+
+
+@pytest.mark.parametrize("how,want", [
+    ("blank", "init --inventory blank"),
+    ("file:/tmp/theirs/roster.yml", "init --inventory file:/tmp/theirs/roster.yml"),
+    ("ssh-config", "init --inventory ssh-config"),
+    ("ssh-config:/tmp/my_ssh_config", "init --inventory ssh-config:/tmp/my_ssh_config"),
+    ("repo:git@example.com:team/map.git", "git clone -q -- git@example.com:team/map.git"),
+])
+@posix_shell
+def test_install_inventory_flag_picks_one_without_prompts(tmp_path, how, want):
+    r = install(tmp_path, "--inventory", how)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert want in r.stdout, r.stdout
+
+
+@posix_shell
+def test_install_inventory_flag_is_checked(tmp_path):
+    for bad in ("nope", "file:", "repo:"):
+        r = install(tmp_path, "--inventory", bad)
+        assert r.returncode == 2 and "--inventory" in r.stderr, bad
+
+
+def install_answering(tmp_path, replies):
+    """install.sh --dry-run in a made-up HOME, answering each question as it's asked: REPLIES maps words in a
+    question to the answer typed; any other question gets Enter (its default). Returns everything it printed."""
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1"}
+    for k in ("ROSTER_INFRA_REPO", "ROSTER_INVENTORY", "ROSTER_CONFIG"):
+        env.pop(k, None)
+    p = subprocess.Popen(["bash", str(INSTALL_SH), "--dry-run"], env=env, stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    out, line = b"", b""
+    try:
+        while chunk := os.read(p.stdout.fileno(), 4096):
+            out += chunk
+            line = (line + chunk).rsplit(b"\n", 1)[-1]
+            if line.rstrip().endswith(b"]"):                    # a question waits for its answer
+                said = line.decode(errors="replace")
+                reply = next((v for k, v in replies.items() if k in said), "")
+                p.stdin.write((reply + "\n").encode())
+                p.stdin.flush()
+                line = b""
+        p.wait(timeout=60)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    return out.decode(errors="replace")
+
+
+@posix_shell
+@pytest.mark.parametrize("replies,want", [
+    ({}, "init --inventory blank"),
+    ({"1, 2, 3 or 4": "2", "Path of the roster.yml": "/tmp/theirs/roster.yml"},
+     "init --inventory file:/tmp/theirs/roster.yml"),
+    ({"1, 2, 3 or 4": "3", "Git URL": "git@example.com:team/map.git"}, "git clone -q -- git@example.com:team/map.git"),
+    ({"1, 2, 3 or 4": "4"}, "init --inventory ssh-config"),
+])
+def test_install_offers_the_ways_to_start_an_inventory(tmp_path, replies, want):
+    out = install_answering(tmp_path, replies)
+    assert "How do you want to start your Inventory?" in out, out
+    assert want in out, out
+
+
+@posix_shell
+def test_install_can_use_an_imported_file_where_it_is(tmp_path):
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "/tmp/theirs/roster.yml",
+                                       "Copy /tmp/theirs/roster.yml": "n"})
+    assert "init --inventory file:" not in out and "using /tmp/theirs/roster.yml where it is" in out, out
+
+
+@posix_shell
+def test_install_offers_git_init_after_a_blank_one_default_no(tmp_path):
+    out = install_answering(tmp_path, {"Keep its history in git": "y"})
+    assert "Keep its history in git" in out and f"git -C {tmp_path / 'home' / 'infra'} init -q" in out, out
+
+
+@posix_shell
+def test_install_adds_a_new_one_as_a_named_inventory_beside_the_one_there(tmp_path):
+    home = tmp_path / "home"
+    (home / "infra").mkdir(parents=True)
+    (home / "infra" / "roster.yml").write_text("groups: {}\n")
+    out = install_answering(tmp_path, {"Keep using it": "n", "Name for the new Inventory": "lab",
+                                       "Folder for the new Inventory": str(home / "lab")})
+    assert f"roster -c {home / 'lab' / 'roster.yml'} init --inventory blank --name lab" in out, out
+    assert (home / "infra" / "roster.yml").read_text() == "groups: {}\n"
+
+
+@posix_shell
+def test_install_keeps_a_roster_yml_that_is_there(tmp_path):
+    home = tmp_path / "home"
+    (home / "infra").mkdir(parents=True)
+    (home / "infra" / "roster.yml").write_text("groups: {}\n")
+    r = install(tmp_path, "--inventory", "blank")
+    assert f"found {home / 'infra' / 'roster.yml'}" in r.stdout
+    assert "init --inventory" not in r.stdout and "kept" in r.stdout
+    assert (home / "infra" / "roster.yml").read_text() == "groups: {}\n"
 
 
 @posix_shell
@@ -248,6 +354,6 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes", "--infra-repo", "git@example.com:team/map.git"],
                        env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120,
                        start_new_session=True)
-    assert "git clone -q git@example.com:team/map.git" in r.stdout
+    assert "git clone -q -- git@example.com:team/map.git" in r.stdout
     assert "BatchMode=yes" in r.stdout                        # nobody to answer ssh under --yes
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key

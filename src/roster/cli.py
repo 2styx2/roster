@@ -36,11 +36,55 @@ from .winhost import clean
 # ---------------------------------------------------------------- commands
 
 def cmd_init(args):
+    """`roster init`: the commented example (the default), or a new Inventory the --inventory way (T212). A file
+    that's there already is kept; --name names the new one (`roster inv add`)."""
+    from . import newinventory
     path = Path(args.config or "roster.yml").expanduser()
-    if path.exists():
-        die(f"{path} already exists")
-    path.write_text(EXAMPLE_CONFIG)
-    say(f"wrote {path} - edit it, then run: roster setup")
+    how, value = ("blank", None) if args.blank else (None, None)
+    if args.inventory:
+        try:
+            how, value = newinventory.parse_how(args.inventory)
+        except ValueError as e:
+            build_parser().error(f"--inventory {e}")
+    try:
+        if how is None:
+            if path.exists():
+                newinventory.create(path, "blank")           # raises the kept-as-it-is Problem
+            path.write_text(EXAMPLE_CONFIG)
+            say(f"wrote {path} - edit it, then run: roster setup")
+        else:
+            made = newinventory.create(path, how, value)
+            say_made(made, value)
+    except Problem as e:
+        die(f"{e.message}" + (f" ({e.details})" if e.details else "") + (f" - {e.fix}" if e.fix else ""))
+    if args.name:
+        from . import inventories
+        inventories.add(args.name, path)
+        say(f"named {args.name}: {inventories.path_of(args.name)} (`roster --inv {args.name} setup` sets this Box up "
+            f"for it; `roster inv use {args.name}` makes it the active one)")
+    return 0
+
+
+def say_made(made, value):
+    from . import store
+    path = made.path
+    if made.how == "blank":
+        say(f"wrote {path}, a blank Inventory - add Hosts under hosts: (or `roster discover CIDR --write`), then "
+            "run: roster setup")
+    elif made.how == "file":
+        say(f"copied {value} to {path} - then run: roster setup")
+    elif made.how == "repo":
+        say(f"cloned {value} into {path.parent} - then run: roster setup")
+    elif made.hosts:
+        say(f"wrote {path} with {plural(len(made.hosts), 'Host')} from {value or '~/.ssh/config'} (your ssh config "
+            "is unchanged) - check them, then run: roster setup")
+    else:
+        say(f"no Host in {value or '~/.ssh/config'} to import (only wildcards or Match blocks), so {path} is a blank "
+            "Inventory - add Hosts under hosts:, then run: roster setup")
+    if made.skipped:
+        say(f"skipped      {', '.join(made.skipped)} (patterns and Match blocks aren't single Hosts)")
+    if store.at(path).kind == store.FILE and made.how != "repo":
+        say(f"optional     `git -C {path.parent} init` keeps its history; roster works the same without git")
 
 
 LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
@@ -325,7 +369,8 @@ def cmd_mesh(cfg, args):
         change = mesh.write_cut(cfg, args.target)
         say(f"cut {args.target}: confirmed on {', '.join(r['confirmed']) or 'no Host'}")
         if change.get("written"):
-            say(f"roster.yml   mesh: false for {args.target}, a Pending change (publish it so the cut stays)")
+            say(f"roster.yml   mesh: false for {args.target}, a Pending change (publish it so the cut stays)"
+                if change.get("kind") == "repo" else f"roster.yml   mesh: false for {args.target}, saved in roster.yml")
             boxsync.after_edit(cfg["path"])           # T153: this Box follows, as after serve's mesh.cut
         say(f"note: {change['note']}") if change.get("note") else None
         if change.get("error"):
@@ -1233,7 +1278,16 @@ def build_parser():
     only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
     as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
                "Machine-readable output in docs/cli-reference.md)"}
-    sub.add_parser("init", help="write an example roster.yml")
+    s = sub.add_parser("init", help="write an example roster.yml, or a new Inventory: blank, a copy, the team's repo, "
+                       "or Hosts from ~/.ssh/config")
+    how = s.add_mutually_exclusive_group()
+    how.add_argument("--blank", action="store_true", help="a short roster.yml with an empty group, instead of the "
+                     "commented example (same as --inventory blank)")
+    how.add_argument("--inventory", metavar="HOW", help="blank, file:PATH (a copy of that roster.yml, once it loads), "
+                     "repo:URL (a git clone of the team's repo into roster.yml's folder, which must be empty) or "
+                     "ssh-config[:PATH] (Hosts from ~/.ssh/config, or PATH: HostName, User, Port, IdentityFile)")
+    s.add_argument("--name", metavar="NAME", help="name the new Inventory too (`roster inv add NAME PATH`), e.g. "
+                   "beside one you keep")
     s = sub.add_parser("setup", help="one-time setup of this box")
     s.add_argument("--only", **only)
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")

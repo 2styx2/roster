@@ -5,10 +5,10 @@ Use this to give another machine (your laptop, a teammate's box, a jump host, a 
 You need three things:
 
 1. **roster itself**: this repository.
-2. **The team's `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It lives in [yourteam/infra](https://example.com/yourteam/infra).
+2. **An Inventory, `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It's either your team's, in its git repo ([yourteam/infra](https://example.com/yourteam/infra)), or a plain file of your own on this Box; roster works the same with both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and how to start your Inventory when its folder has none: a blank one (the default, so `--yes` alone makes one), a copy of a `roster.yml` you have, a clone of your team's repo, or the Hosts in `~/.ssh/config`. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` is `repo:URL`). A `roster.yml` already there is kept; it can add a new one beside it as a named Inventory instead. After a new one it offers `git init` too, never required. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -36,14 +36,23 @@ No git access on that box? Use `git archive --format=zip -o roster.zip HEAD` on 
 
 ## 3. Put the host list in place
 
-The team's map lives in the [infra repo](https://example.com/yourteam/infra):
+**The team's repo.** The team's map lives in the [infra repo](https://example.com/yourteam/infra):
 
 ```bash
-git clone git@example.com:yourteam/infra.git ~/infra
+git clone git@example.com:yourteam/infra.git ~/infra     # or: roster -c ~/infra/roster.yml init --inventory repo:URL
 cd ~/infra                 # roster reads ./roster.yml; run roster commands from here
 ```
 
-No git access? Copy `roster.yml` into `~/infra/` by hand instead. You'll then need to copy it again whenever it changes.
+No git access? Copy `roster.yml` into `~/infra/` by hand instead (`roster -c ~/infra/roster.yml init --inventory file:PATH` copies it once it loads). You'll then need to copy it again whenever it changes.
+
+**A plain file of your own.** No team repo, or your own machines? Start one:
+
+```bash
+roster -c ~/infra/roster.yml init --blank                  # a short, empty one to add Hosts to
+roster -c ~/infra/roster.yml init --inventory ssh-config   # or the Hosts already in ~/.ssh/config (it isn't changed)
+```
+
+A plain file needs no git: the app's edits, `roster discover --write` and `roster mesh cut` save straight to it, and there's nothing to publish. `git init` in its folder is optional, for history you commit yourself. A `roster.yml` that's already there is never replaced: make the new one in another folder with `--name NAME` to name it beside the first ([A new Inventory](cli-reference.md#a-new-inventory)).
 
 roster looks for its config in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml`. To run roster from any directory, name it (`roster inv add work ~/infra/roster.yml`, see step 9), or add this to `~/.bashrc` (and `~/.zshrc` if you use zsh):
 

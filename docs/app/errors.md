@@ -17,7 +17,7 @@ The # is a row's id, given in the order rows were added and cited by the code (`
 
 | # | What happened | Typical cause | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 1 | `roster.yml` doesn't load | Bad YAML or a missing field after a hand edit | Inventory | "roster.yml has an error at line N: …" | Open the file; show roster's message |
+| 1 | `roster.yml` doesn't load | Bad YAML or a missing field after a hand edit; or there's no `roster.yml` yet | Inventory | "roster.yml has an error at line N: …"; "no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, …)" | Open the file; show roster's message. None yet: `roster init --blank` makes one (or `--inventory file:PATH\|repo:URL\|ssh-config`, [A new Inventory](../cli-reference.md#a-new-inventory)) |
 | 2 | Host not in this Box's ssh config | `roster.yml` was edited but `roster sync` wasn't run | Box | "esxi-02 isn't in this Box's ssh config yet" | Button: run `roster sync` |
 | 3 | Host is `reviewed: false` | Came from `discover` | Inventory | "esxi-02 hasn't been reviewed" | Review it (ticket 11) |
 | 4 | No user set | Hand edit left the user out, or `CHANGE-ME` | Inventory | "No SSH user for esxi-02" | Edit the Host |
@@ -89,7 +89,7 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 38 | 70 | `roster.yml` isn't committed in a git repo, so it can't have Pending changes | `roster.yml`, Box | "/home/you/roster.yml isn't in a git repo, so it can't have Pending changes" | Keep it in the infra repo, or edit by hand |
+| 38 | 70 | `roster.yml` isn't committed in a git repo, so it can't have Pending changes. Since serve API 28 (T212) such a file is a plain file instead, whose edits save straight to it, so roster no longer says this for it: only a roster older than that does | `roster.yml`, Box | "/home/you/roster.yml isn't in a git repo, so it can't have Pending changes" | Upgrade roster; or keep it in the infra repo, or edit by hand |
 | 39 | 71 | The pull found uncommitted changes: Pending changes, or other files | Infra repo | "roster.yml has Pending changes, so roster won't pull over them" | Publish or discard them; button: Show Pending changes |
 | 40 | 72 | This Box's branch and its upstream both have new commits | Infra repo | "this box's infra repo and origin/main have diverged (1 local and 2 new commits there)" | Merge or rebase in a terminal (`git pull --rebase`) |
 | 41 | 73 | The fetch or the fast-forward failed: network, access, a file in the way | Network, infra repo | "couldn't fetch origin/main for the infra repo" | Check the network and access; git's words under Details |
@@ -246,7 +246,7 @@ Scanning a network from the app with the first-party [discover](../../plugins/di
 | 97 | none (the scan's `error`) | nmap failed: not allowed, a bad option, killed | This Box | "The scan of 10.0.0.0/24 failed: nmap failed: …" | See nmap's words; `roster discover` in a terminal shows the same |
 | 98 | 122 | `roster serve` restarted during a scan (its scans don't outlive it) | This Box | "The scan of 10.0.0.0/24 failed: no scan 'scan-1' here" | Scan again |
 | 99 | 123 | An address can't be added: the scan didn't find it, or it's in the Inventory or added already | The Inventory | "Nothing was added: 10.0.0.5: in the Inventory already" | Keep only the new ones |
-| 100 | 70, 74, 100 | Adding: `roster.yml` isn't in a git repo, the result wouldn't load, or the `group` setting names a group that's there | `roster.yml` / init.lua | "Nothing was added: … isn't in a git repo, so it can't have Pending changes" | As for any Pending change; name a new group in the `group` setting |
+| 100 | 70, 74, 100 | Adding: `roster.yml` isn't in a git repo (before serve API 28; since then a plain file is saved straight to), the result wouldn't load, or the `group` setting names a group that's there | `roster.yml` / init.lua | "Nothing was added: … isn't in a git repo, so it can't have Pending changes" | As for any Pending change; name a new group in the `group` setting |
 | 101 | -32601 | The Box's roster is older than serve API 18: it has no `discover.*` | This Box | "Not scanned: the roster on this Box is too old to scan from the app" | Update roster on the Box; `roster discover` works meanwhile |
 
 ## A Plugin's files
@@ -402,6 +402,17 @@ A Host with `os: windows` in `roster.yml` (T195, decision Q174): `roster setup`,
 | 219 | 159 | `roster run --sudo` on an `os: windows` Host: Windows has no sudo over ssh. Refused before the vault is asked; nothing ran | Inventory | "[159] dc-01 is a Windows Host (os: windows), which has no sudo over ssh: nothing ran. Log in as an account in Administrators …" | Log in as an account in Administrators (its ssh session is already elevated) and run it without `--sudo` |
 | 220 | 160 (a note) | An `os: windows` Host in a meshed group or a Link (or a Link's `via:`) is left out of the Mesh: its scripts are sh. Not an error: the rest of the Mesh goes ahead, and roster never logs in to it for the Mesh (`roster mesh --dry-run`, `mesh status`, `check`; `excluded` in `mesh.plan` and `mesh.status`) | Inventory | "left out: dc-01 ([160] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's left out …)" | Nothing; take it out of the group's Mesh (`mesh: false`) or the Link to stop the note |
 | 221 | 161 | `roster run` on an `os: windows` Host: the command doesn't parse as PowerShell (cmd.exe's syntax, `&&` on Windows PowerShell 5.1, an unclosed quote). Nothing ran; PowerShell's own words come first on stderr | Inventory | "[161] the command isn't PowerShell, so nothing ran on dc-01: roster run runs PowerShell on a Windows Host (for cmd.exe's syntax: cmd /c '...')" | Write it as PowerShell, or wrap cmd.exe's syntax in `cmd /c '…'` |
+
+## A new Inventory
+
+`roster init --inventory HOW` (and `install.sh`, which runs it) gets a new `roster.yml`: a blank one, a copy of yours, a clone of the team's repo, or the Hosts in an ssh config (T212, decision Q182). See [A new Inventory](../cli-reference.md#a-new-inventory).
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 230 | 170 | A `roster.yml` is there already where the new one would go: roster keeps it as it is and writes nothing | Box | "roster.yml already exists, so roster kept it as it is" | Use it; or make the new one in another folder and name it: `roster -c OTHER-FOLDER/roster.yml init --inventory … --name NAME` |
+| 231 | 171 | `file:PATH`: no file there, or it doesn't load (nothing written); `repo:URL`: the clone has no `roster.yml` at its top (the clone is kept, and said where) | `roster.yml` / repo | "/tmp/theirs.yml doesn't load, so nothing was written: …"; "the clone has no roster.yml at its top: it's in /home/you/infra" | Fix that file first (`roster -c PATH check --box` says why); point roster at the clone's roster.yml (`-c`), or remove the clone |
+| 232 | 172 | `repo:URL`: git couldn't clone it (a bad URL, no access, the network), git isn't installed, or the folder for it isn't empty. Nothing written | Box / network / repo | "git couldn't clone git@example.com:team/infra.git"; "/home/you/infra isn't empty, so roster won't clone into it" | Check the URL and your access (`git clone URL` shows the same); pick an empty folder; or copy `roster.yml` over and use `file:PATH` |
+| 233 | 173 | `ssh-config[:PATH]`: the ssh config can't be read (not there, no permission). Nothing written; the ssh config is only ever read | Box | "can't read ~/.ssh/config: No such file or directory" | Give the path of your ssh config: `--inventory ssh-config:PATH` |
 
 ## See also
 

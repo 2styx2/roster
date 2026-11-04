@@ -182,8 +182,8 @@ def test_a_text_edit_needs_no_verify_and_keeps_every_other_byte(app, box):
 def test_the_diff_shows_exactly_the_change(app, box):
     d = result(app.call("changes.diff"))
     last = d.pop("last_commit")
-    assert d == {"path": str(box.yml), "repo": str(box), "diff": "", "hosts": [], "groups": [], "count": 0,
-                 "message": ""}
+    assert d == {"path": str(box.yml), "repo": str(box), "kind": "repo", "diff": "", "hosts": [], "groups": [],
+                 "count": 0, "message": ""}
     assert last == {"commit": git(box, "rev-parse", "HEAD"), "subject": "inventory", "upstream": "origin/main",
                     "pushed": True}
     result(app.call("host.update", {"host": "esx", "changes": {"title": "ESXi 8"}}))
@@ -231,14 +231,44 @@ def test_an_unknown_host(app):
     assert app.call("host.update", {"host": "nope", "changes": {"title": "x"}})["error"]["code"] == 2
 
 
-def test_an_inventory_outside_git_has_no_pending_changes(serve, write_config):
+def test_a_plain_file_saves_every_edit_in_place_with_no_git_on_path(serve, write_config, isolated, monkeypatch):
+    """T212: roster.yml outside any repo, and no git on PATH at all: an edit saves straight to the file, and the
+    Pending changes calls answer that there's nothing pending instead of failing."""
+    path = write_config(INVENTORY.format(port=22))
+    before = path.read_text()
+    empty = isolated["home"].parent / "no-git"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    s = serve("-c", str(path))
+    info = result(s.call("inventory.info"))
+    assert info["store"]["kind"] == "file" and "git isn't installed" in info["store"]["note"]
+    assert result(s.call("inventory.pull"))["updated"] is False
+    r = result(s.call("host.update", {"host": "esx", "changes": {"title": "ESXi 8"}}))
+    assert r["changed"] and r["host"]["title"] == "ESXi 8" and r["sync"]["ok"]
+    assert path.read_text() == before.replace("title: ESX\n", "title: ESXi 8\n")
+    assert r["backup"] == str(path.with_name("roster.yml.bak")) and Path(r["backup"]).read_text() == before
+    d = result(s.call("changes.diff"))
+    assert d["kind"] == "file" and d["count"] == 0 and d["diff"] == ""
+    assert result(s.call("changes.discard")) == {"discarded": False, "backup": None}
+    err = s.call("changes.publish")["error"]
+    assert err["code"] == 90 and "plain file" in err["message"]
+    assert "title: ESXi 8\n" in path.read_text()
+
+
+def test_a_plain_file_outside_any_repo_takes_group_edits_too(serve, write_config):
     path = write_config(INVENTORY.format(port=22))
     s = serve("-c", str(path))
-    for method, params in (("host.update", {"host": "esx", "changes": {"title": "x"}}), ("changes.diff", {}),
-                           ("changes.discard", {}), ("inventory.pull", {})):
-        err = s.call(method, params)["error"]
-        assert err["code"] == 70 and "isn't in a git repo" in err["message"], method
-    assert "title: ESX\n" in path.read_text()
+    assert result(s.call("inventory.info"))["store"]["kind"] == "file"
+    assert result(s.call("group.new", {"name": "spare"}))["group"] == "spare"
+    assert result(s.call("host.remove", {"host": "other"}))["removed"]
+    text = path.read_text()
+    assert "spare:" in text and "other:" not in text
+
+
+def test_a_repo_says_so_in_inventory_info(app, box):
+    st = result(app.call("inventory.info"))["store"]
+    assert st == {"kind": "repo", "note": st["note"], "repo": str(box)} and "Pending changes" in st["note"]
+    assert result(app.call("changes.diff"))["kind"] == "repo"
 
 
 # ---------------------------------------------------------------- verified changes (decision Q43)

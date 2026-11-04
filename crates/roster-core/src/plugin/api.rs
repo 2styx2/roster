@@ -4286,6 +4286,11 @@ pub const TYPES: &[Type] = &[
             f("box", "string", "This Box's name."),
             f("host_count", "integer", "How many Hosts."),
             f("providers", "string[]", "The password providers roster has."),
+            o(
+                "store",
+                "InventoryStore",
+                "How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before).",
+            ),
             f("roster_version", "string", "roster's version."),
             f(
                 "api_version",
@@ -4388,13 +4393,34 @@ pub const TYPES: &[Type] = &[
         open: false,
     },
     Type {
+        name: "InventoryStore",
+        summary: "How `roster.yml` is kept: a plain file or a team repo (serve API 28)",
+        doc: "Decided per file, each time: `repo` when `roster.yml` is committed in a git repo with a remote (edits are Pending changes until Publish), `file` otherwise (every edit is saved straight to it, and there's nothing to publish).",
+        alias: "",
+        fields: &[
+            f("kind", "\"repo\"|\"file\"", "A team repo, or a plain file."),
+            f(
+                "note",
+                "string",
+                "Which, in a sentence, as `roster check --box` says it.",
+            ),
+            o("repo", "string", "The git work tree it's in; `nil` outside one."),
+        ],
+        open: false,
+    },
+    Type {
         name: "ChangesDiff",
         summary: "`changes.diff`'s result: the Pending changes",
         doc: "",
         alias: "",
         fields: &[
             f("path", "string", "`roster.yml`'s path."),
-            f("repo", "string", "The infra repo's top folder."),
+            o("repo", "string", "The infra repo's top folder; `nil` for a plain file."),
+            o(
+                "kind",
+                "\"repo\"|\"file\"",
+                "`file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before).",
+            ),
             f(
                 "diff",
                 "string",
@@ -4623,12 +4649,17 @@ pub const TYPES: &[Type] = &[
             o(
                 "backup",
                 "string",
-                "The copy of `roster.yml` from before; `nil` when it isn't in a git repo.",
+                "The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git).",
+            ),
+            o(
+                "kind",
+                "\"repo\"|\"file\"",
+                "A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before).",
             ),
             o(
                 "note",
                 "string",
-                "Why nothing was written, or that it went straight to a file outside git.",
+                "Why nothing was written (before serve API 28, also that it went straight to a file outside git).",
             ),
             o(
                 "error",

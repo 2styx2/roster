@@ -6,6 +6,25 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### New
+
+**CLI**
+
+- **Your Inventory can be a plain `roster.yml` or a team's git repo, both first-class** (#401): roster decides per file, each time it writes. Committed in a git repo with a remote, edits are Pending changes as before. Anything else (outside a repo, no git on the Box, not committed, a repo with no remote) is a plain file: the app's edits, `roster discover --write` and `roster mesh cut` save straight to it, with `roster.yml.bak` beside it, and nothing asks for git or a Publish. `roster check --box` says which. See [A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo).
+- **`roster init` gets you an Inventory four ways** (#401): `--blank` (a short, empty `roster.yml` that loads), `--inventory file:PATH` (a copy, once it loads), `repo:URL` (a clone of the team's repo) or `ssh-config[:PATH]` (the Hosts in `~/.ssh/config`: HostName, User, Port and IdentityFile only, wildcards and `Match` blocks skipped, the file never changed). `roster init` alone still writes the commented example. A `roster.yml` already there is kept; `--name NAME` names a new one beside it. See [A new Inventory](cli-reference.md#a-new-inventory).
+- **`install.sh` starts you with an Inventory** (#401): with none in the folder it offers the same four ways, a blank one by default (so `--yes` alone makes one, where it used to leave you with none), then `git init` as an option. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` still works). One already there is kept, or a new one is added beside it as a named Inventory.
+
+### Changed
+
+**CLI**
+
+- **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
+- **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
+
+**`roster serve` API 28**
+
+- `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes.
+
 ### Security
 
 **CLI**
