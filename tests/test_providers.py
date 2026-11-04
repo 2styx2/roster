@@ -242,7 +242,8 @@ def test_serve_moves_an_inherited_onepassword_sign_in_out_and_lock_forgets_it(is
     monkeypatch.setenv("OP_SESSION_test", "tok")
     rpc.only_vault_unlock_unlocks()
     assert "OP_SESSION_test" not in os.environ
-    assert providers.PROVIDER_STATE["op"]["env"] == {"OP_SESSION_test": "tok"}
+    env = providers.PROVIDER_STATE["op"]["env"]                       # Windows upper-cases env names
+    assert {k.upper(): v for k, v in env.items()} == {"OP_SESSION_TEST": "tok"}
     providers.lock("op")
     assert "op" not in providers.PROVIDER_STATE
 
