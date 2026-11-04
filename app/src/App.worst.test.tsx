@@ -191,7 +191,8 @@ describe("one, and none", () => {
     expect(document.querySelector(".statusbar")).toHaveTextContent("0 Hosts");
     expect(screen.getByText("No Hosts yet. Add them in roster.yml.")).toBeInTheDocument();
     const hint = document.querySelector(".sb-empty .keys-with-word");
-    expect(hint).toHaveTextContent(/^press/);
+    // "Drag a Host here, or ␣ a.": the word before the keys stays on their line.
+    expect(hint).toHaveTextContent(/^or/);
     expect(hint?.querySelector(".keycap-leader")).not.toBeNull();
     await user.keyboard(`${LEADER}f`);
     expect(screen.getByText(/The Inventory has no Hosts yet/)).toBeInTheDocument();

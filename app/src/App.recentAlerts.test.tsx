@@ -308,7 +308,14 @@ describe("trust", () => {
     const r = await ready();
     const p = await prompt();
     const regions = () => screen.getAllByRole("group").map((e) => e.getAttribute("aria-label")).filter((n) => !n?.startsWith("Session "));
-    const bar = () => document.querySelector(".statusbar")?.textContent;
+    // The status bar without what an open Session adds (its name, and the find hint the idle
+    // screen leaves to its empty state).
+    const bar = () => {
+      const copy = document.querySelector(".statusbar")?.cloneNode(true) as HTMLElement | undefined;
+      copy?.querySelectorAll(".session-seg").forEach((e) => e.remove());
+      copy?.querySelectorAll(".hint").forEach((e) => e.textContent?.trim().endsWith("find") && e.remove());
+      return copy?.textContent;
+    };
     const before = { regions: regions(), bar: bar() };
     await r.user.click(within(p).getByRole("button", { name: "Install" }));
     await connect(r);
