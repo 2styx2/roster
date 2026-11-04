@@ -7,9 +7,18 @@ import type { HostKeyScan } from "../backend/types";
 import type { ErrorRow } from "../errors/catalog";
 import { ErrorPanel, type ProblemActions } from "../errors/ErrorPanel";
 import type { CommandLine } from "../keymap";
-import type { TerminalEnv, TerminalViewComponent } from "../terminal/TerminalView";
+import type {
+  TerminalEnv,
+  TerminalViewComponent,
+} from "../terminal/TerminalView";
 import { Keys } from "../ui/Keys";
-import { tabFacts, type PasswordPrompt, type Tab, type Tabs, type TabsSnapshot } from "./tabs";
+import {
+  tabFacts,
+  type PasswordPrompt,
+  type Tab,
+  type Tabs,
+  type TabsSnapshot,
+} from "./tabs";
 import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
@@ -20,11 +29,18 @@ import { useForgetOnLock } from "../lock/forgetOnLock";
  * it has (or it ended, or was refused). For a Host whose key roster hasn't seen (ticket 36):
  * `checking-key` while its key is fetched, `asking` while the user decides, `trusting` while
  * roster records it. */
-export type ConnectPhase = "starting" | "logging-in" | "checking-key" | "asking" | "trusting" | "password";
+export type ConnectPhase =
+  | "starting"
+  | "logging-in"
+  | "checking-key"
+  | "asking"
+  | "trusting"
+  | "password";
 
 export function connectPhase(tab: Tab): ConnectPhase | null {
   const s = tab.status;
-  if (s.state === "asking") return !s.key ? "checking-key" : s.trusting ? "trusting" : "asking";
+  if (s.state === "asking")
+    return !s.key ? "checking-key" : s.trusting ? "trusting" : "asking";
   if (s.state === "password") return "password";
   if (s.state === "connecting") return "starting";
   if (tab.status.state === "open" && !tab.shell) return "logging-in";
@@ -53,7 +69,9 @@ export function statusText(tab: Tab): string {
       return "failed";
     case "ended":
       if (s.exit.closed) return "closed";
-      return s.exit.code === null ? "ended (signal)" : `ended (code ${s.exit.code})`;
+      return s.exit.code === null
+        ? "ended (signal)"
+        : `ended (code ${s.exit.code})`;
   }
 }
 
@@ -86,7 +104,10 @@ export function TabStrip({ snapshot, run }: TabStripProps) {
         const selected = tab.id === snapshot.active;
         const status = statusText(tab);
         return (
-          <div key={tab.id} className={`tab${selected ? " selected" : ""} ${tab.status.state}`}>
+          <div
+            key={tab.id}
+            className={`tab${selected ? " selected" : ""} ${tab.status.state}`}
+          >
             <button
               type="button"
               role="tab"
@@ -98,8 +119,16 @@ export function TabStrip({ snapshot, run }: TabStripProps) {
             >
               <StateDot tab={tab} />
               <span className="tab-host">
-                <span className="tab-name">{tab.label === tab.host ? tab.label : tab.label.slice(0, tab.host.length)}</span>
-                {tab.label !== tab.host && <span className="tab-tail">{tab.label.slice(tab.host.length)}</span>}
+                <span className="tab-name">
+                  {tab.label === tab.host
+                    ? tab.label
+                    : tab.label.slice(0, tab.host.length)}
+                </span>
+                {tab.label !== tab.host && (
+                  <span className="tab-tail">
+                    {tab.label.slice(tab.host.length)}
+                  </span>
+                )}
               </span>
               {tab.hop && <HopCrumb hop={tab.hop} spoken />}
               {status && <span className="tab-status"> {status}</span>}
@@ -201,19 +230,30 @@ export function ConnectCard({
   const keysNote = useId();
   // Whether to save the password once it logs in: a choice, not a secret, so plain state.
   const [save, setSave] = useState(false);
-  const question = (phase === "asking" || phase === "trusting") && hostKey !== null && answers !== undefined;
-  const asksPassword = phase === "password" && prompt !== null && answers?.connect !== undefined;
+  const question =
+    (phase === "asking" || phase === "trusting") &&
+    hostKey !== null &&
+    answers !== undefined;
+  const asksPassword =
+    phase === "password" && prompt !== null && answers?.connect !== undefined;
   const asking = question || asksPassword;
   // Keyboard first: the question takes focus (after the terminal, which the active pane focuses
   // first), so Enter trusts and Esc cancels. Once answered, focus goes back to the terminal.
   const asked = useRef(false);
   useEffect(() => {
-    if (asking && active) (passwordField.current ?? trustButton.current)?.focus();
+    if (asking && active)
+      (passwordField.current ?? trustButton.current)?.focus();
     if (asking) asked.current = true;
     else if (asked.current) {
       asked.current = false;
-      if (active && (document.activeElement === document.body || document.activeElement === null)) {
-        card.current?.parentElement?.querySelector<HTMLElement>("textarea, input")?.focus();
+      if (
+        active &&
+        (document.activeElement === document.body ||
+          document.activeElement === null)
+      ) {
+        card.current?.parentElement
+          ?.querySelector<HTMLElement>("textarea, input")
+          ?.focus();
       }
     }
   }, [asking, active]);
@@ -231,7 +271,11 @@ export function ConnectCard({
   // way out. While roster waits for an answer from you, there's nothing to time.
   const [startedAt] = useState(() => Date.now());
   const [now, setNow] = useState(startedAt);
-  const waiting = phase === "starting" || phase === "logging-in" || phase === "checking-key" || phase === "trusting";
+  const waiting =
+    phase === "starting" ||
+    phase === "logging-in" ||
+    phase === "checking-key" ||
+    phase === "trusting";
   useEffect(() => {
     if (!waiting) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -242,7 +286,13 @@ export function ConnectCard({
   if (words === null) return null;
   const title = `${again ? "Reconnecting" : "Connecting"} to ${host}`;
   // A Quick Connect's name already holds its address (user@address), so the title doesn't repeat it.
-  const where = quick ? null : question ? `${hostKey.address}:${hostKey.port}` : asksPassword ? `${prompt.address}:${prompt.port}` : address;
+  const where = quick
+    ? null
+    : question
+      ? `${hostKey.address}:${hostKey.port}`
+      : asksPassword
+        ? `${prompt.address}:${prompt.port}`
+        : address;
   const asksQuick = question && quick !== null && answers.connect !== undefined;
   const connectQuick = () => {
     const field = passwordField.current;
@@ -296,24 +346,62 @@ export function ConnectCard({
         height="23"
         aria-hidden="true"
       >
-        <rect className="connect-box" x="3.5" y="3.25" width="5.5" height="5.5" rx="1.1" />
+        <rect
+          className="connect-box"
+          x="3.5"
+          y="3.25"
+          width="5.5"
+          height="5.5"
+          rx="1.1"
+        />
         <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
-        <circle className="connect-host" cx="65" cy="6" r="4.25" pathLength={100} />
+        <circle
+          className="connect-host"
+          cx="65"
+          cy="6"
+          r="4.25"
+          pathLength={100}
+        />
         <circle className="connect-host-closed" cx="65" cy="6" r="4.25" />
-        {fills && <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />}
+        {fills && (
+          <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />
+        )}
       </svg>
       <p className="connect-title">
-        <span className="muted">{phase === null ? "Logged in to " : again ? "Reconnecting to " : "Connecting to "}</span>
-        <span className="connect-name">{host}</span>
-        {where && <span className="connect-address"> {where}</span>}
+        {/* A question is titled as one: it asks, it isn't connecting yet (round 8). */}
+        {asking && !asksPassword ? (
+          <>
+            <span className="muted">Trust </span>
+            <span className="connect-name">{host}</span>
+            <span className="muted">'s host key?</span>
+            {where && (
+              <span className="connect-address connect-address-line">
+                {where}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="muted">
+              {phase === null
+                ? "Logged in to "
+                : again
+                  ? "Reconnecting to "
+                  : "Connecting to "}
+            </span>
+            <span className="connect-name">{host}</span>
+            {where && <span className="connect-address"> {where}</span>}
+          </>
+        )}
       </p>
       {asksPassword ? (
         <>
           <p className="key-says">
-            <span className="connect-name">{host}</span>'s Login is <span className="connect-name">auth: prompt</span>: roster has no saved
-            password for it.
+            <span className="connect-name">{host}</span>'s Login is{" "}
+            <span className="connect-name">auth: prompt</span>: roster has no
+            saved password for it.
           </p>
           <form
             className="quick-login"
@@ -326,11 +414,20 @@ export function ConnectCard({
               <span>
                 Password for <span className="connect-name">{prompt.user}</span>
               </span>
-              <input ref={passwordField} type="password" autoComplete="off" spellCheck={false} />
+              <input
+                ref={passwordField}
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+              />
             </label>
             {canSave && (
               <label className="add-check quick-save">
-                <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={save}
+                  onChange={(e) => setSave(e.target.checked)}
+                />
                 Save to vault once it logs in
               </label>
             )}
@@ -350,14 +447,20 @@ export function ConnectCard({
       ) : asksQuick ? (
         <>
           <p className="key-says">
-            {hostKey.recorded === "match" ? "This is the key roster recorded for " : "roster hasn't seen a key at "}
+            {hostKey.recorded === "match"
+              ? "This is the key roster recorded for "
+              : "roster hasn't seen a key at "}
             <span className="connect-address">{endpoint(quick)}</span>
             {hostKey.recorded === "match" ? "." : " before."}
           </p>
           <p className="key-print">
-            <span className="key-type">{hostKey.key_type}</span> <span className="key-fingerprint">{hostKey.fingerprint}</span>
+            <span className="key-type">{hostKey.key_type}</span>{" "}
+            <span className="key-fingerprint">{hostKey.fingerprint}</span>
           </p>
-          <p className="muted key-advice">Compare it with the machine's console or its owner before you trust it.</p>
+          <p className="muted key-advice">
+            Compare it with the machine's console or its owner before you trust
+            it.
+          </p>
           <form
             className="quick-login"
             onSubmit={(e) => {
@@ -369,14 +472,24 @@ export function ConnectCard({
               <span>
                 Password for <span className="connect-name">{quick.user}</span>
               </span>
-              <input ref={passwordField} type="password" autoComplete="off" spellCheck={false} aria-describedby={keysNote} />
+              <input
+                ref={passwordField}
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby={keysNote}
+              />
             </label>
             <p className="muted quick-keys" id={keysNote}>
               Leave it empty to log in with this Box's keys.
             </p>
             {canSave && (
               <label className="add-check quick-save">
-                <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={save}
+                  onChange={(e) => setSave(e.target.checked)}
+                />
                 Save to vault once it logs in
               </label>
             )}
@@ -400,11 +513,19 @@ export function ConnectCard({
         <>
           <p className="key-says">roster hasn't seen this Host's key before.</p>
           <p className="key-print">
-            <span className="key-type">{hostKey.key_type}</span> <span className="key-fingerprint">{hostKey.fingerprint}</span>
+            <span className="key-type">{hostKey.key_type}</span>{" "}
+            <span className="key-fingerprint">{hostKey.fingerprint}</span>
           </p>
-          <p className="muted key-advice">Compare it with the Host's console or its owner before you trust it.</p>
+          <p className="muted key-advice">
+            Compare it with the Host's console or its owner before you trust it.
+          </p>
           <div className="key-actions">
-            <button type="button" className="primary" ref={trustButton} onClick={() => answers.trust()}>
+            <button
+              type="button"
+              className="primary"
+              ref={trustButton}
+              onClick={() => answers.trust()}
+            >
               Trust and connect
               <span className="btn-keys" aria-hidden="true">
                 <Keys keys="Enter" />
@@ -436,9 +557,12 @@ export function ConnectCard({
           )}
         </p>
       )}
-      {/* The way out has its line from the start (shown from 8 s), so nothing moves when it does. */}
+      {/* The way out has its line from the start (shown from 3 s, with the timer), so nothing moves when it does. */}
       {!asking && closeKeys && (
-        <p className={`connect-stop key-hint${waiting && seconds >= 8 ? "" : " later"}`} aria-hidden={!(waiting && seconds >= 8)}>
+        <p
+          className={`connect-stop key-hint${waiting && seconds >= 3 ? "" : " later"}`}
+          aria-hidden={!(waiting && seconds >= 3)}
+        >
           <Keys keys={closeKeys} leader={leader} /> stops it
         </p>
       )}
@@ -463,16 +587,25 @@ function SaveOffer({
   dismiss(): void;
 }) {
   return (
-    <div className="session-note save-offer" role="status" aria-label="Save to vault">
+    <div
+      className="session-note save-offer"
+      role="status"
+      aria-label="Save to vault"
+    >
       <span>
-        <span className="connect-name">{host}</span> logged in with the password you typed.
+        <span className="connect-name">{host}</span> logged in with the password
+        you typed.
       </span>
       {saveKeys && (
         <span className="muted key-hint">
           <Keys keys={saveKeys} leader={leader} />
         </span>
       )}
-      <button type="button" className="reconnect primary" onClick={() => run("save")}>
+      <button
+        type="button"
+        className="reconnect primary"
+        onClick={() => run("save")}
+      >
         Save…
       </button>
       <button type="button" className="reconnect" onClick={dismiss}>
@@ -505,7 +638,11 @@ function FillOffer({
   const whose = prompt.kind === "ssh" ? "ssh's" : "sudo's";
   if (prompt.elsewhere !== null) {
     return (
-      <div className="session-note fill-offer elsewhere" role="status" aria-label="Password prompt">
+      <div
+        className="session-note fill-offer elsewhere"
+        role="status"
+        aria-label="Password prompt"
+      >
         <span>
           {whose} password prompt: {prompt.elsewhere}. roster won't fill it.
         </span>
@@ -514,13 +651,21 @@ function FillOffer({
   }
   const to = prompt.hop?.host ?? host;
   return (
-    <div className="session-note save-offer fill-offer" role="status" aria-label="Password prompt">
+    <div
+      className="session-note save-offer fill-offer"
+      role="status"
+      aria-label="Password prompt"
+    >
       <span>
-        {whose} password prompt · fill <span className="connect-name">{to}</span>'s from the vault
+        {whose} password prompt · fill{" "}
+        <span className="connect-name">{to}</span>'s from the vault
         {!prompt.marked && (
           <>
             {" "}
-            <span className="muted">(roster can't tell whether you're still on {host}: without the shell's marks a nested shell can't be ruled out)</span>
+            <span className="muted">
+              (roster can't tell whether you're still on {host}: without the
+              shell's marks a nested shell can't be ruled out)
+            </span>
           </>
         )}
       </span>
@@ -529,7 +674,12 @@ function FillOffer({
           <Keys keys={fillKeys} leader={leader} />
         </span>
       )}
-      <button type="button" className="reconnect primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("fill")}>
+      <button
+        type="button"
+        className="reconnect primary"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => run("fill")}
+      >
         Fill
       </button>
     </div>
@@ -547,7 +697,15 @@ function endpoint({ address, port }: QuickTarget): string {
 const FADE_MS = 240;
 
 export interface SessionPanesProps {
-  tabs: Pick<Tabs, "wiring" | "trustKey" | "cancelKey" | "connectQuick" | "connectPrompted" | "dismissSave">;
+  tabs: Pick<
+    Tabs,
+    | "wiring"
+    | "trustKey"
+    | "cancelKey"
+    | "connectQuick"
+    | "connectPrompted"
+    | "dismissSave"
+  >;
   snapshot: TabsSnapshot;
   leader: string;
   terminalView: TerminalViewComponent;
@@ -603,10 +761,21 @@ export function SessionPanes({
         const s = tab.status;
         const wiring = tabs.wiring(tab.id);
         return (
-          <div key={tab.id} className="pane" role="group" aria-label={`Session ${tab.label}`} hidden={!active}>
+          <div
+            key={tab.id}
+            className="pane"
+            role="group"
+            aria-label={`Session ${tab.label}`}
+            hidden={!active}
+          >
             {s.state === "failed" ? (
               <div className="session-error">
-                <ErrorPanel title="Couldn't open a Session" problem={s.problem} rows={errorRows} actions={actions} />
+                <ErrorPanel
+                  title="Couldn't open a Session"
+                  problem={s.problem}
+                  rows={errorRows}
+                  actions={actions}
+                />
               </div>
             ) : (
               wiring && (
@@ -615,7 +784,11 @@ export function SessionPanes({
                   leader={leader}
                   {...wiring}
                   env={terminalEnv}
-                  reveal={reveal?.session === tab.id ? { text: reveal.text, nonce: reveal.nonce } : null}
+                  reveal={
+                    reveal?.session === tab.id
+                      ? { text: reveal.text, nonce: reveal.nonce }
+                      : null
+                  }
                 />
               )
             )}
@@ -631,7 +804,9 @@ export function SessionPanes({
                   trust: () => tabs.trustKey(tab.id),
                   cancel: () => tabs.cancelKey(tab.id),
                   connect: (password, save) =>
-                    tab.quick ? tabs.connectQuick(tab.id, password, save) : tabs.connectPrompted(tab.id, password, save),
+                    tab.quick
+                      ? tabs.connectQuick(tab.id, password, save)
+                      : tabs.connectPrompted(tab.id, password, save),
                 }}
                 active={active}
                 quick={tab.quick?.to ?? null}
@@ -642,19 +817,44 @@ export function SessionPanes({
                 fills={tab.auth !== "password"}
               />
             )}
-            {tab.save?.loggedIn && tab.save.saved === null && s.state === "open" && (
-              <SaveOffer host={tab.host} saveKeys={saveKeys} leader={leader} run={run} dismiss={() => tabs.dismissSave(tab.id)} />
-            )}
+            {tab.save?.loggedIn &&
+              tab.save.saved === null &&
+              s.state === "open" && (
+                <SaveOffer
+                  host={tab.host}
+                  saveKeys={saveKeys}
+                  leader={leader}
+                  run={run}
+                  dismiss={() => tabs.dismissSave(tab.id)}
+                />
+              )}
             {canFill && tab.prompt && !tab.quick && s.state === "open" && (
-              <FillOffer host={tab.host} prompt={tab.prompt} fillKeys={fillKeys} leader={leader} run={run} />
+              <FillOffer
+                host={tab.host}
+                prompt={tab.prompt}
+                fillKeys={fillKeys}
+                leader={leader}
+                run={run}
+              />
             )}
             {/* Where a nested ssh took the Session (ticket 120), said once when it changes. */}
-            <span className="visually-hidden" role="status" aria-label="Where this Session is">
-              {tab.hop ? `Now on ${tab.hop.to}${tab.hop.known ? "" : ", not a Host roster can resolve"}` : ""}
+            <span
+              className="visually-hidden"
+              role="status"
+              aria-label="Where this Session is"
+            >
+              {tab.hop
+                ? `Now on ${tab.hop.to}${tab.hop.known ? "" : ", not a Host roster can resolve"}`
+                : ""}
             </span>
             {s.state === "ended" && s.problem && (
               <div className="session-error overlay">
-                <ErrorPanel title="Session ended" problem={s.problem} rows={errorRows} actions={actions} />
+                <ErrorPanel
+                  title="Session ended"
+                  problem={s.problem}
+                  rows={errorRows}
+                  actions={actions}
+                />
               </div>
             )}
             {s.state === "ended" && !s.problem && (
@@ -666,7 +866,11 @@ export function SessionPanes({
                     · <Keys keys={reconnectKeys} leader={leader} /> or
                   </span>
                 )}{" "}
-                <button type="button" className="reconnect" onClick={() => run("reconnect")}>
+                <button
+                  type="button"
+                  className="reconnect"
+                  onClick={() => run("reconnect")}
+                >
                   Reconnect
                 </button>
               </div>

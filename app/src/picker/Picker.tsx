@@ -20,7 +20,7 @@ import {
   type PickerAction,
 } from "../keymap";
 import { Announce } from "../ui/Announce";
-import { addressCut, countOf, formatCount } from "../ui/format";
+import { addressCut, countOf, formatCount, middleCut } from "../ui/format";
 import { Keys } from "../ui/Keys";
 import { prefixFill } from "../ui/completion";
 import { searchHosts } from "./match";
@@ -34,6 +34,8 @@ import { StateDot, type Light } from "../ui/StateDot";
 
 /** An address column's most characters; a longer address (IPv6) drops groups from its middle. */
 const IP_CHARS = 22;
+/** A group column's most characters; a longer group is cut in its middle. */
+const GROUP_CHARS = 18;
 
 /** An i in a ring: a Host's details (ticket 18). */
 export const InfoGlyph = () => (
@@ -411,7 +413,8 @@ export function Picker({
                   : marked(host.ip, query)}
               </span>
               <span className="host-group" title={host.group}>
-                {host.group}
+                {/* Groups often share a start ("fieldwork-east-…"): cut in the middle, they stay apart. */}
+                {middleCut(host.group, GROUP_CHARS)}
               </span>
               <span className="host-type" title={host.type}>
                 {host.type}
@@ -453,7 +456,9 @@ export function Picker({
             <span />
             <span />
             <span className="host-ip">{widest.ip}</span>
-            <span className="host-group">{widest.group}</span>
+            <span className="host-group">
+              {middleCut(widest.group, GROUP_CHARS)}
+            </span>
             <span className="host-type">{widest.type}</span>
             {widest.badge && <span className="badge">unreviewed</span>}
           </li>
@@ -473,9 +478,11 @@ export function Picker({
             {query.trim() === "" && hosts.hosts.length === 0
               ? "The Inventory has no Hosts yet. Add them to roster.yml and they show up here."
               : `No Hosts match “${query}”.`}
-            {onQuick && query.trim() !== "" && (
+            {query.trim() !== "" && (
               <span className="picker-empty-next">
-                To reach a box that isn't in the Inventory, type user@address.
+                {onQuick
+                  ? "To reach a box that isn't in the Inventory, type user@address."
+                  : "Names, addresses, groups and types all match; Backspace widens the search."}
               </span>
             )}
           </p>

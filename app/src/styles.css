@@ -123,7 +123,8 @@ input, textarea {
   transition: border-color var(--dur-fade) ease, box-shadow var(--dur-fade) ease;
 }
 input::placeholder, textarea::placeholder { color: var(--muted); }
-input:focus-visible, textarea:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Focus is the border in the accent, no glow (taste.md: no glows). */
+input:focus-visible, textarea:focus-visible { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 code { font-family: var(--font-mono); font-size: 0.95em; }
 
@@ -280,7 +281,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .recent-ip { color: var(--muted); font: 500 var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; }
 /* The digit that opens the row (Startify's numbers). */
 .recent-key { color: var(--muted); font: 500 var(--text-xs) var(--font-mono); text-align: right; }
-.empty-path { max-width: min(56ch, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
+.empty-path { max-width: min(56ch, calc(100% - 32px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
 .empty-path code { direction: ltr; unicode-bidi: isolate; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
 
@@ -291,7 +292,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .statusbar > * { flex: none; }
 .statusbar .backend { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+/* The link to roster serve: muted while it's fine (the accent means a live Session, Q185). */
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
 /* Long values give way in order: the path first (it only gets the room left over), then the
    hints, then the Box's name. The Backend, the Host count and the mode never do. Each cut value
    has its whole text in a tooltip. */
@@ -404,6 +406,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* Sessions' count sits by its title: the right-hand column there holds the rows' numbers (Q196). */
+.sb-section[data-section="sessions"] .sb-count { margin-left: 4px; }
 /* With no Hosts there's nothing to drag into a Folder, so its hint waits. */
 .sb-rest:not(:has([data-section="inventory"] .sb-row)) [data-section="folders"] .sb-empty { display: none; }
 /* In a very short window the Folders hint gives way, so the Inventory keeps its rows. */
@@ -416,6 +420,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* Sessions show at most eight rows, scrolling in place beyond that, so fifty open Sessions never
    push the Inventory out of the Sidebar (the cursor scrolls them into view as it moves). */
 .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(8 * var(--row-h)); overflow-y: auto; overscroll-behavior: contain; }
+@media (max-height: 700px) { .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(4 * var(--row-h)); } }
 @media (max-height: 500px) { .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(3 * var(--row-h)); } }
 /* More Sessions out of sight: a hairline on that edge of the list. */
 .sb-section[data-section="sessions"] > .sb-rows { border-block: 1px solid transparent; }
@@ -923,7 +928,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* One line, always (it must never move the list): the name gives way last, the group first. */
 .picker-detail > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
-.picker-detail > .host-name { flex-shrink: 0.2; }
+.picker-detail > .host-name { flex-shrink: 0; max-width: 62%; }
 .picker-detail > .host-ip { flex-shrink: 0; }
 .picker-detail > span + span::before { content: "·"; margin-right: 10px; color: var(--muted); }
 .picker-detail .host-name { font-family: var(--font-mono); color: var(--text); }
@@ -976,6 +981,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .lock-row button { height: 32px; min-width: 8.5em; }
 .lock-row button.primary[aria-disabled="true"] { background: var(--raised); color: var(--muted); border-color: var(--line-strong); }
 .lock-error { color: var(--error); font-size: var(--text-sm); }
+.lock-error.lock-caps { color: var(--warn); }
 .lock-problem { color: var(--warn); }
 .lock-problem code, .lock-error code { color: var(--text); }
 .lock-panel > button { align-self: flex-start; }
@@ -1115,7 +1121,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; transition-delay: 0s; }
 /* Words break between words; only a Host name too long for the pane breaks inside itself. */
 .connect-card p { margin: 0; overflow-wrap: break-word; text-wrap: balance; }
-.connect-map { overflow: visible; margin-bottom: 12px; }
+/* Scales with the pane, 136 to 200 px (owner, after round 8); strokes stay 1 and 1.5 px. */
+.connect-map { overflow: visible; margin-bottom: 12px; width: clamp(136px, 14vw, 200px); height: auto; }
 .connect-box { fill: var(--tone); }
 .connect-edge {
   stroke: var(--accent); stroke-width: 1px; vector-effect: non-scaling-stroke;
@@ -1141,6 +1148,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-title { font-size: var(--text-lg); }
 .connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.connect-address-line { display: block; margin-top: 2px; font-size: var(--text-sm); }
 /* One fixed line: Iosevka's `ssh` in "Starting ssh…" had made the line, and the card, 1 px taller
    than "Logging in…", so the map moved by half a pixel between phases. */
 .connect-phase { font-size: var(--text-sm); line-height: 20px; min-height: 20px; white-space: pre-wrap; }
@@ -1302,6 +1310,9 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    64 columns): the panels float over the terminal, as in Focus, instead of squeezing it (M5).
    They open from a key, so they don't animate. */
 @media (max-width: 1040px) {
+  /* A panel floating over the idle pane: its map steps aside rather than sit half under it. */
+  .body:has(.keys-panel, .check-panel, .side-panel:not(.plugin-float)) .workspace > .empty { padding-inline-end: calc(var(--panel-w, 320px) + 24px); }
+  .body:has(.keys-panel, .check-panel, .side-panel:not(.plugin-float)) .workspace > .empty .recent { display: none; }
   .keys-panel, .check-panel, .side-panel {
     position: absolute; top: 0; right: 0; bottom: 0; z-index: var(--z-float); max-width: 100%;
     border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
