@@ -406,6 +406,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `171` | `roster init`: the `roster.yml` to import isn't there or doesn't load, or a cloned repo has none at its top; nothing written (or the clone is kept, and said). A CLI error so far |
 | `172` | `roster init`: git couldn't clone the team's repo (not installed, a bad URL or access, or the folder isn't empty). A CLI error so far |
 | `173` | `roster init`: the ssh config to import Hosts from can't be read; nothing written. A CLI error so far |
+| `174` | `roster init`: the folder for the new `roster.yml` can't be made or written in; nothing written. A CLI error so far |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

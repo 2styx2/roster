@@ -85,7 +85,7 @@ def say_made(made, value):
             "Inventory - add Hosts under hosts:, then run: roster setup")
     if made.skipped:
         say(f"skipped      {', '.join(made.skipped)} (patterns and Match blocks aren't single Hosts)")
-    if store.at(path).kind == store.FILE and made.how != "repo":
+    if store.at(path, for_show=True).kind == store.FILE and made.how != "repo":
         say(f"optional     `git -C {path.parent} init` keeps its history; roster works the same without git")
 
 

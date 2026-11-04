@@ -234,7 +234,7 @@ def repo(path):
     saw it (no fetch): clean, Pending changes, or other changes."""
     if path is None:
         return []
-    kept = store.at(path)
+    kept = store.at(path, for_show=True)
     if kept.kind == store.FILE:
         return [check("repo", "ok", kept.note)]
     try:

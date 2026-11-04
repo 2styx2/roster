@@ -18,7 +18,7 @@ import yaml
 
 from .common import NAME_RE
 from .config import load_config_text
-from .errors import CLONE_FAILED, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
+from .errors import CANT_WRITE, CLONE_FAILED, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
 
 HOWS = ("blank", "file", "repo", "ssh-config")
 ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports (#409 L3)
@@ -74,9 +74,7 @@ def create(path, how, value=None, interactive=True):
     except a clone that worked but has no roster.yml (kept, and the Problem says where)."""
     path = Path(path).expanduser()
     if path.exists() or path.is_symlink():          # a link to nothing is there too: never written through
-        raise Problem(INVENTORY_THERE, f"{path} already exists, so roster kept it as it is", {"path": str(path)},
-                      fix=f"use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
-                          f"{path.name} init --inventory ... --name NAME")
+        raise there(path)
     if how == "repo":
         return clone(path, value, interactive)
     if how == "blank":
@@ -87,12 +85,31 @@ def create(path, how, value=None, interactive=True):
         text, made = imported(path, value)
     else:
         raise ValueError(how)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private (#409 S2)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private (#409 S2);
+    # O_BINARY: no CRLF on Windows, so it's the same bytes on every OS (#409 N4)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        raise there(path) from None
+    except OSError as e:
+        raise cant_write(path.parent, e) from None
     with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
         f.write(text)
     return made
+
+
+def there(path):
+    return Problem(INVENTORY_THERE, f"{path} already exists, so roster kept it as it is", {"path": str(path)},
+                   fix=f"use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
+                       f"{path.name} init --inventory ... --name NAME")
+
+
+def cant_write(folder, e):
+    """An OSError making the new Inventory, as a Problem (#417 L1): never a traceback, nor serve's -32603."""
+    return Problem(CANT_WRITE, f"roster can't write in {folder}: {e.strerror or type(e).__name__}",
+                   {"path": str(folder)}, fix="pick a folder you can write to (or make this one writable)")
 
 
 def read_source(src, what, limit, code, fix):
@@ -125,8 +142,13 @@ def copied(path, source):
                        "give the path of an existing roster.yml (file:PATH)")
     try:
         raw = yaml.safe_load(text)
-    except yaml.YAMLError:
-        raw = {"groups": {"-": {}}}                 # checked() below says what's wrong with it
+    except yaml.YAMLError as e:                     # where, never PyYAML's snippet of the file: it may be secrets (#417 L2)
+        mark = getattr(e, "problem_mark", None)
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        raise Problem(NOT_AN_INVENTORY, f"{src} doesn't load (it isn't valid YAML: "
+                                        f"{getattr(e, 'problem', None) or 'a syntax error'}{where}), so nothing was "
+                                        "written", {"path": str(src)},
+                      fix=f"fix it first (`roster -c {src} check --box` shows the line)") from None
     if raw is not None and not isinstance(raw, dict):
         raise Problem(NOT_AN_INVENTORY, f"{src} isn't a roster.yml (its top level isn't a mapping of settings and "
                                         "groups:), so nothing was written", {"path": str(src)},
@@ -142,7 +164,11 @@ def copied(path, source):
 
 def clone(path, url, interactive):
     folder = path.parent
-    if folder.exists() and any(folder.iterdir()):
+    try:
+        busy = folder.exists() and any(folder.iterdir())
+    except OSError as e:
+        raise cant_write(folder, e) from None
+    if busy:
         raise Problem(CLONE_FAILED, f"{folder} isn't empty, so roster won't clone into it", {"path": str(folder)},
                       fix="pick an empty or new folder (-c FOLDER/roster.yml)")
     if shutil.which("git") is None:
@@ -170,6 +196,7 @@ def clone(path, url, interactive):
         raise Problem(CLONE_FAILED, f"git couldn't clone {shown_url(url)}", {"url": shown_url(url)},
                       fix="check the URL and your access to the repo (`git clone URL` in a terminal shows the same)"
                           + asked, details=said or None)
+    strip_credentials(folder)
     if not path.is_file():
         raise Problem(NOT_AN_INVENTORY, f"the clone has no {path.name} at its top: it's in {folder}",
                       {"path": str(folder)}, fix=f"point roster at the roster.yml in it (-c), or remove {folder}")
@@ -218,22 +245,57 @@ def ssh_hosts(text):
     return hosts, skipped
 
 
-CREDENTIALS = re.compile(r"(://[^/@:\s]*):([^@/\s]*)@")     # scheme://user:PASSWORD@ in a URL
+# Credentials in a clone URL (#409 L4, N2; #417 M2). For http(s) and ssh the whole userinfo goes, up to the last @
+# before the host: a token as the user (https://ghp_TOKEN@github.com/...) and a password with an @ in it. Elsewhere
+# (file://) only a password. By pattern, not a URL parser: one that can't parse the rest (a Windows path after
+# file://) would show it all. scp-style git@host:path has no secret, and isn't touched.
+USERINFO = re.compile(r"((?:https?|ssh|git\+ssh|ftps?)://)([^/\s]*)@", re.I)
+PASSWORD = re.compile(r"(://[^/@:\s]*):([^@/\s]*)@")
 
 
 def shown_url(url):
-    """URL with any password in it cut out (https://me:TOKEN@host/... -> https://me:***@host/...), for messages
-    and the log (#409 L4). By pattern, not a URL parser: one that can't parse the rest (a Windows path after
-    file://) would show it all."""
-    return CREDENTIALS.sub(r"\1:***@", url)
+    """URL with its credentials cut out, for messages, errors and the log: https://***@host/..."""
+    return PASSWORD.sub(r"\1:***@", USERINFO.sub(r"\1***@", url))
+
+
+def secrets_in(url):
+    m = USERINFO.search(url)
+    if m:
+        info = m.group(2)
+        return [x for x in (info, info.partition(":")[2]) if x]
+    m = PASSWORD.search(url)
+    return [m.group(2)] if m and m.group(2) else []
 
 
 def redacted(url, text):
-    """TEXT with URL's password (if it has one) cut out wherever it shows."""
-    m = CREDENTIALS.search(url)
-    secret = m.group(2) if m else ""
+    """TEXT with URL's credentials cut out wherever they show."""
     text = text.replace(url, shown_url(url))
-    return text.replace(secret, "***") if secret else text
+    for secret in sorted(secrets_in(url), key=len, reverse=True):
+        text = text.replace(secret, "***")
+    return text
+
+
+def bare_url(url):
+    """URL with no credentials at all, for the clone's remote: https://host/..., ssh://user@host/... (a user name
+    there is no secret)."""
+    m = USERINFO.match(url)
+    if not m:
+        return PASSWORD.sub(r"\1@", url)
+    user = m.group(2).rpartition("@")[0] or m.group(2)
+    keep = f"{user.partition(':')[0]}@" if m.group(1).lower().startswith(("ssh", "git+ssh")) else ""
+    return m.group(1) + keep + url[m.end():]
+
+
+def strip_credentials(folder):
+    """Take the credentials out of a fresh clone's origin URL (#417 M2): .git/config is as readable as the folder,
+    and a token belongs in a credential helper, not there. The rest of the URL stays, so pull and push still go
+    to the same place (asking for the credential, or the helper giving it)."""
+    from .changes import out
+    url = out(folder, "remote", "get-url", "origin")
+    if url and bare_url(url) != url:
+        out(folder, "remote", "set-url", "origin", bare_url(url))
+        return True
+    return False
 
 
 def scalar(v):

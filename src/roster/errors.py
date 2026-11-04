@@ -166,11 +166,12 @@ BW_NEEDS_WRITE = 164        # a bw command that changes the vault, writes it out
 BW_NOT_ALLOWED = 165        # a bw command or option before it that roster bw doesn't know, or --write among bw's own
 BW_REFUSED = 166            # never run: `bw serve` (the vault to every local program) or a session on the command line
 
-# A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233)
+# A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233, 235)
 INVENTORY_THERE = 170       # roster init: a roster.yml is there already, so it's kept as it is; nothing written
 NOT_AN_INVENTORY = 171      # roster init: the file to import isn't there or doesn't load, or a clone has no roster.yml
 CLONE_FAILED = 172          # roster init: git couldn't clone the repo (or isn't installed, or the folder isn't empty)
 SSH_CONFIG_UNREADABLE = 173  # roster init: the ssh config to import Hosts from can't be read; nothing written
+CANT_WRITE = 174            # roster init / inventory.create: the folder can't be made or written in; nothing written
 
 
 class Problem(Exception):

@@ -283,7 +283,7 @@ def test_import_refuses_a_huge_or_special_file(isolated, capsys, tmp_path):
 
 def test_a_clone_url_never_shows_its_credentials(isolated, capsys, tmp_path):
     from roster.newinventory import shown_url
-    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://me:***@example.com:8443/team/map.git"
+    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://***@example.com:8443/team/map.git"
     assert shown_url("file://me:tok@D:\\a\\nope") == "file://me:***@D:\\a\\nope"        # a Windows path after it
     assert shown_url("git@example.com:team/map.git") == "git@example.com:team/map.git"     # scp form: no password
     """L4: https://user:TOKEN@host/... in an error is shown without the TOKEN."""
@@ -330,3 +330,83 @@ def test_sync_keeps_this_boxs_ssh_config_when_a_pull_brings_an_empty_looking_fil
     with pytest.raises(SystemExit):
         main(["-c", str(path), "sync"])
     assert ssh.read_text() == before and "esx" in before
+
+
+# ---------------------------------------------------------------- #409's second pass (N2, N4) and #417's (M2, L1, L2)
+
+@pytest.mark.parametrize("url,shown", [
+    ("https://ghp_SECRET@github.com/o/r.git", "https://***@github.com/o/r.git"),
+    ("https://oauth2:SECRET@gitlab.example.com/o/r.git", "https://***@gitlab.example.com/o/r.git"),
+    ("https://me:SEC@RET@example.com/x", "https://***@example.com/x"),
+    ("http://me@example.com/x", "http://***@example.com/x"),
+    ("ssh://git:SECRET@example.com/x", "ssh://***@example.com/x"),
+    ("file://me:SECRET@/srv/x", "file://me:***@/srv/x"),
+    ("git@example.com:team/map.git", "git@example.com:team/map.git"),
+    ("https://example.com/team/map.git", "https://example.com/team/map.git"),
+])
+def test_a_clone_urls_userinfo_never_shows(url, shown):
+    """N2/M2: a token as the user (GitHub's usual form) and a password with an @ in it are cut whole."""
+    from roster.newinventory import redacted, shown_url
+    assert shown_url(url) == shown
+    assert "SECRET" not in redacted(url, f"fatal: unable to access '{url}': nope") and "SEC@RET" not in redacted(url, url)
+
+
+def test_a_cloned_repo_keeps_no_credential_in_its_config(isolated, capsys, tmp_path, monkeypatch):
+    """M2: the token typed in the URL isn't left in the clone's .git/config (remote.origin.url): roster takes it out
+    after cloning, keeping the rest of the URL."""
+    for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+                 "GIT_COMMITTER_EMAIL": "t@x", "GIT_CONFIG_NOSYSTEM": "1"}.items():
+        monkeypatch.setenv(k, v)
+    team = tmp_path / "team"
+    team.mkdir()
+    (team / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "map"]):
+        subprocess.run(["git", "-C", str(team), *args], check=True, capture_output=True)
+    from roster.newinventory import strip_credentials
+    target = isolated["home"] / "infra" / "roster.yml"
+    main(["-c", str(target), "init", "--inventory", f"repo:{team}"])
+    subprocess.run(["git", "-C", str(target.parent), "remote", "set-url", "origin", "https://ghp_SECRET@example.com/o/r.git"],
+                   check=True)
+    strip_credentials(target.parent)
+    url = subprocess.run(["git", "-C", str(target.parent), "remote", "get-url", "origin"], capture_output=True,
+                         text=True).stdout.strip()
+    assert url == "https://example.com/o/r.git"
+    assert "SECRET" not in (target.parent / ".git" / "config").read_text()
+
+
+@pytest.mark.parametrize("how", ["blank", "file", "ssh-config"])
+def test_a_new_inventory_is_byte_for_byte_lf(isolated, capsys, tmp_path, how):
+    """N4: written in binary on Windows too (no CRLF), so a copy is the same bytes and a team file the same on any OS."""
+    src = tmp_path / "src"
+    src.write_bytes(b"groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n" if how == "file"
+                    else b"Host esx-02\n  HostName 10.0.0.6\n")
+    spec = {"blank": "blank", "file": f"file:{src}", "ssh-config": f"ssh-config:{src}"}[how]
+    assert main(["init", "--inventory", spec]) == 0
+    data = (isolated["work"] / "roster.yml").read_bytes()
+    assert b"\r\n" not in data
+    if how == "file":
+        assert data == src.read_bytes()
+
+
+@posix_only
+def test_a_folder_roster_cannot_write_in_is_a_clean_refusal(isolated, capsys, tmp_path):
+    """L1: an OSError (no permission) is a Problem with a fix, never a traceback or a -32603."""
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    try:
+        with pytest.raises(SystemExit) as e:
+            main(["-c", str(ro / "sub" / "roster.yml"), "init", "--blank"])
+        assert "can't write" in str(e.value.code) and "pick a folder you can write to" in str(e.value.code)
+    finally:
+        ro.chmod(0o700)
+
+
+def test_a_file_that_doesnt_load_shows_where_never_its_lines(isolated, capsys, tmp_path):
+    """L2: the import's refusal names the line and column, never PyYAML's snippet of the file (it may be secrets)."""
+    src = tmp_path / "creds"
+    src.write_text("groups:\n  lab:\n    hosts:\n      esx: 10.0.0.5\npassword: SUPERSECRETVALUE456: x\n")
+    with pytest.raises(SystemExit) as e:
+        main(["init", "--inventory", f"file:{src}"])
+    said = str(e.value.code)
+    assert "SUPERSECRETVALUE456" not in said and "line" in said

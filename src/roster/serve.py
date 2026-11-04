@@ -257,7 +257,7 @@ def inventory_info(state, params):
     """
     cfg = state.inventory()
     return {"path": str(cfg["path"]), "box": cfg["box"], "host_count": len(cfg["hosts"]),
-            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"]).view(), **versions()}
+            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True).view(), **versions()}
 
 
 def hosts_list(state, params):
