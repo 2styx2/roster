@@ -281,10 +281,11 @@ def kill_tree(p):
         pass
 
 
-def run(args, timeout=None, input=None, **kw):
+def run(args, timeout=None, input=None, stdout=subprocess.PIPE, **kw):
     """subprocess.run with capture_output, but a timeout kills the whole process tree (kill_tree) before it waits for
-    the output, so a tool's leftover child can't hold the call past its timeout."""
-    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    the output, so a tool's leftover child can't hold the call past its timeout. STDOUT=subprocess.DEVNULL: what the
+    tool prints never reaches this process (an item a vault CLI prints, password and all)."""
+    with subprocess.Popen(args, stdout=stdout, stderr=subprocess.PIPE,
                           **({"stdin": subprocess.PIPE} if input is not None else {}), **kw) as p:
         try:
             out, err = p.communicate(input, timeout=timeout)

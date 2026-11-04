@@ -180,11 +180,22 @@ def bw_items(fakes, monkeypatch, tmp_path):
     monkeypatch.setenv("FAKE_BW_ITEMS", str(items))
     monkeypatch.setenv("FAKE_ARGV_LOG", str(log))
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
+    monkeypatch.setenv("FAKE_BW_STDOUT_LOG", str(tmp_path / "stdout.log"))
     return log
 
 
 def bw_calls(log):
     return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def stdout_of(log, what):
+    """Where each `bw get WHAT` call's stdout went, as the fake saw it ("devnull" or "pipe")."""
+    f = log.with_name("stdout.log")
+    return [ln.split()[1] for ln in f.read_text().splitlines() if ln.split()[0] == what] if f.exists() else []
+
+
+def items(bw_items, *rows):
+    bw_items.with_name("items.json").write_text(json.dumps(list(rows)))
 
 
 def test_from_vault_fills_address_port_and_user_without_reading_the_password(capsys, yml, bw_items):
@@ -193,14 +204,16 @@ def test_from_vault_fills_address_port_and_user_without_reading_the_password(cap
     assert "      nas: {ip: 10.0.0.60, user: admin, port: 2200, auth: bw:nas ssh}\n" in yml.read_text()
     assert "pw-nas-secret" not in out + err + yml.read_text()
     gets = [c[:2] for c in bw_calls(bw_items) if c[:1] == ["get"]]
-    assert gets == [["get", "uri"], ["get", "username"]]            # never `get item` or `get password`
+    assert gets == [["get", "item"], ["get", "uri"], ["get", "username"]]       # never `get password`
+    assert stdout_of(bw_items, "item") == ["devnull"]               # `get item` checks the name: its output unread
     assert not any(c[:2] == ["list", "items"] for c in bw_calls(bw_items))
 
 
 def test_from_vault_flags_given_win(capsys, yml, bw_items):
     assert run(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--user", "ops2", "--ip", "10.0.0.61",
                "--yes")[0] == 0
-    assert "      nas: {ip: 10.0.0.61, user: ops2, port: 2200, auth: bw:nas ssh}\n" in yml.read_text()
+    # the port goes with the address it came with: --ip given, so not the vault's 2200
+    assert "      nas: {ip: 10.0.0.61, user: ops2, auth: bw:nas ssh}\n" in yml.read_text()
 
 
 def test_from_vault_an_item_without_a_uri_still_needs_the_address(capsys, yml, bw_items):
@@ -244,4 +257,130 @@ def test_vault_item_fields_gives_the_address_port_and_user_never_the_password(se
     assert s.call("vault.item_fields", {"provider": "env", "item": "NAS_PW"})["error"]["code"] == 186
     s.close()
     assert "pw-nas-secret" not in json.dumps(s.responses) and "pw-bare-secret" not in json.dumps(s.responses)
-    assert not any(c[:2] in (["get", "item"], ["get", "password"], ["list", "items"]) for c in bw_calls(bw_items))
+    assert not any(c[:2] in (["get", "password"], ["list", "items"]) for c in bw_calls(bw_items))
+    assert set(stdout_of(bw_items, "item")) == {"devnull"}             # `get item` only to check the name, unread
+
+
+# ---------------------------------------------------------------- review of #429
+
+INV_TYPED = YML.replace("esx-02: {ip: 10.0.0.5}", "esx-02: {ip: 10.0.0.5, type: nas}")
+
+
+def test_setup_sets_up_only_the_new_host_even_when_its_name_is_another_hosts_type(capsys, write_config,
+                                                                                  monkeypatch, fakes):
+    import roster.cli as cli
+    write_config(INV_TYPED)
+    scanned = []
+    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    monkeypatch.setenv("NAS_PW", "x")
+    run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW", "--no-enroll",
+        "--setup", "--yes")
+    assert scanned == ["nas"]                                   # never esx-02 (type nas)
+
+
+def test_the_next_step_hint_says_when_only_would_select_more(capsys, write_config):
+    write_config(INV_TYPED)
+    out = run(capsys, "nas", "--ip", "10.0.0.50", "--yes")[1]
+    assert "roster check nas" in out
+    assert "--only nas also selects esx-02" in out and "roster add nas" not in out.split("next")[1].split("\n")[0]
+
+
+@pytest.mark.parametrize("address", ["nas_01", "my_db.lan"])
+def test_an_underscore_address_is_one_quick_connect_could_open(capsys, yml, serve, address):
+    assert run(capsys, "nas", "--ip", address, "--yes")[0] == 0
+    s = serve()
+    r = s.call("host.add", {"name": "nas2", "group": "office", "address": address.upper()})
+    assert "result" in r, r                                     # the form (and quick.save) too
+
+
+def test_an_ipv6_zone_is_letters_digits_and_dots_only(capsys, yml):
+    assert "[80]" in fails(capsys, "nas", "--ip", "fe80::1%-oProxyCommand=x", "--yes")
+    assert run(capsys, "nas", "--ip", "fe80::1%eth0", "--yes")[0] == 0
+
+
+def test_the_same_address_written_another_way_is_still_taken(capsys, write_config):
+    write_config(YML.replace("10.0.0.9", "fe80::1"))
+    assert "[184]" in fails(capsys, "nas", "--ip", "FE80:0:0::1", "--yes")
+
+
+@pytest.mark.parametrize("uri, ip, port", [("fe80::1", "fe80::1", None), ("ssh://[fe80::1%25eth0]", "fe80::1%eth0", None),
+                                          ("sftp://10.0.0.70:2201", "10.0.0.70", 2201),
+                                          ("https://nas.example.com:8443/", "nas.example.com", None),
+                                          ("10.0.0.71:2202", "10.0.0.71", 2202)])
+def test_a_uri_gives_its_address_and_only_an_ssh_port(capsys, yml, bw_items, uri, ip, port):
+    items(bw_items, {"id": "c-1", "name": "nas ssh", "login": {"username": "admin", "password": "pw",
+                                                                "uris": [{"uri": uri}]}})
+    out = run(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--dry-run", "--yes")[1]
+    assert f"ip: {ip}" in out or f"ip: \"{ip}\"" in out
+    assert (f"port: {port}" in out) == (port is not None)
+
+
+@pytest.mark.parametrize("uri", ["androidapp://com.example.files", "javascript:alert(1)", "mailto:x@example.com"])
+def test_a_uri_that_isnt_a_network_address_gives_none_and_says_so(capsys, yml, bw_items, uri):
+    items(bw_items, {"id": "c-1", "name": "nas ssh", "login": {"username": "admin", "password": "pw",
+                                                                "uris": [{"uri": uri}]}})
+    message = fails(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--yes")
+    assert "[185]" in message and "--ip" in message
+    assert "isn't a network address" in capsys.readouterr().out
+
+
+def test_a_name_two_items_match_is_refused_even_when_each_field_narrows_to_one(capsys, yml, bw_items):
+    items(bw_items, {"id": "d-1", "name": "nas ssh", "login": {"username": "admin", "password": "pw1"}},
+          {"id": "d-2", "name": "nas web", "login": {"password": "pw2", "uris": [{"uri": "https://10.0.0.61"}]}})
+    message = fails(capsys, "nas", "--auth", "bw:nas", "--from-vault", "--yes")
+    assert "[33]" in message and message.count("item's id") == 1 and "list items" not in message
+    assert yml.read_text() == YML
+
+
+@pytest.mark.parametrize("item", ["--help", "--session=zzz", "-x"])
+def test_an_item_that_looks_like_an_option_never_reaches_bw(capsys, yml, bw_items, item):
+    assert "can't start with '-'" in fails(capsys, "nas", "--auth", f"bw:{item}", "--from-vault", "--yes")
+    assert not any(item in c for c in bw_calls(bw_items)) if bw_items.exists() else True
+
+
+def test_a_secret_lookup_of_an_item_like_an_option_never_reaches_bw(bw_items):
+    from roster import providers
+    providers.setup_providers(None)
+    with pytest.raises(providers.SecretError, match="can't start with '-'"):
+        providers.get_secret("bw:--session=zzz", "lab")
+    assert not bw_items.exists() or not any("--session=zzz" in c for c in bw_calls(bw_items))
+
+
+def test_another_bw_error_with_available_in_it_is_an_error_not_a_missing_field(capsys, yml, bw_items, monkeypatch):
+    monkeypatch.setenv("FAKE_BW_FIELD_FAIL", "The server is not available right now.")
+    assert "[35]" in fails(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--yes")
+
+
+def test_yes_never_asks_for_the_master_password(capsys, yml, bw_items, monkeypatch):
+    import getpass
+    import sys
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.delenv("BW_SESSION")
+    monkeypatch.setattr(getpass, "getpass", lambda *a: pytest.fail("asked for the master password"))
+    message = fails(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--yes")
+    assert "locked" in message
+
+
+def test_dry_run_shows_the_line_it_replaces(capsys, write_config):
+    p = write_config("groups:\n  lab:\n    user: ops\n    hosts: {}\n")
+    out = run(capsys, "nas", "--ip", "10.0.0.50", "--dry-run")[1]
+    assert "-     hosts: {}" in out and "+     hosts:" in out and "+       nas: {ip: 10.0.0.50}" in out or \
+        ("-     hosts: {}" in out and "+       nas:" in out)
+    assert p.read_text() == "groups:\n  lab:\n    user: ops\n    hosts: {}\n"
+
+
+def test_a_sync_that_exits_after_the_write_is_only_said(write_config):
+    from roster import addhost, edit
+    p = write_config(YML)
+
+    def dies():
+        raise SystemExit("error: providers didn't load")
+    r = addhost.add(p, "lab", "nas", {"ip": edit.check_new("ip", "10.0.0.50")}, sync=dies)
+    assert r["sync"]["ok"] is False and "nas" in p.read_text()
+
+
+@pytest.mark.parametrize("item", ["nas ssh#username", "-x"])
+def test_vault_item_fields_refuses_a_field_or_an_option(serve, yml, bw_items, item):
+    s = serve()
+    s.call("vault.unlock", {"provider": "bw", "password": "hunter2"})
+    assert s.call("vault.item_fields", {"provider": "bw", "item": item})["error"]["code"] == -32602

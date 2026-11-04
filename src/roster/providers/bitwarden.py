@@ -21,6 +21,7 @@ from . import (
     VaultLocked,
     WriteFailed,
     WrongPassword,
+    check_item_name,
     errtext,
     manual_unlock,
     near_names,
@@ -31,10 +32,10 @@ from . import (
 
 # ---- built-in: Bitwarden
 
-def _bw(ctx, *args, env=None, input=None, floor=1):
+def _bw(ctx, *args, env=None, input=None, floor=1, discard=False):
     key = session_key()
     env = {**({"BW_SESSION": key} if key else {}), **(env or {})}
-    return ctx.run(["bw", *args, "--nointeraction"], env=env, input=input, floor=floor)
+    return ctx.run(["bw", *args, "--nointeraction"], env=env, input=input, floor=floor, discard=discard)
 
 
 # The unlocked vault's session key. It goes into each `bw` call's env and nowhere else, never os.environ: every other
@@ -201,6 +202,7 @@ def _bw_summary(item):
 
 
 def _bw_item(ctx, ref):
+    check_item_name(ref)
     r = _bw(ctx, "get", "item", ref)
     if r.returncode == 0:
         return json.loads(r.stdout)
@@ -212,7 +214,7 @@ def _bw_item(ctx, ref):
             return exact[0]
         matches = [_bw_summary(i) for i in (exact or listed)]
         raise SeveralItems(f"several Bitwarden items match '{ref}' - use the item's id instead "
-                           f"(find it with: bw list items --search \"{ref}\")", ref, matches, exact=bool(exact))
+                           "(the Bitwarden app shows it)", ref, matches, exact=bool(exact))
     if "Not found" in err:
         near = near_names(ref, [i.get("name", "") for i in _bw_list(ctx)])
         raise ItemNotFound(f"no Bitwarden item matches '{ref}'", ref, near)
@@ -429,25 +431,38 @@ def _bw_delete(item_id, ctx):
         raise WriteFailed(f"Bitwarden didn't delete item {item_id}: {errtext(r)}")
 
 
-# ---- an item's address and user, never its password (Q190): `bw get uri` and `bw get username` print just that
-# field, so the password stays inside bw. Several matches aren't listed here (`bw list items` would hand roster every
+# ---- an item's address and user, never its password (Q190). `bw get uri` and `bw get username` print just that
+# field, but each narrows several matches by its own field (bw's getCipher(id, filter)), so the two could come from two
+# items. So first `bw get item ITEM` with its stdout sent to the null device: only its exit code and stderr reach
+# roster, and they say whether ITEM names exactly one item. Several are never listed (`bw list items` prints every
 # match's password): the message asks for the item's id.
+
+SEVERAL = "several Bitwarden items match '{}' - use the item's id instead (the Bitwarden app shows it)"
+NO_FIELD = {"uri": "No uri available", "username": "No username available"}     # bw's words for an empty field
+
+
+def _bw_one(ctx, name, r):
+    err = errtext(r, stdout=False)
+    if "More than one" in err:
+        raise SeveralItems(SEVERAL.format(name), name, [], exact=False)
+    if "Not found" in err:
+        raise ItemNotFound(f"no Bitwarden item matches '{name}'", name)
+    return err
+
 
 def _bw_login_fields(name, ctx):
     _bw_ready(ctx)
+    r = _bw(ctx, "get", "item", name, discard=True)           # one item? Its output (the password) is never read
+    if r.returncode != 0:
+        raise SecretError(f"`bw get item` failed: {_bw_one(ctx, name, r)}")
     out = {}
     for field in ("uri", "username"):
         r = _bw(ctx, "get", field, name)
         if r.returncode == 0:
             out[field] = r.stdout.strip() or None
             continue
-        err = errtext(r, stdout=False)
-        if "More than one" in err:
-            raise SeveralItems(f"several Bitwarden items match '{name}' - use the item's id instead (find it with: "
-                               f"roster bw list items --search \"{name}\")", name, [], exact=False)
-        if "Not found" in err:
-            raise ItemNotFound(f"no Bitwarden item matches '{name}'", name)
-        if "available" in err:                  # bw: "No uri available for this login."
+        err = _bw_one(ctx, name, r)
+        if NO_FIELD[field] in err:
             out[field] = None
             continue
         raise SecretError(f"`bw get {field}` failed: {err}")

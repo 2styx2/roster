@@ -140,7 +140,8 @@ def refuse_left_out(h):
 
 
 def cmd_setup(cfg, args):
-    hosts = selected(cfg, args.only)
+    names = getattr(args, "names", None)    # `roster add --setup`: exactly these Hosts, not what --only would match
+    hosts = [cfg["hosts"][n] for n in names] if names else selected(cfg, args.only)
     waiting = [h for h in hosts if not h["reviewed"]]
     hosts = [h for h in hosts if h["reviewed"]]
     if waiting:

@@ -487,19 +487,32 @@ def added(path, group, name, fields):
     return text, new_text, h
 
 
-HOSTNAME_RE = re.compile(r"^(?=.{1,253}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-                         r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?\Z")
+# An address (Q190): what Quick Connect opens, the form and `roster add` write, one rule (serve's quick_target uses it
+# too, so a Quick Connect that logged in can always be saved). Labels may hold '_' (compose and mDNS names), as ssh
+# resolves them; an IPv6 zone is letters, digits, '_', '.' and '-', never starting with '-'.
+LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+HOSTNAME_RE = re.compile(rf"^(?=.{{1,253}}\Z){LABEL}(?:\.{LABEL})*\.?\Z")
+ZONE_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\Z")
+
+
+def ip_of(v):
+    """V as an ipaddress address (an IPv6 zone checked), or None when it isn't an IP address."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(v)
+    except ValueError:
+        return None
+    zone = getattr(ip, "scope_id", None)
+    return ip if zone is None or ZONE_RE.match(zone) else None
 
 
 def good_address(v):
     """V is an IPv4 or IPv6 address or a DNS name (what ssh can be pointed at), not a URL or a typo with a slash."""
-    import ipaddress
-    try:
-        ipaddress.ip_address(v)
+    if not isinstance(v, str):
+        return False
+    if ip_of(v) is not None:
         return True
-    except ValueError:
-        return bool(HOSTNAME_RE.match(v)) and not re.fullmatch(r"[\d.]+", v)
-
+    return "%" not in v and ":" not in v and bool(HOSTNAME_RE.match(v)) and not re.fullmatch(r"[\d.]+", v)
 
 
 # ---------------------------------------------------------------- the Live Inventory (ticket 28)

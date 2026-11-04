@@ -1150,7 +1150,6 @@ def still_offered(asked, key, label, outcome, who, again):
 # and forgotten by vault.lock. Nothing is written to roster.yml.
 
 QUICK_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
-QUICK_ADDRESS = re.compile(r"[A-Za-z0-9_.:%][A-Za-z0-9_.:%-]*")     # a name, IPv4 or IPv6 (no brackets, no '-' first)
 
 
 def quick_target(params):
@@ -1159,7 +1158,7 @@ def quick_target(params):
     if not isinstance(user, str) or not QUICK_USER.fullmatch(user):
         raise RpcError(INVALID_PARAMS, "params.user must be a user name (letters, digits, '.', '_', '-'; not "
                                        "starting with '-')")
-    if not isinstance(address, str) or not QUICK_ADDRESS.fullmatch(address):
+    if not edit.good_address(address):          # the rule host.add and `roster add` write by (Q190)
         raise RpcError(INVALID_PARAMS, "params.address must be a host name or an IP address")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise RpcError(INVALID_PARAMS, "params.port must be a number from 1 to 65535")
@@ -1633,9 +1632,13 @@ def add_host(state, params):
         state.reload()
         return sync_box(state)
 
+    written_in = []                             # set once the Host is in roster.yml: then the item stays
+
     try:                                        # until the Host is written, any failure takes the item back out
-        written = addhost.add(state.path, group, name, fields, sync=after)
+        written = addhost.add(state.path, group, name, fields, sync=after, on_write=written_in.append)
     except BaseException as e:
+        if written_in:
+            raise
         raise take_back(made, write_failed(f"{name} wasn't added", state.path, e)) from None
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": written["backup"], "verify": verify,
             "item": made, "warnings": warnings, "sync": written["sync"]}
@@ -2346,14 +2349,16 @@ def vault_item_fields(state, params):
 
     Params: `{item, provider?}`: `item` the item's name or id (as after `bw:` in auth), `provider` the vault (default:
         the Inventory's, as vault.status's)
-    Result: `{provider, item, address?, port?, user?}`
+    Result: `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address
+        (another scheme than ssh, sftp, http or https, or a host that isn't an address)
     Errors: 13, 14, 11, 12, 31, 32, 33, 35, 186
     Since: API 29
     """
     provider = vault_provider(state, params)
     item = params.get("item")
-    if not isinstance(item, str) or not item.strip() or "\n" in item:
-        raise RpcError(INVALID_PARAMS, "params.item must be a vault item's name or id, one line")
+    if not isinstance(item, str) or not item.strip() or "\n" in item or "#" in item or item.strip().startswith("-"):
+        raise RpcError(INVALID_PARAMS, "params.item must be a vault item's name or id: one line, no '#', not "
+                                       "starting with '-'")
     item = item.strip()
     return {"provider": provider, "item": item, **addhost.vault_fields(f"{provider}:{item}")}
 

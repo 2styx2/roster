@@ -213,6 +213,14 @@ def register(name, help="", tool=""):
     return deco
 
 
+def check_item_name(name):
+    """An item name that starts with '-' would reach the vault CLI as an option (`bw get item --session=KEY` puts a
+    key on the command line, Q178 (c)): refused before any CLI runs."""
+    if str(name).startswith("-"):
+        raise SecretError(f"a vault item's name can't start with '-' ({str(name)[:1]}...): the vault CLI would take it "
+                          "as an option - use the item's id")
+
+
 def split_field(spec, default="password"):
     """'Item name#field' -> ('Item name', 'field');  'Item name' -> ('Item name', default)."""
     item, _, field = spec.partition("#")
@@ -237,17 +245,19 @@ class Ctx:
             raise SecretError(f"needs input ({prompt.strip().rstrip(':')}) but there's no terminal to ask in")
         return getpass.getpass(f"  {prompt}")
 
-    def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1):
+    def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1, discard=False):
         """Run a helper command, capturing output. A missing tool becomes a friendly error.
         INPUT goes to its stdin (the way to hand a tool a secret: never in args). The timeout is held to serve's
-        deadline (common.time_left), but never below FLOOR; past it, TimedOut."""
+        deadline (common.time_left), but never below FLOOR; past it, TimedOut. DISCARD: its stdout goes to the null
+        device, never into roster (only the exit code and stderr come back)."""
         tool = args if isinstance(args, str) else args[0]
         stdin = {} if input is not None else {"stdin": None if interactive else subprocess.DEVNULL}
         try:
             if not shell:
                 args = program_argv(args)
-            return run(args, shell=shell, text=True, timeout=time_left(timeout, floor),
-                       input=input, env={**os.environ, **(env or {})}, **stdin)
+            return run(args, shell=shell, text=True, timeout=time_left(timeout, floor), input=input,
+                       env={**os.environ, **(env or {})}, stdout=subprocess.DEVNULL if discard else subprocess.PIPE,
+                       **stdin)
         except FileNotFoundError:
             raise CliMissing(not_installed(self.provider, tool))
         except subprocess.TimeoutExpired:
@@ -539,10 +549,11 @@ def delete_item(provider, item_id):
     fn(item_id, Ctx(provider, None))
 
 
-def login_fields(provider, spec):
+def login_fields(provider, spec, interactive=True):
     """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
     None when the item has none. Only a provider that can read them without the password reaching roster has this
-    (bw's `bw get uri` / `bw get username`); any other is Unsupported."""
+    (bw's `bw get uri` / `bw get username`); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
+    asks, not even for a master password."""
     fn = _vault_op(provider, "login_fields")
     if not fn:
         raise Unsupported(f"provider '{provider}' can't give an item's address and username without roster reading "
@@ -550,8 +561,11 @@ def login_fields(provider, spec):
     name, _ = split_field(spec)
     if not name:
         raise SecretError(f"{provider}: needs an item name or id")
+    check_item_name(name)
+    ctx = Ctx(provider, None)
+    ctx.interactive = ctx.interactive and interactive
     with _secret_lock:
-        found = fn(name, Ctx(provider, None))
+        found = fn(name, ctx)
     return {"uri": found.get("uri") or None, "username": found.get("username") or None}
 
 
