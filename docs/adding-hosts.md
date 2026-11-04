@@ -4,6 +4,19 @@ The usual flow for bringing a new network or box into roster: scan it, review it
 
 `roster.yml` may be a plain file (your own, on this Box) or a file in your team's git repo: every step here works the same on both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)). No `roster.yml` yet? `roster init --blank` writes a short, empty one, and `roster init --inventory ssh-config` starts it from the Hosts in your `~/.ssh/config` ([A new Inventory](cli-reference.md#a-new-inventory)).
 
+## One Host you already know
+
+No scan needed when you know the box: save its Login in the vault (named and filled as in [step 2](#2-add-the-logins-to-the-vault): the address in its URI field, the user in its username), then add the Host in one command:
+
+```bash
+roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab --no-enroll # everything said
+roster add nas-01 --auth "bw:nas-01 ssh" --from-vault --setup                   # address and user from the item, then set up
+```
+
+It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --only nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks.
+
+For a whole network you don't know yet, start here instead:
+
 ## 1. Scan the network
 
 ```bash

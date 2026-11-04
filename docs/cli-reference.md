@@ -223,6 +223,22 @@ A local database is this Box's own, so the app's `init.lua` can name it instead:
   ```
 - **Python plugin, for anything that needs login or unlock logic:** drop a `.py` file into `~/.config/roster/providers/` or a `providers/` folder next to `roster.yml`. `examples/providers/pass_store.py` is a complete, documented example for `pass`. Copy it to get started.
 
+## Adding one Host: `roster add`
+
+```bash
+roster add NAME --ip ADDR [--user USER] [--auth REF] [--group GROUP] [--enroll | --no-enroll] [--os windows|posix]
+           [--title TEXT] [--type TEXT] [--port N] [--from-vault] [--setup] [--dry-run] [-y]
+```
+
+`roster add` puts one Host you already know into `roster.yml`, reviewed, the way the app's add-Host form does: it's the same code (serve's `host.add`), so the two check and write a Host the same way.
+
+- **Where:** under `--group`, an existing group or a new one (made after the last group, and said so); without it, the first group in the file. Only the new Host's lines are added: comments, order and quoting stay byte for byte, and it's written only if the result loads to exactly that Host with nothing else changed. A team repo's `roster.yml` gets it as a Pending change (the note says so: publish it from the app, or commit it); a plain file is saved in place, `roster.yml.bak` beside it ([A plain file or a team repo](#a-plain-file-or-a-team-repo)). It says what it wrote (`backup`, `wrote`), then syncs this Box as `roster sync` does (its ssh config and Claude files), as `roster discover --write` and `roster mesh cut` do: `ssh NAME` works straight away. If the sync fails, the Host stays written and a `warning:` on stderr says why and to run `roster sync`.
+- **What it refuses**, writing nothing: a bad name (letters, digits, `. _ -`), a bad address (not an IPv4 or IPv6 address or a DNS name, e.g. a URL; names may hold `_`, as Quick Connect's do, and an IPv6 zone is letters, digits, `_`, `.` and `-`), a name another Host has (81, naming its group), an address and SSH port another Host has (184, naming that Host; `::1` and `0:0::1` are the same address: give `--port` for a second sshd on one machine). Values the Host would inherit anyway (its group's `user:`, `auth:`, `enroll:`) aren't written on it.
+- **Asking:** in a terminal it asks for what's missing: the group (the first one is the default), the address, and whether to install this Box's key (`enroll`, the group's setting is the default). With `-y`/`--yes`, or without a terminal, it never asks (not even for the vault's master password with `--from-vault`): a value with a default takes it, and one without (the address; a user or Login when neither the group nor `defaults:` sets one) is an error naming its flag (185).
+- **`--from-vault`** (with `--auth bw:ITEM`): fills `--ip` from the item's URI and `--user` from its username, never reading its password. roster first checks that ITEM names exactly one item (`bw get item` with its output thrown away unread, so the password stays in bw), then reads just the two fields (`bw get uri`, `bw get username`). The URI may be a bare address (`10.0.0.5`, `fe80::1`, `nas:2222`) or an `ssh`, `sftp`, `http` or `https` URL; only a bare or `ssh`/`sftp` URI's port becomes `--port`, and only when the address came from the vault too. Any other scheme (`androidapp://`, `mailto:`) gives no address, and roster says so. Flags you give win. Several items matching the name need the item's id in `--auth` (the Bitwarden app shows it; roster won't list them, as that would read their passwords), and an item name starting with `-` is refused before bw runs. Providers that can't give these fields without the password (`op`, `kp`, `pass`, `env`, ...) are refused (186): give `--ip` and `--user`.
+- **`--setup`**: then runs setup for that Host alone (its host key, and this Box's key on it when `enroll` is true; never another Host, even one whose group, type or product is NAME) and `roster check NAME` (a Session to it would open, step by step), and ends with how each went; it exits 1 if either failed. Without it, roster add prints `roster setup --only NAME` and `roster check NAME` as the next step, and says so when `--only NAME` would select other Hosts too.
+- **`--dry-run`** prints what the write would change (`+` the lines it adds, `-` one it replaces, such as a group's `hosts: {}`) and writes nothing.
+
 ## Discover
 
 ```bash
@@ -249,6 +265,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | Command | What it does |
 |---|---|
 | `init [--blank \| --inventory HOW] [--name NAME]` | Write the commented example `roster.yml` (to `-c PATH`, else `./roster.yml`), or a new Inventory: `--blank` (same as `--inventory blank`) a short one with an empty group and a Host to copy commented out; `--inventory file:PATH` a copy of that `roster.yml`, once it loads; `repo:URL` a `git clone` of the team's repo into `roster.yml`'s folder (empty or new); `ssh-config[:PATH]` the Hosts in `~/.ssh/config` (or PATH): see [A new Inventory](#a-new-inventory). A file already there is kept (170): make the new one in another folder, and `--name NAME` names it (`roster inv add`) |
+| `add NAME --ip ADDR […]` | Add one Host you already know to `roster.yml`, reviewed, and syncs this Box, the way the app's add-Host form does (the same code): under `--group` (new or existing; default the first), with `--user`, `--auth`, `--enroll`/`--no-enroll`, `--os`, `--title`, `--type`, `--port`. Asks in a terminal for what's missing; `-y` never asks. `--from-vault` fills the address and user from the `--auth` item, never its password; `--setup` then runs setup and check for it; `--dry-run` writes nothing. See [Adding one Host](#adding-one-host-roster-add) |
 | `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`) |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
@@ -268,7 +285,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
-| `completion bash\|zsh\|fish\|powershell` | Print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `info`, `web`, `mesh cut`), groups (`--only`, `discover --group`), resources (`reveal`, `info`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
+| `completion bash\|zsh\|fish\|powershell` | Print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `info`, `web`, `mesh cut`), groups (`--only`, `discover --group`, `add --group`), resources (`reveal`, `info`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`.
 
@@ -384,7 +401,7 @@ Other Boxes get it at their next unlock (roster runs `bw sync` then) or with `ro
 
 An Inventory is one `roster.yml`, and roster works the same whether it's a plain file or a file in your team's git repo. Which one is decided per file, each time roster writes it:
 
-- **A team repo**: `roster.yml` is committed in a git work tree that has a remote. The app's edits (and `roster discover --write`, `roster mesh cut`) are Pending changes: `:changes` shows them, `:publish` commits `roster.yml` alone and pushes it, `:discard` puts it back, and the app pulls before an edit form. The backup of what an edit replaced is kept in the repo's git dir (`.git/roster/roster.yml.bak`), never in the work tree.
+- **A team repo**: `roster.yml` is committed in a git work tree that has a remote. The app's edits (and `roster add`, `roster discover --write`, `roster mesh cut`) are Pending changes: `:changes` shows them, `:publish` commits `roster.yml` alone and pushes it, `:discard` puts it back, and the app pulls before an edit form. The backup of what an edit replaced is kept in the repo's git dir (`.git/roster/roster.yml.bak`), never in the work tree.
 - **A plain file**: anything else (not in a git repo, git not installed, not committed yet, or a repo with no remote to publish to). Every edit is saved straight to the file; there's nothing to pull, discard or publish, and nothing asks for git. The backup is `roster.yml.bak` beside it (in the git dir when it's in a repo).
 
 `roster check --box` (and the app's `:check`) says which, in its Infra repo section. `git init` in the folder is optional: it gives you history to commit by hand, and edits still save in place until the repo has a remote.
@@ -540,6 +557,7 @@ roster check esx-02                      # why a Session to esx-02 would or woul
 roster check --box                       # this Box's health: roster.yml, ssh, vault, infra repo
 roster run esx-02 -- uptime              # run a command with the stored login
 roster web esx-02 GET /api/status        # an HTTP request, logged in
+roster add nas-01 --ip 10.0.5.50 --auth bw:nas-01 --setup   # one Host you know, then set it up
 roster discover 10.0.5.0/24              # scan a network, preview only
 roster reveal lab-guest --wifi | qrencode -t ansiutf8
 ```

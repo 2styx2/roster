@@ -177,6 +177,12 @@ CLONE_FAILED = 172          # roster init: git couldn't clone the repo (or isn't
 SSH_CONFIG_UNREADABLE = 173  # roster init: the ssh config to import Hosts from can't be read; nothing written
 FOLDER_NOT_WRITABLE = 174   # roster init / inventory.create: the folder can't be made or written in; nothing written
 
+# Adding one Host (T220, #427, decision Q190): `roster add` and serve's host.add, one implementation (addhost.py)
+# (catalog rows 245-247)
+ADDRESS_TAKEN = 184         # a Host at that address (and SSH port) is in roster.yml already; data.host, data.group
+NEEDS_FLAG = 185            # roster add without a terminal (or with --yes): a value it can't guess; the flag is named
+NO_ITEM_FIELDS = 186        # the vault can't give an item's address and user without reading its password
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

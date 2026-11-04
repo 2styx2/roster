@@ -16,7 +16,7 @@ USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check", "auth-check"]),
     ("Every day", ["hosts", "info", "run", "web", "resources", "reveal"]),
-    ("Inventory and access", ["discover", "inv", "mesh", "revoke"]),
+    ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
     ("Tools", ["bw", "providers", "man", "completion"]),
     ("Run by the app, not by hand", ["serve", "askpass"]),
 ]
@@ -50,6 +50,10 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
                   ("roster resources --find guest", "search them")],
     "reveal": [("roster reveal lab-guest", "print its secret, for you to type in"),
                ("roster reveal lab-guest --wifi", "a WIFI:... string for a QR code")],
+    "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
+            ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
+             "setup and check for it"),
+            ("roster add web-01 --ip 10.0.0.20 --dry-run", "the lines it would add; nothing written")],
     "discover": [("roster discover 10.0.1.0/24", "preview what answers; nothing written"),
                  ("roster discover 10.0.1.0/24 --write --group lab", "add them, unreviewed, to roster.yml")],
     "inv": [("roster inv add work ~/infra/roster.yml", "name an Inventory"),

@@ -410,6 +410,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `172` | `roster init`: git couldn't clone the team's repo (not installed, a bad URL or access, or the folder isn't empty). A CLI error so far |
 | `173` | `roster init`: the ssh config to import Hosts from can't be read; nothing written. A CLI error so far |
 | `174` | `roster init`: the folder for the new `roster.yml` can't be made or written in; nothing written. A CLI error so far |
+| `184` | `roster add`: another Host has that address and SSH port already; `data.host`, `data.group` (T220). A CLI error: the app's `host.add` allows it |
+| `185` | `roster add` without a terminal (or with `--yes`): a value it can't default is missing, and the message names its flag (T220). A CLI error |
+| `186` | `vault.item_fields` (and `roster add --from-vault`): the provider can't give an item's address and username without roster reading its password, so it isn't asked (T220, API 29) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
@@ -450,7 +453,7 @@ The key a new address offers comes from `host.scan_key {address, port?}` (its se
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
-| `host.add` | `{name, group, address, user?, port?, type?, title?, description?, enroll?, auth? \| password + item?, host_key?, provider?, save_to?}` | `{added: true, host, backup, verify, item, warnings, sync}`: `host` as `roster.yml` has it now, `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`, its `error` and `fix`) | `80`, `81`, `74`, `61`, `11`, `12`, `14`, `30`-`35`, `40`-`48`, `60`, `62`, `64`, `65` | 6 |
+| `host.add` | `{name, group, address, user?, port?, type?, title?, description?, enroll?, auth? \| password + item?, host_key?, provider?, save_to?}` | `{added: true, host, backup, verify, item, warnings, sync}`: `host` as `roster.yml` has it now, `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`, its `error` and `fix`). Since API 29 (T220) its checks are `roster add`'s (addhost.py): `80` also for an address that's neither an IP address nor a DNS name | `80`, `81`, `74`, `61`, `11`, `12`, `14`, `30`-`35`, `40`-`48`, `60`, `62`, `64`, `65` | 6 |
 | `host.review` | `{host, reviewed?}` | `{changed, host, backup, sync?}`: `reviewed: true` set on that Host and nothing else (`changed: false` if it already was). `reviewed: false` (API 9) un-reviews it, for a review made by mistake: where the Host's own `reviewed: true` sits over an unreviewed group or defaults, its line is taken out again, so the text goes back to what it was. `sync` (T150): the `roster sync` after a change, as `host.add`'s | `2`, `70`, `74` | 6 |
 
 <!-- END generated:methods -->
@@ -629,13 +632,14 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 
 "Save to vault" (the add-Host form, Quick Connect) creates the Vault item a new Login points at. The order is: verify the login, create the Vault item, then add the Pending change. If that last step fails, `vault.undo_create` takes the item back out, so nothing stray is left.
 
-<!-- BEGIN generated:methods vault.create_item vault.undo_create vault.targets -->
+<!-- BEGIN generated:methods vault.create_item vault.undo_create vault.targets vault.item_fields -->
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
 | `vault.create_item` | `{name, password, username?, uri?, provider?, save_to?}` | `{provider, id, name, target}` | `14`, `60`-`62`, `64`, `65` | 4 |
 | `vault.undo_create` | `{id}` (from `vault.create_item`) | `{provider, id}` | `14`, `62`, `63` | 4 |
 | `vault.targets` | `{provider?}` | `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from, problem}` | `14` | 10 |
+| `vault.item_fields` | `{item, provider?}`: `item` the item's name or id (as after `bw:` in auth), `provider` the vault (default: the Inventory's, as vault.status's) | `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address (another scheme than ssh, sftp, http or https, or a host that isn't an address) | `13`, `14`, `11`, `12`, `31`, `32`, `33`, `35`, `186` | 29 |
 
 <!-- END generated:methods -->
 
