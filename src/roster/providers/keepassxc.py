@@ -12,9 +12,9 @@ Checked against keepassxc-cli 2.8.0: prompts go to stderr ("Enter password to un
 the unlock errors (a wrong password would be a bare exit 1)."""
 
 import os
-import shutil
 from pathlib import Path
 
+from ..common import find_program
 from . import (
     PROVIDERS,
     ItemExists,
@@ -123,7 +123,7 @@ def _ready(ctx):
 
 
 def _status(ctx):
-    if not shutil.which(TOOL):
+    if not find_program(TOOL):
         return "missing"
     if not_set_up(ctx):
         return "unauthenticated"

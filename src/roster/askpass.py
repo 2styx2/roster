@@ -20,8 +20,8 @@ Wire format, one exchange per connection, then serve closes:
 REASON is safe to show in the terminal; CODE is one of errors.py's stable codes. The helper prints it as
 the one line "roster askpass: [CODE] REASON" on stderr, which the app's classifier parses.
 
-Stdlib only, and nothing else from roster (but winpipe, on Windows): ssh runs the helper for every prompt, it must
-start fast and never load roster.yml.
+Stdlib only, and nothing else from roster (but winpipe, on Windows, and on serve's side common.find_program): ssh
+runs the helper for every prompt, it must start fast and never load roster.yml.
 
 On Windows ssh can't run a script as SSH_ASKPASS, only a program, so the helpers are the launchers pip and uv install
 for roster's entry points roster-askpass and roster-askpass-login (pyproject.toml), found next to the Python serve
@@ -33,7 +33,6 @@ import re
 import secrets
 import select
 import shlex
-import shutil
 import socket
 import struct
 import sys
@@ -314,7 +313,8 @@ def installed_helper(name):
         exe = os.path.join(d or "", f"{name}.exe")
         if d and os.path.isfile(exe):
             return exe
-    return shutil.which(name)
+    from .common import find_program  # serve's side only: the helper itself never comes here
+    return find_program(name)
 
 
 def ttl():
@@ -417,8 +417,8 @@ class Channel:
         prunes what expires and runs tick() (on Linux the one select() loop does both)."""
         from . import winpipe
         self.socket_path = rf"\\.\pipe\roster-askpass-{secrets.token_hex(16)}"   # the pipe's name: env and logs
-        self.helper = installed_helper("roster-askpass")
-        self.login_helper = installed_helper("roster-askpass-login")
+        self.helper = installed_helper("roster-askpass") or ""        # "": not installed (self.problem says so)
+        self.login_helper = installed_helper("roster-askpass-login") or ""
         if not self.helper or not self.login_helper:
             self.problem = ("roster-askpass.exe isn't installed next to roster, so ssh has no way to ask for a "
                             "password - reinstall roster (`uv tool install --force .` in the roster repo)")
