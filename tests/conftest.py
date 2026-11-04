@@ -23,7 +23,7 @@ def source_copy(tmp_path):
     src = tmp_path / "src-copy"
     (src / "src/roster").mkdir(parents=True, exist_ok=True)
     root = Path(__file__).parent.parent
-    for f in ("install.sh", "update.sh", "pyproject.toml", "src/roster/roster.1"):
+    for f in ("install.sh", "update.sh", "install-lib.sh", "pyproject.toml", "src/roster/roster.1"):
         (src / f).write_bytes((root / f).read_bytes())
     return src
 
