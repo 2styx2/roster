@@ -242,7 +242,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The idle pane's Recent Hosts (Q188): the Sidebar's row language, centred in a column, so the
    first screen shows your network. Rows raise under the pointer, no motion (a click is its own
    confirmation). */
-.recent { width: min(420px, 100%); margin: 6px 0 4px; text-align: left; }
+.recent { width: 420px; max-width: 100%; margin: 6px 0 4px; text-align: left; }
 .recent-title {
   margin: 0 0 4px; padding: 0 10px; color: var(--muted);
   font-size: max(11px, calc(var(--text-xs) - 1px)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
@@ -488,13 +488,14 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.lit.password circle { fill: none; stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
-/* Connecting (issue #78, Q184): an accent ring with a gap facing the terminal (three quarters of
-   the 20.4 circumference drawn, the gap centred on the right); it closes and fills (key) or
-   closes into a ring (password) once the shell answers. Static: the edge in the pane is the
-   motion. */
+/* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the
+   logo's Host sits in the Gap orbit (4.5 of the 20.4 circumference open, centred at -45°); it
+   closes and fills (key) or closes into a ring (password) once the shell answers. A small gap up
+   and to the right, not a quarter on the side, so beside a name it reads as a node, not a "c".
+   Static: the edge in the pane is the motion. */
 .dot.connecting circle {
   fill: none; stroke: var(--accent); stroke-width: 1.5px;
-  stroke-dasharray: 15.3 5.1; stroke-dashoffset: -2.55;
+  stroke-dasharray: 15.92 4.5; stroke-dashoffset: 0.28;
 }
 
 /* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,

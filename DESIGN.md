@@ -264,7 +264,7 @@ The one recurring geometry is the network's: **nodes** (6 to 7px circles whose f
 - **Ring:** password login.
 - **Dashed ring:** unreviewed.
 - **Hollow grey:** ended.
-- **Open apricot ring** (a quarter missing, facing the terminal): connecting.
+- **Open apricot ring** (a short gap at its upper right, where the logo's Host sits): connecting.
 
 With no Session open, the pane lists up to six recent Hosts under the mark, each a Sidebar-style row (node, Iosevka name, muted address), above Find a Host.
 
