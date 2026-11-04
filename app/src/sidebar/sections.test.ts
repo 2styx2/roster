@@ -92,4 +92,22 @@ describe("a Session row's breadcrumb (ticket 120)", () => {
   it("has none on the Session's own Host", () => {
     expect(rowOf(tab(1, first))?.hop).toBeUndefined();
   });
+
+  it("lights only the nodes of Hosts with a live or connecting Session (the accent means live)", () => {
+    const build = sectionBuilder();
+    const second = hosts.hosts.find((h) => h.reviewed && h.name !== first)?.name ?? "";
+    const sessions: TabsSnapshot = {
+      tabs: [tab(1, first, { state: "open" }), tab(2, second, { state: "ended", exit: { code: 0, closed: false } })],
+      active: 1,
+      previous: null,
+    };
+    const built = build(defs, ctx(sessions));
+    const rows = built.flatMap((s) => s.rows).filter((r) => r.dot);
+    const lit = rows.filter((r) => r.lit);
+    // Its Session's row and its Inventory row; nothing else, the ended Session's Host included.
+    expect(lit.map((r) => r.host)).toEqual([first, first]);
+    expect(rows.filter((r) => r.host === second).some((r) => r.lit)).toBe(false);
+    // With no Session at all, no node is lit.
+    expect(build(defs, ctx(none)).flatMap((s) => s.rows).some((r) => r.lit)).toBe(false);
+  });
 });

@@ -156,7 +156,7 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
               onMouseMove={() => i !== current && setMoved(i)}
               onClick={() => choose(item)}
             >
-              {item.dot && <StateDot dot={item.dot} />}
+              {item.dot && <StateDot dot={item.dot} lit={item.lit} />}
               <span className="finder-label" title={item.label}>
                 <span className="finder-name" dir="auto">
                   {item.label}

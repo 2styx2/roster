@@ -54,6 +54,9 @@ export interface SidebarRow {
    * commands such as `folder add` act on the Host under the cursor. */
   host?: string;
   dot?: Dot;
+  /** Its Host has a Session that's connected or connecting: the node takes the accent. At rest a
+   * node is muted, whatever its shape (taste.md: the accent means live, decision Q185). */
+  lit?: boolean;
   /** A short status after the label ("connecting…", "ended (code 0)"). */
   note?: string;
   /** The end of the label that must stay in view when the rest is cut off (a Session's " (2)"). */
@@ -365,7 +368,7 @@ const Row = memo(function Row({
       >
         {row.foldable && <Chevron folded={row.folded ?? false} />}
         {row.icon && <RowIcon name={row.icon} />}
-        {row.dot && <StateDot dot={row.dot} />}
+        {row.dot && <StateDot dot={row.dot} lit={row.lit} />}
         {/* The name first: what follows it in here drops out whole (to a hidden second line)
             when there's no room, and the name is cut only when it alone is too long. */}
         {/* Hovering the text shows the whole name (it may be cut off), then the row's tooltip. */}

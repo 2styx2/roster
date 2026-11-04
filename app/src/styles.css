@@ -421,19 +421,22 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sidebar .sb-action.pinned { display: grid; }
 .sb-row.has-actions.selected .sb-detail, .sb-row.has-actions.selected .sb-num, .sb-row.has-actions.selected .sb-badge { display: none; }
 
-/* State nodes (ui/StateDot.tsx, decisions Q53 and Q57): the shape carries the state, colour only
-   adds to it. Filled accent = key login, accent ring = password login, grey ring = ended, dashed
-   ring in the second tone = unreviewed (not in reach yet, so not the accent). Grey is `muted` and
-   the tone is held at 3:1, so every node reads at 3:1 or more on every surface. */
+/* State nodes (ui/StateDot.tsx, decisions Q53, Q57 and Q185): the shape carries the state, colour
+   only adds to it. Filled = key login, ring = password login, grey ring = ended, dashed ring in the
+   second tone = unreviewed. At rest every node is `muted`: the accent means live (taste.md), so a
+   node takes it only when its Host has a Session that's connected or connecting (`.lit`), and
+   while it connects. Grey is `muted` and the tone is held at 3:1, so every node reads at 3:1 or
+   more on every surface. */
 .dot { flex: none; overflow: visible; }
-.dot circle { fill: var(--accent); stroke: none; }
+.dot circle { fill: var(--muted); stroke: none; }
 .dot.password circle, .dot.ended circle, .dot.off circle { fill: none; stroke-width: 1.5px; }
-.dot.password circle { stroke: var(--accent); }
-.dot.ended circle { stroke: var(--muted); }
+.dot.password circle, .dot.ended circle { stroke: var(--muted); }
+.dot.lit circle { fill: var(--accent); }
+.dot.lit.password circle { fill: none; stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78): an accent ring, not filled yet; it fills (key) or stays a ring
-   (password) once the shell answers. What tells it from a password node is the edge below. */
+   (password) once the shell answers. */
 .dot.connecting circle { fill: none; stroke: var(--accent); stroke-width: 1.5px; }
 
 /* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,

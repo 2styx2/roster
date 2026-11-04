@@ -259,8 +259,8 @@ Gently rounded and mostly rectangular:
 - **Pill, 999px:** counts in the toolbar.
 - Window controls are square, matching the OS.
 
-The one recurring geometry is the network's: **nodes** (6 to 7px circles whose fill or stroke carries state), **edges** (1px lines drawn between nodes), and **this Box's square** (6px, 1.5px radius, Sea Glass). Node shapes carry meaning:
-- **Filled:** key login, live.
+The one recurring geometry is the network's: **nodes** (6 to 7px circles whose fill or stroke carries state), **edges** (1px lines drawn between nodes), and **this Box's square** (6px, 1.5px radius, Sea Glass). Node shapes carry meaning. At rest every node is Muted Pewter; it turns apricot only while its Host has a Session that's connected or connecting (Q185):
+- **Filled:** key login.
 - **Ring:** password login.
 - **Dashed ring:** unreviewed.
 - **Hollow grey:** ended.
@@ -326,7 +326,7 @@ The tokens are `--ease-out` (`cubic-bezier(0.23, 1, 0.32, 1)`), 120ms press/fade
 ### Do:
 - **Do** use the raised style (Raised Graphite plus a 1px inset Raised Line) for selection, and add the 2px apricot bar only for the live Session.
 - **Do** put Host names, IPs, ports, keys and commands in Iosevka 500 with tabular figures, at Muted Pewter for secondary data.
-- **Do** show state with node shape (filled, ring, dashed, hollow) plus words, never colour alone.
+- **Do** show state with node shape (filled, ring, dashed, hollow) plus words, never colour alone. Nodes are Muted Pewter at rest and apricot only while their Host is live.
 - **Do** put the keycap for the next action beside every empty state, footer and menu item.
 - **Do** make keyboard navigation instant (no transition on cursor, selection or live-bar moves), as in Neovim.
 - **Do** keep motion under 150ms, ease-out, transform and opacity only, interruptible and off under reduced motion.

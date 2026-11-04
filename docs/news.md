@@ -16,6 +16,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **Only what's live is apricot** (#418): a Host's node is grey at rest, in the same shape as before (filled for a key login, a ring for a password one), and turns apricot while the Host has a Session that's connected or connecting, in the Sessions list, the Inventory and Folders. An idle Inventory is calm, and the live Session stands out.
 - **Connecting looks like the connection coming up** (#418): the pane shows this Box, an edge and the Host on the pane itself, not in a box over a blank terminal. The edge reaches part-way while ssh starts and the whole way while it logs in, the Host's ring fills when the shell answers, and the terminal appears with its first output. The Sidebar row no longer draws a line under itself while it connects. Words in the card no longer break mid-word in a narrow window.
 
 ### Security

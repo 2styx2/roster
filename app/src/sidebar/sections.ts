@@ -91,7 +91,8 @@ export function sectionBuilder(): SectionBuild {
       })
       .filter((s): s is SidebarSection => s !== null);
     const active = ctx.sessions.tabs.find((t) => t.id === ctx.sessions.active);
-    return active ? markOnScreen(sections, active.host, isLive(active)) : sections;
+    const lit = markLit(sections, new Set(ctx.sessions.tabs.filter(isLive).map((t) => t.host)));
+    return active ? markOnScreen(lit, active.host, isLive(active)) : lit;
   };
 }
 
@@ -117,6 +118,16 @@ function foldSection(section: SidebarSection, folded: ReadonlySet<string>): Side
 
 /** A Session that's connected or connecting: not ended, not refused. */
 const isLive = (tab: Tab) => tab.status.state !== "ended" && tab.status.state !== "failed";
+
+/** Rows whose Host has a live or connecting Session: their node takes the accent (`lit`); every
+ * other node stays muted (taste.md: the accent means live, decision Q185). An ended or unreviewed
+ * node keeps its own colour. Only the rows that change are new objects, so the memoized rows of a
+ * big Inventory don't re-render (#62). */
+function markLit(sections: SidebarSection[], hosts: ReadonlySet<string>): SidebarSection[] {
+  if (hosts.size === 0) return sections;
+  const lights = (r: SidebarRow) => r.host !== undefined && hosts.has(r.host) && r.dot !== undefined && r.dot !== "ended" && r.dot !== "off";
+  return sections.map((s) => (s.folded || !s.rows.some(lights) ? s : { ...s, rows: s.rows.map((r) => (lights(r) ? { ...r, lit: true } : r)) }));
+}
 
 /** The on-screen Host is raised where it first shows (a section may have raised its own row
  * already: Sessions raises the tab on screen) and brighter ("also") everywhere else. The raised
