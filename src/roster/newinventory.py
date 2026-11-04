@@ -13,15 +13,20 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+import yaml
 
 from .common import NAME_RE
 from .config import load_config_text
 from .errors import CLONE_FAILED, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
 
 HOWS = ("blank", "file", "repo", "ssh-config")
+ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports (#409 L3)
+SSH_CONFIG_MAX = 1024 * 1024            # ... and ssh config
 GROUP = "servers"                       # the blank one's empty group
 IMPORTED = "imported"                   # the group Hosts from an ssh config go in
-CLONE_TIMEOUT = 90                      # s: a clone serve runs (the app waits 120 s for inventory.create)
+CLONE_TIMEOUT = 90                      # s: a clone that can ask nothing (serve's)
 
 HEADER = """\
 # roster.yml - the map of your network. NO PASSWORDS IN THIS FILE: only where they are (auth: bw:ITEM, ...).
@@ -69,7 +74,7 @@ def create(path, how, value=None, interactive=True):
     a passphrase on this terminal (serve's never does). Returns Made; raises Problem with nothing left half-made,
     except a clone that worked but has no roster.yml (kept, and the Problem says where)."""
     path = Path(path).expanduser()
-    if path.exists():
+    if path.exists() or path.is_symlink():          # a link to nothing is there too: never written through
         raise Problem(INVENTORY_THERE, f"{path} already exists, so roster kept it as it is", {"path": str(path)},
                       fix=f"use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
                           f"{path.name} init --inventory ... --name NAME")
@@ -84,9 +89,26 @@ def create(path, how, value=None, interactive=True):
     else:
         raise ValueError(how)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "x", encoding="utf-8", newline="") as f:      # "x": never over a file that appeared meanwhile
+    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private (#409 S2)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
         f.write(text)
     return made
+
+
+def read_source(src, what, limit, code, fix):
+    """SRC's text, if it's a regular file of at most LIMIT bytes (never a device, a folder or a huge file)."""
+    if not src.is_file():
+        raise Problem(code, f"no file at {src}", {"path": str(src)}, fix=fix)
+    try:
+        size = src.stat().st_size
+        if size > limit:
+            raise Problem(code, f"{src} is too big for {what} ({size // 1024} KB; at most {limit // 1024} KB)",
+                          {"path": str(src)}, fix=fix)
+        return src.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        raise Problem(code, f"can't read {src}: {e.strerror or type(e).__name__}", {"path": str(src)},
+                      fix=fix) from None
 
 
 def checked(path, text, what):
@@ -100,14 +122,21 @@ def checked(path, text, what):
 
 def copied(path, source):
     src = Path(source).expanduser()
-    if not src.is_file():
-        raise Problem(NOT_AN_INVENTORY, f"no file at {src}", {"path": str(src)},
-                      fix="give the path of an existing roster.yml (file:PATH)")
+    text = read_source(src, "a roster.yml", ROSTER_YML_MAX, NOT_AN_INVENTORY,
+                       "give the path of an existing roster.yml (file:PATH)")
     try:
-        text = src.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        raise Problem(NOT_AN_INVENTORY, f"can't read {src}: {type(e).__name__}", {"path": str(src)},
-                      fix="check the file and its permissions") from None
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError:
+        raw = {"groups": {"-": {}}}                 # checked() below says what's wrong with it
+    if raw is not None and not isinstance(raw, dict):
+        raise Problem(NOT_AN_INVENTORY, f"{src} isn't a roster.yml (its top level isn't a mapping of settings and "
+                                        "groups:), so nothing was written", {"path": str(src)},
+                      fix="give the path of a roster.yml (file:PATH); for an ssh config: ssh-config:PATH")
+    groups = (raw or {}).get("groups")
+    if not isinstance(groups, dict) or not groups:   # empty, a typo'd groups:, another YAML file (#409 C2)
+        raise Problem(NOT_AN_INVENTORY, f"{src} has no groups: (no Hosts at all), so it isn't a roster.yml to "
+                                        "import; nothing was written", {"path": str(src)},
+                      fix="check the file, or start a new one: --inventory blank")
     checked(src.resolve(), text, str(src))
     return text
 
@@ -120,21 +149,28 @@ def clone(path, url, interactive):
     if shutil.which("git") is None:
         raise Problem(CLONE_FAILED, "git isn't installed on this Box, so roster can't clone the repo",
                       fix="install git, or copy roster.yml over and use file:PATH")
-    env = dict(os.environ) if interactive else {**os.environ, "GIT_TERMINAL_PROMPT": "0",
-                                                 "GIT_SSH_COMMAND": os.environ.get("GIT_SSH_COMMAND",
-                                                                                   "ssh -o BatchMode=yes")}
+    from .changes import GIT_LOCATION
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
+    if not interactive:                             # nobody to answer: a passphrase, a password or a new host key
+        env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": env.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
     argv = ["git", "clone", "-q", "--", url, str(folder)]
     try:
+        # stderr is kept (with the URL's password cut out) even in a terminal: git may echo the URL; ssh's and git's
+        # own questions go to the terminal itself
         r = subprocess.run(argv, env=env, text=True, stdin=None if interactive else subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=None if interactive else subprocess.PIPE,
+                           capture_output=True,
                            timeout=600 if interactive else CLONE_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise Problem(CLONE_FAILED, f"git clone didn't finish within {600 if interactive else CLONE_TIMEOUT} s",
                       fix="check the network; a big repo: `roster init --inventory repo:URL` in a terminal") from None
     if r.returncode != 0:
-        raise Problem(CLONE_FAILED, f"git couldn't clone {url}", {"url": url},
-                      fix="check the URL and your access to the repo (`git clone URL` in a terminal shows the same)",
-                      details=(r.stderr or "").strip() or None)
+        said = redacted(url, (r.stderr or "").strip())
+        asked = "" if interactive else (" (nothing can be answered here: a repo that needs a passphrase, a password "
+                                        "or a host key not seen before fails; `roster init --inventory repo:URL` in "
+                                        "a terminal can ask)")
+        raise Problem(CLONE_FAILED, f"git couldn't clone {shown_url(url)}", {"url": shown_url(url)},
+                      fix="check the URL and your access to the repo (`git clone URL` in a terminal shows the same)"
+                          + asked, details=said or None)
     if not path.is_file():
         raise Problem(NOT_AN_INVENTORY, f"the clone has no {path.name} at its top: it's in {folder}",
                       {"path": str(folder)}, fix=f"point roster at the roster.yml in it (-c), or remove {folder}")
@@ -183,12 +219,40 @@ def ssh_hosts(text):
     return hosts, skipped
 
 
+def shown_url(url):
+    """URL with any password in it cut out (https://me:TOKEN@host/... -> https://me:***@host/...), for messages
+    and the log (#409 L4)."""
+    try:
+        u = urlsplit(url)
+        if u.password is None:
+            return url
+        host = (u.hostname or "") + (f":{u.port}" if u.port else "")
+    except ValueError:
+        return url
+    return urlunsplit(u._replace(netloc=f"{u.username}:***@{host}"))
+
+
+def redacted(url, text):
+    """TEXT with URL's password (if it has one) cut out wherever it shows."""
+    try:
+        secret = urlsplit(url).password
+    except ValueError:
+        secret = None
+    return text.replace(url, shown_url(url)).replace(secret, "***") if secret else text
+
+
 def scalar(v):
-    """V as a YAML scalar: as it is when that's unambiguous, else JSON's double-quoted string (valid YAML)."""
+    """V as a YAML scalar that reads back as exactly V: plain when YAML (1.1, as PyYAML reads it) gives back the
+    same string, else JSON's double-quoted string, which is valid YAML (#409 C1: yes, null, 010, 1_000 ...)."""
     if isinstance(v, int):
         return str(v)
-    return v if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@/~-]*", v) and not re.fullmatch(r"[0-9.]+e[0-9]+", v,
-                                                                                         re.I) else json.dumps(v)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@/~-]*", v):
+        try:
+            if yaml.safe_load(v) == v:
+                return v
+        except yaml.YAMLError:
+            pass
+    return json.dumps(v)
 
 
 def host_line(name, h):
@@ -203,10 +267,15 @@ def host_line(name, h):
         fields["port"] = int(port)
     if h.get("identityfile"):
         fields["auth"] = "agent"
-    line = f"      {name}: {{" + ", ".join(f"{k}: {scalar(v)}" for k, v in fields.items()) + "}"
+    line = f"      {scalar(name)}: {{" + ", ".join(f"{k}: {scalar(v)}" for k, v in fields.items()) + "}"
     if h.get("identityfile"):
-        line += f"     # IdentityFile {h['identityfile']}: auth: agent logs in with it (ssh-agent)"
+        line += f"     # IdentityFile {oneline(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
     return line
+
+
+def oneline(text):
+    """TEXT with every control character (a newline above all) taken out, for a comment."""
+    return re.sub(r"[\x00-\x1f\x7f]", "", text)
 
 
 def local_user():
@@ -219,27 +288,37 @@ def local_user():
 
 def imported(path, source):
     src = Path(source or "~/.ssh/config").expanduser()
+    if re.search(r"[\x00-\x1f\x7f]", str(src)):
+        raise Problem(SSH_CONFIG_UNREADABLE, "the ssh config's path has a control character (a newline) in it, so "
+                                             "roster won't use it", fix="give a plain path (ssh-config:PATH)")
     try:                                            # ~/.ssh/config on every OS (Windows' backslashes too)
         shown = "~/" + src.relative_to(Path.home()).as_posix()
     except ValueError:
         shown = str(src)
-    try:
-        text = src.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        raise Problem(SSH_CONFIG_UNREADABLE, f"can't read {shown}: {e.strerror or type(e).__name__}",
-                      {"path": str(src)}, fix="give the path of your ssh config (ssh-config:PATH)") from None
+    text = read_source(src, "an ssh config", SSH_CONFIG_MAX, SSH_CONFIG_UNREADABLE,
+                       "give the path of your ssh config (ssh-config:PATH)")
     hosts, skipped = ssh_hosts(text)
-    if not hosts:
-        return BLANK, Made(path, "ssh-config", [], skipped)
     user = local_user()
-    lines = [HEADER.rstrip("\n"),
-             f"# The Hosts below came from {shown} (each one's HostName, User, Port and IdentityFile; nothing else, and",
-             f"# {shown} itself is unchanged). Check them, then:  roster setup", "",
-             "key_path: ~/.ssh/roster_ed25519", "", "groups:", f"  {IMPORTED}:", f"    title: From {scalar(shown)}"]
+    head = [HEADER.rstrip("\n"),
+            f"# The Hosts below came from {shown} (each one's HostName, User, Port and IdentityFile; nothing else, and",
+            f"# {shown} itself is unchanged). Check them, then:  roster setup", "",
+            "key_path: ~/.ssh/roster_ed25519", "", "groups:", f"  {IMPORTED}:", f"    title: {scalar('From ' + shown)}"]
     if user:
-        lines.append(f"    user: {user}                # ssh's own default for a Host with no User: your login name")
-    lines.append("    hosts:")
-    lines += [host_line(n, h) for n, h in hosts.items()]
-    out = "\n".join(lines) + "\n"
+        head.append(f"    user: {scalar(user)}                # ssh's own default for a Host with no User: your login name")
+    head.append("    hosts:")
+    lines, kept = [], []
+    for n, h in hosts.items():                      # each Host on its own: one roster can't take is skipped (L2)
+        line = host_line(n, h)
+        try:
+            load_config_text("\n".join([*head, line]) + "\n", path)
+        except SystemExit as e:
+            why = str(e.code).removeprefix("error: ").replace(f"host {n!r}", "").strip(" :")
+            skipped.append(f"{n} ({why})")
+            continue
+        lines.append(line)
+        kept.append(n)
+    if not kept:
+        return BLANK, Made(path, "ssh-config", [], skipped)
+    out = "\n".join([*head, *lines]) + "\n"
     checked(path, out, "the imported roster.yml")
-    return out, Made(path, "ssh-config", list(hosts), skipped)
+    return out, Made(path, "ssh-config", kept, skipped)

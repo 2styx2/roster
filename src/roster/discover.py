@@ -18,7 +18,8 @@ import yaml
 
 from . import boxsync, jsonout, store
 from .common import die, oneline, say, tcp_ok
-from .config import find_config, load_config
+from .config import find_config, load_config, load_config_text
+from .edit import write_over
 
 # ---------------------------------------------------------------- discover (network scan)
 
@@ -389,19 +390,16 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
                 "defaults:\n  auth: prompt\n\ngroups:\n")
     new_text = with_group(text, group, entries, note, needs_user)
 
-    tmp = path.with_name(path.name + ".new")
-    tmp.write_text(new_text)
     try:
-        load_config(tmp)                          # refuse to write a file roster can't read back
+        load_config_text(new_text, path)          # refuse to write a file roster can't read back (checked in memory)
     except SystemExit as e:
-        tmp.unlink()
         die(f"the merged roster.yml didn't validate, nothing written ({e})")
     if path.exists():                             # T212: saved as serve's edits are (store.py), repo or plain file
-        tmp.unlink()
         backup = store.at(path).save(text, new_text)
         say(f"backup       {backup}")
-    else:
-        tmp.replace(path)
+    else:                                         # a new one is private (0600), as `roster init`'s (#409 S2)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_over(path, new_text)
     say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
     boxsync.after_edit(path)                      # T153: this Box follows, as after serve's changes
     say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")

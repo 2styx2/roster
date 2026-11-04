@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from .common import WINDOWS, kill_tree, time_left
-from .edit import load_text, read_text, write_text
+from .edit import keep_backup, load_text, read_text
 from .errors import (
     COMMIT_FAILED,
     DIRTY,
@@ -36,12 +36,19 @@ HOST_VIEW = ("group", "ip", "title", "description", "type", "product", "enroll",
              "services")
 
 
+# Which repo git works on is roster.yml's folder's, never one the environment names (a dotfiles GIT_DIR, #409 S3)
+GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
+                "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
+
+
 def git(repo, *args, timeout=GIT_TIMEOUT, floor=1):
     """Run git in REPO, non-interactive. Past TIMEOUT its whole process group is killed (a push's remote side
     and hooks too, which would otherwise hold the output open) and it's a Problem."""
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"}
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
+    env.update({"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"})
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-    argv = ["git", "-C", str(repo), *args]
+    # a repo's own config never runs a program for roster's reads: core.fsmonitor runs on reading the index (#409 S3)
+    argv = ["git", "-C", str(repo), "-c", "core.fsmonitor=false", *args]
     timeout = round(time_left(timeout, floor), 1)          # held to serve's deadline for the whole request
     try:
         p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
@@ -105,11 +112,7 @@ class Repo:
 
     def backup(self, text):
         """Keep TEXT (what's about to be replaced) as roster.yml.bak in the git dir; returns its path."""
-        d = self.git_dir / "roster"
-        d.mkdir(exist_ok=True)
-        bak = d / (self.path.name + ".bak")
-        write_text(bak, text)
-        return bak
+        return keep_backup(self.git_dir / "roster" / (self.path.name + ".bak"), text, self.path)
 
     def diff_text(self):
         r = git(self.top, "diff", "--no-color", "--no-ext-diff", "HEAD", "--", self.rel)

@@ -23,6 +23,7 @@ roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
 roster serve
 roster askpass [prompt]
 roster man [\-\-install] [\-\-prefix DIR]
+roster completion {bash,zsh,fish,powershell}
 .fi
 .SH DESCRIPTION
 .PP
@@ -335,6 +336,14 @@ copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv to
 .TP
 \fB\-\-prefix DIR\fR
 with \-\-install: install into DIR/share/man/man1/ instead
+.SS completion
+.PP
+\fBroster completion {bash,zsh,fish,powershell}\fR
+.PP
+zsh\e
+.TP
+\fBSHELL\fR
+the shell to print it for
 .SH JSON OUTPUT
 .PP
 The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBinfo NAME\fR, \fBresources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBproviders\fR and \fBauth\-check\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.

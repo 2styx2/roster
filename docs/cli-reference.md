@@ -258,6 +258,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
+| `completion bash\|zsh\|fish\|powershell` | Print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `info`, `web`, `mesh cut`), groups (`--only`, `discover --group`), resources (`reveal`, `info`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`.
 
@@ -335,12 +336,12 @@ An Inventory is one `roster.yml`, and roster works the same whether it's a plain
 
 | HOW | What you get |
 |---|---|
-| `blank` (or `--blank`) | A short `roster.yml` that loads: a header, `key_path:`, and an empty group `servers` with a Host to copy commented out |
-| `file:PATH` | A copy of the `roster.yml` at PATH, made only once it loads (171 if it doesn't). To use it where it is instead, point roster at it (`-c PATH`, `ROSTER_CONFIG`, `roster inv add`) |
+| `blank` (or `--blank`) | A short `roster.yml` that loads: a header, `key_path:`, and an empty group `servers` with a Host to copy commented out. A `roster.yml` with no Hosts loads only in this shape (`groups:`, each group with `hosts:`, no unknown top-level key), so an empty file or a typo'd `grups:` is still an error |
+| `file:PATH` | A copy of the `roster.yml` at PATH, made only once it has `groups:` and loads (171 if not). To use it where it is instead, point roster at it (`-c PATH`, `ROSTER_CONFIG`, `roster inv add`) |
 | `repo:URL` | `git clone URL` into the folder `roster.yml` goes in, which must be empty or new (172); the clone must have `roster.yml` at its top (171). A team repo from the start |
 | `ssh-config[:PATH]` | The Hosts in `~/.ssh/config` (or PATH), in a group `imported`: each `Host` block's names, with its `HostName` (its address), `User`, `Port`, and `auth: agent` when it has an `IdentityFile` (named in a comment). Wildcards (`*`, `?`), negations (`!`) and `Match` blocks are skipped, `Include` isn't followed, and no other setting is read, so nothing secret is copied. The ssh config itself is only read, never changed (173 if it can't be). A Host with no `User` gets your login name, as ssh does |
 
-The new file goes to `-c PATH`, else `./roster.yml`. One that's already there is kept as it is (170): to start another beside it, give another folder and a name, `roster -c ~/home-net/roster.yml init --blank --name home`, which names it as `roster inv add` does. Then run `roster setup`.
+The new file goes to `-c PATH`, else `./roster.yml`, and is private (mode 0600). Every backup roster keeps of it (`roster.yml.bak`) has its mode, and a `.bak` that's a symlink is replaced, never written through. A password in a `repo:` URL never shows in roster's output. One that's already there is kept as it is (170): to start another beside it, give another folder and a name, `roster -c ~/home-net/roster.yml init --blank --name home`, which names it as `roster inv add` does. Then run `roster setup`.
 
 ## Named Inventories
 
@@ -402,6 +403,19 @@ $ roster check esx-02 --json
 $ roster info nope --json
 {"version": 1, "error": {"code": 2, "message": "unknown host or resource 'nope'", "fix": null}}   (on stderr, exit 1)
 ```
+
+## Tab completion
+
+`install.sh` turns it on without asking (`--no-completion` leaves it off): a line marked `# roster: completion` in `~/.bashrc` and `~/.zshrc` (each one that's there, and your login shell's), and fish's `~/.config/fish/completions/roster.fish`. `uninstall.sh` removes them. By hand, one line in your shell's startup file:
+
+| Shell | Line |
+|---|---|
+| bash (`~/.bashrc`) | `eval "$(roster completion bash)"` |
+| zsh (`~/.zshrc`, after `compinit`) | `eval "$(roster completion zsh)"` |
+| fish | `roster completion fish > ~/.config/fish/completions/roster.fish` (once) |
+| PowerShell (`$PROFILE`) | `roster completion powershell \| Out-String \| Invoke-Expression` |
+
+Each script is short: on every Tab it asks roster (`roster __complete`, hidden) what fits, and roster answers from its own command list, so a new command or option completes without a new script. Names come from the local `roster.yml` (the one `-c` or `--inv` on that line picks, else the usual lookup) and the named Inventories' list, read as plain YAML: no network, no vault, nothing written. A missing or broken `roster.yml` completes no names, and no error is shown. A path (`-c`, `inv add NAME PATH`) is the shell's own file completion.
 
 ## Files
 

@@ -232,7 +232,7 @@ def test_help_is_the_header_and_nothing_else(script):
     assert r.stdout.startswith(("Install", "Update", "Remove")) and "set -uo" not in r.stdout
 
 
-def install(tmp_path, *args, answers=None, home=None):
+def install_dry(tmp_path, *args, answers=None, home=None):
     """install.sh --dry-run in a made-up HOME (never this machine's), with ANSWERS typed (else --yes)."""
     env = {**os.environ, "HOME": str(home or tmp_path / "home"), "NO_COLOR": "1"}
     for k in ("ROSTER_INFRA_REPO", "ROSTER_INVENTORY", "ROSTER_CONFIG"):
@@ -245,7 +245,7 @@ def install(tmp_path, *args, answers=None, home=None):
 @posix_shell
 def test_install_with_nothing_given_creates_a_blank_inventory_under_yes(tmp_path):
     """T212: with no repo given, the default is a new, blank Inventory (Y), not nothing."""
-    r = install(tmp_path)
+    r = install_dry(tmp_path)
     cfg = tmp_path / "home" / "infra" / "roster.yml"
     assert f"would run: roster -c {cfg} init --inventory blank" in r.stdout, r.stdout
     assert "git clone" not in r.stdout
@@ -261,7 +261,7 @@ def test_install_with_nothing_given_creates_a_blank_inventory_under_yes(tmp_path
 ])
 @posix_shell
 def test_install_inventory_flag_picks_one_without_prompts(tmp_path, how, want):
-    r = install(tmp_path, "--inventory", how)
+    r = install_dry(tmp_path, "--inventory", how)
     assert r.returncode == 0, r.stdout + r.stderr
     assert want in r.stdout, r.stdout
 
@@ -269,7 +269,7 @@ def test_install_inventory_flag_picks_one_without_prompts(tmp_path, how, want):
 @posix_shell
 def test_install_inventory_flag_is_checked(tmp_path):
     for bad in ("nope", "file:", "repo:"):
-        r = install(tmp_path, "--inventory", bad)
+        r = install_dry(tmp_path, "--inventory", bad)
         assert r.returncode == 2 and "--inventory" in r.stderr, bad
 
 
@@ -315,9 +315,11 @@ def test_install_offers_the_ways_to_start_an_inventory(tmp_path, replies, want):
 
 @posix_shell
 def test_install_can_use_an_imported_file_where_it_is(tmp_path):
-    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "/tmp/theirs/roster.yml",
-                                       "Copy /tmp/theirs/roster.yml": "n"})
-    assert "init --inventory file:" not in out and "using /tmp/theirs/roster.yml where it is" in out, out
+    theirs = tmp_path / "theirs" / "roster.yml"
+    theirs.parent.mkdir()
+    theirs.write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": str(theirs), "Copy ": "n"})
+    assert "init --inventory file:" not in out and f"using {theirs} where it is" in out, out
 
 
 @posix_shell
@@ -342,7 +344,7 @@ def test_install_keeps_a_roster_yml_that_is_there(tmp_path):
     home = tmp_path / "home"
     (home / "infra").mkdir(parents=True)
     (home / "infra" / "roster.yml").write_text("groups: {}\n")
-    r = install(tmp_path, "--inventory", "blank")
+    r = install_dry(tmp_path, "--inventory", "blank")
     assert f"found {home / 'infra' / 'roster.yml'}" in r.stdout
     assert "init --inventory" not in r.stdout and "kept" in r.stdout
     assert (home / "infra" / "roster.yml").read_text() == "groups: {}\n"
@@ -357,6 +359,92 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     assert "git clone -q -- git@example.com:team/map.git" in r.stdout
     assert "BatchMode=yes" in r.stdout                        # nobody to answer ssh under --yes
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key
+
+
+COMPLETION_LINE = 'command -v roster >/dev/null 2>&1 && eval "$(roster completion bash)"   # roster: completion'
+
+
+def install_box(tmp_path, login_shell="/bin/bash"):
+    """A HOME before install.sh, and stand-ins for everything install.sh would fetch or change outside it."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)        # conftest's isolated HOME
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    for name, text in {**FAKES, "bw": '#!/bin/sh\necho \'{"status":"unauthenticated"}\'\n'}.items():
+        (fakes / name).write_text(text)
+        (fakes / name).chmod(0o755)
+    env = {"HOME": str(home), "NO_COLOR": "1", "PATH": f"{fakes}:/usr/bin:/bin", "LANG": "C", "SHELL": login_shell}
+    return home, env
+
+
+def install(env, tmp_path, *args):
+    return run(INSTALL_SH, env, "--prefix", str(tmp_path / "opt"), *args)
+
+
+@posix_shell
+def test_install_turns_on_tab_completion_for_the_user_s_shell_without_asking(tmp_path):
+    home, env = install_box(tmp_path)
+    (home / ".zshrc").write_text("# mine\n")
+    r = install(env, tmp_path)
+    assert "Tab completion" in r.stdout, r.stdout + r.stderr
+    assert (home / ".bashrc").read_text().count(COMPLETION_LINE) == 1      # $SHELL's, made if it isn't there
+    zshrc = (home / ".zshrc").read_text()
+    assert zshrc.startswith("# mine\n") and zshrc.count(COMPLETION_LINE.replace("bash", "zsh")) == 1
+    assert "?" not in [line.strip()[:1] for line in r.stdout.splitlines() if "Tab completion" in line]
+    install(env, tmp_path)
+    assert (home / ".bashrc").read_text().count("# roster: completion") == 1     # again: nothing added twice
+
+
+@posix_shell
+def test_install_writes_fish_s_completion_file(tmp_path):
+    home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
+    install(env, tmp_path)
+    fish = home / ".config/fish/completions/roster.fish"
+    assert fish.read_text().splitlines()[1:] == ["roster completion fish | source"]
+    assert not (home / ".bashrc").exists() or "# roster: completion" not in (home / ".bashrc").read_text()
+
+
+@posix_shell
+def test_install_leaves_a_fish_completion_file_it_did_not_write(tmp_path):
+    home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# my own\n")
+    install(env, tmp_path)
+    assert fish.read_text() == "# my own\n"
+
+
+@posix_shell
+def test_install_no_completion_leaves_the_shell_alone(tmp_path):
+    home, env = install_box(tmp_path)
+    (home / ".bashrc").write_text("# mine\n")
+    r = install(env, tmp_path, "--no-completion")
+    assert "# roster: completion" not in (home / ".bashrc").read_text()
+    assert "roster completion bash" in r.stdout                  # says how to turn it on by hand
+
+
+@posix_shell
+def test_install_dry_run_says_where_completion_would_go(tmp_path):
+    home, env = install_box(tmp_path)
+    r = install(env, tmp_path, "--dry-run")
+    assert "would turn on Tab completion in ~/.bashrc" in r.stdout
+    assert not (home / ".bashrc").exists()
+
+
+@posix_shell
+def test_uninstall_removes_tab_completion(box):
+    home, env = box
+    rc = home / ".bashrc"
+    rc.write_text(rc.read_text() + f"{COMPLETION_LINE}\n")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# roster: completion (install.sh wrote this file; uninstall.sh removes it)\n"
+                    "roster completion fish | source\n")
+    mine = home / ".config/fish/completions/other.fish"
+    mine.write_text("complete -c other\n")
+    run(UNINSTALL_SH, env)
+    assert "completion" not in rc.read_text() and 'alias ll="ls -l"' in rc.read_text()
+    assert not fish.exists() and mine.exists()
 
 
 @posix_shell
@@ -379,3 +467,55 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
     assert "dnf install -y cronie" in r.stdout
     assert "would add to crontab:" in r.stdout
     assert "no crontab on this box" not in r.stdout
+
+
+# ---------------------------------------------------------------- PR #409's review: L4, L5, L6
+
+@posix_shell
+def test_install_never_shows_a_clone_urls_password(tmp_path):
+    """L4: https://me:TOKEN@host/... is shown, and logged, without the TOKEN."""
+    r = install_dry(tmp_path, "--inventory", "repo:https://me:s3cret-token@example.com/team/map.git")
+    assert "s3cret-token" not in r.stdout + r.stderr, r.stdout
+    assert "https://me:***@example.com/team/map.git" in r.stdout
+
+
+@posix_shell
+def test_install_uses_a_file_in_place_only_as_a_full_path_that_is_there(tmp_path):
+    """L5: '~/x' (bash doesn't expand ~ after file:) and a relative path become full paths; a missing one isn't
+    used (nothing to point ROSTER_CONFIG at)."""
+    home = tmp_path / "home"
+    (home / "mine").mkdir(parents=True)
+    (home / "mine" / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "~/mine/roster.yml",
+                                       "Copy ": "n"})
+    assert f"using {home / 'mine' / 'roster.yml'} where it is" in out, out
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "~/nope/roster.yml",
+                                       "Copy ": "n"})
+    assert "no file at" in out and "where it is" not in out.replace("(n: use it where it is)", ""), out
+
+
+@posix_shell
+def test_install_refuses_a_path_that_would_run_in_the_shell_startup_files(tmp_path):
+    """L5: ROSTER_CONFIG goes into .bashrc in double quotes: a path with $( ` " or a newline is refused."""
+    out = install_answering(tmp_path, {"Folder for your Inventory": "~/in$(touch x)fra"})
+    assert "can't hold" in out, out
+    assert "ROSTER_CONFIG" not in out.split("can't hold")[1].split("Summary")[0].replace("would add ROSTER_CONFIG", "")
+
+
+@posix_shell
+def test_uninstall_never_offers_to_delete_a_folder_that_holds_other_files(box):
+    """L5: a roster.yml used in place in, say, ~/Downloads: only roster's own files there are roster's to remove."""
+    home, env = box
+    (home / "infra" / "holiday.jpg").write_text("x\n")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert "Delete the whole config folder" not in r.stdout and "holds other files" in r.stdout, r.stdout
+    assert (home / "infra" / "roster.yml").exists() and (home / "infra" / "holiday.jpg").exists()
+
+
+@posix_shell
+def test_uninstall_says_a_repo_with_no_remote_is_the_only_copy(box):
+    """L6: a local git repo (install's git init) has no upstream: deleting it loses it."""
+    home, env = box
+    subprocess.run(["git", "-C", str(home / "infra"), "init", "-q"], check=True)
+    r = run(UNINSTALL_SH, env, answers="\n" * 40)
+    assert "only copy" in r.stdout and "a fresh clone brings it back" not in r.stdout, r.stdout

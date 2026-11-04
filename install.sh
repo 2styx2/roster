@@ -11,9 +11,11 @@
 #                              repo:URL (a clone of your team's git repo) or ssh-config[:PATH] (Hosts from ~/.ssh/config);
 #                              or ROSTER_INVENTORY=HOW
 #   ./install.sh --infra-repo URL   the same as --inventory repo:URL; or ROSTER_INFRA_REPO=URL
+#   ./install.sh --no-completion    don't turn on Tab completion for roster in your shell (it's on otherwise)
 #
 # Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the Inventory's folder, making roster work from
 # any directory, unlocking the vault, `roster setup`, and auto-updates from cron. ./uninstall.sh undoes them.
+# "Work from anywhere" also turns on Tab completion for roster in bash, zsh and fish (unless --no-completion).
 # Output of each step goes to ~/.cache/roster/install.log; it is shown only when a step fails.
 set -uo pipefail
 
@@ -25,13 +27,15 @@ SESSION_FILE="$HOME/.config/roster/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
 PATH_MARK="# roster: uv tools"
 MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+COMP_MARK="# roster: completion"         # the Tab completion line (or fish's file), always added (decision Q183)
 NEED_MANPATH=0
 
-YES=0 DRY=0 PREFIX=${PREFIX:-}
+YES=0 DRY=0 COMPLETION=1 PREFIX=${PREFIX:-}
 while (( $# )); do
     case "$1" in
         -y|--yes) YES=1 ;;
         -n|--dry-run) DRY=1 ;;
+        --no-completion) COMPLETION=0 ;;
         --prefix) [[ -n ${2:-} ]] || { echo "--prefix needs a directory" >&2; exit 2; }; PREFIX=$2; shift ;;
         --prefix=*) PREFIX=${1#--prefix=} ;;
         --infra-repo) [[ -n ${2:-} ]] || { echo "--infra-repo needs a git URL" >&2; exit 2; }; INFRA_REPO=$2; shift ;;
@@ -113,10 +117,18 @@ ask_value() {                   # ask_value "Prompt" default -> echoes the answe
     echo "${reply:-$def}"
 }
 
+redact() {                      # redact TEXT -> TEXT with a URL's password cut out (https://me:***@host/...)
+    sed -E 's#(://[^/:@[:space:]]*):[^@/[:space:]]*@#\1:***@#g' <<<"$1"
+}
+
+safe_path() {                   # safe_path PATH -> 0 when PATH can go inside "..." in a shell startup file
+    [[ $1 != *[\"\$\`\\]* && $1 != *$'\n'* ]]
+}
+
 step() {                        # step "what" cmd...  - runs with a spinner, output to the log
-    local what=$1; shift
-    if (( DRY )); then info "would run: $*"; return 0; fi
-    printf '\n==== %s: %s\n' "$what" "$*" >> "$LOG"
+    local what; what=$(redact "$1"); shift
+    if (( DRY )); then info "would run: $(redact "$*")"; return 0; fi
+    printf '\n==== %s: %s\n' "$what" "$(redact "$*")" >> "$LOG"
     "$@" >> "$LOG" 2>&1 &
     local pid=$! i=0
     if [[ -t 1 ]]; then
@@ -133,8 +145,8 @@ step() {                        # step "what" cmd...  - runs with a spinner, out
 }
 
 live() {                        # live "what" cmd...  - runs in the foreground (it needs the keyboard)
-    local what=$1; shift
-    if (( DRY )); then info "would run: $*"; return 0; fi
+    local what; what=$(redact "$1"); shift
+    if (( DRY )); then info "would run: $(redact "$*")"; return 0; fi
     info "$what"
     if "$@" < "$TTY"; then ok "$what"; else bad "$what failed"; return 1; fi
 }
@@ -373,8 +385,12 @@ make_inventory() {              # make_inventory CFG HOW [NAME]: CFG made the HO
             if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$cfg" || return 1; fi
             return 0 ;;
         file:*)
-            src=${how#file:}
+            src=${how#file:}; src=${src/#\~/$HOME}
             if ! ask "Copy $src into $dir? (n: use it where it is)" Y; then
+                # a full path that's there, and one a shell startup file can hold (ROSTER_CONFIG="...")
+                if [[ ! -f $src ]]; then bad "no file at $src"; return 1; fi
+                src="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+                if ! safe_path "$src"; then bad "$src can't hold \", \$, \` or a newline: rename it, or copy it"; return 1; fi
                 MADE=$src; ok "using $src where it is"
                 if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$src" || return 1; fi
                 return 0
@@ -391,7 +407,11 @@ make_inventory() {              # make_inventory CFG HOW [NAME]: CFG made the HO
 cfg_dir=$(ask_value "Folder for your Inventory (roster.yml)" "$HOME/infra")
 cfg_dir=${cfg_dir/#\~/$HOME}
 CFG="$cfg_dir/roster.yml"
-if [[ -f "$CFG" ]]; then
+if ! safe_path "$cfg_dir"; then
+    # ROSTER_CONFIG="..." goes into the shell startup files (stage 6): a $( or ` there would run at every start
+    bad "the folder can't hold \", \$, \` or a newline (it goes into your shell startup files): run this again with another"
+    CFG=""; fail_stage
+elif [[ -f "$CFG" ]]; then
     ok "found $CFG"
     if [[ -d "$cfg_dir/.git" ]] && ask "Pull the latest map into $cfg_dir?" Y; then
         step "git pull" git -C "$cfg_dir" pull --ff-only --quiet || warn "couldn't fast-forward; using it as it is"
@@ -465,6 +485,42 @@ elif ask "Make roster work from any directory (set ROSTER_CONFIG=$CFG in ${rc_fi
 else
     export ROSTER_CONFIG="$CFG"
     skip "run roster from $cfg_dir, or pass -c $CFG"
+fi
+
+# Tab completion for roster (`roster ho<Tab>`, `roster run <Tab>` for Host names) in each shell this box uses: no
+# question, it's on unless --no-completion (decision Q183). bash and zsh get a marked line that asks roster for its
+# script when the shell starts (so a newer roster's commands complete too), fish a file it loads on the first Tab.
+comp_shell=${SHELL##*/}
+if (( ! COMPLETION )); then
+    info "--no-completion: no Tab completion (to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc;"
+    info "roster completion zsh, fish or powershell for those)"
+else
+    comp_added=0
+    for sh in bash zsh; do
+        f="$HOME/.${sh}rc"
+        [[ -f $f || $comp_shell == "$sh" ]] || continue
+        if grep -qF "$COMP_MARK" "$f" 2>/dev/null; then ok "Tab completion already on in ${f/#$HOME/\~}"
+        elif (( DRY )); then info "would turn on Tab completion in ${f/#$HOME/\~}"
+        else
+            printf '\n%s\n' "command -v roster >/dev/null 2>&1 && eval \"\$(roster completion $sh)\"   $COMP_MARK" >> "$f"
+            ok "Tab completion for roster in ${f/#$HOME/\~}"
+        fi
+        comp_added=1
+    done
+    fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
+    if [[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/fish || $comp_shell == fish ]]; then
+        comp_added=1
+        if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
+            ok "Tab completion already on for fish"
+        elif [[ -e $fish_file ]]; then warn "${fish_file/#$HOME/\~} isn't roster's: kept it (roster completion fish prints roster's)"
+        elif (( DRY )); then info "would turn on Tab completion in ${fish_file/#$HOME/\~}"
+        elif mkdir -p "$(dirname "$fish_file")" && printf '%s\n' \
+                "$COMP_MARK (install.sh wrote this file; uninstall.sh removes it)" 'roster completion fish | source' \
+                > "$fish_file"; then
+            ok "Tab completion for roster in ${fish_file/#$HOME/\~}"
+        else warn "couldn't write ${fish_file/#$HOME/\~}"; fi
+    fi
+    (( comp_added )) || info "no bash, zsh or fish here: roster completion SHELL prints Tab completion for yours"
 fi
 
 # 7. Unlock the vault

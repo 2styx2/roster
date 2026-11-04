@@ -12,7 +12,7 @@
 #   ./uninstall.sh --prefix DIR  roster is in DIR/bin (as install.sh --prefix DIR put it); or PREFIX=DIR
 #
 # Stages: take this box off its hosts (roster mesh cut --all, roster revoke --all), the auto-update cron job, the
-# lines in shell startup files, this box's SSH key and ssh config, the vault session, roster and its man page, and
+# lines in shell startup files (and fish's Tab completion file), this box's SSH key and ssh config, the vault session, roster and its man page, and
 # the files `roster setup` wrote next to roster.yml. Output of each step goes to ~/.cache/roster-uninstall.log.
 set -uo pipefail
 
@@ -22,6 +22,7 @@ SESSION_FILE="$CONF_DIR/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # the line install.sh adds to shell startup files
 PATH_MARK="# roster: uv tools"           # and the PATH line it adds when ~/.local/bin wasn't there
 MAN_MARK="# roster: man page"            # and the MANPATH line, when man didn't find the page by itself
+COMP_MARK="# roster: completion"         # and the Tab completion line (fish: the file that starts with it)
 
 YES=0 DRY=0 PURGE=0 KEEP_HOSTS=0 PREFIX=${PREFIX:-}
 while (( $# )); do
@@ -234,7 +235,13 @@ fi
 
 # 3. Shell startup
 stage 3
-for f in ${rc_files[@]+"${rc_files[@]}"}; do drop_lines "$f" "$MARK\$" || true; drop_lines "$f" "$MAN_MARK\$" || true; done
+for f in ${rc_files[@]+"${rc_files[@]}"}; do
+    drop_lines "$f" "$MARK\$" || true; drop_lines "$f" "$MAN_MARK\$" || true; drop_lines "$f" "$COMP_MARK\$" || true
+done
+fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
+if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
+    remove "fish's Tab completion for roster ($(home "$fish_file"))" "$fish_file"
+fi
 path_files=()
 for f in ${rc_files[@]+"${rc_files[@]}"}; do grep -qF "$PATH_MARK" "$f" && path_files+=("$f"); done
 if (( ${#path_files[@]} )); then
@@ -365,25 +372,35 @@ else
     unsaved=""
     if [[ -d $cfg_dir/.git ]]; then
         # what `roster setup` wrote there isn't yours: it doesn't count
-        [[ -n $(git -C "$cfg_dir" status --porcelain -- . ':!ROSTER.md' ':!CLAUDE.md' ':!.claude' 2>/dev/null) ]] \
+        # a repo with nowhere to push (a local one: install's git init) is the only copy, whatever else it has
+        git -C "$cfg_dir" -c core.fsmonitor=false rev-parse '@{u}' >/dev/null 2>&1 || unsaved="no upstream to push to"
+        [[ -z $unsaved && -n $(git -C "$cfg_dir" -c core.fsmonitor=false status --porcelain -- . ':!ROSTER.md' ':!CLAUDE.md' ':!.claude' 2>/dev/null) ]] \
             && unsaved="changes not committed"
-        [[ -z $unsaved && -n $(git -C "$cfg_dir" log --oneline '@{u}..' 2>/dev/null) ]] && unsaved="commits not pushed"
-        [[ -z $unsaved ]] && ! git -C "$cfg_dir" rev-parse '@{u}' >/dev/null 2>&1 && unsaved="no upstream to push to"
+        [[ -z $unsaved && -n $(git -C "$cfg_dir" -c core.fsmonitor=false log --oneline '@{u}..' 2>/dev/null) ]] && unsaved="commits not pushed"
     else
         unsaved="not a git clone"
     fi
+    # Not a git clone: the whole folder is roster's to offer only when it holds nothing but roster's own files (a
+    # roster.yml used where it is, in ~/Downloads say, isn't roster's folder)
+    others=""
+    if [[ ! -d $cfg_dir/.git ]]; then
+        others=$(cd "$cfg_dir" && ls -A | grep -vxE 'roster\.yml|roster\.yml\.bak|ROSTER\.md|CLAUDE\.md|\.claude|bin' | head -n 3)
+    fi
     if [[ -n $unsaved ]]; then info "$(home "$cfg_dir") has $unsaved: it stays unless you say so"; fi
     def=$EXTRA; [[ -n $unsaved ]] && def=N
-    if (( YES )) && [[ -n $unsaved ]]; then
+    if [[ -n $others ]]; then
+        info "kept $(home "$cfg_dir"): it holds other files too ($(tr '\n' ' ' <<<"$others" | sed 's/ $//')), so it isn't roster's to delete"
+        del=1
+    elif (( YES )) && [[ -n $unsaved ]]; then
         printf '  %s?%s Delete the whole config folder %s? %s[y/N]%s no\n' "$C" "$N" "$(home "$cfg_dir")" "$D" "$N"
         del=1
-    elif ask "Delete the whole config folder $(home "$cfg_dir") ($([[ $unsaved == "not a git clone" ]] && echo "a plain roster.yml: this is its only copy" || echo "the team's map; a fresh clone brings it back"))?" "$def"; then
+    elif ask "Delete the whole config folder $(home "$cfg_dir") ($(case $unsaved in "") echo "the team's map; a fresh clone brings it back" ;; "changes not committed"|"commits not pushed") echo "its $unsaved would be lost" ;; *) echo "$unsaved: this is its only copy" ;; esac))?" "$def"; then
         del=0
     else del=1; fi
     if (( del == 0 )); then
         remove "$(home "$cfg_dir")" "$cfg_dir" && done_stage || fail_stage
     else
-        tracked() { [[ -d $cfg_dir/.git ]] && git -C "$cfg_dir" ls-files --error-unmatch "$1" >/dev/null 2>&1; }
+        tracked() { [[ -d $cfg_dir/.git ]] && git -C "$cfg_dir" -c core.fsmonitor=false ls-files --error-unmatch "$1" >/dev/null 2>&1; }
         md=$cfg_dir/ROSTER.md
         if [[ -f $md ]] && head -n 1 "$md" | grep -q '^<!-- generated by roster' && ! tracked ROSTER.md; then
             remove "$(home "$md") (roster setup wrote it)" "$md"
