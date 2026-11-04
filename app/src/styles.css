@@ -8,12 +8,14 @@
 :root {
   /* Type. --font-ui, --font-mono and --ui-size come from the appearance options (decision Q30,
      `fonts.ui_size`); the scale and the row height follow --ui-size, and nothing goes under 11 px
-     (N6). 15 px by default (decision Q61): xs 13, sm 14, md 15, lg 17, rows 30. */
+     (N6). 15 px by default (decision Q61): xs 13, sm 14, md 15, lg 17, xl 19, rows 30. */
   --ui-size: 15px;
   --text-xs: max(11px, calc(var(--ui-size) - 2px));
   --text-sm: max(11px, calc(var(--ui-size) - 1px));
   --text-md: var(--ui-size);
   --text-lg: calc(var(--ui-size) + 2px);
+  /* The connect card's title, the moment a Session lands (after round 9): 19 px by default. */
+  --text-xl: calc(var(--ui-size) + 4px);
   --radius-sm: 4px;
   --radius: 6px;
   --radius-lg: 10px;
@@ -42,6 +44,9 @@
   --enter-y: 4px;
   /* An edge drawn on connect (taste.md, issue #78). */
   --dur-draw: 120ms;
+  /* How long the connect card's "Logged in to" holds before it fades (owner, after round 9). Not
+     motion, so reduced motion keeps it. */
+  --dur-hold: 220ms;
 
   font-family: var(--font-ui, system-ui, sans-serif);
   font-size: var(--text-md);
@@ -394,6 +399,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    height and its list scrolls inside it, so the tree under the pointer never moves. */
 .sb-section[data-section="sessions"].held { height: var(--held-h); overflow: hidden; }
 .sb-section[data-section="sessions"].held > .sb-rows { max-height: var(--held-rows); }
+/* No Sessions: one quiet row of room, as high as a Session row and its list's edges, so the
+   first Session takes its place and nothing under it moves (Q199). */
+.sb-section[data-section="sessions"] > .sb-empty { margin: 0 8px 0 24px; height: calc(var(--row-h) + 2px); line-height: calc(var(--row-h) + 2px); }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -615,8 +623,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .row-menu-keys { flex: none; } /* at the end: the label takes the free space */
 .row-menu-cmd { flex: none; color: var(--muted); font: 500 var(--text-xs) var(--font-mono); }
 /* :focus covers :focus-visible: a menu item has focus only while it's the active one. */
+/* The cursor, as everywhere a key moves one (Sidebar App mode, Picker, Finder): raised, with a
+   1px accent outline. */
 .sidebar .row-menu-item:focus {
-  outline: none; background: var(--raised); box-shadow: inset 0 0 0 1px var(--raised-line);
+  outline: none; background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text);
+}
+@media (hover: hover) and (pointer: fine) {
+  .sidebar .row-menu-item:hover:not(:focus) { background: var(--hover); }
 }
 .row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 @media (forced-colors: active) {
@@ -859,6 +872,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    Columns: node, name, address, group, type, badge, details. */
 .picker-list {
   list-style: none; margin: 0; padding: 6px; overflow-y: auto;
+  /* The scrollbar's room is kept, so a query that ends the scrolling never shifts the columns. */
+  scrollbar-gutter: stable;
   /* max-content rows: a selected row's wrapped name grows its row (auto rows stayed at the
      unwrapped height in a long, scrolling list and the name spilled over the rows below). */
   display: grid; align-content: start; column-gap: 12px; grid-auto-rows: max-content;
@@ -932,6 +947,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-detail > .host-ip { flex-shrink: 0; }
 .picker-detail > span + span::before { content: "·"; margin-right: 10px; color: var(--muted); }
 .picker-detail .host-name { font-family: var(--font-mono); color: var(--text); }
+/* Nothing cut in the selected row: the strip keeps its room but says nothing (it'd repeat the row). */
+.picker-detail:not([data-cut]) > * { visibility: hidden; }
 /* A short window keeps its rows: the strip gives way, and the selected row's tooltip has it all. */
 @media (max-height: 460px) { .picker-detail { display: none; } }
 .picker-detail .host-ip { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -1112,17 +1129,19 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .connect-card.leaving {
   opacity: 0; pointer-events: none;
-  transition: opacity var(--dur-fade) ease var(--dur-fade);
+  transition: opacity var(--dur-fade) ease calc(var(--dur-fade) + var(--dur-hold));
 }
 /* The terminal waits behind the card until the shell's first byte, then comes in once the card
    has gone (the ring's 120 ms beat, then the card's 120 ms fade), so the card's words never sit
    on the first output. Hidden again at once when a card comes back. */
-.pane .term-wrap { transition: opacity var(--dur-fade) ease calc(var(--dur-fade) * 2); }
-.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; transition-delay: 0s; }
+.pane .term-wrap { transition: opacity var(--dur-fade) ease calc(var(--dur-fade) * 2 + var(--dur-hold)); }
+/* Hidden, not only transparent: Tab must reach the card's buttons, never the waiting terminal's
+   input (round 9). It comes back when the card starts leaving. */
+.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; visibility: hidden; transition-delay: 0s; }
 /* Words break between words; only a Host name too long for the pane breaks inside itself. */
 .connect-card p { margin: 0; overflow-wrap: break-word; text-wrap: balance; }
-/* Scales with the pane, 136 to 200 px (owner, after round 8); strokes stay 1 and 1.5 px. */
-.connect-map { overflow: visible; margin-bottom: 12px; width: clamp(136px, 14vw, 200px); height: auto; }
+/* Scales with the pane, 160 to 240 px (owner, after rounds 8 and 9); strokes stay 1 and 1.5 px. */
+.connect-map { overflow: visible; margin-bottom: 12px; width: clamp(160px, 18vw, 240px); height: auto; }
 .connect-box { fill: var(--tone); }
 .connect-edge {
   stroke: var(--accent); stroke-width: 1px; vector-effect: non-scaling-stroke;
@@ -1131,11 +1150,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   @starting-style { transform: scaleX(0); }
 }
 .connect-map[data-phase="starting"] .connect-edge { transform: scaleX(0.4); }
-/* The Host's ring: open (78 of 100 drawn, the gap centred at -45°, where the logo's Host sits)
+/* The Host's ring: open (one arc, its 79° gap centred at -45°, where the logo's Host sits)
    while connecting; the closed ring and, for a key login, the fill fade in when the shell answers. */
 .connect-host {
   fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke;
-  stroke-dasharray: 78 22; stroke-dashoffset: 1.5;
 }
 .connect-host-closed { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
@@ -1145,7 +1163,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .connect-stop { margin: 0; font-size: var(--text-sm); color: var(--muted); }
 .connect-stop.later { visibility: hidden; }
-.connect-title { font-size: var(--text-lg); }
+.connect-title { font-size: var(--text-xl); }
 .connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .connect-address-line { display: block; margin-top: 2px; font-size: var(--text-sm); }
@@ -1381,11 +1399,16 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder-query input:focus-visible { box-shadow: none; }
 .finder-prompt { color: var(--accent-ink); font-size: var(--text-md); }
 .finder-count { color: var(--muted); font: var(--text-xs) var(--font-ui); font-variant-numeric: tabular-nums; }
+/* The Finder borrows the Picker's list box (padding, scrolling) but not its column grid: its rows
+   are one flex line each, stacked. (Round 2 made .picker-list a grid and laid every Finder row
+   side by side; styles.test.ts pins this.) */
+.picker-list.finder-list { display: flex; flex-direction: column; }
 .finder-row {
   display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 7px 10px; border-radius: var(--radius);
   font: var(--text-md) var(--font-mono); color: var(--muted);
 }
-.finder-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--raised-line); }
+/* The cursor: the Picker's and the Sidebar's (raised, 1px accent outline). */
+.finder-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 .finder-row.selected .finder-label, .finder-row.selected .finder-path { white-space: normal; }
 .finder-row.selected .finder-name, .finder-row.selected .finder-path { overflow-wrap: anywhere; }
 /* A long label wraps on the selected row; its path keeps room to wrap by words, not letters. */

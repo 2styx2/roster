@@ -46,6 +46,8 @@ describe(":help", () => {
     const before = document.activeElement;
     await user.keyboard(`${LEADER}?`);
     const finder = await screen.findByRole("dialog", { name: /find a help topic/i });
+    // Its list stacks its rows (styles.test.ts pins .finder-list), never the Picker's column grid.
+    expect(within(finder).getByRole("listbox")).toHaveClass("finder-list");
     await user.keyboard("terminal.size");
     expect(within(finder).getAllByRole("option")[0]).toHaveTextContent("terminal.size");
     await user.keyboard("{Enter}");

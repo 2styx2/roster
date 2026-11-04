@@ -195,3 +195,10 @@ describe("Plugins' UI (ticket 73)", () => {
     expect(tag).not.toMatch(/--accent/);
   });
 });
+
+describe("the Finder's list", () => {
+  it("stacks its rows: it never takes the Picker's column grid", () => {
+    // Round 2 made .picker-list a grid; the Finder, which reuses the class, laid every row side by side.
+    expect(stylesCss).toMatch(/\.picker-list\.finder-list\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/);
+  });
+});

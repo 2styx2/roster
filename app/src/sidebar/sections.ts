@@ -213,7 +213,9 @@ export const sessionsSection: SidebarSectionDef = {
           id: "sessions",
           title: "Sessions",
           count: sessions.tabs.length,
-          // No sentence when empty: the pane says "No Sessions open" already (it'd be said twice).
+          // One quiet row when empty: the section keeps a row of room, so the first Session takes
+          // that slot and nothing under it moves (Q199).
+          empty: "None open",
           rows: sessions.tabs.map((tab, i) => {
             const facts = tabFacts(tab);
             return {

@@ -32,6 +32,17 @@ import {
 import { hostDot } from "../sidebar/sections";
 import { StateDot, type Light } from "../ui/StateDot";
 
+/** Marks the detail strip `data-cut` when a cell of the selected row is cut off, so the strip
+ * shows the Host whole only when the row can't (a DOM write, kept out of the component). */
+function markCut(list: HTMLElement | null, strip: HTMLElement | null) {
+  if (!strip) return;
+  const cells =
+    list?.querySelectorAll<HTMLElement>(".picker-row.selected > span") ?? [];
+  const cut = [...cells].some((c) => c.scrollWidth > c.clientWidth + 1);
+  if (cut) strip.dataset.cut = "";
+  else delete strip.dataset.cut;
+}
+
 /** An address column's most characters; a longer address (IPv6) drops groups from its middle. */
 const IP_CHARS = 22;
 /** A group column's most characters; a longer group is cut in its middle. */
@@ -160,6 +171,9 @@ export function Picker({
   const [notice, setNotice] = useState("");
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  // The strip speaks only when something in the selected row is cut (markCut, below).
+  useLayoutEffect(() => markCut(listRef.current, stripRef.current));
 
   const results = useMemo(
     () => searchHosts(hosts, query, recent),
@@ -465,12 +479,18 @@ export function Picker({
         </ul>
         {/* The selected Host whole, on one steady line: rows never wrap, so the list never jumps
             as the selection moves (Q195). The option itself carries the name for screen readers. */}
-        {selected && (
-          <div className="picker-detail" aria-hidden="true">
-            <span className="host-name">{selected.name}</span>
-            {selected.ip && <span className="host-ip">{selected.ip}</span>}
-            {selected.group && <span>{selected.group}</span>}
-            {selected.type && <span>{selected.type}</span>}
+        {/* Its room is kept while there are rows; it speaks only when the selected row is cut,
+            so it never just repeats the row (round 9). */}
+        {rowCount > 0 && (
+          <div className="picker-detail" aria-hidden="true" ref={stripRef}>
+            {selected && (
+              <>
+                <span className="host-name">{selected.name}</span>
+                {selected.ip && <span className="host-ip">{selected.ip}</span>}
+                {selected.group && <span>{selected.group}</span>}
+                {selected.type && <span>{selected.type}</span>}
+              </>
+            )}
           </div>
         )}
         {rowCount === 0 && (

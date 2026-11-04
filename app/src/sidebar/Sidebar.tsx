@@ -485,7 +485,8 @@ const Section = memo(function Section({
 /** Holds the Sessions section at its height while the pointer is on the tree under it (`on`), so
  * a Session opening or closing never moves the tree: the row under the pointer stays the row
  * you clicked, with nothing scrolled away (Q197). A new Session scrolls into view inside the
- * held list; the section takes its new height when the pointer leaves. */
+ * held list (never fewer than one row: an empty section keeps a row of room, Q199); the section
+ * takes its new height when the pointer leaves. */
 function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
   if (!section) return;
   if (!on) {
@@ -495,9 +496,11 @@ function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
     return;
   }
   if (section.classList.contains("held")) return;
-  const rows = section.querySelector<HTMLElement>(":scope > .sb-rows");
+  // The room under the heading (a row list, or the one-row "None open"), which the held list keeps.
+  const heading = section.querySelector<HTMLElement>(":scope > .sb-heading");
+  const room = section.getBoundingClientRect().bottom - (heading?.getBoundingClientRect().bottom ?? section.getBoundingClientRect().top);
   section.style.setProperty("--held-h", `${section.offsetHeight}px`);
-  section.style.setProperty("--held-rows", `${rows?.offsetHeight ?? 0}px`);
+  section.style.setProperty("--held-rows", `${Math.max(0, Math.round(room))}px`);
   section.classList.add("held");
 }
 

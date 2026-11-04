@@ -357,12 +357,11 @@ export function ConnectCard({
         <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
-        <circle
+        {/* One arc, its gap (79°) centred at -45°, the logo's Host side. A dash pattern under
+            non-scaling-stroke repeated in Chromium and drew two gaps (round 9). */}
+        <path
           className="connect-host"
-          cx="65"
-          cy="6"
-          r="4.25"
-          pathLength={100}
+          d="M69.231 5.6 A4.25 4.25 0 1 1 65.4 1.769"
         />
         <circle className="connect-host-closed" cx="65" cy="6" r="4.25" />
         {fills && (
@@ -691,10 +690,10 @@ function endpoint({ address, port }: QuickTarget): string {
   return `${address.includes(":") ? `[${address}]` : address}:${port}`;
 }
 
-/** How long the card takes to fade out (--dur-fade in styles.css). */
-/** The shell answered: the Host's ring fills (120 ms), then the card fades (120 ms), so the
- * connection visibly lands before the card goes (styles.css `.connect-card.leaving`). */
-const FADE_MS = 240;
+/** The shell answered: the Host's ring closes and fills (--dur-fade, 120 ms), "Logged in to …"
+ * holds (--dur-hold, 220 ms) so the landing is seen, then the card fades (120 ms). The card is
+ * unmounted after all three (styles.css `.connect-card.leaving`). */
+const FADE_MS = 120 + 220 + 120;
 
 export interface SessionPanesProps {
   tabs: Pick<

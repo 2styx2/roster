@@ -141,7 +141,7 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
               : formatCount(results.items.length)}
           </span>
         </div>
-        <ul className="picker-list" role="listbox" id={listId} ref={listRef} aria-label={source.prompt}>
+        <ul className="picker-list finder-list" role="listbox" id={listId} ref={listRef} aria-label={source.prompt}>
           {shown.map((item, i) => (
             <li
               key={item.id}

@@ -210,7 +210,8 @@ A neutral graphite palette with exactly one warm accent and one cool place-marke
 
 ### Hierarchy
 The whole scale follows one `--ui-size` (15px by default, `fonts.ui_size`), and nothing goes under 11px.
-- **Title** (500, 17px, 1.4): the Picker's query field and panel titles. The largest type in the app; there is no display tier.
+- **Title** (500, 17px, 1.4): the Picker's query field and panel titles.
+- **Landing** (19px, `--text-xl`): only the connect card's title, the moment a Session lands. The largest type in the app; there is no display tier.
 - **Body** (400, 15px, 1.4): Sidebar rows, panel text, messages. Inter uses `cv11` and `calt`.
 - **Body small** (400, 14px): secondary lines, Picker group/type columns, empty-state hints, the message line.
 - **Label** (600, 12px (one step under the xs size, never under 11px), 0.06em, uppercase): Sidebar section headings (SESSIONS, FOLDERS, INVENTORY) and the idle pane's RECENT, nothing else.
@@ -301,7 +302,7 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 - **Hover:** Hover Graphite with Paper text.
 - **Raised (on screen):** Raised Graphite fill with a 1px inset Raised Line.
 - **Live Session:** raised, plus a **2px apricot bar** at the start, inset 5px top and bottom. It moves with a key, so it doesn't animate.
-- **App-mode cursor:** raised, with a 1px inset *apricot* outline and no bar.
+- **App-mode cursor:** raised, with a 1px inset *apricot* outline and no bar. It is the one cursor style: the Picker's and Finder's selected row and the focused row-menu item wear it too.
 - **Pending (added, not Published):** content at 60% opacity, with a hollow muted node.
 - **Section headings:** 12px uppercase Inter 600, tracked 0.06em, muted, with a tabular count at the right (left out at 0, where the section's sentence says it).
 
@@ -320,7 +321,7 @@ A tmux-like line on Chrome Graphite: `● backend  ■ this Box  ● esx-02  N H
 - **Unreviewed:** 13px Signal Yellow text with a 45%-yellow 1px border, 4px radius and 5px side padding.
 
 ### Connect card and lock screen (signature)
-- **Connect card:** while a Session starts, the pane itself shows the map: no surface, no border, no shadow. It has this Box's square, an edge and the Host's open ring (136 to 200px wide as the pane grows, 12px above a 17px title), the Host and its address in Iosevka, and plain progress text (`ssh` in Iosevka). The edge reaches 40% while ssh starts and the Host's ring while it logs in (120ms each). The terminal stays hidden until its first byte, so no cursor blinks behind the card. From 3s it counts the seconds in Iosevka and shows the keys that close the Session. When the shell answers, the ring closes (and fills, for a key login), the title says "Logged in to …", and the card fades before the terminal comes in, so its words never sit on the first output. Its height never changes: the phase line and the keys' line keep their room throughout. This Box's square is small (about 10px) beside the 16px Host ring, so the Host is the focus. It's never a spinner and never a blank terminal. The host-key and password questions keep the Panel Graphite surface, because they ask something, and a host-key question is titled as one ("Trust esx-02's host key?", its address on a muted line under it).
+- **Connect card:** while a Session starts, the pane itself shows the map: no surface, no border, no shadow. It has this Box's square, an edge and the Host's open ring (160 to 240px wide as the pane grows, 12px above a 19px title, its open ring one arc with a single gap at the upper right), the Host and its address in Iosevka, and plain progress text (`ssh` in Iosevka). The edge reaches 40% while ssh starts and the Host's ring while it logs in (120ms each). The terminal stays hidden until its first byte, so no cursor blinks behind the card. From 3s it counts the seconds in Iosevka and shows the keys that close the Session. When the shell answers, the ring closes (and fills, for a key login), the title says "Logged in to …" and holds for 220ms so the landing is seen, and the card fades before the terminal comes in, so its words never sit on the first output. Its height never changes: the phase line and the keys' line keep their room throughout. This Box's square is small (about 10px) beside the 16px Host ring, so the Host is the focus. It's never a spinner and never a blank terminal. The host-key and password questions keep the Panel Graphite surface, because they ask something, and a host-key question is titled as one ("Trust esx-02's host key?", its address on a muted line under it).
 - **Lock screen:** the Gap orbit mark, the Box name in Iosevka, one field labelled with the vault ("Bitwarden master password") and nothing else; "Locked" is the dialog's name for assistive tech, not drawn. It covers the window instantly; no fade, because hiding Sessions must not lag.
 
 ### Motion
