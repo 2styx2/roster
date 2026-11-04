@@ -72,20 +72,38 @@ def test_its_markers_are_sentences_of_the_guides():
         assert any(marker in f.read_text(encoding="utf-8") for f in [*(ROOT / "docs").rglob("*.md"), ROOT / "app/src/help/guideText.ts"]), marker
 
 
+GUIDE_TEXT = r"""(?:\.\./)+(?:docs/[^"'`]*\.md|docs/[^"'`]*\*[^"'`]*|examples/plugins/types/roster\.lua)[^"'`]*"""
+# `from "…"`, `import("…")`, a bare `import "…"`, and `import.meta.glob("…")` (or a list of them).
+TEXT_IMPORT = re.compile(r"""(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bimport\.meta\.glob\s*(?:<[^>]*>)?\s*\(\s*\[?\s*)["'`](""" + GUIDE_TEXT + r""")["'`]""")
+
+
+def guide_text_imports(text):
+    return [m.group(1) for m in TEXT_IMPORT.finditer(text)]
+
+
+def test_the_import_guard_sees_every_way_to_import_a_guide():
+    for line in ['import news from "../../../docs/news.md?raw";', 'const t = await import("../../../docs/news.md?raw");',
+                 'import "../../../docs/news.md?raw";', 'import.meta.glob("../../../docs/**/*.md", { query: "?raw" });',
+                 'import.meta.glob<string>(["../../../docs/app/*.md"]);', "import s from '../../../examples/plugins/types/roster.lua?raw';"]:
+        assert guide_text_imports(line), line
+    for line in ['import { guides } from "./guides";', 'import x from "../../../crates/roster-core/tests/fixtures/plugin-api.json";',
+                 '// see docs/news.md']:
+        assert not guide_text_imports(line), line
+
+
 def test_only_the_help_chunk_imports_the_guides_text():
     # The marker check above samples two guides; this covers every one (#431's review F5): outside the help
     # chunk (app/src/help/guideText.ts), only build-time and website code and tests may import docs/'s Markdown
     # or the stubs, so no guide's text can come back into the startup JS by an import of its own.
     allowed = {"src/help/guideText.ts"}
-    text_import = re.compile(r"""from\s+["']((?:\.\./)+(?:docs/[^"']*\.md|examples/plugins/types/roster\.lua)[^"']*)["']""")
     found = []
-    for f in sorted((ROOT / "app/src").rglob("*.ts*")):
+    for f in sorted(p for ext in ("ts", "tsx", "js", "mjs") for p in (ROOT / "app/src").rglob(f"*.{ext}")):
         rel = f.relative_to(ROOT / "app").as_posix()
         if rel in allowed or ".test." in f.name or rel.startswith("src/docs-site/"):
             continue
-        found += [f"{rel}: {m.group(1)}" for m in text_import.finditer(f.read_text(encoding="utf-8"))]
+        found += [f"{rel}: {i}" for i in guide_text_imports(f.read_text(encoding="utf-8"))]
     assert found == []
-    assert text_import.search((ROOT / "app/src/help/guideText.ts").read_text(encoding="utf-8"))
+    assert guide_text_imports((ROOT / "app/src/help/guideText.ts").read_text(encoding="utf-8"))
 
 
 def test_it_fails_only_what_is_over_its_budget(tmp_path, capsys):
