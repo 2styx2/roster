@@ -90,7 +90,8 @@ describe("Terminal mode and App mode", () => {
 describe("The Sidebar", () => {
   it("lists the open Sessions with the one on screen raised, and no tab strip", async () => {
     const user = await ready();
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
     await connect(user, h0);
     await connect(user, h1);
     expect(within(sessionList()).getAllByRole("treeitem", { name: /^(?!Sessions$)/ })).toHaveLength(2);
@@ -109,7 +110,8 @@ describe("The Sidebar", () => {
     await user.click(within(sessionList()).getByRole("button", { name: `Close ${h0}` }));
     expect(current()).toHaveAccessibleName(new RegExp(`^${h1}`));
     await user.click(within(sessionList()).getByRole("button", { name: `Close ${h1}` }));
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
   });
 
   it("switches Sessions by key: next, previous, by number, and j/k then Enter", async () => {
@@ -243,7 +245,8 @@ describe("The command line", () => {
     const user = await ready();
     await connect(user, h0);
     await user.keyboard(`${LEADER}:close{Enter}`);
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
   });
 
   it("says what's wrong, and won't connect to an unknown or unreviewed Host", async () => {
@@ -255,7 +258,8 @@ describe("The command line", () => {
     const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;
     await user.keyboard(`${LEADER}:connect ${unreviewed}{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent(/isn't reviewed/);
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
   });
 
   it("Esc closes it and gives the keys back to the terminal", async () => {
