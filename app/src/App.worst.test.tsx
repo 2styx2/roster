@@ -189,8 +189,7 @@ describe("one, and none", () => {
   it("has an empty state everywhere, and keeps a key hint's word on its line", async () => {
     const user = await open("worst-case-empty");
     expect(document.querySelector(".statusbar")).toHaveTextContent("0 Hosts");
-    // The pane explains an empty Inventory; the Sidebar only offers a key when it can add.
-    expect(screen.getByText("No Hosts in the Inventory yet.")).toBeInTheDocument();
+    expect(screen.getByText("No Hosts yet. Add them in roster.yml.")).toBeInTheDocument();
     const hint = document.querySelector(".sb-empty .keys-with-word");
     // "Drag a Host here, or ␣ a.": the word before the keys stays on their line.
     expect(hint).toHaveTextContent(/^or/);

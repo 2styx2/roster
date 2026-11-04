@@ -663,6 +663,7 @@ export function Sidebar({
     },
   }));
 
+  const lifted = sections[0]?.id === "sessions" ? 1 : 0;
   const renderSection = (section: SidebarSection) => (
     <Section
       key={section.id}
@@ -727,9 +728,10 @@ export function Sidebar({
       >
         {/* Sessions sit above the rest and never scroll away (its own list scrolls past eight);
             the sections under it scroll, and that scroller keeps the row under the pointer. */}
-        {sections.filter((s) => s.id === "sessions").map(renderSection)}
+        {/* Only when Sessions come first (init.lua can order the sections otherwise). */}
+        {sections.slice(0, lifted).map(renderSection)}
         <div className="sb-rest" ref={restRef} role="none" onPointerEnter={() => (pointerIn.current = true)} onPointerLeave={giveBack}>
-          {sections.filter((s) => s.id !== "sessions").map(renderSection)}
+          {sections.slice(lifted).map(renderSection)}
         </div>
       </div>
       {menuShown && menu && menuRow && (

@@ -346,12 +346,12 @@ function keys(seq: string): string {
 describe("Tab through the Sidebar", () => {
   it("moves on from the tree to the next control, not back where it came from", async () => {
     const { user } = await ready();
-    const find = screen.getByRole("button", { name: /^Find a Host, / });
+    const find = within(screen.getByRole("navigation", { name: "Sidebar" })).getByRole("button", { name: /^Find a Host, / });
     find.focus();
     await user.tab();
     expect(screen.getByRole("tree")).toHaveFocus();
     await user.tab();
-    // The pane's Find a Host button, past the tree, in Terminal mode again.
-    expect(within(screen.getByRole("main", { name: /workspace/i })).getByRole("button", { name: "Find a Host" })).toHaveFocus();
+    // Past the tree, the pane's first control (the first Host on its map), in Terminal mode again.
+    expect(within(screen.getByRole("region", { name: "In the Inventory" })).getAllByRole("button")[0]).toHaveFocus();
   });
 });
