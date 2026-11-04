@@ -12,6 +12,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
 
+### Changed
+
+**App**
+
+- **Connecting looks like the connection coming up** (#418): the pane shows this Box, an edge and the Host on the pane itself, not in a box over a blank terminal. The edge reaches part-way while ssh starts and the whole way while it logs in, the Host's ring fills when the shell answers, and the terminal appears with its first output. The Sidebar row no longer draws a line under itself while it connects. Words in the card no longer break mid-word in a narrow window.
+
 ### Security
 
 **CLI**

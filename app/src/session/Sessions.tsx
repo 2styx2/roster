@@ -2,7 +2,7 @@
 // option shows instead of the Sidebar's Sessions section. Inactive terminals stay mounted, just
 // hidden, so their screens survive switching. Buttons here run command lines (`session N`,
 // `close N`, `reconnect`) like every other way in.
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { HostKeyScan } from "../backend/types";
 import type { ErrorRow } from "../errors/catalog";
 import { ErrorPanel, type ProblemActions } from "../errors/ErrorPanel";
@@ -121,9 +121,14 @@ export function TabStrip({ snapshot, run }: TabStripProps) {
   );
 }
 
-/** What the connect card says on its second line: honest about where it is (taste.md). */
-const PHASE_WORDS: Record<ConnectPhase, string> = {
-  starting: "Starting ssh on this Box…",
+/** What the connect card says on its second line: honest about where it is (taste.md). `ssh` is a
+ * command you could paste, so it's in Iosevka (the paste rule). */
+const PHASE_WORDS: Record<ConnectPhase, ReactNode> = {
+  starting: (
+    <>
+      Starting <span className="connect-cmd">ssh</span> on this Box…
+    </>
+  ),
   "logging-in": "Logging in…",
   "checking-key": "Fetching the Host's key…",
   asking: "",
@@ -259,10 +264,21 @@ export function ConnectCard({
       }
       tabIndex={asking ? -1 : undefined}
     >
-      <svg className={`connect-map${asking ? " waiting" : ""}`} viewBox="0 0 72 12" width="72" height="12" aria-hidden="true">
+      {/* The map: this Box, the edge, the Host. The edge says how far the connection has got
+          (`data-phase`): part-way while ssh starts, to the Host's ring while it logs in, and the
+          ring fills when the shell answers (`.leaving`). */}
+      <svg
+        className={`connect-map${asking ? " waiting" : ""}`}
+        data-phase={phase ?? "up"}
+        viewBox="0 0 72 12"
+        width="96"
+        height="16"
+        aria-hidden="true"
+      >
         <rect className="connect-box" x="1" y="2" width="8" height="8" rx="1.6" />
         <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
         <circle className="connect-host" cx="65" cy="6" r="4.25" />
+        <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />
       </svg>
       <p className="connect-title">
         <span className="muted">{again ? "Reconnecting to " : "Connecting to "}</span>
@@ -485,7 +501,9 @@ function endpoint({ address, port }: QuickTarget): string {
 }
 
 /** How long the card takes to fade out (--dur-fade in styles.css). */
-const FADE_MS = 120;
+/** The shell answered: the Host's ring fills (120 ms), then the card fades (120 ms), so the
+ * connection visibly lands before the card goes (styles.css `.connect-card.leaving`). */
+const FADE_MS = 240;
 
 export interface SessionPanesProps {
   tabs: Pick<Tabs, "wiring" | "trustKey" | "cancelKey" | "connectQuick" | "connectPrompted" | "dismissSave">;

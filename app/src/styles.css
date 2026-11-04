@@ -436,21 +436,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    (password) once the shell answers. What tells it from a password node is the edge below. */
 .dot.connecting circle { fill: none; stroke: var(--accent); stroke-width: 1.5px; }
 
-/* A Session's link (issue #78, taste.md "Connect"): a 1px accent edge drawn from the row's node
-   toward the terminal while it connects (120 ms, strong ease-out, from the node's side), faded
-   once the shell answers, snapped back at once when it fails or ends. Transform and opacity
-   only; reduced motion keeps the fade and drops the draw. */
-.sb-row[class*="link-"] .sb-item::after {
-  content: ""; position: absolute; left: 12px; right: 6px; bottom: 2px; height: 1px; border-radius: 1px;
-  background: var(--accent); transform-origin: left center; pointer-events: none;
-}
-.sb-row.link-connecting .sb-item::after {
-  transform: scaleX(1); opacity: 1;
-  transition: transform var(--dur-draw) var(--ease-out);
-  @starting-style { transform: scaleX(0); }
-}
-.sb-row.link-up .sb-item::after { transform: scaleX(1); opacity: 0; transition: opacity var(--dur-fade) ease; }
-.sb-row.link-down .sb-item::after { transform: scaleX(0); opacity: 0; }
+/* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,
+   from this Box to the Host. In the row, the node says it: an accent ring while connecting, filled
+   (key) or a ring (password) once live, hollow grey when it ended. The row carries `link-*` for
+   tests and Plugins but draws no line of its own: a line across the row read as an underline. */
 
 /* App mode: the cursor row whole (M6), its name wrapped, its state and address below. */
 .sb-details {
@@ -908,37 +897,58 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .session-note:not(.ended) { padding-right: 12px; }
 .session-note.ended > span:first-child { color: var(--warn); }
 .session-note .reconnect { height: 24px; padding: 0 10px; font-size: var(--text-sm); }
-/* The connect card (issue #78): over the terminal while the Session connects, so the pane is never
-   a blank terminal. This Box's square (the second tone) and an accent edge drawn to the Host's
-   node: the network-map motif, still apart from the one draw. It eases in like the notes; the
-   edge draws after the card has risen (it starts 60 ms in, 120 ms long); it fades out over the
-   first output. */
+/* The connect card (issue #78): the pane while the Session connects, so it's never a blank
+   terminal. It isn't a dialog over the terminal: the map sits on the pane itself (no surface, no
+   shadow), centred a little above the middle, and the terminal stays out of sight until its first
+   byte (`tab.shell`), so no lone cursor blinks behind it. The map is this Box's square (the second
+   tone), an accent edge and the Host's ring: the network-map motif. The edge says how far it got:
+   40% while ssh starts, to the ring while it logs in (120 ms, strong ease-out, transform only).
+   When the shell answers the ring fills (120 ms) and then the card fades (120 ms) over the first
+   output. Reduced motion keeps the fades and drops the draw (--dur-draw is 0). */
 .connect-card {
-  position: absolute; left: 50%; top: 40%; translate: -50% -50%; z-index: 1;
-  display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: calc(100% - 32px);
-  padding: 16px 20px; border-radius: var(--radius-lg); background: var(--panel); border: 1px solid var(--line-strong);
-  box-shadow: 0 8px 24px var(--shadow); text-align: center;
+  position: absolute; inset: 0 0 12% 0; margin: auto; z-index: 1;
+  width: fit-content; height: fit-content; max-width: calc(100% - 32px); max-height: calc(100% - 16px);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 16px 20px; text-align: center;
   transition: opacity var(--dur-move) var(--ease-out), transform var(--dur-move) var(--ease-out);
   @starting-style { opacity: 0; transform: translateY(var(--enter-y)); }
 }
-.connect-card.leaving { opacity: 0; transition: opacity var(--dur-fade) ease; }
-.connect-card p { margin: 0; overflow-wrap: anywhere; }
-.connect-map { overflow: visible; margin-bottom: 4px; }
+.connect-card.leaving {
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-fade) ease var(--dur-fade);
+}
+/* The terminal waits behind the card until the shell's first byte, then fades in under it. */
+.pane .term-wrap { transition: opacity var(--dur-fade) ease; }
+.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; }
+/* Words break between words; only a Host name too long for the pane breaks inside itself. */
+.connect-card p { margin: 0; overflow-wrap: break-word; text-wrap: balance; }
+.connect-map { overflow: visible; margin-bottom: 6px; }
 .connect-box { fill: var(--tone); }
 .connect-edge {
-  stroke: var(--accent); stroke-width: 1px; transform-box: fill-box; transform-origin: left center;
-  transition: transform var(--dur-draw) var(--ease-out) 60ms;
+  stroke: var(--accent); stroke-width: 1px; vector-effect: non-scaling-stroke;
+  transform-box: fill-box; transform-origin: left center;
+  transition: transform var(--dur-draw) var(--ease-out);
   @starting-style { transform: scaleX(0); }
 }
-.connect-host { fill: none; stroke: var(--accent); stroke-width: 1.5px; }
+.connect-map[data-phase="starting"] .connect-edge { transform: scaleX(0.4); }
+.connect-host { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) ease; }
+.connect-card.leaving .connect-host-fill { opacity: 1; }
+.connect-cmd { font-family: var(--font-mono); }
 .connect-title { font-size: var(--text-md); }
-.connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
+.connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .connect-phase { font-size: var(--text-sm); }
 /* The host key question (ticket 36) in the same card, so it reads as a step of connecting, not a
    modal. No motion of its own: it's a keyboard-paced swap inside a card that already eased in. The
    edge waits, dashed, until the user answers. The fingerprint is data (Iosevka), whole, selectable. */
-.connect-card.key-question { gap: 8px; width: min(520px, calc(100% - 32px)); }
+/* The host key question keeps a surface: it asks something and holds focus, so it reads as a
+   step you answer, not just state. It scrolls inside itself in a short window. */
+.connect-card.key-question {
+  gap: 8px; width: min(520px, calc(100% - 32px)); overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px var(--shadow);
+}
 .connect-map.waiting .connect-edge { stroke-dasharray: 3 3; }
 .key-says { color: var(--text); }
 .key-print {
