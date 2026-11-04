@@ -6,7 +6,8 @@ CI builds the frontend (`vite build` in app/) and runs this on every pull reques
 
 It adds up every .js and every .css file the build wrote under dist/assets, minified as shipped and gzipped
 (level 9, as a size anyone can reproduce; the app reads them from disk, so raw is what it parses), and fails
-when either total is over its budget. Fonts, icons and other assets aren't counted: they change only when a
+when a total is over its budget. The fake Backend's chunk (fake-*.js, a dynamic import() for the tutor demo
+and browser runs) is budgeted on its own rather than as JS the app parses at start. Fonts, icons and other assets aren't counted: they change only when a
 font does. A KB here is 1,000 bytes, as Vite prints them. A change that goes over raises the budget below and
 in performance.md's table, with the reason in its pull request. Standard library only.
 """
@@ -56,18 +57,32 @@ KB = 1000
 # 15,429 gzipped, 71 bytes under the gzipped budget, after T178 found no dead rules left to take out, so the next
 # stylesheet change would fail. The app's own stylesheets, grown a rule at a time with features, not a dependency;
 # 1 KB gzipped lets the next few small features through while a stylesheet library (tens of KB) still fails.
+# JS 2,650 -> 3,000 raw, 775 -> 880 gzipped on 2026-11-04 (T197, #377, decision Q181, owner's call: thorough docs,
+# budgets follow comparable products): ~38 % of the startup JS is bundled :help text (978 KB raw / 287 gzipped);
+# comparables are bigger (Neovim's help 1.6 MB gzipped). Raised once so docs PRs stop moving it; lazy :help (T213, #405)
+# then splits it. The same day the fake Backend's chunk (fake-*.js, a dynamic import(), 172.8 raw / 58.2 gzipped)
+# stopped counting toward it and got a budget of its own, its size then + 15 %. Startup JS without it: 2,433.7 raw
+# / 710.0 gzipped.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2650, "gzip": 775},
+    "js": {"raw": 3000, "gzip": 880},
     "css": {"raw": 90, "gzip": 16.5},
+    "fake": {"raw": 199, "gzip": 67},
 }
+LABELS = {"js": "JS", "css": "CSS", "fake": "Fake Backend JS"}
+
+
+def kind_of(f):
+    """Which budget file F counts toward: "js", "css", "fake" (the fake Backend's chunk), or None."""
+    kind = f.suffix.lstrip(".")
+    return "fake" if kind == "js" and f.name.startswith("fake-") else kind
 
 
 def measure(dist):
     """{"js": {"raw": bytes, "gzip": bytes}, "css": {...}}: the totals of the build in DIST (its assets folder)."""
     out = {kind: {"raw": 0, "gzip": 0} for kind in BUDGETS}
     for f in sorted((Path(dist) / "assets").rglob("*")):
-        kind = f.suffix.lstrip(".")
+        kind = kind_of(f)
         if kind in out and f.is_file():
             data = f.read_bytes()
             out[kind]["raw"] += len(data)
@@ -86,7 +101,7 @@ def main(argv=None, budgets=None):
     for kind, budget in budgets.items():
         for how in ("raw", "gzip"):
             got, most = sizes[kind][how] / KB, budget[how]
-            line = f"{kind.upper()} {how} {got:,.1f} KB"
+            line = f"{LABELS.get(kind, kind.upper())} {how} {got:,.1f} KB"
             if got > most:
                 over.append(f"{line}, over its budget of {most:,} KB")
             print(f"{line} (budget {most:,} KB)")
