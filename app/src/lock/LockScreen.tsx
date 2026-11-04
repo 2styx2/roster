@@ -222,10 +222,13 @@ function UnlockForm({
           {checking ? "Checking…" : busy ? "Unlocking…" : "Unlock"}
         </button>
       </div>
-      {error && (
+      {error ? (
         <p id="lock-error" role="alert" className="lock-error">
           {withCode(error)}
         </p>
+      ) : (
+        // The error's room, held so the block doesn't move when one appears.
+        <p className="lock-error" aria-hidden="true" />
       )}
     </form>
   );

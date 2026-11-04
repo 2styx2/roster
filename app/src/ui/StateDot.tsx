@@ -30,7 +30,9 @@ export function StateDot({ dot, lit }: { dot: Dot; lit?: Light | false | undefin
   return (
     <svg className={`dot ${dot}${lit === "current" ? " lit" : lit === "live" ? " on" : ""}`} data-shape={SHAPES[dot]} viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
       <circle cx="4" cy="4" r="3.25" />
-      {lit && <circle className="halo" cx="4" cy="4" r="5.25" />}
+      {/* Has a Session: a short edge leaving the node toward this Box, the map's own way of
+          saying "connected" (Q194), so it's a shape as well as a colour. */}
+      {lit && <line className="stub" x1="-3.5" y1="4" x2="0.4" y2="4" />}
     </svg>
   );
 }

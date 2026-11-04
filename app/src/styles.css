@@ -411,6 +411,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    push the Inventory out of the Sidebar (the cursor scrolls them into view as it moves). */
 .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(8 * var(--row-h)); overflow-y: auto; overscroll-behavior: contain; }
 @media (max-height: 500px) { .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(3 * var(--row-h)); } }
+/* More Sessions out of sight: a hairline on that edge of the list. */
+.sb-section[data-section="sessions"] > .sb-rows { border-block: 1px solid transparent; }
+.sb-section[data-section="sessions"] > .sb-rows:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
+.sb-section[data-section="sessions"] > .sb-rows:is([data-more="below"], [data-more="both"]) { border-bottom-color: var(--line-strong); }
 .sb-row { position: relative; display: flex; align-items: center; height: var(--row-h); border-radius: var(--radius); color: var(--muted); }
 @media (hover: hover) and (pointer: fine) {
   .sb-row:hover { background: var(--hover); color: var(--text); }
@@ -530,11 +534,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.on.password circle { fill: none; stroke: var(--text); }
 .dot.lit circle { fill: var(--accent); }
 .dot.lit.password circle { fill: none; stroke: var(--accent); }
-/* A Host with a Session gets a thin halo, so "has a Session" is a shape, not only a lighter
-   colour (WCAG 1.4.1): the node with its connection around it. */
-.dot circle.halo { fill: none !important; stroke-width: 1px; stroke-dasharray: none; opacity: 0.8; }
-.dot.on circle.halo { stroke: var(--text); }
-.dot.lit circle.halo { stroke: var(--accent); }
+/* A Host with a Session gets a short edge stub leaving its node (Q194), so "has a Session" is a
+   shape, not only a lighter colour (WCAG 1.4.1), in the map's grammar: a connection is an edge. */
+.dot line.stub { stroke-width: 1px; stroke-linecap: butt; }
+.dot.on line.stub { stroke: var(--text); }
+.dot.lit line.stub { stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the
@@ -840,7 +844,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* The name is the column you scan: it takes the room first (at least 14 characters); the
      address up to 22, the group up to 18 and the type up to 10 take only what they need, and
      give way before it. */
-  grid-template-columns: 0 8px minmax(14ch, 1fr) fit-content(22ch) fit-content(18ch) fit-content(10ch) auto 24px 0;
+  grid-template-columns: 0 8px minmax(26ch, 1fr) fit-content(22ch) fit-content(16ch) fit-content(10ch) auto 24px 0;
 }
 .picker-row {
   grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
@@ -853,7 +857,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 /* The selected row shows its whole name and address, wrapped (M6): two long Hosts that differ at
    the end can be told apart from the keyboard. */
-.picker-row.selected > :is(.host-name, .host-ip, .host-group) { white-space: normal; overflow-wrap: anywhere; overflow: visible; }
+/* Only the name (and an address) wraps on the selected row: the group and type stay one line, so
+   moving the selection doesn't make the list jump by whole lines of group. */
+.picker-row.selected > :is(.host-name, .host-ip) { white-space: normal; overflow-wrap: anywhere; overflow: visible; }
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
@@ -906,10 +912,16 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .lock-gate[data-locked] { visibility: hidden; }
 .lock {
   position: absolute; inset: 0; z-index: 20; background: var(--bg);
-  display: flex; align-items: center; justify-content: center; padding: 24px;
+  display: flex; align-items: center; justify-content: center; padding: 24px 24px 12vh;
 }
+/* The mark and this Box centred over the form, as every other empty state is centred; the
+   field's label stays left over its field (Q194). Optically a little above the middle, as the
+   connect card sits. */
 .lock-panel { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; }
-.lock-mark { margin-bottom: 6px; }
+.lock-mark { margin-bottom: 6px; align-self: center; }
+.lock-panel > .lock-box { align-self: center; }
+/* The error's line is there before any error, so nothing moves when one appears. */
+.lock-form .lock-error { min-height: 1lh; }
 .lock-panel h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 /* This Box under the heading (taste.md "Lock screen"): its square in the second tone and its name
    in Iosevka, as the status line shows them. */

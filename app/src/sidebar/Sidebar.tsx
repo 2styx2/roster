@@ -500,6 +500,20 @@ function keepUnderPointer(tree: HTMLElement, delta: number, borrowed: number): n
   return room;
 }
 
+/** Marks a scrolling list with whether rows are hidden above or below (data-more). */
+function markOverflow(list: HTMLElement) {
+  const above = list.scrollTop > 0;
+  const below = list.scrollTop + list.clientHeight < list.scrollHeight - 1;
+  const more = above && below ? "both" : above ? "above" : below ? "below" : "";
+  if (more) list.dataset.more = more;
+  else delete list.dataset.more;
+}
+
+/** Scrolls an element by `by` px (a helper, so the component never writes to the DOM itself). */
+function scrollBy(el: HTMLElement, by: number) {
+  el.scrollTop += by;
+}
+
 /** An IPv4 or IPv6 address, or a range (10.0.0.0/24). */
 const DATA_FACT = /^[0-9a-f:.]+(\/\d+)?$/i;
 
@@ -585,6 +599,16 @@ export function Sidebar({
     else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + row.offsetHeight - list.clientHeight;
   }, [liveRow]);
 
+  // The capped Sessions list says when more are out of sight: a hairline on that edge (Q194).
+  useLayoutEffect(() => {
+    const list = scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"] > .sb-rows');
+    if (!list) return;
+    const mark = () => markOverflow(list);
+    mark();
+    list.addEventListener("scroll", mark, { passive: true });
+    return () => list.removeEventListener("scroll", mark);
+  });
+
   // A Session opening or closing changes the Sessions section's height, above everything else in
   // the tree. With the pointer in the Sidebar that would slide the row under it (the next click
   // opening a neighbour), so the scroll moves by the same amount and the row stays put.
@@ -592,21 +616,37 @@ export function Sidebar({
   const sessionsHeight = useRef<number | null>(null);
   const restRef = useRef<HTMLDivElement | null>(null);
   const borrowed = useRef(0);
+  // How far the scroll-keeping has moved the tree, given back when the pointer leaves (Q194).
+  const shifted = useRef(0);
+  const giveBack = () => {
+    pointerIn.current = false;
+    const rest = restRef.current;
+    if (!rest) return;
+    // Back to where the tree was before Sessions moved it, so no heading stays half cut.
+    if (shifted.current !== 0) {
+      scrollBy(rest, -shifted.current);
+      shifted.current = 0;
+    }
+    if (borrowed.current === 0) return;
+    borrowed.current = 0;
+    keepUnderPointer(rest, 0, -1);
+  };
   useLayoutEffect(() => {
     const el = scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
     const h = el?.offsetHeight ?? null;
     const before = sessionsHeight.current;
     sessionsHeight.current = h;
     const rest = restRef.current;
-    if (h === null || before === null || h === before || !pointerIn.current || !rest) return;
+    if (h === null || before === null || h === before || !rest) return;
+    if (!pointerIn.current) {
+      // The pointer isn't on the tree (Sessions closed by a key): give back what was held.
+      if (shifted.current !== 0) giveBack();
+      return;
+    }
+    const top = rest.scrollTop;
     borrowed.current = keepUnderPointer(rest, h - before, borrowed.current);
+    shifted.current += rest.scrollTop - top;
   });
-  const giveBack = () => {
-    pointerIn.current = false;
-    if (borrowed.current === 0 || !restRef.current) return;
-    borrowed.current = 0;
-    keepUnderPointer(restRef.current, 0, -1);
-  };
 
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs
   // some data for a drag to start).
@@ -730,7 +770,7 @@ export function Sidebar({
             the sections under it scroll, and that scroller keeps the row under the pointer. */}
         {/* Only when Sessions come first (init.lua can order the sections otherwise). */}
         {sections.slice(0, lifted).map(renderSection)}
-        <div className="sb-rest" ref={restRef} role="none" onPointerEnter={() => (pointerIn.current = true)} onPointerLeave={giveBack}>
+        <div className="sb-rest" ref={restRef} role="none" tabIndex={-1} onPointerEnter={() => (pointerIn.current = true)} onPointerLeave={giveBack}>
           {sections.slice(lifted).map(renderSection)}
         </div>
       </div>

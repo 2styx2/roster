@@ -73,7 +73,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
   control({
     id: "quick",
     label: () => "Quick Connect",
-    text: "Connect",
+    // An icon, as Add Host is (Q190, Q194): its name is in the tooltip with its keys.
     icon: "quick",
     command: "quick",
     byDefault: true,

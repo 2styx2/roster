@@ -12,7 +12,7 @@ And like Neovim or VS Code, **roster is a tool you make your own**. The look, th
 
 1. **The terminal is the hero.** Chrome recedes: neutral near-black, hairlines, no gradients, no glass, no shadows on resting surfaces. If a pixel isn't helping you reach or use a shell, it's quiet.
 2. **Nodes and edges are our only ornament.**
-   - State dots are *nodes*, and their shapes carry meaning: filled = key, ring = password, dashed = unreviewed, hollow grey = ended. Connecting is an open ring, the Gap orbit's broken ring; a node whose Host has a Session wears a thin halo (Q192). At rest a node is grey; the Session on screen and its Host take the accent, and other connected Sessions the text colour (Q185, Q186).
+   - State dots are *nodes*, and their shapes carry meaning: filled = key, ring = password, dashed = unreviewed, hollow grey = ended. Connecting is an open ring, the Gap orbit's broken ring; a node whose Host has a Session carries a short edge stub, its connection (Q192, Q194). At rest a node is grey; the Session on screen and its Host take the accent, and other connected Sessions the text colour (Q185, Q186).
    - Empty states, the lock screen and loading use the Gap orbit mark, small and still, never as wallpaper.
    - "Connecting" is an edge being drawn, a short line from this Box to the Host's node. It isn't a spinner.
 3. **The accent means "live".** The accent is apricot (Apricot flare, Q57), and it's spent only on what's connected or actionable now: the current Session's bar, a live node, the primary button, the cursor, the Host in the logo. Nothing decorative is apricot. A screen with no live connection has almost none on it.
