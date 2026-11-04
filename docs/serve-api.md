@@ -58,12 +58,13 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 
 <!-- END generated:methods -->
 
-<!-- BEGIN generated:methods inventory.info hosts.list host.get -->
+<!-- BEGIN generated:methods inventory.info inventory.create hosts.list host.get -->
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
 | `inventory.info` | none | `{path, box, host_count, providers: [names], store, roster_version, api_version}` |  | 1 |
 | `inventory.info` | none | `store: {kind, note, repo}` (T212): how `roster.yml` is kept, as the disk and git say now. `kind` is `repo` (committed in a git repo with a remote: edits are Pending changes until `changes.publish`) or `file` (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says which in a sentence; `repo` is the git work tree it's in (`null` outside one) |  | 28 |
+| `inventory.create` | `{how: blank\|file\|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the `roster.yml` to copy (`file`) or the git URL (`repo`) | `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the app restarts serve (as after `inventories.use`) | `140`, `143`, `170`-`172` | 28 |
 | `hosts.list` | none | `{hosts: [Host, ...], groups: {name: {title, description}}, error}`, hosts in `roster.yml` order. `error` (API 8) is `null`, or why `roster.yml` as it is now doesn't load while these are the last good ones |  | 1 |
 | `host.get` | `{name}` (exact Host name) | one Host | `2` | 1 |
 | `host.get` | `{name, settled: true}` | the Host once no write to `roster.yml` is under way: it waits for one as another write would (the app's check after a `host.add` it stopped waiting for) | `2`, `4` | 20 |

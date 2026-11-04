@@ -49,6 +49,43 @@ fn no_inventory_is_inventory_not_found_with_roster_wording() {
 }
 
 #[test]
+fn with_no_inventory_a_serve_of_its_own_makes_one() {
+    // T212: the first-run dialog's call, on a serve started for it alone (Backend::start can't: no Inventory)
+    let r = Backend::create_inventory(
+        &fake("first-run"),
+        serde_json::json!({"how": "blank", "folder": "/home/u/infra"}),
+    )
+    .unwrap();
+    assert_eq!(r["path"], "/home/u/infra/roster.yml");
+    assert_eq!(r["restart"], true);
+}
+
+#[test]
+fn a_refused_create_keeps_servers_code_and_fix() {
+    let e = Backend::create_inventory(&fake("first-run"), serde_json::json!({"how": "repo", "folder": "/x"}))
+        .err()
+        .unwrap();
+    match e {
+        roster_core::rpc::CallError::Rpc { code, data, .. } => {
+            assert_eq!(code, 172);
+            assert_eq!(data.unwrap()["fix"], "check the URL");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn an_older_roster_cannot_make_one() {
+    let e = Backend::create_inventory(
+        &fake("no-inventory"),
+        serde_json::json!({"how": "blank", "folder": "/x"}),
+    )
+    .err()
+    .unwrap();
+    assert!(matches!(e, roster_core::rpc::CallError::Rpc { code: 1, .. }), "{e:?}");
+}
+
+#[test]
 fn a_command_that_cannot_start_is_a_failure_naming_it() {
     let c = Candidate {
         target: Target::Local,

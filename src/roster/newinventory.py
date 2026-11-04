@@ -21,6 +21,7 @@ from .errors import CLONE_FAILED, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_
 HOWS = ("blank", "file", "repo", "ssh-config")
 GROUP = "servers"                       # the blank one's empty group
 IMPORTED = "imported"                   # the group Hosts from an ssh config go in
+CLONE_TIMEOUT = 90                      # s: a clone serve runs (the app waits 120 s for inventory.create)
 
 HEADER = """\
 # roster.yml - the map of your network. NO PASSWORDS IN THIS FILE: only where they are (auth: bw:ITEM, ...).
@@ -125,9 +126,11 @@ def clone(path, url, interactive):
     argv = ["git", "clone", "-q", "--", url, str(folder)]
     try:
         r = subprocess.run(argv, env=env, text=True, stdin=None if interactive else subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=None if interactive else subprocess.PIPE, timeout=600)
+                           stdout=subprocess.PIPE, stderr=None if interactive else subprocess.PIPE,
+                           timeout=600 if interactive else CLONE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        raise Problem(CLONE_FAILED, "git clone didn't finish within 10 minutes", fix="check the network") from None
+        raise Problem(CLONE_FAILED, f"git clone didn't finish within {600 if interactive else CLONE_TIMEOUT} s",
+                      fix="check the network; a big repo: `roster init --inventory repo:URL` in a terminal") from None
     if r.returncode != 0:
         raise Problem(CLONE_FAILED, f"git couldn't clone {url}", {"url": url},
                       fix="check the URL and your access to the repo (`git clone URL` in a terminal shows the same)",

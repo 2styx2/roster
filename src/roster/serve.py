@@ -28,6 +28,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from . import (
@@ -73,6 +74,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     INVALID_HOST,
     INVENTORIES_UNREADABLE,
     INVENTORY_ERROR,
+    INVENTORY_THERE,
     ITEM_EXISTS,
     LOGIN_NOT_SEEN,
     MESH_BUSY,
@@ -680,10 +682,78 @@ def inventories_use(state, params):
     return {"active": name, "path": str(chosen.path), "restart": True}
 
 
+def inventory_create(state, params):
+    """A new Inventory, for the app's first run when this serve found none (T212, decision Q182): one of
+    `roster init --inventory`'s ways, written by serve (ADR 0001: the app never writes roster.yml). It goes to
+    FOLDER/roster.yml and is named (`roster inv add`, NAME or the folder's name) and made the active one, so the
+    serve the app starts next finds it. A clone never asks anything (no terminal): a repo that needs a passphrase or
+    a password fails (`172`), and `roster init --inventory repo:URL` in a terminal is the way then.
+
+    Params: `{how: blank|file|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the
+        `roster.yml` to copy (`file`) or the git URL (`repo`)
+    Result: `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the
+        app restarts serve (as after `inventories.use`)
+    Errors: 140, 143, 170-172
+    Since: API 28
+    """
+    from . import newinventory
+    if state.path is not None:
+        raise RpcError(INVENTORY_THERE, f"this roster serve runs on {state.path} already, so it makes no other "
+                                        "Inventory", {"path": str(state.path)},
+                       fix="`roster init --inventory ... --name NAME` in a terminal makes another one beside it")
+    how = params.get("how")
+    if how not in ("blank", "file", "repo"):
+        raise RpcError(INVALID_PARAMS, "params.how must be blank, file or repo")
+    folder = params.get("folder")
+    if not isinstance(folder, str) or not folder.strip():
+        raise RpcError(INVALID_PARAMS, "params.folder: the folder for roster.yml")
+    folder = Path(folder.strip()).expanduser()
+    if not folder.is_absolute():
+        raise RpcError(INVALID_PARAMS, "params.folder must be a full path (or ~/...): this serve's own folder "
+                                       "isn't one you chose")
+    source = params.get("source")
+    if how != "blank":
+        if not isinstance(source, str) or not source.strip():
+            raise RpcError(INVALID_PARAMS, f"params.source: the {'roster.yml to copy' if how == 'file' else 'git URL'}")
+        source = source.strip()
+        try:
+            newinventory.parse_how(f"{how}:{source}")
+        except ValueError as e:
+            raise RpcError(INVALID_PARAMS, f"params.source: {e}") from None
+    name = params.get("name") or folder.name
+    if not isinstance(name, str) or inventories.name_problem(name):
+        raise RpcError(INVALID_PARAMS, f"params.name: {inventories.name_problem(str(name))}")
+    try:
+        inv = inventories.load()
+    except SystemExit as e:
+        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    taken = [x.name for x in inv.inventories if inventories.same_name(x.name, name)]
+    if taken:
+        raise RpcError(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
+                       fix="pick another name")
+    target = folder / "roster.yml"
+    with state.lock:
+        if state.path is not None:                  # another create got here first
+            raise RpcError(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
+        made = newinventory.create(target, how, source, interactive=False)
+        state.path = made.path.resolve()            # this serve makes no other
+    try:
+        inventories.add(name, made.path)
+        inventories.use(name)
+    except SystemExit as e:
+        raise RpcError(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
+                       {"path": str(made.path)}, fix=f"`roster inv add NAME {made.path}` in a terminal") from None
+    hosts = len(load_config(made.path)["hosts"])
+    return {"path": str(made.path.resolve()), "name": inventories.canonical(name), "how": how, "hosts": hosts,
+            "restart": True}
+
+
 METHODS = {
     "inventory.info": inventory_info,
     "inventories.list": inventories_list,
     "inventories.use": inventories_use,
+    "inventory.create": inventory_create,
     "box.check": box_check,
     "hosts.list": hosts_list,
     "host.get": host_get,
@@ -2760,7 +2830,7 @@ METHODS["discover.add"] = discover_add
 # to check what a step that timed out did: changes.CHECK_TIMEOUT, bitwarden's lookup after a create; and UNDO_TIME
 # to take a new Vault item back out). So serve
 # always answers before the app gives up, and the answer says what happened. Other methods: the app's 60 s.
-DEADLINES = {"host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
+DEADLINES = {"inventory.create": 110, "host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
              "host.verify_login": 45, "vault.create_item": 45, "quick.save": 45,
              "host.save_login": 45, "box.check": 45, "mesh.plan": 240, "mesh.apply": 240, "mesh.cut": 60}
 AFTER_DEADLINE = 40

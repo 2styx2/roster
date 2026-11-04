@@ -78,6 +78,7 @@ pub const CALL_SECS: &[(&str, u64)] = &[
     ("mesh.plan", 300),
     ("mesh.apply", 300),
     ("mesh.cut", 120),
+    ("inventory.create", 120),
 ];
 
 /// The first serve API with `host.check {background: true}` and `host.check_job` (ticket 108).
@@ -156,14 +157,7 @@ impl Backend {
     /// As [`Backend::start`], handing serve's notifications (`inventory.changed`) to `notify`.
     pub fn start_with(c: &Candidate, notify: Option<Notify>) -> Result<Backend, BackendError> {
         let shown = c.serve_argv.join(" ");
-        let mut cmd = Command::new(&c.serve_argv[0]);
-        cmd.args(&c.serve_argv[1..]);
-        if c.target == Target::Local && cfg!(windows) {
-            // Native Windows roster: Python's UTF-8 mode, so roster.yml, the vault CLI's output and
-            // every file roster writes are UTF-8 whatever the Windows code page is.
-            cmd.env("PYTHONUTF8", "1");
-        }
-        let client = RpcClient::spawn_with(cmd, notify).map_err(|e| {
+        let client = spawn_serve(c, notify).map_err(|e| {
             BackendError::new(
                 ErrorKind::Failed,
                 "The backend couldn't be started.",
@@ -191,6 +185,18 @@ impl Backend {
                 inventory,
             },
         })
+    }
+
+    /// A new Inventory for the app's first run (T212, serve API 28): with none found,
+    /// [`Backend::start`] can't start (its `inventory.info` fails), so `inventory.create` goes to a
+    /// serve started for this one call, which then stops. serve writes `roster.yml` (ADR 0001);
+    /// the app then connects again, and the new serve finds it. An older serve's refusal comes back
+    /// as it is (`-32601`, or `1` from one that answers every method so).
+    pub fn create_inventory(c: &Candidate, params: Value) -> Result<Value, CallError> {
+        let client = spawn_serve(c, None).map_err(|e| CallError::Io {
+            message: format!("the backend couldn't be started: {e}"),
+        })?;
+        client.call_timeout("inventory.create", params, timeout_for("inventory.create"))
     }
 
     /// The `api_version` serve reported at start.
@@ -509,6 +515,18 @@ fn too_old(message: String) -> BackendError {
     )
 }
 
+/// `roster serve` as `c` runs it, its stdout the JSON-RPC client's.
+fn spawn_serve(c: &Candidate, notify: Option<Notify>) -> std::io::Result<RpcClient> {
+    let mut cmd = Command::new(&c.serve_argv[0]);
+    cmd.args(&c.serve_argv[1..]);
+    if c.target == Target::Local && cfg!(windows) {
+        // Native Windows roster: Python's UTF-8 mode, so roster.yml, the vault CLI's output and
+        // every file roster writes are UTF-8 whatever the Windows code page is.
+        cmd.env("PYTHONUTF8", "1");
+    }
+    RpcClient::spawn_with(cmd, notify)
+}
+
 /// A failure of the first call, as the error the user sees.
 fn classify(e: CallError, shown: &str) -> BackendError {
     match e {
@@ -534,7 +552,8 @@ fn classify(e: CallError, shown: &str) -> BackendError {
         } => BackendError::new(
             ErrorKind::InventoryNotFound,
             format!("roster couldn't load the Inventory: {message}"),
-            "Clone the infra repo to ~/infra (or set ROSTER_CONFIG in ~/.profile), then retry.",
+            "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for \
+             your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
         )
         .with_detail(shown),
         CallError::Rpc {

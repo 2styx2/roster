@@ -9,6 +9,8 @@ The first argument picks a behaviour:
                      password gets an askpass token in env, and the password itself is never echoed back;
                      save: true (ticket 15) adds held: "q1" and the LocalCommand options
   no-inventory       every method returns error code 1, like serve without a roster.yml
+  first-run          as no-inventory, but inventory.create (API 28, T212) answers with the params it got, and
+                     `{"how": "repo"}` is refused with 172
   unknown-command    exits 2 at once with argparse's "invalid choice: 'serve'" (a roster from before serve)
   reverse            holds two requests, then answers them in reverse order
   shuffle            as serve's workers do (API 20): holds four requests, then answers them 3rd, 1st, 4th, 2nd, with a
@@ -76,7 +78,13 @@ def login_of(h):
 def answer(req):
     global minted, trusted
     m = req["method"]
-    if mode == "no-inventory":
+    if mode == "first-run" and m == "inventory.create":
+        p = req.get("params", {})
+        if p.get("how") == "repo":
+            return {"error": {"code": 172, "message": "git couldn't clone it", "data": {"fix": "check the URL"}}}
+        return {"result": {"path": p.get("folder", "") + "/roster.yml", "name": "infra", "how": p.get("how"),
+                           "hosts": 0, "restart": True}}
+    if mode in ("no-inventory", "first-run"):
         return {"error": {"code": 1, "message": "no roster.yml found here or in ~/.config/roster/",
                           "data": {"path": None, "roster_version": "0.1.0", "api_version": 1}}}
     if m == "inventory.info":

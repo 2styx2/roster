@@ -27,18 +27,7 @@ impl BackendState {
     /// development env vars winning; a change takes effect at the next (re)start.
     fn connect(&self, restart: bool, config: &Config, notify: Notify) -> Result<BackendInfo, BackendError> {
         let backend = self.0.connect(restart, Backend::is_alive, || {
-            let env_cmd = roster_core::env::roster_override();
-            let env_distro = roster_core::env::wsl_distro();
-            let plan = config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref())
-                .map_err(|m| {
-                    BackendError::new(
-                        ErrorKind::Failed,
-                        m,
-                        "Fix it in init.lua (docs/app/config.md), then Retry.",
-                    )
-                })?;
-            let candidate = detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)?;
-            Backend::start_with(&candidate, Some(notify))
+            Backend::start_with(&candidate(config)?, Some(notify))
         })?;
         Ok(backend.info.clone())
     }
@@ -49,6 +38,22 @@ impl BackendState {
             message: "the backend isn't running".into(),
         })
     }
+}
+
+/// The roster the Config (and the development env vars) pick, found on this Box.
+fn candidate(config: &Config) -> Result<roster_core::detect::Candidate, BackendError> {
+    let env_cmd = roster_core::env::roster_override();
+    let env_distro = roster_core::env::wsl_distro();
+    let plan = config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref()).map_err(
+        |m| {
+            BackendError::new(
+                ErrorKind::Failed,
+                m,
+                "Fix it in init.lua (docs/app/config.md), then Retry.",
+            )
+        },
+    )?;
+    detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)
 }
 
 async fn blocking<T: Send + 'static, E: Send + 'static>(
@@ -80,6 +85,21 @@ async fn backend_connect(
     blocking(move || {
         let config = loader.map(|l| l.settled()).unwrap_or_default();
         s.connect(restart, &config, notify)
+    })
+    .await
+}
+
+/// The first-run dialog (T212): with no Inventory, `inventory.create` on a serve started for that
+/// one call (roster-core `Backend::create_inventory`). serve writes roster.yml (ADR 0001); the
+/// frontend then connects again. The params are the dialog's choice: how, a folder, a path or a
+/// URL. Nothing secret is in them.
+#[tauri::command]
+async fn inventory_create(config: tauri::State<'_, ConfigState>, params: Value) -> Result<Value, CallError> {
+    let loader = config.0.clone();
+    blocking(move || {
+        let config = loader.map(|l| l.settled()).unwrap_or_default();
+        let c = candidate(&config).map_err(|e| CallError::Io { message: e.message })?;
+        Backend::create_inventory(&c, params)
     })
     .await
 }
@@ -1336,6 +1356,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_connect,
+            inventory_create,
             open_url,
             hosts_list,
             host_get,
