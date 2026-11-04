@@ -1081,21 +1081,13 @@ fn what_it_wasnt_granted_isnt_in_its_sandbox() {
 
 // ------------------------------------------------------------------- its tutorial (#233)
 
-/// The demo Inventory `:tutor` hands the demo's Plugin host (app/src/tutor/demo.ts).
+/// The demo Inventory `:tutor` hands the demo's Plugin host: `demoHosts()` in app/src/tutor/demo.ts,
+/// which app/src/tutor/tutor.test.ts holds to this file.
 fn demo_inventory() -> Value {
-    let hosts: Vec<Value> = (1..=6)
-        .map(|i| {
-            let group = if i <= 4 { "demo-lab" } else { "demo-office" };
-            host(&format!("demo-0{i}"), group, &format!("10.0.0.{}", 10 + i), json!({}))
-        })
-        .collect();
-    json!({
-        "hosts": hosts,
-        "groups": {
-            "demo-lab": { "title": "The demo lab (made up)", "description": "" },
-            "demo-office": { "title": "The demo office (made up)", "description": "" },
-        },
-    })
+    let text =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/demo-inventory.json"))
+            .unwrap();
+    serde_json::from_str(&text).unwrap()
 }
 
 #[test]
@@ -1114,7 +1106,7 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
     // `:tutor topology`, with `:help tutor-topology` as its page.
     let tutor = one(&reply.ops, "tutor");
     assert_eq!(tutor["id"], "topology");
-    assert_eq!(tutor["spec"]["title"], "Topology");
+    assert_eq!(tutor["spec"]["title"], "Topology tutor");
     let lessons = tutor["spec"]["lessons"].as_array().unwrap();
     assert!(lessons.len() >= 2, "{lessons:#?}");
     let steps: Vec<&Value> = lessons.iter().flat_map(|l| l["steps"].as_array().unwrap()).collect();

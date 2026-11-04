@@ -7,6 +7,8 @@ import { defaultOptions, keymapOf } from "../keymap";
 import { memoryPlatform } from "../platform/memory";
 import { builtinRegistries } from "../registries";
 import { StateStore } from "../state/store";
+import demoInventory from "../../../crates/roster-core/tests/fixtures/demo-inventory.json";
+import { demoHosts } from "./demo";
 import { resumeAt, rosterTutorial, stepMatches, TutorProgress, TUTOR_KEY } from "./tutor";
 
 const ev = (name: string, data: Record<string, string | null> = {}) => ({ name, data });
@@ -93,5 +95,11 @@ describe("the tutor page", () => {
   it("says how to start outside the demo, and where you are inside it", () => {
     expect(pageBody(ctx([]), "tutor").map((b) => (b.t === "p" ? plain(b.text) : "")).join(" ")).toMatch(/:tutor starts it on a demo Inventory/);
     expect(pageBody(ctx([], "roster"), "tutor").map((b) => (b.t === "p" ? plain(b.text) : "")).join(" ")).toMatch(/You're on the demo Inventory/);
+  });
+});
+
+describe("the demo Inventory", () => {
+  it("is the one the core's tests teach Plugins' tutorials on (crates/roster-core/tests/fixtures/demo-inventory.json)", () => {
+    expect(demoHosts()).toEqual(demoInventory);
   });
 });

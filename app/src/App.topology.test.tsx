@@ -112,7 +112,7 @@ describe("the Topology view", () => {
     await user.keyboard(`${LEADER}:tutor topology{Enter}`);
     await waitFor(() => expect(screen.queryByRole("region", { name: "Demo Inventory" })).not.toBeNull(), WAIT);
     const help = await screen.findByRole("complementary", { name: "Help" }, WAIT);
-    expect(within(help).getAllByRole("heading", { level: 1 })[0]).toHaveTextContent("Topology");
+    expect(within(help).getAllByRole("heading", { level: 1 })[0]).toHaveTextContent("Topology tutor");
     const step = (n: number) => help.querySelectorAll(".help-step")[n] as HTMLElement;
     const ticked = (n: number) => waitFor(() => expect(step(n)).toHaveAttribute("data-done"), WAIT);
     expect(help.querySelectorAll(".help-step")).toHaveLength(4);

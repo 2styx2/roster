@@ -464,7 +464,7 @@
                     "text": "Show only the lab with `:topology demo-lab`. `:topology` alone shows every group again."
                   }
                 ],
-                "text": "`:topology` opens the map as a full view, and so does `␣ T`. This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.",
+                "text": "`:topology` opens the map, and so does `␣ T`. This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.",
                 "title": "Open the map"
               },
               {
@@ -476,7 +476,7 @@
                       "event": "command",
                       "id": "info"
                     },
-                    "text": "Find `demo-03` with `/`, then press `i` for its details."
+                    "text": "On the map (`:topology`), find `demo-03` with `/`, then press `i` for its details."
                   },
                   {
                     "id": "session",
@@ -493,7 +493,7 @@
             ],
             "outro": "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, select a Host to light up what it can reach and what can reach it.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
             "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host",
-            "title": "Topology"
+            "title": "Topology tutor"
           }
         },
         {
@@ -1489,7 +1489,7 @@
                     "text": "Show only the lab with `:topology demo-lab`. `:topology` alone shows every group again."
                   }
                 ],
-                "text": "`:topology` opens the map as a full view, and so does `␣ T`. This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.",
+                "text": "`:topology` opens the map, and so does `␣ T`. This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.",
                 "title": "Open the map"
               },
               {
@@ -1501,7 +1501,7 @@
                       "event": "command",
                       "id": "info"
                     },
-                    "text": "Find `demo-03` with `/`, then press `i` for its details."
+                    "text": "On the map (`:topology`), find `demo-03` with `/`, then press `i` for its details."
                   },
                   {
                     "id": "session",
@@ -1518,7 +1518,7 @@
             ],
             "outro": "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, select a Host to light up what it can reach and what can reach it.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
             "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host",
-            "title": "Topology"
+            "title": "Topology tutor"
           }
         },
         {

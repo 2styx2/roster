@@ -393,7 +393,7 @@ roster.help.set("topology", {
 -- steps name the demo's Hosts and groups (demo-01 to demo-06, demo-lab and demo-office). The demo
 -- answers no Mesh, so the tutorial teaches what the map shows without one and says so.
 roster.tutor.set("topology", {
-  title = "Topology",
+  title = "Topology tutor",
   summary = "Learn the Topology view: open the map, show one group, go from a node to its Host",
   intro = table.concat({
     "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.",
@@ -403,7 +403,7 @@ roster.tutor.set("topology", {
   lessons = {
     {
       title = "Open the map",
-      text = "`:topology` opens the map as a full view"
+      text = "`:topology` opens the map"
         .. (settings.leader and (", and so does `␣ " .. settings.leader .. "`") or "")
         .. ". This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.",
       steps = {
@@ -419,7 +419,7 @@ roster.tutor.set("topology", {
       title = "From a node to its Host",
       text = "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
       steps = {
-        { id = "details", text = "Find `demo-03` with `/`, then press `i` for its details.", on = { event = "command", id = "info", arg = "demo-03" } },
+        { id = "details", text = "On the map (`:topology`), find `demo-03` with `/`, then press `i` for its details.", on = { event = "command", id = "info", arg = "demo-03" } },
         { id = "session", text = "Open the map again, find `demo-03` and press Enter: a Session to it opens.", on = { event = "session_open", host = "demo-03" } },
       },
     },
