@@ -378,3 +378,14 @@ def test_the_sign_in_timeout_waits_while_a_request_holds_the_vault(signin, isola
     for t in [t for t in threading.enumerate() if t.name == "sign-in-timeout"]:
         t.join(10)
     assert flow.closed
+
+
+def test_a_sign_in_flow_without_touched_never_breaks_the_tick(signin, isolated):
+    from roster import serve as rpc
+
+    class PluginFlow:                                               # a Plugin provider's flow: no `touched`
+        def close(self):
+            pass
+    state = rpc.State(str(isolated["work"] / "roster.yml"))
+    state.login = rpc.SignIn("keeper", PluginFlow())
+    assert rpc.housekeeping(state) is None and state.login is not None

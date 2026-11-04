@@ -1878,10 +1878,13 @@ def vault_status(state, params):
 
 def only_vault_unlock_unlocks():
     """The app opens locked and only its lock screen unlocks: forget a BW_PASSWORD / BW_SESSION this process
-    inherited, and tell providers not to unlock by themselves (no bw-session file, no prompt)."""
+    inherited, and tell providers not to unlock by themselves (no bw-session file, no prompt). An OP_SESSION_* it
+    inherited moves out of its environment into the op provider's state: only op gets it, and vault.lock forgets it."""
     from .providers.bitwarden import forget_session
+    from .providers.onepassword import adopt_inherited_session
     os.environ.pop("BW_PASSWORD", None)
     forget_session()
+    adopt_inherited_session(providers.PROVIDER_STATE.setdefault("op", {}))
     providers.MANUAL_UNLOCK = True
 
 
@@ -2212,14 +2215,17 @@ def prune_sign_in(state):
     login = state.login
     if login is None:
         return None
-    left = login.flow.touched + SIGN_IN_IDLE - time.monotonic()
+    touched = getattr(login.flow, "touched", None)     # a Plugin provider's flow may not keep it: never times out here
+    if not isinstance(touched, (int, float)):
+        return None
+    left = touched + SIGN_IN_IDLE - time.monotonic()
     if left > 0:
         return left
     if not state.vault.acquire(False, 0, "the sign-in's timeout"):
         return 1.0                              # a request has the vault (maybe this sign-in's step): look again soon
     ended = None
     try:
-        if state.login is login and time.monotonic() - login.flow.touched > SIGN_IN_IDLE:
+        if state.login is login and time.monotonic() - touched > SIGN_IN_IDLE:
             ended, state.login = login, None    # no answer can reach it from here on
     finally:
         state.vault.release()

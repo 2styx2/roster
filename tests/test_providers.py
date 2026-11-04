@@ -237,6 +237,16 @@ def test_an_inherited_onepassword_sign_in_is_moved_out_of_the_env(isolated, fake
     assert not any(v.startswith("OP_SESSION_") for v in _child_env("op"))
 
 
+def test_serve_moves_an_inherited_onepassword_sign_in_out_and_lock_forgets_it(isolated, fakes, monkeypatch):
+    from roster import serve as rpc
+    monkeypatch.setenv("OP_SESSION_test", "tok")
+    rpc.only_vault_unlock_unlocks()
+    assert "OP_SESSION_test" not in os.environ
+    assert providers.PROVIDER_STATE["op"]["env"] == {"OP_SESSION_test": "tok"}
+    providers.lock("op")
+    assert "op" not in providers.PROVIDER_STATE
+
+
 def test_onepassword_items_and_references(isolated, fakes):
     setup_providers(cfg_with(isolated, {"op": {"vault": "Infra"}}))
     assert get_secret("op:Network gear", "g") == "pw-netops"

@@ -4,6 +4,23 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Security
+
+**CLI**
+
+- **The vault's session no longer reaches the programs roster starts** (#388): roster keeps Bitwarden's session key (`BW_SESSION`) and a 1Password sign-in (`OP_SESSION_*`) for its own `bw` and `op` calls only. Before, ssh and what its config runs (`ProxyCommand`, `LocalCommand`), git and its hooks, nmap, other vault tools and your own provider commands all inherited them, and with a `SendEnv` in your ssh config ssh could pass them to a Host. A `BW_SESSION` or `OP_SESSION_*` exported in your shell still works: roster moves it out of its environment the first time it uses it. So a `providers:` command template that runs `bw` or `op` itself no longer gets the session: use the built-in `bw:` or `op:` reference instead, or `roster bw …` (with the bw-session file) on the CLI. `roster serve` moves an `OP_SESSION_*` it inherited out of its environment as it starts, and `vault.lock` forgets it. See [Security](app/security.md).
+- **A failing provider command's output stays out of its error** (#391): when a `providers:` command template exits non-zero, its error now shows only what it printed on stderr, never its stdout, which is the password.
+- **A sign-in nobody answers ends after 10 minutes** (#389): `roster serve` now ends it by itself, stopping `bw login` and forgetting the master password, without waiting for the app's next request.
+- **The askpass channel checks who connects on macOS** (#390): as on Linux, serve refuses a password request from a process that isn't the user's own.
+- **`roster web` deletes an expired kept login** (#395); where there's no `$XDG_RUNTIME_DIR` (macOS, Windows), kept logins live in `~/.cache/roster/sessions/`, now documented. See [roster web](cli-reference.md).
+
+**App**
+
+- **A password typed but not sent is emptied when the app locks** (#393): the add-Host form's and a connect card's. A new Host's host key waiting to be confirmed goes back to the form: type the password again. See [Locking](app/security.md#locking).
+- **Passwords crossing the app's core are moved, not copied, and wiped after use** (#392): the master password, a typed Session password and a filled sudo password, with the buffers they pass through.
+
 ## v0.5.0
 
 ### New
