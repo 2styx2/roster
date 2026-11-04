@@ -17,7 +17,7 @@ use common::unhurried;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{DemoHost, Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1076,6 +1076,105 @@ fn what_it_wasnt_granted_isnt_in_its_sandbox() {
     assert_eq!(
         one(&r.ops, "status")["spec"]["text"],
         "inventory.update=false sessions.open=false terminal.send=false http.get=false mesh.apply=false:not granted"
+    );
+}
+
+// ------------------------------------------------------------------- its tutorial (#233)
+
+/// The demo Inventory `:tutor` hands the demo's Plugin host: `demoHosts()` in app/src/tutor/demo.ts,
+/// which app/src/tutor/tutor.test.ts holds to this file.
+fn demo_inventory() -> Value {
+    let text =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/demo-inventory.json"))
+            .unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_done_there() {
+    let w = World::new("tutor");
+    let scratch = temp("tutor-scratch");
+    let demo = DemoHost::new(demo_inventory(), unhurried(), &scratch).unwrap();
+    let (tx, rx) = channel();
+    let tx = Mutex::new(tx);
+    demo.set_listener(Arc::new(move |r: Reply| {
+        let _ = tx.lock().unwrap().send(r);
+    }));
+    let (_, reply) = demo.load(&Source::Dir(w.dir.clone()), &perms(ALL)).unwrap();
+    ok(&reply);
+
+    // `:tutor topology`, with `:help tutor-topology` as its page.
+    let tutor = one(&reply.ops, "tutor");
+    assert_eq!(tutor["id"], "topology");
+    assert_eq!(tutor["spec"]["title"], "Topology tutor");
+    let lessons = tutor["spec"]["lessons"].as_array().unwrap();
+    assert!(lessons.len() >= 2, "{lessons:#?}");
+    let steps: Vec<&Value> = lessons.iter().flat_map(|l| l["steps"].as_array().unwrap()).collect();
+    let demo_hosts = ["demo-01", "demo-02", "demo-03", "demo-04", "demo-05", "demo-06"];
+    for step in &steps {
+        let on = &step["on"];
+        // A Host or group a step names is the demo's, so it can be done there.
+        if let Some(h) = on["host"].as_str() {
+            assert!(demo_hosts.contains(&h), "{step}");
+        }
+        if on["event"] == "command" && on["id"] == "topology" {
+            let arg = on["arg"].as_str().unwrap_or_default();
+            assert!(["", "demo-lab", "demo-office"].contains(&arg), "{step}");
+        }
+    }
+    // Opening the map, one group of it, and a Session from it: its whole loop.
+    let wants = |m: Value| steps.iter().any(|s| s["on"] == m);
+    assert!(wants(json!({ "event": "command", "id": "topology", "arg": "" })));
+    assert!(wants(
+        json!({ "event": "command", "id": "topology", "arg": "demo-lab" })
+    ));
+    assert!(steps.iter().any(|s| s["on"]["event"] == "session_open"));
+    // No two steps wait for the same thing: one event never ticks two at once.
+    let ons: Vec<String> = steps.iter().map(|s| s["on"].to_string()).collect();
+    let mut unique = ons.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), ons.len(), "{ons:?}");
+
+    // On the demo: its first look draws the demo's six Hosts and says, honestly, that there's no Mesh.
+    let first = reply
+        .ops
+        .iter()
+        .find(|o| o["op"] == "timer" && o["every"] == false)
+        .map(|t| handler(&t["run"]))
+        .unwrap();
+    let mut ops = demo.call(NAME, first, json!({})).ops;
+    let started = Instant::now();
+    while !ops.iter().any(|o| o["op"] == "view") {
+        assert!(started.elapsed() < common::CEILING, "no map: {ops:#?}");
+        if let Ok(r) = rx.recv_timeout(Duration::from_millis(50)) {
+            ok(&r);
+            ops.extend(r.ops);
+        }
+    }
+    let text = view(&Reply {
+        plugin: NAME.into(),
+        result: Value::Null,
+        ops,
+        error: None,
+        disabled: None,
+    })["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(text.starts_with("6 Hosts in 2 groups."), "{text}");
+    assert!(
+        text.contains("The Mesh isn't shown: mesh.status isn't on the demo Inventory"),
+        "{text}"
+    );
+
+    // `:topology demo-lab`, as its step asks: the lab's cluster, not "There's no group".
+    let run = handler(&one(&reply.ops, "command")["run"]);
+    let r = demo.call(NAME, run, json!({ "args": "demo-lab", "words": ["demo-lab"] }));
+    ok(&r);
+    assert_eq!(
+        r.ops[0],
+        json!({ "op": "view_update", "id": "topology", "changes": { "filter": { "clusters": [":group:demo-lab"] } } })
     );
 }
 
