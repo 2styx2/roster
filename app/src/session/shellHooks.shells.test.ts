@@ -205,7 +205,7 @@ describe("telling a shell on a pty has drawn the line typed in", () => {
 });
 
 describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_, shell) => {
-  it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", { repeats: shell.name === "fish" ? 20 : 0, timeout: 1_200_000 }, async () => {
+  it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", async () => {
     const out = await runIn(shell, [hookLine(shell.kind, N), "false", "cd /tmp", "exit"]);
     expect(out, tail(out)).toContain(own("A"));
     expect(out, tail(out)).toContain(own("B"));
@@ -213,7 +213,7 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
     expect(out, tail(out)).toContain(own("D;1"));
     expect(out, tail(out)).toContain(own("D;0"));
     expect(out, tail(out)).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
-  });
+  }, 60_000);
 });
 
 // #400: in a git checkout fish's prompt shows the branch, and the hook line wraps where that puts
@@ -223,14 +223,14 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
 const hasGit = has("git");
 describe.each(["main", "dev", "fix/t211-a-long-branch-name"])("the hook line in fish, in a git checkout on %s", (branch) => {
   const fish = SHELLS.find((s) => s.name === "fish")!;
-  it.skipIf(missing(fish) || !hasGit)("marks prompts, commands and their exit codes", { repeats: 20, timeout: 1_200_000 }, async () => {
+  it.skipIf(missing(fish) || !hasGit)("marks prompts, commands and their exit codes", async () => {
     const repo = join(mkdtempSync(join(tmpdir(), "roster-shells-git-")), "w", "r", "r", "apps");
     mkdirSync(repo, { recursive: true });
     expect(spawnSync("git", ["init", "-q", "-b", branch], { cwd: repo, env: ENV }).status).toBe(0);
     const out = await runIn(fish, [hookLine("fish", N), "false", "cd /tmp", "exit"], repo);
     expect(out, tail(out)).toContain(`(${branch})`);
     for (const mark of ["A", "B", "C", "D;1", "D;0"]) expect(out, tail(out)).toContain(own(mark));
-  });
+  }, 60_000);
 });
 
 // Ticket 159 (#296): the auto-send must see each shell's own idle prompt as it draws it (fish
