@@ -265,7 +265,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .recent-box .box-mark { width: 8px; height: 8px; border-radius: 1.6px; }
 .recent-box-name { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 var(--text-xs) var(--font-mono); }
 .recent-edges { align-self: stretch; width: 48px; height: 100%; overflow: visible; }
-.recent-edges path { fill: none; stroke: var(--faint); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.recent-edges path { fill: none; stroke: color-mix(in srgb, var(--faint) 60%, var(--muted)); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 .recent-edges path.on { stroke: var(--muted); }
 .recent-list { list-style: none; margin: 0; padding: 0; }
 .recent-row {
@@ -590,6 +590,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .row-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row-menu-keys { flex: none; } /* at the end: the label takes the free space */
+.row-menu-cmd { flex: none; color: var(--muted); font: 500 var(--text-xs) var(--font-mono); }
 /* :focus covers :focus-visible: a menu item has focus only while it's the active one. */
 .sidebar .row-menu-item:focus {
   outline: none; background: var(--raised); box-shadow: inset 0 0 0 1px var(--raised-line);
@@ -618,15 +619,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel table { width: 100%; border-collapse: collapse; }
 .keys-panel td { padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; line-height: 18px; }
 .keys-panel td:first-child { color: var(--muted); padding: 6px 8px 6px 14px; }
-.keys-keys { text-align: right; }
+/* The keys column takes what its keycaps need, the description the rest. */
+.keys-keys { text-align: right; width: 1%; padding-right: 14px !important; }
+.keys-keys .keys-list { max-width: 9em; }
 .keys-list { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 6px; }
-/* Where the binding comes from: builtin, init.lua or a Plugin. */
-.keys-panel td.keys-source {
-  width: 1%; padding: 6px 14px 6px 10px; font-size: var(--text-xs); color: var(--muted); white-space: nowrap; text-align: right;
-}
-.keys-panel td.keys-source.config { color: var(--accent-ink); }
-/* A Plugin's name can be long: it gives way to the binding's label, whole in its tooltip. */
-.keys-source span { display: block; max-width: 8em; overflow: hidden; text-overflow: ellipsis; }
+/* Where the binding comes from (init.lua or a Plugin), beside its option name. */
+.keys-panel .keys-source { display: inline-block; max-width: 12em; margin-left: 8px; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); }
+.keys-panel .keys-source.config { color: var(--accent-ink); }
 /* Its name in init.lua (ticket 32): data, so Iosevka, quiet under the source. */
 .keys-option { display: block; margin-top: 1px; font: var(--text-xs)/16px var(--font-mono); color: var(--muted); }
 .panel-foot {
@@ -880,7 +879,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   width: 24px; height: 24px; padding: 0; display: grid; place-items: center; visibility: hidden;
   background: transparent; border-color: transparent; color: var(--muted);
 }
-.picker-row.selected .picker-info { visibility: visible; }
+.picker-info svg { width: 14px; height: 14px; }
+.picker-row.selected .picker-info { visibility: visible; color: var(--text); }
 @media (hover: hover) and (pointer: fine) {
   .picker-info:hover { color: var(--text); background: var(--hover); }
 }
@@ -1124,7 +1124,16 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .key-type { color: var(--muted); }
 .key-fingerprint { color: var(--text); overflow-wrap: anywhere; }
 .key-advice { font-size: var(--text-sm); }
-.key-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.key-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+/* The question card: the map and title centred as while connecting (nothing moves when the
+   question appears); what it asks, the fingerprint and the form read left at one measure; the
+   buttons sit right, each with its key. */
+.connect-card.key-question { align-items: stretch; text-align: left; }
+.connect-card.key-question > .connect-map, .connect-card.key-question > .connect-title { align-self: center; text-align: center; }
+.connect-card.key-question .connect-title .muted { color: var(--text); }
+.btn-keys { display: inline-flex; margin-left: 8px; }
+.btn-keys .keycap { height: 16px; min-width: 16px; }
+button.primary .btn-keys .keycap { color: inherit; background: transparent; border-color: color-mix(in srgb, currentColor 45%, transparent); }
 /* Quick Connect's password (ticket 14), in the same card as its key: one masked field, then the
    same two answers. The field holds the password only until Enter. */
 .quick-login { display: flex; flex-direction: column; align-items: stretch; gap: 6px; width: min(320px, 100%); }
@@ -1234,9 +1243,6 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   .screen .body.sidebar-right .sidebar {
     left: auto; right: 0; border-right: 0; border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
   }
-  /* With no Session open the pane behind has nothing to show, so the Sidebar takes the width
-     rather than half-covering it. */
-  .screen .body:not(:has(.pane)) > .sidebar { right: 0; width: auto; box-shadow: none; }
   /* Tucked away while a Session is in front and you're in the terminal (App.tsx). */
   .screen .body[data-tucked] > .sidebar { visibility: hidden; }
 }

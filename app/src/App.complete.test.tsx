@@ -236,9 +236,9 @@ describe("The Key bindings panel", () => {
     await user.keyboard(`${LEADER}K`);
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
     const rows = within(panel).getAllByRole("row");
-    // A built-in binding's source cell is empty; the Config's says init.lua.
+    // A built-in binding names no source; the Config's says init.lua beside its option name.
     const rowOf = (label: RegExp, source = "") =>
-      rows.find((r) => label.test(r.textContent ?? "") && r.querySelector(".keys-source")?.textContent === source);
+      rows.find((r) => label.test(r.textContent ?? "") && (r.querySelector(".keys-source")?.textContent ?? "") === source);
     const keysOf = (label: RegExp, source = "") => rowOf(label, source)?.querySelector(".keys-keys")?.textContent;
     const optionOf = (label: RegExp) => rowOf(label)?.querySelector(".keys-option")?.textContent;
     expect(keysOf(/Next completion/)).toMatch(/^Tab/);

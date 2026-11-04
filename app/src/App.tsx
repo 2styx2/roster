@@ -894,8 +894,10 @@ function Workspace({
   const narrow = useMediaMatch("(max-width: 720px)");
   // The Session the Sidebar was shown over: switching Sessions tucks it away again.
   const [peekFor, setPeekFor] = useState<number | null>(null);
-  const sidebarPeek = peekFor !== null && peekFor === sessions.active;
-  const sidebarTucked = sidebarShown && narrow && sessions.active !== null && keyState.mode !== "app" && !sidebarPeek;
+  // -1 stands for "no Session": the idle pane can be peeked over too.
+  const sidebarPeek = peekFor !== null && peekFor === (sessions.active ?? -1);
+  // With no Session too: the idle pane's map and Find are then what a narrow window shows.
+  const sidebarTucked = sidebarShown && narrow && keyState.mode !== "app" && !sidebarPeek;
   const finderCtx = useMemo<FinderContext | null>(
     () =>
       hosts
@@ -1637,7 +1639,7 @@ function Workspace({
     },
     toggleSidebar: () => {
       if (sidebarTucked || (narrow && sidebarPeek)) {
-        setPeekFor(sidebarPeek ? null : sessions.active);
+        setPeekFor(sidebarPeek ? null : (sessions.active ?? -1));
         return setMessage(quiet(sidebarPeek ? "Sidebar tucked away" : "Sidebar shown", sidebarPeek ? "Sidebar tucked away while the window is narrow" : "Sidebar shown over the terminal until you switch Sessions"));
       }
       const shown = !isShown(layout, "sidebar");
@@ -2260,7 +2262,9 @@ function Workspace({
         return (
           <span key={id} className="box" title={info.inventory.box}>
             <span className="box-mark" aria-hidden="true" />
-            <span className="statusbar-cut">{info.inventory.box}</span>
+            <span className="statusbar-cut" title={info.inventory.box}>
+              {middleCut(info.inventory.box, 24)}
+            </span>
           </span>
         );
       case "session": {
@@ -2275,7 +2279,9 @@ function Workspace({
           <span key={id} className="session-seg" title={`Session ${tab.label}`}>
             <StateDot dot={dot} lit={ended || connectPhase(tab) ? undefined : "current"} />
             <span className="visually-hidden">Session </span>
-            <span className="statusbar-cut">{middleCut(tab.label, 24)}</span>
+            <span className="statusbar-cut" title={tab.label}>
+              {middleCut(tab.label, 24)}
+            </span>
           </span>
         );
       }
@@ -2492,6 +2498,10 @@ function Workspace({
                   "Add Hosts to this file and they show up here."
                 )}
               </p>
+              {/* The next action, with its command (taste.md: an empty state carries it). */}
+              <button type="button" className="empty-find" onMouseDown={(e) => e.preventDefault()} onClick={() => run("help adding-hosts")}>
+                How to add Hosts <span className="row-menu-cmd">:help adding-hosts</span>
+              </button>
             </div>
           ) : noSessions ? (
             <div className="empty">

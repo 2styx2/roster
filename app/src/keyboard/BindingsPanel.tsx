@@ -60,7 +60,7 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
           {groups.map(([area, list]) => (
             <tbody key={area}>
               <tr className="group">
-                <th colSpan={3} scope="colgroup">
+                <th colSpan={2} scope="colgroup">
                   {area}
                 </th>
               </tr>
@@ -72,6 +72,13 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
                     <code className="keys-option" title="Change it in init.lua">
                       {r.options.join(" ")}
                     </code>
+                    {/* Where it comes from, when it isn't built in, on the same line as its name
+                        (a column of its own took the width every description needs). */}
+                    {r.source !== BUILTIN && (
+                      <span className="keys-source config" title={r.source}>
+                        {r.source}
+                      </span>
+                    )}
                   </td>
                   <td className="keys-keys">
                     <span className="keys-list">
@@ -83,11 +90,6 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
                         </span>
                       ))}
                     </span>
-                  </td>
-                  {/* Where it comes from, when it isn't built in (filtering by "builtin" still works),
-                      */}
-                  <td className={`keys-source${r.source === BUILTIN ? "" : " config"}`}>
-                    {r.source !== BUILTIN && <span title={r.source}>{r.source}</span>}
                   </td>
                 </tr>
               ))}

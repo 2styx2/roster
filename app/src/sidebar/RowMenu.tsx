@@ -178,10 +178,14 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
             <span className="row-menu-label" dir="auto" title={entry.label}>
               {entry.label}
             </span>
-            {entry.keys && (
+            {entry.keys ? (
               <>
                 <span className="visually-hidden">,</span> <Keys keys={entry.keys} leader={leader} className="row-menu-keys" />
               </>
+            ) : (
+              // No key bound: its command line, so the item still says how to reach it from the
+              // keyboard (taste.md: every action has a key, or at least a `:` form).
+              <span className="row-menu-cmd key-hint" aria-hidden="true">:{entry.command.split(" ")[0]}</span>
             )}
           </button>
         ),

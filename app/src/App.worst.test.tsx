@@ -62,7 +62,10 @@ function cutWithoutTooltip(): string[] {
       const text = el.textContent?.trim() ?? "";
       if (!text) continue;
       const title = el.closest("[title]")?.getAttribute("title") ?? "";
-      if (!title.includes(text)) bad.push(`${selector}: "${text}"`);
+      // A middle cut ("server-10…7-203") keeps the name's start and end; the tooltip has it whole.
+      const [head = "", tail] = text.split("…");
+      const middleCut = tail !== undefined && title.startsWith(head) && title.endsWith(tail);
+      if (!title.includes(text) && !middleCut) bad.push(`${selector}: "${text}"`);
     }
   }
   return bad;

@@ -340,14 +340,12 @@ export function ConnectCard({
               </button>
               <button type="button" onClick={() => answers.cancel()}>
                 Cancel
+                <span className="btn-keys" aria-hidden="true">
+                  <Keys keys="Escape" />
+                </span>
               </button>
             </div>
           </form>
-          <p className="connect-phase muted">
-            <span className="key-hint">
-              <Keys keys="Enter" /> connect · <Keys keys="Escape" /> cancel
-            </span>
-          </p>
         </>
       ) : asksQuick ? (
         <>
@@ -385,17 +383,18 @@ export function ConnectCard({
             <div className="key-actions">
               <button type="submit" className="primary" ref={trustButton}>
                 Trust and connect
+                <span className="btn-keys" aria-hidden="true">
+                  <Keys keys="Enter" />
+                </span>
               </button>
               <button type="button" onClick={() => answers.cancel()}>
                 Cancel
+                <span className="btn-keys" aria-hidden="true">
+                  <Keys keys="Escape" />
+                </span>
               </button>
             </div>
           </form>
-          <p className="connect-phase muted">
-            <span className="key-hint">
-              <Keys keys="Enter" /> connect · <Keys keys="Escape" /> cancel
-            </span>
-          </p>
         </>
       ) : question ? (
         <>
@@ -407,19 +406,20 @@ export function ConnectCard({
           <div className="key-actions">
             <button type="button" className="primary" ref={trustButton} onClick={() => answers.trust()}>
               Trust and connect
+              <span className="btn-keys" aria-hidden="true">
+                <Keys keys="Enter" />
+              </span>
             </button>
             <button type="button" onClick={() => answers.cancel()}>
               Cancel
+              <span className="btn-keys" aria-hidden="true">
+                <Keys keys="Escape" />
+              </span>
             </button>
           </div>
+          {/* The keys are on the buttons; this line only speaks while the key is recorded. */}
           <p className="connect-phase muted" aria-live="polite">
-            {phase === "trusting" ? (
-              PHASE_WORDS.trusting
-            ) : (
-              <span className="key-hint">
-                <Keys keys="Enter" /> trust · <Keys keys="Escape" /> cancel
-              </span>
-            )}
+            {phase === "trusting" ? PHASE_WORDS.trusting : ""}
           </p>
         </>
       ) : (

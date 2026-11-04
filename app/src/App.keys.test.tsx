@@ -300,12 +300,14 @@ describe("The Key bindings panel", () => {
     const user = await ready({ bindings: { leader: { t: "next" } } });
     await user.keyboard(`${LEADER}K`);
     const next = rowOf("Next Session");
+    // The source sits beside the option name, before the keys.
     expect(next.map((r) => r.textContent)).toEqual([
-      expect.stringMatching(/Next Session.*Leader.*\]$/),
-      expect.stringMatching(/Next Session.*Leader.*t.*init\.lua/),
+      expect.stringMatching(/^Next Session(?!.*init\.lua).*Leader.*\]$/),
+      expect.stringMatching(/^Next Session.*init\.lua.*Leader.*t$/),
     ]);
     // A built-in binding doesn't say "builtin" (ticket 29 N1); only another source is named.
     expect(rowOf("Leader")[0]).toHaveTextContent(/Ctrl\+Space$/);
+    expect(rowOf("Leader")[0]).not.toHaveTextContent(/builtin/);
     expect(within(panel()).getByRole("searchbox", { name: /filter/i })).toHaveFocus();
     await user.keyboard("close the s");
     const shown = within(panel()).getAllByRole("row").filter((r) => !r.classList.contains("group"));
@@ -315,7 +317,7 @@ describe("The Key bindings panel", () => {
   it("shows a changed Leader as coming from the Config", async () => {
     const user = await ready({ options: { leader: "Ctrl+b" } });
     await user.keyboard("{Control>}b{/Control}K");
-    expect(rowOf("Leader")[0]).toHaveTextContent(/Ctrl\+b.*init\.lua/);
+    expect(rowOf("Leader")[0]).toHaveTextContent(/init\.lua.*Ctrl\+b/);
   });
 
   it("closes with Esc or ␣ K again, and opens with the mouse", async () => {
@@ -366,7 +368,7 @@ describe("Registries (ADR 0006)", () => {
     expect(within(sessionList()).getAllByRole("treeitem", { name: new RegExp(`^${h0}`) })).toHaveLength(2);
     await user.keyboard(`${LEADER}K`);
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
-    expect(within(panel).getByText("Home box").closest("tr")).toHaveTextContent(/Leader\s*h.*init\.lua/);
+    expect(within(panel).getByText("Home box").closest("tr")).toHaveTextContent(/init\.lua.*Leader\s*h/);
   });
 });
 
