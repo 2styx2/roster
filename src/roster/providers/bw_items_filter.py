@@ -38,7 +38,7 @@ def main(argv):
     data = sys.stdin.buffer.read(cap + 1)
     if len(data) > cap:
         del data
-        sys.stderr.write("too many items\n")
+        say("too many items")
         return 3
     try:
         items = json.loads(data.decode("utf-8"))
@@ -46,21 +46,27 @@ def main(argv):
         items = None
     del data
     if not isinstance(items, list):
-        sys.stderr.write("not a list of items\n")
+        say("not a list of items")
         return 2
-    out = sys.stdout
+    out = sys.stdout.buffer
     for item in items:
         row = keep(item)
         if row is not None and row["id"]:
-            out.write(json.dumps(row) + "\n")
+            out.write(json.dumps(row).encode("ascii") + b"\n")       # bytes: "\n" on Windows too, and ASCII only
     out.flush()
     return 0
+
+
+def say(line):
+    """One of the fixed lines on stderr, as bytes (no "\r\n" on Windows)."""
+    sys.stderr.buffer.write(line.encode("ascii") + b"\n")
+    sys.stderr.buffer.flush()
 
 
 if __name__ == "__main__":
     try:
         code = main(sys.argv)
     except BaseException:                               # a traceback would show the line it failed on, and values
-        sys.stderr.write("not a list of items\n")
+        say("not a list of items")
         code = 2
     sys.exit(code)

@@ -3,6 +3,7 @@ roster.yml refers to, new ones marked, and a walk through adding each. Fakes and
 (its items carry fake passwords, TOTP seeds and notes, which must never show up anywhere), op and keepassxc-cli."""
 
 import json
+import os
 import subprocess
 import sys
 
@@ -305,7 +306,8 @@ def test_json_is_the_list_only(capsys, yml, bw, isolated):
 def test_mark_seen_makes_them_old_and_all_shows_them_again(capsys, yml, bw, isolated):
     assert add(capsys, "--mark-seen", "--no-sync")[0] == 0
     [f] = seen_files(isolated)
-    assert oct(f.stat().st_mode & 0o777) == "0o600"
+    if os.name != "nt":                                     # Windows: the user's own %APPDATA%, no mode bits
+        assert oct(f.stat().st_mode & 0o777) == "0o600"
     kept = json.loads(f.read_text())
     assert kept["items"] == {"bw": {"aaaa-1": "nas-01 ssh", "bbbb-2": "web-02 web", "cccc-3": "old box"}}
     rc, out, _ = add(capsys, "--no-sync")
