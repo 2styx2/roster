@@ -6,7 +6,7 @@ import pytest
 from conftest import posix_shell
 
 from roster.config import load_config
-from roster.sshops import add_key_script, public_key_line, remove_key_script, write_ssh_config
+from roster.sshops import add_key_script, box_key_re, public_key_line, remove_key_script, write_ssh_config
 
 PUB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster-managed:ws1"
 TAG_RE = " (roster-managed|fleet-managed):ws1$"
@@ -207,3 +207,41 @@ def test_a_quiet_command_on_a_password_host_says_it_timed_out_running(monkeypatc
     monkeypatch.setattr(paramiko, "SSHClient", lambda: Client(fail_connect=True))
     with pytest.raises(RuntimeError, match="can't connect"):
         sshops.password_exec(h, "x", "pw")
+
+
+# T217 (#412): a renamed Box (box_name: changed, or the hostname) finds its own key line under the earlier name by its
+# public key, never another Box's line, whatever that one's name.
+OLD_NAME_LINE = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster-managed:old-pi"
+OTHER_BOX_SAME_OLD_NAME = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherBox+Key/x= roster-managed:old-pi"
+
+
+def renamed(tmp_path, *extra):
+    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg["pub"].write_text(OLD_NAME_LINE + "\n")         # ssh-keygen -C wrote the tag the Box had then
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    ak.write_text("\n".join(["ssh-rsa AAAAother someone@laptop", OLD_NAME_LINE, OTHER_BOX_SAME_OLD_NAME,
+                             "from=\"10.0.0.2\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly mine",
+                             *extra]) + "\n")
+    return cfg, ak
+
+
+@posix_shell
+def test_remove_key_takes_this_boxs_line_under_an_earlier_name_by_its_key(tmp_path):
+    cfg, ak = renamed(tmp_path)
+    assert "ROSTER_OK" in run_remote(remove_key_script(box_key_re(cfg)), tmp_path)
+    assert ak.read_text().splitlines() == ["ssh-rsa AAAAother someone@laptop", OTHER_BOX_SAME_OLD_NAME,
+                                           "from=\"10.0.0.2\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly mine"]
+
+
+@posix_shell
+def test_add_key_retags_this_boxs_line_under_an_earlier_name(tmp_path):
+    cfg, ak = renamed(tmp_path, "ssh-ed25519 AAAAkeep roster-managed:ws10")
+    for _ in range(2):
+        assert "ROSTER_OK" in run_remote(add_key_script(PUB, box_key_re(cfg)), tmp_path)
+    lines = ak.read_text().splitlines()
+    assert OLD_NAME_LINE not in lines and lines.count(PUB) == 1 and OTHER_BOX_SAME_OLD_NAME in lines
+
+
+def test_box_key_re_is_the_tag_alone_without_a_public_key(tmp_path):
+    assert box_key_re({"tag_re": TAG_RE, "pub": tmp_path / "none.pub"}) == TAG_RE

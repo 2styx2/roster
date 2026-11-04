@@ -30,6 +30,13 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes. `inventory.create` makes a new Inventory when serve found none (the app's first run): blank, a copy or a clone, named after its folder and made the active one.
 
+### Fixed
+
+**CLI**
+
+- **Renaming a Box takes its key with it** (#412): after `box_name:` (or the hostname) changes on a Box already set up, `roster setup` re-tags this Box's key on the Hosts where it already works (`ok    nas-1 (re-tagged)`), and `roster revoke` finds the key under the earlier name too. Both match the line by this Box's own public key, so another Box's line, even under the same name, is never touched. Before, `revoke` looked only for the new name and left the key on every Host. To rename a Box: set `box_name:`, then run `roster setup`.
+- **`roster check` says when another Box replaced a shared Mesh key** (#412): when the Box whose Mesh files a source's are rotates that key or cuts the source, this Box's own lines for the old key stay on its peers until its next `roster mesh`; its `roster check` (and `roster mesh --dry-run`) now warns, per peer, that the line still lets the old key in, from its `from=` address.
+
 ## v0.5.1
 
 ### New

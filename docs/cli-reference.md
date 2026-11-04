@@ -565,7 +565,7 @@ Web UIs: Claude won't type passwords into login pages. Sign in once in the brows
 
 ## Security model
 
-- **Each box gets its own key.** The key is tagged `roster-managed:<box>` in `authorized_keys`, so `revoke` removes exactly that box's key, and running `setup` again replaces it cleanly. Keys tagged `fleet-managed` by the earlier script are recognized too.
+- **Each box gets its own key.** The key is tagged `roster-managed:<box>` in `authorized_keys`, so `revoke` removes exactly that box's key, and running `setup` again replaces it cleanly. Both also find this box's own public key under an earlier name (`box_name:` changed): `setup` re-tags it, `revoke` removes it, and a line with another key is never touched. Keys tagged `fleet-managed` by the earlier script are recognized too.
 - **The key has no passphrase,** so automation can use it. Anyone with access to the box can reach the fleet, so treat these boxes accordingly.
 - **Host fingerprints are recorded on first contact** in `~/.ssh/roster_known_hosts`.
 - **Passwords exist only in memory,** for one run.

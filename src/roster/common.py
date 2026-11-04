@@ -76,6 +76,14 @@ def mesh_state_file(name: Any = _CURRENT) -> Path:
     return user_config_dir() / ("mesh.json" if name is None else f"mesh-{name}.json")
 
 
+def key_name_file(name: Any = _CURRENT) -> Path:
+    """The Box name this Box's key lines on the Inventory NAME's Hosts were last all tagged with (T217, #412), so
+    `roster setup` sees box_name: (or the hostname) changed: ~/.config/roster/key-name, or key-name-NAME for a named
+    Inventory (each Inventory has its own box_name:)."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("key-name" if name is None else f"key-name-{name}")
+
+
 def known_hosts_label():
     """known_hosts_file() as messages name it: ~/.ssh/roster_known_hosts (or -NAME)."""
     return f"~/.ssh/{known_hosts_file().name}"

@@ -311,6 +311,12 @@ function Main {
     $adminSecure = { param($f) Set-AdminAcl $f }
     $userSecure = { param($f) Set-UserAcl $f $me }
 
+    if ($Mode -eq 'retag') {
+        # T217: only where this Box's key line already is (under an earlier name): the add then re-tags it
+        $old = Read-Keys $mine
+        if ($null -eq $old -or -not (@($old -split '\n' | Where-Object { Is-Mine $_ }).Count)) { Say 'ROSTER_OK'; return }
+        $Mode = 'add'
+    }
     if ($Mode -eq 'add') {
         if ($mine -eq $adminFile) {
             Assert-Folder (Split-Path -Parent $adminFile) $me @($Admins, $System)
@@ -374,11 +380,12 @@ try { Main } catch {
 }
 """
 
-MODES = ("add", "remove", "check")
+MODES = ("add", "remove", "check", "retag")
 
 
 def script(mode, tag_re, pub=""):
-    """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE): sent on stdin."""
+    """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE; retag: add PUB
+    only where a line TAG_RE matches is already there): sent on stdin."""
     if mode not in MODES:
         raise ValueError(mode)
     header = f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
@@ -665,13 +672,13 @@ def not_windows(name):
             "changed. Fix os: for it in roster.yml")
 
 
-def over_key(h, mode, tag_re, timeout=60):
+def over_key(h, mode, tag_re, timeout=60, pub=""):
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError."""
+    RuntimeError. PUB: the key line retag writes."""
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
                                          remote_command()]),
-                           input=framed(script(mode, tag_re)).encode(), capture_output=True, timeout=timeout)
+                           input=framed(script(mode, tag_re, pub)).encode(), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None
     out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")

@@ -13,7 +13,18 @@ from urllib.parse import urlparse
 
 from . import __version__, boxsync, clihelp, jsonout, mesh
 from .claude import write_claude_files
-from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
+from .common import (
+    KEY_TAG,
+    die,
+    key_name_file,
+    not_reviewed,
+    program_argv,
+    replace_file,
+    run_instead,
+    say,
+    ssh_config_file,
+    tcp_ok,
+)
 from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
@@ -22,12 +33,15 @@ from .example import EXAMPLE_CONFIG
 from .providers import NO_PASSWORD, PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import (
+    box_key_re,
     enroll,
     ensure_key,
+    key_named,
     password_exec,
     public_key_line,
     record_fingerprints,
     remove_key_script,
+    retag_key_script,
     ssh_ok,
     sudo_wrap,
     write_ssh_config,
@@ -143,12 +157,30 @@ def cmd_setup(cfg, args):
         works = dict(zip([h["name"] for h in key_hosts], ex.map(lambda h: ssh_ok(h["name"]), key_hosts), strict=True))
     todo = [h for h in key_hosts if not works[h["name"]]]
     say(f"key login    {len(key_hosts) - len(todo)} already work, {len(todo)} need the key installed")
+    # T217 (#412): box_name: (or the hostname) changed since this Box's key went on its Hosts: the lines there still
+    # carry the earlier name, so the Hosts where the key works get it re-tagged (found by this Box's own public key)
+    was = key_named(cfg)
+    retag = [h for h in key_hosts if works[h["name"]]] if was not in (None, cfg["box"]) else []
+    if retag:
+        say(f"key tag      this Box's key is tagged {KEY_TAG}:{was} on its Hosts (box_name:, or the hostname, "
+            f"changed since): re-tag it as {cfg['tag']} on {plural(len(retag), 'host')}")
 
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if args.dry_run:
         for h in todo:
             say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']})")
+        for h in retag:
+            say(f"  would re-tag key on {h['name']}")
         return 0
+
+    if retag:
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub, box_key_re(cfg)), retag), strict=True):
+                if why is None:
+                    say(f"  ok    {h['name']} (re-tagged)")
+                else:
+                    failed[h["name"]] = f"re-tag: {why}"
+                    say(f"  FAIL  {h['name']}: re-tag: {why}")
 
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
@@ -163,7 +195,7 @@ def cmd_setup(cfg, args):
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            futs = {ex.submit(enroll, h, pub, cfg["tag_re"]): h for h in todo}
+            futs = {ex.submit(enroll, h, pub, box_key_re(cfg)): h for h in todo}
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
@@ -176,6 +208,10 @@ def cmd_setup(cfg, args):
                     failed[h["name"]] = str(e)
                     say(f"  FAIL  {h['name']}: {e}")
 
+    # every key Host of this roster.yml now has the key under this name: a later rename is seen against it
+    if not args.only and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
+        if was != cfg["box"]:
+            replace_file(key_name_file(), f"{cfg['box']}\n")
     write_claude_files(cfg)
     warn_overlaps(cfg)
     if mesh.graph(cfg)["links"]:
@@ -461,7 +497,7 @@ def check_windows_key(cfg, h):
     from . import winhost
     from .errors import KEY_FILE
     try:
-        found = winhost.over_key(h, "check", cfg["tag_re"])
+        found = winhost.over_key(h, "check", box_key_re(cfg))
         notes = found.warnings
         if found.admins:
             print(f"note: {h['name']}: {found.files[0] if found.files else 'its key file'}: "
@@ -851,7 +887,7 @@ def revoke_on(h, tag_re):
             return str(e)
         from .errors import KEY_FILE
         for w in done.warnings:             # on stderr: the ok/FAIL lines stay one per Host
-            print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_re.rsplit(':', 1)[-1].rstrip('$')})",
+            print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_name(tag_re)})",
                   file=sys.stderr, flush=True)
         return None
     r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
@@ -862,6 +898,30 @@ def revoke_on(h, tag_re):
         return None
     if winhost.looks_windows(r.stdout + r.stderr):
         return winhost.windows_hint(h["name"])
+    return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
+
+
+def tag_name(tag_re):
+    """The Box name in TAG_RE (cfg's tag_re, or box_key_re's, which starts with it)."""
+    m = re.search(r":([A-Za-z0-9_-]+)[$]", tag_re)
+    return m[1] if m else "?"
+
+
+def retag_on(h, pub, key_re):
+    """Re-tag this Box's key line on key Host H as PUB (T217), where it's there (KEY_RE: by its public key, under an
+    earlier name too), over `ssh NAME` with the key itself: None when done, else why not."""
+    from . import winhost
+    try:
+        if is_windows(h):
+            winhost.over_key(h, "retag", key_re, pub=pub)
+            return None
+        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+                                         "sh -c " + shlex.quote(retag_key_script(pub, key_re))]),
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
+        return str(e)
+    if "ROSTER_OK" in r.stdout:
+        return None
     return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
 
 
@@ -888,15 +948,16 @@ def cmd_revoke(cfg, args):
     keyed = [h for h in selected(cfg, args.only) if h["enroll"]]
     hosts = skip_left_out(keyed)
     warn_os(hosts)
+    mine = box_key_re(cfg)                  # T217: its key under an earlier name too
     if any(not is_windows(h) for h in hosts):
-        check_ssh_takes(remove_script(cfg["tag_re"]))
+        check_ssh_takes(remove_script(mine))
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
     bad = 0
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, cfg["tag_re"]), hosts), strict=True):
+        for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, mine), hosts), strict=True):
             bad += why is not None
             revoke_line("", h, why)
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
@@ -979,7 +1040,7 @@ def cmd_revoke_all(args):
     total = sum(len(hosts) for _, _, hosts in plan)
     for _, cfg, hosts in plan:
         if any(not is_windows(h) for h in hosts):
-            check_ssh_takes(remove_script(cfg["tag_re"]))
+            check_ssh_takes(remove_script(box_key_re(cfg)))
     if not args.yes:
         tags = ", ".join(sorted({f"'{cfg['tag']}'" for _, cfg, _ in plan})) or "this box's key"
         counts = ", ".join(f"{label} {len(hosts)}" for label, _, hosts in plan)
@@ -987,7 +1048,7 @@ def cmd_revoke_all(args):
                     "access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
-    jobs = [(label, h, cfg["tag_re"]) for label, cfg, hosts in plan for h in hosts]
+    jobs = [(label, h, box_key_re(cfg)) for label, cfg, hosts in plan for h in hosts]
     bad = 0
     with cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
         for (label, h, _), why in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):

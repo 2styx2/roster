@@ -11,10 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from .common import (
+    KEY_TAG,
+    LEGACY_KEY_TAGS,
     SSH_UNSAFE,
     WINDOWS,
     current_inventory,
     die,
+    key_name_file,
     known_hosts_file,
     program_argv,
     replace_file,
@@ -45,6 +48,47 @@ def public_key_line(cfg):
     if len(parts) < 2:
         die(f"{cfg['pub']} doesn't look like a public key")
     return f"{parts[0]} {parts[1]} {cfg['tag']}"   # tag lets revoke find exactly this box's key
+
+
+def ere_literal(text):
+    """TEXT as a POSIX ERE (and .NET regex) that matches it literally: grep -E on a Host, -cmatch on Windows."""
+    return re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", text)
+
+
+def box_key_re(cfg):
+    """What matches this Box's key line in authorized_keys: its tag (cfg's tag_re), or this Box's own public key with
+    a roster-managed tag of any Box name (T217, #412): a Box renamed since (box_name:, or the hostname) still finds
+    its line under the earlier name, and never another Box's, whose key differs. The tag alone without a public key."""
+    try:
+        parts = cfg["pub"].read_text().split()
+    except OSError:
+        return cfg["tag_re"]
+    if len(parts) < 2:
+        return cfg["tag_re"]
+    tags = "|".join((KEY_TAG,) + LEGACY_KEY_TAGS)
+    return f"{cfg['tag_re']}|^{ere_literal(parts[0])} {ere_literal(parts[1])} ({tags}):[A-Za-z0-9_-]+$"
+
+
+def key_tag_name(cfg):
+    """The Box name in this Box's public key's comment (ssh-keygen -C, as ensure_key made it, or as setup re-tagged
+    it), or None when the comment isn't a roster-managed tag (a key of the user's own)."""
+    try:
+        parts = cfg["pub"].read_text().split()
+    except OSError:
+        return None
+    m = re.fullmatch(f"(?:{'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):([A-Za-z0-9_-]+)", parts[2]) \
+        if len(parts) == 3 else None
+    return m.group(1) if m else None
+
+
+def key_named(cfg):
+    """The Box name this Box's key lines on this Inventory's Hosts carry: what the last `roster setup` that reached
+    every key Host tagged them with (key_name_file), else the key's own comment (a key made by roster names the Box
+    as it was then). None: not known (a key of the user's own, never set up since T217)."""
+    try:
+        return key_name_file().read_text().strip() or None
+    except OSError:
+        return key_tag_name(cfg)
 
 
 def hk_name(h: dict[str, Any]) -> str:
@@ -395,6 +439,12 @@ def add_key_script(pub, tag_re):
             f"printf '%s\\n' {shlex.quote(pub)} >> \"$f.roster\"; "
             "chmod 600 \"$f.roster\"; " + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL +
             "chmod 700 ~/.ssh; echo ROSTER_OK")
+
+
+def retag_key_script(pub, key_re):
+    # T217: where this Box's key line is (KEY_RE: under an earlier name too), it becomes PUB; nowhere else is it added
+    return ("[ -f ~/.ssh/authorized_keys ] && grep -q -E -- " + shlex.quote(key_re) +
+            " ~/.ssh/authorized_keys || { echo ROSTER_OK; exit 0; }; " + add_key_script(pub, key_re))
 
 
 def remove_key_script(tag_re):

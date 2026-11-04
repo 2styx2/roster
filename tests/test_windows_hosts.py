@@ -774,3 +774,22 @@ def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, mo
     with pytest.raises(SystemExit) as e:
         main(["run", "--sudo", "dc-01", "--", "whoami"])
     assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)
+
+
+# T217 (#412): box_name: changed on a Box already set up. Its key's line on a Windows Host still carries the earlier
+# name: setup re-tags it there, and revoke finds it by this Box's public key; another Box's line is never touched.
+
+@needs_powershell
+def test_setup_retags_and_revoke_finds_a_renamed_boxs_key_on_a_windows_host(win, capsys, write_config):
+    theirs = b"ssh-ed25519 AAAAtheirs roster-managed:box\r\n"          # another Box named box: another key
+    win.admin_file("dc-01").write_bytes(OTHER)
+    assert main(["setup", "--only", "dc-01"]) == 0
+    win.admin_file("dc-01").write_bytes(win.admin_file("dc-01").read_bytes() + theirs)
+    write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
+    capsys.readouterr()
+    assert main(["setup", "--only", "dc-01"]) == 0
+    assert "ok    dc-01 (re-tagged)" in capsys.readouterr().out
+    assert win.admin_file("dc-01").read_bytes() == OTHER + theirs + key_line(win).replace(b":box", b":box2")
+    write_config(WIN.replace("box_name: box\n", "box_name: box3\n"))
+    assert main(["revoke", "-y", "--only", "dc-01"]) == 0
+    assert win.admin_file("dc-01").read_bytes() == OTHER + theirs
