@@ -283,7 +283,7 @@ def test_import_refuses_a_huge_or_special_file(isolated, capsys, tmp_path):
 
 def test_a_clone_url_never_shows_its_credentials(isolated, capsys, tmp_path):
     from roster.newinventory import shown_url
-    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://me:***@example.com:8443/team/map.git"
+    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://***@example.com:8443/team/map.git"
     assert shown_url("file://me:tok@D:\\a\\nope") == "file://me:***@D:\\a\\nope"        # a Windows path after it
     assert shown_url("git@example.com:team/map.git") == "git@example.com:team/map.git"     # scp form: no password
     """L4: https://user:TOKEN@host/... in an error is shown without the TOKEN."""
