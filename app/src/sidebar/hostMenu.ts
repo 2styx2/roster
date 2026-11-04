@@ -39,8 +39,9 @@ export interface HostMenuOptions {
  * unreview, a Plugin's) with the changes. */
 export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
   const host = row.host;
-  if (host === undefined) return [];
   const own = (row.actions ?? []).map((a) => ({ label: a.label, command: a.command }));
+  // A group's (or another row's) menu is its own actions: the buttons its heading shows on hover.
+  if (host === undefined) return own;
   if (o.reviewed === null) return own;
   const groups: MenuEntry[][] = [
     o.reviewed
@@ -48,7 +49,8 @@ export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
           // Open goes to the Host's Session when it has one, so it says that; New Session always
           // opens another. Each names its key where one is bound.
           { label: o.hasSession ? "Go to its Session" : "Open", command: `open ${host}`, keys: o.openKeys ?? null },
-          { label: "New Session", command: `connect ${host}`, keys: o.keys(`connect`) },
+          // Another Session only means something once there's one: with none, Open is it.
+          ...(o.hasSession ? [{ label: "New Session", command: `connect ${host}`, keys: o.keys(`connect`) }] : []),
         ]
       : [{ label: "Mark reviewed", command: `review ${host}` }],
     [

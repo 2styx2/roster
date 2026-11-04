@@ -16,7 +16,7 @@ async function start(scenario: FakeScenario = fixtures["sign-out"]!) {
   const clock = manualClock();
   render(<App backend={backend} clock={clock} />);
   await screen.findByRole("dialog", { name: /locked/i });
-  await screen.findByLabelText(/master password/i);
+  await screen.findByLabelText(/^\S+ master password$/i);
   return { user, backend, clock };
 }
 
@@ -70,13 +70,13 @@ describe("signing out from the lock screen", () => {
     await user.type(screen.getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     await user.keyboard("{Control>} {/Control}:lock{Enter}");
-    await screen.findByLabelText(/master password/i);
+    await screen.findByLabelText(/^\S+ master password$/i);
     expect(differentAccount()).toBeInTheDocument();
     expect(lockScreen()).toHaveTextContent(`Signed in as ${FAKE_EMAIL} on bitwarden.com`);
     await user.type(screen.getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     act(() => clock.advance(60 * 60_000));
-    await screen.findByLabelText(/master password/i);
+    await screen.findByLabelText(/^\S+ master password$/i);
     expect(differentAccount()).toBeInTheDocument();
   });
 
@@ -90,7 +90,7 @@ describe("signing out from the lock screen", () => {
     await user.type(within(dialog).getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     await user.keyboard("{Control>} {/Control}:lock{Enter}");
-    await screen.findByLabelText(/master password/i);
+    await screen.findByLabelText(/^\S+ master password$/i);
     expect(await within(lockScreen()).findByRole("button", { name: /use a different account/i })).toBeInTheDocument();
   });
 

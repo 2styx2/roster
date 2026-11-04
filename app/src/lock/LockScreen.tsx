@@ -86,7 +86,7 @@ function LockScreen({ vault, hint, box, errorRows, copy }: { vault: Vault; hint?
         {/* Locked, the screen is the mark, this Box and one field (taste.md "Lock screen"): the
             heading stays the dialog's name for assistive tech but isn't drawn. Every other state
             shows its heading, since there it says what's wrong. */}
-        <h1 id="lock-title" className={vault.view.state === "locked" ? "visually-hidden" : undefined}>
+        <h1 id="lock-title" className={vault.view.state === "locked" || vault.view.state === "checking" ? "visually-hidden" : undefined}>
           {heading(vault.view)}
         </h1>
         {box && (
@@ -120,7 +120,13 @@ function LockScreen({ vault, hint, box, errorRows, copy }: { vault: Vault; hint?
 function Body({ view, vault, copy }: { view: VaultView; vault: Vault; copy?: LockExtras["copy"] }) {
   switch (view.state) {
     case "checking":
-      return <p className="muted">Checking the vault…</p>;
+      // The form is there from the first frame, so a password typed while roster checks the
+      // vault isn't lost: the same input stays when the check says it's locked.
+      return (
+        <>
+          <UnlockForm provider={null} error={null} onUnlock={async () => {}} checking />
+        </>
+      );
     case "locked":
       return (
         <>
@@ -154,17 +160,30 @@ function UnlockForm({
   provider,
   error,
   onUnlock,
+  checking = false,
 }: {
-  provider: string;
+  /** Null while roster is still checking which vault it is. */
+  provider: string | null;
   error: string | null;
   onUnlock: (password: string) => Promise<void>;
+  checking?: boolean;
 }) {
   // Uncontrolled on purpose: the password lives only in the input, never in React state.
   const field = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
+  // Enter pressed while roster still checks the vault: sent as soon as the check says locked.
+  const queued = useRef(false);
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (checking) {
+      queued.current = (field.current?.value ?? "") !== "";
+      return;
+    }
+    await send();
+  }
+
+  async function send() {
     const input = field.current;
     if (!input || busy || input.value === "") return;
     setBusy(true);
@@ -177,9 +196,16 @@ function UnlockForm({
     }
   }
 
+  useEffect(() => {
+    if (checking || !queued.current) return;
+    queued.current = false;
+    void send();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the check ends
+  }, [checking]);
+
   return (
     <form className="lock-form" onSubmit={(e) => void submit(e)}>
-      <label htmlFor="lock-password">{providerName(provider)} master password</label>
+      <label htmlFor="lock-password">{provider ? `${providerName(provider)} master password` : "Master password"}</label>
       <div className="lock-row">
         <input
           id="lock-password"
@@ -192,8 +218,8 @@ function UnlockForm({
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? "lock-error" : undefined}
         />
-        <button type="submit" className="primary" disabled={busy}>
-          {busy ? "Unlocking…" : "Unlock"}
+        <button type="submit" className="primary" disabled={busy || checking}>
+          {checking ? "Checking…" : busy ? "Unlocking…" : "Unlock"}
         </button>
       </div>
       {error && (

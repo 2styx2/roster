@@ -47,7 +47,6 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(menu()).toHaveAccessibleName("linux-1-000");
     expect(items()).toEqual([
       "Open",
-      "New Session",
       "Details",
       "Check",
       "Edit…",
@@ -84,7 +83,7 @@ describe("a Host row's menu (T166, Q156)", () => {
   it("leaves out what this roster can't do (no Live Inventory)", async () => {
     await ready(5);
     rightClick(item("linux-1-000"));
-    expect(items()).toEqual(["Open", "New Session", "Details", "Check", "Edit…", "Add to a Folder…"]);
+    expect(items()).toEqual(["Open", "Details", "Check", "Edit…", "Add to a Folder…"]);
   });
 
   it("is a keyboard menu: arrows, Home/End, a letter, Esc puts focus back", async () => {
@@ -131,13 +130,20 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(await screen.findByRole("complementary", { name: "Details of linux-1-000" })).toBeInTheDocument();
   });
 
-  it("says so on a row that isn't a Host", async () => {
+  it("says so on a row with no menu (a section heading)", async () => {
     const { user } = await ready();
     await user.keyboard(LEADER);
     // The cursor starts on the first row: the Sessions heading or the Inventory's.
     await user.keyboard("{ContextMenu}");
     expect(screen.queryByRole("menu")).toBeNull();
-    expect(await screen.findByText(/Only a Host's row has a menu/)).toBeInTheDocument();
+    expect(await screen.findByText(/This row has no menu/)).toBeInTheDocument();
+  });
+
+  it("opens a group's menu with its own actions", async () => {
+    const { user } = await ready();
+    rightClick(within(inventory()).getByRole("treeitem", { name: /^subnet-1/ }));
+    expect(items().some((i) => /Add a Host to subnet-1/.test(i ?? ""))).toBe(true);
+    await user.keyboard("{Escape}");
   });
 
   it("closes on a click outside, and on Tab", async () => {

@@ -19,7 +19,7 @@
 //
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
-import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import { Fragment, memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { hopWords, type Breadcrumb } from "../session/breadcrumb";
 import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
@@ -340,7 +340,7 @@ const Row = memo(function Row({
       onDragOver={row.drop ? (e) => drag.over(e, row.drop) : undefined}
       onDrop={row.drop ? (e) => drag.drop(e, row.drop) : undefined}
       onContextMenu={
-        row.menu
+        row.menu || row.actions?.length
           ? (e) => {
               e.preventDefault();
               select(row.id);
@@ -475,14 +475,29 @@ const Section = memo(function Section({
 
 /** The cursor row, whole (M6): a cut-off name, its state and address, readable from the keyboard.
  * It repeats what the tree item's name already tells assistive tech, so it's hidden from it. */
+/** An IPv4 or IPv6 address, or a range (10.0.0.0/24). */
+const DATA_FACT = /^[0-9a-f:.]+(\/\d+)?$/i;
+
 function Details({ row }: { row: SidebarRow }) {
   const facts = rowFacts(row);
+  // An unreviewed Host's tooltip says what its node already said ("can't be opened").
+  const title = row.title && row.dot !== "off" && !facts.includes(row.title) ? row.title : undefined;
   return (
     <div className="sb-details" data-testid="sidebar-details" aria-hidden="true">
       <p className={`sb-details-name${row.dot ? " data" : ""}`} dir="auto">
         {row.label}
       </p>
-      {(facts.length > 0 || row.title) && <p className="sb-details-facts">{[...facts, ...(row.title ? [row.title] : [])].join(" · ")}</p>}
+      {(facts.length > 0 || title) && (
+        <p className="sb-details-facts">
+          {[...facts, ...(title ? [title] : [])].map((f, i) => (
+            <Fragment key={i}>
+              {i > 0 && " · "}
+              {/* An address or a range is data (Iosevka); the rest is the app talking. */}
+              {DATA_FACT.test(f) ? <span className="data">{f}</span> : f}
+            </Fragment>
+          ))}
+        </p>
+      )}
     </div>
   );
 }
@@ -545,7 +560,7 @@ export function Sidebar({
     [menuAt],
   );
   // The open menu's row: gone (removed, folded away), the menu goes with it.
-  const menuRow = menu === null ? null : (allRows(sections).find((r) => r.id === menu.row && r.menu) ?? null);
+  const menuRow = menu === null ? null : (allRows(sections).find((r) => r.id === menu.row && (r.menu || r.actions?.length)) ?? null);
   const menuEntries = menuRow && rowMenu ? rowMenu(menuRow) : [];
   const menuShown = menuRow !== null && menuEntries.length > 0;
   useLayoutEffect(() => {
@@ -626,7 +641,7 @@ export function Sidebar({
           // row's own handler took a right-click on it already.
           if (e.target !== e.currentTarget || e.defaultPrevented || e.button === 2) return;
           e.preventDefault();
-          if (cursorRow?.menu && menu?.row !== cursorRow.id) openMenu(cursorRow.id, null);
+          if ((cursorRow?.menu || cursorRow?.actions?.length) && menu?.row !== cursorRow?.id) openMenu(cursorRow!.id, null);
         }}
         onDragOver={(e) => drag.over(e, undefined)}
         onDrop={(e) => drag.drop(e, undefined)}

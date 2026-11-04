@@ -237,7 +237,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 
 .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px; text-align: center; }
 .empty p { margin: 0; }
-.empty-mark { opacity: 0.35; margin-bottom: 6px; }
+/* Nothing is live on an empty state, so the mark is drawn in the muted tones (its Host node too,
+   not a dimmed apricot that reads brown). */
+.empty-mark { margin-bottom: 6px; --text: var(--faint); --accent: var(--faint); }
 .empty-title { font-weight: 500; color: var(--muted); }
 /* The idle pane's Recent Hosts (Q188): the Sidebar's row language, centred in a column, so the
    first screen shows your network. Rows raise under the pointer, no motion (a click is its own
@@ -518,6 +520,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-details-name { font-size: var(--text-sm); color: var(--text); unicode-bidi: isolate; }
 .sb-details-name.data { font-family: var(--font-mono); }
 .sb-details-facts { margin-top: 2px; }
+.sb-details-facts .data { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 
 /* A Host row's menu (T166, decision Q156): a right-click on a Host's row, or the Menu key or

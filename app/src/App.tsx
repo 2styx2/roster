@@ -1728,7 +1728,8 @@ function Workspace({
     rowMenu: () => {
       const row = cursorRow();
       if (!sidebarShown) return setMessage("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
-      if (!row?.menu) return setMessage("Only a Host's row has a menu: move the cursor to one");
+      // A Host's row has its menu; a group's (or a Plugin row's) has its actions.
+      if (!row?.menu && !(row?.actions?.length)) return setMessage("This row has no menu: move the cursor to a Host or a group");
       setRowMenu({ row: row.id, at: null });
     },
     selectedHost: () => {
@@ -2448,7 +2449,12 @@ function Workspace({
             onTreeBlur={(to) => {
               // Focus went elsewhere (Tab on, a click): keys are the terminal's again.
               // A Host row's menu is the tree's own: App mode stays while it's open.
-              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline, .row-menu")) setMode(terminalMode);
+              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline, .row-menu")) {
+                // Focus is already on its way to `to` (Tab on): nothing to put back, or the restore
+                // below, running before it lands, would pull it back to where it came from.
+                beforeTree.current = null;
+                setMode(terminalMode);
+              }
             }}
           />
         )}
@@ -3015,20 +3021,10 @@ function Workspace({
       )}
     </div>
   );
-  const lockKey = hintFor(keymap, "lock");
-  const lockHint = (
-    <>
-      Locks after {options.idleLockMinutes} minutes idle.
-      {lockKey && (
-        <span className="key-hint">
-          {" "}
-          <Keys keys={lockKey} leader={options.leader} /> locks now.
-        </span>
-      )}
-    </>
-  );
+  // The lock screen is the mark, this Box and one field (taste.md): how long until it locks again
+  // is :help lock's to say, not a line under the field.
   return frame(
-    <LockGate vault={vault} hint={lockHint} box={conn.state === "ready" ? conn.info.inventory.box : undefined} errorRows={errorRows} copy={copy}>
+    <LockGate vault={vault} box={conn.state === "ready" ? conn.info.inventory.box : undefined} errorRows={errorRows} copy={copy}>
       {shell}
     </LockGate>,
   );

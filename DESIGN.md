@@ -44,9 +44,9 @@ typography:
     lineHeight: 1.4
   label:
     fontFamily: "Inter, system-ui, Segoe UI, sans-serif"
-    fontSize: "13px"
+    fontSize: "12px"
     fontWeight: 600
-    letterSpacing: "0.05em"
+    letterSpacing: "0.06em"
   data:
     fontFamily: "Iosevka, Cascadia Mono, Consolas, ui-monospace, monospace"
     fontSize: "15px"
@@ -213,7 +213,7 @@ The whole scale follows one `--ui-size` (15px by default, `fonts.ui_size`), and 
 - **Title** (500, 17px, 1.4): the Picker's query field and panel titles. The largest type in the app; there is no display tier.
 - **Body** (400, 15px, 1.4): Sidebar rows, panel text, messages. Inter uses `cv11` and `calt`.
 - **Body small** (400, 14px): secondary lines, Picker group/type columns, empty-state hints, the message line.
-- **Label** (600, 13px, 0.05em, uppercase): Sidebar section headings (SESSIONS, FOLDERS, INVENTORY) and nothing else.
+- **Label** (600, 12px (one step under the xs size, never under 11px), 0.06em, uppercase): Sidebar section headings (SESSIONS, FOLDERS, INVENTORY) and the idle pane's RECENT, nothing else.
 - **Data** (Iosevka 500, 15px, tabular figures): Host names, the wordmark, terminal text.
 - **Data small** (Iosevka 500, 14px or 13px, tabular figures, muted): IPs, ports, counts, the status bar's numbers.
 - **Keycap** (Iosevka 500, 13px, line-height 1): every key hint.
@@ -302,7 +302,7 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 - **Live Session:** raised, plus a **2px apricot bar** at the start, inset 5px top and bottom. It moves with a key, so it doesn't animate.
 - **App-mode cursor:** raised, with a 1px inset *apricot* outline and no bar.
 - **Pending (added, not Published):** content at 60% opacity, with a hollow muted node.
-- **Section headings:** 13px uppercase Inter 600, tracked 0.05em, muted, with a tabular count at the right.
+- **Section headings:** 12px uppercase Inter 600, tracked 0.06em, muted, with a tabular count at the right (left out at 0, where the section's sentence says it).
 
 ### Picker (signature)
 - **Container:** Panel Graphite, Strong Hairline border, 10px radius, Overlay shadow, over a dimmed backdrop.

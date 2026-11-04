@@ -41,7 +41,7 @@ describe("hostMenu", () => {
   it("groups open, look, change and remove, with a row's own actions among the changes", () => {
     const own = { ...row, actions: [{ label: "Mark unreviewed", icon: "unreview" as const, command: "host unreview esx-02" }] };
     expect(labels(own)).toEqual([
-      "Open", "New Session", "|", "Details", "Check", "Edit…", "|",
+      "Open", "|", "Details", "Check", "Edit…", "|",
       "Mark unreviewed", "Rename…", "Move to another group…", "Add to a Folder…", "|", "Remove from the Inventory…",
     ]);
   });
@@ -49,7 +49,7 @@ describe("hostMenu", () => {
   it("runs the command lines the old buttons and keys ran, with their keys", () => {
     const entries = hostMenu(row, all).filter((e) => !("separator" in e));
     expect(entries.map((e) => ("command" in e ? e.command : ""))).toEqual([
-      "open esx-02", "connect esx-02", "info esx-02", "check esx-02", "edit esx-02",
+      "open esx-02", "info esx-02", "check esx-02", "edit esx-02",
       "host rename esx-02", "host move esx-02", "folder add esx-02", "host remove esx-02",
     ]);
     expect(entries.find((e) => "label" in e && e.label === "Rename…")).toMatchObject({ keys: "␣ R" });

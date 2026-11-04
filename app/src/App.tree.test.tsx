@@ -166,7 +166,7 @@ describe("Opening Hosts from the tree", () => {
 describe("Folders", () => {
   it("creates, renames and deletes Folders from the command line", async () => {
     const { user } = await ready();
-    expect(within(folders()).getByText(/No Folders yet/)).toBeInTheDocument();
+    expect(within(folders()).getByText(/Drag a Host here/)).toBeInTheDocument();
     await user.keyboard(`${LEADER}:folder new Lab ESXi{Enter}`);
     expect(within(folders()).getByRole("treeitem", { name: /^Lab ESXi/ })).toBeInTheDocument();
     await user.keyboard(`${LEADER}:folder rename Lab ESXi Daily{Enter}`);
