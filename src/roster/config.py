@@ -42,7 +42,7 @@ def find_config(arg, inv=None):
     return path
 
 
-def locate_config(arg, inv=None):
+def locate_config(arg: Any, inv: str | None = None) -> Path:
     """find_config's lookup alone."""
     from . import inventories
     if arg:
@@ -209,11 +209,22 @@ def rate_limited(v):
         die("rate_limited: must be a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]")
     nets = []
     for entry in v:
+        text = str(entry).strip()
         try:
-            nets.append(str(ipaddress.ip_network(str(entry).strip())))
+            nets.append(str(ipaddress.ip_network(text)))
+            continue
         except ValueError:
-            die(f"rate_limited: {oneline(entry)!r} isn't a network or an address (10.0.0.0/8, 192.0.2.7); a "
-                "network's address has no host bits set (10.0.0.0/8, not 10.0.0.1/8)")
+            pass
+        why = f"rate_limited: {oneline(entry)!r} isn't a network or an address (10.0.0.0/8, 192.0.2.7)"
+        if isinstance(entry, int) and not isinstance(entry, bool):
+            why += "; quote an IPv6 one ('2001:db8::/32'): unquoted, YAML can read it as a number"
+        else:
+            try:
+                net = ipaddress.ip_network(text, strict=False)
+                why += f"; a network's address has no host bits set ({net}, not {text})"
+            except ValueError:
+                pass
+        die(why)
     return nets
 
 

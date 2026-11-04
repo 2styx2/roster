@@ -150,7 +150,7 @@ What the errors mean:
 | `warning: [154] HOST has type: windows but no os:` | roster treats it as a POSIX Host. Set `os: windows` if it's Windows |
 | `[159] HOST is a Windows Host (os: windows), which has no sudo over ssh` | `roster run --sudo` on Windows: log in as an account in Administrators and run it without `--sudo` |
 | `[161] the command isn't PowerShell, so nothing ran` | `roster run` on a Windows Host runs PowerShell: rewrite it, or wrap cmd.exe's syntax in `cmd /c '…'` |
-| Port 22 accepts connections but sends no SSH banner, on many Hosts at once | A network IPS or rate limiter between this Box and the Hosts, not the Hosts: probe a neighbouring Host, or wait a few minutes and retry with fewer `workers:`. Don't retry in a loop |
+| Port 22 accepts connections but sends no SSH banner, on many Hosts at once | A network IPS or rate limiter between this Box and the Hosts, not the Hosts: probe a neighbouring Host, or wait a few minutes and retry with fewer `workers:`. Don't retry in a loop. List a network that has one in [`rate_limited:`](cli-reference.md#networks-with-an-ssh-rate-limiter), so a Host there that doesn't answer says so |
 
 ## Windows Hosts
 

@@ -95,3 +95,21 @@ def test_no_address_range_is_left_in_roster():
     """The hint used to come from one network's fixed prefix (#363)."""
     import inspect
     assert "10.19" not in inspect.getsource(diagnose)
+
+
+def test_only_a_network_with_host_bits_set_is_told_about_host_bits(write_config):
+    with pytest.raises(SystemExit) as e:
+        load_config(write_config("rate_limited: [10.0.0.1/8]\n" + HOSTS))
+    assert "host bits" in str(e.value.code) and "10.0.0.0/8" in str(e.value.code)
+    with pytest.raises(SystemExit) as e:
+        load_config(write_config("rate_limited: [not-a-network]\n" + HOSTS))
+    assert "host bits" not in str(e.value.code)
+
+
+def test_an_unquoted_ipv6_address_read_as_a_number_says_to_quote_it(write_config):
+    """YAML 1.1 reads 1:2:3:4:5:6:7:8 unquoted as a base-60 number."""
+    with pytest.raises(SystemExit) as e:
+        load_config(write_config("rate_limited: [1:2:3:4:5:6:7:8]\n" + HOSTS))
+    assert "quote" in str(e.value.code)
+    assert load_config(write_config("rate_limited: ['1:2:3:4:5:6:7:8']\n" + HOSTS))["rate_limited"] == \
+        ["1:2:3:4:5:6:7:8/128"]

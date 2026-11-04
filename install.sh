@@ -7,9 +7,11 @@
 #   ./install.sh --prefix DIR  put the roster command in DIR/bin and its man page in DIR/share/man/man1
 #                              (default: uv's tool bin dir, ~/.local/bin, so ~/.local/share/man/man1); or PREFIX=DIR
 #   ./install.sh --infra-repo URL   the git URL of your team's map (the repo with roster.yml); or ROSTER_INFRA_REPO=URL
+#   ./install.sh --no-completion    don't turn on Tab completion for roster in your shell (it's on otherwise)
 #
 # Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the roster config folder, making roster work from
 # any directory, unlocking the vault, `roster setup`, and auto-updates from cron. ./uninstall.sh undoes them.
+# "Work from anywhere" also turns on Tab completion for roster in bash, zsh and fish (unless --no-completion).
 # Output of each step goes to ~/.cache/roster/install.log; it is shown only when a step fails.
 set -uo pipefail
 
@@ -20,13 +22,15 @@ SESSION_FILE="$HOME/.config/roster/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
 PATH_MARK="# roster: uv tools"
 MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+COMP_MARK="# roster: completion"         # the Tab completion line (or fish's file), always added (decision Q183)
 NEED_MANPATH=0
 
-YES=0 DRY=0 PREFIX=${PREFIX:-}
+YES=0 DRY=0 COMPLETION=1 PREFIX=${PREFIX:-}
 while (( $# )); do
     case "$1" in
         -y|--yes) YES=1 ;;
         -n|--dry-run) DRY=1 ;;
+        --no-completion) COMPLETION=0 ;;
         --prefix) [[ -n ${2:-} ]] || { echo "--prefix needs a directory" >&2; exit 2; }; PREFIX=$2; shift ;;
         --prefix=*) PREFIX=${1#--prefix=} ;;
         --infra-repo) [[ -n ${2:-} ]] || { echo "--infra-repo needs a git URL" >&2; exit 2; }; INFRA_REPO=$2; shift ;;
@@ -128,18 +132,52 @@ live() {                        # live "what" cmd...  - runs in the foreground (
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+SUDO=sudo                       # root (a container, say) often has no sudo, and doesn't need it
+(( EUID == 0 )) && SUDO=""
+
 APT_UPDATED=0
 pkg_install() {                 # pkg_install name... with the box's package manager
+    if [[ -n $SUDO ]] && ! have sudo && ! have brew; then bad "no sudo - install $* as root yourself"; return 1; fi
     if   have apt-get; then
         # a fresh box (or container) has no package lists yet: install would say "Unable to locate package"
-        if (( ! APT_UPDATED )); then step "apt update" sudo apt-get update -q || return 1; APT_UPDATED=1; fi
-        step "apt install $*" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
-    elif have dnf;     then step "dnf install $*" sudo dnf install -y "$@"
-    elif have yum;     then step "yum install $*" sudo yum install -y "$@"
-    elif have pacman;  then step "pacman -S $*" sudo pacman -S --noconfirm "$@"
+        if (( ! APT_UPDATED )); then step "apt update" $SUDO apt-get update -q || return 1; APT_UPDATED=1; fi
+        step "apt install $*" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+    elif have dnf;     then step "dnf install $*" $SUDO dnf install -y "$@"
+    elif have yum;     then step "yum install $*" $SUDO yum install -y "$@"
+    elif have pacman;  then step "pacman -S $*" $SUDO pacman -S --noconfirm "$@"
     elif have brew;    then step "brew install $*" brew install "$@"
     else bad "no package manager found - install $* yourself"; return 1
     fi
+}
+
+cron_pkg() {                    # the package that brings crontab and the cron daemon, empty if we can't tell
+    if   have apt-get; then echo cron
+    elif have dnf || have yum || have pacman; then echo cronie
+    fi
+}
+
+start_cron() {                  # make sure the cron daemon runs now and after a restart; 0 when it does
+    [[ $(uname -s) == Darwin ]] && return 0             # launchd starts cron on macOS
+    local svc wsl=0
+    grep -qi microsoft /proc/version 2>/dev/null && wsl=1
+    for svc in crond cron cronie; do                    # Fedora/RHEL, Debian/Ubuntu, Arch
+        if [[ -d /run/systemd/system ]]; then
+            systemctl cat "$svc.service" >/dev/null 2>&1 || continue
+            if systemctl is-active --quiet "$svc" && systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+                ok "cron daemon ($svc) running"; return 0
+            fi
+            step "start the cron daemon ($svc), now and at boot" $SUDO systemctl enable --now "$svc"; return
+        elif [[ -x /etc/init.d/$svc ]]; then
+            if ! service "$svc" status >/dev/null 2>&1; then
+                step "start the cron daemon ($svc)" $SUDO service "$svc" start || return 1
+            else ok "cron daemon ($svc) running"; fi
+            # no systemd: nothing starts cron again when WSL (or the container) restarts
+            (( wsl )) && warn "WSL without systemd: cron stops with WSL. Put [boot] systemd=true in /etc/wsl.conf so it starts by itself"
+            return 0
+        fi
+    done
+    if (( DRY )); then info "would start the cron daemon"; return 0; fi
+    warn "couldn't find the cron service - start it yourself, or the job never runs"; return 1
 }
 
 # ---- start
@@ -358,6 +396,42 @@ else
     skip "run roster from $cfg_dir, or pass -c $CFG"
 fi
 
+# Tab completion for roster (`roster ho<Tab>`, `roster run <Tab>` for Host names) in each shell this box uses: no
+# question, it's on unless --no-completion (decision Q183). bash and zsh get a marked line that asks roster for its
+# script when the shell starts (so a newer roster's commands complete too), fish a file it loads on the first Tab.
+comp_shell=${SHELL##*/}
+if (( ! COMPLETION )); then
+    info "--no-completion: no Tab completion (to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc;"
+    info "roster completion zsh, fish or powershell for those)"
+else
+    comp_added=0
+    for sh in bash zsh; do
+        f="$HOME/.${sh}rc"
+        [[ -f $f || $comp_shell == "$sh" ]] || continue
+        if grep -qF "$COMP_MARK" "$f" 2>/dev/null; then ok "Tab completion already on in ${f/#$HOME/\~}"
+        elif (( DRY )); then info "would turn on Tab completion in ${f/#$HOME/\~}"
+        else
+            printf '\n%s\n' "command -v roster >/dev/null 2>&1 && eval \"\$(roster completion $sh)\"   $COMP_MARK" >> "$f"
+            ok "Tab completion for roster in ${f/#$HOME/\~}"
+        fi
+        comp_added=1
+    done
+    fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
+    if [[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/fish || $comp_shell == fish ]]; then
+        comp_added=1
+        if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
+            ok "Tab completion already on for fish"
+        elif [[ -e $fish_file ]]; then warn "${fish_file/#$HOME/\~} isn't roster's: kept it (roster completion fish prints roster's)"
+        elif (( DRY )); then info "would turn on Tab completion in ${fish_file/#$HOME/\~}"
+        elif mkdir -p "$(dirname "$fish_file")" && printf '%s\n' \
+                "$COMP_MARK (install.sh wrote this file; uninstall.sh removes it)" 'roster completion fish | source' \
+                > "$fish_file"; then
+            ok "Tab completion for roster in ${fish_file/#$HOME/\~}"
+        else warn "couldn't write ${fish_file/#$HOME/\~}"; fi
+    fi
+    (( comp_added )) || info "no bash, zsh or fish here: roster completion SHELL prints Tab completion for yours"
+fi
+
 # 7. Unlock the vault
 stage 7
 if ! have bw; then
@@ -433,18 +507,32 @@ fi
 stage 9
 pull="$cfg_dir/bin/roster-pull"
 job="*/15 * * * * $pull >> \$HOME/.cache/roster-pull.log 2>&1"
+cron_ready=1
 if [[ ! -x $pull ]] && (( ! DRY )); then
-    skip "no bin/roster-pull in $cfg_dir"
+    skip "no bin/roster-pull in $cfg_dir"; cron_ready=0
 elif ! have crontab; then
-    skip "no crontab on this box - run $pull yourself to update"
-elif crontab -l 2>/dev/null | grep -qF "$pull"; then
-    ok "cron job already there"; done_stage
-elif ask "Pull map updates every 15 minutes (cron job running bin/roster-pull)?" Y; then
-    if (( DRY )); then info "would add to crontab: $job"; done_stage
-    elif (crontab -l 2>/dev/null; echo "$job") | crontab -; then ok "cron job added"; done_stage
-    else bad "couldn't write the crontab"; fail_stage; fi
-else
-    skip "update by hand: $pull"
+    # a minimal box or WSL distro (Fedora's, say) ships without cron
+    pkg=$(cron_pkg)
+    if [[ -z $pkg ]]; then
+        skip "no crontab, and no package manager to get it with - run $pull yourself to update"; cron_ready=0
+    elif ! ask "Auto-update runs from cron, which isn't installed. Install $pkg?" Y; then
+        skip "no cron - run $pull yourself to update"; cron_ready=0
+    elif ! pkg_install "$pkg" || { (( ! DRY )) && ! have crontab; }; then
+        bad "cron didn't install"; fail_stage; cron_ready=0
+    fi
+fi
+if (( cron_ready )); then
+    if ! start_cron; then
+        fail_stage
+    elif crontab -l 2>/dev/null | grep -qF "$pull"; then
+        ok "cron job already there"; done_stage
+    elif ask "Pull map updates every 15 minutes (cron job running bin/roster-pull)?" Y; then
+        if (( DRY )); then info "would add to crontab: $job"; done_stage
+        elif (crontab -l 2>/dev/null; echo "$job") | crontab -; then ok "cron job added"; done_stage
+        else bad "couldn't write the crontab"; fail_stage; fi
+    else
+        skip "update by hand: $pull"
+    fi
 fi
 
 # ---- summary

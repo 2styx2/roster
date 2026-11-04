@@ -74,10 +74,10 @@ Top-level `links:` add one-way Host-to-Host reach across groups: `- { from: HOST
 Some networks have a rate limiter (an IPS, a firewall rule) that stops answering SSH for a few minutes after many connections. If yours does, list those networks at the top level of `roster.yml`, so a Host there that doesn't answer gets a fix that says so:
 
 ```yaml
-rate_limited: [10.0.0.0/8, 192.0.2.7]    # networks, or single addresses; IPv6 too. Empty (the default): none listed
+rate_limited: [10.0.0.0/8, 192.0.2.7, '2001:db8::/32']   # networks or single addresses; quote IPv6 ones. Empty (the default): none
 ```
 
-When `roster check HOST`, a Host key scan, Quick Connect or a test login gets no answer (code 42), the fix then reads `10.0.0.5 is in 10.0.0.0/8 (rate_limited: in roster.yml): its SSH rate limiter stops answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop`. An address outside the listed networks gets no rate-limiter hint; with no list, or a Host whose `ip:` is a name, the fix says a rate limiter on the network can cause this. A network's address can't have host bits set (`10.0.0.0/8`, not `10.0.0.1/8`), and an entry that isn't a network or an address stops the load, naming the key. The app's Session panel never reads `roster.yml`, so it always gives the generic hint; its `:check HOST` names the network.
+When `roster check HOST`, a Host key scan, Quick Connect or a test login gets no answer (code 42), the fix then reads `10.0.0.5 is in 10.0.0.0/8 (rate_limited: in roster.yml): its SSH rate limiter stops answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop`. An address outside the listed networks gets no rate-limiter hint; with no list, or a Host whose `ip:` is a name, the fix says a rate limiter on the network can cause this. Quote an IPv6 entry (`'2001:db8::/32'`): unquoted, YAML reads some as a number (`1:2:3:4:5:6:7:8`) and can't read others at all (`::1`). A network's address can't have host bits set (`10.0.0.0/8`, not `10.0.0.1/8`), and an entry that isn't a network or an address stops the load, naming the key. The app's Session panel never reads `roster.yml`, so it always gives the generic hint; its `:check HOST` names the network.
 
 ### One login per box, overrides per service
 
@@ -268,6 +268,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
+| `completion bash\|zsh\|fish\|powershell` | Print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `info`, `web`, `mesh cut`), groups (`--only`, `discover --group`), resources (`reveal`, `info`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`.
 
@@ -390,6 +391,19 @@ $ roster check esx-02 --json
 $ roster info nope --json
 {"version": 1, "error": {"code": 2, "message": "unknown host or resource 'nope'", "fix": null}}   (on stderr, exit 1)
 ```
+
+## Tab completion
+
+`install.sh` turns it on without asking (`--no-completion` leaves it off): a line marked `# roster: completion` in `~/.bashrc` and `~/.zshrc` (each one that's there, and your login shell's), and fish's `~/.config/fish/completions/roster.fish`. `uninstall.sh` removes them. By hand, one line in your shell's startup file:
+
+| Shell | Line |
+|---|---|
+| bash (`~/.bashrc`) | `eval "$(roster completion bash)"` |
+| zsh (`~/.zshrc`, after `compinit`) | `eval "$(roster completion zsh)"` |
+| fish | `roster completion fish > ~/.config/fish/completions/roster.fish` (once) |
+| PowerShell (`$PROFILE`) | `roster completion powershell \| Out-String \| Invoke-Expression` |
+
+Each script is short: on every Tab it asks roster (`roster __complete`, hidden) what fits, and roster answers from its own command list, so a new command or option completes without a new script. Names come from the local `roster.yml` (the one `-c` or `--inv` on that line picks, else the usual lookup) and the named Inventories' list, read as plain YAML: no network, no vault, nothing written. A missing or broken `roster.yml` completes no names, and no error is shown. A path (`-c`, `inv add NAME PATH`) is the shell's own file completion.
 
 ## Files
 
