@@ -296,7 +296,7 @@ export function ConnectCard({
         height="23"
         aria-hidden="true"
       >
-        <rect className="connect-box" x="1" y="2" width="8" height="8" rx="1.6" />
+        <rect className="connect-box" x="3.5" y="3.25" width="5.5" height="5.5" rx="1.1" />
         <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
@@ -425,7 +425,8 @@ export function ConnectCard({
       ) : (
         <p className="connect-phase muted">
           {/* As the ring closes the words say so, so the two never disagree. */}
-          {phase === null ? "" : PHASE_WORDS[words]}
+          {/* Kept, empty, as the ring closes: the card's height never changes, so it never jumps. */}
+          {phase === null ? " " : PHASE_WORDS[words]}
           {/* Not announced: a status that changed every second would talk over everything. */}
           {waiting && seconds >= 3 && (
             <span className="connect-elapsed" aria-hidden="true">
@@ -435,8 +436,9 @@ export function ConnectCard({
           )}
         </p>
       )}
-      {waiting && seconds >= 8 && closeKeys && (
-        <p className="connect-stop key-hint">
+      {/* The way out has its line from the start (shown from 8 s), so nothing moves when it does. */}
+      {!asking && closeKeys && (
+        <p className={`connect-stop key-hint${waiting && seconds >= 8 ? "" : " later"}`} aria-hidden={!(waiting && seconds >= 8)}>
           <Keys keys={closeKeys} leader={leader} /> stops it
         </p>
       )}

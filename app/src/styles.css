@@ -370,7 +370,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 
 /* overflow-anchor: none, as Sidebar.tsx keeps the row under the pointer itself when Sessions open
    or close (the browser's own anchoring would move it a second time). */
-.sb-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 2px 6px 10px; outline: none; overflow-anchor: none; }
+/* The tree: Sessions on top, fixed, and the rest scrolling under them (.sb-rest). overflow-anchor:
+   none there, as Sidebar.tsx keeps the row under the pointer itself when Sessions open or close
+   (the browser's own anchoring would move it a second time). */
+.sb-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 2px 6px 0; outline: none; }
+.sb-scroll > .sb-section[data-section="sessions"] { flex: none; }
+.sb-rest { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-bottom: 10px; }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -392,10 +397,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-rows { list-style: none; margin: 0; padding: 0; }
 /* Sessions show at most eight rows, scrolling in place beyond that, so fifty open Sessions never
    push the Inventory out of the Sidebar (the cursor scrolls them into view as it moves). */
-/* With no Session the section keeps one row's room, so the first Session fills it rather than
-   pushing the tree down under the pointer. */
-.sb-section[data-section="sessions"]:not(:has(.sb-row)) { padding-bottom: var(--row-h); }
 .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(8 * var(--row-h)); overflow-y: auto; overscroll-behavior: contain; }
+@media (max-height: 500px) { .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(3 * var(--row-h)); } }
 .sb-row { position: relative; display: flex; align-items: center; height: var(--row-h); border-radius: var(--radius); color: var(--muted); }
 @media (hover: hover) and (pointer: fine) {
   .sb-row:hover { background: var(--hover); color: var(--text); }
@@ -517,7 +520,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.lit.password circle { fill: none; stroke: var(--accent); }
 /* A Host with a Session gets a thin halo, so "has a Session" is a shape, not only a lighter
    colour (WCAG 1.4.1): the node with its connection around it. */
-.dot circle.halo { fill: none !important; stroke-width: 1px; stroke-dasharray: none; opacity: 0.55; }
+.dot circle.halo { fill: none !important; stroke-width: 1px; stroke-dasharray: none; opacity: 0.8; }
 .dot.on circle.halo { stroke: var(--text); }
 .dot.lit circle.halo { stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
@@ -529,7 +532,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    Static: the edge in the pane is the motion. */
 .dot.connecting circle {
   fill: none; stroke: var(--accent); stroke-width: 1.5px;
-  stroke-dasharray: 17.34 3.06; stroke-dashoffset: 1.02;
+  stroke-dasharray: 15.3 5.1; stroke-dashoffset: 0;
 }
 
 /* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,
@@ -1069,6 +1072,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
 .connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .connect-stop { margin: 0; font-size: var(--text-sm); color: var(--muted); }
+.connect-stop.later { visibility: hidden; }
+.connect-phase { min-height: 1lh; white-space: pre-wrap; }
 .connect-title { font-size: var(--text-lg); }
 .connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }

@@ -484,10 +484,17 @@ function keepUnderPointer(tree: HTMLElement, delta: number, borrowed: number): n
     return 0;
   }
   let room = borrowed;
-  const short = tree.scrollTop + delta - (tree.scrollHeight - tree.clientHeight);
-  if (delta > 0 && short > 0) {
-    room += short;
-    tree.style.paddingBottom = `calc(10px + ${room}px)`;
+  if (delta > 0) {
+    // Where the content really ends (scrollHeight is never less than the viewport, so it can't
+    // say how short a short tree is), and the padding that leaves room to scroll by `delta`.
+    const last = tree.lastElementChild;
+    const top = tree.getBoundingClientRect().top;
+    const contentEnd = last ? last.getBoundingClientRect().bottom - top + tree.scrollTop : 0;
+    const need = tree.scrollTop + delta + tree.clientHeight - contentEnd;
+    if (need > 10 + room) {
+      room = need - 10;
+      tree.style.paddingBottom = `${need}px`;
+    }
   }
   tree.scrollTop += delta;
   return room;
@@ -583,21 +590,22 @@ export function Sidebar({
   // opening a neighbour), so the scroll moves by the same amount and the row stays put.
   const pointerIn = useRef(false);
   const sessionsHeight = useRef<number | null>(null);
+  const restRef = useRef<HTMLDivElement | null>(null);
   const borrowed = useRef(0);
   useLayoutEffect(() => {
     const el = scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
     const h = el?.offsetHeight ?? null;
     const before = sessionsHeight.current;
     sessionsHeight.current = h;
-    const tree = scrollRef.current;
-    if (h === null || before === null || h === before || !pointerIn.current || !tree) return;
-    borrowed.current = keepUnderPointer(tree, h - before, borrowed.current);
+    const rest = restRef.current;
+    if (h === null || before === null || h === before || !pointerIn.current || !rest) return;
+    borrowed.current = keepUnderPointer(rest, h - before, borrowed.current);
   });
   const giveBack = () => {
     pointerIn.current = false;
-    if (borrowed.current === 0 || !scrollRef.current) return;
+    if (borrowed.current === 0 || !restRef.current) return;
     borrowed.current = 0;
-    keepUnderPointer(scrollRef.current, 0, -1);
+    keepUnderPointer(restRef.current, 0, -1);
   };
 
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs
@@ -655,6 +663,20 @@ export function Sidebar({
     },
   }));
 
+  const renderSection = (section: SidebarSection) => (
+    <Section
+      key={section.id}
+      section={section}
+      cursor={cursor !== null && cursorIn(section, cursor) ? cursor : null}
+      selected={selected !== null && cursorIn(section, selected) ? selected : null}
+      run={stableRun}
+      select={stableSelect}
+      drag={drag}
+      openMenu={openMenu}
+      leader={leaderHint}
+    />
+  );
+
   return (
     <nav className={`sidebar side-${side}`} aria-label="Sidebar">
       <button type="button" className="sb-find" onMouseDown={keepFocus} onClick={() => run("find")}>
@@ -670,8 +692,6 @@ export function Sidebar({
       <div
         className="sb-scroll"
         ref={setTree}
-        onPointerEnter={() => (pointerIn.current = true)}
-        onPointerLeave={giveBack}
         role="tree"
         aria-label="Sessions and Hosts"
         tabIndex={0}
@@ -705,19 +725,12 @@ export function Sidebar({
           drag.refocus();
         }}
       >
-        {sections.map((section) => (
-          <Section
-            key={section.id}
-            section={section}
-            cursor={cursor !== null && cursorIn(section, cursor) ? cursor : null}
-            selected={selected !== null && cursorIn(section, selected) ? selected : null}
-            run={stableRun}
-            select={stableSelect}
-            drag={drag}
-            openMenu={openMenu}
-            leader={leaderHint}
-          />
-        ))}
+        {/* Sessions sit above the rest and never scroll away (its own list scrolls past eight);
+            the sections under it scroll, and that scroller keeps the row under the pointer. */}
+        {sections.filter((s) => s.id === "sessions").map(renderSection)}
+        <div className="sb-rest" ref={restRef} role="none" onPointerEnter={() => (pointerIn.current = true)} onPointerLeave={giveBack}>
+          {sections.filter((s) => s.id !== "sessions").map(renderSection)}
+        </div>
       </div>
       {menuShown && menu && menuRow && (
         <RowMenu
