@@ -155,7 +155,11 @@ app/src/keyboard/     mode.ts (Terminal mode / App mode machine, key sequences),
 app/src/health/       `:check` with no Host (ticket 49): health.ts (the health section registry, the app's own sections,
                       runHealth; roster's sections come from box.check), shown as the `health` help page
 app/src/help/         `:help` (ticket 37, docs/app/help.md): pages.ts (the help page registry, the pages generated from the
-                      registries, topics), guides.ts (docs/app's Markdown bundled at build time), markdown.ts (that Markdown
+                      registries, topics), guides.ts (each guide's topic, title and place), guideText.ts (their Markdown, bundled at
+                      build time as the help chunk, T213), text.ts (HelpText: loads that chunk on the first :help), tagTable.ts
+                      and guideBlocks.ts (the guides' topics, made at build time by scripts/help-plugin.mjs as
+                      `virtual:help-tags`, so startup knows them before the text loads), luaStubs.ts (plugin-types' Lua
+                      stubs, written from plugin-api.json), markdown.ts (that Markdown
                       → blocks, doc.ts), options.ts (config.md's option tables + each value and where it came from),
                       command.ts (`:help`, the `help` finder, HelpView, `:lookup`), lookup.ts (which topic the lookup
                       keys open: the command typed, the selected result or row, a binding's option, ticket 52), HelpPanel.tsx
@@ -198,6 +202,8 @@ app/scripts/gen-docs-site.ts  `npm run docs` (`-- --out DIR`, `--pdf FILE`): wri
                       (Vite's module runner, so the app's `?raw` imports work)
 app/scripts/notices-plugin.mjs  `virtual:third-party-notices`: THIRD-PARTY-NOTICES's text for `:version`'s help page
                       (T180), in vite.config.ts and vite-run.mjs
+app/scripts/help-plugin.mjs  `virtual:help-tags` (the guides' tag table, made at build time) and `FILE.json?pick=a,b` (some keys of a
+                      JSON file), so startup reads neither the guides' text nor all of plugin-api.json (T213); also in both
 app/scripts/check-docs-a11y.ts  `npm run docs:a11y -- DIR`: axe-core over the built site in headless Chrome (dark, light,
                       the search box open); fails on any WCAG 2.x A/AA problem. docs.yml runs it on every PR
 app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [--build]`, `serve`;

@@ -10,6 +10,7 @@ import { plain } from "./doc";
 import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
 import { findTopic, headingTag, pageBody, pageTexts, topics, type HelpContext, type Topic } from "./pages";
+import { helpText, type HelpText } from "./text";
 
 /** Where the help panel is: a page, and the entry or heading on it. */
 export interface HelpPlace {
@@ -29,7 +30,15 @@ export interface HelpSnapshot {
   seq: number;
   /** How it got to `at` (`:tutor` waits for a Ctrl+O back, ticket 55). */
   moved?: "open" | "back" | "forward";
+  /** `at` is a guide whose text is still loading, past LOADING_AFTER (T213). */
+  loading: boolean;
+  /** Why the guides' text couldn't load, when it couldn't. */
+  failed?: string;
 }
+
+/** How long a guide's text may take before help opens anyway and says it's loading (T213): a wait
+ * shorter than this shows nothing, so the page appears whole, never an empty panel first. */
+export const LOADING_AFTER = 150;
 
 const place = (t: Topic | HelpPlace, search?: string): HelpPlace => ({
   page: t.page,
@@ -38,11 +47,16 @@ const place = (t: Topic | HelpPlace, search?: string): HelpPlace => ({
 });
 
 export class HelpView {
-  private snap: HelpSnapshot = { at: null, canBack: false, canForward: false, seq: 0 };
+  private snap: HelpSnapshot = { at: null, canBack: false, canForward: false, seq: 0, loading: false };
   private back: HelpPlace[] = [];
   private forward: HelpPlace[] = [];
   private readonly listeners = new Set<() => void>();
   private ctx: (() => HelpContext) | null = null;
+  /** The open still waiting for the guides' text; a later move cancels it. */
+  private waiting: { shown: boolean } | null = null;
+
+  /** `text` is the guides' text (T213): a guide opens once it's loaded. */
+  constructor(private readonly text: HelpText = helpText) {}
 
   /** What topics are resolved against: App sets it every render. */
   setContext(ctx: () => HelpContext) {
@@ -60,11 +74,31 @@ export class HelpView {
     return () => this.listeners.delete(listener);
   };
 
-  /** Shows `to`, searching it for `search`; the place it leaves is where Ctrl+O goes back to. */
+  /** Shows `to`, searching it for `search`; the place it leaves is where Ctrl+O goes back to. A
+   * guide whose text isn't loaded yet opens when it is, or past LOADING_AFTER as loading. */
   open(to: Topic | HelpPlace, search?: string) {
-    if (this.snap.at) this.back.push(this.snap.at);
-    this.forward = [];
-    this.set(place(to, search), "open");
+    const at = place(to, search);
+    this.waiting = null;
+    if (this.text.ready() || !this.context()?.pages.find((pg) => pg.id === at.page)?.tags) return this.go(at);
+    const ticket = { shown: false };
+    this.waiting = ticket;
+    const timer = setTimeout(() => {
+      if (this.waiting !== ticket) return;
+      ticket.shown = true;
+      this.go(at, { loading: true });
+    }, LOADING_AFTER);
+    const arrive = (failed?: string) => {
+      clearTimeout(timer);
+      if (this.waiting !== ticket) return;
+      this.waiting = null;
+      const extra = failed === undefined ? {} : { failed };
+      if (ticket.shown) this.set(at, "open", extra);
+      else this.go(at, extra);
+    };
+    this.text.load().then(
+      () => arrive(),
+      (e: unknown) => arrive(e instanceof Error ? e.message : String(e)),
+    );
   }
 
   /** Opens the topic `query` names; false when there's none. `TOPIC /TEXT` also searches the
@@ -78,9 +112,18 @@ export class HelpView {
     return true;
   }
 
+  /** Starts loading the guides' text, for what's about to need it (`:h <Tab>`, the finders). */
+  prefetch() {
+    this.text.load().catch(() => {});
+  }
+
+  /** Tells `listener` when the guides' text has loaded. */
+  subscribeText = (listener: () => void): (() => void) => this.text.subscribe(listener);
+
   goBack() {
     const to = this.back.pop();
     if (!to || !this.snap.at) return;
+    this.waiting = null;
     this.forward.push(this.snap.at);
     this.set(to, "back");
   }
@@ -88,20 +131,36 @@ export class HelpView {
   goForward() {
     const to = this.forward.pop();
     if (!to || !this.snap.at) return;
+    this.waiting = null;
     this.back.push(this.snap.at);
     this.set(to, "forward");
   }
 
   close() {
+    this.waiting = null;
     if (!this.snap.at) return;
     this.back = [];
     this.forward = [];
-    this.snap = { at: null, canBack: false, canForward: false, seq: this.snap.seq };
+    this.snap = { at: null, canBack: false, canForward: false, seq: this.snap.seq, loading: false };
     this.changed();
   }
 
-  private set(at: HelpPlace, moved: "open" | "back" | "forward") {
-    this.snap = { at, canBack: this.back.length > 0, canForward: this.forward.length > 0, seq: this.snap.seq + 1, moved };
+  private go(at: HelpPlace, extra: { loading?: boolean; failed?: string } = {}) {
+    if (this.snap.at) this.back.push(this.snap.at);
+    this.forward = [];
+    this.set(at, "open", extra);
+  }
+
+  private set(at: HelpPlace, moved: "open" | "back" | "forward", extra: { loading?: boolean; failed?: string } = {}) {
+    this.snap = {
+      at,
+      canBack: this.back.length > 0,
+      canForward: this.forward.length > 0,
+      seq: this.snap.seq + 1,
+      moved,
+      loading: extra.loading ?? false,
+      ...(extra.failed !== undefined ? { failed: extra.failed } : {}),
+    };
     this.changed();
   }
 
@@ -123,6 +182,8 @@ export function helpCommand(view: HelpView): CommandDef {
       if (!view.openTopic(topic)) ctx.say(`No help for ${topic}. :help alone lists the topics.`);
     },
     complete: (arg) => {
+      // The tag table answers now; the text is on its way for the page Tab leads to.
+      view.prefetch();
       const ctx = view.context();
       return ctx ? matching(topics(ctx).map((t) => t.tag), arg) : [];
     },
@@ -136,6 +197,7 @@ export function helpFinder(view: HelpView): FinderSourceDef {
     source: BUILTIN,
     title: "Find a help topic",
     prompt: "Help",
+    open: () => view.prefetch(),
     items: (): FinderItem[] => {
       const ctx = view.context();
       if (!ctx) return [];
@@ -212,6 +274,9 @@ export function helpgrepFinder(view: HelpView): FinderSourceDef {
     prompt: "Help text",
     prose: true,
     empty: "Type words to search every help page.",
+    // The guides' text loads as the finder opens (T213); their matches come when it's here.
+    open: () => view.prefetch(),
+    subscribe: view.subscribeText,
     items: () => [],
     search: (_ctx, query) => search(query),
   };

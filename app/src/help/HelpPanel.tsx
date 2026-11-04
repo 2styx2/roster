@@ -240,7 +240,24 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
       <div className="help-scroll" ref={scrollRef} tabIndex={0} role="region" aria-label={page?.title ?? at.page}>
         <Env value={env}>
           <article className="help-doc">
-            {page ? blocks.map((b, i) => <BlockView key={i} block={b} target={at.anchor} />) : <p>No help page named {at.page}.</p>}
+            {!page ? (
+              <p>No help page named {at.page}.</p>
+            ) : snapshot.loading || snapshot.failed !== undefined ? (
+              // A guide whose text is still on its way (past 150 ms: HelpView waits that long first)
+              // or couldn't load (T213). Still text, no motion: it's gone as soon as the page is here.
+              <>
+                <h1>{page.title}</h1>
+                {snapshot.failed !== undefined ? (
+                  <p role="alert">
+                    Couldn't load help's guides: {snapshot.failed}. <code>:help {at.anchor ?? at.page}</code> tries again.
+                  </p>
+                ) : (
+                  <p role="status">Loading this page…</p>
+                )}
+              </>
+            ) : (
+              blocks.map((b, i) => <BlockView key={i} block={b} target={at.anchor} />)
+            )}
           </article>
         </Env>
       </div>

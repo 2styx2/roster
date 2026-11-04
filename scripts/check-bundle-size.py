@@ -6,9 +6,11 @@ CI builds the frontend (`vite build` in app/) and runs this on every pull reques
 
 It adds up every .js and every .css file the build wrote under dist/assets, minified as shipped and gzipped
 (level 9, as a size anyone can reproduce; the app reads them from disk, so raw is what it parses), and fails
-when a total is over its budget. The fake Backend's chunk (fake-*.js, a dynamic import() for the tutor demo
-and browser runs) is budgeted on its own rather than as JS the app parses at start. Fonts, icons and other assets aren't counted: they change only when a
-font does. A KB here is 1,000 bytes, as Vite prints them. A change that goes over raises the budget below and
+when a total is over its budget. Two dynamic import() chunks are budgeted on their own rather than as JS the
+app parses at start: the fake Backend's (fake-*.js, for the tutor demo and browser runs) and the help chunk
+(guideText-*.js, :help's guides, loaded on the first :help: T213, decision Q189). It also fails when a startup
+chunk carries a guide's sentence (MARKERS), which would mean the guides are bundled at start again. Fonts,
+icons and other assets aren't counted: they change only when a font does. A KB here is 1,000 bytes, as Vite prints them. A change that goes over raises the budget below and
 in performance.md's table, with the reason in its pull request. Standard library only.
 """
 
@@ -63,19 +65,55 @@ KB = 1000
 # then splits it. The same day the fake Backend's chunk (fake-*.js, a dynamic import(), 172.8 raw / 58.2 gzipped)
 # stopped counting toward it and got a budget of its own, its size then + 15 %. Startup JS without it: 2,433.7 raw
 # / 710.0 gzipped.
+# JS split into startup and the help chunk on 2026-11-04 (T213, #405, decision Q189): :help's guides load on the first
+# :help (their text a chunk of its own, the Plugin API bundled once, as data), so the startup JS is the app's code and
+# its dependencies again. Measured that day: startup 1,548.5 raw / 438.0 gzipped (was 2,488.5 / 727.8), the help chunk
+# 989.3 / 299.6. Startup JS 3,000 -> 1,700 raw, 880 -> 480 gzipped, about 10 % above, so it catches a dependency or
+# code growth again; the help chunk 1,500 / 450, the room #377's research gave it, so docs PRs don't move it (it's text
+# loaded on the first :help, and Neovim ships 5.4 MB of help, read a page at a time); raise it as the search index's is.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 3000, "gzip": 880},
+    "js": {"raw": 1700, "gzip": 480},
+    "help": {"raw": 1500, "gzip": 450},
     "css": {"raw": 90, "gzip": 16.5},
     "fake": {"raw": 199, "gzip": 67},
 }
-LABELS = {"js": "JS", "css": "CSS", "fake": "Fake Backend JS"}
+LABELS = {"js": "Startup JS", "help": "Help chunk JS", "css": "CSS", "fake": "Fake Backend JS"}
+
+# Sentences of the guides (docs/), none of which the app's own code says: a startup chunk that carries one carries
+# the guides' text. Each must be in the help chunk too, so the check can't pass because the build changed shape.
+MARKERS = [
+    "Commands, keys, Themes, finders, Sidebar sections, the toolbar and these help pages are all registries",
+    "Every function, value, event and data type of the",
+]
 
 
 def kind_of(f):
-    """Which budget file F counts toward: "js", "css", "fake" (the fake Backend's chunk), or None."""
+    """Which budget file F counts toward: "js" (startup), "help" (the help chunk), "fake" (the fake Backend's
+    chunk), "css", or another suffix (not counted)."""
     kind = f.suffix.lstrip(".")
-    return "fake" if kind == "js" and f.name.startswith("fake-") else kind
+    if kind == "js" and f.name.startswith("fake-"):
+        return "fake"
+    if kind == "js" and f.name.startswith("guideText-"):
+        return "help"
+    return kind
+
+
+def help_problems(dist, markers=None):
+    """What's wrong with where the guides' text is: a startup chunk carrying a marker, or no help chunk with them."""
+    markers = MARKERS if markers is None else markers
+    files = sorted(f for f in (Path(dist) / "assets").rglob("*.js") if f.is_file())
+    helps = [f for f in files if kind_of(f) == "help"]
+    if not helps:
+        return ["no help chunk (guideText-*.js) in the build: :help's guides should be a chunk of their own"]
+    out = []
+    for marker in markers:
+        if not any(marker in f.read_text("utf-8", "replace") for f in helps):
+            out.append(f"the help chunk doesn't carry {marker!r}: pick another sentence from a guide")
+        for f in files:
+            if kind_of(f) == "js" and marker in f.read_text("utf-8", "replace"):
+                out.append(f"{f.name} carries help text ({marker!r}): the guides belong in the help chunk")
+    return out
 
 
 def measure(dist):
@@ -90,9 +128,9 @@ def measure(dist):
     return out
 
 
-def main(argv=None, budgets=None):
+def main(argv=None, budgets=None, markers=None):
     argv = sys.argv[1:] if argv is None else argv
-    budgets = budgets or BUDGETS
+    budgets = BUDGETS if budgets is None else budgets
     dist = Path(argv[0]) if argv else ROOT / "app" / "dist"
     if not (dist / "assets").is_dir():
         print(f"no build in {dist}: run `npx vite build` in app/ first", file=sys.stderr)
@@ -108,7 +146,10 @@ def main(argv=None, budgets=None):
     for line in over:
         print(f"error: {line}: make it smaller, or raise the budget in scripts/check-bundle-size.py and "
               "docs/app/performance.md and say why in the pull request")
-    return 1 if over else 0
+    misplaced = help_problems(dist, markers) if markers != [] else []
+    for line in misplaced:
+        print(f"error: {line}")
+    return 1 if over or misplaced else 0
 
 
 if __name__ == "__main__":

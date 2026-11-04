@@ -27,6 +27,10 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
 - **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
 
+**App**
+
+- **The app starts lighter** (#405): `:help`'s guides load the first time you open help, `:helpgrep` or Tab-complete a topic, read from the app's own files (never the network), instead of with everything else at start. That takes the JS the app reads at start from about 2.5 MB to 1.5 MB. Every page, topic and search is still there; Tab completes a guide's headings before its text has loaded, and the rare wait past 150 ms says the page is loading.
+
 **`roster serve` API 28**
 
 - `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes. `inventory.create` makes a new Inventory when serve found none (the app's first run): blank, a copy or a clone, named after its folder and made the active one.
