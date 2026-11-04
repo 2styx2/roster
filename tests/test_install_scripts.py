@@ -427,15 +427,15 @@ def test_install_dry_run_says_where_completion_would_go(tmp_path):
 
 def test_install_and_update_turn_completion_on_with_one_shared_step():
     """#414: one Tab-completion step, in install-lib.sh beside the scripts, shipped wherever they are."""
-    lib = (ROOT / INSTALL_LIB).read_text()
+    lib = (ROOT / INSTALL_LIB).read_text(encoding="utf-8")
     assert "roster completion fish | source" in lib
     for script in (INSTALL_SH, UPDATE_SH):
-        text = script.read_text()
+        text = script.read_text(encoding="utf-8")
         assert INSTALL_LIB in text and "turn_on_completion" in text
         assert "roster completion fish | source" not in text and "fish/completions/roster.fish" not in text
-    tarball = (ROOT / ".github/workflows/release.yml").read_text()
+    tarball = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in tarball      # the Release's roster-cli tarball
-    assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in (ROOT / "scripts/test-install.sh").read_text()
+    assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in (ROOT / "scripts/test-install.sh").read_text(encoding="utf-8")
 
 
 @posix_shell
