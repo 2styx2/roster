@@ -2030,7 +2030,7 @@ def vault_logout(state, params):
 
 
 SIGN_OUT_FIXES = {ALREADY_SIGNED_OUT: "sign in from the lock screen",
-                  SIGN_OUT_FAILED: "see the message; `roster bw logout` in a terminal shows the same"}
+                  SIGN_OUT_FAILED: "see the message; `roster bw --write logout` in a terminal shows the same"}
 
 
 def sign_out_error(e):

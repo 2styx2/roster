@@ -67,7 +67,7 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
 | 71 | 15 | The CLI was already signed out (in a terminal, or a moment ago) | Box | "the Bitwarden CLI isn't signed in on this box - there's no account to sign out of" | None needed: the app goes straight to the sign-in form |
-| 72 | 16 | `bw logout` failed some other way | Vault / Box | "`bw logout` failed: …" (bw's words) | See Details; `roster bw logout` in a terminal shows the same |
+| 72 | 16 | `bw logout` failed some other way | Vault / Box | "`bw logout` failed: …" (bw's words) | See Details; `roster bw --write logout` in a terminal shows the same |
 | — | 13 | The provider has no account: KeePassXC, `pass`, `env`, `cmd` | Box | "KeePassXC has no account to sign out of: it opens a local database file. To use another one, change vault.kp.database in init.lua" | No link on the lock screen; `:vault signout` says this |
 
 ## Saving to the vault
@@ -402,6 +402,16 @@ A Host with `os: windows` in `roster.yml` (T195, decision Q174): `roster setup`,
 | 219 | 159 | `roster run --sudo` on an `os: windows` Host: Windows has no sudo over ssh. Refused before the vault is asked; nothing ran | Inventory | "[159] dc-01 is a Windows Host (os: windows), which has no sudo over ssh: nothing ran. Log in as an account in Administrators …" | Log in as an account in Administrators (its ssh session is already elevated) and run it without `--sudo` |
 | 220 | 160 (a note) | An `os: windows` Host in a meshed group or a Link (or a Link's `via:`) is left out of the Mesh: its scripts are sh. Not an error: the rest of the Mesh goes ahead, and roster never logs in to it for the Mesh (`roster mesh --dry-run`, `mesh status`, `check`; `excluded` in `mesh.plan` and `mesh.status`) | Inventory | "left out: dc-01 ([160] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's left out …)" | Nothing; take it out of the group's Mesh (`mesh: false`) or the Link to stop the note |
 | 221 | 161 | `roster run` on an `os: windows` Host: the command doesn't parse as PowerShell (cmd.exe's syntax, `&&` on Windows PowerShell 5.1, an unclosed quote). Nothing ran; PowerShell's own words come first on stderr | Inventory | "[161] the command isn't PowerShell, so nothing ran on dc-01: roster run runs PowerShell on a Windows Host (for cmd.exe's syntax: cmd /c '...')" | Write it as PowerShell, or wrap cmd.exe's syntax in `cmd /c '…'` |
+
+## `roster bw`
+
+`roster bw` runs the Bitwarden CLI with this Box's session, read-only unless `--write`, against a list that fails closed (T202, #387, decision Q178). Each is refused before bw starts, so nothing ran; none repeats what follows bw's command, which may hold a password. See [`roster bw`](../cli-reference.md#roster-bw).
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 224 | 164 | A bw command that changes the vault (`create`, `edit`, `delete`, `move`, …), writes it out (`export`) or a file on this Box (`receive`, `get attachment`, any `--output`) or acts on the account (`login`, `logout`, `unlock`, `lock`, `config`), without `--write` | Box | "[164] bw edit changes the vault, and roster bw is read-only unless you say so: roster bw --write edit ..." | Add `--write` before bw's arguments |
+| 225 | 165 | A bw command roster bw doesn't know (a newer bw's, a typo), an option before the command that isn't one of bw's own read-only ones (never repeated, even by roster's parser), or `--write` after bw's command (before it, among bw's options too, it's roster's) | Box | "[165] roster bw runs only the bw commands it knows (the first word isn't one of them, and isn't repeated here): …"; "[165] --write is roster's, not bw's: put it before bw's command …" | Use a listed command; put `--write` before bw's command; run bw itself for anything else |
+| 226 | 166 | `bw serve` (it would give the unlocked vault to every program that reaches its port), or `--session` on bw's command line (other programs can read it there) | Box | "[166] roster bw won't run bw serve: …"; "[166] roster bw won't put a session key on bw's command line …" | Run `bw serve` yourself; drop `--session` (roster passes the session in bw's environment) |
 
 ## A new Inventory
 

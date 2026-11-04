@@ -35,6 +35,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **An unanswered sign-in ends after 10 minutes** (#389), stopping `bw login` and forgetting the master password.
 - **The askpass channel checks who connects on macOS** (#390), as on Linux.
 - **`roster web` deletes an expired kept login** (#395).
+- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a Host's password, and what roster can and can't see.
 
 **App**
 
