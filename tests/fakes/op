@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 # Test stand-in for the 1Password CLI (op). Signed out until `op signin`. OLD_OP=1 mimics a version without --reveal.
 # Stand-in for 1Password CLI v2: signed out until `op signin`; item "Network gear" in vault Infra.
+# `op item list --categories Login --format json`: each item's overview as op 2 prints it (id, title, vault,
+#   category, additional_information (a login's username), urls), never a field's value. FAKE_OP_ITEMS=JSON: those
+#   items, [{"id", "title", "vault", "username", "urls": [...], "fields": {label: value}}] (default: the two below).
+#   `op item get ID --fields label=X` reads one of their fields (it prints concealed ones only with --reveal).
+# FAKE_ARGV_LOG=FILE: every call's full argv, one JSON list per line.
 import json, os, sys
 a = sys.argv[1:]
+os.environ.get("FAKE_ARGV_LOG") and open(os.environ["FAKE_ARGV_LOG"], "a").write(json.dumps(["op", *a]) + "\n")
 if a[:1] == ["--account"]: a = a[2:]
 signed = os.environ.get("OP_SESSION_test") == "tok" or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("op " + " ".join(a[:2]) + "\n")
@@ -18,6 +24,23 @@ if a[0] == "read":
     v = items.get((vault, item), {}).get(field)
     if v is None: print(f'[ERROR] could not read secret {a[1]}', file=sys.stderr); sys.exit(1)
     print(v); sys.exit()
+listed = json.loads(os.environ.get("FAKE_OP_ITEMS") or "[]")
+if a[:2] == ["item", "list"]:
+    cats = a[a.index("--categories") + 1].lower().split(",") if "--categories" in a else None
+    vault = a[a.index("--vault") + 1] if "--vault" in a else None
+    print(json.dumps([{"id": i["id"], "title": i["title"], "version": 1, "vault": {"id": "v-" + i["vault"], "name": i["vault"]},
+                       "category": i.get("category", "LOGIN"), "additional_information": i.get("username", ""),
+                       "urls": [{"primary": n == 0, "href": u} for n, u in enumerate(i.get("urls") or [])],
+                       "updated_at": "2026-11-01T10:00:00Z"}
+                      for i in listed if (cats is None or i.get("category", "LOGIN").lower() in cats)
+                      and vault in (None, i["vault"])])); sys.exit()
+if a[:2] == ["item", "get"] and any(i["id"] == a[2] for i in listed):
+    i = next(i for i in listed if i["id"] == a[2])
+    label = a[a.index("--fields") + 1].split("=", 1)[1]
+    if label not in i.get("fields", {}): print(f'[ERROR] could not find field {label}', file=sys.stderr); sys.exit(1)
+    concealed = label == "password" and "--reveal" not in a
+    value = "[use 'op item get {} --reveal' to reveal]".format(i["id"]) if concealed else i["fields"][label]
+    print(json.dumps({"id": label, "label": label, "type": "STRING", "value": value})); sys.exit()
 if os.environ.get("OLD_OP") and "--reveal" in a: print("[ERROR] unknown flag: --reveal", file=sys.stderr); sys.exit(1)
 if a[:2] == ["item", "get"]:
     item = a[2]; field = a[a.index("--fields") + 1].split("=", 1)[1]

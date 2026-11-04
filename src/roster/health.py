@@ -213,7 +213,20 @@ def vault(cfg):
     uses = {n: c for n, c in provider_uses(cfg).items() if n != "prompt"}     # prompt: typed, no vault to check
     if not uses:
         return [check("vault", "ok", "no Host Login uses a vault")]
-    return [provider_check(name, n) for name, n in sorted(uses.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return [provider_check(name, n) for name, n in sorted(uses.items(), key=lambda kv: (-kv[1], kv[0]))] + \
+        not_in_inventory(cfg)
+
+
+def not_in_inventory(cfg):
+    """The vault items no Login in roster.yml names that were new at the last `roster add --from-vault` (T221, Q191):
+    that run's count, never a vault call here."""
+    from .fromvault import cached_count
+    cached = cached_count(cfg["path"])
+    if not cached or not cached[0]:
+        return []
+    n, when = cached
+    return [check("vault", "ok", f"{count(n, 'vault item')} {'isn' if n == 1 else 'aren'}'t in roster.yml; roster add --from-vault"
+                                 + (f" (as of {str(when)[:16].replace('T', ' ')} UTC)" if when else ""))]
 
 
 def provider_check(name, n):

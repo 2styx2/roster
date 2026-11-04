@@ -183,6 +183,11 @@ ADDRESS_TAKEN = 184         # a Host at that address (and SSH port) is in roster
 NEEDS_FLAG = 185            # roster add without a terminal (or with --yes): a value it can't guess; the flag is named
 NO_ITEM_FIELDS = 186        # the vault can't give an item's address and user without reading its password
 
+# The vault items roster.yml doesn't name yet (T221, #428, decision Q191): `roster add --from-vault` with no NAME
+# (catalog rows 248-249)
+LIST_FAILED = 187           # the vault couldn't list its items (bw list items, its filter, op item list, kp ls) or sync
+NO_LISTABLE_VAULT = 188     # roster.yml uses no vault that can list its items without roster reading their passwords
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

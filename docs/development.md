@@ -35,6 +35,8 @@ src/roster/
   addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
                     (checks, the write through store.py, this Box's sync), and a vault item's address and user
                     without its password (`--from-vault`, vault.item_fields)
+  fromvault.py      `roster add --from-vault` with no NAME (T221, Q191): the vault items no Login in roster.yml names,
+                    new ones since the last run (the seen file), and the walk adding each through addhost
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
                     requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),
@@ -70,6 +72,8 @@ src/roster/
   providers/        password providers: registry + plugins + templates, builtin, bitwarden, onepassword,
                     keepassxc (a local .kdbx through keepassxc-cli);
                     bw_login: `bw login` driven a step at a time on a PTY (serve's vault.login); ConPTY on Windows
+                    bw_items_filter: the stdlib-only filter `bw list items` is piped into, so roster reads only each
+                    item's id, name, URIs and username (Q191)
 examples/           commented roster.yml and init.lua, provider plugin template, example Plugins and the Plugin API's types
 plugins/            the first-party Plugins (mesh, discover, topology), installed as Packages with dir = "plugins/NAME" (Q94)
 scripts/            gen-serve-api.py: docs/serve-api.md's method tables from serve's docstrings (Params:, Result:,

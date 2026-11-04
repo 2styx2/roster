@@ -254,6 +254,30 @@ class LoginsDoc(Part, frozen=True):
     ok: bool
 
 
+class VaultItem(Part, frozen=True):
+    """A vault item no Login in roster.yml names (fromvault.row), and the Host it suggests. Never a value."""
+
+    provider: str
+    id: str
+    name: str
+    auth: str
+    new: bool
+    host: str | None = None
+    address: str | None = None
+    port: int | None = None
+    user: str | None = None
+    note: str | None = None
+
+
+class VaultItemsDoc(Part, frozen=True):
+    """`roster add --from-vault --json` (no NAME): the items (new ones, or every one with --all), how many no Login
+    names, and how many of those are new."""
+
+    items: list[VaultItem]
+    unmapped: int
+    new: int
+
+
 # ---------------------------------------------------------------- named Inventories
 
 class NamedInventory(Part, frozen=True):

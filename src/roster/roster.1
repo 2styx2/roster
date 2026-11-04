@@ -12,7 +12,7 @@ roster resources [\-\-only LIST] [\-\-find TEXT] [\-\-json]
 roster reveal [\-\-wifi] name
 roster info [\-\-json] NAME [NAME ...]
 roster run [\-\-sudo] host ...
-roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
+roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster bw [\-\-write] ...
 roster providers [\-\-json]
@@ -167,9 +167,9 @@ the host to run it on
 the command, after \-\-
 .SS add
 .PP
-\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
+\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
 .PP
-Add one Host you already know to \fBroster.yml\fR, reviewed, and syncs this Box, the way the app's add\-Host form does (the same code): under \fB\-\-group\fR (new or existing; default the first), with \fB\-\-user\fR, \fB\-\-auth\fR, \fB\-\-enroll\fR/\fB\-\-no\-enroll\fR, \fB\-\-os\fR, \fB\-\-title\fR, \fB\-\-type\fR, \fB\-\-port\fR\&. Asks in a terminal for what's missing; \fB\-y\fR never asks. \fB\-\-from\-vault\fR fills the address and user from the \fB\-\-auth\fR item, never its password; \fB\-\-setup\fR then runs setup and check for it; \fB\-\-dry\-run\fR writes nothing. See Adding one Host
+The vault items no Login in \fBroster.yml\fR names, the new ones since the last run marked (synced first; \fB\-\-no\-sync\fR), and in a terminal a walk adding each [Y/n/edit/skip] the \fBroster add NAME\fR way; \fB\-\-all\fR every one, \fB\-\-json\fR the list, \fB\-\-mark\-seen\fR\&. Never reads a password. See Vault items not in roster.yml
 .TP
 \fBNAME\fR
 the new Host's name: letters, digits, . _ \- (needed unless \-\-from\-vault)
@@ -205,7 +205,19 @@ a free label (nas, switch, esxi, ...)
 its SSH port (default: 22)
 .TP
 \fB\-\-from\-vault\fR
-fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw); flags given win
+fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw); flags given win. With no NAME: list the vault items no Login in roster.yml names (new ones since the last run), and in a terminal add each one [Y/n/edit/skip]
+.TP
+\fB\-\-json\fR
+with \-\-from\-vault and no NAME: print the list as JSON, add nothing
+.TP
+\fB\-\-all\fR
+with \-\-from\-vault and no NAME: every item roster.yml doesn't name, not only the new ones
+.TP
+\fB\-\-mark\-seen\fR
+with \-\-from\-vault and no NAME: remember every item listed as seen, so it isn't new next time
+.TP
+\fB\-\-no\-sync\fR
+with \-\-from\-vault and no NAME: don't sync the vault first (bw sync)
 .TP
 \fB\-\-setup\fR
 then run setup for it alone (its host key, and this Box's key on it when enrolled) and check it, and say how each went
@@ -400,7 +412,7 @@ zsh\e
 the shell to print it for
 .SH JSON OUTPUT
 .PP
-The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBinfo NAME\fR, \fBresources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBproviders\fR and \fBauth\-check\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBinfo NAME\fR, \fBresources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBproviders\fR and \fBauth\-check\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 .IP \(bu 2
 \fBNever a secret.\fR Logins are references: the provider and the item (\fBbw:esx\-02 ssh\fR, \fBop:Lab/esx\-02\fR, \fBprompt\fR, \fBagent\fR). A \fBcmd:\fR or \fBenv:\fR reference says how a secret is fetched, and a password pasted into a \fBcmd:\fR line would show, so each one is cut to its kind (\fBcmd:\fR, \fBenv:\fR) everywhere in the output, error messages and check messages included, the way Plugins get them: a \fBcmd:\fR one to the end of its line, an \fBenv:\fR one its variable's name, wherever one starts a text or follows a space, a quote or one of \fB=:,({[\fR\&. An error message keeps a trailing \fB(code N)\fR\&. The cases both implementations are tested against are in \fBtests/vectors/redaction.json\fR\&. \fBauth\-check \-\-json\fR fetches every secret it tests and says only whether it was found. \fBreveal\fR has no \fB\-\-json\fR: it's for a person.
 .IP \(bu 2
@@ -411,6 +423,9 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 \fBErrors\fR go to stderr as \fB{"version": 1, "error": {"code", "message", "fix"}}\fR, with nothing on stdout. The codes are \fBroster serve\fR\&'s: \fB1\fR \fBroster.yml\fR wasn't found or doesn't load (\fBfix\fR says where), \fB2\fR no Host or resource by that name, \fB3\fR any other refusal. Wrong arguments are code \fB3\fR too, with exit status 2. A refusal serve has its own code for keeps it: \fB121\fR too many addresses for \fBdiscover\fR, \fB110\fR a \fB\-\-rotate\fR Host that isn't a Mesh source.
 .IP \(bu 2
 \fBWhat's a breaking change:\fR removing or renaming a field, changing its type or what it means, or changing an exit status. Those come with a new \fBversion\fR and a line under \fBBreaking\fR in What's new. A new field or a new command with \fB\-\-json\fR isn't one, so read the fields you need and ignore the rest.
+.TP
+\fBadd \-\-from\-vault \-\-json\fR
+\fB{version, items: [{provider, id, name, auth, new, host?, address?, port?, user?, note?}], unmapped, new}\fR: the new items (every one with \fB\-\-all\fR) no Login names, the Host each suggests and the Login to write; \fBunmapped\fR and \fBnew\fR count them all. Never a value. Errors: \fB14\fR locked, \fB187\fR the listing failed, \fB188\fR no vault to list
 .TP
 \fBhosts \-\-json\fR
 \fB{version, hosts: [Host], resources: [resource], groups: {name: {title, description}}, hidden}\fR\&. Hosts and resources in \fBroster.yml\fR order, filtered as the table is; \fBhidden\fR counts the unreviewed Hosts left out (\fB\-\-all\fR shows them). Exit 1 when \fB\-\-find\fR matches nothing

@@ -288,6 +288,28 @@ def _delete(item_id, ctx):
         raise WriteFailed(f"{NAME} didn't delete entry '{item_id}': {_scrub(_errtext(r), ctx.state.get('password'))}")
 
 
+# ---- every entry, never its password (Q191): `ls -R -f` gives the paths, and `show -a UserName -a URL` just those two
+# attributes of each entry roster.yml doesn't name yet. A locked database is never opened by asking here: the caller
+# says how to unlock.
+
+def _items(ctx, mapped):
+    _ready(ctx)
+    out = []
+    for path in _entries(ctx):
+        title = path.rsplit("/", 1)[-1]
+        item = {"id": path, "name": title, "keys": [path, title], "uris": [], "username": None}
+        if not mapped(item):
+            r = _kp(ctx, "show", "-a", "UserName", "-a", "URL", entry=path)
+            if r.returncode == 0:
+                username, _, url = r.stdout.partition("\n")
+                url = url.rstrip("\r\n")
+                item["username"] = username.rstrip("\r") or None
+                item["uris"] = [url] if url else []
+        out.append(item)
+    return out
+
+
+PROVIDERS["kp"].update(items=_items)
 PROVIDERS["kp"].update(unlock=_unlock, lock=_lock, status=_status, not_logged_in=not_set_up,
                        login_help=f"{NAME} has no sign-in, only a master password: set providers: kp: database: in "
                                   "roster.yml (or vault.kp.database in the app's init.lua), then unlock",

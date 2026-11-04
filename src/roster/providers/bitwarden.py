@@ -469,7 +469,60 @@ def _bw_login_fields(name, ctx):
     return out
 
 
+# ---- every item's name, URIs and username, never a password (Q191, the owner's ruling of 2026-11-04). bw has no
+# listing that leaves secrets out: `bw list items` prints every item whole. So its stdout goes straight into roster's
+# filter (bw_items_filter.py, its own Python process: `python -I -S`, an OS pipe between the two), and roster reads
+# only the filter's lines: {id, name, uris, username} per login item. bw's stderr is read as for any bw call.
+
+FILTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bw_items_filter.py")
+LIST_CAP = 64 * 1024 * 1024            # bytes of `bw list items` the filter reads; more is refused, not cut short
+ROW_KEYS = {"id", "name", "uris", "username"}
+
+
+def _filter_argv():
+    import sys
+    if not sys.executable:
+        raise SecretError("roster can't list Bitwarden items here: it can't find its own Python to run its filter")
+    return [sys.executable, "-I", "-S", FILTER, str(LIST_CAP)]
+
+
+def _bw_items(ctx, mapped):
+    _bw_ready(ctx)
+    key = session_key()
+    bw, filt = ctx.run_filtered(["bw", "list", "items", "--nointeraction"], _filter_argv(),
+                                env={"BW_SESSION": key} if key else None)
+    if filt.returncode == 3:                    # first: bw itself then fails writing to a pipe no one reads
+        raise SecretError(f"the vault has too many items for roster to list (over {LIST_CAP // (1024 * 1024)} MB "
+                          "from `bw list items`)")
+    if bw.returncode != 0:
+        raise SecretError(f"`bw list items` failed: {errtext(bw, stdout=False) or f'exit {bw.returncode}'}")
+    rows = []
+    try:
+        if filt.returncode != 0:
+            raise ValueError
+        for line in filt.stdout.splitlines():
+            row = json.loads(line)
+            if not isinstance(row, dict) or set(row) != ROW_KEYS:
+                raise ValueError
+            rows.append({"id": str(row["id"]), "name": str(row["name"]), "keys": [str(row["id"]), str(row["name"])],
+                         "uris": [str(u) for u in row["uris"]], "username": row["username"]})
+    except (ValueError, TypeError):
+        raise SecretError("roster couldn't read the list of Bitwarden items (`bw list items` didn't print a list "
+                          "of items)") from None
+    return rows
+
+
+def _bw_sync(ctx):
+    """`bw sync`, after the time of the one before it (`bw status`'s lastSync). Its output is never read."""
+    _bw_ready(ctx)
+    previous = _bw_status_json(ctx).get("lastSync") or None
+    r = _bw(ctx, "sync", discard=True)
+    if r.returncode != 0:
+        raise SecretError(f"`bw sync` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}")
+    return {"previous": previous}
+
+
 PROVIDERS["bw"].update(unlock=_bw_unlock, lock=_bw_lock, forget=_bw_forget, status=_bw_vault_status,
                        account=_bw_account, logout=_bw_logout, not_logged_in=NOT_LOGGED_IN,
                        create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
-                       login_fields=_bw_login_fields)
+                       login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync)

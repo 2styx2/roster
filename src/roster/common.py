@@ -11,7 +11,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import IO, Any, NoReturn, cast
 
 KEY_TAG = "roster-managed"
 LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
@@ -297,6 +297,61 @@ def run(args, timeout=None, input=None, stdout=subprocess.PIPE, **kw):
             kill_tree(p)
             raise
     return subprocess.CompletedProcess(args, p.returncode, out, err)
+
+
+STDERR_CAP = 64 * 1024         # bytes of a producer's stderr kept by run_filtered (an error message, never data)
+
+
+def filter_env():
+    """The environment run_filtered's filter gets: next to nothing (none of this process's variables, so no session
+    key, token or password a variable holds); on Windows SYSTEMROOT, which Python itself needs to start."""
+    return {k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ} if WINDOWS else {}
+
+
+def run_filtered(producer, filt, timeout=None, env=None, filter_env=None):
+    """PRODUCER's stdout connected straight to FILT's stdin, an OS pipe between the two child processes: this process
+    never reads a byte PRODUCER prints (Q191: `bw list items`, which prints every password). It reads FILT's stdout
+    and both programs' stderr (PRODUCER's up to STDERR_CAP). ENV: PRODUCER's environment (default this process's);
+    FILTER_ENV: FILT's (default this process's). Returns (PRODUCER's CompletedProcess with stdout None, FILT's).
+    A timeout kills both process trees, then raises subprocess.TimeoutExpired."""
+    import threading
+    import time
+    p1 = subprocess.Popen(producer, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    try:
+        p2 = subprocess.Popen(filt, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=filter_env)
+    except BaseException:
+        kill_tree(p1)
+        p1.wait()
+        raise
+    finally:
+        cast(IO[bytes], p1.stdout).close()              # the filter holds the read end now: never this process
+    err1 = []
+    stderr = cast(IO[bytes], p1.stderr)
+
+    def drain():
+        kept = b""
+        while chunk := stderr.read(65536):
+            kept = (kept + chunk)[:STDERR_CAP]
+        err1.append(kept)
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
+    start = time.monotonic()
+    try:
+        out2, err2 = p2.communicate(timeout=timeout)
+        p1.wait(timeout=None if timeout is None else max(0.1, timeout - (time.monotonic() - start)))
+    except BaseException:
+        kill_tree(p1)
+        kill_tree(p2)
+        p1.wait()
+        p2.wait()
+        raise
+    finally:
+        t.join(timeout=5)
+        stderr.close()
+    text = (err1[0] if err1 else b"").decode("utf-8", "replace")
+    return (subprocess.CompletedProcess(producer, p1.returncode, None, text),
+            subprocess.CompletedProcess(filt, p2.returncode, out2.decode("utf-8", "replace"),
+                                        err2.decode("utf-8", "replace")))
 
 
 def run_instead(argv):
