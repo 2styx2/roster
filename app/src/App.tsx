@@ -4375,7 +4375,7 @@ function RecentMap({
                 <span className="recent-ip">{h.ip}</span>
                 {i < 9 && (
                   <span className="recent-key key-hint" aria-hidden="true">
-                    {i + 1}
+                    <Keys keys={String(i + 1)} />
                   </span>
                 )}
               </button>

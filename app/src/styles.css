@@ -275,7 +275,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .recent-edges path.on { stroke: var(--muted); }
 .recent-list { list-style: none; margin: 0; padding: 0; }
 .recent-row {
-  width: 100%; height: var(--row-h); display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 1ch; align-items: center; column-gap: 12px; padding: 0 10px;
+  width: 100%; height: var(--row-h); display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 0 10px;
   background: transparent; border: 0; border-radius: var(--radius); color: var(--text); font-weight: 400; text-align: left;
 }
 .recent-row:active:not(:disabled) { transform: none; }
@@ -284,8 +284,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .recent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-weight: 500; }
 .recent-ip { color: var(--muted); font: 500 var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; }
-/* The digit that opens the row (Startify's numbers). */
-.recent-key { color: var(--muted); font: 500 var(--text-xs) var(--font-mono); text-align: right; }
+/* The digit that opens the row (Startify's numbers), as a key. */
+.recent-key { display: flex; justify-content: flex-end; }
 .empty-path { max-width: min(56ch, calc(100% - 32px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
 .empty-path code { direction: ltr; unicode-bidi: isolate; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
@@ -421,6 +421,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
 /* Sessions' count sits by its title: the right-hand column there holds the rows' numbers (Q196). */
 .sb-section[data-section="sessions"] .sb-count { margin-left: 4px; }
+/* A Session's number for ␣ 1–9, as a key (Q196, owner after round 10). */
+.sb-index { margin-left: auto; padding-left: 8px; flex: none; display: flex; }
+.sb-section[data-section="sessions"] .sb-count[data-above]::after { content: " · " attr(data-above) " above"; font-weight: 400; text-transform: none; letter-spacing: 0; }
 /* With no Hosts there's nothing to drag into a Folder, so its hint waits. */
 .sb-rest:not(:has([data-section="inventory"] .sb-row)) [data-section="folders"] .sb-empty { display: none; }
 /* In a very short window the Folders hint gives way, so the Inventory keeps its rows. */
@@ -550,7 +553,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* Always there (the Inventory heading's "Add a Host"): last in its heading, so a selected
    heading's other buttons appear beside it and never move it. A plain, quiet button. */
 .sidebar .sb-action.pinned { display: grid; }
-.sb-row.has-actions.selected .sb-detail, .sb-row.has-actions.selected .sb-num, .sb-row.has-actions.selected .sb-badge { display: none; }
+.sb-row.has-actions.selected .sb-detail, .sb-row.has-actions.selected .sb-num, .sb-row.has-actions.selected .sb-index, .sb-row.has-actions.selected .sb-badge { display: none; }
 
 /* State nodes (ui/StateDot.tsx, decisions Q53, Q57, Q184 and Q185): the shape carries the state,
    colour only adds to it. Filled = key login, ring = password login, grey ring = ended, dashed ring
@@ -579,13 +582,14 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the
-   logo's Host sits in the Gap orbit (4.5 of the 20.4 circumference open, centred at -45°); it
+   logo's Host sits in the Gap orbit (50° open, 2.83 of the 20.4 circumference, centred at -45°,
+   owner after round 10: a quarter read as a frozen spinner); it
    closes and fills (key) or closes into a ring (password) once the shell answers. A small gap up
    and to the right, not a quarter on the side, so beside a name it reads as a node, not a "c".
    Static: the edge in the pane is the motion. */
 .dot.connecting circle {
   fill: none; stroke: var(--accent); stroke-width: 1.5px;
-  stroke-dasharray: 15.3 5.1; stroke-dashoffset: 0;
+  stroke-dasharray: 17.57 2.83; stroke-dashoffset: 1.12;
 }
 
 /* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,
@@ -896,10 +900,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* Zero-width edge tracks: with the 12px gap they're the row's side padding, so the node sits
      12px from the row's edge and 12px from the name, as in the Sidebar (a subgrid row's own
      padding would push its first cell into the gap). */
-  /* The name is the column you scan: it takes the room first (at least 14 characters); the
+  /* The name is the column you scan: it takes the room first (at least 20 characters; the footer shows it whole when cut); the
      address up to 22, the group up to 18 and the type up to 10 take only what they need, and
      give way before it. */
-  grid-template-columns: 0 8px minmax(26ch, 1fr) fit-content(22ch) fit-content(16ch) fit-content(10ch) auto 24px 0;
+  grid-template-columns: 0 8px minmax(20ch, 1fr) fit-content(22ch) fit-content(16ch) fit-content(10ch) auto 24px 0;
 }
 .picker-row {
   grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
@@ -915,8 +919,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
-.picker-row .host-ip { font: var(--text-sm) var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.picker-row .host-ip { font: var(--text-sm) var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: max-content; }
 .picker-row .host-group, .picker-row .host-type { font-size: var(--text-sm); color: var(--muted); }
+/* Each keeps a word's room: the name gives way first (its whole text is in the footer when cut). */
+.picker-row > .host-group { min-width: min(12ch, max-content); }
+.picker-row > .host-type { min-width: min(7ch, max-content); }
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
 .picker-row > .badge { justify-self: end; overflow: visible; }
@@ -947,26 +954,22 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   font-size: var(--text-xs); line-height: 15px; color: var(--warn);
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: var(--radius-sm); padding: 0 5px;
 }
-.picker-empty { margin: 0; padding: 18px 16px; color: var(--muted); }
+/* Holds some of the list's room while a query matches nothing, so the panel doesn't collapse as you
+   type (round 10). */
+.picker-empty { margin: 0; padding: 18px 16px; color: var(--muted); min-height: min(30vh, 240px); }
 .picker-empty-next { display: block; margin-top: 4px; font-size: var(--text-sm); }
 /* The sizer: the Inventory's widest address, group and type, invisible and zero high, so the
    columns are sized by every Host and hold still as a query narrows the list. */
 .picker-row.picker-sizer { visibility: hidden; height: 0; min-height: 0; padding-block: 0; overflow: hidden; }
+/* In the footer's free room (flex 1, before the count): the selected Host's whole name, one line,
+   only when its row cuts it (the address, group and type have their columns). */
 .picker-detail {
-  flex: none; display: flex; align-items: baseline; column-gap: 10px; height: 30px; padding: 0 16px;
-  border-top: 1px solid var(--line); font-size: var(--text-sm); line-height: 30px; color: var(--muted);
-  white-space: nowrap; overflow: hidden;
+  flex: 1; min-width: 0; display: flex; align-items: baseline; column-gap: 8px;
+  white-space: nowrap; overflow: hidden; font-size: var(--text-xs); color: var(--muted);
 }
-/* One line, always (it must never move the list): the name gives way last, the group first. */
-.picker-detail > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
-.picker-detail > .host-name { flex-shrink: 0; max-width: 62%; }
-.picker-detail > .host-ip { flex-shrink: 0; }
-.picker-detail > span + span::before { content: "·"; margin-right: 10px; color: var(--muted); }
+.picker-detail > .host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .picker-detail .host-name { font-family: var(--font-mono); color: var(--text); }
-/* Nothing cut in the selected row: the strip keeps its room but says nothing (it'd repeat the row). */
 .picker-detail:not([data-cut]) > * { visibility: hidden; }
-/* A short window keeps its rows: the strip gives way, and the selected row's tooltip has it all. */
-@media (max-height: 460px) { .picker-detail { display: none; } }
 .picker-detail .host-ip { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .picker-footer {
   display: flex; align-items: center; gap: 14px; padding: 0 14px; height: 34px; flex: none;
@@ -975,6 +978,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-footer [role="status"] {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--warn);
 }
+.picker-footer [role="status"]:empty { flex: 0 0 0; }
 .picker-count { font-variant-numeric: tabular-nums; }
 .picker-hint { display: inline-flex; align-items: center; gap: 5px; }
 
@@ -1012,6 +1016,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    While roster checks or unlocks, the button steps back to a plain one in the second tone (not a
    faded apricot): it is waiting, not offered. aria-disabled keeps Enter queuing (LockScreen.tsx). */
 .lock-row button { height: 32px; min-width: 8.5em; }
+/* Nothing typed yet: Unlock waits as a plain button, so the lock screen has no apricot at rest
+   (round 10); it becomes the primary button with the first character. */
+.lock-row:has(input:placeholder-shown) button.primary,
 .lock-row button.primary[aria-disabled="true"] { background: var(--raised); color: var(--muted); border-color: var(--line-strong); }
 .lock-error { color: var(--error); font-size: var(--text-sm); }
 .lock-error.lock-caps { color: var(--warn); }
@@ -1167,7 +1174,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   @starting-style { transform: scaleX(0); }
 }
 .connect-map[data-phase="starting"] .connect-edge { transform: scaleX(0.4); }
-/* The Host's ring: open (one arc, its 79° gap centred at -45°, where the logo's Host sits)
+/* The Host's ring: open (one arc, its 50° gap centred at -45°, where the logo's Host sits)
    while connecting; the closed ring and, for a key login, the fill fade in when the shell answers. */
 .connect-host {
   fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke;

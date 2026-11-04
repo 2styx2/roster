@@ -357,11 +357,11 @@ export function ConnectCard({
         <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
-        {/* One arc, its gap (79°) centred at -45°, the logo's Host side. A dash pattern under
+        {/* One arc, its gap (50°) centred at -45°, the logo's Host side. A dash pattern under
             non-scaling-stroke repeated in Chromium and drew two gaps (round 9). */}
         <path
           className="connect-host"
-          d="M69.231 5.6 A4.25 4.25 0 1 1 65.4 1.769"
+          d="M68.994 4.546 A4.25 4.25 0 1 1 66.454 2.006"
         />
         <circle className="connect-host-closed" cx="65" cy="6" r="4.25" />
         {fills && (

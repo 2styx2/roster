@@ -19,7 +19,15 @@
 //
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
-import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
 import { hopWords, type Breadcrumb } from "../session/breadcrumb";
 import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
@@ -36,7 +44,19 @@ export type { Dot } from "../ui/StateDot";
 export interface RowAction {
   /** The accessible name, e.g. "Close esxi-02". */
   label: string;
-  icon: "close" | "edit" | "add" | "addGroup" | "review" | "unreview" | "info" | "copy" | "plan" | "apply" | "cut" | "map";
+  icon:
+    | "close"
+    | "edit"
+    | "add"
+    | "addGroup"
+    | "review"
+    | "unreview"
+    | "info"
+    | "copy"
+    | "plan"
+    | "apply"
+    | "cut"
+    | "map";
   command: CommandLine;
   /** Always shown, not only on the selected row (the Inventory's "Add a Host"). */
   pinned?: boolean;
@@ -168,16 +188,22 @@ export interface OpenMenu {
 }
 
 /** A row's DOM id, for aria-activedescendant: any row id, made a valid id. */
-export const rowDomId = (id: string) => `sb-${Array.from(id, (c) => (/[\w-]/.test(c) ? c : `_${c.codePointAt(0)}_`)).join("")}`;
+export const rowDomId = (id: string) =>
+  `sb-${Array.from(id, (c) => (/[\w-]/.test(c) ? c : `_${c.codePointAt(0)}_`)).join("")}`;
 
-const hostsCount = (n: number) => `${formatCount(n)} ${n === 1 ? "Host" : "Hosts"}`;
+const hostsCount = (n: number) =>
+  `${formatCount(n)} ${n === 1 ? "Host" : "Hosts"}`;
 
 /** What a row says about itself, beyond its label: its state in words (never only a dot's colour),
  * its note, a badge, its address, its count. */
 export function rowFacts(row: SidebarRow): string[] {
   const facts: string[] = [];
   // An ended or connecting Session's note already says it.
-  if (row.dot && !((row.dot === "ended" || row.dot === "connecting") && row.note)) facts.push(DOT_WORDS[row.dot]);
+  if (
+    row.dot &&
+    !((row.dot === "ended" || row.dot === "connecting") && row.note)
+  )
+    facts.push(DOT_WORDS[row.dot]);
   if (row.note) facts.push(row.note);
   // An unreviewed Host's badge is what its dot already said.
   if (row.badge && row.dot !== "off") facts.push(row.badge);
@@ -190,13 +216,24 @@ export function rowFacts(row: SidebarRow): string[] {
 }
 
 /** A Plugin badge's name, for its tooltip and the row's accessible name: "recent-alerts: 2". */
-const tagName = (t: { source: string; text: string }) => `${t.source}: ${t.text}`;
+const tagName = (t: { source: string; text: string }) =>
+  `${t.source}: ${t.text}`;
 
 /** The row's accessible name: "esxi-02, password login, 10.0.0.5". */
-export const rowName = (row: SidebarRow) => [row.label, ...rowFacts(row)].join(", ");
+export const rowName = (row: SidebarRow) =>
+  [row.label, ...rowFacts(row)].join(", ");
 
 const SearchIcon = () => (
-  <svg className="sb-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+  <svg
+    className="sb-icon"
+    viewBox="0 0 16 16"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.3"
+    aria-hidden="true"
+  >
     <circle cx="7" cy="7" r="4.5" />
     <path d="M10.5 10.5L14 14" strokeLinecap="round" />
   </svg>
@@ -207,8 +244,6 @@ export const headingId = (section: string) => `section:${section}`;
 
 /** Keeps focus where it is (the terminal) when a row or button is clicked. */
 const keepFocus = (e: React.MouseEvent) => e.preventDefault();
-
-
 
 type Run = (line: CommandLine) => void;
 type DropTarget = (payload: string) => CommandLine | null;
@@ -232,7 +267,15 @@ function actionTitle(a: RowAction, hints: boolean, leader: string): string {
   return `${a.label} (${a.keys.replace(LEADER, leader)})`;
 }
 
-function Actions({ actions, run, leader = "" }: { actions: readonly RowAction[]; run: Run; leader?: string }) {
+function Actions({
+  actions,
+  run,
+  leader = "",
+}: {
+  actions: readonly RowAction[];
+  run: Run;
+  leader?: string;
+}) {
   const hints = useContext(HintsShown);
   return actions.map((a) => (
     <button
@@ -278,14 +321,35 @@ const ICONS: Record<RowAction["icon"], string> = {
 
 /** A row action's icon (a Sidebar row's, a table's action). */
 export const RowActionGlyph = ({ name }: { name: RowAction["icon"] }) => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+  <svg
+    viewBox="0 0 16 16"
+    width="12"
+    height="12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.4"
+    aria-hidden="true"
+  >
     <path d={ICONS[name]} />
   </svg>
 );
 
 const Chevron = ({ folded }: { folded: boolean }) => (
-  <svg className={`sb-chev${folded ? " folded" : ""}`} viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-    <path d="M2.5 3.75L5 6.25l2.5-2.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+  <svg
+    className={`sb-chev${folded ? " folded" : ""}`}
+    viewBox="0 0 10 10"
+    width="10"
+    height="10"
+    aria-hidden="true"
+  >
+    <path
+      d="M2.5 3.75L5 6.25l2.5-2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
   </svg>
 );
 
@@ -300,11 +364,19 @@ const ROW_ICONS: Record<NonNullable<SidebarRow["icon"]>, React.ReactNode> = {
 };
 
 const RowIcon = ({ name }: { name: NonNullable<SidebarRow["icon"]> }) => (
-  <svg className="sb-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true">
+  <svg
+    className="sb-icon"
+    viewBox="0 0 16 16"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.2"
+    aria-hidden="true"
+  >
     {ROW_ICONS[name]}
   </svg>
 );
-
 
 type Select = (id: string) => void;
 type OpenRowMenu = (row: string, at: { x: number; y: number } | null) => void;
@@ -338,7 +410,9 @@ const Row = memo(function Row({
       // Chromium won't start a drag from a <button>, so the row is a div with the button role,
       // not focusable, and the <li> is what's dragged.
       draggable={row.drag !== undefined}
-      onDragStart={row.drag !== undefined ? (e) => drag.start(row, e) : undefined}
+      onDragStart={
+        row.drag !== undefined ? (e) => drag.start(row, e) : undefined
+      }
       onDragOver={row.drop ? (e) => drag.over(e, row.drop) : undefined}
       onDrop={row.drop ? (e) => drag.drop(e, row.drop) : undefined}
       onContextMenu={
@@ -374,16 +448,27 @@ const Row = memo(function Row({
         {/* The name first: what follows it in here drops out whole (to a hidden second line)
             when there's no room, and the name is cut only when it alone is too long. */}
         {/* Hovering the text shows the whole name (it may be cut off), then the row's tooltip. */}
-        <span className="sb-text" title={row.title ? `${row.label}\n${row.title}` : row.label}>
+        <span
+          className="sb-text"
+          title={row.title ? `${row.label}\n${row.title}` : row.label}
+        >
           {/* A note ("ended (code 0)") stays beside the name like the " (2)" tail: when the name
               is cut, the label gives way, never the state. */}
           <span className="sb-name">
             <span className="sb-label" dir="auto">
-              {cut ? row.label.slice(0, -(row.tail as string).length) : row.label}
+              {cut
+                ? row.label.slice(0, -(row.tail as string).length)
+                : row.label}
             </span>
             {cut && <span className="sb-tail">{row.tail}</span>}
             {row.note && <span className="sb-note"> {row.note}</span>}
-            {row.pending && <span className="sb-pending-dot" aria-hidden="true" title="Not Published yet" />}
+            {row.pending && (
+              <span
+                className="sb-pending-dot"
+                aria-hidden="true"
+                title="Not Published yet"
+              />
+            )}
             {row.tags?.map((t) => (
               <span key={t.source} className="sb-tag" title={tagName(t)}>
                 {t.text}
@@ -394,10 +479,13 @@ const Row = memo(function Row({
           {row.badge && <span className="sb-badge"> {row.badge}</span>}
           {row.detail && <span className="sb-detail"> {row.detail}</span>}
         </span>
-        {row.count !== undefined && <span className="sb-num">{formatCount(row.count)}</span>}
+        {row.count !== undefined && (
+          <span className="sb-num">{formatCount(row.count)}</span>
+        )}
         {row.index !== undefined && (
-          <span className="sb-num sb-index key-hint" aria-hidden="true">
-            {row.index}
+          // A key, drawn as one (owner, after round 10: bare digits read as data).
+          <span className="sb-index key-hint" aria-hidden="true">
+            <Keys keys={String(row.index)} />
           </span>
         )}
       </div>
@@ -429,7 +517,8 @@ const Section = memo(function Section({
 }) {
   const id = headingId(section.id);
   const folded = section.folded ?? false;
-  const emptyShown = !folded && section.rows.length === 0 && section.empty !== undefined;
+  const emptyShown =
+    !folded && section.rows.length === 0 && section.empty !== undefined;
   return (
     <section
       role="group"
@@ -439,7 +528,11 @@ const Section = memo(function Section({
       onDragOver={section.drop ? (e) => drag.over(e, section.drop) : undefined}
       onDrop={section.drop ? (e) => drag.drop(e, section.drop) : undefined}
     >
-      <div className={`sb-heading${cursor === id ? " cursor" : ""}${selected === id ? " selected" : ""}`} data-row={id} role="none">
+      <div
+        className={`sb-heading${cursor === id ? " cursor" : ""}${selected === id ? " selected" : ""}`}
+        data-row={id}
+        role="none"
+      >
         <div
           role="treeitem"
           id={rowDomId(id)}
@@ -458,11 +551,14 @@ const Section = memo(function Section({
           <Chevron folded={folded} />
           <h2>{section.title}</h2>
           {/* An empty section shows no "0": its sentence, or the pane, says it. */}
-          {section.count !== undefined && !(section.count === 0 && section.rows.length === 0) && (
-            <span className="sb-count">{formatCount(section.count)}</span>
-          )}
+          {section.count !== undefined &&
+            !(section.count === 0 && section.rows.length === 0) && (
+              <span className="sb-count">{formatCount(section.count)}</span>
+            )}
         </div>
-        {section.actions && <Actions actions={section.actions} run={run} leader={leader} />}
+        {section.actions && (
+          <Actions actions={section.actions} run={run} leader={leader} />
+        )}
       </div>
       {emptyShown && (
         <p className="sb-empty" id={`${rowDomId(id)}-empty`}>
@@ -472,7 +568,16 @@ const Section = memo(function Section({
       {!folded && (
         <ul className="sb-rows" role="none">
           {section.rows.map((row) => (
-            <Row key={row.id} row={row} cursor={row.id === cursor} selected={row.id === selected} run={run} select={select} drag={drag} openMenu={openMenu} />
+            <Row
+              key={row.id}
+              row={row}
+              cursor={row.id === cursor}
+              selected={row.id === selected}
+              run={run}
+              select={select}
+              drag={drag}
+              openMenu={openMenu}
+            />
           ))}
         </ul>
       )}
@@ -498,9 +603,15 @@ function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
   if (section.classList.contains("held")) return;
   // The room under the heading (a row list, or the one-row "None open"), which the held list keeps.
   const heading = section.querySelector<HTMLElement>(":scope > .sb-heading");
-  const room = section.getBoundingClientRect().bottom - (heading?.getBoundingClientRect().bottom ?? section.getBoundingClientRect().top);
+  const room =
+    section.getBoundingClientRect().bottom -
+    (heading?.getBoundingClientRect().bottom ??
+      section.getBoundingClientRect().top);
   section.style.setProperty("--held-h", `${section.offsetHeight}px`);
-  section.style.setProperty("--held-rows", `${Math.max(0, Math.round(room))}px`);
+  section.style.setProperty(
+    "--held-rows",
+    `${Math.max(0, Math.round(room))}px`,
+  );
   section.classList.add("held");
 }
 
@@ -511,6 +622,16 @@ function markOverflow(list: HTMLElement) {
   const more = above && below ? "both" : above ? "above" : below ? "below" : "";
   if (more) list.dataset.more = more;
   else delete list.dataset.more;
+  // The Sessions list says on its heading how many are scrolled out of sight above (round 10: a
+  // held list showing only the newest read as if the others had closed).
+  const count = list.parentElement?.querySelector<HTMLElement>(
+    ":scope > .sb-heading .sb-count",
+  );
+  if (!count || !list.matches('[data-section="sessions"] > .sb-rows')) return;
+  const row = list.querySelector<HTMLElement>(".sb-row")?.offsetHeight || 1;
+  const hidden = Math.round(list.scrollTop / row);
+  if (hidden > 0) count.dataset.above = String(hidden);
+  else delete count.dataset.above;
 }
 
 /** An IPv4 or IPv6 address, or a range (10.0.0.0/24). */
@@ -519,9 +640,16 @@ const DATA_FACT = /^[0-9a-f:.]+(\/\d+)?$/i;
 function Details({ row }: { row: SidebarRow }) {
   const facts = rowFacts(row);
   // An unreviewed Host's tooltip says what its node already said ("can't be opened").
-  const title = row.title && row.dot !== "off" && !facts.includes(row.title) ? row.title : undefined;
+  const title =
+    row.title && row.dot !== "off" && !facts.includes(row.title)
+      ? row.title
+      : undefined;
   return (
-    <div className="sb-details" data-testid="sidebar-details" aria-hidden="true">
+    <div
+      className="sb-details"
+      data-testid="sidebar-details"
+      aria-hidden="true"
+    >
       <p className={`sb-details-name${row.dot ? " data" : ""}`} dir="auto">
         {row.label}
       </p>
@@ -566,9 +694,15 @@ export function Sidebar({
     selectRef.current = onSelect;
     menuRef.current = onMenu;
   });
-  const stableRun = useCallback((line: CommandLine) => runRef.current(line), []);
+  const stableRun = useCallback(
+    (line: CommandLine) => runRef.current(line),
+    [],
+  );
   const stableSelect = useCallback((id: string) => selectRef.current?.(id), []);
-  const openMenu = useCallback<OpenRowMenu>((row, at) => menuRef.current?.({ row, at }), []);
+  const openMenu = useCallback<OpenRowMenu>(
+    (row, at) => menuRef.current?.({ row, at }),
+    [],
+  );
   const closeMenu = useCallback(() => menuRef.current?.(null), []);
 
   // Keep the cursor row in view as j/k walk a long tree.
@@ -582,7 +716,9 @@ export function Sidebar({
   );
   useLayoutEffect(() => {
     if (cursor === null) return;
-    const el = scrollRef.current?.querySelector(`[data-row="${CSS.escape(cursor)}"]`);
+    const el = scrollRef.current?.querySelector(
+      `[data-row="${CSS.escape(cursor)}"]`,
+    );
     el?.scrollIntoView?.({ block: "nearest" });
   }, [cursor]);
 
@@ -591,12 +727,15 @@ export function Sidebar({
   const liveRow = allRows(sections).find((r) => r.live)?.id ?? null;
   useLayoutEffect(() => {
     if (liveRow === null) return;
-    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(liveRow)}"]`);
+    const row = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-row="${CSS.escape(liveRow)}"]`,
+    );
     const list = row?.closest<HTMLElement>(".sb-section > .sb-rows");
     if (!row || !list || list.scrollHeight <= list.clientHeight) return;
     const top = row.offsetTop - list.offsetTop;
     if (top < list.scrollTop) list.scrollTop = top;
-    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + row.offsetHeight - list.clientHeight;
+    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight)
+      list.scrollTop = top + row.offsetHeight - list.clientHeight;
   }, [liveRow]);
 
   const restRef = useRef<HTMLDivElement | null>(null);
@@ -605,7 +744,9 @@ export function Sidebar({
   // The tree under them does the same at its top edge, so a scrolled tree reads as scrolled.
   useLayoutEffect(() => {
     const lists = [
-      scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"] > .sb-rows'),
+      scrollRef.current?.querySelector<HTMLElement>(
+        '[data-section="sessions"] > .sb-rows',
+      ),
       restRef.current,
     ].filter((el): el is HTMLElement => el != null);
     const marks = lists.map((list) => {
@@ -616,26 +757,41 @@ export function Sidebar({
       list.addEventListener("scroll", mark, { passive: true });
       return [list, mark] as const;
     });
-    return () => marks.forEach(([list, mark]) => list.removeEventListener("scroll", mark));
+    return () =>
+      marks.forEach(([list, mark]) => list.removeEventListener("scroll", mark));
   });
 
   // While the pointer is on the tree, the Sessions above it keep their height (Q197).
-  const sessionsSection = () => scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
+  const sessionsSection = () =>
+    scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
 
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs
   // some data for a drag to start).
   const dragged = useRef<SidebarRow | null>(null);
   const focusBefore = useRef<Element | null>(null);
   const pressing = useRef(false);
-  const cursorRow = cursor === null ? null : (allRows(sections).find((r) => r.id === cursor) ?? null);
+  const cursorRow =
+    cursor === null
+      ? null
+      : (allRows(sections).find((r) => r.id === cursor) ?? null);
   // The open menu's row on screen, for a menu opened by a key to go under it.
   const menuAt = menu?.row ?? null;
   const menuAnchor = useCallback(
-    () => (menuAt === null ? null : (scrollRef.current?.querySelector(`[data-row="${CSS.escape(menuAt)}"]`) ?? null)),
+    () =>
+      menuAt === null
+        ? null
+        : (scrollRef.current?.querySelector(
+            `[data-row="${CSS.escape(menuAt)}"]`,
+          ) ?? null),
     [menuAt],
   );
   // The open menu's row: gone (removed, folded away), the menu goes with it.
-  const menuRow = menu === null ? null : (allRows(sections).find((r) => r.id === menu.row && (r.menu || r.actions?.length)) ?? null);
+  const menuRow =
+    menu === null
+      ? null
+      : (allRows(sections).find(
+          (r) => r.id === menu.row && (r.menu || r.actions?.length),
+        ) ?? null);
   const menuEntries = menuRow && rowMenu ? rowMenu(menuRow) : [];
   const menuShown = menuRow !== null && menuEntries.length > 0;
   useLayoutEffect(() => {
@@ -655,7 +811,12 @@ export function Sidebar({
     refocus() {
       const el = focusBefore.current;
       focusBefore.current = null;
-      if (el instanceof HTMLElement && el.isConnected && (document.activeElement === document.body || !document.activeElement)) el.focus();
+      if (
+        el instanceof HTMLElement &&
+        el.isConnected &&
+        (document.activeElement === document.body || !document.activeElement)
+      )
+        el.focus();
     },
     start(row, e) {
       dragged.current = row;
@@ -683,7 +844,9 @@ export function Sidebar({
       key={section.id}
       section={section}
       cursor={cursor !== null && cursorIn(section, cursor) ? cursor : null}
-      selected={selected !== null && cursorIn(section, selected) ? selected : null}
+      selected={
+        selected !== null && cursorIn(section, selected) ? selected : null
+      }
       run={stableRun}
       select={stableSelect}
       drag={drag}
@@ -694,10 +857,20 @@ export function Sidebar({
 
   // Nine or more Sessions: the tree's other live rows keep their colour but drop the edge stub, so
   // stubs stay a signal, not a texture (owner, after round 9; styles.css).
-  const manySessions = (sections.find((s) => s.id === "sessions")?.count ?? 0) >= 9;
+  const manySessions =
+    (sections.find((s) => s.id === "sessions")?.count ?? 0) >= 9;
   return (
-    <nav className={`sidebar side-${side}`} aria-label="Sidebar" data-many-sessions={manySessions || undefined}>
-      <button type="button" className="sb-find" onMouseDown={keepFocus} onClick={() => run("find")}>
+    <nav
+      className={`sidebar side-${side}`}
+      aria-label="Sidebar"
+      data-many-sessions={manySessions || undefined}
+    >
+      <button
+        type="button"
+        className="sb-find"
+        onMouseDown={keepFocus}
+        onClick={() => run("find")}
+      >
         <SearchIcon />
         <span className="sb-find-label">Find a Host</span>
         {findKeys && (
@@ -715,26 +888,46 @@ export function Sidebar({
         tabIndex={0}
         aria-activedescendant={cursor !== null ? rowDomId(cursor) : undefined}
         onFocus={(e) => {
-          if (e.target !== e.currentTarget || e.currentTarget.contains(e.relatedTarget)) return;
+          if (
+            e.target !== e.currentTarget ||
+            e.currentTarget.contains(e.relatedTarget)
+          )
+            return;
           // A press on a draggable row can't keep focus where it is (that would stop the drag), so the
           // tree takes it. That's a click, not Tab reaching the tree: entering App mode here put the
           // cursor on the top row and scrolled the Sidebar up to it. Focus goes straight back instead.
           const before = focusBefore.current;
           if (pressing.current && before !== null) {
-            if (before instanceof HTMLElement && before.isConnected && before !== e.currentTarget) before.focus({ preventScroll: true });
+            if (
+              before instanceof HTMLElement &&
+              before.isConnected &&
+              before !== e.currentTarget
+            )
+              before.focus({ preventScroll: true });
             return;
           }
           onTreeFocus?.(e.relatedTarget);
         }}
         onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget)) onTreeBlur?.(e.relatedTarget);
+          if (!e.currentTarget.contains(e.relatedTarget))
+            onTreeBlur?.(e.relatedTarget);
         }}
         onContextMenu={(e) => {
           // The Menu key or Shift+F10 with the tree focused (App mode): the cursor row's menu. A
           // row's own handler took a right-click on it already.
-          if (e.target !== e.currentTarget || e.defaultPrevented || e.button === 2) return;
+          if (
+            e.target !== e.currentTarget ||
+            e.defaultPrevented ||
+            e.button === 2
+          )
+            return;
           e.preventDefault();
-          if (cursorRow && (cursorRow.menu || cursorRow.actions?.length) && menu?.row !== cursorRow.id) openMenu(cursorRow.id, null);
+          if (
+            cursorRow &&
+            (cursorRow.menu || cursorRow.actions?.length) &&
+            menu?.row !== cursorRow.id
+          )
+            openMenu(cursorRow.id, null);
         }}
         onDragOver={(e) => drag.over(e, undefined)}
         onDrop={(e) => drag.drop(e, undefined)}
@@ -747,7 +940,14 @@ export function Sidebar({
             the sections under it scroll, and that scroller keeps the row under the pointer. */}
         {/* Only when Sessions come first (init.lua can order the sections otherwise). */}
         {sections.slice(0, lifted).map(renderSection)}
-        <div className="sb-rest" ref={restRef} role="none" tabIndex={-1} onPointerEnter={() => holdSessions(sessionsSection(), true)} onPointerLeave={() => holdSessions(sessionsSection(), false)}>
+        <div
+          className="sb-rest"
+          ref={restRef}
+          role="none"
+          tabIndex={-1}
+          onPointerEnter={() => holdSessions(sessionsSection(), true)}
+          onPointerLeave={() => holdSessions(sessionsSection(), false)}
+        >
           {sections.slice(lifted).map(renderSection)}
         </div>
       </div>
@@ -769,13 +969,23 @@ export function Sidebar({
 }
 
 function cursorIn(section: SidebarSection, cursor: string): boolean {
-  return cursor === headingId(section.id) || section.rows.some((r) => r.id === cursor);
+  return (
+    cursor === headingId(section.id) ||
+    section.rows.some((r) => r.id === cursor)
+  );
 }
 
 /** A section's heading as a cursor stop. */
 function headingRow(section: SidebarSection): SidebarRow {
   const id = headingId(section.id);
-  return { id, label: section.title, level: -1, foldable: true, folded: section.folded ?? false, command: `togglefold ${id}` };
+  return {
+    id,
+    label: section.title,
+    level: -1,
+    foldable: true,
+    folded: section.folded ?? false,
+    command: `togglefold ${id}`,
+  };
 }
 
 /** Every cursor stop, top to bottom (the order j/k walk): each heading, then its shown rows. */
@@ -793,9 +1003,12 @@ export function moveCursor(
   const i = rows.findIndex((r) => r.id === cursor);
   const last = rows.length - 1;
   const next =
-    move === "top" ? 0
-    : move === "bottom" ? last
-    : i < 0 ? 0
-    : Math.max(0, Math.min(last, i + (move === "down" ? 1 : -1)));
+    move === "top"
+      ? 0
+      : move === "bottom"
+        ? last
+        : i < 0
+          ? 0
+          : Math.max(0, Math.min(last, i + (move === "down" ? 1 : -1)));
   return rows[next]?.id ?? null;
 }

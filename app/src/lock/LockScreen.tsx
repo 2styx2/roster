@@ -318,6 +318,8 @@ function UnlockForm({
           type="password"
           autoComplete="off"
           spellCheck={false}
+          // An empty placeholder, so CSS can tell an empty field (:placeholder-shown).
+          placeholder=" "
           autoFocus
           readOnly={busy}
           aria-invalid={error ? true : undefined}

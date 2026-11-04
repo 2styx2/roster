@@ -37,7 +37,8 @@ import { StateDot, type Light } from "../ui/StateDot";
 function markCut(list: HTMLElement | null, strip: HTMLElement | null) {
   if (!strip) return;
   const cells =
-    list?.querySelectorAll<HTMLElement>(".picker-row.selected > span") ?? [];
+    list?.querySelectorAll<HTMLElement>(".picker-row.selected > .host-name") ??
+    [];
   const cut = [...cells].some((c) => c.scrollWidth > c.clientWidth + 1);
   if (cut) strip.dataset.cut = "";
   else delete strip.dataset.cut;
@@ -171,7 +172,7 @@ export function Picker({
   const [notice, setNotice] = useState("");
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
-  const stripRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLSpanElement>(null);
   // The strip speaks only when something in the selected row is cut (markCut, below).
   useLayoutEffect(() => markCut(listRef.current, stripRef.current));
 
@@ -477,22 +478,6 @@ export function Picker({
             {widest.badge && <span className="badge">unreviewed</span>}
           </li>
         </ul>
-        {/* The selected Host whole, on one steady line: rows never wrap, so the list never jumps
-            as the selection moves (Q195). The option itself carries the name for screen readers. */}
-        {/* Its room is kept while there are rows; it speaks only when the selected row is cut,
-            so it never just repeats the row (round 9). */}
-        {rowCount > 0 && (
-          <div className="picker-detail" aria-hidden="true" ref={stripRef}>
-            {selected && (
-              <>
-                <span className="host-name">{selected.name}</span>
-                {selected.ip && <span className="host-ip">{selected.ip}</span>}
-                {selected.group && <span>{selected.group}</span>}
-                {selected.type && <span>{selected.type}</span>}
-              </>
-            )}
-          </div>
-        )}
         {rowCount === 0 && (
           <p className="picker-empty">
             {query.trim() === "" && hosts.hosts.length === 0
@@ -511,6 +496,19 @@ export function Picker({
           <span role="status" title={notice || undefined}>
             {notice}
           </span>
+          {/* The selected Host whole, in the footer's free room: shown only when its row is cut
+              (Q195, round 10: a strip of its own sat empty most of the time). Rows never wrap,
+              so the list never jumps; the option carries the name for screen readers. */}
+          {!notice && (
+            <span
+              className="picker-detail"
+              aria-hidden="true"
+              ref={stripRef}
+              title={selected?.name}
+            >
+              {selected && <span className="host-name">{selected.name}</span>}
+            </span>
+          )}
           {/* The count, said once typing pauses (ticket 54); the one beside it is only seen. */}
           <Announce
             text={
