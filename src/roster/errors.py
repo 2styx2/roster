@@ -160,6 +160,12 @@ RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has n
 MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
 NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
 
+# `roster bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
+# None of the three messages repeats what came after bw's command: those arguments may hold a password
+BW_NEEDS_WRITE = 164        # a bw command that changes the vault, writes it out, or acts on the account, without --write
+BW_NOT_ALLOWED = 165        # a bw command or option before it that roster bw doesn't know, or --write among bw's own
+BW_REFUSED = 166            # never run: `bw serve` (the vault to every local program) or a session on the command line
+
 # A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233)
 INVENTORY_THERE = 170       # roster init: a roster.yml is there already, so it's kept as it is; nothing written
 NOT_AN_INVENTORY = 171      # roster init: the file to import isn't there or doesn't load, or a clone has no roster.yml
