@@ -317,7 +317,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 | `38` | askpass: the helper couldn't reach `serve` |
 | `40` | `host.check`: the address doesn't resolve |
 | `41` | `host.check`: the ssh port refused the connection |
-| `42` | `host.check`: no answer in time. For 10.19.x the fix mentions the rate limiter (wait a few minutes) |
+| `42` | `host.check`: no answer in time. The fix names the rate limiter for an address in one of `rate_limited:`'s networks in roster.yml (wait a few minutes), none for an address outside them, and says a rate limiter on the network can cause it when the list is empty |
 | `43` | `host.check`: the Host's key isn't the recorded one. Never accepted automatically |
 | `44` | `host.check`, `session.prepare`: no recorded host key for the Host. From `session.prepare`, `data` has its `address` and `port`, for the app to ask about the key |
 | `45` | `host.check`: the Host refused the password for that user |
