@@ -236,6 +236,7 @@ def test_one_bad_host_is_skipped_with_why_not_the_whole_import(isolated, capsys,
     assert "bad (" in out and "%" in out and "spaced (" in out
 
 
+@posix_only                                                 # Windows can't name a folder with a colon
 def test_an_ssh_config_path_with_odd_characters_still_imports(isolated, capsys, tmp_path):
     """L1: the path goes into a comment and the group's title: a ': ' or ' #' can't break or cut it."""
     d = tmp_path / "a: b #c"
@@ -281,6 +282,10 @@ def test_import_refuses_a_huge_or_special_file(isolated, capsys, tmp_path):
 
 
 def test_a_clone_url_never_shows_its_credentials(isolated, capsys, tmp_path):
+    from roster.newinventory import shown_url
+    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://me:***@example.com:8443/team/map.git"
+    assert shown_url("file://me:tok@D:\\a\\nope") == "file://me:***@D:\\a\\nope"        # a Windows path after it
+    assert shown_url("git@example.com:team/map.git") == "git@example.com:team/map.git"     # scp form: no password
     """L4: https://user:TOKEN@host/... in an error is shown without the TOKEN."""
     target = isolated["home"] / "infra" / "roster.yml"
     with pytest.raises(SystemExit) as e:
