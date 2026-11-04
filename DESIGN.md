@@ -316,7 +316,7 @@ A tmux-like line on Chrome Graphite: `● backend  ■ this Box  ● esx-02  N H
 
 ### Connect card and lock screen (signature)
 - **Connect card:** while a Session starts, the pane itself shows the map: no surface, no border, no shadow. It has this Box's square, an edge and the Host's ring (drawn 96px wide), the Host and its address in Iosevka, and plain progress text (`ssh` in Iosevka). The edge reaches 40% while ssh starts and the Host's ring while it logs in (120ms each). The terminal stays hidden until its first byte, so no cursor blinks behind the card. From 3s it counts the seconds in Iosevka, and from 8s it shows the keys that close the Session. When the shell answers, the ring fills and then the card fades. It's never a spinner and never a blank terminal. The host-key and password questions keep the Panel Graphite surface, because they ask something.
-- **Lock screen:** the Gap orbit mark, the Box name in Iosevka, one field and nothing else. It covers the window instantly; no fade, because hiding Sessions must not lag.
+- **Lock screen:** the Gap orbit mark, the Box name in Iosevka, one field labelled with the vault ("Bitwarden master password") and nothing else; "Locked" is the dialog's name for assistive tech, not drawn. It covers the window instantly; no fade, because hiding Sessions must not lag.
 
 ### Motion
 The tokens are `--ease-out` (`cubic-bezier(0.23, 1, 0.32, 1)`), 120ms press/fade/draw, 150ms move, and a 4px enter offset. Motion uses transform and opacity only. Under reduced motion, movement drops and fades stay. Every new or changed animation goes through the `animate` skill.

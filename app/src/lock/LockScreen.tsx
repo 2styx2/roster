@@ -83,7 +83,12 @@ function LockScreen({ vault, hint, box, errorRows, copy }: { vault: Vault; hint?
     <div className="lock" role="dialog" aria-modal="true" aria-labelledby="lock-title">
       <section className="lock-panel">
         <Logo size={40} className="lock-mark" />
-        <h1 id="lock-title">{heading(vault.view)}</h1>
+        {/* Locked, the screen is the mark, this Box and one field (taste.md "Lock screen"): the
+            heading stays the dialog's name for assistive tech but isn't drawn. Every other state
+            shows its heading, since there it says what's wrong. */}
+        <h1 id="lock-title" className={vault.view.state === "locked" ? "visually-hidden" : undefined}>
+          {heading(vault.view)}
+        </h1>
         {box && (
           <p className="lock-box">
             <span className="box-mark" aria-hidden="true" />
@@ -174,8 +179,7 @@ function UnlockForm({
 
   return (
     <form className="lock-form" onSubmit={(e) => void submit(e)}>
-      <p>Unlock {providerName(provider)} to continue.</p>
-      <label htmlFor="lock-password">Master password</label>
+      <label htmlFor="lock-password">{providerName(provider)} master password</label>
       <div className="lock-row">
         <input
           id="lock-password"

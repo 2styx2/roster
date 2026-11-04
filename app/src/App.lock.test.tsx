@@ -31,7 +31,7 @@ describe("the Lock", () => {
   it("opens locked, with the Sessions hidden", async () => {
     await start();
     expect(await screen.findByRole("dialog", { name: /locked/i })).toBeInTheDocument();
-    expect(await screen.findByText(/unlock bitwarden/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Bitwarden master password")).toBeInTheDocument();
     expect(sessions()).toBeNull();
     expect(passwordField()).toHaveFocus();
   });
