@@ -631,6 +631,46 @@ def test_run_on_a_windows_host_passes_on_its_exit_code(win, capfd, command, code
     assert "ROSTER_EXIT" not in err
 
 
+NATIVE3 = "if (Get-Command cmd.exe -ErrorAction SilentlyContinue) { cmd /c exit 3 } else { sh -c 'exit 3' }"
+NATIVE_ERR0 = "& $env:FAKE_PYTHON -c 'import sys; sys.stderr.write(chr(110)+chr(10))'"      # writes to stderr, exits 0
+
+
+@needs_powershell
+@SHELLS
+@pytest.mark.parametrize("command, code", [
+    ("[Console]::Error.Write('no newline'); exit 3", 3),              # CMD's last stderr write had no newline
+    (NATIVE3 + "; break", 3),                                        # break, continue, return: no last statement
+    (NATIVE3 + "; continue", 3),
+    ("Get-Item -LiteralPath ./no-such-thing; return", 1),
+    ("Write-Output fine; return", 0),
+    (NATIVE_ERR0 + "; Get-Item -LiteralPath ./no-such-thing -ErrorAction Ignore", 1),   # failed, though $Error didn't grow
+    (NATIVE_ERR0, 0),
+])
+def test_how_cmd_ends_never_turns_a_failure_into_success(win, capfd, command, code):
+    rc, out, err = run_on(win, capfd, command)
+    assert rc == code, (out, err)
+    assert "ROSTER_" not in err
+
+
+@needs_powershell
+def test_cmds_own_output_never_says_roster_refused_it(win, capfd):
+    """[161] and [156] come only from roster's own (nonce'd) lines, never from what CMD prints."""
+    rc, out, err = run_on(win, capfd, "[Console]::Error.WriteLine('roster: NOT_POWERSHELL: x'); "
+                                      "[Console]::Error.WriteLine('ROSTER_NOT_POWERSHELL=' + '0' * 32 + ':x'); "
+                                      "[Console]::Error.WriteLine('powershell: not found'); exit 0")
+    assert rc == 0 and "[161]" not in err and "[156]" not in err
+
+
+@needs_powershell
+@SHELLS
+def test_a_script_that_never_ran_isnt_mistaken_for_the_commands_exit(win, capfd, monkeypatch):
+    """The bootstrap refuses a malformed frame (exit 3, no marker): roster says the command may not have run, 255."""
+    from roster import winhost
+    monkeypatch.setattr(winhost, "framed", lambda script: "99999\nshort")
+    rc, out, err = run_on(win, capfd, "exit 3")
+    assert rc == 255 and "ended without the command's exit code" in err
+
+
 @needs_powershell
 @SHELLS
 def test_an_exit_marker_in_the_commands_own_output_is_shown_and_ignored(win, capfd):
@@ -640,14 +680,17 @@ def test_an_exit_marker_in_the_commands_own_output_is_shown_and_ignored(win, cap
     assert rc == 5 and forged in err and forged in out
 
 
-def test_a_run_scripts_exit_marker_is_its_own_nonces():
+def test_roster_reads_only_its_own_lines_from_a_runs_stderr():
+    """The launcher's lines carry this run's nonce, and may come after CMD's last write with no newline before them."""
     from roster import winhost
-    m = winhost.exit_marker("ab" * 16)
-    assert m.fullmatch("ROSTER_EXIT=" + "ab" * 16 + ":3\r\n").group(1) == "3"
-    assert not m.fullmatch("ROSTER_EXIT=" + "cd" * 16 + ":0\n")
-    assert not m.fullmatch("x ROSTER_EXIT=" + "ab" * 16 + ":0\n")
+    said = winhost.RunOutcome("ab" * 16)
+    assert said.take("ROSTER_EXIT=" + "ab" * 16 + ":3\r\n") == "" and said.code == 3
+    assert said.take("partial lineROSTER_EXIT=" + "ab" * 16 + ":4\n") == "partial line\n" and said.code == 4
+    forged = "ROSTER_EXIT=" + "cd" * 16 + ":0\n"
+    assert said.take(forged) == forged and said.code == 4
+    assert said.take("ROSTER_NOT_POWERSHELL=" + "cd" * 16 + ":x\n").startswith("ROSTER_") and said.notes == {}
     script = winhost.run_script("Write-Output hi", "ab" * 16)
-    assert script.isascii() and "Write-Output" not in script        # CMD only as base64, two levels down
+    assert script.isascii() and "Write-Output" not in script        # CMD only as base64
 
 
 @needs_powershell

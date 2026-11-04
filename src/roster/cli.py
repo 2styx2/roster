@@ -31,6 +31,7 @@ from .sshops import (
     write_ssh_config,
 )
 from .web import cmd_web, mask
+from .winhost import clean
 
 # ---------------------------------------------------------------- commands
 
@@ -734,7 +735,7 @@ def cmd_run(cfg, args):
     try:
         rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
     sys.stdout.write(out)
     sys.stderr.write(err)
     if words[0] == "sudo" and rc != 0 and ("password is required" in err or "terminal is required" in err):
@@ -760,7 +761,7 @@ def run_windows(h, command, sudo):
     except ValueError as e:                 # the script with CMD in it is over 1 MB: nothing was sent
         die(f"{h['name']}: {e}: nothing ran")
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
 
 
 def run_sudo(h, command):
@@ -768,7 +769,7 @@ def run_sudo(h, command):
     try:
         secret = get_secret(h["ssh"]["auth"], h["group"])
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
     if not secret:
         die(f"{h['name']}: --sudo needs the login's password, but its auth is {h['ssh']['auth']!r} "
             "(set auth: to the vault item that holds the password)")
@@ -783,7 +784,7 @@ def run_sudo(h, command):
         try:
             rc, out, err = password_exec(h, wrapped, secret, stdin=secret + "\n")
         except RuntimeError as e:
-            die(f"{h['name']}: {mask(str(e), [secret])}")
+            die(f"{h['name']}: {clean(mask(str(e), [secret]))}")
     sys.stdout.write(mask(out, [secret]))
     sys.stderr.write(mask(err, [secret]))
     if "incorrect password" in err or "no password was provided" in err:

@@ -2068,3 +2068,11 @@ def test_a_windows_host_once_in_the_mesh_is_never_visited_to_take_it_back(win_ne
     r = mesh.run(win_net.cfg(), apply=True)
     assert "win-1" not in r["pending"]
     assert not any(c.endswith(" win-1") for c in win_net.connections())
+
+
+@pytest.mark.parametrize("argv", [["mesh", "cut", "win-1", "--yes"], ["mesh", "--find-leftovers"],
+                                  ["mesh", "--remove-leftovers", "--yes"]])
+def test_cut_and_leftovers_never_log_in_to_a_windows_host(win_net, argv):
+    mesh.run(win_net.cfg(), apply=True)
+    main(argv)
+    assert not any(c.endswith(" win-1") for c in win_net.connections())

@@ -688,7 +688,7 @@ def visits_of(cfg, hosts):
     for x in links:
         if x.get("via") and "skip" not in x and (x["from"], x["via"]) in live:
             hops.setdefault(x["via"], {})[x["to"]] = hosts[x["to"]]
-    hop_only = [n for n in sorted(set(hops) - set(g["sources"])) if hosts[n]["enroll"]]
+    hop_only = [n for n in sorted(set(hops) - set(g["sources"])) if visitable(hosts[n])]
     visits = sorted(set(g["visit"]) | set(ex))
     return g, st, ex, links, hops, hop_only, visits
 
