@@ -11,10 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from .common import (
+    KEY_TAG,
+    LEGACY_KEY_TAGS,
     SSH_UNSAFE,
     WINDOWS,
     current_inventory,
     die,
+    key_name_file,
     known_hosts_file,
     program_argv,
     replace_file,
@@ -45,6 +48,56 @@ def public_key_line(cfg):
     if len(parts) < 2:
         die(f"{cfg['pub']} doesn't look like a public key")
     return f"{parts[0]} {parts[1]} {cfg['tag']}"   # tag lets revoke find exactly this box's key
+
+
+def ere_literal(text):
+    """TEXT as a POSIX ERE (and .NET regex) that matches it literally: grep -E on a Host, -cmatch on Windows."""
+    return re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", text)
+
+
+TAGS_ERE = "(" + "|".join((KEY_TAG,) + LEGACY_KEY_TAGS) + "):[A-Za-z0-9_-]+$"     # a roster-managed tag, any Box name
+
+
+def key_ere(kind, key):
+    """An ERE for a Box key line of key KIND KEY under a roster-managed tag of any name, with or without options
+    before it (`from="..." ssh-ed25519 KEY roster-managed:BOX`, #423's review M1): it ends in this key and a roster
+    tag, so it's this Box's line, whatever its name. A line with no roster tag (a user's own) never matches."""
+    return f"(^| ){ere_literal(kind)} {ere_literal(key)} {TAGS_ERE}"
+
+
+def box_key_re(cfg):
+    """What matches this Box's key line in authorized_keys: its tag (cfg's tag_re), or this Box's own public key with
+    a roster-managed tag of any Box name (T217, #412): a Box renamed since (box_name:, or the hostname) still finds
+    its line under the earlier name, and never another Box's, whose key differs. The tag alone without a public key."""
+    try:
+        parts = cfg["pub"].read_text().split()
+    except OSError:
+        return cfg["tag_re"]
+    if len(parts) < 2:
+        return cfg["tag_re"]
+    return f"{cfg['tag_re']}|{key_ere(parts[0], parts[1])}"
+
+
+def key_tag_name(cfg):
+    """The Box name in this Box's public key's comment (ssh-keygen -C, as ensure_key made it, or as setup re-tagged
+    it), or None when the comment isn't a roster-managed tag (a key of the user's own)."""
+    try:
+        parts = cfg["pub"].read_text().split()
+    except OSError:
+        return None
+    m = re.fullmatch(f"(?:{'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):([A-Za-z0-9_-]+)", parts[2]) \
+        if len(parts) == 3 else None
+    return m.group(1) if m else None
+
+
+def key_named(cfg):
+    """The Box name this Box's key lines on this Inventory's Hosts carry: what the last `roster setup` that reached
+    every key Host tagged them with (key_name_file), else the key's own comment (a key made by roster names the Box
+    as it was then). None: not known (a key of the user's own, never set up since T217)."""
+    try:
+        return key_name_file().read_text().strip() or None
+    except OSError:
+        return key_tag_name(cfg)
 
 
 def hk_name(h: dict[str, Any]) -> str:
@@ -397,8 +450,29 @@ def add_key_script(pub, tag_re):
             "chmod 700 ~/.ssh; echo ROSTER_OK")
 
 
+def retag_key_script(pub):
+    """T217: this Box's key lines (PUB's key under any roster-managed name, options and all) get PUB's tag, in place:
+    their options stay, every other line stays as it is (never matched by name: #423's review L2), and nothing is
+    added. ROSTER_NONE when there's no such line (a key file roster doesn't manage, as ESXi's, or a line written by
+    hand); a grep that fails (2: unreadable) is a failure, never "no line"."""
+    kind, key, tag = pub.split()[:3]
+    found = key_ere(kind, key)
+    return ("set -e; [ -f ~/.ssh/authorized_keys ] || { echo ROSTER_NONE; exit 0; }; rc=0; "
+            f"grep -q -E -- {shlex.quote(found)} ~/.ssh/authorized_keys || rc=$?; "
+            "[ $rc -eq 1 ] && { echo ROSTER_NONE; exit 0; }; "
+            "[ $rc -eq 0 ] || { echo \"grep couldn't read authorized_keys (exit $rc)\" >&2; exit 1; }; "
+            "umask 077; " + REPLACE_AK +
+            # the line with a space before it, so the key matches at its start too; ENVIRON, so awk keeps every \
+            f"RE={shlex.quote(' ' + found.removeprefix('(^| )'))} TAG={shlex.quote(tag)} "
+            "awk 'BEGIN { re = ENVIRON[\"RE\"]; t = ENVIRON[\"TAG\"] } "
+            f"(\" \" $0) ~ re {{ sub(/ {TAGS_ERE[:-1]}$/, \" \" t) }} {{ print }}' \"$f\" > \"$f.roster\"; "
+            "chmod 600 \"$f.roster\"; " + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + "echo ROSTER_OK")
+
+
 def remove_key_script(tag_re):
+    # each line it takes says its tag's name first (ROSTER_TAG NAME), so revoke can say when one had another name
     return ("set -e; [ -f ~/.ssh/authorized_keys ] || { echo ROSTER_OK; exit 0; }; " + REPLACE_AK +
+            f"grep -E -- {shlex.quote(tag_re)} \"$f\" | sed -n 's/.*:\\([A-Za-z0-9_-]*\\)$/ROSTER_TAG \\1/p' || true; "
             f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$f.roster\" || true; " +
             KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + "echo ROSTER_OK")
 

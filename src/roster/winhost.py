@@ -311,6 +311,26 @@ function Main {
     $adminSecure = { param($f) Set-AdminAcl $f }
     $userSecure = { param($f) Set-UserAcl $f $me }
 
+    $Retagged = $null
+    if ($Mode -eq 'retag') {
+        # T217: this Box's key lines ($TagRe: its key under any roster name, options and all) get $Pub's tag, in
+        # place: options, line ends and every other line stay; nothing is added (NOLINE: none found here)
+        $old = Read-Keys $mine
+        $tag = ($Pub -split ' ')[-1]
+        $hit = $false
+        if ($null -ne $old) {
+            $Retagged = -join @(foreach ($l in @($old -split '(?<=\n)')) {
+                if ($l -eq '') { continue }
+                $body = $l.TrimEnd()
+                if ($body -cmatch $TagRe) {
+                    $hit = $true
+                    ($body -creplace ' (roster-managed|fleet-managed):[A-Za-z0-9_-]+$', (' ' + $tag)) + $l.Substring($body.Length)
+                } else { $l }
+            })
+        }
+        if (-not $hit) { Say 'NOLINE'; Say 'ROSTER_OK'; return }
+        $Mode = 'add'
+    }
     if ($Mode -eq 'add') {
         if ($mine -eq $adminFile) {
             Assert-Folder (Split-Path -Parent $adminFile) $me @($Admins, $System)
@@ -320,7 +340,7 @@ function Main {
             Assert-Folder $sshDir $me @($me, $Admins, $System)
         }
         $old = Read-Keys $mine
-        $new = New-Text $old $Pub
+        $new = if ($null -ne $Retagged) { $Retagged } else { New-Text $old $Pub }
         $created = $null -eq $old
         $secure = if ($mine -eq $adminFile) { $adminSecure } elseif ($created) { $userSecure } else { $null }
         # an existing user file's ACL, as it is (File.Replace keeps it): never changed, only said
@@ -334,6 +354,9 @@ function Main {
         foreach ($f in $files) {
             $old = Read-Keys $f
             if ($null -eq $old) { continue }
+            foreach ($l in @($old -split '\n')) {     # each line it takes says its tag's name (revoke says another)
+                if ((Is-Mine $l) -and $l.TrimEnd() -cmatch ':([A-Za-z0-9_-]+)$') { Say "TAG $($Matches[1])" }
+            }
             $new = New-Text $old $null
             if ($new -ceq $old) { continue }
             if ($f -eq $adminFile) {
@@ -374,11 +397,13 @@ try { Main } catch {
 }
 """
 
-MODES = ("add", "remove", "check")
+MODES = ("add", "remove", "check", "retag")
 
 
 def script(mode, tag_re, pub=""):
-    """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE): sent on stdin."""
+    """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE; retag: the lines
+    TAG_RE matches, this Box's key under any roster name, get PUB's tag in place, NOLINE when there's none): sent on
+    stdin."""
     if mode not in MODES:
         raise ValueError(mode)
     header = f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
@@ -628,8 +653,9 @@ class Result:
     """What the script said: the files it wrote or read, its warnings, and whether the file is the administrators'
     (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
-    def __init__(self, files, warnings, admins=False):
+    def __init__(self, files, warnings, admins=False, tags=(), noline=False):
         self.files, self.warnings, self.admins = files, warnings, admins
+        self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
 
 
 def admins_note(name):
@@ -652,7 +678,8 @@ def outcome(name, rc, out, err):
         if ln == "NOT_WINDOWS":
             raise RuntimeError(not_windows(name))
     if "ROSTER_OK" in lines:
-        return Result(files, warnings, "SCOPE admins" in lines)
+        return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
+                      "NOLINE" in lines)
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):
@@ -665,13 +692,13 @@ def not_windows(name):
             "changed. Fix os: for it in roster.yml")
 
 
-def over_key(h, mode, tag_re, timeout=60):
+def over_key(h, mode, tag_re, timeout=60, pub=""):
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError."""
+    RuntimeError. PUB: the key line retag writes."""
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
                                          remote_command()]),
-                           input=framed(script(mode, tag_re)).encode(), capture_output=True, timeout=timeout)
+                           input=framed(script(mode, tag_re, pub)).encode(), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None
     out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
