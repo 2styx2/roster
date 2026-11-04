@@ -97,7 +97,7 @@ describe("a Session row's breadcrumb (ticket 120)", () => {
     const build = sectionBuilder();
     const second = hosts.hosts.find((h) => h.reviewed && h.name !== first)?.name ?? "";
     const sessions: TabsSnapshot = {
-      tabs: [tab(1, first, { state: "open" }), tab(2, second, { state: "ended", exit: { code: 0, closed: false } })],
+      tabs: [tab(1, first, { state: "open" }), tab(2, second, { state: "ended", exit: { code: 0, closed: false }, problem: null })],
       active: 1,
       previous: null,
     };
