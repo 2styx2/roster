@@ -205,7 +205,7 @@ describe("telling a shell on a pty has drawn the line typed in", () => {
 });
 
 describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_, shell) => {
-  it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", { repeats: shell.name === "fish" ? 20 : 0, timeout: 1_200_000 }, async () => {
+  it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", { repeats: shell.name === "fish" || shell.name === "pwsh" ? 20 : 0, timeout: 1_200_000 }, async () => {
     const out = await runIn(shell, [hookLine(shell.kind, N), "false", "cd /tmp", "exit"]);
     expect(out, tail(out)).toContain(own("A"));
     expect(out, tail(out)).toContain(own("B"));
