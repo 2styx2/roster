@@ -13,7 +13,7 @@ import { prefixFill } from "../ui/completion";
 import { searchHosts } from "./match";
 import { formatQuickTarget, parseQuickTarget, type QuickTarget } from "../quick/target";
 import { hostDot } from "../sidebar/sections";
-import { StateDot } from "../ui/StateDot";
+import { StateDot, type Light } from "../ui/StateDot";
 
 /** An i in a ring: a Host's details (ticket 18). */
 export const InfoGlyph = () => (
@@ -47,9 +47,15 @@ export interface PickerProps {
   onInfo?: (host: Host) => void;
   /** `picker.help` (F1): help on the selected row, a topic (ticket 52). */
   onHelp?: (topic: string) => void;
-  /** Hosts with a Session that's connected or connecting: their node is lit, as in the Sidebar
-   * (taste.md: the accent means live). */
-  live?: ReadonlySet<string>;
+  /** How each Host with a Session stands (sidebar/sections.ts `hostLights`): its node is drawn as
+   * in the Sidebar (taste.md: the accent means live). */
+  live?: ReadonlyMap<string, Light | "connecting">;
+}
+
+/** A Host's node in the list, drawn as the Sidebar draws it. */
+function HostNode({ host, how }: { host: Host; how: Light | "connecting" | undefined }) {
+  if (!host.reviewed || how === undefined) return <StateDot dot={hostDot(host)} />;
+  return how === "connecting" ? <StateDot dot="connecting" /> : <StateDot dot={hostDot(host)} lit={how} />;
 }
 
 /** The first key bound to `action`, for the footer's hints. */
@@ -235,10 +241,12 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
                 choose(host);
               }}
             >
-              <StateDot dot={hostDot(host)} lit={host.reviewed && live?.has(host.name)} />
+              <HostNode host={host} how={live?.get(host.name)} />
               <span className="host-name" title={host.name}>
                 {host.name}
-                {host.reviewed && live?.has(host.name) && <span className="visually-hidden">, has a Session</span>}
+                {host.reviewed && live?.has(host.name) && (
+                  <span className="visually-hidden">{live.get(host.name) === "connecting" ? ", connecting" : ", has a Session"}</span>
+                )}
               </span>
               <span className="host-ip" title={host.ip || undefined}>
                 {host.ip}

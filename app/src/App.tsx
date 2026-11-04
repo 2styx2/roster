@@ -103,7 +103,7 @@ import { Tabs } from "./session/tabs";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
 import { hostMenu } from "./sidebar/hostMenu";
-import { sectionBuilder } from "./sidebar/sections";
+import { hostLights, sectionBuilder } from "./sidebar/sections";
 import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
 import { PluginManager, type DemoPlugins } from "./plugins/manager";
 import { ViewPanel } from "./view/ViewContent";
@@ -553,10 +553,7 @@ function Workspace({
   const sessions = useSyncExternalStore(tabs.subscribe, tabs.snapshot);
   /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
    * lit wherever a Host is listed (taste.md: the accent means live, Q185). */
-  const liveHosts = useMemo(
-    () => new Set(sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").map((t) => t.host)),
-    [sessions],
-  );
+  const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
   // Plugins (ticket 23): the Lua runs in roster-core; they act on the app through command lines,
   // and their UI goes into the registries with their name as its source.
   const runRef = useRef<(line: string) => void>(() => {});

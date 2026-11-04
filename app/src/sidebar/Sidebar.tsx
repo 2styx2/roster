@@ -26,7 +26,7 @@ import type { CommandLine } from "../keymap";
 import { formatCount } from "../ui/format";
 import { HintsShown } from "../ui/hints";
 import { Keys, LEADER, WithKeys } from "../ui/Keys";
-import { DOT_WORDS, StateDot, type Dot } from "../ui/StateDot";
+import { DOT_WORDS, StateDot, type Dot, type Light } from "../ui/StateDot";
 import type { MenuEntry } from "./hostMenu";
 import { RowMenu } from "./RowMenu";
 
@@ -56,7 +56,7 @@ export interface SidebarRow {
   dot?: Dot;
   /** Its Host has a Session that's connected or connecting: the node takes the accent. At rest a
    * node is muted, whatever its shape (taste.md: the accent means live, decision Q185). */
-  lit?: boolean;
+  lit?: Light;
   /** A short status after the label ("connecting…", "ended (code 0)"). */
   note?: string;
   /** The end of the label that must stay in view when the rest is cut off (a Session's " (2)"). */

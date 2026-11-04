@@ -432,23 +432,31 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sidebar .sb-action.pinned { display: grid; }
 .sb-row.has-actions.selected .sb-detail, .sb-row.has-actions.selected .sb-num, .sb-row.has-actions.selected .sb-badge { display: none; }
 
-/* State nodes (ui/StateDot.tsx, decisions Q53, Q57 and Q185): the shape carries the state, colour
-   only adds to it. Filled = key login, ring = password login, grey ring = ended, dashed ring in the
-   second tone = unreviewed. At rest every node is `muted`: the accent means live (taste.md), so a
-   node takes it only when its Host has a Session that's connected or connecting (`.lit`), and
-   while it connects. Grey is `muted` and the tone is held at 3:1, so every node reads at 3:1 or
-   more on every surface. */
+/* State nodes (ui/StateDot.tsx, decisions Q53, Q57, Q184 and Q185): the shape carries the state,
+   colour only adds to it. Filled = key login, ring = password login, grey ring = ended, dashed ring
+   in the second tone = unreviewed, and an open ring = connecting: the Gap orbit's ring, broken on
+   the side the Host connects from. At rest every node is `muted`. The accent means live
+   (taste.md): it's spent on the Session on screen and its Host (`.lit`) and on connecting; another
+   Session that's connected is in the text colour (`.on`), so fifty live Sessions don't all shout.
+   Grey is `muted` and the tone is held at 3:1, so every node reads at 3:1 or more on every surface. */
 .dot { flex: none; overflow: visible; }
 .dot circle { fill: var(--muted); stroke: none; }
 .dot.password circle, .dot.ended circle, .dot.off circle { fill: none; stroke-width: 1.5px; }
 .dot.password circle, .dot.ended circle { stroke: var(--muted); }
+.dot.on circle { fill: var(--text); }
+.dot.on.password circle { fill: none; stroke: var(--text); }
 .dot.lit circle { fill: var(--accent); }
 .dot.lit.password circle { fill: none; stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
-/* Connecting (issue #78): an accent ring, not filled yet; it fills (key) or stays a ring
-   (password) once the shell answers. */
-.dot.connecting circle { fill: none; stroke: var(--accent); stroke-width: 1.5px; }
+/* Connecting (issue #78, Q184): an accent ring with a gap facing the terminal (three quarters of
+   the 20.4 circumference drawn, the gap centred on the right); it closes and fills (key) or
+   closes into a ring (password) once the shell answers. Static: the edge in the pane is the
+   motion. */
+.dot.connecting circle {
+  fill: none; stroke: var(--accent); stroke-width: 1.5px;
+  stroke-dasharray: 15.3 5.1; stroke-dashoffset: -2.55;
+}
 
 /* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,
    from this Box to the Host. In the row, the node says it: an accent ring while connecting, filled

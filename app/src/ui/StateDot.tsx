@@ -21,9 +21,14 @@ export const DOT_WORDS: Record<Dot, string> = {
   connecting: "connecting",
 };
 
-export function StateDot({ dot, lit = false }: { dot: Dot; lit?: boolean | undefined }) {
+/** How a node is lit (taste.md: the accent means live, decision Q185): `current` is the Session on
+ * screen (or its Host), in the accent; `live` is another Session that's connected, in the text
+ * colour; unlit nodes are muted. */
+export type Light = "current" | "live";
+
+export function StateDot({ dot, lit }: { dot: Dot; lit?: Light | false | undefined }) {
   return (
-    <svg className={`dot ${dot}${lit ? " lit" : ""}`} data-shape={SHAPES[dot]} viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
+    <svg className={`dot ${dot}${lit === "current" ? " lit" : lit === "live" ? " on" : ""}`} data-shape={SHAPES[dot]} viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
       <circle cx="4" cy="4" r="3.25" />
     </svg>
   );

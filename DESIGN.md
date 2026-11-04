@@ -259,12 +259,12 @@ Gently rounded and mostly rectangular:
 - **Pill, 999px:** counts in the toolbar.
 - Window controls are square, matching the OS.
 
-The one recurring geometry is the network's: **nodes** (6 to 7px circles whose fill or stroke carries state), **edges** (1px lines drawn between nodes), and **this Box's square** (6px, 1.5px radius, Sea Glass). Node shapes carry meaning. At rest every node is Muted Pewter; it turns apricot only while its Host has a Session that's connected or connecting (Q185):
+The one recurring geometry is the network's: **nodes** (6 to 7px circles whose fill or stroke carries state), **edges** (1px lines drawn between nodes), and **this Box's square** (6px, 1.5px radius, Sea Glass). Node shapes carry meaning. At rest every node is Muted Pewter; the Session on screen and its Host are apricot, other connected Sessions are Paper, the text colour (Q185, Q186):
 - **Filled:** key login.
 - **Ring:** password login.
 - **Dashed ring:** unreviewed.
 - **Hollow grey:** ended.
-- **Hollow apricot ring:** connecting.
+- **Open apricot ring** (a quarter missing, facing the terminal): connecting.
 
 **The Nodes-And-Edges Rule.** The network's own shapes are the only ornament. The Gap orbit mark appears small and still (48 to 64px, muted) in empty states and on the lock screen, and is never used as wallpaper.
 

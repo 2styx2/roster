@@ -8,6 +8,7 @@ import { connectPhase, linkOf, statusText } from "../session/Sessions";
 import { tabFacts, type Tab, type TabsSnapshot } from "../session/tabs";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./Sidebar";
+import type { Light } from "../ui/StateDot";
 import type { HostBadge } from "../view/status";
 
 /** What a section can build from. */
@@ -91,7 +92,7 @@ export function sectionBuilder(): SectionBuild {
       })
       .filter((s): s is SidebarSection => s !== null);
     const active = ctx.sessions.tabs.find((t) => t.id === ctx.sessions.active);
-    const lit = markLit(sections, new Set(ctx.sessions.tabs.filter(isLive).map((t) => t.host)));
+    const lit = markLit(sections, ctx.sessions);
     return active ? markOnScreen(lit, active.host, isLive(active)) : lit;
   };
 }
@@ -123,10 +124,45 @@ const isLive = (tab: Tab) => tab.status.state !== "ended" && tab.status.state !=
  * other node stays muted (taste.md: the accent means live, decision Q185). An ended or unreviewed
  * node keeps its own colour. Only the rows that change are new objects, so the memoized rows of a
  * big Inventory don't re-render (#62). */
-function markLit(sections: SidebarSection[], hosts: ReadonlySet<string>): SidebarSection[] {
+function markLit(sections: SidebarSection[], sessions: TabsSnapshot): SidebarSection[] {
+  const hosts = hostLights(sessions);
   if (hosts.size === 0) return sections;
-  const lights = (r: SidebarRow) => r.host !== undefined && hosts.has(r.host) && r.dot !== undefined && r.dot !== "ended" && r.dot !== "off";
-  return sections.map((s) => (s.folded || !s.rows.some(lights) ? s : { ...s, rows: s.rows.map((r) => (lights(r) ? { ...r, lit: true } : r)) }));
+  const byTab = new Map(sessions.tabs.map((t) => [`session-${t.id}`, t]));
+  const change = (r: SidebarRow): SidebarRow | null => {
+    if (r.dot === undefined || r.dot === "ended" || r.dot === "off" || r.host === undefined) return null;
+    // A Session's own row: its own state (the dot already says connecting).
+    const tab = byTab.get(r.id);
+    if (tab) return r.dot === "connecting" ? null : { ...r, lit: tab.id === sessions.active ? "current" : "live" };
+    // A Host's row anywhere else: how its Sessions stand, connecting first.
+    const how = hosts.get(r.host);
+    if (how === undefined) return null;
+    return how === "connecting" ? { ...r, dot: "connecting" } : { ...r, lit: how };
+  };
+  return sections.map((s) => {
+    if (s.folded) return s;
+    let changed = false;
+    const rows = s.rows.map((r) => {
+      const next = change(r);
+      if (next) changed = true;
+      return next ?? r;
+    });
+    return changed ? { ...s, rows } : s;
+  });
+}
+
+/** How each Host with a Session stands, for its node wherever it's listed: `connecting` while any
+ * of its Sessions is, else `current` when the Session on screen is one of its, else `live`. Ended
+ * and refused Sessions don't count (decisions Q184, Q185). */
+export function hostLights(sessions: TabsSnapshot): Map<string, Light | "connecting"> {
+  const out = new Map<string, Light | "connecting">();
+  for (const t of sessions.tabs) {
+    if (!isLive(t)) continue;
+    const how = connectPhase(t) ? "connecting" : t.id === sessions.active ? "current" : "live";
+    const had = out.get(t.host);
+    if (had === "connecting" || (had === "current" && how === "live")) continue;
+    out.set(t.host, how);
+  }
+  return out;
 }
 
 /** The on-screen Host is raised where it first shows (a section may have raised its own row

@@ -10,7 +10,8 @@ import { searchHosts } from "../picker/match";
 import { searchItems } from "./search";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { CommandLine } from "../keymap";
-import { statusText } from "../session/Sessions";
+import { connectPhase, statusText } from "../session/Sessions";
+import type { Light } from "../ui/StateDot";
 import type { Dot, SidebarSection } from "../sidebar/Sidebar";
 import { buildSections, hostDot, type SidebarContext, type SidebarSectionDef } from "../sidebar/sections";
 
@@ -22,8 +23,9 @@ export interface FinderItem {
   /** Right-aligned and faint (an address, a status); matched too. */
   detail?: string;
   dot?: Dot;
-  /** A Session that's connected or connecting: its node takes the accent (see SidebarRow.lit). */
-  lit?: boolean;
+  /** A Session that's connected: the one on screen in the accent, others in the text colour
+   * (see SidebarRow.lit). */
+  lit?: Light;
   /** The Session on screen, or the one before it (the session bar's `*` and `-`). */
   mark?: "current" | "previous";
   /** What Enter or a click runs. */
@@ -103,8 +105,8 @@ export const sessionsFinder: FinderSourceDef = {
         id: `session-${tab.id}`,
         label: tab.label,
         detail: statusText(tab) || host?.ip || "",
-        dot: ended ? "ended" : (tab.auth ?? (host ? hostDot(host) : "key")),
-        ...(ended ? {} : { lit: true }),
+        dot: ended ? "ended" : connectPhase(tab) ? "connecting" : (tab.auth ?? (host ? hostDot(host) : "key")),
+        ...(ended || connectPhase(tab) ? {} : { lit: tab.id === sessions.active ? ("current" as const) : ("live" as const) }),
         ...(mark ? { mark } : {}),
         command: `session ${i + 1}`,
       } satisfies FinderItem;
