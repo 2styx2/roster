@@ -707,7 +707,8 @@ def inventory_create(state, params):
     folder = params.get("folder")
     if not isinstance(folder, str) or not folder.strip():
         raise RpcError(INVALID_PARAMS, "params.folder: the folder for roster.yml")
-    if re.search(r"[\x00-\x1f\x7f\"']", folder + (params.get("source") or "" if isinstance(params.get("source"), str) else "")):
+    given = params.get("source") if isinstance(params.get("source"), str) else ""
+    if re.search(r"[\x00-\x1f\x7f\"']", folder + given):     # they go into messages, inventories.json, the ssh config
         raise RpcError(INVALID_PARAMS, "params.folder and params.source can't hold a quote or a control character")
     folder = Path(folder.strip()).expanduser()
     if not folder.is_absolute():
