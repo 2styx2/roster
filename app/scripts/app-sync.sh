@@ -12,6 +12,7 @@ dest="$(wslpath "$win_local")/$WIN_DIR/src/"
 mkdir -p "$dest"
 rsync -a --delete \
   --include /Cargo.toml --include /Cargo.lock --include /rustfmt.toml --include /.gitattributes \
+  --include /LICENSE --include /THIRD-PARTY-NOTICES \
   --include /app/ --include /crates/ --include /examples/ \
   --include /docs/ --include /docs/app/ --include '/docs/*.md' --exclude '/docs/*' \
   --include /tests/ --include /tests/vectors/ --exclude '/tests/*' \
