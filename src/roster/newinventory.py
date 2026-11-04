@@ -13,7 +13,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 
@@ -219,26 +218,22 @@ def ssh_hosts(text):
     return hosts, skipped
 
 
+CREDENTIALS = re.compile(r"(://[^/@:\s]*):([^@/\s]*)@")     # scheme://user:PASSWORD@ in a URL
+
+
 def shown_url(url):
     """URL with any password in it cut out (https://me:TOKEN@host/... -> https://me:***@host/...), for messages
-    and the log (#409 L4)."""
-    try:
-        u = urlsplit(url)
-        if u.password is None:
-            return url
-        host = (u.hostname or "") + (f":{u.port}" if u.port else "")
-    except ValueError:
-        return url
-    return urlunsplit(u._replace(netloc=f"{u.username}:***@{host}"))
+    and the log (#409 L4). By pattern, not a URL parser: one that can't parse the rest (a Windows path after
+    file://) would show it all."""
+    return CREDENTIALS.sub(r"\1:***@", url)
 
 
 def redacted(url, text):
     """TEXT with URL's password (if it has one) cut out wherever it shows."""
-    try:
-        secret = urlsplit(url).password
-    except ValueError:
-        secret = None
-    return text.replace(url, shown_url(url)).replace(secret, "***") if secret else text
+    m = CREDENTIALS.search(url)
+    secret = m.group(2) if m else ""
+    text = text.replace(url, shown_url(url))
+    return text.replace(secret, "***") if secret else text
 
 
 def scalar(v):
