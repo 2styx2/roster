@@ -11,6 +11,7 @@ from conftest import WINDOWS
 
 from roster import askpass, errors, providers
 from roster import serve as rpc
+from roster.providers import bitwarden
 
 INVENTORY = """\
 groups:
@@ -159,13 +160,14 @@ def test_every_secret_is_forgotten_before_the_cli_logs_out(bw, isolated, monkeyp
         return rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}))
 
     assert "result" in call("vault.unlock", {"password": PASSWORD})
-    assert os.environ.get("BW_SESSION") == "fake-session-key"
+    assert bitwarden.session_key() == "fake-session-key"
+    assert "BW_SESSION" not in os.environ
     seen = {}
     real_logout = providers.PROVIDERS["bw"]["logout"]
 
     def watching_logout(ctx):
         seen.update(tokens=dict(state.askpass.tokens), handed=dict(state.askpass.handed), held=dict(state.held),
-                    typed=typed.password, session=os.environ.get("BW_SESSION"), cached=dict(providers._secrets),
+                    typed=typed.password, session=bitwarden.session_key(), cached=dict(providers._secrets),
                     unlocked=set(state.unlocked), login=state.login)
         return real_logout(ctx)
 

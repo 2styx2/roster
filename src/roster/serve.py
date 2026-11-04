@@ -1164,9 +1164,15 @@ def hold(state, hid, typed, kind, label, target=None):
 
 
 def open_channel(state):
-    """serve's askpass channel, which also forgets the held passwords whose HOLD_FOR is up (on its tick), so none
-    outlives its time waiting for a request that would prune it."""
-    return askpass.Channel(askpass_lookup, log=log_line, tick=lambda: prune_held(state))
+    """serve's askpass channel, which also forgets (on its tick) the held passwords whose HOLD_FOR is up and a sign-in
+    left SIGN_IN_IDLE without an answer, so neither outlives its time waiting for a request that would prune it."""
+    return askpass.Channel(askpass_lookup, log=log_line, tick=lambda: housekeeping(state))
+
+
+def housekeeping(state):
+    """The channel's tick: the seconds until anything it looks after is due (None: nothing)."""
+    due = [t for t in (prune_held(state), prune_sign_in(state)) if t is not None]
+    return min(due, default=None)
 
 
 def prune_held(state):
@@ -1873,8 +1879,9 @@ def vault_status(state, params):
 def only_vault_unlock_unlocks():
     """The app opens locked and only its lock screen unlocks: forget a BW_PASSWORD / BW_SESSION this process
     inherited, and tell providers not to unlock by themselves (no bw-session file, no prompt)."""
-    for var in ("BW_PASSWORD", "BW_SESSION"):
-        os.environ.pop(var, None)
+    from .providers.bitwarden import forget_session
+    os.environ.pop("BW_PASSWORD", None)
+    forget_session()
     providers.MANUAL_UNLOCK = True
 
 
@@ -2199,6 +2206,25 @@ def end_sign_in(state):
         login.flow.close()
 
 
+def prune_sign_in(state):
+    """End the sign-in nobody has answered for SIGN_IN_IDLE, with the password it holds (and its `bw login`, which has
+    it in its env), without waiting for the next request to notice. The seconds until it's due (None: no sign-in)."""
+    login = state.login
+    if login is None:
+        return None
+    left = login.flow.touched + SIGN_IN_IDLE - time.monotonic()
+    if left > 0:
+        return left
+    if not state.vault.acquire(False, 0, "the sign-in's timeout"):
+        return 1.0                              # a request has the vault (maybe this sign-in's step): look again soon
+    try:
+        if state.login is login and time.monotonic() - login.flow.touched > SIGN_IN_IDLE:
+            end_sign_in(state)
+    finally:
+        state.vault.release()
+    return None if state.login is None else 1.0
+
+
 def sign_in_step(state, login, fn):
     """Run one step. A failure that says where to carry on keeps the sign-in; any other ends it."""
     try:
@@ -2279,6 +2305,8 @@ def vault_login(state, params):
     except providers.SecretError as e:
         raise sign_in_problem(e) from None
     state.login = login = SignIn(name, flow)
+    if state.askpass is not None:
+        state.askpass.nudge()                   # its tick ends the sign-in after SIGN_IN_IDLE without an answer
     closing(state, login)
     step = sign_in_step(state, login, lambda: flow.start({**params, "method": method}))
     closing(state, login)

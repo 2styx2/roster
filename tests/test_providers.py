@@ -1,13 +1,14 @@
 import json
 import os
 import shutil
+import sys
 
 import pytest
 from conftest import WINDOWS, posix_shell
 
 from roster import providers
 from roster.common import user_config_dir
-from roster.providers import SecretError, get_secret, setup_providers
+from roster.providers import Ctx, SecretError, bitwarden, get_secret, setup_providers
 
 
 def cfg_with(isolated, providers_conf=None, dirs=None):
@@ -53,6 +54,14 @@ def test_template_provider(isolated):
 def test_template_provider_quotes_input(isolated):
     setup_providers(cfg_with(isolated, {"echo": {"command": "printf '%s' {item}"}}))
     assert get_secret("echo:a b; rm -rf /tmp/nothing", "g") == "a b; rm -rf /tmp/nothing"
+
+
+@posix_shell
+def test_a_failing_template_command_keeps_its_stdout_out_of_the_error(isolated):
+    setup_providers(cfg_with(isolated, {"kv": {"command": "echo pw-xyzzy-{item}; echo vault says no >&2; exit 3"}}))
+    with pytest.raises(SecretError, match="exit 3.*vault says no") as e:
+        get_secret("kv:web", "g")
+    assert "xyzzy" not in str(e.value)
 
 
 def test_bad_template_is_reported(isolated):
@@ -156,7 +165,7 @@ def test_lock_forgets_session_cache_and_state_and_runs_bw_lock(fakes, monkeypatc
     providers.unlock("bw", "hunter2")
     assert get_secret("bw:Network gear", "g") == "pw-netops"
     providers.lock("bw")
-    assert "BW_SESSION" not in os.environ
+    assert "BW_SESSION" not in os.environ and bitwarden.session_key() is None
     assert "bw lock" in log.read_text().splitlines()
     with pytest.raises(SecretError, match="locked"):           # cached value and "ready" are gone too
         get_secret("bw:Network gear", "g")
@@ -191,6 +200,34 @@ def test_providers_without_unlock_degrade(monkeypatch):
 
 
 # ---- 1Password (fake op: signed out until signin; items live in vault "Infra")
+
+def _child_env(name):
+    """The env a program roster starts (other than the vault's own CLI) sees: what Ctx.run hands a helper."""
+    r = Ctx(name, None).run([sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ)))"])
+    return json.loads(r.stdout)
+
+
+def test_bitwarden_session_key_reaches_bw_only(fakes):
+    providers.unlock("bw", "hunter2")
+    assert get_secret("bw:Network gear", "g") == "pw-netops"          # bw still gets the key
+    assert "BW_SESSION" not in os.environ                              # but this process's env doesn't hold it,
+    assert "BW_SESSION" not in _child_env("bw")                        # so nothing else roster starts inherits it
+
+
+def test_inherited_bitwarden_session_is_moved_out_of_the_env(fakes, monkeypatch):
+    monkeypatch.setenv("BW_SESSION", "fake-session-key")
+    assert get_secret("bw:Network gear", "g") == "pw-netops"
+    assert "BW_SESSION" not in os.environ and bitwarden.session_key() == "fake-session-key"
+
+
+def test_onepassword_sign_in_reaches_op_only_and_lock_forgets_it(isolated, fakes):
+    setup_providers(cfg_with(isolated))
+    assert get_secret("op:Network gear", "g") == "pw-netops"          # signed in through `op signin`
+    assert not any(v.startswith("OP_SESSION_") for v in os.environ)
+    assert not any(v.startswith("OP_SESSION_") for v in _child_env("op"))
+    providers.lock("op")
+    assert "env" not in providers.PROVIDER_STATE.get("op", {})
+
 
 def test_onepassword_items_and_references(isolated, fakes):
     setup_providers(cfg_with(isolated, {"op": {"vault": "Infra"}}))

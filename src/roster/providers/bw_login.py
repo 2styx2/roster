@@ -42,7 +42,7 @@ from . import (
     errtext,
     not_installed,
 )
-from .bitwarden import _bw, _bw_status_json, _bw_unlock
+from .bitwarden import _bw, _bw_status_json, _bw_unlock, set_session
 
 if not WINDOWS:                         # a PTY is Linux's and macOS's; native Windows has its pseudoconsole
     import fcntl
@@ -484,7 +484,7 @@ class BwLogin:
         if what == 0:
             key = self.session_key()
             if key:
-                os.environ["BW_SESSION"] = key                          # this process only
+                set_session(key)
                 return self.finish()
             return self.at({"step": "master_password", "email": self.email})
         e = self.failure(after)

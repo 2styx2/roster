@@ -274,3 +274,49 @@ def test_a_spent_token_is_still_logged_as_refused_without_the_token(runtime_dir)
     assert lines[0] == "askpass: esx: password handed to ssh"
     assert lines[1].startswith("askpass: refused a token")
     assert not [line for line in lines if token in line or "s3cret-value" in line]
+
+
+# ---- the peer's uid where there's no SO_PEERCRED (macOS, the BSDs): getpeereid
+
+def fake_getpeereid(uid, ret=0):
+    def fn(fd, puid, pgid):
+        puid._obj.value = uid
+        return ret
+    return lambda: fn
+
+
+@pytest.mark.parametrize("uid, ret, same", [
+    (os.getuid(), 0, True),             # this user
+    (os.getuid() + 1, 0, False),        # anyone else is refused
+    (os.getuid(), -1, False),           # getpeereid can't say: refused
+])
+def test_without_so_peercred_getpeereid_checks_the_peer(monkeypatch, uid, ret, same):
+    monkeypatch.delattr(socket, "SO_PEERCRED", raising=False)
+    monkeypatch.setattr(askpass, "getpeereid", fake_getpeereid(uid, ret))
+    a, b = socket.socketpair(socket.AF_UNIX)
+    with a, b:
+        assert askpass.same_user(a) is same
+
+
+def test_without_so_peercred_or_getpeereid_the_folder_is_the_check(monkeypatch):
+    monkeypatch.delattr(socket, "SO_PEERCRED", raising=False)
+    monkeypatch.setattr(askpass, "getpeereid", lambda: None)
+    a, b = socket.socketpair(socket.AF_UNIX)
+    with a, b:
+        assert askpass.same_user(a) is True
+
+
+@pytest.mark.skipif(not hasattr(socket, "SO_PEERCRED"), reason="Linux: SO_PEERCRED")
+def test_so_peercred_still_checks_on_linux():
+    a, b = socket.socketpair(socket.AF_UNIX)
+    with a, b:
+        assert askpass.same_user(a) is True
+
+
+def test_a_token_whose_typed_password_was_forgotten_is_refused_not_crashed():
+    with askpass.Channel(lambda login: "unused") as ch:
+        typed = askpass.Typed("typed-pw-xyzzy")
+        token = ch.mint(typed, "root@10.0.0.5")
+        typed.password = None                                # vault.forget_typed, before ssh asked
+        reply = ch._reply(token)
+    assert reply.startswith(f"no {askpass.TOKEN_SPENT}\n".encode()) and b"xyzzy" not in reply

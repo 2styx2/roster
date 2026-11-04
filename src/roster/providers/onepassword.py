@@ -13,19 +13,24 @@ def _op_base(ctx):
     return ["op"] + (["--account", str(acct)] if acct else [])
 
 
+def _op(ctx, args, **kw):
+    """Run op with this run's sign-in (OP_SESSION_*) in its own env only: never os.environ, which every other program
+    roster starts would inherit. The sign-in lives in the provider's state, which a lock forgets."""
+    return ctx.run(args, env=ctx.state.get("env"), **kw)
+
+
 def _op_ready(ctx):
     if ctx.state.get("ready") or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"):
         ctx.state["ready"] = True
         return
-    if ctx.run(_op_base(ctx) + ["whoami"]).returncode == 0:
+    if _op(ctx, _op_base(ctx) + ["whoami"]).returncode == 0:
         ctx.state["ready"] = True
         return
     # Not signed in. With the 1Password app integration this pops a biometric/app prompt;
     # otherwise it asks for the account password on the terminal.
-    r = ctx.run(_op_base(ctx) + ["signin"], interactive=ctx.interactive, timeout=180)
-    for var, val in re.findall(r'export (OP_SESSION_\w+)="([^"]*)"', r.stdout):
-        os.environ[var] = val                                   # this process only
-    if r.returncode != 0 or ctx.run(_op_base(ctx) + ["whoami"]).returncode != 0:
+    r = _op(ctx, _op_base(ctx) + ["signin"], interactive=ctx.interactive, timeout=180)
+    ctx.state["env"] = {**ctx.state.get("env", {}), **dict(re.findall(r'export (OP_SESSION_\w+)="([^"]*)"', r.stdout))}
+    if r.returncode != 0 or _op(ctx, _op_base(ctx) + ["whoami"]).returncode != 0:
         raise SecretError("1Password CLI isn't signed in. Turn on the 1Password app integration, set "
                           "OP_SERVICE_ACCOUNT_TOKEN, or run  eval $(op signin)  in the shell you start "
                           "Claude (or roster) from")
@@ -40,7 +45,7 @@ def _onepassword(spec, ctx):
         raise SecretError("op: needs an item, e.g. op:Orion servers or op://Infra/Orion servers/password")
     _op_ready(ctx)
     if spec.startswith("op://"):
-        r = ctx.run(_op_base(ctx) + ["read", spec])
+        r = _op(ctx, _op_base(ctx) + ["read", spec])
         if r.returncode != 0:
             raise SecretError(f"1Password couldn't read {spec}: {errtext(r)}")
         return r.stdout.rstrip("\r\n")
@@ -51,9 +56,9 @@ def _onepassword(spec, ctx):
     args = _op_base(ctx) + ["item", "get", item, "--fields", f"label={field}", "--format", "json"]
     if vault:
         args += ["--vault", str(vault)]
-    r = ctx.run(args + ["--reveal"])
+    r = _op(ctx, args + ["--reveal"])
     if r.returncode != 0 and "reveal" in errtext(r):      # older op versions have no --reveal
-        r = ctx.run(args)
+        r = _op(ctx, args)
     if r.returncode != 0:
         raise SecretError(f"1Password: couldn't get '{field}' from item '{item}'"
                           f"{f' in vault {vault}' if vault else ''}: {errtext(r)}")

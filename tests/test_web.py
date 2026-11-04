@@ -309,6 +309,13 @@ def test_unifi_expired_session_logs_in_again(capsys, unifi, isolated):
     assert rc == 0 and unifi_logins() == 2
 
 
+def test_an_expired_kept_session_is_deleted_when_found(tmp_path):
+    from roster import web
+    path = tmp_path / "udm-unifi.json"
+    path.write_text(json.dumps({"cookie": "TOKEN=old", "expires": 0}))
+    assert web.load_session(path) is None and not path.exists()
+
+
 def test_unifi_rejected_session_logs_in_again_once(capsys, unifi, isolated):
     run(capsys, "udm", "GET", "/api/users/self")
     cache = unifi_cache(isolated)

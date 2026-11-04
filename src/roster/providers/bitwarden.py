@@ -33,7 +33,34 @@ from . import (
 # ---- built-in: Bitwarden
 
 def _bw(ctx, *args, env=None, input=None, floor=1):
+    key = session_key()
+    env = {**({"BW_SESSION": key} if key else {}), **(env or {})}
     return ctx.run(["bw", *args, "--nointeraction"], env=env, input=input, floor=floor)
+
+
+# The unlocked vault's session key. It goes into each `bw` call's env and nowhere else, never os.environ: every other
+# program roster starts (ssh and what its config runs, git and its hooks, nmap, another vault's CLI) would inherit it
+# from there, and with bw's local data the key opens the whole vault.
+_session = {"key": None}
+
+
+def session_key():
+    """This process's Bitwarden session key, or None. A BW_SESSION inherited from the shell is moved out of os.environ
+    on first use, so from then on only bw gets it."""
+    inherited = os.environ.pop("BW_SESSION", None)
+    if inherited and not _session["key"]:
+        _session["key"] = inherited
+    return _session["key"]
+
+
+def set_session(key):
+    os.environ.pop("BW_SESSION", None)
+    _session["key"] = key or None
+
+
+def forget_session():
+    os.environ.pop("BW_SESSION", None)
+    _session["key"] = None
 
 
 NOT_LOGGED_IN = "Bitwarden CLI isn't logged in on this box - run `bw login` once"
@@ -48,14 +75,14 @@ def load_session_file():
     other terminals) can use an unlocked vault. Ignored unless only you can read it (on Windows the file is in your own
     %APPDATA%, which only you can open)."""
     f = session_file()
-    if os.environ.get("BW_SESSION") or not f.is_file():
+    if session_key() or not f.is_file():
         return False
     if not WINDOWS and f.stat().st_mode & 0o077:
         say(f"warning      {f} is readable by others - ignored (chmod 600 {f})")
         return False
     key = f.read_text().strip()
     if key:
-        os.environ["BW_SESSION"] = key                     # this process only
+        set_session(key)
     return bool(key)
 
 
@@ -84,7 +111,7 @@ def _bw_ready(ctx):
             raise SecretError("`bw login --apikey` failed - check BW_CLIENTID / BW_CLIENTSECRET")
         status = "locked"
     if status == "locked" and from_file:
-        os.environ.pop("BW_SESSION", None)
+        forget_session()
         if not (os.environ.get("BW_PASSWORD") or ctx.interactive):
             raise SecretError(f"the Bitwarden session in {session_file()} has expired (vault locked) - refresh it: "
                               f"(umask 077; bw unlock --raw > {session_file()})")
@@ -102,7 +129,7 @@ def _bw_ready(ctx):
                               f"- or, for every session on this box:  (umask 077; bw unlock --raw > {session_file()})")
         if r.returncode != 0 or not r.stdout.strip():
             raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
-        os.environ["BW_SESSION"] = r.stdout.strip()       # this process only
+        set_session(r.stdout.strip())
     if ctx.settings.get("sync", True) and _bw(ctx, "sync").returncode != 0:
         say("warning      `bw sync` failed - using the vault as last synced")
     ctx.state["ready"] = True
@@ -116,11 +143,11 @@ def _bw_unlock(password, ctx):
         if "not logged in" in errtext(r).lower():
             raise NotLoggedIn(NOT_LOGGED_IN)
         raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
-    os.environ["BW_SESSION"] = r.stdout.strip()           # this process only
+    set_session(r.stdout.strip())
 
 
 def _bw_vault_status(ctx):
-    """`bw status` as-is (BW_SESSION from this process only, never the session file); "missing" if no bw."""
+    """`bw status` as-is (this process's session key only, never the session file); "missing" if no bw."""
     return _bw_status(ctx) if shutil.which("bw") else "missing"
 
 
@@ -136,7 +163,7 @@ def _bw_account(ctx):
 
 
 def _bw_forget(ctx):
-    os.environ.pop("BW_SESSION", None)
+    forget_session()
 
 
 def _bw_lock(ctx):

@@ -431,7 +431,7 @@ What \fBroster mesh\fR couldn't finish (pending Hosts, cuts pending) and when it
 A Mesh source's key, known hosts, ssh config and its peers for Claude, written by \fBroster mesh\fR (The Mesh)
 .TP
 \fB$XDG_RUNTIME_DIR/roster/\fR
-Short\-lived private state: kept web logins and the askpass socket (on Windows, the askpass channel is a named pipe and its folder is in \fB%TEMP%\fR)
+Short\-lived private state: kept web logins and the askpass socket (on Windows, the askpass channel is a named pipe and its folder is in \fB%TEMP%\fR). Without \fB$XDG_RUNTIME_DIR\fR, kept web logins go in \fB~/.cache/roster/sessions/\fR, which survives a logout: each one is deleted when it's found expired (10 minutes at most) or rejected
 .SH ENVIRONMENT
 .TP
 \fBROSTER_CONFIG\fR
