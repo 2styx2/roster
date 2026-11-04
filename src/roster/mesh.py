@@ -425,7 +425,12 @@ if [ -n "$RETAG" ]; then
 fi
 [ -s "$ADOPT" ] && grep -xFf "$ADOPT" "$AK" 2>/dev/null >> "$OL"
 if [ -n "$UNT" ]; then
-  grep -E " roster-mesh:($UNT)\$" "$AK" 2>/dev/null | grep -vxFf "$OL" | while read -r l; do echo "UNTAGGED ${l##*:}"; done
+  # each with its key (the field before the tag) and from=, so the Box can say when it's the key --rotate replaces
+  grep -E " roster-mesh:($UNT)\$" "$AK" 2>/dev/null | { if [ -s "$OL" ]; then grep -vxFf "$OL"; else cat; fi; } \
+    | while read -r l; do
+      f=$(printf '%s\n' "$l" | sed -n 's/^from="\([^"]*\)".*/\1/p'); k=$(printf '%s\n' "$l" | awk '{ print $(NF-1) }')
+      echo "UNTAGGED ${l##*:} $k $f"
+    done
 fi
 grep -vxFf "$W" "$H" | while read -r l; do t=${l##*:}; echo "DROP ${t%%@*}"; done
 grep -vxFf "$H" "$W" | while read -r l; do t=${l##*:}; echo "ADD ${t%%@*}"; done
@@ -878,10 +883,20 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             "roster leaves them alone; that Box's (or Inventory's) roster.yml can add these Links")
             if theirs and differs else None)
         stale(out, name, lines)                 # a source that left with its mesh_dir: (NOT_SOURCE)
-        for src in sorted(set(report(lines, "UNTAGGED "))):
-            out.setdefault("warnings", []).append(
-                f"{name}: a roster-mesh:{src} line with no Box in its tag isn't the one this Box writes (another "
-                "Box's, or other options), so roster left it: roster mesh --find-leftovers lists it")
+        said = set()
+        for x in report(lines, "UNTAGGED "):
+            src, key, frm = (x.split(" ", 2) + ["", ""])[:3]
+            old = (out["probe"].get(src) or {}).get("oldpub") or ""
+            if key and key in old.split()[1:2]:     # the key --rotate replaces: it still gets in from there
+                out.setdefault("warnings", []).append(
+                    f"{name}: a roster-mesh:{src} line with no Box in its tag still lets the replaced key in "
+                    f"(from={frm or '?'}): it isn't the line this Box writes, so roster left it; remove it with "
+                    "roster mesh --remove-leftovers, or rotate from the Box that wrote it")
+            elif src not in said:
+                said.add(src)
+                out.setdefault("warnings", []).append(
+                    f"{name}: a roster-mesh:{src} line with no Box in its tag isn't the one this Box writes (another "
+                    "Box's, or other options), so roster left it: roster mesh --find-leftovers lists it")
         for path in report(lines, "CONFLICT "):
             out.setdefault("warnings", []).append(
                 f"{name}: {path} isn't roster's, so roster left it alone (move it away and apply again)")

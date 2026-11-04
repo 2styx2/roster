@@ -1968,7 +1968,9 @@ def test_the_one_time_retag_leaves_an_untagged_line_with_other_options(net):
     other = ours.replace(",no-X11-forwarding", "")      # same key, other options: not the line this Box writes
     p = net.host("nas-1") / "home/.ssh/authorized_keys"
     p.write_text(p.read_text().replace(ours + "\n", other + "\n"))
-    mesh.run(net.cfg(), apply=True)
+    r = mesh.run(net.cfg(), apply=True)         # nothing to take on nas-1: the other line is still said
+    assert any(w.startswith("nas-1: a roster-mesh:orion-2 line with no Box in its tag isn't the one")
+               for w in r.get("warnings", [])), r
     lines = net.mesh_lines("nas-1")
     assert other in lines and key_line_of(net, "orion-2", "10.0.0.2") in lines
 
@@ -1979,11 +1981,15 @@ def test_rotating_on_the_upgrade_takes_this_boxs_untagged_line_for_the_old_key(n
     mesh.run(net.cfg(), apply=True)
     untag(net)
     old = key_line_of(net, "orion-2", "10.0.0.2").removesuffix("@box")
+    theirs = old.replace('from="10.0.0.2"', 'from="10.0.0.99"')         # another older Box's, for the same key
+    add_line(net, "nas-1", theirs)
     r = mesh.run(net.cfg(), rotate=["orion-2"])
     assert "tag key from orion-2 as this Box's" in next(h for h in r["hosts"] if h["host"] == "nas-1")["changes"]
-    mesh.run(net.cfg(), apply=True, rotate=["orion-2"])
+    r = mesh.run(net.cfg(), apply=True, rotate=["orion-2"])
     lines = net.mesh_lines("nas-1")
-    assert old not in lines and old.split()[2] not in "".join(lines)
+    assert old not in lines and theirs in lines                     # left, and said: it still lets the old key in
+    assert any(w.startswith("nas-1: a roster-mesh:orion-2 line with no Box in its tag still lets the replaced key in "
+                            "(from=10.0.0.99)") for w in r.get("warnings", [])), r
     assert key_line_of(net, "orion-2", "10.0.0.2") in lines
 
 
