@@ -314,7 +314,9 @@ function Main {
     $Retagged = $null
     $Read = $null
     if ($Mode -in 'add', 'retag') {
-        # read once (#423's S5): the text the re-tag or the add is made from is the text replaced
+        # read once (#423's S5): the text the re-tag or the add is made from is the text replaced. Reading comes
+        # before the add's folder and trust checks (Assert-Folder, Assert-AdminFileTrusted), but writes nothing: a
+        # file they refuse throws there, before Write-Keys (#442's review L2)
         $Read = Read-Keys $mine
         if ($Taken -and $null -ne $Read) {
             # T226: on a renamed Box, another key's line under the new name is another Box's: said, nothing changed

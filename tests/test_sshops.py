@@ -1,4 +1,6 @@
 import os
+import re
+import shlex
 import shutil
 import subprocess
 
@@ -366,3 +368,46 @@ def test_retag_with_a_guard_leaves_a_host_where_another_key_has_the_new_name(tmp
     before = ak.read_text()
     out = run_remote(retag_key_script(PUB, "admin", taken=TAG_RE), tmp_path)
     assert "ROSTER_TAKEN" in out.split() and ak.read_text() == before
+
+
+@posix_shell
+def test_retag_checks_the_new_name_before_saying_no_line(tmp_path):
+    """#442's review M1: the key works from a line of the user's own (no roster tag), and another Box's line has the
+    new name: TAKEN (as on Windows), never 'no line', which would record the new name and let revoke take it."""
+    cfg, ak = renamed(tmp_path)
+    ak.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly me@laptop\n" + OTHER_BOX_NEW_NAME + "\n")
+    before = ak.read_text()
+    out = run_remote(retag_key_script(PUB, "admin", taken=TAG_RE), tmp_path)
+    assert "ROSTER_TAKEN" in out.split() and "ROSTER_NONE" not in out and ak.read_text() == before
+
+
+def awk_part(script):
+    """The re-tag's awk program and the RE it gets: what an awk on the Host reads."""
+    m = re.search(r"RE=('[^']*'\"[^\"]*\") TAG=\S+ awk '(.*?)' ", script)
+    assert m, script
+    return shlex.split(m[1])[0] + "\n" + m[2]
+
+
+def test_retag_awk_uses_no_bracket_character_class():
+    """#442's review M2: mawk 1.3.3 (Debian 10, Ubuntu 18.04's awk) has no [[:space:]], and reads it as a set of
+    letters: no [:class:] in what the awk reads (grep and sed keep theirs)."""
+    assert "[:" not in awk_part(retag_key_script(PUB, "admin", taken=TAG_RE))
+
+
+OTHER_AWKS = [a for a in ("mawk", "busybox", "original-awk", "nawk") if shutil.which(a)]
+
+
+@posix_shell
+@pytest.mark.skipif(not OTHER_AWKS, reason="no mawk, busybox or nawk here")
+@pytest.mark.parametrize("awk", OTHER_AWKS)
+def test_retag_works_with_other_awks(tmp_path, awk):
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "awk").write_text(f"#!/bin/sh\nexec {shutil.which(awk)} {'awk ' if awk == 'busybox' else ''}\"$@\"\n")
+    (bin_ / "awk").chmod(0o755)
+    cfg, ak = renamed(tmp_path)
+    ak.write_bytes((OLD_NAME_LINE.replace(":old-pi", ":grace") + "\r\n").encode() + (OLD_NAME_LINE + "\n").encode())
+    r = subprocess.run(["sh", "-c", retag_key_script(PUB, "admin")], capture_output=True, text=True,
+                       env={**os.environ, "HOME": str(tmp_path), "PATH": f"{bin_}:{os.environ['PATH']}"})
+    assert "ROSTER_OK" in r.stdout, r.stderr
+    assert ak.read_bytes() == (PUB + "\r\n").encode()

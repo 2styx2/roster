@@ -56,6 +56,10 @@ def ere_literal(text):
     return re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", text)
 
 
+# KEY_TRAIL for awk, with no bracket class (#442's M2): a space, tab or CR. In the program's own regex literal as
+# escapes; in RE (through ENVIRON, where awk may not read escapes) as the characters, which the shell makes ($W)
+AWK_TRAIL_LITERAL = "[ \\t\\r]*$"
+AWK_TRAIL_SH = "W=$(printf ' \\t\\r'); "
 # a roster-managed tag, any Box name
 TAGS_ERE = "(" + "|".join((KEY_TAG,) + LEGACY_KEY_TAGS) + "):[A-Za-z0-9_-]+" + KEY_TRAIL
 
@@ -433,8 +437,14 @@ def password_exec(h, command, password, timeout=15, stdin=None):
 
 # Which file sshd reads this account's keys from ($f, and $F as messages name it): ~/.ssh/authorized_keys, or on ESXi
 # (uname VMkernel) its own /etc/ssh/keys-USER/authorized_keys, which it keeps across a reboot (its home isn't kept),
-# as the Mesh's scripts do (T226, #435). USER is the Login's user ($U), as sshd's %u.
+# as the Mesh's scripts do (T226, #435). USER is the Login's user ($U), as sshd's %u: one the Host names otherwise
+# (`id -un`: another case, a directory account's form) is refused, as the key would go where sshd doesn't look
+# (#442's review L1).
 AK_FILE = ('if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then ESXI=1; f=/etc/ssh/keys-$U/authorized_keys; F=$f; '
+           'L=$(id -un 2>/dev/null) || L=; '
+           '[ "$L" = "$U" ] || { echo "this login is ${L:-unknown} on ESXi, not $U (its user: in roster.yml), and '
+           'ESXi\'s sshd reads its keys-${L:-LOGIN} folder: nothing was changed (set user: as the Host names it)" '
+           '>&2; exit 1; }; '
            'else ESXI=; f=$HOME/.ssh/authorized_keys; F="~/.ssh/authorized_keys"; fi; ')
 # All three rewrite authorized_keys as a new file next to it, then mv it into place: a run cut short leaves the old
 # file whole (rewritten in place, it could be left empty and lock everyone out). cp -p first keeps its mode and owner
@@ -487,16 +497,22 @@ def retag_key_script(pub, user, taken=None):
     (the new name's tag_re): a line it matches with another key stops it, as ROSTER_TAKEN, before anything changes."""
     kind, key, tag = pub.split()[:3]
     found = key_ere(kind, key)
-    return (key_script_head(user) + "[ -f \"$f\" ] || { echo \"ROSTER_NONE $F\"; exit 0; }; rc=0; NEW=; "
+    # the line with a space before it, so the key matches at its start too; awk's own trail (#442's M2: mawk 1.3.3,
+    # Debian 10's and Ubuntu 18.04's awk, has no [[:space:]] and reads it as a set of letters)
+    awk_re = " " + found.removeprefix("(^| )").removesuffix(KEY_TRAIL)
+    return (key_script_head(user) + "[ -f \"$f\" ] || { echo \"ROSTER_NONE $F\"; exit 0; }; rc=0; NEW=; " +
+            # the new name first (#442's M1): a Host where no line of this key is tagged may still hold another
+            # Box's line under it, which this Box's revoke would take once the new name is recorded
+            taken_guard(taken, found) +
             f"grep -q -E -- {shlex.quote(found)} \"$f\" || rc=$?; "
             "[ $rc -eq 1 ] && { echo \"ROSTER_NONE $F\"; exit 0; }; "
-            "[ $rc -eq 0 ] || { echo \"grep couldn't read $F (exit $rc)\" >&2; exit 1; }; " +
-            taken_guard(taken, found) + "umask 077; " + REPLACE_AK +
-            # the line with a space before it, so the key matches at its start too; ENVIRON, so awk keeps every \
-            f"RE={shlex.quote(' ' + found.removeprefix('(^| )'))} TAG={shlex.quote(tag)} "
+            "[ $rc -eq 0 ] || { echo \"grep couldn't read $F (exit $rc)\" >&2; exit 1; }; "
+            "umask 077; " + REPLACE_AK +
+            # ENVIRON, so awk keeps every \
+            AWK_TRAIL_SH + f"RE={shlex.quote(awk_re)}\"[$W]*\\$\" TAG={shlex.quote(tag)} "
             "awk 'BEGIN { re = ENVIRON[\"RE\"]; t = ENVIRON[\"TAG\"] } "
             # the tag is what changes; whatever follows it (a CR, a space: #423's S1) stays
-            f"(\" \" $0) ~ re {{ s = $0; sub(/{KEY_TRAIL}/, \"\", s); w = substr($0, length(s) + 1); "
+            f"(\" \" $0) ~ re {{ s = $0; sub(/{AWK_TRAIL_LITERAL}/, \"\", s); w = substr($0, length(s) + 1); "
             f"sub(/ {TAGS_ERE.removesuffix(KEY_TRAIL)}$/, \" \" t, s); if (seen[s]++) next; $0 = s w }} {{ print }}' "
             "\"$f\" > \"$f.roster\"; " +
             KEY_MODE + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + "echo ROSTER_OK")

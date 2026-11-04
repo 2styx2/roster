@@ -12,6 +12,7 @@
 #                                 DIR/NAME/down     the Host is down: ssh times out (exit 255), nothing runs
 #                                 DIR/NAME/esxi     it's ESXi: `uname -s` says VMkernel, and ESXi's own paths
 #                                                   (/etc/ssh/keys-USER, /vmfs/volumes) are DIR/NAME/etc/..., DIR/NAME/vmfs/...
+#                                 DIR/NAME/login    what `id -un` says there (fakes/host/id): the account logged in
 #                                 DIR/NAME/blocked  ip:port lines this Host can't reach (its `nc -z` fails)
 #                                 DIR/NAME/slow     seconds each connection to it takes before it runs anything
 #                                 DIR/NAME/hold     each connection to it waits while this file is there (the test

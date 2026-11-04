@@ -124,6 +124,7 @@ def net(fakes, isolated, write_config, monkeypatch, host_key):
         (d / "home/.ssh/config").write_text("Host *\n    ServerAliveInterval 60\n")
     esx = root / "esx-02"
     (esx / "esxi").touch()
+    (esx / "login").write_text("root\n")       # what `id -un` says there (tests/fakes/host/id)
     shutil.rmtree(esx / "home/.ssh")
     (esx / "etc/ssh/keys-root").mkdir(parents=True)
     (esx / "etc/ssh/keys-root/authorized_keys").write_text("ssh-ed25519 AAAAbox roster-managed:box\n")
@@ -2204,6 +2205,7 @@ def test_setup_installs_the_key_in_esxis_own_keys_file_with_the_sticky_bit(net, 
     sshd reads, kept across a reboot), a new one 1600 as ESXi's own; never ~/.ssh, which ESXi rebuilds at boot."""
     from roster import sshops
     net.cfg_path.write_text(CONFIG.replace("esx-02: { ip: 10.0.0.12, user: root }", "esx-02: { ip: 10.0.0.12, user: ops }"))
+    (net.host("esx-02") / "login").write_text("ops\n")
     monkeypatch.setattr(sshops, "get_secret", lambda ref, group: "pw")
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
@@ -2216,6 +2218,17 @@ def test_setup_installs_the_key_in_esxis_own_keys_file_with_the_sticky_bit(net, 
     assert ak.read_text() == pub + "\n"
     assert ak.stat().st_mode & 0o7777 == 0o1600
     assert not (net.host("esx-02") / "home/.ssh/authorized_keys").exists()
+
+
+@key_scripts_run
+def test_revoke_on_esxi_refuses_a_user_that_isnt_the_login(net, isolated, capsys):
+    """#442's review L1: ESXi's sshd reads /etc/ssh/keys-LOGIN/, LOGIN as it names the account: when roster.yml's user:
+    isn't what the Host calls this login, roster would change a file sshd doesn't read, so that Host fails, said."""
+    (net.host("esx-02") / "login").write_text("Root\n")          # what `id -un` says there
+    assert main(["revoke", "-y"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  esx-02: this login is Root on ESXi, not root (its user: in roster.yml)" in out
+    assert box_lines(net, "esx-02") == ["ssh-ed25519 AAAAbox roster-managed:box"]     # left as it was
 
 
 def setup_box(monkeypatch):
@@ -2265,6 +2278,23 @@ def test_renaming_onto_a_name_another_box_uses_needs_force(net, isolated, capsys
     assert not key_name_file().exists()                                                          # again next time
     assert main(["setup", "--force"]) == 0
     assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box2", theirs]
+
+
+@key_scripts_run
+def test_renaming_onto_a_taken_name_where_the_key_works_from_a_line_of_your_own(net, isolated, capsys, monkeypatch):
+    """#442's review M1: the key works on orion-2 from an untagged line, and another Box's line there has the new name:
+    a FAIL (190), not 'no line', so the new name isn't recorded and this Box's revoke never takes that line."""
+    renamed_box(net, isolated)
+    setup_box(monkeypatch)
+    p = net.host("orion-2") / "home/.ssh/authorized_keys"
+    theirs = "ssh-ed25519 AAAAtheirs roster-managed:box2"
+    p.write_text(p.read_text().replace("ssh-ed25519 AAAAbox roster-managed:box\n", "ssh-ed25519 AAAAbox me@laptop\n")
+                 + theirs + "\n")
+    assert main(["setup"]) == 1
+    assert "FAIL  orion-2: [190]" in capsys.readouterr().out
+    assert box_lines(net, "orion-2") == [theirs] and "ssh-ed25519 AAAAbox me@laptop" in net.ak("orion-2")
+    from roster.common import key_name_file
+    assert not key_name_file().exists()
 
 
 def test_setup_dry_run_on_a_renamed_box_says_it_would_retag_and_changes_nothing(net, isolated, capsys, monkeypatch):
