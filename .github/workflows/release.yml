@@ -79,7 +79,7 @@ jobs:
       # Laid out like a prefix for the man page too (share/man/man1/roster.1), as Neovim's tarballs are.
       - name: roster-cli tarball
         run: |
-          files=(pyproject.toml uv.lock .python-version README.md install.sh src examples
+          files=(pyproject.toml uv.lock .python-version README.md install.sh update.sh uninstall.sh src examples
                  docs/cli-reference.md docs/serve-api.md docs/new-box.md docs/adding-hosts.md)
           [ -f LICENSE ] && files+=(LICENSE)
           d="roster-cli-$VERSION"

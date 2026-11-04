@@ -17,6 +17,22 @@ REAL_PATH = os.environ.get("PATH", "")       # before any test put the stand-ins
 posix_shell = pytest.mark.skipif(WINDOWS, reason="runs a POSIX shell script; native Windows has no sh")
 
 
+def source_copy(tmp_path):
+    """The files install.sh and update.sh read, in a folder of their own that isn't a git clone: they must never run
+    git (a fetch, a pull) on the checkout running the tests."""
+    src = tmp_path / "src-copy"
+    (src / "src/roster").mkdir(parents=True, exist_ok=True)
+    root = Path(__file__).parent.parent
+    for f in ("install.sh", "update.sh", "pyproject.toml", "src/roster/roster.1"):
+        (src / f).write_bytes((root / f).read_bytes())
+    return src
+
+
+def no_roster_path():
+    """PATH without a directory holding a roster: on a box that has one, install.sh would run update.sh instead."""
+    return os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if d and not (Path(d) / "roster").exists())
+
+
 def find_posix_sh():
     """A POSIX sh for the stand-in Hosts (tests/fakes/ssh, FAKE_HOSTS): /bin/sh, or on native Windows Git for Windows'
     MSYS sh (Git/usr/bin/sh.exe, which has the awk, sed, mktemp and ssh-keygen a Host's side of `roster mesh` uses
@@ -68,6 +84,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.chdir(work)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)         # an in-process serve test sets it
+    from roster.providers import bitwarden
+    monkeypatch.setitem(bitwarden._session, "key", None)           # bw's session key, held outside os.environ
     from roster import common
     monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
     monkeypatch.setattr(common, "_config_path", None)              # and its roster.yml

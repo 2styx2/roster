@@ -19,13 +19,24 @@ def build(tmp_path, files):
     return tmp_path / "dist"
 
 
+def sized(*blobs):
+    return {"raw": sum(len(b) for b in blobs), "gzip": sum(len(gzip.compress(b, 9, mtime=0)) for b in blobs)}
+
+
 def test_it_sums_every_js_and_css_file_raw_and_gzipped_and_leaves_fonts_out(tmp_path):
     js1, js2, css = b"let a = 1;\n" * 300, b"export {};\n", b"body{color:red}\n" * 50
-    dist = build(tmp_path, {"index-1.js": js1, "fake-2.js": js2, "index-3.css": css, "inter.woff2": b"\0" * 5000})
+    dist = build(tmp_path, {"index-1.js": js1, "tauri-2.js": js2, "index-3.css": css, "inter.woff2": b"\0" * 5000})
     sizes = bs.measure(dist)
-    assert sizes["js"] == {"raw": len(js1) + len(js2),
-                           "gzip": len(gzip.compress(js1, 9, mtime=0)) + len(gzip.compress(js2, 9, mtime=0))}
-    assert sizes["css"] == {"raw": len(css), "gzip": len(gzip.compress(css, 9, mtime=0))}
+    assert sizes["js"] == sized(js1, js2)
+    assert sizes["css"] == sized(css)
+
+
+def test_the_fake_backend_chunk_has_a_budget_of_its_own_not_the_startup_js(tmp_path):
+    # It's a dynamic import() for the tutor demo and browser runs, not JS the app parses at start (#377).
+    app, fake = b"let a = 1;\n" * 300, b"export const fixtures = [];\n" * 40
+    sizes = bs.measure(build(tmp_path, {"index-1.js": app, "fake-Dc3x.js": fake}))
+    assert sizes["js"] == sized(app)
+    assert sizes["fake"] == sized(fake)
 
 
 def test_it_fails_only_what_is_over_its_budget(tmp_path, capsys):
@@ -45,6 +56,8 @@ def test_a_missing_build_says_how_to_make_one(tmp_path, capsys):
 
 def test_the_budgets_in_performance_md_are_the_scripts():
     text = (ROOT / "docs/app/performance.md").read_text(encoding="utf-8")
-    rows = re.findall(r"^\| App (JS|CSS), minified \| ≤ ([\d,.]+) KB raw, ≤ ([\d,.]+) KB gzipped \|", text, re.M)
-    assert {k.lower(): {"raw": float(raw.replace(",", "")), "gzip": float(gz.replace(",", ""))}
+    rows = re.findall(r"^\| App (JS|CSS|fake Backend)\b[^|]*, minified \| ≤ ([\d,.]+) KB raw, ≤ ([\d,.]+) KB gzipped \|",
+                      text, re.M)
+    kinds = {"JS": "js", "CSS": "css", "fake Backend": "fake"}
+    assert {kinds[k]: {"raw": float(raw.replace(",", "")), "gzip": float(gz.replace(",", ""))}
             for k, raw, gz in rows} == bs.BUDGETS

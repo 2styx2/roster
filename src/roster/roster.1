@@ -13,7 +13,7 @@ roster reveal [\-\-wifi] name
 roster info [\-\-json] NAME [NAME ...]
 roster run [\-\-sudo] host ...
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
-roster bw ...
+roster bw [\-\-write] ...
 roster providers [\-\-json]
 roster auth\-check [\-\-only LIST] [\-\-json]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
@@ -23,6 +23,7 @@ roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
 roster serve
 roster askpass [prompt]
 roster man [\-\-install] [\-\-prefix DIR]
+roster completion {bash,zsh,fish,powershell}
 .fi
 .SH DESCRIPTION
 .PP
@@ -37,7 +38,7 @@ Give this box (and Claude) access to the hosts in roster.yml.
 \fBScans become inventory safely.\fR \fBroster discover\fR turns an nmap sweep into \fBroster.yml\fR entries marked \fBreviewed: false\fR\&. Nothing logs in to them until a person has reviewed them.
 .SH OPTIONS
 .TP
-\fB\-\-version\fR
+\fB\-v, \-\-version\fR
 show program's version number and exit
 .TP
 \fB\-c, \-\-config PATH\fR
@@ -194,9 +195,12 @@ allow scanning more than 4096 addresses
 print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS bw
 .PP
-\fBroster bw ...\fR
+\fBroster bw [\-\-write] ...\fR
 .PP
-The Bitwarden CLI with this box's vault session from \fB~/.config/roster/bw\-session\fR (never prompts), e.g. \fBroster bw list items \-\-search proxmox\fR
+The Bitwarden CLI with this box's vault session from \fB~/.config/roster/bw\-session\fR (never prompts, except \fBlogin\fR and \fBunlock\fR), e.g. \fBroster bw list items \-\-search web\-01\fR\&. Read\-only unless \fB\-\-write\fR: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See \fBroster bw\fR
+.TP
+\fB\-\-write\fR
+allow bw commands that change the vault, write a file here or act on the account (create, edit, delete, export, receive, \-\-output, login, logout, unlock, lock, config, ...)
 .TP
 \fBBW_ARGS\fR
 arguments for bw
@@ -326,6 +330,14 @@ copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv to
 .TP
 \fB\-\-prefix DIR\fR
 with \-\-install: install into DIR/share/man/man1/ instead
+.SS completion
+.PP
+\fBroster completion {bash,zsh,fish,powershell}\fR
+.PP
+zsh\e
+.TP
+\fBSHELL\fR
+the shell to print it for
 .SH JSON OUTPUT
 .PP
 The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBinfo NAME\fR, \fBresources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBproviders\fR and \fBauth\-check\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
@@ -431,7 +443,7 @@ What \fBroster mesh\fR couldn't finish (pending Hosts, cuts pending) and when it
 A Mesh source's key, known hosts, ssh config and its peers for Claude, written by \fBroster mesh\fR (The Mesh)
 .TP
 \fB$XDG_RUNTIME_DIR/roster/\fR
-Short\-lived private state: kept web logins and the askpass socket (on Windows, the askpass channel is a named pipe and its folder is in \fB%TEMP%\fR)
+Short\-lived private state: kept web logins and the askpass socket (on Windows, the askpass channel is a named pipe and its folder is in \fB%TEMP%\fR). Without \fB$XDG_RUNTIME_DIR\fR, kept web logins go in \fB~/.cache/roster/sessions/\fR, which survives a logout: each one is deleted when it's found expired (10 minutes at most) or rejected
 .SH ENVIRONMENT
 .TP
 \fBROSTER_CONFIG\fR

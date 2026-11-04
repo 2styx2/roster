@@ -13,6 +13,7 @@ import { tabFacts, type PasswordPrompt, type Tab, type Tabs, type TabsSnapshot }
 import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
+import { useForgetOnLock } from "../lock/forgetOnLock";
 
 /** Where a Session is on its way to a shell (issue #78): `starting` while roster prepares it and
  * ssh starts on this Box, `logging-in` once ssh runs and the Host hasn't answered yet, null once
@@ -180,6 +181,9 @@ export function ConnectCard({
   // The typed password lives only in this input (never React state): read once on submit, sent,
   // and the field emptied at once (docs/app/security.md).
   const passwordField = useRef<HTMLInputElement>(null);
+  useForgetOnLock(() => {
+    if (passwordField.current) passwordField.current.value = "";
+  });
   const keysNote = useId();
   // Whether to save the password once it logs in: a choice, not a secret, so plain state.
   const [save, setSave] = useState(false);

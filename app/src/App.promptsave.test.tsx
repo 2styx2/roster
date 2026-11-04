@@ -84,6 +84,17 @@ describe('"Save to vault" for an auth: prompt Host', () => {
     expect((await backend.listHosts()).hosts.find((h) => h.name === HOST)!.ssh.auth).toBe("prompt");
   });
 
+  it("a password typed but not sent is emptied when the app locks", async () => {
+    const user = await ready();
+    await user.keyboard(`{Control>} {/Control}:connect ${HOST}{Enter}`);
+    const q = await within(pane()).findByRole("alertdialog", { name: `Password for ${HOST}` });
+    await user.type(within(q).getByLabelText("Password for root"), FAKE_HOST_PASSWORD);
+    await user.keyboard("{Control>} {/Control}:lock{Enter}");
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(within(pane()).getByLabelText("Password for root")).toHaveValue("");
+  });
+
   it("Esc connects nothing", async () => {
     const user = await ready();
     await user.keyboard(`{Control>} {/Control}:connect ${HOST}{Enter}`);

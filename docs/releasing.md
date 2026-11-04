@@ -17,7 +17,7 @@ A Release is one version of the whole repo: the CLI and the app ship together, w
 | `roster-app-X.Y.Z-macos-universal.dmg` | macOS, Apple silicon and Intel in one app, ad-hoc signed |
 | `roster-app-X.Y.Z-macos.tar.gz` | `Roster.app`, `LICENSE` and `THIRD-PARTY-NOTICES` |
 | `roster-X.Y.Z-py3-none-any.whl`, `roster-X.Y.Z.tar.gz` | The CLI's wheel and sdist (`uv build`) |
-| `roster-cli-X.Y.Z.tar.gz` | The CLI's source with `install.sh` and `LICENSE`, for a box without git: unpack, `./install.sh`. It has the man page at `share/man/man1/roster.1` too, laid out like a prefix |
+| `roster-cli-X.Y.Z.tar.gz` | The CLI's source with `install.sh`, `update.sh`, `uninstall.sh` and `LICENSE`, for a box without git: unpack, `./install.sh`. It has the man page at `share/man/man1/roster.1` too, laid out like a prefix |
 | `roster.1` | The `roster(1)` man page on its own, for packagers (the wheel also installs it to `PREFIX/share/man/man1/`) |
 | `roster-docs-X.Y.Z.pdf` | Every `:help` page in one document, printed by headless Chromium from the same pages as the docs website (`npm run docs -- --pdf`, ADR 0008) |
 | `SHA256SUMS` | The SHA-256 of every file above |

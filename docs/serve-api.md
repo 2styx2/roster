@@ -317,7 +317,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 | `38` | askpass: the helper couldn't reach `serve` |
 | `40` | `host.check`: the address doesn't resolve |
 | `41` | `host.check`: the ssh port refused the connection |
-| `42` | `host.check`: no answer in time. For 10.19.x the fix mentions the rate limiter (wait a few minutes) |
+| `42` | `host.check`: no answer in time. The fix names the rate limiter for an address in one of `rate_limited:`'s networks in roster.yml (wait a few minutes), none for an address outside them, and says a rate limiter on the network can cause it when the list is empty |
 | `43` | `host.check`: the Host's key isn't the recorded one. Never accepted automatically |
 | `44` | `host.check`, `session.prepare`: no recorded host key for the Host. From `session.prepare`, `data` has its `address` and `port`, for the app to ask about the key |
 | `45` | `host.check`: the Host refused the password for that user |
@@ -398,6 +398,10 @@ One person may have several Inventories, the team's for work and their own for h
 | `159` | `roster run --sudo` on an `os: windows` Host: refused, Windows has no sudo over ssh; nothing ran. A CLI error, never a serve answer |
 | `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
 | `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
+| `162` | A `box.check` warning (topic `E222`): this Box's name is an OS image's default hostname, so another Box likely has it too; Boxes with the same name are one owner |
+| `164` | `roster bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
+| `165` | `roster bw`: a bw command (or an option before it) roster bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
+| `166` | `roster bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
@@ -607,7 +611,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 |---|---|
 | `13` | The provider has no account to sign out of; roster doesn't try. KeePassXC: "KeePassXC has no account to sign out of: it opens a local database file. To use another one, change vault.kp.database in init.lua"; `env`, `cmd`: "provider 'env' has no account to sign out of - its Logins come from this box itself". Nothing was forgotten |
 | `15` | The CLI isn't signed in, so there's no account to sign out of: "the Bitwarden CLI isn't signed in on this box - there's no account to sign out of". `data.fix`: sign in from the lock screen. Everything was forgotten anyway |
-| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster bw logout` in a terminal shows the same. Everything was forgotten anyway |
+| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster bw --write logout` in a terminal shows the same. Everything was forgotten anyway |
 
 ## Saving to the vault: `vault.create_item`
 

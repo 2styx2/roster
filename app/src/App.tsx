@@ -87,6 +87,7 @@ import { bindingRows } from "./keyboard/bindings";
 import { press, terminalMode, type KeyState } from "./keyboard/mode";
 import { realClock, type Clock } from "./lock/idle";
 import { afterPull, pullGate, syncFailed } from "./edit/pull";
+import { forgetTypedOnLock } from "./lock/forgetOnLock";
 import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
 import { useVault } from "./lock/useVault";
 import { actionsOf, chordOf, defaultOptions, keymapOf, type CommandLine as Line, type Keymap, type Options } from "./keymap";
@@ -774,6 +775,7 @@ function Workspace({
     if (backendReady) void plugins.syncPackages();
   }, [backendReady, plugins, packagesKey]);
   useEffect(() => {
+    if (vault.locked) forgetTypedOnLock();
     void plugins.event(vault.locked ? "lock" : "unlock");
   }, [vault.locked, plugins]);
   useEffect(() => {

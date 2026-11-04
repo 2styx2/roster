@@ -136,7 +136,9 @@ describe("the docs website", () => {
   it("keeps the search index inside its budget (docs/app/performance.md)", async () => {
     const js = file(site.files, "search-index.js");
     const gzip = new Response(new Response(js).body?.pipeThrough(new CompressionStream("gzip")));
-    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(320_000);
+    // 330 -> 450 KB on 2026-11-04 (T197, #377, decision Q181, owner's call): budgets follow the docs. It loads
+    // lazily, as Ghostty's 174 KB does; WezTerm's 382 KB and Zed's 875 KB load on every page. performance.md has the history.
+    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(450_000);
   });
 
   it("puts the search box on every page, and loads the index only when it's used", () => {

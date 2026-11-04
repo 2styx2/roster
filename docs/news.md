@@ -4,6 +4,50 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## v0.5.1
+
+### New
+
+**CLI**
+
+- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
+
+### Changed
+
+**CLI**
+
+- **Which networks have an SSH rate limiter is your setting** (#363): list them as `rate_limited: [10.0.0.0/8]` at the top of `roster.yml` (empty by default), and a Host there that doesn't answer is told its network's rate limiter may be why. With no list, a no-answer's fix says a rate limiter on the network can cause this; roster no longer assumes one fixed address range has one. See [Networks with an SSH rate limiter](cli-reference.md#networks-with-an-ssh-rate-limiter).
+- **The Mesh's one-time re-tag takes only this Box's own older lines** (#384): on the first `roster mesh` after upgrading to this release (v0.5.1), an untagged `authorized_keys` line (from a roster before v0.5.0) is taken as this Box's only when it's exactly the line this Box writes there, the same key, `from=` and options; another older Box's line for the same source stays, the apply warns about it (and, with `--rotate`, says when it still lets the replaced key in), and `roster mesh --find-leftovers` lists it. v0.5.0's first `roster mesh` took every untagged line for a source it writes, another older Box's too. `roster check --box` warns when this Box's name is an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …): Boxes with the same name are one owner, so each one's `setup` and `revoke` take the other's key and each one's `roster mesh` the other's entries; set `box_name:` (on a Box already set up: `roster revoke` first, then set it and run `roster setup` again). **Upgrading Boxes that share Hosts:** upgrade them together, straight from v0.4 to this release, skipping v0.5.0, and run each one's `roster mesh` once. A Box that already ran v0.5.0's `roster mesh` may have taken another older Box's untagged line for a source it writes; that Box's next `roster mesh` puts it back, and `roster mesh --find-leftovers` lists the untagged lines still there. A roster older than v0.5.0 still running on another Box leaves the new tagged lines alone, but still removes untagged lines, and Mesh files on a Host it doesn't make a source, on every apply. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
+
+**App**
+
+- A Session that gets no answer says a rate limiter on the network can cause this, for any address; `:check HOST` names the network when it's in `rate_limited:` (#363).
+
+### Security
+
+**CLI**
+
+- **The vault's session reaches only `bw` and `op`** (#388): `BW_SESSION` and `OP_SESSION_*` no longer go to ssh (or its `ProxyCommand`), git hooks or other programs roster starts. One exported in your shell still works, and `roster serve` forgets it at `vault.lock`. A `providers:` command that runs `bw` or `op` itself no longer gets it: use a `bw:` or `op:` reference, or `roster bw`.
+- **A failing provider command's error shows its stderr only** (#391), never its stdout, which is the password.
+- **An unanswered sign-in ends after 10 minutes** (#389), stopping `bw login` and forgetting the master password.
+- **The askpass channel checks who connects on macOS** (#390), as on Linux.
+- **`roster web` deletes an expired kept login** (#395).
+- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a Host's password, and what roster can and can't see.
+
+**App**
+
+- **A password typed but not sent is emptied when the app locks** (#393).
+- **Passwords crossing the app's core are moved, not copied, and wiped after use** (#392).
+
+### Fixed
+
+**CLI**
+
+- **`install.sh` installs the newest Release, not whatever the checkout is on** (#408): a checkout on a `main` never pulled installed roster 0.1.0 over 0.5.0 without a word. It now fetches `origin` and installs the highest `vX.Y.Z` tag from a clean copy, leaving your checkout as it is (`--ref REF` for another tag or branch; offline, the checkout as it is, with a warning). It never installs an older roster over a newer one without a yes (`--allow-downgrade`). On a box that's set up it runs `update.sh` instead, with the same flags; a box that isn't finished (no map yet, a failed stage, no cron job) gets every stage again, so running it again with `--infra-repo` finishes a first `--yes` run. It no longer pulls the map itself.
+- **`update.sh` checks the checkout it installs from** (#408): it fetches, offers to fast-forward a branch that's behind (under `--yes`, only a clean fast-forward), says when the checkout is older, and never installs an older roster over a newer one without a yes. It never switches branches or touches uncommitted work, and it turns on Tab completion on a box installed before `install.sh` did.
+- **`install.sh` and `update.sh` end with the roster they installed** (#408): `Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`.
+- **`roster -v` prints the version** (#408), as `roster --version` does. Plain `roster` shows the overview and exits 0.
+
 ## v0.5.0
 
 ### New
@@ -32,6 +76,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **Help you can find your way with.** `roster` on its own shows what it can do instead of an argparse error. `roster --help` lists the commands in groups (Start here, Every day, Inventory and access, Tools, and the two the app runs), ahead of the options, with the commands you'll type most. Its usage line is `roster [-c PATH | --inv NAME] COMMAND [ARGS]` instead of all twenty names. `roster COMMAND --help` opens with what the command does and ends with examples, each parsed by a test so none goes stale. A mistyped command or option gets the nearest real one (`roster hots`: "did you mean `hosts`?", `--jsn`: `--json`), in `--json` errors too, and a usage error says which `--help` to read. The man page is unchanged. See [Commands](cli-reference.md#commands).
 - **A login test runs `exit 0`, not `true`** (#375): the same in sh, cmd.exe and PowerShell, so `roster check` and `setup` no longer report a working key login to a Windows Host as failing. `roster check HOST` says when a login was refused on ssh's shared connection (error 158), not as a key problem, and `roster revoke` says why for each Host it couldn't revoke.
 - **Each Box's Mesh is its own** (#379): what the Mesh writes now says which Box wrote it (and which Inventory, when named): `authorized_keys` lines are tagged `roster-mesh:SOURCE@BOX` (`BOX/NAME` for a named Inventory), and the Mesh's `config` and `ROSTER.md` on a source name it in their first line. `roster mesh`, a cut, `--rotate` and `--remove-leftovers` change only this Box's entries, so a Box that lists a Host only as a peer no longer removes the Mesh another Box set up from it, and two Inventories on one Box no longer remove each other's lines. A Host whose Mesh files are another Box's, with other peers, is pending and left alone. Entries from an older roster (no Box in the tag) are kept, listed by `--find-leftovers` and removed only by `--remove-leftovers` or `cut --all`; each Box's first `roster mesh` tags the ones its Mesh record shows it wrote, so every Host changes once and `roster check` shows that as drift until then. Upgrade the Boxes that share Hosts together. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
 - **Each named Inventory has its own Mesh state** (#346): `roster mesh` remembers a named Inventory's pending Hosts and cuts in `~/.config/roster/mesh-NAME.json`, so two Inventories with a Host of the same name no longer mix their Meshes. One that isn't named keeps `mesh.json`, unchanged. Naming the Inventory the Box's `mesh.json` came from moves it there once, and `roster inv remove` sets it aside.
@@ -55,6 +100,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **`install.sh` works on a fresh box, and has `update.sh` and `uninstall.sh` beside it.** On a new Debian or Ubuntu box it runs `apt-get update` before installing (it used to stop at "Unable to locate package"). It installs `unzip` for the Bitwarden CLI's standalone binary on Linux x86_64 instead of giving up, and puts `~/.local/bin` on PATH even before there's a `roster.yml`. It also asks for your team's map repo (or `--infra-repo GIT-URL`, `ROSTER_INFRA_REPO`) instead of cloning a placeholder, and under `--yes` a clone can't wait on a hidden ssh question. It clones roster itself over https, so a new box needs no GitHub key. It checks that `man roster` finds the page it installed, adding a `MANPATH` line only where `man` doesn't look there by itself, and offers `man-db` with the optional tools when there's no `man` (on a minimized Ubuntu it says to run `sudo unminimize`). `./update.sh` pulls the checkout, reinstalls roster with its man page, pulls the map and runs `roster sync`. `./uninstall.sh` takes this box off its hosts first (`roster mesh cut --all`, `roster revoke --all`), then removes the cron job, the startup-file lines, this box's key and ssh config, the vault session, roster, its man page and the `ROSTER.md` `setup` wrote. It keeps the key and roster while a host still has the key, and asks before removing uv's PATH line, `bw` or the config folder (`--purge` says yes). `scripts/test-install.sh` runs all three on a fresh Ubuntu or Fedora box in a container. See [Removing a box](new-box.md#removing-a-box).
 - **`roster revoke` and `roster check` with every Host skipped exit 1** (#371), instead of `removed from 0/0 hosts` or `0/0 hosts fully reachable` and 0; any skipped Host fails them. `roster revoke` names this Box's files to delete only once every Host of its `roster.yml` has lost the key (not with `--only`), and never another `roster.yml`'s `config.d/roster`; `roster revoke --all` with a left-out Host skipped exits 1 too.
 - **`roster mesh` says when the `Include` it relies on names a missing file** (#365), and writes it again.
 - **The Mesh never removes a `ROSTER.md` that only mentions it** (#372's review): it takes a `~/ROSTER.md` as its own only by its exact first line, so your notes that start with "roster-mesh" stay.

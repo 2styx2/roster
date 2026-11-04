@@ -42,7 +42,7 @@ from . import (
     errtext,
     not_installed,
 )
-from .bitwarden import _bw, _bw_status_json, _bw_unlock
+from .bitwarden import _bw, _bw_status_json, _bw_unlock, set_session
 
 if not WINDOWS:                         # a PTY is Linux's and macOS's; native Windows has its pseudoconsole
     import fcntl
@@ -365,7 +365,7 @@ class BwLogin:
         if status.get("status") != "unauthenticated":
             who = f" as {status['userEmail']}" if status.get("userEmail") else ""
             raise AlreadyLoggedIn(f"the Bitwarden CLI is already logged in on this box{who} - unlock it instead "
-                                  "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw logout`)")
+                                  "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw --write logout`)")
         self.server = status.get("serverUrl") or CLOUD
         if params.get("server"):
             self.set_server(server_url(params["server"]))
@@ -484,7 +484,7 @@ class BwLogin:
         if what == 0:
             key = self.session_key()
             if key:
-                os.environ["BW_SESSION"] = key                          # this process only
+                set_session(key)
                 return self.finish()
             return self.at({"step": "master_password", "email": self.email})
         e = self.failure(after)
@@ -624,7 +624,7 @@ class BwLogin:
             return ApiKeyRejected("Bitwarden didn't accept that API key (client_id or client_secret)")
         if "already logged in" in low:
             return AlreadyLoggedIn("the Bitwarden CLI is already logged in on this box - unlock it instead "
-                                   "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw logout`)")
+                                   "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw --write logout`)")
         if after in (CODE, NEW_DEVICE):
             return CodeRejected("Bitwarden didn't accept that code (wrong or expired)")
         if "invalid master password" in low or "username or password is incorrect" in low:

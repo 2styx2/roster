@@ -17,6 +17,14 @@ from .sshops import hk_name, known_names, ssh_config_hosts
 SECTIONS = {"roster": "roster", "inventory": "Inventory", "ssh": "ssh", "vault": "Vault", "askpass": "askpass",
             "repo": "Infra repo"}
 PLACEHOLDER_USERS = ("", "CHANGE-ME")
+# Names many machines carry out of the box (an OS image's default hostname): a Box named one of them likely shares
+# its name with another Box, and Boxes with one name are one owner (#384). Lower case: compared with the name
+# lowered (config.py keeps its case).
+COMMON_BOX_NAMES = frozenset({
+    "localhost", "localdomain", "none", "-none-", "default", "ubuntu", "ubuntu-server", "debian", "raspberrypi",
+    "raspberry", "dietpi", "kali", "fedora", "centos", "rocky", "rockylinux", "almalinux", "archlinux", "alpine",
+    "nixos", "opensuse", "manjaro", "linuxmint", "mint", "pop-os", "vagrant", "osmc", "orangepi", "libreelec",
+    "macbook", "macbook-pro", "macbook-air", "imac", "imac-pro", "mac-mini", "mac-pro", "mac-studio"})
 SHOWN = 5                   # names listed before "and N more"
 
 
@@ -152,6 +160,15 @@ def ssh(cfg):
                                             f"{names(missing)}", "run `roster sync`", "E2"))
         else:
             out.append(check("ssh", "ok", f"roster's ssh config has every Host: {ours}"))
+    if str(cfg["box"]).lower() in COMMON_BOX_NAMES:
+        out.append(check("ssh", "warn", f"this Box's name, {cfg['box']} (box_name:, or the hostname), is a common "
+                                        "default, so another Box may have it too: Boxes with the same name are one "
+                                        "owner, so each one's setup and revoke take the other's key, and each one's "
+                                        "Mesh the other's entries, off the Hosts they share",
+                         "on a new Box, set box_name: in roster.yml to a name no other Box uses before `roster setup`; "
+                         "on a Box already set up, first `roster revoke` (under the old name: it also takes a "
+                         "same-named Box's key, which then runs `roster setup` again), then set box_name: and run "
+                         "`roster setup` again", "E222"))
     if any(h["enroll"] for h in hosts):
         if cfg["key"].exists():
             out.append(check("ssh", "ok", f"this Box's key: {cfg['key']}"))

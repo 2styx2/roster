@@ -771,8 +771,9 @@ const PROBE_SPLIT: usize = 2;
 const PROBE_KEYS: usize = 1;
 
 /// A secret on its way from serve to a PTY: no Debug value, no Display, no Clone, no Serialize,
-/// and its bytes are overwritten when it's dropped (best effort: copies serve's answer passed
-/// through on the way here, such as the JSON line it came in, aren't).
+/// and its bytes are overwritten when it's dropped. It's moved here from serve's answer, never
+/// copied, and the line that answer came in is wiped too ([`crate::wipe`]; best effort: the
+/// pipe's read buffer and serde_json's scratch space aren't the core's to wipe).
 pub struct Secret(Vec<u8>);
 
 impl Secret {
@@ -783,11 +784,7 @@ impl Secret {
 
 impl Drop for Secret {
     fn drop(&mut self) {
-        for b in self.0.iter_mut() {
-            // SAFETY: a valid, aligned, exclusive pointer into our own buffer.
-            unsafe { std::ptr::write_volatile(b, 0) };
-        }
-        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+        crate::wipe::wipe_bytes(&mut self.0);
     }
 }
 

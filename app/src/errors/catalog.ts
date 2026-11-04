@@ -467,8 +467,8 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     row: 72,
     codes: [16],
     where: ["the vault", "this Box"],
-    fix: () => "See the details: the CLI's own words. `roster bw logout` in a terminal shows the same.",
-    actions: [copy(() => "roster bw logout")],
+    fix: () => "See the details: the CLI's own words. `roster bw --write logout` in a terminal shows the same.",
+    actions: [copy(() => "roster bw --write logout")],
   }),
   // The Mesh (`mesh.plan`, `mesh.apply`, ticket 39): docs/app/errors.md row 73. Rows 74-79 are a
   // Link's or a Host's status in the result, not errors.
