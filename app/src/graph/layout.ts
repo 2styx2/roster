@@ -5,7 +5,9 @@
 // once stays where it is, and a new one takes a free place without moving the others; a placed
 // cluster that overlaps another (it got new nodes, or an older version saved it so) moves, whole, to
 // the nearest free place (T99, #237). A node the user placed stays where they put it: it never moves
-// with its cluster, nor counts in the cluster's size when clusters are kept apart. No force
+// with its cluster, nor counts in the cluster's size when clusters are kept apart. A cluster the
+// user placed (`m` or a drag on it collapsed) stays where they put it: a neighbour it lands on makes
+// room, and while it's held (being moved) it pushes nothing. No force
 // simulation: it would move everything when one node arrives, and cost seconds at 2,000 nodes.
 import type { GraphData } from "./model";
 
@@ -24,6 +26,14 @@ export interface SavedLayout {
   clusters: Record<string, [number, number]>;
   /** Nodes the user placed (a drag, or `m`): they stay where they are, whatever their cluster does. */
   moved?: string[];
+  /** Clusters the user placed whole, the one placed last at the end: they stay where they are, and
+   * a neighbour they land on makes room. */
+  movedClusters?: string[];
+}
+
+export interface LayoutOptions {
+  /** The cluster being moved: it stays exactly where it's saved and pushes nothing, until let go. */
+  holding?: string | undefined;
 }
 
 export interface Layout {
@@ -99,7 +109,7 @@ function nearestFree(from: Point, r: number, others: readonly Circle[]): Point |
   return null;
 }
 
-export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
+export function layoutGraph(g: GraphData, saved?: SavedLayout, opts: LayoutOptions = {}): Layout {
   const clusterIds = new Set(g.clusters.map((c) => c.id));
   const group = (id: string): Group => ({ id, members: [], r: 0, centre: { x: 0, y: 0 }, fixed: false, grew: false, pinned: [] });
   const user = new Set(saved?.moved ?? []);
@@ -153,15 +163,29 @@ export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
 
   // Groups placed before stay where they are, unless one overlaps another: then it moves, whole, to
   // the nearest free place. One overlaps when it got new nodes and grew into its neighbours (Topology
-  // fills its clusters as Hosts' details arrive), or when an older version saved it so. Those that
-  // didn't grow settle first, so a grown one is the one that moves. Nodes the user placed don't count
-  // (they're not in `r`): a node dragged out over a neighbour moves nothing.
+  // fills its clusters as Hosts' details arrive), when an older version saved it so, or when the user
+  // put a cluster on it. Clusters the user placed settle first (the one placed last first), then
+  // those that didn't grow, so a grown one is the one that moves and the user's stays. Nodes the
+  // user placed don't count (they're not in `r`): a node dragged out over a neighbour moves nothing.
+  // The cluster being moved is left out: it stays under the user and pushes nothing until let go.
+  const userOrder = (saved?.movedClusters ?? []).filter((id) => byId.get(id)?.fixed).reverse();
+  const mine = new Set(userOrder);
+  const held = opts.holding !== undefined && byId.get(opts.holding)?.fixed ? opts.holding : undefined;
   const settled: Circle[] = [];
   const homeless: Group[] = [];
-  for (const grp of [...used.filter((x) => x.fixed && !x.grew), ...used.filter((x) => x.grew)]) {
+  const order = [
+    ...userOrder.map((id) => byId.get(id) as Group),
+    ...used.filter((x) => x.fixed && !x.grew && !mine.has(x.id)),
+    ...used.filter((x) => x.grew && !mine.has(x.id)),
+  ].filter((x) => x.id !== held);
+  // One that moves avoids the clusters still to settle too, where they are, so it doesn't land on
+  // one and push it on in turn.
+  const pending = new Set(order);
+  for (const grp of order) {
+    pending.delete(grp);
     const c = { ...grp.centre, r: grp.r };
     if (!settled.every((o) => apart(c, o))) {
-      const p = nearestFree(grp.centre, grp.r, settled);
+      const p = nearestFree(grp.centre, grp.r, [...settled, ...[...pending].map((x) => ({ ...x.centre, r: x.r }))]);
       if (!p) {
         grp.fixed = false;
         homeless.push(grp);
@@ -225,5 +249,7 @@ export function layoutGraph(g: GraphData, saved?: SavedLayout): Layout {
     if (grp.id !== "") clusters.set(grp.id, { x: c.x, y: c.y, r });
   }
   if (moved.length) out.moved = moved;
+  const movedClusters = (saved?.movedClusters ?? []).filter((id) => byId.get(id)?.fixed);
+  if (movedClusters.length) out.movedClusters = movedClusters;
   return { nodes, clusters, saved: out };
 }

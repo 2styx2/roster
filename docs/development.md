@@ -4,7 +4,8 @@
 uv sync                  # creates .venv with dev tools
 uv run pytest            # no network or SSH server needed; temp folders are deleted when each test ends (below)
 uv run pytest tests/test_mesh.py -n 4   # the slow Mesh suite on 4 workers (pytest-xdist), as CI's Windows job runs it
-uv run ruff check src tests scripts app/scripts
+uv run ruff check src tests scripts app/scripts   # with flake8-bandit's security rules (S)
+uv run pyright           # the type checker: basic over src/roster/, strict for the modules listed in pyproject.toml
 uv build                 # wheel + sdist in dist/
 ```
 
@@ -18,18 +19,26 @@ The `cmd:`/`env:` cut (decision Q92) is written twice, in `src/roster/jsonout.py
 src/roster/
   cli.py            commands and argument parsing
   jsonout.py        `--json` on the read commands: one document with a version, `cmd:`/`env:` references cut (Q92, Q110)
+  jsondocs.py       each `--json` document as a Pydantic model (T176), imported only when one prints
   common.py         small shared helpers: output, paths, text, starting programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login
-  config.py         loading/validating roster.yml, search, --only
+  config.py         loading/validating roster.yml, search, --only; find_config: which roster.yml (-c, --inv, ...)
+  models.py         roster.yml's Inventory as Pydantic models (Host, its Logins and services, group, Link, resource);
+                    load_inventory returns them, load_config their dict view (Inventory.as_config)
+  inventories.py    named Inventories (`roster inv`, inventories.json, its Pydantic models): the active one, each one's
+                    own ssh config and known_hosts, the ssh config index, and the warnings for the same machine in two
   example.py        the `roster init` template
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
   claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
+  boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
                     requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),
                     `$/cancel` (Request, Server.cancel), the unlock's own lane;
                     each method's docstring is its row in docs/serve-api.md (scripts/gen-serve-api.py)
+  servemodels.py    serve's params and results as Pydantic models (T174: hosts.list, host.get so far); with models.py,
+                    the object tables in docs/serve-api.md are generated from them
   jobs.py           serve's job manager: background work (a Mesh run, a scan, a Host's check) with ids, state, progress, a stop, and
                     the job.progress notification; serve's exit stops every job and records it
   edit.py           editing one Host in roster.yml as text, adding, removing, renaming or moving one, and groups (comments and other entries kept), checked before it's written
@@ -45,6 +54,7 @@ src/roster/
                     the infra repo), every check local
   askpass.py        the askpass channel: serve's socket (named pipe on Windows) + one-time tokens, the `roster askpass` helper and the logged-in report (stdlib only)
   web.py            roster web: HTTP requests logged in with a service's stored credentials
+  winhost.py        Windows Hosts (os: windows): the PowerShell scripts setup, revoke and check send on stdin (the key file, its ACL)
   winpipe.py        Windows named pipes for askpass: a pipe only this user can open (its DACL), the client end (ctypes, stdlib only)
   providers/        password providers: registry + plugins + templates, builtin, bitwarden, onepassword,
                     keepassxc (a local .kdbx through keepassxc-cli);
@@ -57,6 +67,12 @@ scripts/            gen-serve-api.py: docs/serve-api.md's method tables from ser
                     bump-version.sh: one version everywhere;
                     news_check.py and news_section.py: the news reminder on pull requests and a Release's notes;
                     check-bundle-size.py: the app's JS/CSS budget
+                    check-release-notices.py: every app download (archives, installers, the bundle config) carries
+                    LICENSE and THIRD-PARTY-NOTICES (docs/releasing.md)
+                    gen-repaint-cases.py: the repaints the core's screen and xterm.js are both checked on
+                    (crates/roster-core/tests/fixtures/repaints.json, repaint-fuzz.json; Q151 (l))
+                    stress.sh: one roster-core test binary many times at once beside busy loops, to find the
+                    tests that fail only under load (docs/app/dev/testing.md)
 docs/               team guides: setting up a new box, adding hosts; docs/app/ for the app, docs/adr/ for decisions
 tests/              pytest suite + fake password-manager CLIs
 app/                the roster app (frontend + app/src-tauri); its Rust core is crates/roster-core (app/README.md)
@@ -70,7 +86,13 @@ The app's checks are in [app/README.md](../app/README.md#development) (`npm run 
 
 ## Languages and types
 
-The CLI and `roster serve` are Python; the app's core is Rust (decision Q113, [ADR 0009](adr/0009-python-cli-rust-where-it-falls-short.md)). Every new data shape in the CLI or serve (a serve method's params and result, a `roster.yml` key, a `--json` document) is a Pydantic model, and new or rewritten modules pass the type checker in strict mode (ticket T112 adds the checker and its command here). When something can't be done well in Python, write it in Rust in the Cargo workspace instead of a second Python copy. A full rewrite of the CLI is revisited once the app has matured.
+The CLI and `roster serve` are Python; the app's core is Rust (decision Q113, [ADR 0009](adr/0009-python-cli-rust-where-it-falls-short.md)). Every new data shape in the CLI or serve (a serve method's params and result, a `roster.yml` key, a `--json` document) is a Pydantic model, and new or rewritten modules pass the type checker in strict mode. Existing dicts move over when a ticket touches them, not in one sweep.
+
+- **The type checker is pyright** (`uv run pyright`, pinned in the dev group; CI's `CLI lint` job runs it beside ruff). It checks `src/roster/` in basic mode; a module that is new or rewritten goes on the `strict` list in `pyproject.toml`'s `[tool.pyright]` in the same pull request (`models.py` is the first). What it finds is fixed, or silenced on its line with the rule and a reason (`# pyright: ignore[reportAttributeAccessIssue] - Windows only`), never for a whole file.
+- **roster.yml loads into models** (`models.py`): `config.load_inventory(path)` returns an `Inventory` of `Host`s (with their `SshLogin`, `Login` and `Service`s), `Group`s, `Link`s and resources (`WifiResource`, `AccountResource`, `SecretResource`), read-only. New code reads those. `load_config(path)` is the same Inventory as the dicts the older code reads (`Inventory.as_config()`), keys unchanged; a module moves to the models when a ticket touches it. serve's params and results are models in `servemodels.py` (`hosts.list` and `host.get` so far: a method moves there when a ticket touches it), and every `--json` document is one in `jsondocs.py` (`jsonout.emit` takes only a model). Each dumps with `exclude_unset` (an optional key that isn't set is left out, as the dicts did) in the field order the dicts had: the output is byte for byte what it was. Their fields' `description=` is what docs/serve-api.md's object tables say (`scripts/gen-serve-api.py`); a field without one fails the generator. A key roster doesn't know stays on its Host (`shell_hooks`, a team's own).
+- **A model's error is roster's own:** config.py makes its checks first, with their usual messages; whatever the models still refuse (`workers: lots`) stops with `error: PATH: KEY: what's wrong` (code 1 in serve and `--json`), never a Pydantic traceback, and never the value that failed. No repr shows an `auth:` or a key roster doesn't know: anything that could hold a secret is `Field(repr=False)` (`SecretStr` for a value a vault returns).
+- **Pydantic is imported lazily:** only when roster.yml is loaded (inside `config.parse_inventory`), so `roster --help`, `roster --version` and `roster askpass` don't pay for it (`tests/test_models.py` checks `import roster.cli` doesn't load it). Measure a change to that with `python -X importtime -c "import roster.cli"`.
+- **ruff's `S` rules** (flake8-bandit) are on: a finding is fixed or carries a `noqa` with its reason. `S603`/`S607` (running a program from PATH without a shell) are off everywhere, since running ssh, git and the vault CLIs as argv lists is roster's job; the tests may assert and use made-up passwords and temp paths. When something can't be done well in Python, write it in Rust in the Cargo workspace instead of a second Python copy. A full rewrite of the CLI is revisited once the app has matured.
 
 ## Trying it safely
 

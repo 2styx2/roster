@@ -1,6 +1,6 @@
 # `roster serve` API
 
-`roster serve` is the backend for the desktop app (the roster app, [`app/`](../app/README.md)). It speaks JSON-RPC 2.0 on stdin/stdout, one JSON object per line, answers several requests at once (API 20; [Ordering, locks and jobs](#ordering-locks-and-jobs)), and exits with code 0 when stdin closes. It is the app's backend, not a public API: scripts and other tools use the CLI's `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). Its one other channel is the private askpass socket for password Sessions (below). Only responses go to stdout; warnings and logs go to stderr. It finds `roster.yml` the same way every other command does (`-c PATH`, `$ROSTER_CONFIG`, ...).
+`roster serve` is the backend for the desktop app (the roster app, [`app/`](../app/README.md)). It speaks JSON-RPC 2.0 on stdin/stdout, one JSON object per line, answers several requests at once (API 20; [Ordering, locks and jobs](#ordering-locks-and-jobs)), and exits with code 0 when stdin closes. It is the app's backend, not a public API: scripts and other tools use the CLI's `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). Its one other channel is the private askpass socket for password Sessions (below). Only responses go to stdout; warnings and logs go to stderr. It finds `roster.yml` the same way every other command does (`-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, ...).
 
 Results are the objects roster builds when it loads `roster.yml`, with no extra schema. Logins come back as references (`bw:esxi-02 ssh+web`), never as values.
 
@@ -69,7 +69,89 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 
 <!-- END generated:methods -->
 
-A Host has `name`, `group`, `ip`, `ssh: {user, port, auth}`, `login: {user, auth}` (the default for its services), `services: {name: {port, url, scheme, user, auth, verify, login, override}}` (`login` is the resolved type, never a `web_login_names` alias), `problems: [{service, message, fix}]` (service entries left out because roster can't use them; empty when there are none), `web`, `enroll`, `reviewed`, `title`, `description`, `type`, `product`, `mac`, plus the older flat `user`, `port` and `auth`.
+The objects these answer with are generated from their models (`src/roster/models.py`, `servemodels.py`; ticket T174): every value is resolved (what the Host doesn't set comes from its group, then `defaults:`), and no field ever holds a password: `auth` is a Login reference. A Host also carries any other key `roster.yml` gives it, its group or `defaults:`, as `roster.yml` has it, after these.
+
+<!-- BEGIN generated:models Host SshLogin Login Service ServiceProblem Group InventoryError -->
+
+**Host**: one Host. Keys roster doesn't know (shell_hooks, a team's own) stay on it as they were written.
+
+| Field | Type | What |
+|---|---|---|
+| `user` | `string \| null` | The same as `ssh.user` (kept for older code). |
+| `port` | `integer` | The same as `ssh.port`. |
+| `enroll` | `boolean` | Whether `roster setup` puts this Box's key on it (`false`: password Sessions). |
+| `auth` | `string \| null` | The same as `ssh.auth`. |
+| `web` | `string \| null` | Its web UI's URL: the `web` service's, else the first service given a URL. |
+| `services` | `{string: Service}` | Its services by name (`web`, `postgres`); `{}` when none. |
+| `notes` | `any` | The older name for `description`, as roster.yml has it. |
+| `title` | `string` | One line; `""` if unset. |
+| `description` | `string` | One line; `""` if unset. |
+| `type` | `string` | What it is (`esxi`, `linux`); `""` if unset. |
+| `product` | `string` | Its product; `""` if unset. |
+| `reviewed` | `boolean` | `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is. |
+| `mac` | `any` | Its MAC address; `""` if unset. |
+| `mesh` | `boolean \| null` | `mesh:` as roster.yml sets it; `null` if nothing does. |
+| `os` | `"windows" \| "posix" \| null` | `os:` as roster.yml sets it (defaults, group, Host): `windows` (setup, revoke and check run PowerShell there) or `posix`; `null` if nothing does, which is `posix`. |
+| `ip` | `string` | Its address (an IP or a DNS name). |
+| `name` | `string` | Its name in the Inventory, unique. |
+| `group` | `string` | The group it's in. |
+| `ssh` | `SshLogin` | How roster logs in to it over ssh: the most specific of the Host's, its group's and `defaults:`. |
+| `login` | `Login` | The default Login for its services. |
+| `problems` | `ServiceProblem[]` | Service entries roster left out because it can't use them; `[]` when there are none. |
+
+**SshLogin**: how `ssh NAME` logs in: the most specific of the Host's, its group's and the defaults' ssh: block or plain user/port/auth.
+
+| Field | Type | What |
+|---|---|---|
+| `port` | `integer` | The port (22 unless set). |
+| `user` | `string \| null` | The user. |
+| `auth` | `string \| null` | Its Login reference (`prompt` unless set). |
+
+**Login**: the Host's default Login for its services (user and auth, unresolved).
+
+| Field | Type | What |
+|---|---|---|
+| `user` | `string \| null` | The user; `null` if unset. |
+| `auth` | `string \| null` | The Login reference; `null` if unset. |
+
+**Service**: one of a Host's services, merged defaults <- group <- host. `override`: it sets its own user or auth.
+
+| Field | Type | What |
+|---|---|---|
+| `port` | `integer` | Its port. |
+| `url` | `string \| null` | Its URL, for http and https services. |
+| `scheme` | `string \| null` | `http`, `https`, or `null` when roster can't tell. |
+| `user` | `string \| null` | Its user: its own, else the Host's `login.user`. |
+| `auth` | `string \| null` | Its Login reference: its own, else the Host's `login.auth`. |
+| `verify` | `boolean` | Whether its TLS certificate is checked. |
+| `login` | `string` | How `roster web` signs in, resolved (never a `web_login_names` alias): `basic`, `bearer`, `vsphere`, `unifi`, `openvpnas`, `hub` or `none`. |
+| `override` | `boolean` | `true` when it has a Login of its own; `false` when it uses the Host's. |
+
+**ServiceProblem**: a service entry roster left out of the Inventory, and why: the rest of the Host still loads.
+
+| Field | Type | What |
+|---|---|---|
+| `service` | `string` | The service's name. |
+| `message` | `string` | What's wrong, naming the service. |
+| `fix` | `string` | What to change. |
+
+**Group**: a group of Hosts, by its name in `hosts.list`'s `groups`.
+
+| Field | Type | What |
+|---|---|---|
+| `title` | `string` | One line; `""` if unset. |
+| `description` | `string` | One line; `""` if unset. |
+
+**InventoryError**: `hosts.list`'s `error` (API 8): why roster.yml as it is now doesn't load, while the last good Inventory is shown (catalog row 1).
+
+| Field | Type | What |
+|---|---|---|
+| `message` | `string` | What's wrong, with the line for a YAML error. |
+| `path` | `string \| null` | The `roster.yml` that doesn't load. |
+| `line` | `integer \| null` | The line a YAML error is at; left out when there's none. |
+| `fix` | `string \| null` | What to do about it. |
+
+<!-- END generated:models -->
 
 ## Sessions: `session.prepare`
 
@@ -282,6 +364,42 @@ Requests without an `id` (notifications) run but get no reply. `serve` sends thr
 <!-- END generated:methods -->
 
 The checks of [`roster check --box`](cli-reference.md#roster-check---box), in section order: `roster`, `inventory`, `ssh`, `vault`, `askpass`, `repo` (a newer roster may add sections; the app shows one it doesn't know under its id). `level` is `ok`, `warn` or `error`; `fix` says what to do in a sentence; `topic` is a `:help` topic that explains it (an error catalog row such as `E6`, or a command such as `:publish`). `ok` is false when any check is an `error`. Every check is local: files, `PATH`, each vault CLI's own status, the infra repo's git with no fetch. Nothing logs in to a Host or touches the network. It reads `roster.yml` as it is now without applying it, so a file that doesn't load is an `inventory` error while `hosts.list` still answers with the last good Inventory. `askpass` says whether this `serve`'s askpass channel is open. No check carries a secret: Logins are counted by provider, never looked up. `box.check` never fails; with no `roster.yml`, the `inventory` check says so.
+
+## Named Inventories: `inventories.list`, `inventories.use`
+
+One person may have several Inventories, the team's for work and their own for home, and one is active ([`roster inv`](cli-reference.md#named-inventories)). A `serve` runs on one of them for its whole life: `inventories.list` says which (`name`, `path`) and which is active, and `inventories.use` makes another one the active one. The app then restarts `serve` (as it does for a new `backend`), which finds the active one, or starts it with `--inv NAME`. `inventories.use` changes nothing else: no vault is locked or unlocked and no Session is touched; those are the app's to do around the restart.
+
+<!-- BEGIN generated:methods inventories.list inventories.use -->
+
+| Method | Params | Result | Errors | Since API |
+|---|---|---|---|---|
+| `inventories.list` | none | `{inventories: [{name, path, active, exists}], active, name, path}`: `active` is the active Inventory's name (or `null`), `name` the named Inventory this serve runs on (`null` when its `roster.yml` isn't one) and `path` its `roster.yml` (`null` when none was found). With no named Inventories, `inventories` is `[]` | `143` | 27 |
+| `inventories.use` | `{name}` | `{active, path, restart: true}`: `path` is its `roster.yml` | `140`, `143` | 27 |
+
+<!-- END generated:methods -->
+
+| Code | Meaning |
+|---|---|
+| `140` | No named Inventory by that name (`inventories.use`, `--inv`, `roster inv use` and `remove`). `data.names`: the ones there are |
+| `141` | `roster inv add`: the name, the file or its folder is already a named Inventory's (each Inventory keeps its own folder: `ROSTER.md` is written next to it) |
+| `142` | `roster inv add`: a bad name (letters, digits, `.` `_` `-`), or no file at the path |
+| `143` | roster's list of named Inventories (`inventories.json` in roster's folder) doesn't load |
+| `144` | A `box.check` warning: another named Inventory's `roster.yml` isn't there or doesn't load, so it isn't compared |
+| `145` | A `box.check` warning: a Host here and one in another named Inventory have the same host key (the same machine?) |
+| `146` | A `box.check` warning: the same Host name in two named Inventories; `ssh NAME` reaches the active one's |
+| `147` | A `box.check` warning: the same address and port in two named Inventories, with different host keys |
+| `148` | A warning (stderr, and `box.check`): the named Inventories' ssh config index is out of date and couldn't be rewritten (a read-only `~/.ssh`); everything else goes on |
+| `149` | `roster revoke` (and `--all`): this Box's ssh is a batch file (a `.cmd` or `.bat` shim on Windows), and roster won't hand it the key-removal script, whose characters cmd.exe would act on; nothing is revoked. A CLI error, never a serve answer |
+| `154` | A warning (stderr): a Host has `type: windows` but no `os:`, so roster treats it as POSIX. Never a serve answer |
+| `155` | `roster setup` / `revoke`: a POSIX script failed with Windows' "'sh' is not recognized": set `os: windows`. A CLI error, never a serve answer |
+| `156` | `roster setup` / `revoke` / `check`: an `os: windows` Host has no PowerShell or isn't Windows; nothing was changed. A CLI error |
+| `157` | `roster setup` / `revoke` / `check` on a Windows Host: its key file is refused (UTF-16, a BOM, an `sshd_config` roster can't follow, an ACL it couldn't set; nothing changed), or, as a warning, others can use it |
+| `158` | `host.check`'s `auth` step: the login was refused on ssh's shared connection (ControlMaster, "No existing session"), not for its key or password |
+| `159` | `roster run --sudo` on an `os: windows` Host: refused, Windows has no sudo over ssh; nothing ran. A CLI error, never a serve answer |
+| `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
+| `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
+
+`box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
 ## Editing: Pending changes
 
@@ -550,7 +668,7 @@ A Mesh result is `{applied, links, hosts, excluded, reach, pending, already, war
 
 - `links`: `[{from, to, kind, status, why?, via?, skip?}]`. `kind` is `key` or `password` (the peer asks for a password). `via` is the Host the source goes through to the peer (a Link's `via:`; `mesh.status` has it too). `status` is `ok`; `untested` (written, but the source has no `nc` or bash to test the port with, or a hop couldn't be tested); `unreachable` (the source can't reach the peer's ssh port, or a hop can't: left out); `no-host-key` (this Box recorded no host key for the peer, or for its `via` Host: left out); `no-via` (the source has no Link to the `via` Host: left out); `pending` (the source, or the `via` Host, didn't answer); `skipped` (`skip: "password-source"`: roster doesn't write on a password Host). `why` says it in words.
 - `hosts`: `[{host, status, changes, error?}]` for every Host visited. `status` is `same`, `would-change` (plan), `changed` (apply) or `pending` (with `error`). `changes` are short phrases: `make key`, `replace key`, `write ssh config`, `write known_hosts`, `write ROSTER.md`, `write Include in ~/.ssh/config`, `add key from orion-2`, `remove key from orion-2`, `replace key from orion-2`, `remove id_ed25519`, ....
-- `excluded`: `{host: why}` for Hosts kept out (`not reviewed (reviewed: false)`, `mesh: false`).
+- `excluded`: `{host: why}` for Hosts kept out (`not reviewed (reviewed: false)`, `mesh: false`, or `[160] os: windows: …` for a Windows Host, since T196: no API change).
 - `reach`: `{source: how many Hosts it reaches}`, counting the Links that work.
 - `pending`: `{host: why}`, Hosts that didn't answer; `already`: nothing to change and nothing pending ("already in the mesh"); `warnings`: words to show (a `ROSTER.md` that isn't roster's, a Host that left `roster.yml`); `cut_pending`: `{host: [peers]}` from earlier cuts not yet finished.
 - **Grouped** (API 19, `grouped: true` on `mesh.status`): for a map that draws who reaches whom, such as the Topology Plugin ([plugins/topology](../plugins/topology/README.md)). `meshed: {group: [host]}` names each meshed group's Hosts that reach each other both ways (two or more, in `roster.yml` order; a password Host among them is a peer, reached and never reaching), and `links` leaves out the pairs those cover (two Hosts of one meshed group, without a `via`), so 2,000 meshed Hosts are 2,000 names and not 98,000 Links. Everything else is as without it. Not with `brief` (`-32602`).

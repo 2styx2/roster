@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from . import jsonout
+from . import boxsync, jsonout
 from .common import die, oneline, say, tcp_ok
 from .config import find_config, load_config
 
@@ -68,7 +68,9 @@ def parse_nmap_xml(text):
     """nmap -oX output -> [{ip, hostname, mac, vendor, os, ports: [{port, name, product, title, ssl}]}]"""
     import xml.etree.ElementTree as ET
     try:
-        root = ET.fromstring(text)
+        # S314: the XML is the output of the nmap roster just ran on this box, not a document from the network, and
+        # ElementTree never fetches external entities
+        root = ET.fromstring(text)  # noqa: S314
     except ET.ParseError as e:
         die(f"couldn't read nmap's output: {e}")
     found = []
@@ -101,7 +103,7 @@ def parse_nmap_xml(text):
                 ostypes.append(sv["ostype"])
             product = " ".join(x for x in (sv.get("product"), sv.get("version"),
                                            f"({sv['extrainfo']})" if sv.get("extrainfo") else "") if x)
-            rec["ports"].append({"port": int(p.get("portid")), "name": sv.get("name", "") or "unknown",
+            rec["ports"].append({"port": int(p.attrib["portid"]), "name": sv.get("name", "") or "unknown",
                                  "product": product, "title": title,
                                  "ssl": sv.get("tunnel") == "ssl" or sv.get("name") in ("https", "ssl")})
         osm = host.find("os/osmatch")
@@ -208,6 +210,8 @@ def scan_entry(rec, taken, today):
 
     page_title = next((p["title"] for p in rec["ports"] if p["title"]), "")
     entry = {"ip": rec["ip"], "title": page_title, "type": kind}   # web page title is a good first guess
+    if kind == "windows":
+        entry["os"] = "windows"         # what setup, revoke and check act on (PowerShell there): type: is a label
     if ssh and ssh["port"] != 22:
         entry["port"] = ssh["port"]
     # Only plain servers get a key installed by default; switches, BMCs and Windows log in by password.
@@ -294,7 +298,7 @@ def cmd_discover(args):
         cfg_path = Path(args.config).expanduser()          # --write will create it
     else:
         try:
-            cfg_path = find_config(args.config)
+            cfg_path = find_config(args.config, getattr(args, "inv", None))
             cfg = load_config(cfg_path)
         except SystemExit as e:
             # a roster.yml that's there but broken is error 1 under --json, found by -c or not; none at all (nothing
@@ -321,10 +325,12 @@ def cmd_discover(args):
     group = args.group or f"discovered-{today.replace('-', '')}"
     group = unique(group, set(cfg["groups"]) if cfg else set())
     if args.json:
-        jsonout.emit({"targets": [str(n) if n.num_addresses > 1 else str(n.network_address) for n in nets],
-                      "addresses": total, "ports": args.top_ports or len([p for p in args.ports.split(",") if p.strip()]),
-                      "scanner": "nmap" if use_nmap else "built-in", "count": len(found), "quiet": len(quiet),
-                      "found": [found_record(r, known, taken, today) for r in found], "group": group})
+        from . import jsondocs
+        doc = {"targets": [str(n) if n.num_addresses > 1 else str(n.network_address) for n in nets],
+               "addresses": total, "ports": args.top_ports or len([p for p in args.ports.split(",") if p.strip()]),
+               "scanner": "nmap" if use_nmap else "built-in", "count": len(found), "quiet": len(quiet),
+               "found": [found_record(r, known, taken, today) for r in found], "group": group}
+        jsonout.emit(jsondocs.DiscoverDoc.model_validate(doc))
         return 0
     entries = [scan_entry(r, taken, today) for r in new]
     say(f"\nfound        {len(found)} hosts with open ports: {len(new)} new, {len(already)} already in roster.yml"
@@ -362,6 +368,8 @@ def with_group(text, group, entries, note, needs_user):
             die("roster.yml has `groups:` written inline (e.g. groups: {}); switch it to block style first")
         text = text.rstrip("\n") + "\n\ngroups:\n"
         m = re.search(r"(?m)^groups:[ \t]*(#.*)?$", text)
+        if m is None:
+            raise RuntimeError("groups: was just added, yet isn't there")
     after = text[m.end():]
     child = re.search(r"(?m)^( +)\S", after)
     indent = len(child.group(1)) if child and not after[:child.start()].strip(" \t\n#") else 2
@@ -394,6 +402,7 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
         say(f"backup       {backup}")
     tmp.replace(path)
     say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
+    boxsync.after_edit(path)                      # T153: this Box follows, as after serve's changes
     say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")
     say("             set the login user, move hosts into the right groups if you like,")
     say(f"             then set `reviewed: true` and run:  roster setup --only {group}")

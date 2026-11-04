@@ -168,7 +168,8 @@ app/src/tutor/        `:tutor` (ticket 55, decision Q76): tutor.ts (the tutorial
 app/src/news/         news.ts: what's new after an upgrade, said once in the status line (`newsSeen` in the State, ticket 47)
 app/src/ui/Announce.tsx
                       a live region that speaks a count once it settles (finders, the Picker, help's search; ticket 54)
-app/src/sidebar/      Sidebar.tsx (sections of rows, raised row, cursor), sections.ts (section registry, Sessions)
+app/src/sidebar/      Sidebar.tsx (sections of rows, raised row, cursor), RowMenu.tsx and hostMenu.ts (a Host row's
+                      menu, Q156), sections.ts (section registry, Sessions)
 app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|remove|rename|move`, `:group new|rename|delete`),
                       ConfirmPanel.tsx (removing a Host asks first)
 app/src/folders/      Folders (GLOSSARY), now the built-in Plugin's: folders.ts (the Folder model and the `folders` registry
@@ -194,6 +195,8 @@ app/src/docs-site/    the docs website and PDF (ticket 46, ADR 0008): site.tsx r
                       matching over search-index.js; entry.ts is bundled into the site's search.js
 app/scripts/gen-docs-site.ts  `npm run docs` (`-- --out DIR`, `--pdf FILE`): writes it, and bundles search.js; run through vite-run.mjs
                       (Vite's module runner, so the app's `?raw` imports work)
+app/scripts/notices-plugin.mjs  `virtual:third-party-notices`: THIRD-PARTY-NOTICES's text for `:version`'s help page
+                      (T180), in vite.config.ts and vite-run.mjs
 app/scripts/check-docs-a11y.ts  `npm run docs:a11y -- DIR`: axe-core over the built site in headless Chrome (dark, light,
                       the search box open); fails on any WCAG 2.x A/AA problem. docs.yml runs it on every PR
 app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [--build]`, `serve`;
@@ -201,7 +204,12 @@ app/scripts/perf.sh   measuring (docs/app/performance.md): `browser`, `windows [
                       `--latency DIR`: a `latency` Host whose Session, perf/latency.py, measures the terminal path)
 app/scripts/linux-run.sh  the Linux build (ticket 20, docs/app/dev/linux.md): `build`, `fetch` (CI's), `run` and
                       `measure` with its own HOME and XDG dirs (opens a window), `report`
+app/e2e/              copy and paste end to end (T158): TerminalView in headless Chromium through Vite, a fake
+                      Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md);
+                      a Host row's menu placed in the whole app's layout (T173, host-menu.e2e.ts)
 app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it's shown (questions go through)
+app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153); bound to its xterm, guards it (T172)
+app/src/terminal/xtermGuard.ts  what keeps an xterm fed a Session's output going when a handler throws: ED 1 rerun as ED 2, any other sequence skipped, logged once (T172, Q158)
 ```
 
 **Checks** (run all before a commit):
@@ -209,6 +217,7 @@ app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it'
 ```bash
 cd app && npm ci       # once, in WSL
 npm run check          # in app/: tsc --noEmit + eslint + Vitest (UI tests use the fake Backend)
+npm run e2e            # in app/: copy and paste, and the Host row menu, in headless Chromium (npx playwright-core install --only-shell chromium once)
 cargo test             # at the root: roster-core only (WSL can't build app/src-tauri: no webkit2gtk)
 cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check
 ```
@@ -219,7 +228,7 @@ Separately: `npm run typecheck`, `npm run lint`, `npm test`.
 `http://localhost:5179/?fixture=many-hosts`. Other fixtures: `few-hosts`, `slow`, `roster-too-old`,
 `roster-missing`, `inventory-missing`, `no-wsl`. The app opens locked: the fake master password is
 `correct horse`. `&theme=roster-light|gruvbox|nord|catppuccin-mocha|tokyo-night` picks a Theme (default: follow the OS). Vault fixtures: `locked` (the default), `not-logged-in`, `missing-cli`, `no-vault` (no lock screen). Sign-in fixtures (ticket 31; email `you@example.com`, codes `123456`, API key `user.fake-client` / `fake-client-secret`): `sign-in` (new-device code), `sign-in-2fa` (method picker), `sign-in-totp`, `sign-in-fido2` (unsupported), `sign-in-sso`, `sign-in-eu`, `sign-in-rate-limited`. Editing (ticket 10, API 5): `edit`, `edit-pending` (two Pending changes), `edit-diverged` (the pull fails). Adding (ticket 11, API 6): `add` (a new Host's password is `host pass`; anything else is refused). Un-reviewing (API 9): `review`. Connecting (issue #54): `slow-login` (Sessions take 1.2 s to start and 2.5 s to log in). Host keys (ticket 36, API 11): `host-key` (every first Session asks about the Host's key), `host-key-changed` (the key changes before Trust). Quick Connect (ticket 14, API 12): `quick` (any `user@address` takes the password `host pass`, or none; `10.0.0.66` doesn't answer, `10.0.0.43`'s key differs from the recorded one, `10.0.0.23`'s changes before the connect). Save to vault (ticket 15, API 13): `quick-save` (`root@10.0.0.5` with `host pass` and the tick logs in as `nas-01`; a vault item `dup ssh` is already there). `prompt-save` (ticket 16: the first Host's Login is `auth: prompt`; its password is `host pass`). Signing out (ticket 42, API 14): `sign-out` (locked as `you@example.com`; "Use a different account" and `:vault signout` sign it out, and the sign-in form takes the same fake account). Health (ticket 49, API 16): `health` (`:check` with no Host finds a vault CLI that isn't logged in, a Host since the last sync and Pending changes). `:check HOST` live (ticket 110, API 22): `check-live` (each step starts 0.7 s after the last), `check-hang` (the TCP step never ends), `check-stopped` (every check stopped at Host key, as a lock would). Plugins (ticket 79): `recent-alerts` (the example Plugin installed as a Package, no vault, and two Sessions whose logs have alerts: its section, badges, `⚠` count, finder and float, headless). Graphs (ticket 77): `plugin-graph` (a made-up map of this Box and 640 Hosts in 16 clusters, `:view demo-map` or `␣ y m`; `w` on a node turns its edge live and back, so the draw-in can be seen), `plugin-graph-worst` (2,000 Hosts in 40 clusters with long, unbreakable, non-Latin and emoji names).
-Host details (ticket 18): every fixture's Hosts have services by type (none on `linux-*`, a web UI on most others, and on `nas-*` a web UI, an `admin` UI with its own Login, and SMB); in `worst-case`, `server-10-19-77-203-…` has 40 services, long names and URLs, and one URL with a password in it that's never drawn or opened.
+Host details (ticket 18): every fixture's Hosts have services by type (none on `linux-*`, a web UI on most others, and on `nas-*` a web UI, an `admin` UI with its own Login, and SMB); in `worst-case`, `server-10-0-0-203-…` has 40 services, long names and URLs, and one URL with a password in it that's never drawn or opened.
 Worst case (ticket 27): `worst-case` (1,284 Hosts, 50 Sessions, 100 Folders, long, odd and missing values),
 `worst-case-empty`, `worst-case-one`, `worst-case-start`, `worst-case-vault`; a dev build shows a
 "Demo data / Worst case" toggle at the bottom to switch between them (`&toggle=off` hides it; it works in
@@ -244,8 +253,9 @@ already Running (`wsl -l -v`); it never starts a stopped non-default distro, bec
 interop for every distro (OracleLinux_9's systemd-binfmt removed `WSLInterop`, see `docs/app/dev/tauri-pty-wsl.md`).
 To use a stopped distro, set `ROSTER_APP_WSL_DISTRO=<name>`: only that distro is probed, and started if needed
 (`app/scripts/app-dev.sh` passes it through `WSLENV`). Each probe runs `bash -lc` to find
-roster's absolute path (`~/.local/bin` added) and a `roster.yml` (`$ROSTER_CONFIG`, `~/roster.yml`,
-`~/.config/roster/roster.yml`, `~/infra/roster.yml`), then starts
+roster's absolute path (`~/.local/bin` added) and asks that roster which `roster.yml` it uses (`roster inv which`,
+from `$HOME`, so the app and the CLI agree, named Inventories included; a roster too old to answer, or one that
+finds none, falls back to `$ROSTER_CONFIG`, `~/roster.yml`, `~/.config/roster/roster.yml`, `~/infra/roster.yml`), then starts
 `wsl.exe -d <distro> --cd ~ --exec /usr/bin/env PATH=<login PATH> <roster> -c <roster.yml> serve` with no console window (the login PATH so roster finds `bw` in `~/.local/bin`). On Linux it starts
 roster locally the same way. To use another roster command, set `roster_command` in `init.lua`
 (docs/app/config.md), or `ROSTER_APP_ROSTER`, split on spaces, which wins over it (as `ROSTER_APP_WSL_DISTRO`

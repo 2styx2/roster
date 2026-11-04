@@ -13,9 +13,11 @@
 
 mod common;
 
+use common::unhurried;
+
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -182,7 +184,12 @@ fn mesh_grouped() -> Value {
 }
 
 fn mesh_cut(name: &str) -> Value {
-    json!({ "host": name, "confirmed": ["esx-02", "nas-01"], "pending": { "nas-02": "timed out" }, "change": { "written": true, "backup": "x" } })
+    mesh_cut_synced(name, json!({ "ok": true }))
+}
+
+/// A cut whose `roster sync` after writing `mesh: false` came to `sync` (T150).
+fn mesh_cut_synced(name: &str, sync: Value) -> Value {
+    json!({ "host": name, "confirmed": ["esx-02", "nas-01"], "pending": { "nas-02": "timed out" }, "change": { "written": true, "backup": "x", "sync": sync } })
 }
 
 /// A `roster serve` that answers from the made-up network and records every call.
@@ -195,8 +202,11 @@ struct FakeServe {
     mesh: Mutex<Value>,
     /// What `mesh.status { grouped = true }` answers; Null: a serve before API 19, which ignores it.
     grouped: Value,
-    /// A `host.check_job` it answers 300 ms late, so a later one answers first.
-    slow_check: Mutex<Option<String>>,
+    /// A `host.check_job` it holds until the test sends a word on the gate (at most
+    /// [`common::CEILING`]), so a later one answers first.
+    held_check: Mutex<Option<(String, Receiver<()>)>>,
+    /// The `roster sync` after a cut wrote `mesh: false` (T150).
+    cut_sync: Mutex<Value>,
 }
 
 impl FakeServe {
@@ -207,7 +217,8 @@ impl FakeServe {
             hosts_gate: Mutex::new(None),
             mesh: Mutex::new(mesh),
             grouped: Value::Null,
-            slow_check: Mutex::new(None),
+            held_check: Mutex::new(None),
+            cut_sync: Mutex::new(json!({ "ok": true })),
         }
     }
     fn grouped(mut self, grouped: Value) -> FakeServe {
@@ -231,7 +242,7 @@ impl Serve for FakeServe {
         match method {
             "hosts.list" => {
                 if let Some(gate) = self.hosts_gate.lock().unwrap().take() {
-                    let _ = gate.recv_timeout(Duration::from_secs(5));
+                    let _ = gate.recv_timeout(common::CEILING);
                 }
                 Ok(self.hosts.lock().unwrap().clone())
             }
@@ -241,8 +252,9 @@ impl Serve for FakeServe {
             // check-3 failed nas-01 at tcp, check-5 passed it later; any other passed web-1.
             "host.check_job" => {
                 let job = params["job"].as_str().unwrap_or("");
-                if self.slow_check.lock().unwrap().as_deref() == Some(job) {
-                    std::thread::sleep(Duration::from_millis(300));
+                let held = self.held_check.lock().unwrap().take_if(|(held, _)| held == job);
+                if let Some((_, gate)) = held {
+                    let _ = gate.recv_timeout(common::CEILING);
                 }
                 let host = if job == "check-3" || job == "check-5" {
                     "nas-01"
@@ -265,7 +277,8 @@ impl Serve for FakeServe {
             }
             "mesh.cut" => Ok(mesh_cut(params["host"].as_str().unwrap_or(""))),
             "mesh.job" => Ok(
-                json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false, "result": mesh_cut("esx-01") }),
+                json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
+                        "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
             ),
             _ => Err(format!("unknown method {method}")),
         }
@@ -279,17 +292,6 @@ fn limits() -> Limits {
     Limits::default()
 }
 
-/// Limits far beyond what any machine needs, for a test that checks what the Plugin builds, not
-/// how long it takes: the 2,000-Host one failed 19 of 48 runs on a loaded machine with the app's
-/// own (T146). [`two_thousand_hosts_load_inside_the_apps_own_limits`] times it, on request.
-fn unhurried() -> Limits {
-    Limits {
-        load: Duration::from_secs(60),
-        call: Duration::from_secs(60),
-        ..Limits::default()
-    }
-}
-
 fn perms(names: &[&str]) -> Vec<Permission> {
     names.iter().map(|n| Permission::parse(n).unwrap()).collect()
 }
@@ -297,7 +299,7 @@ fn perms(names: &[&str]) -> Vec<Permission> {
 /// Topology installed as a user installs it, from `dir = "plugins/topology"`.
 struct World {
     dir: PathBuf,
-    host: PluginHost,
+    host: Arc<PluginHost>,
     serve: Arc<FakeServe>,
     /// What the Plugin did when its roster serve requests answered (the Tauri shell's
     /// `plugin-reply`).
@@ -307,8 +309,10 @@ struct World {
 }
 
 impl World {
+    /// With generous limits ([`common::unhurried`]): these tests check what the Plugin builds,
+    /// not how long it takes (T165).
     fn with(test: &str, serve: FakeServe) -> World {
-        World::within(test, serve, limits())
+        World::within(test, serve, unhurried())
     }
 
     /// [`World::with`] under `limits`.
@@ -336,7 +340,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(serve);
-        let host = PluginHost::new(serve.clone(), limits);
+        let host = Arc::new(PluginHost::new(serve.clone(), limits));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -390,13 +394,15 @@ impl World {
         let started = Instant::now();
         while self.host.requests(NAME) > 0 {
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < common::CEILING,
                 "roster serve's answers didn't come"
             );
             std::thread::sleep(Duration::from_millis(2));
         }
-        // An answer's reply can reach the listener just after the count drops: wait a moment.
-        while let Ok(r) = self.replies.lock().unwrap().recv_timeout(Duration::from_millis(50)) {
+        // The host hands an answer's reply to the listener before the answer stops counting
+        // (`deliver`, then the count in plugin/mod.rs), so every reply is in by now: no waiting
+        // for a quiet spell (T167).
+        while let Ok(r) = self.replies.lock().unwrap().try_recv() {
             ok(&r);
             reply.ops.extend(r.ops);
         }
@@ -494,7 +500,7 @@ fn on(node: &str) -> Value {
 #[test]
 fn it_installs_from_its_folder_asking_for_what_its_readme_explains() {
     let w = World::new("manifest");
-    let manifest = read_manifest(&w.dir).unwrap();
+    let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
     assert_eq!(manifest.api, 5);
     let asked: Vec<String> = manifest.permissions.iter().map(|p| p.to_string()).collect();
@@ -731,13 +737,30 @@ fn only_a_finished_check_is_asked_about_and_an_older_result_never_overrides_a_ne
     end("check-2", "stopped");
     assert!(w.serve.called("host.check_job").is_empty());
     // check-3 (failed) ended, then check-5 (passed); check-3's answer comes back last and changes
-    // nothing: only the latest check of a Host to end counts.
-    *w.serve.slow_check.lock().unwrap() = Some("check-3".into());
-    w.host.event(Event {
+    // nothing: only the latest check of a Host to end counts. Serve holds check-3's answer until
+    // check-5's has come and run (T184: it was a 300 ms sleep).
+    let (release, gate) = channel();
+    *w.serve.held_check.lock().unwrap() = Some(("check-3".into(), gate));
+    let check = |job: &str| Event {
         name: "job_progress".into(),
-        payload: json!({ "kind": "check", "job": "check-3", "action": "check", "state": "done", "done": 8, "total": 8, "host": "nas-01" }),
-    });
-    let r = end("check-5", "done");
+        payload: json!({ "kind": "check", "job": job, "action": "check", "state": "done", "done": 8, "total": 8, "host": "nas-01" }),
+    };
+    let mut r = w.host.event(check("check-3"));
+    r.extend(w.host.event(check("check-5")));
+    // Both asked, and one of the two answered and ran: check-5's, as check-3's is held.
+    let started = Instant::now();
+    while w.serve.called("host.check_job").len() < 2 || w.host.requests(NAME) > 1 {
+        assert!(started.elapsed() < common::CEILING, "check-5's answer didn't come");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    release.send(()).unwrap();
+    r.push(w.settle(Reply {
+        plugin: NAME.into(),
+        result: Value::Null,
+        ops: Vec::new(),
+        error: None,
+        disabled: None,
+    }));
     assert_eq!(w.serve.called("host.check_job").len(), 2);
     assert!(
         r.iter().all(|r| find(&r.ops, "view_update").is_empty()),
@@ -767,6 +790,39 @@ fn check_from_a_node_runs_the_apps_check_of_that_host() {
         .map(|a| a["label"].as_str().unwrap())
         .collect();
     assert_eq!(labels, ["Details"]);
+}
+
+/// T153: a cut whose `roster sync` failed after writing `mesh: false` says so, with what to run;
+/// the cut stands.
+#[test]
+fn a_cut_whose_sync_failed_says_this_boxs_ssh_config_didnt_follow() {
+    let w = World::new("cut-sync");
+    *w.serve.cut_sync.lock().unwrap() = json!({ "ok": false, "error": "Permission denied: /home/you/.ssh/config.d/roster", "fix": "run `roster sync` on this box" });
+    let reply = w.load(ALL);
+    let cut = action(view(&reply), "Cut");
+    let r = w.call(cut, on("esx-01"));
+    let r = w.call(
+        handler(&one(&r.ops, "confirm")["spec"]["run"]),
+        json!({ "confirm": "yes" }),
+    );
+    let r = w.call(handler(&one(&r.ops, "timer")["run"]), json!({}));
+    ok(&r);
+    let said: Vec<(&str, &str)> = r
+        .ops
+        .iter()
+        .filter(|o| o["op"] == "notify")
+        .map(|o| (o["text"].as_str().unwrap(), o["level"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("Cut esx-01: cut pending on 1 Host that didn't answer.", "warn"),
+            (
+                "mesh: false for esx-01 was written, but this Box's ssh config didn't follow (Permission denied: /home/you/.ssh/config.d/roster): run roster sync",
+                "warn"
+            )
+        ]
+    );
 }
 
 #[test]
@@ -895,20 +951,19 @@ fn it_reads_the_inventory_without_holding_up_its_own_calls() {
     let started = Instant::now();
     while w.serve.called("hosts.list").len() == before {
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < common::CEILING,
             "it never asked for the Hosts again"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
-    // While serve hasn't answered, the user's :topology still answers at once (#239).
-    let started = Instant::now();
-    let r = w.host.call(NAME, run, json!({ "args": "", "words": [] }));
+    // While serve hasn't answered, the user's :topology still answers (#239): serve stays held
+    // until `release` below, so a call that waited for it wouldn't come back at all, and fails at
+    // the ceiling instead of hanging.
+    let host = Arc::clone(&w.host);
+    let r = common::within_ceiling(":topology's answer", move || {
+        host.call(NAME, run, json!({ "args": "", "words": [] }))
+    });
     ok(&r);
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        ":topology waited {:?} for roster serve",
-        started.elapsed()
-    );
     // Once serve answers, the new Host is on the map.
     release.send(()).unwrap();
     let after = w.settle(Reply {

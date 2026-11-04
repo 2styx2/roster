@@ -13,7 +13,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -165,7 +165,7 @@ impl FakeServe {
                     })
                     .collect();
                 Ok(
-                    json!({ "group": "discovered-20261031", "added": added, "backup": "/infra/.git/roster/roster.yml.bak" }),
+                    json!({ "group": "discovered-20261031", "added": added, "backup": "/team-inventory/.git/roster/roster.yml.bak" }),
                 )
             }
             other => Err(format!("unknown method '{other}' (code -32601)")),
@@ -179,7 +179,7 @@ fn perms(names: &[&str]) -> Vec<Permission> {
 
 /// discover, installed from roster's repo as a user installs it, in a host with the stand-in serve.
 struct World {
-    host: PluginHost,
+    host: Arc<PluginHost>,
     serve: Arc<FakeServe>,
     dir: PathBuf,
     config: Value,
@@ -193,7 +193,15 @@ struct World {
 }
 
 impl World {
+    /// With generous limits ([`common::unhurried`]): these tests check what the Plugin does, not
+    /// how long it takes. The defaults (250 ms a call) are wall-clock time, which a loaded
+    /// machine runs out of (T165, T167).
     fn new(test: &str, config: Value) -> World {
+        World::within(test, config, common::unhurried())
+    }
+
+    /// [`World::new`] under `limits`.
+    fn within(test: &str, config: Value, limits: Limits) -> World {
         let root = temp(test);
         let (bare, work) = (root.join("remote/roster.git"), root.join("work"));
         std::fs::create_dir_all(&bare).unwrap();
@@ -222,7 +230,7 @@ impl World {
         packages.pin(&specs, NAME).unwrap();
         let (dir, _) = packages.loadable(&specs, NAME).unwrap();
         let serve = Arc::new(FakeServe::default());
-        let host = PluginHost::new(serve.clone(), Limits::default());
+        let host = Arc::new(PluginHost::new(serve.clone(), limits));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -259,7 +267,7 @@ impl World {
         let started = Instant::now();
         while self.host.requests(NAME) > 0 {
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < common::CEILING,
                 "roster serve's answers didn't come"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -381,7 +389,7 @@ fn scanned(w: &World, loaded: &Reply) -> (Reply, u64) {
 #[test]
 fn it_installs_from_its_folder_asks_for_the_discover_methods_and_flags_the_scan() {
     let w = World::new("install", json!({}));
-    let manifest = read_manifest(&w.dir).unwrap();
+    let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
     assert_eq!(manifest.api, 5);
     let asked: Vec<String> = manifest.permissions.iter().map(Permission::to_string).collect();
@@ -456,14 +464,22 @@ fn it_asks_before_it_scans_and_nothing_starts_until_the_user_says_scan() {
 /// did (decision Q103).
 #[test]
 fn behind_a_busy_roster_serve_the_question_comes_when_it_answers() {
-    let w = World::new("busy", json!({}));
+    // A call's budget and grace that the wait for serve below (2.6 s) outlasts, but four times
+    // the app's 250 ms budget for the Lua itself, which a busy machine runs out of (T165, T167).
+    let limits = Limits {
+        call: Duration::from_secs(1),
+        grace: Duration::from_secs(1),
+        ..Limits::default()
+    };
+    let w = World::within("busy", json!({}), limits);
     let loaded = w.load(ALL);
     let publish = w.serve.busy.lock().unwrap();
-    let started = Instant::now();
     let words = json!({ "args": "10.0.0.0/24", "words": ["10.0.0.0/24"] });
-    let asked = w.host.call(NAME, command(&loaded.ops), words.clone());
+    // It answers while serve is still busy (`publish` is held until below): a call that waited
+    // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
+    let (host, run, args) = (Arc::clone(&w.host), command(&loaded.ops), words.clone());
+    let asked = common::within_ceiling("the scan command's answer", move || host.call(NAME, run, args));
     ok(&asked);
-    assert!(started.elapsed() < Duration::from_millis(500));
     assert!(!has(&asked.ops, "confirm"));
     let again = w.host.call(NAME, command(&loaded.ops), words);
     ok(&again);
@@ -723,7 +739,7 @@ roster.commands.add("go", { run = function() roster.serve.call("discover.start",
     )
     .unwrap();
     let serve = Arc::new(FakeServe::default());
-    let host = PluginHost::new(serve.clone(), Limits::default());
+    let host = PluginHost::new(serve.clone(), common::unhurried());
     let grants = perms(&["serve:discover.start", "serve:discover.add", "serve:discover.status"]);
     let (_, loaded) = host.load(&Source::Dir(dir.to_path_buf()), &grants).unwrap();
     ok(&loaded);

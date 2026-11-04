@@ -110,6 +110,7 @@ roster.o.terminal.line_height = 1.0 -- a multiple of the font's own line height,
 roster.o.terminal.scrollback = 10000 -- lines, at most 1000000
 roster.o.terminal.copy_on_select = true
 roster.o.terminal.right_click_paste = true -- copies the selection, or pastes when there's none
+roster.o.terminal.osc52 = true -- a program (Claude Code, vim, tmux) may set the clipboard: write only
 -- "webgl" (fast) or "dom" (the browser's own text rendering: closer to Windows Terminal's
 -- ClearType, slower with a lot of output). docs/app/config.md compares them.
 roster.o.terminal.renderer = "webgl"
@@ -151,8 +152,9 @@ roster.o.sessions = "sidebar" -- open Sessions in the Sidebar, or "tabs" for a t
 --   sidebar    false, true, or { side = "left" | "right", sections = { "sessions", "folders", "inventory" } }
 --              (sections picks and orders them; leave it out for all). Leader e shows or hides it.
 --   sessionbar false, "bottom" or "top": the thin tmux-style bar of open Sessions
---   statusbar  false, true (all), or a list of segments in order: "backend", "box", "hosts",
---              "path", "changes", "hints", "mode" (the last two sit on the right).
+--   statusbar  false, true (all), or a list of segments in order: "backend", "box",
+--              "inventory", "hosts", "path", "changes", "hints", "mode" (the last two sit
+--              on the right).
 --              Leader s shows or hides it (in Focus, the session bar).
 --   toolbar    the title bar's controls: false, true (the default set), or a list in order from
 --              "sidebar", "find", "quick", "add", "changes", "publish", "details", "cmdline",

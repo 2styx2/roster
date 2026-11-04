@@ -322,3 +322,40 @@ fn a_demo_answers_only_to_its_own_number_and_an_older_start_never_replaces_a_new
     drop(gone);
     assert!(!folder.exists());
 }
+
+#[test]
+fn a_plugin_in_the_demo_lists_the_demos_sessions() {
+    // The demo's manager sends the demo's Session list to the demo's host (issue #239), so a
+    // Plugin there reads the demo's Sessions, never the workspace's.
+    let perms = ["inventory.read"];
+    let dir = plugin_dir(
+        "sessions",
+        &perms,
+        r#"
+        local roster = require("roster")
+        roster.commands.add("open", { run = function()
+          local parts = {}
+          for _, s in ipairs(roster.sessions.list()) do parts[#parts + 1] = s.session .. "=" .. (s.host or "quick") end
+          roster.notify(#parts == 0 and "none" or table.concat(parts, " "))
+        end })
+        "#,
+    );
+    let scratch = common::temp("plugin-demo-scratch");
+    let host = DemoHost::new(demo_hosts(), Limits::default(), &scratch).unwrap();
+    let (_, reply) = host.load(&Source::Dir(dir.to_path_buf()), &grants(&perms)).unwrap();
+    ok(&reply);
+    let handler = reply
+        .ops
+        .iter()
+        .find(|op| op["op"] == "command")
+        .and_then(|op| op["run"]["handler"].as_u64())
+        .expect("its command's handler");
+    let call = |host: &DemoHost| {
+        let r = host.call("teacher", handler, Value::Null);
+        ok(&r);
+        notices(&r.ops)
+    };
+    assert_eq!(call(&host), ["none"]);
+    host.set_sessions(vec![(1, Some("demo-01".into())), (2, None)]);
+    assert_eq!(call(&host), ["1=demo-01 2=quick"]);
+}

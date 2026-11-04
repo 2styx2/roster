@@ -66,7 +66,7 @@ fn list(rows: &[(&str, &str, &str)]) -> String {
     out
 }
 
-const FOUND: &str = "roster=/home/u/.local/bin/roster\ninventory=/home/u/infra/roster.yml\n";
+const FOUND: &str = "roster=/home/u/.local/bin/roster\ninventory=/home/u/team-inventory/roster.yml\n";
 
 #[test]
 fn on_windows_the_first_distro_with_roster_and_an_inventory_wins() {
@@ -97,7 +97,7 @@ fn on_windows_the_first_distro_with_roster_and_an_inventory_wins() {
             "--exec",
             "/home/u/.local/bin/roster",
             "-c",
-            "/home/u/infra/roster.yml",
+            "/home/u/team-inventory/roster.yml",
             "serve"
         ])
     );
@@ -129,13 +129,15 @@ fn an_override_command_keeps_its_arguments_and_resolves_only_the_program() {
         distros: Some(list(&[("*", "FedoraLinux-44", "Stopped")])),
         probes: HashMap::from([(
             "FedoraLinux-44".into(),
-            "roster=/usr/bin/uv\ninventory=/home/u/infra/roster.yml\n".into(),
+            "roster=/usr/bin/uv\ninventory=/home/u/team-inventory/roster.yml\n".into(),
         )]),
         ..Default::default()
     };
     let cmd = roster_command(Some("uv run --project /home/u/work/roster roster"));
     let c = detect(&r, Platform::Windows, &cmd, None).unwrap();
-    assert_eq!(r.calls.borrow()[1].last().unwrap(), "uv");
+    // The probe gets the whole command: it resolves the program, and runs all of it to ask roster
+    // which Inventory it uses (ticket 115).
+    assert!(r.calls.borrow()[1].ends_with(&cmd), "{:?}", r.calls.borrow()[1]);
     assert_eq!(
         &c.serve_argv[6..],
         &s(&[
@@ -145,7 +147,7 @@ fn an_override_command_keeps_its_arguments_and_resolves_only_the_program() {
             "/home/u/work/roster",
             "roster",
             "-c",
-            "/home/u/infra/roster.yml",
+            "/home/u/team-inventory/roster.yml",
             "serve"
         ])[..]
     );
@@ -225,7 +227,12 @@ fn on_linux_roster_runs_locally() {
     assert_eq!(c.target, Target::Local);
     assert_eq!(
         c.serve_argv,
-        s(&["/home/u/.local/bin/roster", "-c", "/home/u/infra/roster.yml", "serve"])
+        s(&[
+            "/home/u/.local/bin/roster",
+            "-c",
+            "/home/u/team-inventory/roster.yml",
+            "serve"
+        ])
     );
     assert_eq!(r.calls.borrow()[0][..2], s(&["bash", "-lc"])[..]);
 }
@@ -261,7 +268,7 @@ fn serve_gets_the_login_shells_path_so_it_finds_the_vault_cli() {
             "PATH=/home/u/.local/bin:/usr/local/bin:/usr/bin:/bin",
             "/home/u/.local/bin/roster",
             "-c",
-            "/home/u/infra/roster.yml",
+            "/home/u/team-inventory/roster.yml",
             "serve"
         ])
     );
@@ -405,7 +412,7 @@ fn a_leading_tilde_in_the_override_means_the_targets_home() {
         distros: Some(list(&[("*", "FedoraLinux-44", "Running")])),
         probes: HashMap::from([(
             "FedoraLinux-44".into(),
-            "roster=/usr/bin/uv\nhome=/home/u\ninventory=/home/u/infra/roster.yml\n".into(),
+            "roster=/usr/bin/uv\nhome=/home/u\ninventory=/home/u/team-inventory/roster.yml\n".into(),
         )]),
         ..Default::default()
     };
@@ -513,8 +520,8 @@ fn auto_on_windows_takes_roster_on_windows_with_an_inventory_and_never_runs_wsl(
         ])
     );
     assert!(
-        r.calls.borrow().is_empty(),
-        "nothing runs, WSL stays asleep: {:?}",
+        r.calls.borrow().iter().all(|c| c[0] != "wsl.exe"),
+        "WSL stays asleep: {:?}",
         r.calls.borrow()
     );
 }
@@ -613,4 +620,172 @@ fn no_roster_anywhere_on_windows_names_both_places() {
     let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
     assert_eq!(e.kind, ErrorKind::NoWsl);
     assert!(e.hint.contains("roster on Windows itself"), "{e}");
+}
+
+// ---- the app and the CLI agree on the Inventory (ticket 115): the probe asks roster
+
+/// A real probe against a stand-in roster that answers `inv which` as the CLI does: the file it
+/// uses, here the named Inventory it found from `$HOME` (`$PWD`), only when it got its arguments.
+#[cfg(unix)]
+#[test]
+fn the_real_probe_takes_the_inventory_roster_itself_says_it_uses() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = common::temp("detect-asks");
+    let home = tmp.to_path_buf();
+    let h = home.to_str().unwrap().to_string();
+    for d in ["bin", "infra", "work", "x"] {
+        std::fs::create_dir_all(home.join(d)).unwrap();
+    }
+    // ~/infra/roster.yml is where the app used to look; roster says ~/work/roster.yml (its active one)
+    std::fs::write(home.join("infra/roster.yml"), "hosts: []\n").unwrap();
+    std::fs::write(home.join("work/roster.yml"), "hosts: []\n").unwrap();
+    let program = home.join("bin/roster");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\n[ \"$1 $2 $3 $4\" = \"--dir {h}/x inv which\" ] || exit 2\necho \"$PWD/work/roster.yml\"\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cmd = roster_command(Some("~/bin/roster --dir ~/x"));
+    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None).unwrap();
+    let canonical = std::fs::canonicalize(&home).unwrap();
+    let asked = format!("{}/work/roster.yml", canonical.to_str().unwrap());
+    let used = &c.serve_argv[c.serve_argv.len() - 2];
+    assert!(
+        used == &asked || used == &format!("{h}/work/roster.yml"),
+        "{:?}",
+        c.serve_argv
+    );
+    assert!(c.has_inventory);
+
+    // A roster too old to answer (`inv` isn't a command: exit 2) falls back to where the app looked.
+    std::fs::write(&program, "#!/bin/sh\nexit 2\n").unwrap();
+    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None).unwrap();
+    assert_eq!(c.serve_argv[c.serve_argv.len() - 2], format!("{h}/infra/roster.yml"));
+}
+
+/// Native Windows roster, scripted: `inv which` answers ANSWER, run in the folder it records.
+struct WindowsAsks {
+    pc: Scripted,
+    answer: String,
+    dirs: RefCell<Vec<String>>,
+}
+
+impl Runner for WindowsAsks {
+    fn run(&self, argv: &[String], env: &[(&str, &str)]) -> std::io::Result<Output> {
+        self.pc.run(argv, env)
+    }
+
+    fn run_in(&self, argv: &[String], _env: &[(&str, &str)], dir: &str) -> std::io::Result<Output> {
+        self.pc.calls.borrow_mut().push(argv.to_vec());
+        self.dirs.borrow_mut().push(dir.to_string());
+        Ok(Output {
+            code: Some(0),
+            stdout: format!("{}\r\n", self.answer),
+            stderr: String::new(),
+        })
+    }
+
+    fn var(&self, name: &str) -> Option<String> {
+        self.pc.var(name)
+    }
+
+    fn is_file(&self, path: &str) -> bool {
+        self.pc.is_file(path)
+    }
+}
+
+#[test]
+fn windows_roster_is_asked_which_inventory_it_uses_from_the_home_folder() {
+    let mut pc = windows_pc(true, None);
+    pc.files.insert(r"C:\Users\you\home-net\roster.yml".into());
+    let r = WindowsAsks {
+        pc,
+        answer: r"C:\Users\you\home-net\roster.yml".into(),
+        dirs: RefCell::default(),
+    };
+    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
+    assert_eq!(
+        c.serve_argv,
+        s(&[
+            r"C:\Users\you\.local\bin\roster.exe",
+            "-c",
+            r"C:\Users\you\home-net\roster.yml",
+            "serve"
+        ])
+    );
+    assert_eq!(
+        r.pc.calls.borrow().as_slice(),
+        &[s(&[r"C:\Users\you\.local\bin\roster.exe", "inv", "which"])]
+    );
+    assert_eq!(r.dirs.borrow().as_slice(), &[r"C:\Users\you".to_string()]);
+}
+
+/// The real probe holds `roster inv which` to a timeout (15 s; `ROSTER_PROBE_SECS` here) and then
+/// looks where the app used to: a roster that hangs never leaves the app connecting forever.
+#[cfg(unix)]
+#[test]
+fn the_real_probe_gives_up_on_a_roster_that_hangs() {
+    use std::os::unix::fs::PermissionsExt;
+    if std::process::Command::new("timeout").arg("--help").output().is_err() {
+        return; // no coreutils timeout here: the probe then waits, as before
+    }
+    let tmp = common::temp("detect-hangs");
+    let home = tmp.to_path_buf();
+    let h = home.to_str().unwrap().to_string();
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    std::fs::create_dir_all(home.join("infra")).unwrap();
+    std::fs::write(home.join("infra/roster.yml"), "hosts: []\n").unwrap();
+    let program = home.join("bin/roster");
+    std::fs::write(&program, "#!/bin/sh\nexec sleep 30\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    struct Quick(std::path::PathBuf);
+    impl Runner for Quick {
+        fn run(&self, argv: &[String], env: &[(&str, &str)]) -> std::io::Result<Output> {
+            let mut all = env.to_vec();
+            all.extend([
+                ("HOME", self.0.to_str().unwrap()),
+                ("ROSTER_CONFIG", ""),
+                ("ROSTER_PROBE_SECS", "1"),
+            ]);
+            roster_core::detect::SystemRunner.run(argv, &all)
+        }
+    }
+    let start = std::time::Instant::now();
+    let c = detect(
+        &Quick(home.clone()),
+        Platform::Linux,
+        &roster_command(Some("~/bin/roster")),
+        None,
+    )
+    .unwrap();
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(20),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(c.serve_argv[c.serve_argv.len() - 2], format!("{h}/infra/roster.yml"));
+}
+
+#[cfg(unix)]
+#[test]
+fn asking_native_roster_is_held_to_a_timeout() {
+    let start = std::time::Instant::now();
+    let e = roster_core::detect::run_with_timeout(
+        &s(&["sh", "-c", "sleep 30"]),
+        &[],
+        "/",
+        std::time::Duration::from_millis(500),
+    )
+    .unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    let o =
+        roster_core::detect::run_with_timeout(&s(&["sh", "-c", "pwd"]), &[], "/", std::time::Duration::from_secs(10))
+            .unwrap();
+    assert_eq!((o.code, o.stdout.trim()), (Some(0), "/"));
 }

@@ -314,11 +314,15 @@ fn the_roster_table_has_what_the_shape_declares() {
 #[test]
 fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // The CONFIG_VERSION snapshot (tests/config_version.rs) too: the generator adds new names to it.
+    let snapshot = shape::version::snapshot_path(config::CONFIG_VERSION);
+    let committed = std::fs::read_to_string(root.join(&snapshot)).ok();
     for (path, text) in [
         (shape::DOC_PATH, shape::markdown()),
         (shape::STUBS_PATH, shape::stubs()),
         (shape::JSON_PATH, shape::json_text()),
         (shape::CHECK_PATH, shape::check_lua()),
+        (snapshot.as_str(), shape::version::current_text(committed.as_deref())),
     ] {
         let committed = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         assert!(
@@ -359,6 +363,31 @@ fn the_stubs_are_lua_and_declare_every_option() {
     assert!(stubs.contains("---@field size? number|string "));
     assert!(stubs.contains("---| \"terminal.size\"\n"));
     assert!(stubs.contains("function roster.keymap.set(context, keys, action) end"));
+}
+
+/// Ticket 148: the name `roster.o.get` and `roster.o.reset` take says so, and takes a map's own
+/// keys (`"views.files.width"`) as well as the names it lists.
+#[test]
+fn the_option_name_type_says_what_takes_it_and_takes_a_maps_keys() {
+    let stubs = shape::stubs();
+    let start = stubs.find("---@alias roster.config.OptionName\n").expect("the alias");
+    let about = stubs[..start].lines().next_back().unwrap();
+    assert!(
+        about.contains("roster.o.get") && about.contains("roster.o.reset"),
+        "{about}"
+    );
+    assert!(!about.ends_with("for roster.set."), "{about}");
+    let members: Vec<&str> = stubs[start..]
+        .lines()
+        .skip(1)
+        .take_while(|l| l.starts_with("---|"))
+        .collect();
+    assert!(members.contains(&"---| \"views\""), "{members:?}");
+    assert!(
+        members.iter().all(|m| !m.contains('*') && !m.contains("[]")),
+        "{members:?}"
+    );
+    assert_eq!(members.last(), Some(&"---| string"), "a map's key is any string");
 }
 
 #[test]
@@ -728,6 +757,32 @@ fn no_init_lua_name_means_something_else_in_the_plugin_api() {
         if let Some((_, params)) = plugin.iter().find(|(p, _)| p == a.path) {
             let ours: Vec<String> = a.params.unwrap().iter().map(|p| p.name.to_string()).collect();
             assert_eq!(&ours, params, "{} takes other parameters in the Plugin API", a.path);
+        }
+    }
+}
+
+#[test]
+fn the_reference_writes_a_url_form_as_code_not_as_a_link() {
+    // #267: "Takes http://HOST:PORT" rendered as a bare URL, which a link check (and a Markdown
+    // viewer) takes for a link. Outside code, a URL is only ever a link's target.
+    let md = shape::markdown();
+    let mut in_fence = false;
+    for line in md.lines() {
+        if line.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let prose: String = line.split('`').step_by(2).collect::<Vec<_>>().join(" ");
+        for (at, _) in prose.match_indices("://") {
+            let before = &prose[..at];
+            assert!(
+                before.ends_with("](http") || before.ends_with("](https"),
+                "a URL outside code in {}: {line}",
+                shape::DOC_PATH
+            );
         }
     }
 }

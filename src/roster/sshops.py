@@ -3,12 +3,27 @@
 import base64
 import concurrent.futures as cf
 import hashlib
-import os
+import re
 import shlex
 import subprocess
 import threading
+from pathlib import Path
+from typing import Any
 
-from .common import WINDOWS, die, known_hosts_file, program_argv, say, ssh_config_file, ssh_dir, ssh_path
+from .common import (
+    SSH_UNSAFE,
+    WINDOWS,
+    current_inventory,
+    die,
+    known_hosts_file,
+    program_argv,
+    replace_file,
+    say,
+    ssh_config_file,
+    ssh_dir,
+    ssh_path,
+)
+from .config import is_windows
 from .providers import NO_PASSWORD, get_secret
 
 # ---------------------------------------------------------------- keys & known hosts
@@ -32,7 +47,7 @@ def public_key_line(cfg):
     return f"{parts[0]} {parts[1]} {cfg['tag']}"   # tag lets revoke find exactly this box's key
 
 
-def hk_name(h):
+def hk_name(h: dict[str, Any]) -> str:
     return h["ip"] if h["ssh"]["port"] == 22 else f"[{h['ip']}]:{h['ssh']['port']}"
 
 
@@ -45,7 +60,7 @@ def known_names():
     return names
 
 
-def fingerprint(key):
+def fingerprint(key: Any) -> str:
     """A paramiko key as ssh prints it: SHA256:base64."""
     digest = hashlib.sha256(key.asbytes()).digest()
     return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
@@ -106,12 +121,48 @@ def start_transport(sock, key_types, timeout=10):
 
 
 def ssh_config_hosts():
-    """The Hosts a plain `ssh NAME` reaches through roster's ssh config: the names of its Host blocks, or None when
-    it isn't written or ~/.ssh/config doesn't include it."""
-    ours, main = ssh_config_file(), ssh_dir() / "config"
-    if not ours.is_file() or not main.is_file() or ssh_path(ours) not in main.read_text():
+    """The Hosts a plain `ssh NAME` reaches through roster's ssh config: the names of its Host blocks ~/.ssh/config
+    includes (with named Inventories, the ones the index took from this run's), or None when it isn't included."""
+    from .inventories import reachable_hosts
+    return reachable_hosts()
+
+
+def left_out(name):
+    """Why NAME's block isn't in this Box's ssh config though this Inventory has it: another named Inventory, ahead of
+    this one, has a Host by that name (ticket 115). None otherwise."""
+    from .inventories import left_out_hosts
+    if name not in left_out_hosts():
         return None
-    return {line[5:] for line in ours.read_text().splitlines() if line.startswith("Host ")}
+    return (f"{name} is left out of this Box's ssh config: another named Inventory, ahead of this one, has a Host by "
+            "that name, and `ssh " + name + "` reaches that one")
+
+
+def not_reached(name):
+    """Why roster mustn't `ssh NAME` for this run's Host NAME, or None. With named Inventories (~/.ssh/config includes
+    their index), `ssh NAME` reaches this Inventory's Host only when NAME is in this Inventory's part of the index:
+    one left out (left_out) reaches another Inventory's Host, and one not there at all (this Inventory isn't synced on
+    this Box, or the Host is new since) reaches another's or nothing roster wrote (#367's review, as #335's N1).
+    Without the index, nothing changes: as before named Inventories."""
+    from .inventories import index_hosts, unnamed_from_elsewhere
+    other = unnamed_from_elsewhere()
+    if other is not None:               # with or without the index: roster's one unnamed file is another roster.yml's
+        return (f"{name} is not in this Box's ssh config for this roster.yml: roster's unnamed ssh config was written "
+                f"from {other}, so `ssh {name}` would reach that file's {name}")
+    by_file = index_hosts()
+    if by_file is None or name in by_file.get(ssh_path(ssh_config_file()), set()):
+        return None
+    return left_out(name) or (f"{name} is not in this Box's ssh config for this Inventory ({ssh_config_file().name} "
+                              f"has no Host {name} in it, or this Inventory isn't synced here), so `ssh {name}` "
+                              "wouldn't reach it")
+
+
+def sync_fix():
+    """The command that writes this run's ssh config: `roster sync` with what picks this run's roster.yml."""
+    from .common import current_config_path
+    if current_inventory() is not None:
+        return f"`roster --inv {current_inventory()} sync` writes it"
+    here = current_config_path()
+    return f"`roster -c {shlex.quote(str(here))} sync` writes it" if here is not None else "`roster sync` writes it"
 
 
 def in_ssh_config(name):
@@ -154,23 +205,41 @@ def record_fingerprints(cfg, hosts):
 
 # ---------------------------------------------------------------- ssh config
 
+def ssh_quote(path: str | Path, tokens: bool = False) -> str:
+    """PATH as one quoted value of an ssh config line. A quote or a control character in it is refused (ValueError): it
+    could end the value or the line, and what followed would be read as directives. TOKENS: the option expands
+    %-tokens (IdentityFile, UserKnownHostsFile, ControlPath), so a % of the path itself is written %%."""
+    s = ssh_path(path)
+    if SSH_UNSAFE.search(s):
+        raise ValueError(f"{s!r} can't go into an ssh config: it holds a quote or a control character")
+    return f'"{s.replace("%", "%%") if tokens else s}"'
+
+
 def q(path):
-    return f'"{ssh_path(path)}"'
+    """PATH for an option that expands %-tokens (ssh_quote)."""
+    return ssh_quote(path, tokens=True)
+
+
+def comment(text):
+    """TEXT on a comment line: no control character can end the line early."""
+    return re.sub(r"[\x00-\x1f\x7f]", "?", str(text))
 
 
 def host_block(cfg, name, h):
     """The `Host NAME` block roster writes for one Host, as lines (no comments)."""
     out = [f"Host {name}",
-           f"    HostName {h['ip']}",
+           f"    HostName {h['ip'].replace('%', '%%')}",              # ssh expands %-tokens in both
            f"    User {h['ssh']['user']}",
            f"    Port {h['ssh']['port']}",
            f"    UserKnownHostsFile {q(known_hosts_file())}",
            "    StrictHostKeyChecking accept-new",
            "    ConnectTimeout 10",
            "    ServerAliveInterval 30"]
-    if not WINDOWS:                         # Windows' OpenSSH can't share a connection (no Unix sockets)
+    if is_windows(h):                       # a Windows Host's sshd refuses a second session on a shared connection
+        out += ["    ControlMaster no"]       # ("No existing session"), so never share one with it (T195)
+    elif not WINDOWS:                       # Windows' OpenSSH can't share a connection (no Unix sockets)
         out += ["    ControlMaster auto",     # reuse one connection for many commands
-                f"    ControlPath {q(ssh_dir() / 'cm-%C')}",
+                f"    ControlPath {q(ssh_dir())[:-1]}/cm-%C\"",
                 "    ControlPersist 10m"]
     # Offer only roster's key (key Hosts) or no key at all (password Hosts): an agent holding many keys
     # would otherwise use up the Host's MaxAuthTries before the password ("Too many authentication failures").
@@ -196,7 +265,17 @@ def written_host_block(name):
 
 
 def write_ssh_config(cfg):
-    out = [f"# Generated by roster from {cfg['path']}",
+    try:
+        lines = ssh_config_lines(cfg)
+    except ValueError as e:
+        die(f"this Box's ssh config wasn't written: {e} (key_path: in roster.yml, or this Box's home folder)")
+    replace_file(ssh_config_file(), "\n".join(lines), 0o600)
+    finish_ssh_config(cfg)
+
+
+def ssh_config_lines(cfg):
+    """roster's ssh config for the Inventory CFG, as lines. ValueError when a path can't be written safely."""
+    out = [f"# Generated by roster from {comment(cfg['path'])}",
            "# Don't edit by hand: change roster.yml and run `roster sync`.", ""]
     for name, h in sorted(cfg["hosts"].items()):
         tags = ", ".join(x for x in (h["type"], h["product"]) if x)
@@ -207,26 +286,44 @@ def write_ssh_config(cfg):
             out.append(f"# {h['description']}")
         out += host_block(cfg, name, h)
         out.append("")
-    ssh_config_file().parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    ssh_config_file().write_text("\n".join(out))
-    os.chmod(ssh_config_file(), 0o600)
+    return out
 
+
+def finish_ssh_config(cfg):
+    """After this run's Inventory's ssh config is written: ~/.ssh/config reaches it, through the named Inventories'
+    index when there are any (or one is left to clean up), else by including roster's one file."""
+    say(f"ssh config   {ssh_config_file()} ({len(cfg['hosts'])} hosts)")
+    from . import inventories
+    if current_inventory() is not None:
+        unnamed = ssh_config_file(None)         # the file this same roster.yml had before it was named: superseded
+        if unnamed.is_file() and unnamed.read_text().startswith(f"# Generated by roster from {comment(cfg['path'])}\n"):
+            unnamed.unlink()
+    if inventories.in_use():
+        inventories.refresh_index()
+        if inventories.list_file().exists():
+            inventories.refresh_roster_md(skip=current_inventory())
+        return
     main = ssh_dir() / "config"
     text = main.read_text() if main.exists() else ""
-    if ssh_path(ssh_config_file()) not in text:
+    if not inventories.includes(text, ssh_config_file()):
         # Include must sit above any Host block, so prepend it
-        main.write_text(f"Include {q(ssh_config_file())}\n\n{text}")
-        os.chmod(main, 0o600)
-    say(f"ssh config   {ssh_config_file()} ({len(cfg['hosts'])} hosts)")
+        replace_file(main, f"{inventories.include_line(ssh_config_file())}\n\n{text}", 0o600)
 
 
 # ---------------------------------------------------------------- remote helpers
 
+# What a login test runs: the same in sh, cmd.exe and PowerShell, so a Windows Host's working login isn't a failure
+# (`true` is POSIX only: under PowerShell or cmd it isn't a command, and the login looked refused).
+LOGIN_PROBE = "exit 0"
+
+
 def ssh_ok(name, timeout=10):
+    if not_reached(name):               # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
+        return False
     # ControlPath=none: never trust a cached connection, really log in with the key
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none",
-                                         "-o", f"ConnectTimeout={timeout}", name, "true"]),
+                                         "-o", f"ConnectTimeout={timeout}", name, LOGIN_PROBE]),
                            stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout + 20)
         return r.returncode == 0
     except subprocess.TimeoutExpired:
@@ -249,11 +346,13 @@ def password_exec(h, command, password, timeout=15, stdin=None):
     c.load_host_keys(str(known_hosts_file()))
     c.set_missing_host_key_policy(paramiko.RejectPolicy())
     use_pw = password is not None
+    running = False
     try:
         c.connect(h["ip"], port=h["ssh"]["port"], username=h["ssh"]["user"], password=password,
                   allow_agent=not use_pw, look_for_keys=not use_pw,
                   timeout=timeout, auth_timeout=timeout, banner_timeout=timeout)
         stdin_f, stdout, stderr = c.exec_command(command, timeout=120)
+        running = True
         if stdin is not None:
             stdin_f.write(stdin)
             stdin_f.channel.shutdown_write()
@@ -266,6 +365,11 @@ def password_exec(h, command, password, timeout=15, stdin=None):
         if "known_hosts" in str(e):
             raise RuntimeError("host key not recorded - is the host reachable on its SSH port?")
         raise RuntimeError(str(e))
+    except TimeoutError:
+        if running:     # the channel's own 120 s: logged in, but the command was quiet that long
+            raise RuntimeError("the command printed nothing for 120 s, so roster stopped waiting (it may still be "
+                               "running there)") from None
+        raise RuntimeError("can't connect (timed out)") from None
     except OSError as e:
         raise RuntimeError(f"can't connect ({e.strerror or e})")
     finally:
@@ -300,10 +404,25 @@ def remove_key_script(tag_re):
 
 
 def enroll(h, pub, tag_re):
+    """Put this Box's key line PUB on Host H, logging in with its Login's password: the notes to show under its `ok`
+    (on a Windows Host, the file it wrote and any warning). RuntimeError when it can't."""
+    from . import winhost
     pw = get_secret(h["ssh"]["auth"], h["group"])
+    if is_windows(h):
+        done = winhost.install(h, pub, tag_re, pw)
+        if not ssh_ok(h["name"]):
+            raise RuntimeError(f"key written to {', '.join(done.files) or 'its key file'} but key login still fails "
+                               "(check that file's permissions and encoding, and whether sshd_config's Match Group "
+                               "administrators applies to this account)")
+        from .errors import KEY_FILE
+        return ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins else [])
+                + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
     _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, tag_re)), pw)
     if "ROSTER_OK" not in out:
+        if winhost.looks_windows(out + err):
+            raise RuntimeError(winhost.windows_hint(h["name"]))
         raise RuntimeError("couldn't write authorized_keys: " + (err or out).strip()[:200])
     if not ssh_ok(h["name"]):
         raise RuntimeError("key installed but key login still fails "
                            "(sshd PubkeyAuthentication off, or bad home-dir permissions?)")
+    return []

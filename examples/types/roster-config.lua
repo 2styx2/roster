@@ -24,7 +24,7 @@
 ---@field folders? roster.config.Folder[]|roster.o.List Folders kept in the Config, read-only in the app: each a Folder spec.
 ---@field vault? roster.config.Vault This Box's own vault settings, over roster.yml's providers. Paths and choices, never a secret.
 ---@field packages? (string|roster.config.Package)[]|roster.o.List Plugins fetched from git repos and pinned in roster.lock: each a Package spec, or just its source.
----@field plugin_proxy? string The proxy Plugins' requests to public names go through. Unset, they go direct. Takes http://HOST:PORT, the port written out, with no user or password.
+---@field plugin_proxy? string The proxy Plugins' requests to public names go through. Unset, they go direct. Takes "http://HOST:PORT", the port written out, with no user or password.
 ---@field idle_lock_minutes? integer Lock after this many minutes without input. Default: `15`. Takes 1 to 1440 minutes.
 ---@field pull_fresh_minutes? integer How old the last pull of the infra repo may be before a form pulls again; 0 pulls every time. Default: `5`. Takes 0 to 1440 minutes.
 ---@field auto_reload? boolean Reload on every save of a .lua file of the Config, and of roster.yml. Off, :source reloads. Default: `false`.
@@ -127,7 +127,8 @@
 ---@field cursor_style? "block"|"bar"|"underline" The cursor's shape. Default: `"block"`.
 ---@field scrollback? integer How many lines the terminal keeps above the screen. Default: `10000`. Takes 0 to 1000000 lines.
 ---@field copy_on_select? boolean Selecting text copies it. Default: `true`.
----@field right_click_paste? boolean Right-click copies the selection, or pastes when there's none. Default: `true`.
+---@field right_click_paste? boolean Right-click copies the selection, or pastes when there's none; with copy_on_select on, it copies and then pastes. Default: `true`.
+---@field osc52? boolean A program in the Session on screen may set the clipboard with OSC 52 (write only, at most 1 MiB), as in Windows Terminal: how Claude Code, vim or tmux copy what you select in them. Default: `true`.
 ---@field colors? roster.config.TerminalColors Any terminal or ANSI colour, set over the Theme's.
 ---@field shell_hooks? boolean Send each Session's shell the line that turns on prompt marks (OSC 133) and its folder (OSC 7). Unset, a Host's shell_hooks in roster.yml decides.
 
@@ -181,7 +182,7 @@
 ---@field titlebar? boolean The title bar. Default: `true`.
 ---@field sidebar? boolean|roster.config.Sidebar The Sidebar: shown or hidden, the side it's on, and its sections. Default: `{ side = "left" }`. Takes true, false, or a table of the options below (which shows it).
 ---@field sessionbar? false|"bottom"|"top" The thin tmux-style bar of open Sessions, and its edge. Default: `false`.
----@field statusbar? boolean|string[]|roster.o.List The status bar, and its segments. Default: `true`. Takes true, false, or segments in order: "backend", "box", "hosts", "path", "changes", "hints", "mode". Each item once.
+---@field statusbar? boolean|string[]|roster.o.List The status bar, and its segments. Default: `true`. Takes true, false, or segments in order: "backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode". Each item once.
 ---@field fullscreen? boolean OS fullscreen. Default: `false`.
 ---@field toolbar? boolean|string[]|roster.o.List The controls for common commands, in the title bar (or a bar of their own without one). Default: `true`. Takes true, false, or controls in order: "sidebar", "find", "quick", "add", "changes", "publish", "details", "cmdline", "keys", "help", "lock", "mode", or a Plugin control's id. Each item once.
 
@@ -217,7 +218,7 @@
 --- A Package spec: { SOURCE, tag = …, config = { … } }, or just SOURCE.
 ---@class roster.config.Package
 ---@field [1]? string The source, as the spec's first item.
----@field source? string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path.
+---@field source? string Where the repo is: the spec's first item, or source = …. Takes "owner/repo" (GitHub), or a git URL: "https://…", "ssh://…", "git@host:path", "file://…" or a full path.
 ---@field name? string Its name (its folder and its line in roster.lock); the repo's (or dir's) name when left out.
 ---@field tag? string The tag to pin. At most one of tag, branch and commit; none means the default branch.
 ---@field branch? string The branch to follow.
@@ -225,7 +226,7 @@
 ---@field dir? string The repo's folder that holds the Plugin, when it isn't the top. Takes a folder inside the repo, relative, / between folders, no ...
 ---@field config? table Settings the Package reads as roster.plugin.config. Takes a table (never a function).
 
---- An option's dotted name, for roster.set.
+--- An option's dotted name, for roster.o.get, roster.o.reset and roster.set: one of these, or a name under a map's key ("views.files.width", "themes.paper.label").
 ---@alias roster.config.OptionName
 ---| "theme"
 ---| "dark_theme"
@@ -282,6 +283,7 @@
 ---| "terminal.scrollback"
 ---| "terminal.copy_on_select"
 ---| "terminal.right_click_paste"
+---| "terminal.osc52"
 ---| "terminal.colors"
 ---| "terminal.colors.background"
 ---| "terminal.colors.foreground"
@@ -356,6 +358,7 @@
 ---| "editor"
 ---| "backend"
 ---| "roster_command"
+---| string
 
 --- What roster.o gives for an object (a table of named options): its table, with these methods.
 ---@class roster.o.Object
@@ -519,14 +522,27 @@ roster = {}
 ---@type "windows"|"linux"|"macos"
 roster.os = nil
 
---- The version of this table, raised when it changes.
---- Read-only. The Plugin API's version too: it rises with that.
+--- The Plugin API's version, which init.lua's table shows too.
+--- Read-only. It rises when only the Plugin API changes, so it doesn't tell what init.lua has: roster.config_version does.
 ---
 --- ```lua
---- if roster.api_version >= 4 then roster.o.vim = false end
+--- print("Plugin API " .. roster.api_version)
 --- ```
 ---@type integer
 roster.api_version = nil
+
+--- init.lua's own version: 4 is v0.3.0's (roster.o and the collections' functions).
+--- Read-only. It rises when a name is removed or renamed, or keeps its name but takes, gives or does something else; not for a new name (check that it isn't nil) and not for a Plugin API change. For the rare case a name can't tell. An app from before it (v0.4.0 and older) reads it as nil.
+---
+--- ```lua
+--- if (roster.config_version or 0) >= 4 then
+---   roster.o.terminal.size = "16pt"
+--- else
+---   roster.set("terminal.size", "16pt")
+--- end
+--- ```
+---@type integer
+roster.config_version = nil
 
 --- The app's version.
 --- Read-only.
@@ -558,30 +574,33 @@ roster.config_dir = nil
 roster.o = {}
 
 --- Reads any option by its dotted name: a copy of what init.lua set there, or nil.
---- The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.
+--- The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line. A map's key that holds a dot can't be named with dots ("keys.leader.." is an unknown name): read it with brackets, the key as a string, as the example's last line does.
 ---
 --- ```lua
 --- local views = roster.o.get("views") or {}
 --- for id in pairs(views) do print(id) end
+--- print(roster.o.keys.leader["."]) -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size", "views.get".
 ---@return any
 function roster.o.get(name) end
 
 --- Puts an option back to its default: what init.lua set there is taken away.
---- Any option: a value, an object, a map or a list. An unknown name is an error at its line.
+--- Any option: a value, an object, a map or a list. An unknown name is an error at its line. A map's key that holds a dot can't be named with dots: take it away with brackets, the key as a string, set to nil, as the example's last line does.
 ---
 --- ```lua
 --- roster.o.reset("terminal.size")
+--- roster.o.keys.leader["."] = nil -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size".
 function roster.o.reset(name) end
 
 --- Sets any option by its dotted name, as roster.o does.
---- The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option.
+--- The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option. A map's key that holds a dot can't be named with dots: set it through roster.o with brackets, the key as a string, as the example's last line does.
 ---
 --- ```lua
 --- roster.set("terminal.size", "16pt")
+--- roster.o.keys.leader["."] = "connect esx-02" -- a key that is a dot
 --- ```
 ---@param name roster.config.OptionName An option's dotted name: "terminal.size".
 ---@param value any Its value, as the option takes it; nil resets it.

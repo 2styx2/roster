@@ -368,7 +368,7 @@ pub const MODULES: &[Module] = &[
     Module {
         name: "roster.http",
         summary: "HTTP requests to the sites the manifest lists",
-        doc: "`nil` unless the Plugin was granted at least one `network:<site>` permission ([Permissions](plugins.md#permissions)). The request runs in roster's core, never in the app's window, and doesn't wait: the function you pass gets the answer later, as a call of its own with a call's budget. Only the sites granted are reached, redirects included; a name that resolves to an address on this computer or a private network is refused unless the manifest lists the address itself, or the name as a private site (`network:private:nas.lan`), which reaches only private addresses. A pinned site (`#sha256:…`) trusts only that certificate. No cookies or credentials of roster's go along, and no proxy but the user's `plugin_proxy`, through which a public name is still looked up here first and refused if it leads inside (only a name this computer can't look up at all is left to the proxy). At most 4 requests at once, a 256 KB body out, a 1 MB body back, 30 seconds each.",
+        doc: "`nil` unless the Plugin was granted at least one `network:<site>` permission ([Permissions](plugins.md#permissions)). The request runs in roster's core, never in the app's window, and doesn't wait: the function you pass gets the answer later, as a call of its own with a call's budget. Only the sites granted are reached, redirects included; a name that resolves to an address on this computer or a private network is refused unless the manifest lists the address itself, or the name as a private site (`network:private:nas.lan`), which reaches only private addresses. A pinned site (`#sha256:…`) trusts only that certificate. No cookies or credentials of roster's go along, and no proxy but the user's `plugin_proxy`, through which a public name is still looked up here first, refused if it leads inside, and reached only at the address roster checked (the proxy is asked for a tunnel to that address, never the name; a name this computer can't look up isn't sent). At most 4 requests at once, a 256 KB body out, a 1 MB body back, 30 seconds each.",
     },
 ];
 
@@ -460,7 +460,7 @@ pub const FUNCTIONS: &[Function] = &[
             ),
         ],
         summary: "Shows a notice, naming the Plugin",
-        doc: "Warnings and errors always show. An info notice is quiet by default, as roster's own routine messages are (`ui.messages`, like Neovim's): unless `ui.messages = \"all\"`, it isn't drawn, a screen reader still hears it and `:messages` keeps it. An info notice with buttons shows, and `quiet` decides either way: mark `quiet = false` on what the user asked for: the result of something they started (\"Scan done: 12 Hosts answered, 3 new\"), an answer (\"No alerts\") or a refusal (\"Keep a Host first\"), and leave it out for a routine confirmation (\"Copied the line\"). Every notice, shown or quiet, is in `:messages`.\n\nA notice's button runs a command line when the user clicks it, as [`roster.cmd`](#rostercmdline) would: the click is the user's call, so `view ID` opens your view when a job that ran in the background has finished (a Plugin can't open one on its own, from a timer or an answer). It takes a command line, not a function, so a notice never holds on to one.",
+        doc: "Warnings and errors always show. An info notice is quiet by default, as roster's own routine messages are (`ui.messages`, like Neovim's): unless `ui.messages = \"all\"`, it isn't drawn, a screen reader still hears it and `:messages` keeps it. An info notice with buttons shows, and `quiet` decides either way: mark `quiet = false` on what the user asked for: the result of something they started (\"Scan done: 12 Hosts answered, 3 new\"), an answer (\"No alerts\") or a refusal (\"Keep a Host first\"), and leave it out for a routine confirmation (\"Copied the line\"). A quiet notice from a timer, an event or a request's answer, which the user didn't ask for, leaves a message line that shows something (an error, an answer) as it is. Every notice, shown or quiet, is in `:messages`.\n\nA notice's button runs a command line when the user clicks it, as [`roster.cmd`](#rostercmdline) would: the click is the user's call, so `view ID` opens your view when a job that ran in the background has finished (a Plugin can't open one on its own, from a timer or an answer). It takes a command line, not a function, so a notice never holds on to one.",
         returns: ("", ""),
         errors: &[
             (
@@ -4072,6 +4072,11 @@ pub const TYPES: &[Type] = &[
                 "mesh",
                 "boolean",
                 "`mesh:` as roster.yml sets it; `nil` if nothing does.",
+            ),
+            o(
+                "os",
+                "string",
+                "`os:` as roster.yml sets it: `\"windows\"` (setup, revoke and check run PowerShell there) or `\"posix\"`; `nil` if nothing does, which is posix.",
             ),
             f("title", "string", "One line; `\"\"` if unset."),
             f("description", "string", "One line; `\"\"` if unset."),

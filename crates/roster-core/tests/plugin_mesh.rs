@@ -14,7 +14,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source, read_manifest};
+use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -54,6 +54,9 @@ struct World {
     cut_pending: Value,
     /// Polls of `mesh.job` a job answers "running" before it's done.
     ticks: u64,
+    /// The `roster sync` serve ran after a cut wrote `mesh: false` (T150): failed by default, so the
+    /// transcript has the warning (T153).
+    cut_sync: Value,
 }
 
 impl Default for World {
@@ -64,6 +67,7 @@ impl Default for World {
             out_of_date: true,
             cut_pending: json!({}),
             ticks: 1,
+            cut_sync: json!({ "ok": false, "error": "Permission denied: /home/you/.ssh/config.d/roster", "fix": "run `roster sync` on this box" }),
         }
     }
 }
@@ -169,7 +173,7 @@ impl FakeMesh {
                 json!({ "host": host, "confirmed": confirmed,
                         "pending": { "nas-1": "no answer: ssh: connect to host nas-1 port 22: Connection timed out" },
                         "warnings": [format!("{host}: /srv/mesh holds an earlier Mesh key that roster no longer uses (mesh_dir: changed), so delete it by hand")],
-                        "change": { "written": true, "backup": "/home/you/.config/roster/backup/roster.yml" } })
+                        "change": { "written": true, "backup": "/home/you/.config/roster/backup/roster.yml", "sync": w.cut_sync } })
             }
             action => {
                 let apply = action == "apply";
@@ -311,7 +315,7 @@ impl Serve for FakeMesh {
 // ------------------------------------------------------------------- driving it
 
 struct Run {
-    host: PluginHost,
+    host: Arc<PluginHost>,
     serve: Arc<FakeMesh>,
     /// Every op so far, in order.
     ops: Vec<Value>,
@@ -325,8 +329,10 @@ struct Run {
 }
 
 impl Run {
+    /// With generous limits ([`common::unhurried`]): a test about the Plugin's budget says so with
+    /// [`Run::new_with`] (T165: a 250 ms call ran out of time on a busy machine, 1 run in 800).
     fn new(world: World, grants: &[&str]) -> Run {
-        Run::new_with(world, grants, Limits::default())
+        Run::new_with(world, grants, common::unhurried())
     }
 
     fn new_with(world: World, grants: &[&str], limits: Limits) -> Run {
@@ -338,11 +344,11 @@ impl Run {
 
     /// A host with `serve`, nothing loaded yet.
     fn with(serve: Arc<FakeMesh>) -> Run {
-        Run::with_limits(serve, Limits::default())
+        Run::with_limits(serve, common::unhurried())
     }
 
     fn with_limits(serve: Arc<FakeMesh>, limits: Limits) -> Run {
-        let host = PluginHost::new(serve.clone(), limits);
+        let host = Arc::new(PluginHost::new(serve.clone(), limits));
         let (tx, replies) = channel();
         let tx = Mutex::new(tx);
         host.set_listener(Arc::new(move |r: Reply| {
@@ -367,7 +373,7 @@ impl Run {
         let started = Instant::now();
         while self.host.requests(NAME) > 0 {
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < common::CEILING,
                 "roster serve's answers didn't come"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -592,7 +598,7 @@ fn it_installs_from_roster_s_repo_with_dir_and_asks_for_exactly_its_permissions(
     let packages = Packages::new(&root.join("data"), &root.join("config"));
     assert_eq!(packages.sync(&specs)[0].error, None);
     let (dir, _) = packages.loadable(&specs, NAME).unwrap();
-    let m = read_manifest(&dir).unwrap();
+    let m = common::read_manifest(&dir).unwrap();
     assert_eq!(m.name, NAME);
     assert_eq!(m.api, 5);
     let mut asked: Vec<String> = m.permissions.iter().map(|p| p.to_string()).collect();
@@ -754,15 +760,24 @@ fn plan_shows_the_changes_and_apply_comes_only_after_a_question() {
 /// for a minute or two: the controls keep answering meanwhile (decision Q103).
 #[test]
 fn the_controls_answer_while_roster_serve_is_busy_and_catch_up_after() {
-    let mut run = started(World::default());
+    // A call's budget and grace that the wait for serve below (2.6 s) outlasts, but four times
+    // the app's 250 ms budget for the Lua itself, which a busy machine ran out of (T165).
+    let limits = Limits {
+        call: Duration::from_secs(1),
+        grace: Duration::from_secs(1),
+        ..Limits::default()
+    };
+    let mut run = Run::new_with(World::default(), ALL, limits);
+    run.tick();
     run.serve.take();
     let publish = run.serve.busy.lock().unwrap();
     let c = run.last(|o| o["op"] == "command" && o["name"] == NAME);
-    let started = Instant::now();
-    let reply = run
-        .host
-        .call(NAME, handler(&c["run"]), json!({ "args": "plan", "words": ["plan"] }));
-    assert!(started.elapsed() < Duration::from_millis(500));
+    // It answers while serve is still busy (`publish` is held until below): a call that waited
+    // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
+    let (host, run_handler) = (Arc::clone(&run.host), handler(&c["run"]));
+    let reply = common::within_ceiling("the plan command's answer", move || {
+        host.call(NAME, run_handler, json!({ "args": "plan", "words": ["plan"] }))
+    });
     assert!(reply.error.is_none() && reply.disabled.is_none(), "{reply:?}");
     assert_eq!(of(&reply.ops, "view_open")[0]["id"], "mesh-plan");
     // Asked again before serve answers: it says it's starting, and asks nothing more.
@@ -821,6 +836,15 @@ fn cut_asks_for_the_hosts_name_and_warns_about_each_host_that_was_down() {
             "warn"
         )
     );
+    // The sync after mesh: false was written failed (T153): the cut stands, and it says what to run.
+    assert_eq!(
+        (said[3].as_str(), ops_level(&ops, 3)),
+        (
+            "mesh: false for orion-2 was written, but this Box's ssh config didn't follow (Permission denied: /home/you/.ssh/config.d/roster): run roster sync",
+            "warn"
+        )
+    );
+    assert_eq!(said.len(), 4, "{said:?}");
     let badge = run.last(|o| o["op"] == "badge" && o["host"] == "nas-1");
     assert_eq!(badge["text"], "cut pending");
     assert_eq!(run.last(|o| o["op"] == "status")["spec"]["text"], "Cut pending");
@@ -828,6 +852,21 @@ fn cut_asks_for_the_hosts_name_and_warns_about_each_host_that_was_down() {
     let ops = run.command("cut sw-1");
     assert!(of(&ops, "confirm").is_empty());
     assert_eq!(texts(&ops)[0], "sw-1 isn't in the Mesh: there's nothing to cut.");
+}
+
+/// T153: a cut whose sync went fine says nothing about it.
+#[test]
+fn a_cut_whose_sync_went_fine_says_nothing_about_the_ssh_config() {
+    let mut run = started(World {
+        cut_sync: json!({ "ok": true }),
+        ..World::default()
+    });
+    run.action("mesh", "Cut", "orion-2");
+    run.confirm();
+    run.tick();
+    let said = texts(&run.tick());
+    assert!(!said.iter().any(|t| t.contains("ssh config")), "{said:?}");
+    assert_eq!(said.len(), 3, "{said:?}");
 }
 
 /// serve API 20 pushes the job's progress (decision Q112f): the first push takes the timer away,
@@ -998,12 +1037,13 @@ fn a_thousand_hosts_get_their_details_in_batches_until_every_one_has_its_section
 fn a_thousand_hosts_draw_inside_the_apps_own_limits() {
     let t = Instant::now();
     // Default limits: a call over its budget is an error, which `take` fails on.
-    let mut run = Run::new(
+    let mut run = Run::new_with(
         World {
             lab: 1000,
             ..World::default()
         },
         ALL,
+        Limits::default(),
     );
     eprintln!("1,000 Hosts: loaded in {:?}", t.elapsed());
     let mut calls = 0;

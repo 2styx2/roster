@@ -368,6 +368,9 @@ pub struct Terminal {
     pub copy_on_select: bool,
     /// Right-click copies the selection, or pastes when nothing is selected.
     pub right_click_paste: bool,
+    /// A program may set the clipboard with OSC 52 (write only, from the Session on screen, at
+    /// most 1 MiB; decision Q149), as in Windows Terminal.
+    pub osc52: bool,
     /// xterm's renderer: WebGL (fast) or the DOM (the browser's own text rendering).
     pub renderer: Renderer,
     pub cursor_style: CursorStyle,
@@ -397,6 +400,7 @@ impl Default for Terminal {
             scrollback: 10_000,
             copy_on_select: true,
             right_click_paste: true,
+            osc52: true,
             renderer: Renderer::Webgl,
             cursor_style: CursorStyle::Block,
             bold_is_bright: true,
@@ -1079,7 +1083,7 @@ impl<'de> Deserialize<'de> for SessionBarPiece {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct StatusBarPiece {
     pub shown: bool,
-    /// Segment ids in order ("backend", "box", "hosts", "path", "changes", "hints", "mode"); null: all.
+    /// Segment ids in order ("backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode"); null: all.
     pub segments: Option<Vec<String>>,
 }
 

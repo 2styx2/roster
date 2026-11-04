@@ -8,7 +8,6 @@ import queue
 import subprocess
 import sys
 import threading
-import time
 
 import pytest
 from test_edit import INVENTORY, changed_lines
@@ -347,6 +346,9 @@ def repo(tmp_path, monkeypatch):
     return r / "roster.yml"
 
 
+NOTE_WAIT = 20     # s, as call()'s answer: a ceiling, not how long a notification takes
+
+
 class Live:
     """`roster serve` with a reader thread: responses by id, and notifications (no id) as they come."""
 
@@ -375,7 +377,9 @@ class Live:
         assert "error" not in r, r
         return r["result"]
 
-    def note(self, timeout):
+    def note(self, timeout=NOTE_WAIT):
+        """The next notification. The default TIMEOUT is only how long a broken test takes to say so: a loaded machine
+        (a full suite in parallel, a shared CI runner) can pause serve for longer than the watcher's second (T151)."""
         return self.notes.get(timeout=timeout)
 
     def close(self):
@@ -456,13 +460,38 @@ def test_an_edit_while_the_file_is_broken_is_refused_with_its_line(live, repo):
     assert err["code"] == 1 and err["data"]["line"] > 0
 
 
-def test_an_outside_edit_is_applied_within_a_second_with_auto_reload(live, repo):
+def test_the_watcher_looks_often_enough_to_see_an_outside_edit_within_a_second():
+    # An edit is applied once it has settled: seen at the next look (at most WATCH_EVERY after it) and the same at the
+    # one after (WATCH_SETTLE later). Timing the notification instead times the machine too (T151).
+    from roster import serve
+    assert serve.WATCH_EVERY + serve.WATCH_SETTLE < 1.0
+
+
+def test_an_edit_saved_before_the_watcher_thread_first_runs_is_still_seen(repo, monkeypatch):
+    # T151: the watcher took its first look when its thread got to run, so on a loaded machine an edit saved just after
+    # inventory.watch answered was taken for how the file already was, and never applied.
+    from types import SimpleNamespace
+
+    from roster import serve
+    monkeypatch.setattr(serve, "WATCH_EVERY", 0.01)
+    monkeypatch.setattr(serve, "WATCH_SETTLE", 0.01)
+    got = queue.Queue()
+    state = SimpleNamespace(path=repo, lock=threading.Lock(), digest=serve.file_digest(repo), noticed=None, auto=False,
+                            notify=lambda method, params: got.put((method, params)))
+    w = serve.Watcher(state)                    # as inventory.watch makes it, before it answers
+    save(repo, INVENTORY.replace("      plain:", "      plain2:"))
+    w.start()                                   # the thread runs only now
+    try:
+        assert got.get(timeout=NOTE_WAIT) == ("inventory.changed", {"applied": False, "error": None})
+    finally:
+        w.stop.set()
+
+
+def test_an_outside_edit_is_applied_with_auto_reload(live, repo):
     s = live()
     assert s.ok("inventory.watch", {"auto": True})["watching"] is True
     save(repo, INVENTORY.replace("      plain:", "      plain2:"))
-    start = time.monotonic()
-    n = s.note(timeout=1.0)
-    assert time.monotonic() - start < 1.0
+    n = s.note()
     assert n == {"jsonrpc": "2.0", "method": "inventory.changed",
                  "params": {"applied": True, "error": None, "sync": {"ok": True}}}
     assert "plain2" in names(s) and "plain" not in names(s)
@@ -472,12 +501,12 @@ def test_a_broken_edit_keeps_the_last_good_inventory_and_says_the_line_then_reco
     s = live()
     s.ok("inventory.watch", {"auto": True})
     save(repo, INVENTORY.replace("      flow: {ip: 10.0.0.2", "      flow: {ip: 10.0.0.2,,"))
-    n = s.note(timeout=1.0)["params"]
+    n = s.note()["params"]
     assert n["applied"] is True and n["error"]["line"] == 11 and n["error"]["path"] == str(repo)
     listed = s.ok("hosts.list")
     assert "flow" in [h["name"] for h in listed["hosts"]] and listed["error"]["line"] == 11
     save(repo, INVENTORY.replace("      plain:", "      fixed:"))
-    assert s.note(timeout=1.0)["params"] == {"applied": True, "error": None, "sync": {"ok": True}}
+    assert s.note()["params"] == {"applied": True, "error": None, "sync": {"ok": True}}
     listed = s.ok("hosts.list")
     assert listed["error"] is None and "fixed" in [h["name"] for h in listed["hosts"]]
 
@@ -486,10 +515,8 @@ def test_without_auto_reload_an_outside_edit_is_only_reported_until_source(live,
     s = live()
     assert s.ok("inventory.watch", {"auto": False}) == {"watching": True, "auto": False, "path": str(repo)}
     save(repo, INVENTORY.replace("      plain:", "      plain2:"))
-    assert s.note(timeout=1.0)["params"] == {"applied": False, "error": None}
-    assert "plain" in names(s)                   # not applied yet
-    with pytest.raises(queue.Empty):
-        s.note(timeout=0.6)                      # told once, not again and again
+    assert s.note()["params"] == {"applied": False, "error": None}
+    assert "plain" in names(s)                   # not applied yet (told once: test_an_outside_edit_is_reported_once)
     r = s.ok("inventory.reload")
     assert r["changed"] is True and r["error"] is None and "plain2" in names(s)
 
@@ -502,9 +529,87 @@ def test_source_with_a_broken_file_keeps_the_last_good(live, repo):
     assert r["error"]["line"] and r["host_count"] == 6 and len(names(s)) == 6
 
 
-def test_serves_own_writes_are_not_outside_edits(live, repo):
-    s = live()
-    s.ok("inventory.watch", {"auto": False})
-    s.ok("host.remove", {"host": "plain"})
-    with pytest.raises(queue.Empty):
-        s.note(timeout=0.8)
+class Looks:
+    """Stands in for a Watcher's stop event, so the test says when it looks at roster.yml. The watcher waits here
+    between looks; run(N) lets it take N more and returns once it's waiting again: the marker that those looks are
+    over, notifications and all, however slow the machine (T161: a notification not come in 0.6 s proved nothing)."""
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.let_go = self.waits = 0            # looks allowed so far; times the watcher has come back to wait
+        self.stopped = False
+
+    def wait(self, timeout=None):
+        with self.cond:
+            self.waits += 1
+            self.cond.notify_all()
+            self.cond.wait_for(lambda: self.stopped or self.let_go >= self.waits)
+            return self.stopped
+
+    def run(self, n):
+        with self.cond:
+            self.let_go += n
+            self.cond.notify_all()
+            assert self.cond.wait_for(lambda: self.waits > self.let_go, timeout=NOTE_WAIT), "the watcher stopped looking"
+
+    def set(self):
+        with self.cond:
+            self.stopped = True
+            self.cond.notify_all()
+
+
+def watching(state):
+    """STATE's Watcher, started, with its looks in the test's hands: (the watcher, its Looks)."""
+    from roster import serve
+    w = serve.Watcher(state)                    # as inventory.watch makes it
+    w.stop = looks = Looks()
+    w.start()
+    return w, looks
+
+
+def taken(q):
+    """Every notification QUEUE holds now."""
+    out = []
+    while not q.empty():
+        out.append(q.get_nowait())
+    return out
+
+
+def test_an_outside_edit_is_reported_once(repo):
+    from types import SimpleNamespace
+
+    from roster import serve
+    got = queue.Queue()
+    state = SimpleNamespace(path=repo, lock=threading.Lock(), digest=serve.file_digest(repo), noticed=None, auto=False,
+                            notify=lambda method, params: got.put((method, params)))
+    _, looks = watching(state)
+    try:
+        save(repo, INVENTORY.replace("      plain:", "      plain2:"))
+        looks.run(2)                            # seen, then the same at the next look: settled
+        assert taken(got) == [("inventory.changed", {"applied": False, "error": None})]
+        looks.run(3)
+        assert taken(got) == []                 # told once, not again and again
+        save(repo, INVENTORY.replace("      plain:", "      plain2:"))     # saved again as it was: a new file, same text
+        looks.run(3)
+        assert taken(got) == []
+    finally:
+        looks.set()
+
+
+def test_serves_own_writes_are_not_outside_edits(repo):
+    from roster import serve
+    got = queue.Queue()
+    state = serve.State(str(repo))
+    state.notify = lambda method, params: got.put((method, params))
+    _, looks = watching(state)
+    try:
+        r = serve.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": "host.remove",
+                                            "params": {"host": "plain"}}))
+        assert "error" not in r, r
+        looks.run(3)                            # it changed on disk: seen, settled, and one more
+        assert taken(got) == []
+        save(repo, INVENTORY.replace("      flow:", "      flow2:"))     # the marker: an outside edit is still told
+        looks.run(2)
+        assert taken(got) == [("inventory.changed", {"applied": False, "error": None})]
+    finally:
+        looks.set()

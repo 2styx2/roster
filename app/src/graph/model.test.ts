@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { budget } from "../test-budget";
 import { filterGraph, graphIndex, mergeGraph, reachCounts, reachOf, type GraphData, type GraphEdge, type GraphNode } from "./model";
 
 const node = (id: string, cluster?: string): GraphNode => ({ id, label: id, shape: "dot", ...(cluster ? { cluster } : {}) });
@@ -43,13 +44,21 @@ describe("reach, both ways", () => {
     expect(reachOf(ix, "n").out.size).toBe(0);
   });
 
-  it("stays quick at 5,000 nodes in meshed clusters", () => {
+  const meshed = () => {
     const nodes = Array.from({ length: 5000 }, (_, i) => node(`h${i}`, `c${i % 50}`));
     const clusters = Array.from({ length: 50 }, (_, i) => ({ id: `c${i}`, title: `c${i}`, mesh: true as const }));
     const edges = Array.from({ length: 49 }, (_, i) => edge(`c${i}`, `c${i + 1}`));
-    const ix = graphIndex({ nodes, edges, clusters });
+    return graphIndex({ nodes, edges, clusters });
+  };
+
+  it("reaches every node at 5,000 nodes in meshed clusters", () => {
+    expect(reachOf(meshed(), "h0").out.size).toBe(4999);
+  });
+
+  budget("stays quick at 5,000 nodes in meshed clusters", () => {
+    const ix = meshed();
     const t = performance.now();
-    expect(reachOf(ix, "h0").out.size).toBe(4999);
+    reachOf(ix, "h0");
     expect(performance.now() - t).toBeLessThan(100);
   });
 });
@@ -98,12 +107,26 @@ describe("every node's reach counts at once", () => {
     }
   });
 
-  it("takes well under a second at 5,000 nodes", () => {
+  const big = (): GraphData => {
     const nodes = Array.from({ length: 5000 }, (_, i) => node(`h${i}`, `c${i % 50}`));
     const clusters = Array.from({ length: 50 }, (_, i) => ({ id: `c${i}`, title: `c${i}`, ...(i % 2 ? { mesh: true as const } : {}) }));
     const edges = Array.from({ length: 5000 }, (_, i) => edge(`h${i}`, `h${(i * 31 + 7) % 5000}`)).filter((e) => e.from !== e.to);
+    return { nodes, edges, clusters };
+  };
+
+  it("counts every node at 5,000 nodes", () => {
+    const ix = graphIndex(big());
+    const all = reachCounts(ix);
+    for (const id of ["h0", "h1", "h2500", "h4999"]) {
+      const r = reachOf(ix, id);
+      expect(all.get(id), id).toEqual({ out: r.out.size, in: r.in.size });
+    }
+  });
+
+  budget("takes well under a second at 5,000 nodes", () => {
+    const g = big();
     const t = performance.now();
-    reachCounts(graphIndex({ nodes, edges, clusters }));
+    reachCounts(graphIndex(g));
     expect(performance.now() - t).toBeLessThan(500);
   });
 });

@@ -2,13 +2,13 @@
 //! calls, Sessions).
 //! All logic lives in roster-core so it can be tested without Tauri (docs/app/dev/testing.md).
 
-use roster_core::backend::{Backend, BackendInfo, QuickTarget, fill_refusal};
+use roster_core::backend::{Backend, BackendInfo, CheckStarted, QuickTarget, fill_refusal, timeout_for};
 use roster_core::config::{self, Config, Loader, Report};
 use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
 use roster_core::package::{self, Packages};
 use roster_core::plugin::{self, Permission, PluginHost};
 use roster_core::rpc::{CallError, Notify};
-use roster_core::session::{FillTarget, SessionError, SessionEvent, SessionId, SessionManager, Size};
+use roster_core::session::{Hop, SessionError, SessionEvent, SessionId, SessionManager, Size};
 use roster_core::slot::Slot;
 use roster_core::state::StateFile;
 use serde_json::{Value, json};
@@ -327,11 +327,29 @@ async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Val
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
 /// first failure. roster makes at most one connection and one login, so this is safe on 10.19.
 /// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
-/// worker of serve waits for it.
+/// worker of serve waits for it. `started` hears the check's job once serve has it under way, and
+/// whether it's the app's own to stop (`host_check_stop`, #221 item 1); an older serve sends none.
 #[tauri::command]
-async fn host_check(state: tauri::State<'_, Arc<BackendState>>, host: String) -> Result<Value, CallError> {
+async fn host_check(
+    state: tauri::State<'_, Arc<BackendState>>,
+    host: String,
+    started: Channel<CheckStarted>,
+) -> Result<Value, CallError> {
     let backend = state.get()?;
-    blocking(move || backend.check_host(&host)).await
+    blocking(move || {
+        backend.check_host_with(&host, timeout_for("host.check"), |s| {
+            let _ = started.send(s.clone());
+        })
+    })
+    .await
+}
+
+/// Stop in the `:check` panel (#221 item 1): stops a check of the app's own at its next step
+/// (`Backend::stop_check`, serve's `jobs.stop`). Another caller's check isn't stopped.
+#[tauri::command]
+async fn host_check_stop(state: tauri::State<'_, Arc<BackendState>>, job: String) -> Result<Value, CallError> {
+    let backend = state.get()?;
+    blocking(move || backend.stop_check(&job)).await
 }
 
 /// This Box's health (`box.check`, api 16, ticket 49): roster.yml, ssh, the vault CLIs, askpass and the
@@ -354,6 +372,21 @@ async fn jobs_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, 
 #[tauri::command]
 async fn inventory_pull(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
     call(&state, "inventory.pull", json!({})).await
+}
+
+/// The named Inventories, the active one, and which one this serve runs on (`inventories.list`,
+/// serve API 27, ticket 115).
+#[tauri::command]
+async fn inventories_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
+    call(&state, "inventories.list", json!({})).await
+}
+
+/// Makes the named Inventory `name` the active one (`inventories.use`, serve API 27). The frontend
+/// locks the vault first and then restarts serve (`backend_connect` with `restart`), whose
+/// detection asks roster again which file to use: never the old serve's `-c PATH`.
+#[tauri::command]
+async fn inventories_use(state: tauri::State<'_, Arc<BackendState>>, name: String) -> Result<Value, CallError> {
+    call(&state, "inventories.use", json!({ "name": name })).await
 }
 
 /// One test login with a Host's new address, user or Login (`host.verify_login`, decision Q43):
@@ -953,6 +986,13 @@ struct OpenedSession {
     /// The id serve holds a typed password under for "Save to vault" (tickets 15, 16), when asked.
     #[serde(skip_serializing_if = "Option::is_none")]
     held: Option<String>,
+    /// Its PTY is Windows' ConPTY: the app offers only the fills the core makes there (decision
+    /// Q151 (i), ticket 162).
+    conpty: bool,
+    /// The ssh user the core fills sudo's prompt for (`session.prepare`'s login), so the app judges
+    /// sudo's prompt by the same user (the review of #308, #6). None for a Quick Connect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
 }
 
 /// Open a Session to `host`: `session.prepare`, then the command in a PTY of `cols`×`rows`.
@@ -962,6 +1002,8 @@ struct OpenedSession {
 /// token lives 60 s, so every open (and every reconnect) gets a fresh one. For an `auth: prompt`
 /// Host (ticket 16) the app sends the `password` the user typed (moved into serve's request and
 /// dropped with it, as `vault_unlock`'s), and `save` asks serve to hold it for "Save to vault".
+/// `marks` is the token roster's shell hooks put on this attempt's marks (decision Q131 (a)); the
+/// core follows them for a nested ssh's fill (ticket 162).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri fills each argument from the call or its state
 async fn session_open(
@@ -970,6 +1012,7 @@ async fn session_open(
     host: String,
     password: Option<String>,
     save: Option<bool>,
+    marks: Option<String>,
     cols: u16,
     rows: u16,
     events: Channel<InvokeResponseBody>,
@@ -977,13 +1020,17 @@ async fn session_open(
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
-        let (cmd, held) = match password {
+        let (mut cmd, held) = match password {
             Some(password) => {
                 let s = backend.typed_session_command(&host, password, save.unwrap_or(false))?;
                 (s.command, s.held)
             }
             None => (backend.session_command(&host)?, None),
         };
+        // The token on roster's own shell marks for this attempt (ticket 162): the core follows
+        // them, so a nested ssh's fill goes only while that ssh runs.
+        cmd.marks = marks;
+        let user = cmd.fill_as.as_ref().map(|t| t.login.user.clone());
         let id = sessions
             .open(&cmd, Size { cols, rows }, move |event| {
                 let body = match event {
@@ -998,6 +1045,8 @@ async fn session_open(
             auth: cmd.auth,
             quick: None,
             held,
+            conpty: sessions.conpty(),
+            user,
         })
     })
     .await
@@ -1038,6 +1087,8 @@ async fn quick_session_open(
             auth: q.command.auth,
             quick: Some(q.quick),
             held: q.held,
+            conpty: sessions.conpty(),
+            user: None,
         })
     })
     .await
@@ -1055,7 +1106,8 @@ fn session_write(
 
 /// How long a prompt fill waits for an echo of its probe before it types the secret (ticket 119,
 /// decision Q129). Longer than an ssh round trip to a far Host; a link slower than that could echo
-/// after it, which is why the docs say so.
+/// after it, which is why the docs say so. The probe goes in two steps with this wait after each
+/// (ticket 155, decision Q151 (h)), so a fill takes about twice this before it types.
 const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 
 /// Fills the password prompt Session `id` shows, when the user pressed the fill key at one
@@ -1067,23 +1119,34 @@ const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
 /// frontend, a log or an error.
 ///
 /// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
-/// decision Q131): serve answers for that Host (still checking the Session's own), with the same
-/// printed-prompt check in the core.
+/// decision Q131), and which of the Session's own commands that ssh is (ticket 162): serve answers
+/// for that Host (still checking the Session's own), with the same printed-prompt check in the
+/// core, which also fills it only while the Session's own shell's marks show that ssh running.
+///
+/// A refusal at sudo's own prompt whose mask roster didn't take logs what the probe drew, on
+/// stderr with the app's other `roster:` lines (ticket 155: no text but `*` and space in it).
 #[tauri::command]
 async fn session_fill(
     state: tauri::State<'_, Arc<BackendState>>,
     sessions: tauri::State<'_, Arc<SessionManager>>,
     id: SessionId,
     prompt: String,
-    hop: Option<FillTarget>,
+    hop: Option<Hop>,
 ) -> Result<Value, CallError> {
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
         let filled = sessions.fill(id, FILL_WAIT, &prompt, hop.as_ref(), |target| {
-            backend.fill_secret(target, &prompt, hop.as_ref())
+            backend.fill_secret(target, &prompt, hop.as_ref().map(|h| &h.to))
         });
-        filled.map(|host| json!({ "host": host })).map_err(fill_refusal)
+        filled.map(|host| json!({ "host": host })).map_err(|e| {
+            // What sudo's prompt drew that the mask check didn't take (ticket 155): the app's log
+            // only, never the error the message line shows.
+            if let Some(line) = e.log_line() {
+                eprintln!("roster: session {id}: {line}");
+            }
+            fill_refusal(e)
+        })
     })
     .await
 }
@@ -1275,9 +1338,12 @@ pub fn run() {
             hosts_list,
             host_get,
             host_check,
+            host_check_stop,
             box_check,
             jobs_list,
             inventory_pull,
+            inventories_list,
+            inventories_use,
             host_verify_login,
             host_update,
             host_scan_key,

@@ -97,6 +97,32 @@ def inventory(path, cfg, error):
         n = sum(len(h["problems"]) for h in hosts)
         out.append(check("inventory", "warn", f"{count(n, 'service entry')} left out, on {names(left_out)}",
                          "`roster hosts` prints each one with its fix", "E57"))
+    out += named(cfg)
+    return out
+
+
+def named(cfg):
+    """The named Inventories (ticket 115): which one this is, and the same machine in two of them (warnings only)."""
+    from . import inventories
+    from .common import current_inventory
+    if not inventories.list_file().exists():
+        return []
+    inv = inventories.load()
+    if not inv.inventories:
+        return []
+    here = current_inventory()
+    which = (f"this is the named Inventory {here}" + (" (the active one)" if here == inv.active else "")
+             if here else "this roster.yml isn't one of the named Inventories")
+    out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.inventories)}")]
+    out += [check("inventory", "warn", w["message"], w["fix"], f"E{w['row']}") for w in inventories.overlaps(cfg)]
+    for f in inventories.foreign_legacy_files(inv):
+        out.append(check("inventory", "warn", f"{f} has the name roster once used for a named Inventory's ssh config, "
+                                              "but roster didn't write it, so it's left as it is",
+                         "nothing to do if it's yours; rename it if `Include` picks it up by mistake"))
+    if inventories.stale():
+        out.append(check("inventory", "warn", f"{inventories.ssh_index_file()} is older than this Box's ssh config "
+                                              "files and couldn't be rewritten", "make it writable, then run "
+                                              "`roster sync`", "E206"))
     return out
 
 
@@ -118,7 +144,9 @@ def ssh(cfg):
         out.append(check("ssh", "error", f"roster's ssh config ({ours}) isn't written, or ~/.ssh/config doesn't "
                                          "include it", "run `roster sync` (or `roster setup` on a new Box)", "E2"))
     else:
-        missing = [h["name"] for h in hosts if h["name"] not in written]
+        from .inventories import left_out_hosts
+        shadowed = left_out_hosts()         # another named Inventory's Host has the name: warning 146 says so
+        missing = [h["name"] for h in hosts if h["name"] not in written and h["name"] not in shadowed]
         if missing:
             out.append(check("ssh", "warn", f"{count(len(missing), 'Host')} not in roster's ssh config yet: "
                                             f"{names(missing)}", "run `roster sync`", "E2"))

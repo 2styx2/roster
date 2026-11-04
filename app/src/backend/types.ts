@@ -152,6 +152,13 @@ export interface CheckStep {
   data?: Record<string, unknown>;
 }
 
+/** A check under way as serve's job (API 21): its id, and whether it's the app's own to stop
+ * (`stopCheck`, #221 item 1): the app started it, not another caller (a Plugin's `host.check`). */
+export interface CheckStarted {
+  job: string;
+  own: boolean;
+}
+
 /** `host.check {host}`: every step, stopping (the rest `skipped`) at the first failure. */
 export interface HostCheck {
   host: string;
@@ -488,6 +495,42 @@ export const JOBS_API_VERSION = 20;
 /** serve API 21 (ticket 108): a Host's check is a job, with `job.progress` and in `jobs.list`. */
 export const CHECK_JOBS_API_VERSION = 21;
 
+/** serve API 27 (ticket 115): named Inventories, `inventories.list` and `inventories.use`. */
+export const INVENTORIES_API_VERSION = 27;
+
+/** One named Inventory (`inventories.list`): its name, its `roster.yml`, whether it's the active
+ * one, and whether its file is there. */
+export interface NamedInventory {
+  name: string;
+  path: string;
+  active: boolean;
+  exists: boolean;
+}
+
+/** `inventories.list`: the named Inventories, the active one's name, and the Inventory (`name`,
+ * null when its file isn't a named one) and file (`path`) this serve runs on. */
+export interface Inventories {
+  inventories: NamedInventory[];
+  active: string | null;
+  name: string | null;
+  path: string | null;
+}
+
+/** `inventories.use`: the Inventory now active. serve keeps running on its own: the app restarts it. */
+export interface InventoryUsed {
+  active: string;
+  path: string;
+  restart: true;
+}
+
+/** roster's codes for `inventories.list` and `inventories.use`. */
+export const InventoriesError = {
+  /** No named Inventory by that name; `data.names` has the ones there are. */
+  unknown: 140,
+  /** roster's list of named Inventories (`inventories.json`) doesn't load. */
+  unreadable: 143,
+} as const;
+
 /** serve's `job.progress` notification: a job started, moved on or ended. Never its result. */
 export type JobProgress = {
   kind: string;
@@ -680,6 +723,12 @@ export interface SessionHandle {
   resize(size: TermSize): Promise<void>;
   /** Ends it (kills ssh). The exit event still follows, with `closed: true`. */
   close(): Promise<void>;
+  /** Its PTY is Windows' ConPTY: the core fills only sudo's own prompt for the Session's own Host
+   * there (decision Q151 (i)), so the app offers no other (ticket 162). Absent: it isn't. */
+  readonly conpty?: boolean;
+  /** The ssh user the core fills sudo's prompt for (what `session.prepare` said it connects as),
+   * which can differ from the Inventory's; absent: none (the review of #308, #6). */
+  readonly fillUser?: string;
   /** Fills the password prompt the Session shows from the vault (serve API 25, ticket 119,
    * decision Q129), for the line at its cursor (`prompt`, the Host's text). The core asks serve for
    * the password of the Host the Session was opened to and types it only if the prompt doesn't
@@ -759,6 +808,10 @@ export interface NestedHost {
   address: string;
   port: number;
   user: string;
+  /** Which of the Session's own commands that ssh is: the `run`th its own shell marked with the
+   * Session's token (ticket 162). The core fills only while that's still the last of those marks;
+   * serve never gets it. */
+  run: number;
 }
 
 /** `session.fill`'s codes (docs/serve-api.md): rows 143 and 144 in docs/app/errors.md. */
@@ -865,8 +918,10 @@ export interface Backend {
   /** Open a Session to a Host in a PTY of `size`. Rejects with BackendCallError (a
    * `SessionRefusal` code) when roster won't open it; a failed login is ssh's own output.
    * Every call asks roster afresh (`session.prepare` right before the spawn), so a password
-   * Session always gets a new one-time askpass token: call it again to reconnect. */
-  openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword): Promise<SessionHandle>;
+   * Session always gets a new one-time askpass token: call it again to reconnect. `marks` is the
+   * token roster's shell hooks put on this attempt's marks (decision Q131 (a)): the core follows
+   * them so a nested ssh's fill goes only while that ssh runs (ticket 162). */
+  openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword, marks?: string): Promise<SessionHandle>;
   /** `quick.prepare` (API 12, ticket 14), then the command in a PTY: a Session to a box that isn't
    * in the Inventory. roster fetches the key again and refuses (23) one that isn't `to.fingerprint`,
    * or (43) one that differs from a key it recorded. A typed `password` goes once to serve, which
@@ -893,8 +948,13 @@ export interface Backend {
   /** Calls `onLogin` with the held id each time a Session that holds a typed password for "Save to
    * vault" logs in with it (serve's `session.logged_in`); returns stop. */
   onLoggedIn(onLogin: (held: string) => void): () => void;
-  /** `host.check`: roster's diagnostics for one Host (at most one connection and one login). */
-  checkHost(host: string): Promise<HostCheck>;
+  /** `host.check`: roster's diagnostics for one Host (at most one connection and one login).
+   * `onStarted` hears its job once serve has it under way (API 21; an older serve has none). */
+  checkHost(host: string, onStarted?: (started: CheckStarted) => void): Promise<HostCheck>;
+  /** Stops a check of the app's own (`CheckStarted.own`) at its next step (serve's `jobs.stop`):
+   * its `checkHost` then answers with the steps that ran, the rest skipped. False when it isn't
+   * running (over) or isn't the app's own (#221 item 1). */
+  stopCheck(job: string): Promise<boolean>;
   /** `box.check` (API 16, ticket 49): this Box's health, a section at a time. Every check is
    * local; nothing connects to a Host. */
   checkBox(): Promise<BoxCheck>;
@@ -939,6 +999,13 @@ export interface Backend {
   /** `jobs.list` (serve API 20): each kind's latest job, each Host's latest check (API 21), in the
    * shape of `job.progress`. `:check` asks it once on joining a check already running (#221). */
   listJobs(): Promise<JobProgress[]>;
+  /** `inventories.list` (serve API 27, ticket 115): the named Inventories, the active one, and
+   * which one this serve runs on. Rejects with BackendCallError (143). */
+  listInventories(): Promise<Inventories>;
+  /** `inventories.use` (serve API 27): makes `name` the active Inventory. This serve keeps running on
+   * its own; the app locks the vault first and restarts serve after. Rejects with BackendCallError
+   * (140, 143). */
+  useInventory(name: string): Promise<InventoryUsed>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host

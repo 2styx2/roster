@@ -127,6 +127,39 @@ FILL_REFUSED = 130          # the prompt isn't provably this Host's own Login's 
                             #   read it as (sudo, su, ssh), when it is one
 NOTHING_TO_FILL = 131       # the Login that would answer has no saved password (auth: agent, key, none, prompt)
 
+# Named Inventories (ticket 115, #201): `roster inv`, `roster --inv`, serve's inventories.*, and the warnings
+# `roster check --box` (box.check), setup and sync give when the same machine is in two Inventories (catalog rows
+# 188-195). The warnings are never errors, and compare host-key fingerprints only, never a secret.
+UNKNOWN_INVENTORY = 140     # no named Inventory by that name (`--inv`, inv use/remove, inventories.use); data.names
+INVENTORY_TAKEN = 141       # inv add: the name, the file or its folder is already a named Inventory's
+BAD_INVENTORY = 142         # inv add: a bad name, or no file at the path
+INVENTORIES_UNREADABLE = 143  # roster's list of named Inventories (inventories.json) doesn't load
+OTHER_DOESNT_LOAD = 144     # warning: another named Inventory's roster.yml isn't there or doesn't load, so it isn't
+                            #   compared
+SAME_MACHINE = 145          # warning: a Host here and one in another Inventory have the same host key
+SAME_HOST_NAME = 146        # warning: the same Host name in two Inventories (`ssh NAME` reaches the active one's)
+SAME_ADDRESS = 147          # warning: the same address and port in two Inventories, with different host keys
+INDEX_NOT_WRITTEN = 148     # warning: the named Inventories' ssh config index is stale and couldn't be rewritten
+                            #   (a read-only ~/.ssh); the command goes on (catalog row 206)
+SSH_REFUSES_SCRIPT = 149    # revoke: this Box's ssh is a batch file (a .cmd/.bat shim on Windows), and roster won't
+                            #   hand it the key-removal script, which holds characters cmd.exe acts on; nothing is
+                            #   revoked (catalog row 207)
+
+# Windows Hosts (T195, #375, decision Q174): `os: windows` in roster.yml, and the PowerShell scripts setup, revoke and
+# check run there (catalog rows 212-216)
+WINDOWS_TYPE_NO_OS = 154    # warning: a Host has type: windows but no os:, so roster treats it as POSIX (sh scripts)
+LOOKS_LIKE_WINDOWS = 155    # a POSIX script failed with Windows' "'sh' is not recognized": the Host wants os: windows
+NOT_WINDOWS = 156           # an os: windows Host has no PowerShell, or says it isn't Windows: nothing was changed
+KEY_FILE = 157              # a Windows Host's key file roster won't touch (UTF-16, a BOM, an sshd_config it can't
+                            #   follow, an ACL it couldn't set), or, as a warning, one whose ACL lets others in
+CONNECTION_SHARING = 158    # ssh's shared connection (ControlMaster) was refused ("No existing session"), not a login
+
+# Windows Hosts, part 2 (T196, #376, decision Q176): `roster run` there under PowerShell, and what roster won't do there
+# (catalog rows 219-221)
+RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has no sudo over ssh; refused before the vault
+MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
+NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

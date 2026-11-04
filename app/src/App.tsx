@@ -47,6 +47,8 @@ import {
   FILL_API_VERSION,
   NESTED_FILL_API_VERSION,
   SIGN_OUT_API_VERSION,
+  INVENTORIES_API_VERSION,
+  type Inventories,
   type VaultAccount,
   type VaultSettings,
 } from "./backend/types";
@@ -62,12 +64,12 @@ import { ImportPanel } from "./config/ImportPanel";
 import { foldersSettings } from "./folders/file";
 import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
-import type { BoxSync, InventoryFileError } from "./backend/types";
+import type { BoxSync, CheckStarted, InventoryFileError } from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
-import { checkJoined, checkProgressed, checkStarted } from "./errors/checkProgress";
+import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping, stopTarget } from "./errors/checkProgress";
 import { ChangesPanel, type ChangesState, type ChangesStep } from "./edit/ChangesPanel";
 import { AddPanel } from "./edit/AddPanel";
 import { EditPanel } from "./edit/EditPanel";
@@ -84,7 +86,7 @@ import { defaultConfig } from "./config/fixture";
 import { bindingRows } from "./keyboard/bindings";
 import { press, terminalMode, type KeyState } from "./keyboard/mode";
 import { realClock, type Clock } from "./lock/idle";
-import { pullGate } from "./edit/pull";
+import { afterPull, pullGate, syncFailed } from "./edit/pull";
 import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
 import { useVault } from "./lock/useVault";
 import { actionsOf, chordOf, defaultOptions, keymapOf, type CommandLine as Line, type Keymap, type Options } from "./keymap";
@@ -98,7 +100,8 @@ import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
-import { allRows, moveCursor, Sidebar } from "./sidebar/Sidebar";
+import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
+import { hostMenu } from "./sidebar/hostMenu";
 import { sectionBuilder } from "./sidebar/sections";
 import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
 import { PluginManager, type DemoPlugins } from "./plugins/manager";
@@ -130,9 +133,11 @@ import { chosenAppearance, registerThemePicker, stateChoiceWins, ThemeChoice } f
 import { useTheme } from "./theme/useTheme";
 import { Logo } from "./chrome/Logo";
 import { countOf } from "./ui/format";
+import { afterSwitch, NONE_NAMED, switchPlan, type SwitchPlan } from "./inventory/switch";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
 import { PromptWatch } from "./session/prompt";
-import { MESSAGES_VIEW, MessageLog, MessagesChoice, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
+import { XtermPromptScreen } from "./session/promptScreen";
+import { MESSAGES_VIEW, MessageLog, MessagesChoice, lineAfter, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
 import { Keys } from "./ui/Keys";
 import {
   defaultLayouts,
@@ -439,12 +444,24 @@ function Workspace({
   const [confirming, setConfirming] = useState<{ host: string; group: string } | null>(null);
   // Ticket 42: `:vault signout` asks first, naming the account.
   const [signingOut, setSigningOut] = useState<VaultAccount | null>(null);
+  // Ticket 115: the named Inventories as serve last listed them (null until it has, or before API
+  // 27), and `:inventory NAME`'s question while it's up.
+  // Kept with the serve it came from: one serve's answer never stands for the next one's.
+  const [inventoriesOf, setInventoriesOf] = useState<{ info: BackendInfo; list: Inventories } | null>(null);
+  const [switching, setSwitching] = useState<Extract<SwitchPlan, { kind: "confirm" }> | null>(null);
+  /** The Inventory a confirmed switch is going to, while it runs: its step can't be closed, and a
+   * second `:inventory` waits for it. */
+  const switchingTo = useRef<string | null>(null);
+  /** What a switch left the error screen to say, when serve didn't start again after it. */
+  const [startNote, setStartNote] = useState<string | null>(null);
   const [keyState, setKeyState] = useState<KeyState>(terminalMode);
   const keyRef = useRef<KeyState>(terminalMode);
   const [cursor, setCursor] = useState<string | null>(null);
   // The Sidebar's selected row (decision Q88): the one last clicked, or where j/k left the cursor.
   // Its buttons show; in App mode the cursor row is the selected one.
   const [selected, setSelected] = useState<string | null>(null);
+  // A Host row's open menu (T166, Q156).
+  const [rowMenu, setRowMenu] = useState<OpenMenu | null>(null);
   const moveTo = (id: string | null) => {
     setCursor(id);
     setSelected(id);
@@ -463,13 +480,6 @@ function Workspace({
   const [message, setMessageNow] = useState<Message>("");
   // Every message goes into `:messages`'s history too, quiet ones included (ticket 111).
   const [messageLog] = useState(() => new MessageLog());
-  const setMessage = useCallback(
-    (m: Message) => {
-      setMessageNow(m);
-      messageLog.push(m);
-    },
-    [messageLog],
-  );
   const [store] = useState(() => storeProp ?? new StateStore(platform));
   const appState = useSyncExternalStore(store.subscribe, store.snapshot);
   // The Sidebar shown or hidden (issue #78): what the toggle chose is kept in the State, per mode,
@@ -514,6 +524,15 @@ function Workspace({
   // `:messages`'s choice in the State, else quiet (routine confirmations and tips don't show).
   const [messagesChoice] = useState(() => new MessagesChoice(store));
   messagesChoice.setConfig(config?.ui.messages ?? null);
+  // A quiet message from the background (a Plugin's notice from a timer, an event or a request's
+  // answer, or roster's own unasked one) keeps a line that shows, an error above all (decision Q162).
+  const setMessage = useCallback(
+    (m: Message) => {
+      setMessageNow((now) => lineAfter(now, m, messagesChoice.all()));
+      messageLog.push(m);
+    },
+    [messageLog, messagesChoice],
+  );
   const allMessages = messagesChoice.all();
   const spokenMessage = spokenText(message, allMessages);
   const [fontSize, setFontSize] = useState(terminalOptions.fontSize);
@@ -564,6 +583,8 @@ function Workspace({
         openCommandLine: (text) => openCommandLineRef.current(text),
         // Folders (ticket 61, decision Q93): init.lua's Folders, and the ones to move in once.
         builtinSettings: async (name) => (name === "folders" ? foldersSettings(registries.folders, platform.folders, store) : null),
+        // On `:tutor`'s demo, a load failure says so (#233).
+        demo: Boolean(tutor?.demo),
       }),
   );
   const pluginSnap = useSyncExternalStore(plugins.subscribe, plugins.snapshot);
@@ -771,7 +792,11 @@ function Workspace({
   // Shell hooks (ticket 121): init.lua's terminal.shell_hooks and each Host's shell_hooks.
   const shellHooksInit = config?.terminal.shellHooks ?? null;
   useEffect(
-    () => tabs.setShellHooks((tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks)),
+    () =>
+      tabs.setShellHooks(
+        (tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks),
+        (size) => new XtermPromptScreen(size),
+      ),
     [tabs, shellHooksInit, hostByName],
   );
   const groupNames = useMemo(() => {
@@ -871,19 +896,24 @@ function Workspace({
   }, [viewMode, showsHint, hintClock]);
 
   const connect = useCallback(
-    async (restart: boolean) => {
+    async (restart: boolean): Promise<boolean> => {
       setConn({ state: "connecting" });
+      // Whichever serve answers next may run on another Inventory (ticket 115): open Sessions count
+      // as another's until it says where it runs.
+      tabs.serveStarting();
       try {
         const info = await backend.connect(restart ? { restart: true } : undefined);
         const hosts = await backend.listHosts();
         setConn({ state: "ready", info, hosts });
         const leftOut = servicesLeftOut(hosts);
         if (leftOut) setMessage(leftOut);
+        return true;
       } catch (e) {
         setConn({ state: "failed", problem: asProblem(e) });
+        return false;
       }
     },
-    [backend, setMessage],
+    [backend, setMessage, tabs],
   );
 
   useEffect(() => {
@@ -1029,6 +1059,43 @@ function Workspace({
     });
   }, [registries, backend, canLive, reloadHosts, refreshPending, setStale]);
   const pendingCount = pending?.state === "done" ? pending.changes.count : 0;
+
+  // Named Inventories (ticket 115, API 27): asked of each serve once it's up, so the status bar
+  // names the one it runs on and Sessions are marked with theirs. Forgotten while serve (re)starts.
+  const listsInventories = apiVersion >= INVENTORIES_API_VERSION;
+  const inventories = inventoriesOf && connInfo && inventoriesOf.info === connInfo ? inventoriesOf.list : null;
+  const setInventories = useCallback((info: BackendInfo, list: Inventories | null) => setInventoriesOf(list && { info, list }), []);
+  useEffect(() => {
+    if (!connInfo || !listsInventories) return;
+    let live = true;
+    backend.listInventories().then(
+      (list) => live && setInventories(connInfo, list),
+      () => live && setInventories(connInfo, null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [backend, connInfo, listsInventories, setInventories]);
+  useEffect(() => {
+    if (!connInfo) return;
+    // Before API 27 there are no named Inventories: the file inventory.info names is where it runs.
+    // A list that fails never says, so Sessions opened before this serve stay another's.
+    if (!listsInventories) tabs.setInventory({ name: null, path: connInfo.inventory.path });
+    else if (inventories) tabs.setInventory({ name: inventories.name, path: inventories.path });
+  }, [tabs, connInfo, listsInventories, inventories]);
+  // Said when it changes, so a screen reader hears it too (the message line is a status region).
+  const lastInventory = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!inventories) return;
+    const was = lastInventory.current;
+    lastInventory.current = inventories.name;
+    if (was === undefined || was === inventories.name) return;
+    setMessage(
+      inventories.name !== null
+        ? afterSwitch(inventories, inventories.name)
+        : `roster runs on ${inventories.path ?? "no roster.yml"} now, which isn't a named Inventory`,
+    );
+  }, [inventories, setMessage]);
 
   // The State file and the Windows build, once. What changed before the file was read (Hosts
   // picked) is replayed over it.
@@ -1326,6 +1393,43 @@ function Workspace({
     setSigningOut(null);
     restoreFocus();
   };
+  const closeSwitch = () => {
+    setSwitching(null);
+    restoreFocus();
+  };
+  /** A confirmed `:inventory` switch (ticket 115): lock, `inventories.use`, serve started again, then
+   * what roster runs on now, said plainly whatever happened. */
+  const switchTo = async (to: string) => {
+    // Only one Inventory's vault is ever unlocked: this one locks (covering the Sessions) before
+    // serve is asked to switch, and the new serve starts locked. One that doesn't lock stops it.
+    const lockFailed = await vault.lockNow();
+    if (lockFailed !== null) {
+      closeSwitch();
+      return setMessage(`Couldn't lock the vault (${lockFailed}): nothing switched`);
+    }
+    try {
+      await backend.useInventory(to);
+    } catch (e) {
+      closeSwitch();
+      return setMessage(`Couldn't switch to ${to}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    closeSwitch();
+    setMessage(`Restarting roster on ${to}…`);
+    setStartNote(null);
+    // serve starts again as for a new backend: its start asks roster which file to use.
+    if (!(await connect(true))) {
+      return setStartNote(`${to} is the active Inventory now, but roster didn't start again on it: fix what's above, then Retry.`);
+    }
+    const now = await backend.listInventories().catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+    if (typeof now === "string") {
+      return setMessage(`${to} is the active Inventory now, but roster couldn't say which Inventory it started on (${now}): its Sessions from before stay marked`);
+    }
+    if (now.name !== to) setMessage(afterSwitch(now, to));
+  };
+  /** Sessions a switch leaves open (ended ones stay too, but aren't open). */
+  const openSessions = () => sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").length;
+  /** The Pending changes now, asked again (a switch is blocked by them); the last count if roster can't say. */
+  const pendingNow = async () => (canEdit ? ((await backend.pendingChanges().catch(() => null))?.count ?? pendingCount) : 0);
   const closeChanges = () => {
     setChangesView(null);
     restoreFocus();
@@ -1367,6 +1471,19 @@ function Workspace({
   };
 
   // What commands act on. Rebuilt each render, so it always sees the current state.
+  /** Stops the app's own check (#221 item 1): the panel's Stop, its `x`, and `:check stop` (#361).
+   * serve stops it at its next step, and the check's own answer then says where. A stop that
+   * doesn't reach serve offers Stop again (errors.md row 203). */
+  const stopCheck = (job: string) => {
+    const run = checkRun.current;
+    setCheck(checkStopping);
+    backend.stopCheck(job).catch((e: unknown) => {
+      if (run !== checkRun.current) return;
+      setCheck(checkStopFailed);
+      setMessage(`The check couldn't be stopped: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+
   /** `:check` with no Host (ticket 49): every health section, shown as `:help health` (open at once,
    * saying it's checking, then filled in). roster's own sections need `box.check` (API 16). */
   const checkBox = () => {
@@ -1436,6 +1553,11 @@ function Workspace({
     },
     check: (name) => {
       if (name === null) return checkBox();
+      // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
+      if (name === "stop" && !hostByName.has(name)) {
+        const target = stopTarget(check, conn.state === "ready" ? conn.info.inventory.api_version : 0);
+        return "job" in target ? stopCheck(target.job) : setMessage(target.message);
+      }
       // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
       const current = onScreenTab && !onScreenTab.quick ? onScreenTab.host : null;
       if (name === "%" && current === null) {
@@ -1458,7 +1580,9 @@ function Workspace({
       }
       // Where it was (ticket 110) stays with the answer: a stopped check's step, a failed call's.
       const at = (prev: CheckState | null) => (prev?.state === "running" && prev.host === host ? prev.at : null);
-      backend.checkHost(host).then(
+      // The core hands over the check's job as it starts: the app's own can be stopped (#221).
+      const started = (s: CheckStarted) => run === checkRun.current && setCheck((c) => checkOwned(c, host, s));
+      backend.checkHost(host, started).then(
         (result) => run === checkRun.current && setCheck((prev) => ({ state: "done", host, result, at: at(prev) })),
         (e: unknown) =>
           run === checkRun.current &&
@@ -1541,6 +1665,7 @@ function Workspace({
       if (packagesOpen) return closePackages();
       if (keysOpen) return closeKeys();
       if (signingOut) return closeSignOut();
+      if (switching) return switchingTo.current === null ? closeSwitch() : undefined;
       if (confirming) return closeConfirm();
       if (editing !== null) return closeEdit();
       if (adding) return closeAdd();
@@ -1562,6 +1687,12 @@ function Workspace({
     },
     fold,
     cursorRow,
+    rowMenu: () => {
+      const row = cursorRow();
+      if (!sidebarShown) return setMessage("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
+      if (!row?.menu) return setMessage("Only a Host's row has a menu: move the cursor to one");
+      setRowMenu({ row: row.id, at: null });
+    },
     selectedHost: () => {
       const row = cursorRow();
       if (row?.host) return row.host;
@@ -1713,6 +1844,23 @@ function Workspace({
       refreshPending();
       setChangesView({ step: then ?? "diff" });
     },
+    switchInventory: (name) => {
+      if (switchingTo.current !== null) return setMessage(`A switch to ${switchingTo.current} is already running`);
+      if (!listsInventories) {
+        return setMessage(`:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`);
+      }
+      backend.listInventories().then(
+        async (list) => {
+          if (connInfo) setInventories(connInfo, list);
+          if (name === null) return list.inventories.length === 0 ? setMessage(NONE_NAMED) : ctx.openCommandLine("inventory ");
+          const plan = switchPlan(list, name, { sessions: openSessions(), pending: await pendingNow() });
+          if (plan.kind === "say") return setMessage(plan.message);
+          if (!switching) rememberFocus();
+          setSwitching(plan);
+        },
+        (e: unknown) => setMessage(`Couldn't list the named Inventories: ${e instanceof Error ? e.message : String(e)}`),
+      );
+    },
     pull: () => {
       if (!canEdit) return setMessage(`:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
       setMessage(quiet("Pulling the infra repo…"));
@@ -1722,7 +1870,7 @@ function Workspace({
             !r.upstream
               ? "This branch has no upstream: nothing to pull."
               : r.updated
-                ? `Pulled ${countOf(r.commits, "commit")} from ${r.upstream}.`
+                ? `Pulled ${countOf(r.commits, "commit")} from ${r.upstream}${afterPull(r)}.`
                 : `Up to date with ${r.upstream}.`,
           );
         },
@@ -1880,6 +2028,8 @@ function Workspace({
 
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (MODIFIERS.has(e.key)) return;
+    // A Host row's menu takes its own keys (arrows, letters, Esc), in App mode too.
+    if (e.target instanceof Element && e.target.closest(".row-menu")) return;
     // An overlay (the Picker, the command line, the bindings filter) opens in Terminal mode, so its
     // input gets the keys as a terminal would, until the Leader.
     const leaderKey = isLeaderKey(e, options.leader);
@@ -1995,7 +2145,7 @@ function Workspace({
     );
   }
   if (conn.state === "failed") {
-    return frame(<ErrorScreen problem={conn.problem} onRetry={() => void connect(true)} copy={copy} />);
+    return frame(<ErrorScreen problem={conn.problem} note={startNote} onRetry={() => void connect(true)} copy={copy} />);
   }
 
   const { info } = conn;
@@ -2047,6 +2197,15 @@ function Workspace({
             <span className="box-mark" aria-hidden="true" />
             <span className="statusbar-cut">{info.inventory.box}</span>
           </span>
+        );
+      case "inventory":
+        // The named Inventory serve runs on (ticket 115): always in sight while there is one.
+        return (
+          inventories?.name && (
+            <span key={id} className="box" title={`Inventory ${inventories.name}: ${inventories.path ?? ""}`}>
+              <span className="statusbar-cut">{inventories.name} Inventory</span>
+            </span>
+          )
         );
       case "path":
         return (
@@ -2171,6 +2330,18 @@ function Workspace({
               run(line);
             }}
             treeRef={setTree}
+            menu={rowMenu}
+            onMenu={setRowMenu}
+            rowMenu={(row: SidebarRow) => {
+              const h = row.host === undefined ? undefined : hostByName.get(row.host);
+              return hostMenu(row, {
+                reviewed: h ? h.reviewed : null,
+                live: canLive,
+                edit: canEdit,
+                folders: commands.get("folder") !== undefined,
+                keys: (command) => hintFor(keymap, command),
+              });
+            }}
             onTreeFocus={(from) => {
               // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
               if (keyRef.current.mode !== "terminal") return;
@@ -2185,7 +2356,8 @@ function Workspace({
             }}
             onTreeBlur={(to) => {
               // Focus went elsewhere (Tab on, a click): keys are the terminal's again.
-              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline")) setMode(terminalMode);
+              // A Host row's menu is the tree's own: App mode stays while it's open.
+              if (keyRef.current.mode === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline, .row-menu")) setMode(terminalMode);
             }}
           />
         )}
@@ -2316,6 +2488,7 @@ function Workspace({
               checkRun.current++;
               setCheck(null);
             }}
+            onStop={stopCheck}
           />,
         )}
         {editing !== null && hostByName.get(editing) && framed("edit", "Edit", "edit", 
@@ -2482,6 +2655,39 @@ function Workspace({
             onClose={closeConfirm}
           />
         )}
+        {switching && (
+          <ConfirmPanel
+            key={switching.to}
+            title="Switch Inventory"
+            body={switching.body}
+            more={switching.more}
+            action={switching.action}
+            keep={switching.action === null ? "Close" : "Stay"}
+            danger={false}
+            onConfirm={async () => {
+              const to = switching.to;
+              // Pending changes made while it asked still block it.
+              const list = await backend.listInventories().catch(() => inventories);
+              const again = list ? switchPlan(list, to, { sessions: openSessions(), pending: await pendingNow() }) : null;
+              if (!again) {
+                closeSwitch();
+                return setMessage("Couldn't list the named Inventories: nothing switched");
+              }
+              if (again.kind === "say") {
+                closeSwitch();
+                return setMessage(again.message);
+              }
+              if (again.action === null) return setSwitching(again);
+              switchingTo.current = to;
+              try {
+                await switchTo(to);
+              } finally {
+                switchingTo.current = null;
+              }
+            }}
+            onClose={closeSwitch}
+          />
+        )}
         {signingOut && (
           <ConfirmPanel
             title={signOutQuestion(signingOut)}
@@ -2512,8 +2718,8 @@ function Workspace({
             }}
           />
         )}
-        {pluginsOpen && framed("plugins", "Plugins", "plugins", <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} onRefresh={() => void plugins.refreshRequests()} onOpen={() => void plugins.refreshData()} />)}
-        {packagesOpen && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={closePackages} />)}
+        {pluginsOpen && framed("plugins", "Plugins", "plugins", <PluginsPanel snapshot={pluginSnap} onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)} onClose={closePlugins} onRefresh={() => void plugins.refreshRequests()} onOpen={() => void plugins.refreshData()} onRun={run} />)}
+        {packagesOpen && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={closePackages} onRun={run} />)}
         {pluginSnap.confirm && (
           <PluginConfirmPanel
             key={pluginSnap.confirm.id}
@@ -2569,6 +2775,7 @@ function Workspace({
               foldIds: rows.filter((r) => r.foldable).map((r) => r.id),
               sessions: sessions.tabs.map((t) => t.host),
               groupNames,
+              inventoryNames: inventories?.inventories.map((i) => i.name) ?? [],
               webServices: (name) => {
                 const h = hostByName.get(name ?? details ?? ctx.selectedHost() ?? "");
                 return h ? webServices(h) : [];
@@ -2734,10 +2941,6 @@ function afterChange(r: { warnings?: readonly string[]; sync?: BoxSync }): strin
   const warnings = [...(r.warnings ?? [])];
   if (r.sync && !r.sync.ok) warnings.push(syncFailed(r.sync));
   return warnings;
-}
-
-function syncFailed(sync: BoxSync): string {
-  return `this Box's ssh config didn't follow (${sync.error ?? "roster sync failed"}): run roster sync`;
 }
 
 function butWarnings(warnings: readonly string[] | undefined): string {

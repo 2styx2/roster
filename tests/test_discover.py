@@ -138,6 +138,40 @@ def test_the_cli_scans_each_family_once_per_address_and_counts_quiet_hosts(fakes
     assert sorted(h["ip"] for h in hosts.values()) == ["10.0.0.9", "fd00::7"]
 
 
+def one_ssh_host(isolated, monkeypatch):
+    root = isolated["home"].parent / "hosts"
+    (root / "db").mkdir(parents=True)
+    (root / "db" / "address").write_text("10.0.0.9")
+    (root / "db" / "ports").write_text("22 ssh OpenSSH 9.6\n")
+    monkeypatch.setenv("FAKE_HOSTS", str(root))
+    cfg = isolated["work"] / "roster.yml"
+    cfg.write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      old-db: 10.0.0.5\n")
+    return cfg
+
+
+def test_discover_write_syncs_this_box_as_roster_sync_does(fakes, isolated, monkeypatch, capsys):
+    """T153: `roster discover --write` syncs this Box after the edit (its ssh config and Claude files), as serve's
+    changes do (T150), so nothing says to run `roster sync` by hand."""
+    from roster.cli import main
+    cfg = one_ssh_host(isolated, monkeypatch)
+    assert main(["-c", str(cfg), "discover", "10.0.0.0/28", "--ports", "22", "--write"]) == 0
+    ssh = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
+    assert "HostName 10.0.0.9" in ssh and "Host old-db" in ssh
+    assert "10.0.0.9" in (isolated["work"] / "ROSTER.md").read_text()
+    assert "roster sync" not in capsys.readouterr().err
+
+
+def test_a_failed_sync_after_discover_write_keeps_the_hosts_and_says_on_stderr(fakes, isolated, monkeypatch, capsys):
+    from roster.cli import main
+    cfg = one_ssh_host(isolated, monkeypatch)
+    (isolated["home"] / ".ssh" / "config.d" / "roster").mkdir(parents=True)     # a folder there: writing it fails
+    assert main(["-c", str(cfg), "discover", "10.0.0.0/28", "--ports", "22", "--write"]) == 0
+    assert sorted(h["ip"] for h in load_config(cfg)["hosts"].values()) == ["10.0.0.5", "10.0.0.9"]
+    err = capsys.readouterr().err
+    assert "warning: this Box's ssh config didn't follow roster.yml (" in err
+    assert err.rstrip().endswith("run `roster sync` on this box")
+
+
 # ---------------------------------------------------------------- roster discover --json (T107)
 
 @pytest.fixture
@@ -212,3 +246,16 @@ def test_discover_json_errors(scanned, capsys):
         main(["discover", "10.0.0.0/28", "--write", "--json"])
     out, err = capsys.readouterr()
     assert e.value.code == 2 and out == "" and "--write" in json.loads(err)["error"]["message"]
+
+
+def test_a_host_discover_takes_for_windows_gets_os_windows_too(isolated):
+    """T195: os: is what roster acts on (PowerShell for setup, revoke, check); type: stays the free label."""
+    win = rec("10.0.0.5", [P(22, "ssh", "OpenSSH for_Windows"), P(3389, "ms-wbt-server")], hostname="dc-01.example.local")
+    name, e = scan_entry(win, set(), "2026-11-03")
+    assert (name, e["type"], e["os"]) == ("dc-01", "windows", "windows")
+    _, e = scan_entry(rec("10.0.0.6", [P(22, "ssh", "OpenSSH")]), set(), "2026-11-03")
+    assert "os" not in e
+    path = isolated["work"] / "roster.yml"
+    write_discovered(path, "discovered-20261103", [(name, scan_entry(win, set(), "2026-11-03")[1])], "found", True,
+                     "2026-11-03")
+    assert "os: \"windows\"" in path.read_text()

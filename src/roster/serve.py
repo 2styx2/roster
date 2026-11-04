@@ -2,7 +2,8 @@
 one JSON object per line. Only responses go to stdout; anything else roster prints goes to stderr.
 The one other channel is askpass (roster/askpass.py): a private Unix socket, open while serve runs, that
 hands a password Session's ssh its password.
-It answers with the Host, group and resource objects load_config already builds - no new schema.
+It answers with the Host, group and resource objects roster.yml loads into (models.py); hosts.list's and host.get's
+params and results are models in servemodels.py (T174, Q113), and the others move there as tickets touch them.
 Logins come back as references (bw:ITEM), never as values. Requests are handled concurrently (API 20, decision Q112):
 a pool of workers, two more for the quick reads (QUICK), and a lock per resource each method claims (LOCKS), so
 answers can come back in another order than asked. Background work (a Mesh run, a scan) is a job (jobs.py).
@@ -14,6 +15,7 @@ doc's `<!-- BEGIN generated:methods ... -->` markers and run `uv run python scri
 """
 
 import hashlib
+import io
 import json
 import os
 import queue
@@ -24,12 +26,38 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Any
 
-from . import __version__, askpass, changes, diagnose, discover, edit, fill, health, jobs, mesh, providers
-from .claude import write_claude_files
-from .common import current_deadline, deadline, deadline_at, not_reviewed, ssh_config_file, ssh_path
-from .config import find_config, load_config
+from . import (
+    __version__,
+    askpass,
+    boxsync,
+    changes,
+    diagnose,
+    discover,
+    edit,
+    fill,
+    health,
+    inventories,
+    jobs,
+    mesh,
+    providers,
+)
+from .common import (
+    current_deadline,
+    current_inventory,
+    deadline,
+    deadline_at,
+    die_message,
+    failure_text,
+    known_hosts_label,
+    not_reviewed,
+    ssh_config_file,
+    ssh_path,
+)
+from .config import find_config, load_config, load_inventory
 from .errors import (  # noqa: F401 (the codes are part of serve's API)
     ALREADY_SIGNED_OUT,
     BUSY,
@@ -43,6 +71,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     HOST_KEY_UNKNOWN,
     INVALID_EDIT,
     INVALID_HOST,
+    INVENTORIES_UNREADABLE,
     INVENTORY_ERROR,
     ITEM_EXISTS,
     LOGIN_NOT_SEEN,
@@ -67,6 +96,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     TOO_MANY_ADDRESSES,
     UNKNOWN_GROUP,
     UNKNOWN_HOST,
+    UNKNOWN_INVENTORY,
     UNKNOWN_TARGET,
     UNSUPPORTED,
     VAULT_LOCKED,
@@ -80,9 +110,18 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     write_problem,
 )
 from .providers import PROVIDERS, setup_providers
-from .sshops import fingerprint, in_ssh_config, record_host_key, recorded_host_keys, write_ssh_config
+from .servemodels import HostGetParams, HostsListResult, InventoryError, NoParams, dump
+from .sshops import (
+    fingerprint,
+    in_ssh_config,
+    left_out,
+    not_reached,
+    record_host_key,
+    recorded_host_keys,
+    sync_fix,
+)
 
-API_VERSION = 26            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 27            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -103,28 +142,23 @@ def closing_error():
     return RpcError(ROSTER_ERROR, "roster serve is closing")
 
 
-def die_message(e):
-    """The text of a die() (SystemExit("error: ...")), without the prefix."""
-    msg = str(e.code) if e.code is not None else "exited"
-    return msg.removeprefix("error: ")
-
-
 class State:
     """What serve holds for its lifetime: the loaded Inventory, or why it didn't load."""
 
-    def __init__(self, config_arg):
+    def __init__(self, config_arg, inv=None):
         self.cfg, self.path, self.error = None, None, None
+        self.inv: Any = None                # the loaded Inventory's models (cfg is their dict view, Q113)
         self.digest = None                  # what roster.yml held at the last load (good or not): the watcher's base
         self.noticed = None                 # an outside edit already reported as not applied (auto off)
         self.auto = False                   # inventory.watch: apply outside edits as they're saved
         self.watcher = None                 # the Watcher thread, once inventory.watch started it
-        self.notify = None                  # fn(method, params): a JSON-RPC notification to the app (serve() sets it)
+        self.notify: Callable[[str, Any], None] | None = None    # fn(method, params): a JSON-RPC notification to the app (serve() sets it)
         # roster.yml, its repo and the loaded Inventory: every write holds it for its whole request, a reload for
         # itself (LOCKS). Reentrant for its holder, so a write may reload.
         self.lock = Lock("roster.yml")
         self.vault = Lock("the vault")      # unlocking and locking alone; looking up, saving, minting tokens shared
         self.unlocked = set()               # providers vault.unlock opened (vault.lock locks them again)
-        self.askpass = None                 # the askpass Channel, while serve() runs
+        self.askpass: Any = None            # the askpass Channel, while serve() runs
         self.login = None                   # the sign-in in progress (vault.login): SignIn
         self.created = {}                   # item id -> provider, for the items vault.create_item made (undo)
         self.jobs = jobs.Jobs(log=log_line)  # background work: Mesh runs and scans (its notify is serve's)
@@ -140,7 +174,7 @@ class State:
         self.closing = False                # serve's stdin closed: nothing new starts (a sign-in least of all)
         only_vault_unlock_unlocks()
         try:
-            self.path = find_config(config_arg)
+            self.path = find_config(config_arg, inv)
         except SystemExit as e:
             self.error = die_message(e)
             return
@@ -152,11 +186,12 @@ class State:
         with self.lock:                     # a write holding it may reload; anyone else waits for the write
             self.digest, self.noticed = file_digest(self.path), None
             try:
-                cfg = load_config(self.path)
+                inv = load_inventory(self.path)
             except SystemExit as e:
                 self.error = die_message(e)
                 return
-            self.cfg, self.path, self.error = cfg, cfg["path"], None
+            cfg = inv.as_config()
+            self.inv, self.cfg, self.path, self.error = inv, cfg, cfg["path"], None
             setup_providers(cfg)
 
     def problem(self):
@@ -164,7 +199,7 @@ class State:
         if self.error is None:
             return None
         p = inventory_problem(self.error, self.path)
-        p.data |= versions()
+        p.data = {**(p.data or {}), **versions()}
         return p
 
     def fresh(self):
@@ -180,7 +215,7 @@ class State:
 
     def inventory(self):
         if self.cfg is None:
-            raise self.problem()
+            raise self.problem() or RuntimeError("roster.yml hasn't been loaded yet")
         return self.cfg
 
 
@@ -228,8 +263,11 @@ def hosts_list(state, params):
         ones
     Since: API 1
     """
-    cfg = state.inventory()
-    return {"hosts": list(cfg["hosts"].values()), "groups": cfg["groups"], "error": broken(state)}
+    NoParams.parse(params)
+    state.inventory()
+    inv, error = state.inv, broken(state)
+    return dump(HostsListResult(hosts=list(inv.hosts.values()), groups=dict(inv.groups),
+                                error=None if error is None else InventoryError.model_validate(error)))
 
 
 def host_get(state, params):
@@ -245,18 +283,17 @@ def host_get(state, params):
     Errors: 2, 4
     Since: API 20
     """
-    name = text_param(params, "name")
-    settled = params.get("settled", False)
-    if not isinstance(settled, bool):
-        raise RpcError(INVALID_PARAMS, "params.settled must be true or false")
-    if settled:
+    p = HostGetParams.parse(params)
+    if p.settled:
         with claimed(state, [("inventory", False)], "host.get"):
-            h = state.inventory()["hosts"].get(name)
+            state.inventory()
+            h = state.inv.hosts.get(p.name)
     else:
-        h = state.inventory()["hosts"].get(name)
+        state.inventory()
+        h = state.inv.hosts.get(p.name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
-    return h
+        raise RpcError(UNKNOWN_HOST, f"unknown host {p.name!r}")
+    return dump(h)
 
 
 def text_param(params, key):
@@ -301,6 +338,13 @@ def session_prepare(state, params):
     if ssh is None:
         raise RpcError(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
     if not in_ssh_config(h["name"]):
+        why = left_out(h["name"])
+        if why:
+            raise RpcError(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
+                                                "active one (`roster inv use`)")
+        why = not_reached(h["name"])
+        if why:                         # another roster.yml's, or this Inventory isn't synced here
+            raise RpcError(NOT_SET_UP, why, fix=sync_fix())
         raise RpcError(NOT_SET_UP, f"{h['name']} isn't in this box's ssh config ({ssh_config_file()}) - "
                                    "run `roster sync`, or `roster setup` if this box isn't set up yet")
     # What the Session connects to (API 25): the core sends it back with a prompt fill, so a Host edited since isn't
@@ -516,7 +560,8 @@ def check_job(state, name):
             # shared only for the steps that fetch a secret or mint a token (diagnose.VAULT_STEPS), so a lock or an
             # unlock never waits for the rest; vault.lock stops the check rather than wait (stop_checks)
             at = current_deadline()
-            if not state.vault.acquire(True, max(0.0, at - time.monotonic()), "host.check", job.halted):
+            wait = LOCK_WAIT if at is None else max(0.0, at - time.monotonic())
+            if not state.vault.acquire(True, wait, "host.check", job.halted):
                 if job.halted.is_set():
                     raise diagnose.Stopped
                 raise busy_error("vault", state.vault.holder())
@@ -582,8 +627,57 @@ def box_check(state, params):
     return {"checks": checks, "ok": not any(c["level"] == "error" for c in checks), **versions()}
 
 
+def inventories_list(state, params):
+    """The named Inventories (ticket 115): which is active, and which file this serve runs on, so the app can show
+    where you are and offer the others. Switching is inventories.use, then restarting serve.
+
+    Params: none
+    Result: `{inventories: [{name, path, active, exists}], active, name, path}`: `active` is the active Inventory's
+        name (or `null`), `name` the named Inventory this serve runs on (`null` when its `roster.yml` isn't one) and
+        `path` its `roster.yml` (`null` when none was found). With no named Inventories, `inventories` is `[]`
+    Errors: 143
+    Since: API 27
+    """
+    try:
+        inv = inventories.load()
+    except SystemExit as e:
+        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    path = state.path.expanduser().resolve() if state.path else None
+    return {**inv.view(), "name": current_inventory(), "path": str(path) if path else None}
+
+
+def inventories_use(state, params):
+    """Make the named Inventory `name` the active one (`roster inv use`). This serve keeps running on the one it
+    started with: the app restarts serve (as for a new `backend`), which then finds the active one. Nothing else
+    changes here: no vault is locked or unlocked, no Session is touched.
+
+    Params: `{name}`
+    Result: `{active, path, restart: true}`: `path` is its `roster.yml`
+    Errors: 140, 143
+    Since: API 27
+    """
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        raise RpcError(INVALID_PARAMS, "params.name: the named Inventory to make the active one")
+    try:
+        inv = inventories.load()
+    except SystemExit as e:
+        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    chosen = inv.get(name)
+    if chosen is None:
+        names = [x.name for x in inv.inventories]
+        raise RpcError(UNKNOWN_INVENTORY, f"no Inventory named '{name}'", {"names": names},
+                       fix="pick one of " + (", ".join(names) or "none: `roster inv add NAME PATH` names one"))
+    inventories.use(name)
+    return {"active": name, "path": str(chosen.path), "restart": True}
+
+
 METHODS = {
     "inventory.info": inventory_info,
+    "inventories.list": inventories_list,
+    "inventories.use": inventories_use,
     "box.check": box_check,
     "hosts.list": hosts_list,
     "host.get": host_get,
@@ -765,21 +859,14 @@ def sync_box(state):
     """`roster sync` for this Box after serve changed roster.yml (T150): its ssh config and Claude files follow the
     Inventory as it loads now, so a Session to a Host just added or changed opens without `roster sync`. Never
     undoes the change: a failure is only reported, as `{ok: false, error, fix}` (else `{ok: true}`). A roster.yml
-    that doesn't load syncs nothing (the last good Inventory isn't what the file says)."""
+    that doesn't load syncs nothing (the last good Inventory isn't what the file says). The CLI's edits sync the
+    same way (boxsync.py, T153)."""
+    def loaded():
+        if state.error is not None:
+            raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
+        return state.inventory()
     with state.lock:                        # one writer of the ssh config at a time; a write already holds it
-        try:
-            if state.error is not None:
-                raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
-            cfg = state.inventory()
-            write_ssh_config(cfg)
-            write_claude_files(cfg)
-            return {"ok": True}
-        except Exception as e:              # anything at all: the change is written already, and the watcher must live
-            # a Problem's own message; an OSError's own words (paths only); else just its type, never its text
-            why = e.message if isinstance(e, Problem) else failure_text(e)
-            return {"ok": False, "error": why, "fix": "run `roster sync` on this box"}
-        except SystemExit as e:             # a die() isn't an Exception
-            return {"ok": False, "error": die_message(e), "fix": "run `roster sync` on this box"}
+        return boxsync.sync(loaded)
 
 
 # ---------------------------------------------------------------- adding a Host (ticket 11, decision Q43)
@@ -971,8 +1058,9 @@ def quick_prepare(state, params):
     key, recorded = diagnose.offered_key(h)
     if recorded == "changed":
         p = diagnose.changed_key(h, recorded_host_keys(h), key)
-        p.data["fix"] = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
-                         "the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts")
+        fix = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
+               f"the change is expected (reinstall), delete its line in {known_hosts_label()}")
+        p.data = {**(p.data or {}), "fix": fix}
         raise p
     offered = still_offered(asked, key, label, "not connecting", "box", "Quick Connect again")
     qid = secrets.token_hex(8)
@@ -1257,7 +1345,7 @@ def save_quick(state, params):
     try:                                        # the key the user confirmed for this Session, never a fresh scan
         record_host_key(h, q["key_type"], q["base64"])
     except Exception as e:
-        warnings.append(f"{name} was added, but its host key couldn't be recorded in ~/.ssh/roster_known_hosts "
+        warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
                         f"({failure_text(e)}) - the first Session to it will ask about the key")
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
@@ -1387,18 +1475,11 @@ def add_host(state, params):
         try:
             record_host_key(h, k["type"], k["base64"])
         except Exception as e:
-            warnings.append(f"{name} was added, but its host key couldn't be recorded in ~/.ssh/roster_known_hosts "
+            warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
                             f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
     state.reload()
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "verify": verify,
             "item": made, "warnings": warnings, "sync": sync_box(state)}
-
-
-def failure_text(e):
-    """What went wrong, safe to show: an OSError's own words (paths only), else just the exception's type."""
-    if isinstance(e, OSError):
-        return f"{e.strerror or type(e).__name__}" + (f": {e.filename}" if e.filename else "")
-    return type(e).__name__
 
 
 def write_failed(what, path, e):
@@ -1639,6 +1720,9 @@ class Watcher(threading.Thread):
     def __init__(self, state):
         super().__init__(daemon=True, name="roster-watch")
         self.state, self.stop = state, threading.Event()
+        # The first look is taken here, before inventory.watch answers: taken when the thread got to run, it could
+        # see an edit saved in between as how the file already was, and never apply it (T151).
+        self.first = self.look(state.path)
 
     @staticmethod
     def look(path):
@@ -1649,7 +1733,7 @@ class Watcher(threading.Thread):
         return st.st_mtime_ns, st.st_size, st.st_ino
 
     def run(self):
-        last = settling = self.look(self.state.path)
+        last = settling = self.first
         wait = WATCH_EVERY
         while not self.stop.wait(wait):
             now = self.look(self.state.path)
@@ -2088,7 +2172,7 @@ def vault_targets(state, params):
         raise write_problem(e) from None
     problem = found["problem"] and write_problem(found["problem"])
     return {"provider": provider, **found,
-            "problem": problem and {"code": problem.code, "message": problem.message, "fix": problem.data["fix"]}}
+            "problem": problem and {"code": problem.code, "message": problem.message, "fix": (problem.data or {}).get("fix")}}
 
 
 METHODS["vault.create_item"] = vault_create_item
@@ -3110,14 +3194,15 @@ class Server:
         return True
 
 
-def serve(config_arg):
+def serve(config_arg, inv=None):
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
-    sys.stdin.reconfigure(encoding="utf-8", newline="\n")
-    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    for stream in (sys.stdin, sys.stdout):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", newline="\n")
     out = sys.stdout
     sys.stdout = sys.stderr             # whatever else roster prints (warnings, say()) must not corrupt the stream
-    state = State(config_arg)
+    state = State(config_arg, inv)
     out_lock = threading.Lock()
 
     def send(message):

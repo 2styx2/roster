@@ -339,6 +339,31 @@ fn the_returned_table_still_wins_over_roster_o() {
     assert_eq!(c.terminal.size, FontSize::Pt(20.0));
 }
 
+/// Ticket 148: what `:config import-terminal` writes (a Theme with a `terminal` table, then a
+/// `roster.o` line) above a returned table that sets the same option: the returned table wins,
+/// so its line is the one `:options` shows, not the `roster.o` line it beat.
+#[test]
+fn the_returned_tables_line_is_shown_when_it_wins_over_roster_o() {
+    let c = ok(
+        "roster.themes.define(\"wt\", { base = \"roster-dark\", terminal = { background = \"#000000\" } })\n\
+                roster.o.terminal.size = 20\n\
+                return {\n  terminal = { size = 14 },\n}\n",
+    );
+    assert_eq!(c.terminal.size, FontSize::Px(14.0));
+    assert_eq!(line_of(&c, "terminal.size"), ("init.lua".into(), 4));
+}
+
+/// Ticket 148: and a bad value in that returned table is reported at its line too.
+#[test]
+fn a_bad_value_in_the_winning_returned_table_is_placed_at_its_line() {
+    let e = err(
+        "roster.themes.define(\"wt\", { base = \"roster-dark\", terminal = { background = \"#000000\" } })\n\
+                 roster.o.terminal.size = 20\n\
+                 return {\n  terminal = { size = \"900pt\" },\n}\n",
+    );
+    assert_eq!((e.file.as_str(), e.line), ("init.lua", Some(4)), "{e}");
+}
+
 #[test]
 fn roster_set_checks_names_at_its_line_too() {
     let e = err("\nroster.set(\"terminal.szie\", 1)\n");
@@ -365,6 +390,19 @@ fn version_and_config_dir_are_read_only_fields() {
     assert!(e.message.contains("read-only"), "{e}");
     let e = err("roster.o = {}\n");
     assert!(e.message.contains("read-only"), "{e}");
+}
+
+#[test]
+fn config_version_is_init_luas_own_read_only_integer() {
+    // 4 marks v0.3.0's shape (roster.o, the collections' functions); it doesn't follow the
+    // Plugin API's roster.api_version.
+    assert_eq!(
+        says("return { theme = math.type(roster.config_version) .. \"|\" .. roster.config_version }\n"),
+        "integer|4"
+    );
+    let e = err("\n\nroster.config_version = 9\n");
+    assert!(e.message.contains("roster.config_version is read-only"), "{e}");
+    assert_eq!((e.file.as_str(), e.line), ("init.lua", Some(3)), "{e}");
 }
 
 // ---------------------------------------------------------------- roster.packages
@@ -605,8 +643,8 @@ fn theme_errors_are_at_their_line() {
 
 // ---------------------------------------------------------------- the budget
 
-#[test]
-fn a_big_neovim_style_config_loads_within_the_budget() {
+/// A big Neovim-style init.lua: 300 views, keys and font sizes, 100 Folders and Packages.
+fn big_neovim_style() -> String {
     let mut lua = String::new();
     for i in 0..300 {
         lua.push_str(&format!("roster.o.views[\"v{i}\"] = {{ width = 40 }}\n"));
@@ -619,15 +657,48 @@ fn a_big_neovim_style_config_loads_within_the_budget() {
         ));
         lua.push_str(&format!("roster.packages.add(\"someone/p{i}\")\n"));
     }
+    lua
+}
+
+/// Limits no loaded machine runs into, for the tests that aren't about them (T146, T164): the
+/// defaults (a second of Lua) are wall-clock time.
+fn unhurried() -> Env {
+    Env {
+        limits: config::Limits {
+            time: std::time::Duration::from_secs(30),
+            wall: std::time::Duration::from_secs(60),
+            ..config::Limits::default()
+        },
+        ..Env::default()
+    }
+}
+
+#[test]
+fn a_big_neovim_style_config_loads() {
+    let c = config::load_source(&common::temp("config-api-big"), &big_neovim_style(), &unhurried())
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!((c.folders.len(), c.packages.len(), c.views.len()), (100, 100, 300));
+    assert_eq!(c.terminal.size, FontSize::Px(29.0));
+    assert_eq!(
+        binding(&c, KeyContext::Leader, "x299"),
+        Some(KeyAction::Run("close".into()))
+    );
+}
+
+/// The same load inside a second (`Limits`' own default for Lua's run): a performance budget, so
+/// it times this machine, and a busy machine fails it however fast the loader is (T146, T164).
+/// Run it on an idle one: `cargo test -p roster-core --test config_api -- --ignored`.
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn a_big_neovim_style_config_loads_within_the_budget() {
+    let lua = big_neovim_style();
     let start = std::time::Instant::now();
     let c = config::load_source(&common::temp("config-api-budget"), &lua, &Env::default())
         .unwrap_or_else(|e| panic!("{e}"));
+    let took = start.elapsed();
+    eprintln!("a big Neovim-style init.lua: loaded in {took:?}");
     assert_eq!(c.folders.len(), 100);
-    assert!(
-        start.elapsed() < std::time::Duration::from_millis(1000),
-        "{:?}",
-        start.elapsed()
-    );
+    assert!(took < std::time::Duration::from_millis(1000), "{took:?}");
 }
 
 // ---------------------------------------------------------------- review of #253
@@ -778,8 +849,8 @@ fn updates_normalise_and_check_as_adds_do() {
     assert!(e.message.contains("hots"), "{e}");
 }
 
-#[test]
-fn five_thousand_writes_stay_well_within_the_budget() {
+/// Five thousand writes: 500 views, 1,500 scrollbacks, 2,000 keys, and 1,000 Hosts across 10 Folders.
+fn five_thousand_writes() -> String {
     let mut lua = String::new();
     for i in 0..10 {
         lua.push_str(&format!("roster.folders.add({{ name = \"F{i}\" }})\n"));
@@ -795,10 +866,39 @@ fn five_thousand_writes_stay_well_within_the_budget() {
     for i in 0..1000 {
         lua.push_str(&format!("roster.folders.add_hosts(\"F{}\", \"h{i}\")\n", i % 10));
     }
+    lua
+}
+
+#[test]
+fn five_thousand_writes_all_land() {
+    let c = config::load_source(&common::temp("config-api-5000"), &five_thousand_writes(), &unhurried())
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.folders.len(), 10);
+    assert!(c.folders.iter().all(|f| f.hosts.len() == 100));
+    assert_eq!(c.folders[3].hosts[99], "h993");
+    assert_eq!((c.views.len(), c.views["v1996"].width), (500, Some(40)));
+    assert_eq!(c.terminal.scrollback, 1999);
+    assert_eq!(
+        binding(&c, KeyContext::Leader, "k1999"),
+        Some(KeyAction::Run("close".into()))
+    );
+    // The last write's line is where the store says it was (the log keeps lines, not values).
+    assert_eq!(line_of(&c, "terminal.scrollback").1, 10 + 2 * 1999 + 1);
+}
+
+/// The same load well inside a second (`Limits`' own default for Lua's run): a performance budget,
+/// so it times this machine, and a busy machine fails it however fast the loader is (T146, T164;
+/// it failed 160 of 200 runs beside busy loops). Run it on an idle one:
+/// `cargo test -p roster-core --test config_api -- --ignored`.
+#[test]
+#[ignore = "times the machine: run with --ignored on an idle one"]
+fn five_thousand_writes_stay_well_within_the_budget() {
+    let lua = five_thousand_writes();
     let start = std::time::Instant::now();
-    let c =
-        config::load_source(&common::temp("config-api-5000"), &lua, &Env::default()).unwrap_or_else(|e| panic!("{e}"));
+    let c = config::load_source(&common::temp("config-api-5000-timed"), &lua, &Env::default())
+        .unwrap_or_else(|e| panic!("{e}"));
     let took = start.elapsed();
+    eprintln!("5,000 writes: loaded in {took:?}");
     assert_eq!(c.folders[3].hosts.len(), 100);
     assert!(took < std::time::Duration::from_millis(600), "{took:?}");
 }

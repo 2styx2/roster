@@ -471,6 +471,7 @@
 ---@field enroll boolean Whether `roster setup` puts this Box's key on it (`false`: password Sessions).
 ---@field reviewed boolean `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is.
 ---@field mesh? boolean `mesh:` as roster.yml sets it; `nil` if nothing does.
+---@field os? string `os:` as roster.yml sets it: `"windows"` (setup, revoke and check run PowerShell there) or `"posix"`; `nil` if nothing does, which is posix.
 ---@field title string One line; `""` if unset.
 ---@field description string One line; `""` if unset.
 ---@field type string What it is (`esxi`, `linux`); `""` if unset.
@@ -1532,7 +1533,7 @@ function roster.serve.call(method, params) end
 ---@param done fun(result: any, err: string?) Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
 function roster.serve.request(method, params, done) end
 
---- HTTP requests to the sites the manifest lists. `nil` unless the Plugin was granted at least one `network:<site>` permission (Permissions). The request runs in roster's core, never in the app's window, and doesn't wait: the function you pass gets the answer later, as a call of its own with a call's budget. Only the sites granted are reached, redirects included; a name that resolves to an address on this computer or a private network is refused unless the manifest lists the address itself, or the name as a private site (`network:private:nas.lan`), which reaches only private addresses. A pinned site (`#sha256:…`) trusts only that certificate. No cookies or credentials of roster's go along, and no proxy but the user's `plugin_proxy`, through which a public name is still looked up here first and refused if it leads inside (only a name this computer can't look up at all is left to the proxy). At most 4 requests at once, a 256 KB body out, a 1 MB body back, 30 seconds each.
+--- HTTP requests to the sites the manifest lists. `nil` unless the Plugin was granted at least one `network:<site>` permission (Permissions). The request runs in roster's core, never in the app's window, and doesn't wait: the function you pass gets the answer later, as a call of its own with a call's budget. Only the sites granted are reached, redirects included; a name that resolves to an address on this computer or a private network is refused unless the manifest lists the address itself, or the name as a private site (`network:private:nas.lan`), which reaches only private addresses. A pinned site (`#sha256:…`) trusts only that certificate. No cookies or credentials of roster's go along, and no proxy but the user's `plugin_proxy`, through which a public name is still looked up here first, refused if it leads inside, and reached only at the address roster checked (the proxy is asked for a tunnel to that address, never the name; a name this computer can't look up isn't sent). At most 4 requests at once, a 256 KB body out, a 1 MB body back, 30 seconds each.
 roster.http = {}
 
 --- Sends an HTTP request to a site the Plugin was granted.

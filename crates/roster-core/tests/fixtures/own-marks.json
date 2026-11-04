@@ -1,0 +1,202 @@
+{
+ "token": "0123456789abcdef01234567",
+ "cases": [
+  {
+   "name": "a C of its own",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "its C, then its D",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": null
+  },
+  {
+   "name": "C, D, C",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": 2
+  },
+  {
+   "name": "split across reads",
+   "chunks": [
+    "\u001b]133;C;rost",
+    "er=0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "ended by ST",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u001b\\"
+   ],
+   "run": 1
+  },
+  {
+   "name": "ended by an ESC that starts a CSI",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u001b[0m"
+   ],
+   "run": 1
+  },
+  {
+   "name": "ended by C1 ST",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u009c"
+   ],
+   "run": 1
+  },
+  {
+   "name": "started by C1 OSC",
+   "chunks": [
+    "\u009d133;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "C1 OSC inside a title starts the mark",
+   "chunks": [
+    "\u001b]2;title\u009d133;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "an ESC ] inside a title starts the mark",
+   "chunks": [
+    "\u001b]2;title\u001b]133;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "CAN aborts a D, and what follows is text",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=0123456789abcdef01234567\u0018 after"
+   ],
+   "run": 1
+  },
+  {
+   "name": "SUB aborts a D",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=0123456789abcdef01234567\u001a after"
+   ],
+   "run": 1
+  },
+  {
+   "name": "CAN aborts the C itself",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0018\u0007"
+   ],
+   "run": null
+  },
+  {
+   "name": "ignored controls inside",
+   "chunks": [
+    "\u001b]133;C;ros\u0001te\u001fr=\b0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "DEL inside is kept",
+   "chunks": [
+    "\u001b]133;C;roster=\u007f0123456789abcdef01234567\u0007"
+   ],
+   "run": null
+  },
+  {
+   "name": "a leading zero in the id",
+   "chunks": [
+    "\u001b]0133;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "a letter in the id",
+   "chunks": [
+    "\u001b]13x3;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": null
+  },
+  {
+   "name": "another id",
+   "chunks": [
+    "\u001b]7;C;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": null
+  },
+  {
+   "name": "C1 NEL inside aborts it",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=0123456789abcdef01234567\u0085\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "C1 CSI inside aborts it",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=\u009b0123456789abcdef01234567\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "another token",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0;roster=fedcba9876543210fedcba98\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "no token",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;0\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "a kind of two letters",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;CC;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": null
+  },
+  {
+   "name": "no payload",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133\u0007"
+   ],
+   "run": 1
+  },
+  {
+   "name": "in the alternate screen",
+   "chunks": [
+    "\u001b[?1049h",
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b[?1049l"
+   ],
+   "run": 1
+  },
+  {
+   "name": "a non-ASCII character in a field",
+   "chunks": [
+    "\u001b]133;C;roster=0123456789abcdef01234567\u0007",
+    "\u001b]133;D;\u00e9;roster=0123456789abcdef01234567\u0007"
+   ],
+   "run": null
+  }
+ ]
+}

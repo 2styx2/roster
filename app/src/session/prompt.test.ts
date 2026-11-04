@@ -4,6 +4,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Host } from "../backend/types";
 import { mayReachElsewhere } from "./commandLine";
+import { HUGE_CSI, HUGE_CSI_MS, splitInCount } from "../test-hugeCsi";
+import ownMarks from "../../../crates/roster-core/tests/fixtures/own-marks.json";
 import { PromptWatch, sudoOnly } from "./prompt";
 
 const watches: PromptWatch[] = [];
@@ -151,7 +153,7 @@ const host = (name: string, ip: string, over: Partial<Host> = {}): Host => ({
   ...over,
 });
 const INVENTORY = [host("esx-01", "10.0.0.11"), host("esx-02", "10.0.0.12"), host("keyed", "10.0.0.30", { enroll: true, ssh: { user: "ops", port: 22, auth: "key" } })];
-const TO_ESX_02 = { host: "esx-02", address: "10.0.0.12", port: 22, user: "ops" };
+const TO_ESX_02 = { host: "esx-02", address: "10.0.0.12", port: 22, user: "ops", run: 1 };
 const SSH_PROMPT = "ops@esx-02's password: ";
 const N = "0123456789abcdef01234567";
 /** The outer shell's own marks: roster's hook line, with this Session's token. */
@@ -367,6 +369,74 @@ describe("PromptWatch: a Session whose marks aren't roster's own (fail closed)",
   });
 });
 
+describe("PromptWatch: which of the Session's own commands a nested ssh is (ticket 162)", () => {
+  it("names the ssh by how many commands esx-01's own shell had started, its own included", async () => {
+    const w = await hopping([...ran("ls"), back(), ...ran("ssh esx-02", SSH_PROMPT)]);
+    expect(w.prompt()).toMatchObject({ elsewhere: null, hop: { ...TO_ESX_02, run: 2 } });
+  });
+
+  it("counts esx-01's own C marks however it shows them, an alternate screen's too", async () => {
+    // A C of its own while a full-screen program had the alternate screen up still counts, as the
+    // core counts it.
+    const w = await hopping([...ran("vim", `\x1b[?1049h${oC}\x1b[?1049l`), back(), ...ran("ssh esx-02", SSH_PROMPT)]);
+    expect(w.prompt()).toMatchObject({ elsewhere: null, hop: { ...TO_ESX_02, run: 3 } });
+  });
+});
+
+describe("PromptWatch counts the Session's own marks as the core does (ticket 162, the review of #308, #4)", () => {
+  // The same cases as the core's screen (screen.rs, own_marks_match_the_shared_cases): what xterm.js
+  // takes as a mark, each run through both.
+  it.each(ownMarks.cases)("$name", async ({ chunks, run }) => {
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, ownMarks.token);
+    watches.push(w);
+    for (const c of chunks) await w.write(c);
+    expect(w.ownRun()).toBe(run);
+  });
+});
+
+describe("PromptWatch under Windows' ConPTY (ticket 162, decision Q151 (i))", () => {
+  const WINDOWS = /on Windows roster fills only sudo's own prompt for this Session's Host/;
+  const onConpty = async (w: PromptWatch | Promise<PromptWatch>) => {
+    const watch = await w;
+    watch.conptyRules("ops");
+    return watch;
+  };
+
+  it("offers sudo's own prompt for the Session's own Host, marked or not", async () => {
+    expect((await onConpty(fed(`ops@esx:~$ sudo -v\r\n${SUDO}`))).prompt()).toMatchObject({ elsewhere: null, kind: "sudo", hop: null });
+    expect((await onConpty(fed(...marked("sudo -v")))).prompt()).toMatchObject({ elsewhere: null, kind: "sudo", hop: null });
+  });
+
+  it("offers no nested ssh's prompt, and says why", async () => {
+    const login = await onConpty(hopping(ran("ssh esx-02", SSH_PROMPT)));
+    expect(login.prompt()).toMatchObject({ kind: "ssh", hop: null, elsewhere: expect.stringMatching(WINDOWS) });
+    const sudo = await onConpty(hopping([...ran("ssh esx-02", inner), `sudo -v\r\n${C}[sudo] password for ops: `]));
+    expect(sudo.prompt()).toMatchObject({ kind: "sudo", hop: null, elsewhere: expect.stringMatching(WINDOWS) });
+  });
+
+  it("keeps its own reason for a prompt it wouldn't fill anyway, and offers nothing it never offers", async () => {
+    expect((await onConpty(fed(...marked("bash -c 'sudo -v'")))).prompt()?.elsewhere).toMatch(/not sudo itself/);
+    expect((await onConpty(fed("Password: "))).prompt()).toBeNull();
+    expect((await onConpty(fed("[sudo] password for root: "))).prompt()).toBeNull();
+  });
+
+  it("judges sudo's prompt by the user the core fills for, not the Inventory's (the review of #308, #6)", async () => {
+    const differs = await fed(`ops@esx:~$ sudo -v\r\n${SUDO}`);
+    differs.conptyRules("admin");
+    expect(differs.prompt()).toMatchObject({ kind: "sudo", elsewhere: expect.stringMatching(WINDOWS) });
+    const unknown = await fed(`ops@esx:~$ sudo -v\r\n${SUDO}`);
+    unknown.conptyRules(null);
+    expect(unknown.prompt()?.elsewhere).toMatch(WINDOWS);
+  });
+
+  it("follows the rule from when it's told, for the prompt already there", async () => {
+    const w = await hopping(ran("ssh esx-02", SSH_PROMPT));
+    expect(w.prompt()?.elsewhere).toBeNull();
+    w.conptyRules("ops");
+    expect(w.prompt()?.elsewhere).toMatch(WINDOWS);
+  });
+});
+
 describe("mayReachElsewhere: what stops every fill when the marks aren't roster's (best effort)", () => {
   it.each([
     "cu -l /dev/ttyUSB0", "minicom -D /dev/ttyS0", "picocom /dev/ttyUSB0", "screen /dev/ttyUSB0 115200", "tmux attach",
@@ -384,4 +454,13 @@ describe("mayReachElsewhere: what stops every fill when the marks aren't roster'
       expect(mayReachElsewhere(command)).toBe(false);
     },
   );
+});
+
+describe("PromptWatch and a huge CSI count (ticket 163, #305)", () => {
+  it.each(HUGE_CSI)("takes %s fast, and still reads the prompt after it", async (_name, seq) => {
+    const start = performance.now();
+    const w = await fed(`ops@esx:~$ cat crafted${seq}`, ...splitInCount(seq), `\u009b${seq.slice(2)}`, `\r\n${SUDO}`);
+    expect(performance.now() - start).toBeLessThan(HUGE_CSI_MS);
+    expect(w.prompt()?.line).toBe("[sudo] password for ops:");
+  });
 });

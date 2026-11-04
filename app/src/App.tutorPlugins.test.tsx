@@ -97,15 +97,45 @@ describe(":tutor with your Plugins", () => {
     expect(await screen.findByText("coach: 12 Hosts, 1 files")).toBeInTheDocument();
   });
 
-  it("a Plugin that fails to load in the demo is named, and the tutor runs on", async () => {
+  it("a Plugin that fails to load in the demo is named, marked as the demo's (issue #233), and the tutor runs on", async () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}:tutor{Enter}`);
     await waitFor(() => expect(banner()).not.toBeNull());
-    expect(await screen.findByText(/broken: .*attempt to index a nil value/)).toBeInTheDocument();
+    // Marked: a failure on the demo's Hosts and files, not your workspace's.
+    expect(await screen.findByText(/^broken \(in the demo\): .*attempt to index a nil value/)).toBeInTheDocument();
     await screen.findByRole("complementary", { name: "Help" });
     expect(within(help()).getAllByRole("heading", { level: 1 })[0]).toHaveTextContent("roster tutor");
     await user.keyboard(`${LEADER}:coach{Enter}`);
     expect(await screen.findByText("coach: 6 Hosts, 0 files")).toBeInTheDocument();
+  });
+
+  it("a Plugin in the demo lists the demo's Sessions (issue #239)", async () => {
+    const user = userEvent.setup();
+    const lister: FakePlugin = {
+      manifest: { name: "lister", version: "1.0.0", description: "", author: null, api: 4, permissions: ["inventory.read"] },
+      load(roster) {
+        roster.commands.add("lister", {
+          desc: "List the Sessions",
+          run: () => roster.notify(`open: ${(roster.sessions.list?.() ?? []).map((s) => s.host ?? "quick").join(" ") || "none"}`, "info", { quiet: false }),
+        });
+      },
+    };
+    const backend = fakeBackend({ hosts: makeHosts(12), plugins: { "~/plugins/lister": lister } });
+    const platform = memoryPlatform({ state: { plugins: [{ path: "~/plugins/lister", name: "lister", granted: ["inventory.read"], asked: ["inventory.read"] }] } });
+    render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    await user.keyboard(`${LEADER}:tutor{Enter}`);
+    await waitFor(() => expect(banner()).not.toBeNull());
+    await screen.findByRole("complementary", { name: "Help" });
+    await user.keyboard(`${LEADER}:lister{Enter}`);
+    expect(await screen.findByText("lister: open: none")).toBeInTheDocument();
+    await user.keyboard(`${LEADER}f`);
+    await screen.findByRole("dialog", { name: "Find a Host" });
+    await user.keyboard("demo-01{Enter}");
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Session demo-01", hidden: true })).not.toBeNull());
+    await user.keyboard(`${LEADER}:lister{Enter}`);
+    expect(await screen.findByText("lister: open: demo-01")).toBeInTheDocument();
   });
 
   it("only a Plugin running in your workspace comes along, with the grants it has there", async () => {

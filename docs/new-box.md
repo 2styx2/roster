@@ -45,7 +45,7 @@ cd ~/infra                 # roster reads ./roster.yml; run roster commands from
 
 No git access? Copy `roster.yml` into `~/infra/` by hand instead. You'll then need to copy it again whenever it changes.
 
-roster looks for its config in this order: `-c PATH`, `$ROSTER_CONFIG`, `./roster.yml`, `~/.config/roster/roster.yml`. To run roster from any directory, add this to `~/.bashrc` (and `~/.zshrc` if you use zsh):
+roster looks for its config in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml`. To run roster from any directory, name it (`roster inv add work ~/infra/roster.yml`, see step 9), or add this to `~/.bashrc` (and `~/.zshrc` if you use zsh):
 
 ```bash
 export ROSTER_CONFIG="$HOME/infra/roster.yml"
@@ -122,6 +122,19 @@ cd ~/infra && claude
 
 `CLAUDE.md` imports `ROSTER.md`, so Claude knows the hosts and reaches them through `ssh`, `roster run` and `roster web` without seeing passwords, and reads roster's data with `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). After editing `roster.yml`, run `roster sync` to refresh `ROSTER.md` and the SSH config.
 
+## 9. Optional: add your own Inventory
+
+Keep your own machines (a Raspberry Pi at home, the router) in an Inventory of your own, in its own private repo or folder, rather than in the team's: teammates would see them, and every teammate's `roster setup` would try to reach them. Name both on this Box; one is active:
+
+```bash
+roster inv add work ~/infra/roster.yml       # the team's; the first one named is the active one
+roster inv add home ~/home-net/roster.yml    # your own, with its own vault Logins
+roster --inv home setup                      # its own ssh config, known_hosts and ROSTER.md; work's stay as they are
+roster inv list                              # * marks the active one; `roster inv use home` switches
+```
+
+`ssh pi` then works for a Host in either one (the active one's wins if both have that name), and `roster check --box` warns if the same machine is in both. `ROSTER.md` (and the `CLAUDE.md` import) is written for this Box: it marks Hosts another Inventory's name shadows here, so keep it out of the shared repo (add `ROSTER.md` to its `.gitignore`). See [Named Inventories](cli-reference.md#named-inventories).
+
 ## Keeping it up to date
 
 ```bash
@@ -133,10 +146,10 @@ roster setup                                             # new key hosts get thi
 ## Removing a box
 
 ```bash
-roster revoke              # removes this box's key from every host
+roster revoke --all        # removes this box's key from every host, in every Inventory here
 ```
 
-Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster` and `~/.config/roster/bw-session`.
+Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and `~/.config/roster/bw-session` (and `~/.config/roster/inventories.json` if you named Inventories). `roster revoke --all` covers every named Inventory and the unnamed one; plain `roster revoke` covers only the Inventory it runs on (`roster --inv home revoke`). Its summary lists the files to delete.
 
 ## See also
 

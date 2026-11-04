@@ -321,8 +321,11 @@ function load(roster: FakeRoster) {
         roster.notify(`CUT PENDING on ${h}: ${pendingOf[h] ?? ""}. Until it's done there, ${h} may still let ${host} in. Cut again once it answers.`, "warn");
       }
       for (const w of (r.warnings ?? []) as string[]) roster.notify(w, "warn", { quiet: false });
-      const c = (r.change ?? {}) as { error?: string; fix?: string };
+      const c = (r.change ?? {}) as { error?: string; fix?: string; sync?: { ok: boolean; error?: string } };
       if (c.error) roster.notify(`mesh: false for ${host} wasn't written: ${c.error} (${c.fix ?? ""})`, "warn");
+      if (c.sync && !c.sync.ok) {
+        roster.notify(`mesh: false for ${host} was written, but this Box's ssh config didn't follow (${c.sync.error ?? "roster sync failed"}): run roster sync`, "warn");
+      }
     }
     refresh();
   };

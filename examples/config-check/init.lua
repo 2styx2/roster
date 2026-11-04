@@ -12,7 +12,16 @@ end
 
 -- roster.api_version
 do
-  if roster.api_version >= 4 then roster.o.vim = false end
+  print("Plugin API " .. roster.api_version)
+end
+
+-- roster.config_version
+do
+  if (roster.config_version or 0) >= 4 then
+    roster.o.terminal.size = "16pt"
+  else
+    roster.set("terminal.size", "16pt")
+  end
 end
 
 -- roster.version
@@ -36,16 +45,19 @@ end
 do
   local views = roster.o.get("views") or {}
   for id in pairs(views) do print(id) end
+  print(roster.o.keys.leader["."]) -- a key that is a dot
 end
 
 -- roster.o.reset
 do
   roster.o.reset("terminal.size")
+  roster.o.keys.leader["."] = nil -- a key that is a dot
 end
 
 -- roster.set
 do
   roster.set("terminal.size", "16pt")
+  roster.o.keys.leader["."] = "connect esx-02" -- a key that is a dot
 end
 
 -- roster.keymap.set
@@ -372,6 +384,11 @@ end
 -- terminal.right_click_paste
 do
   roster.o.terminal.right_click_paste = false
+end
+
+-- terminal.osc52
+do
+  roster.o.terminal.osc52 = false
 end
 
 -- terminal.colors

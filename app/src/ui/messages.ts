@@ -37,6 +37,10 @@ export interface Quiet {
   said: string;
   /** The whole line shown with every message on: what changed, and what it teaches. */
   text: string;
+  /** Said when nothing was asked (a Plugin's notice from a timer, an event or a request's
+   * answer, or roster's own unasked notice): it never takes the place of a line that shows
+   * (decision Q162, #349). */
+  background?: true;
 }
 
 /** What goes on the message line: an error, a warning or an answer (always shown), or a quiet one. */
@@ -44,6 +48,20 @@ export type Message = string | Quiet;
 
 export function quiet(said: string, text: string = said): Quiet {
   return { kind: "quiet", said, text };
+}
+
+/** A quiet message said when nothing was asked, from the background: a Plugin's or roster's own.
+ * Every quiet message roster says without the user asking is made with this, not `quiet`. */
+export function backgroundQuiet(said: string, text: string = said): Quiet {
+  return { kind: "quiet", said, text, background: true };
+}
+
+/** What the message line holds once `next` is said: `next`, unless it's a quiet message from the
+ * background that wouldn't show while the line shows something (an error, a warning, an answer),
+ * which stays. Errors always show (Q115 (a)); `:messages` keeps `next` either way (decision Q162). */
+export function lineAfter(now: Message, next: Message, all: boolean): Message {
+  const unseen = typeof next !== "string" && next.background === true && !all;
+  return unseen && shownText(now, all) !== "" ? now : next;
 }
 
 /** A message's whole text, as the line shows it with every message on. */

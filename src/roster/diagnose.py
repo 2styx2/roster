@@ -13,16 +13,20 @@ import time
 from contextlib import nullcontext
 
 from . import askpass, errors, providers
-from .common import not_reviewed, time_left
+from .common import known_hosts_label, not_reviewed, time_left
+from .config import is_windows
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
 from .providers import PROVIDERS
 from .sshops import (
     fingerprint,
     host_block,
     in_ssh_config,
+    left_out,
+    not_reached,
     offered_host_key,
     recorded_host_keys,
     start_transport,
+    sync_fix,
     written_host_block,
 )
 
@@ -53,7 +57,7 @@ def check_provider(h, auth=None, what="ssh"):
     """The password Login's provider exists on this box and can answer now (11 not logged in, 12 no CLI,
     14 locked). Providers without a status (env, prompt, cmd) are left to try. AUTH: another of the Host's
     references than its ssh Login (its sudo: one), named WHAT in errors."""
-    auth = str(password_login(h)["auth"] if auth is None else auth)
+    auth = str((password_login(h) or h["ssh"])["auth"] if auth is None else auth)
     name = auth.partition(":")[0].strip()
     if name not in PROVIDERS:
         raise unknown_provider(h, auth, what)
@@ -73,7 +77,7 @@ def check_provider(h, auth=None, what="ssh"):
 def resolve_password(h, auth=None, what="ssh"):
     """The Login's password, looked up now (into this process's memory only; never returned to the app).
     Raises a Problem: item not found, several match, no password/field, or the provider's own failure."""
-    auth = password_login(h)["auth"] if auth is None else auth
+    auth = (password_login(h) or h["ssh"])["auth"] if auth is None else auth
     if str(auth).partition(":")[0].strip() not in PROVIDERS:
         raise unknown_provider(h, auth, what)
     try:
@@ -184,8 +188,15 @@ def step_ssh_config(ctx):
                       fix="install OpenSSH (openssh-client)")
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
     if not in_ssh_config(h["name"]):
+        why = left_out(h["name"])
+        if why:
+            raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
+                                                       "Inventory the active one (`roster inv use`)")
+        why = not_reached(h["name"])
+        if why:                         # another roster.yml's, or this Inventory isn't synced here
+            raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
-    want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"])
+    want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
     if have != want:
         stale = f"{h['name']}'s entry in this box's ssh config is out of date"
         if "    IdentitiesOnly yes" in want and "    IdentitiesOnly yes" not in have:
@@ -274,7 +285,7 @@ def changed_key(h, recorded, key):
     data = {"recorded": [fingerprint(k) for k in recorded.values()], "offered": fingerprint(key) if key else None}
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
-                       "If the change is expected (reinstall), delete its line in ~/.ssh/roster_known_hosts "
+                       f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
                        f"and run `roster setup --only {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 
@@ -291,7 +302,7 @@ def step_auth(ctx):
         env = ctx["channel"].env(ctx["channel"].mint(h, h["name"]))
     else:
         argv += ["-o", "BatchMode=yes"]
-    argv += [h["name"], "true"]
+    argv += [h["name"], "exit 0"]       # the same in sh, cmd.exe and PowerShell (`true` is POSIX only)
     limit = round(time_left(LOGIN_TIMEOUT + 20))
     r = login_attempt(argv, {**os.environ, **env}, limit, ctx.get("halted"))
     if r is None:
@@ -317,7 +328,7 @@ def login_attempt(argv, env, limit, halted=None):
     """Run the login's ssh ARGV for at most LIMIT s: its CompletedProcess, or None when it ran out of time. Once
     HALTED is set (serve's check was stopped: vault.lock, jobs.stop, its last waiter cancelled) its ssh is ended and
     Stopped raised (it isn't started at all if HALTED is set already), so a lock never waits for a login (decision
-    Q119). Ending it is safe: the login runs `true` and nothing else, so nothing on the Host is left half-done, and the
+    Q119). Ending it is safe: the login runs `exit 0` and nothing else, so nothing on the Host is left half-done, and the
     attempt is already made or never will be: a stopped check never tries again, so the Host's rate limiter sees no
     more attempts than before. On POSIX ssh runs in a process group of its own, so ending it ends what it started too
     (a ProxyJump's ssh)."""
@@ -391,8 +402,17 @@ def login_failure(h, password, stderr):
             return Problem(errors.PASSWORD_REFUSED, f"{name} refused the password for user {user}",
                            fix="check the vault item: the password may have been changed on the Host, or the user is wrong",
                            details=stderr)
-        return Problem(errors.KEY_REFUSED, f"{name} didn't accept this box's key",
-                       fix=f"run `roster setup --only {name}`, or set enroll: false", details=stderr)
+        fix = f"run `roster setup --only {name}`, or set enroll: false"
+        if is_windows(h):               # sshd ignores a key file with the wrong permissions or encoding, silently
+            fix += (": on a Windows Host it also checks the key file (an administrator's is "
+                    "%ProgramData%\\ssh\\administrators_authorized_keys) for permissions and an encoding sshd ignores")
+        return Problem(errors.KEY_REFUSED, f"{name} didn't accept this box's key", fix=fix, details=stderr)
+    if "no existing session" in low or "mux_client_request_session" in low or "session open refused" in low:
+        return Problem(errors.CONNECTION_SHARING, f"{name} refused a second session on ssh's shared connection "
+                       "(ControlMaster), so the login itself wasn't the problem",
+                       fix=f"set os: windows for {name} in roster.yml if it's a Windows Host, then `roster sync` "
+                           "(roster turns connection sharing off for those); or close the ssh that holds the shared "
+                           "connection", details=stderr)
     if "connection refused" in low:
         return Problem(errors.REFUSED, f"{name} refused the connection",
                        fix="check the port in roster.yml; is sshd running on the Host?", details=stderr)
@@ -479,7 +499,7 @@ def kind_of(ctx):
 def verify_user(ctx):
     h = ctx["h"]
     check_user(h)
-    how = {"key": "this box's key", "password": "password"}.get(kind_of(ctx)) or f"auth {h['ssh']['auth'] or 'none'}"
+    how = {"key": "this box's key", "password": "password"}.get(kind_of(ctx) or "") or f"auth {h['ssh']['auth'] or 'none'}"
     return f"{h['ssh']['user']}@{h['ip']}:{h['ssh']['port']} ({how})"
 
 

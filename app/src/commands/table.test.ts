@@ -33,6 +33,7 @@ function recorder(mode: ViewMode = "standard") {
     open: (h) => calls.push(`open ${h}`),
     fold: (id, how) => calls.push(`${how} ${id ?? "cursor"}`),
     cursorRow: () => null,
+    rowMenu: () => calls.push("rowMenu"),
     selectedHost: () => null,
     hostNames: () => hosts,
     say: (m) => calls.push(`say ${m}`),
@@ -44,6 +45,7 @@ function recorder(mode: ViewMode = "standard") {
     edit: (h) => calls.push(`edit ${h ?? "selected"}`),
     showChanges: (then) => calls.push(then ? `changes ${then}` : "changes"),
     pull: () => calls.push("pull"),
+    switchInventory: (name) => calls.push(`inventory ${name ?? ""}`),
     addHost: (g) => calls.push(g ? `add ${g}` : "add"),
     saveSession: () => calls.push("save"),
     fillPrompt: () => calls.push("fill"),
@@ -165,6 +167,12 @@ describe("runLine", () => {
     runLine(ctx, "check esxi-02");
     runLine(ctx, "check");
     expect(calls).toEqual(["check esxi-02", "check current"]);
+  });
+
+  it("completes :check's stop (#361) after the Hosts, and names what it does", () => {
+    expect(complete("check st", ["esxi-02", "stor-01"])).toEqual(["check stor-01", "check stop"]);
+    expect(complete("check st", ["stop"])).toEqual(["check stop"]);
+    expect(describeLine("check stop").label).toBe("Stop the app's own check that's running, as the check panel's Stop (x) does");
   });
 
   it("runs a command by its name, with its argument", () => {

@@ -45,7 +45,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// The version of the `roster` Lua module (`roster.api_version`), shared with `init.lua`'s.
+/// The version of the `roster` Lua module (`roster.api_version`). init.lua's table shows it too;
+/// init.lua's own version is `roster.config_version` (decision Q165).
 pub const API_VERSION: u32 = crate::config::API_VERSION;
 
 /// Where a Plugin's code comes from. A Package (ticket 24) is a [`Source::Dir`] too: its clone.
@@ -200,7 +201,7 @@ fn described<S: serde::Serializer>(ps: &[Permission], s: S) -> Result<S::Ok, S::
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     pub memory: usize,
-    /// Lua run time for `init.lua`.
+    /// Lua run time for `init.lua`, and for reading `roster-plugin.lua` before it.
     pub load: Duration,
     /// Lua run time for each call or event (a hook's budget).
     pub call: Duration,
@@ -297,6 +298,9 @@ pub struct PluginHost {
     /// The app's built-in commands, as it last said ([`PluginHost::set_builtins`]): shared with
     /// every Plugin's runtime, so none is a Plugin's own to run (issue #184).
     builtins: Builtins,
+    /// Stands in for this computer's resolver in tests ([`PluginHost::with_lookup`]); None, the
+    /// system's, everywhere else.
+    lookup: Option<network::Lookup>,
 }
 
 /// The app's built-in command names, shared by a host and its Plugins' runtimes: None until the
@@ -318,7 +322,16 @@ impl PluginHost {
             offline: false,
             sessions: Arc::default(),
             builtins: Builtins::default(),
+            lookup: None,
         }
+    }
+
+    /// The host, whose Plugins look names up with `lookup` instead of this computer's resolver
+    /// before a request goes through the proxy. Tests only: the feature is never on in the app.
+    #[cfg(feature = "test-hooks")]
+    pub fn with_lookup(mut self, lookup: network::Lookup) -> Self {
+        self.lookup = Some(lookup);
+        self
     }
 
     /// The host, with no Plugin reaching the network ([`demo`]): a `roster.http` request is checked
@@ -406,7 +419,7 @@ impl PluginHost {
     ) -> Result<(Manifest, Reply), PluginError> {
         let (manifest, dir, code) = match source {
             Source::Dir(dir) => {
-                let manifest = read_manifest(dir)?;
+                let manifest = read_manifest_within(dir, self.limits)?;
                 if BUNDLED.iter().any(|b| b.name == manifest.name) {
                     return Err(PluginError::new(
                         &manifest.name,
@@ -429,7 +442,11 @@ impl PluginHost {
                     PluginError::new(name, None, None, "roster has no built-in Plugin by that name".into())
                 })?;
                 // No folder: a built-in Plugin is one file, with nothing to `require`.
-                (manifest_from(b.manifest, name)?, PathBuf::new(), b.init.to_string())
+                (
+                    manifest_within(b.manifest, name, self.limits)?,
+                    PathBuf::new(),
+                    b.init.to_string(),
+                )
             }
         };
         let source = code;
@@ -703,6 +720,7 @@ impl PluginHost {
         let network = network::Setup {
             proxy: Arc::clone(proxy),
             log: Arc::clone(self.logs.lock().expect("plugin logs").entry(name.clone()).or_default()),
+            lookup: self.lookup.clone(),
         };
         let asks = |p: &Permission| {
             matches!(
@@ -954,6 +972,12 @@ impl ServeWait {
 /// Reads the manifest in `dir` (`roster-plugin.lua`): a Lua file that returns a table, run in
 /// the sandbox with no `roster` module, so reading it can't do anything.
 pub fn read_manifest(dir: &Path) -> Result<Manifest, PluginError> {
+    read_manifest_within(dir, Limits::default())
+}
+
+/// [`read_manifest`] within `limits`' time to load (a host's own, [`PluginHost::new`]; a test's
+/// generous ones, T161).
+pub fn read_manifest_within(dir: &Path, limits: Limits) -> Result<Manifest, PluginError> {
     let shown = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -968,13 +992,20 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, PluginError> {
     // Its real path must be in the Plugin's folder (ticket 82), like every file of the Plugin.
     let real = folder::inside(dir, Path::new(MANIFEST)).map_err(fail)?;
     let source = std::fs::read_to_string(real).map_err(|e| fail(format!("can't read it: {e}")))?;
-    manifest_from(&source, &shown)
+    manifest_within(&source, &shown, limits)
 }
 
 /// The manifest `source` gives (a `roster-plugin.lua`'s text, read before any of the Plugin's
 /// code runs); errors name the Plugin as `shown` (its folder's name). Packages read a new
 /// version's this way, before moving to it.
 pub fn manifest_from(source: &str, shown: &str) -> Result<Manifest, PluginError> {
+    manifest_within(source, shown, Limits::default())
+}
+
+/// [`manifest_from`] within `limits`' time to load, as init.lua is: `load` of Lua run time, and
+/// `load + grace` in all before it's given up on (T151: it was a fixed 200 ms and 1 s, so a
+/// Plugin test failed when a loaded machine paused the process past a second there).
+fn manifest_within(source: &str, shown: &str, limits: Limits) -> Result<Manifest, PluginError> {
     let fail = |line: Option<u32>, message: String| PluginError::new(shown, Some(MANIFEST.into()), line, message);
     let source = source.to_string();
     let (tx, rx) = channel();
@@ -989,7 +1020,7 @@ pub fn manifest_from(source: &str, shown: &str) -> Result<Manifest, PluginError>
                     path: Vec::new(),
                 };
                 let (l, clock) = lua::sandboxed(4 * 1024 * 1024, None, MANIFEST.into()).map_err(internal)?;
-                clock.start(Duration::from_millis(200));
+                clock.start(limits.load);
                 let value: mlua::Value = l
                     .load(&source)
                     .set_name(format!("@{MANIFEST}"))
@@ -1008,7 +1039,7 @@ pub fn manifest_from(source: &str, shown: &str) -> Result<Manifest, PluginError>
             let _ = tx.send(run());
         })
         .map_err(|e| fail(None, format!("couldn't start Lua: {e}")))?;
-    let value = match rx.recv_timeout(Duration::from_secs(1)) {
+    let value = match rx.recv_timeout(limits.load + limits.grace) {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => return Err(fail(e.line, e.message)),
         Err(_) => return Err(fail(None, "took too long to read".into())),

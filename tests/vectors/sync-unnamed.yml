@@ -1,0 +1,10 @@
+defaults:
+  user: ops
+groups:
+  lab:
+    title: Lab gear
+    auth: env:LAB
+    hosts:
+      build-pi: {ip: 10.0.0.5, title: Build box, type: dev, description: Runs the nightly build}
+      esx: {ip: 10.0.0.6, enroll: false, port: 2222}
+      agent-box: {ip: 10.0.0.7, enroll: false, auth: agent}

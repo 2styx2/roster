@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { budget } from "../test-budget";
 import { actionApplies, filterRows, mergeRows, nextSort, sortRows, splitMiddle, windowOf, type TableColumn, type TableRow } from "./table";
 
 const columns: TableColumn[] = [
@@ -38,13 +39,24 @@ describe("mergeRows", () => {
     ]);
   });
 
-  it("takes 5,000 updates into 5,000 rows quickly", () => {
-    const rows = Array.from({ length: 5000 }, (_, i) => row(String(i), { ports: i }));
-    const updates = Array.from({ length: 5000 }, (_, i) => row(String(i * 2), { ports: -i }));
-    const start = performance.now();
+  const thousands = () => ({
+    rows: Array.from({ length: 5000 }, (_, i) => row(String(i), { ports: i })),
+    updates: Array.from({ length: 5000 }, (_, i) => row(String(i * 2), { ports: -i })),
+  });
+
+  it("takes 5,000 updates into 5,000 rows", () => {
+    const { rows, updates } = thousands();
     const merged = mergeRows(rows, updates, []);
-    expect(performance.now() - start).toBeLessThan(100);
     expect(merged).toHaveLength(7500);
+    expect(merged[1]).toMatchObject({ id: "1", cells: { ports: 1 } });
+    expect(merged[7499]).toMatchObject({ id: "9998", cells: { ports: -4999 } });
+  });
+
+  budget("takes 5,000 updates into 5,000 rows quickly", () => {
+    const { rows, updates } = thousands();
+    const start = performance.now();
+    mergeRows(rows, updates, []);
+    expect(performance.now() - start).toBeLessThan(100);
   });
 });
 
@@ -102,8 +114,8 @@ describe("filterRows (ticket 78)", () => {
 
 describe("middle truncation (ticket 91)", () => {
   it("keeps a long value's end, so names that differ only at the end still differ", () => {
-    expect(splitMiddle("server-10-19-77-203")).toEqual(["server-10-19", "-77-203"]);
-    expect(splitMiddle("server-10-19-77-203-long-and-longer")).toEqual(["server-10-19-77-203-long-an", "d-longer"]);
+    expect(splitMiddle("server-10-0-0-203")).toEqual(["server-10-0", "-0-203"]);
+    expect(splitMiddle("server-10-0-0-203-long-and-longer")).toEqual(["server-10-0-0-203-long-an", "d-longer"]);
     expect(splitMiddle("esx-02")).toEqual(["esx-02", ""]);
     expect(splitMiddle("🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂")).toEqual(["🙂".repeat(8), "🙂".repeat(5)]);
   });

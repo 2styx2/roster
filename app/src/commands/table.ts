@@ -6,6 +6,7 @@
 // A command acts through CommandContext, which App provides.
 
 import { groupCommand, hostCommand, type InventoryOp } from "../inventory/commands";
+import { inventoryCommand } from "../inventory/switch";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { SidebarRow } from "../sidebar/Sidebar";
 import { VIEW_MODES, type ViewMode } from "../view/layout";
@@ -56,6 +57,8 @@ export interface CommandContext {
   fold(id: string | null, how: FoldHow): void;
   /** The Sidebar row under the cursor, or null. */
   cursorRow(): SidebarRow | null;
+  /** Opens the menu of the Host row under the Sidebar's cursor (T166, Q156). */
+  rowMenu(): void;
   /** The Host the user means: the one under the Sidebar's cursor, else the Session on screen's. */
   selectedHost(): string | null;
   /** Every Host's name, in roster.yml order (empty until the Inventory is loaded). */
@@ -100,6 +103,9 @@ export interface CommandContext {
   showChanges(then?: "discard" | "publish"): void;
   /** Pulls the infra repo (fast-forward only) and says what happened. */
   pull(): void;
+  /** `:inventory NAME` (ticket 115): asks before switching roster to that named Inventory, or
+   * says why it can't; null starts the command line, or says there are none. */
+  switchInventory(name: string | null): void;
   /** `:config` (ticket 32): opens init.lua (making it first if there's none), reads it again,
    * or says where it is. */
   config(what: ConfigAction): void;
@@ -152,6 +158,8 @@ export interface CompletionContext {
   /** The web services of a Host, or (null) of the current one: Host details', else the selected
    * Host's (`:open`, ticket 18). */
   webServices?(host: string | null): readonly string[];
+  /** The named Inventories, as serve last listed them (`:inventory`, ticket 115). */
+  inventoryNames?: readonly string[];
 }
 
 /** Names that start with `word` first, then the rest that contain it, without case. */
@@ -276,10 +284,17 @@ export const builtinCommands: readonly CommandDef[] = [
     arg: "host",
     optionalArg: true,
     label: (h) =>
-      h
-        ? `Check ${h}`
-        : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail",
+      h === "stop"
+        ? "Stop the app's own check that's running, as the check panel's Stop (x) does"
+        : h
+          ? `Check ${h}`
+          : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail. stop stops the app's own check",
     run: (ctx, h) => ctx.check(h ?? null),
+    // `stop` (#361) after the Hosts: a Host named stop is still checked by `:check stop`.
+    complete: (word, hostNames) => {
+      const hosts = matching([...hostNames].sort(), word);
+      return "stop".startsWith(word.toLowerCase()) && !hostNames.includes("stop") ? [...hosts, "stop"] : hosts;
+    },
   },
   {
     id: "edit",
@@ -292,6 +307,7 @@ export const builtinCommands: readonly CommandDef[] = [
   },
   hostCommand,
   groupCommand,
+  inventoryCommand,
   {
     id: "review",
     source: BUILTIN,
@@ -354,6 +370,15 @@ export const builtinCommands: readonly CommandDef[] = [
   fold("fold", "fold", "Fold, or go to the parent"),
   fold("unfold", "unfold", "Unfold, or go to the first child"),
   fold("togglefold", "toggle", "Fold or unfold"),
+  {
+    // A Host row's menu (T166, Q156): what a right-click on it opens, from the keyboard.
+    id: "menu",
+    source: BUILTIN,
+    area: "Sidebar",
+    label: () => "The menu of the Host under the cursor: open, details, check, edit, rename, move, remove",
+    staysInAppMode: true,
+    run: (ctx) => ctx.rowMenu(),
+  },
   {
     id: "mode",
     source: BUILTIN,

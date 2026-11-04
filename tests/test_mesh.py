@@ -2,8 +2,10 @@
 (tests/fakes/ssh with FAKE_HOSTS). Nothing here connects anywhere: each Host is a directory."""
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,7 @@ HOSTS = {"orion-2": "10.0.0.2", "orion-3": "10.0.0.3", "esx-02": "10.0.0.12", "s
          "nas-1": "10.0.0.30", "db-9": "10.0.9.9", "new-1": "10.0.0.40", "jump-1": "10.0.5.1"}
 
 CONFIG = """\
+box_name: box
 defaults:
   user: admin
 groups:
@@ -143,7 +146,7 @@ def net(fakes, isolated, write_config, monkeypatch, host_key):
 def key_line_of(net, src, dst_ip):
     d = "vmfs/volumes/5f0e-uuid/.roster-mesh" if (net.host(src) / "esxi").exists() else "home/.ssh/roster-mesh"
     pub = (net.host(src) / d / "id_ed25519.pub").read_text().split()
-    return f'from="{dst_ip}",no-agent-forwarding,no-X11-forwarding {pub[0]} {pub[1]} roster-mesh:{src}'
+    return f'from="{dst_ip}",no-agent-forwarding,no-X11-forwarding {pub[0]} {pub[1]} roster-mesh:{src}@box'
 
 
 # ---------------------------------------------------------------- inventory
@@ -798,11 +801,11 @@ def test_rewriting_a_file_keeps_its_mode(net):
 
 def test_every_rewrite_on_a_host_is_relabelled_after_the_move():
     h = {"name": "orion-2", "ssh": {"user": "admin"}}
-    script = mesh.write_script(h, "apply", {}, [], set())
+    script = mesh.write_script(h, "apply", {}, [], set(), "box")
     body = script[script.index("replace() {"):script.index("put() {")]
     mv = body.index('mv -f "$n" "$f"')
     assert body.index('chcon --reference="$f" "$n"') < mv < body.index('restorecon -F "$f"')
-    assert "replace" in mesh.cut_script(h, "orion-3", False)
+    assert "replace" in mesh.cut_script(h, "orion-3", False, "box")
 
 
 @pytest.mark.parametrize("ok", [True, False])
@@ -957,6 +960,24 @@ def test_cut_without_a_git_repo_still_writes_mesh_false(net, capsys):
     assert "isn't in a git repo" in capsys.readouterr().out
 
 
+def test_cut_syncs_this_box_after_writing_mesh_false(net, isolated, capsys):
+    """T153: the CLI's cut syncs this Box after it writes mesh: false, as serve's mesh.cut does (T150)."""
+    ssh = isolated["home"] / ".ssh" / "config.d" / "roster"
+    assert not ssh.exists()
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
+    assert "Host orion-3" in ssh.read_text()
+    assert "roster sync" not in capsys.readouterr().err
+
+
+def test_a_failed_sync_after_a_cut_keeps_mesh_false_and_says_on_stderr(net, isolated, capsys):
+    (isolated["home"] / ".ssh" / "config.d" / "roster").mkdir(parents=True)     # a folder there: writing it fails
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
+    assert net.cfg()["hosts"]["orion-3"]["mesh"] is False
+    err = capsys.readouterr().err
+    assert "warning: this Box's ssh config didn't follow roster.yml (" in err
+    assert err.rstrip().endswith("run `roster sync` on this box")
+
+
 def test_cut_keeps_the_peers_that_confirmed_it_in_the_meshs_bookkeeping(net):
     mesh.run(net.cfg(), apply=True)
     r = mesh.cut(net.cfg(), "esx-02")
@@ -1035,21 +1056,28 @@ def test_serve_plans_applies_cuts_and_reports_status(net, serve, monkeypatch):
     json.dumps(cut)
 
 
-def wait_for(s, job, until=lambda j: j["state"] != "running", seconds=20):
-    """Polls mesh.job, as the Mesh controls Plugin does, until UNTIL holds; returns the last answer."""
+WAIT = 100      # s: how long a test waits for a Mesh job at most; Windows' CI runner takes many times as long as here
+
+
+def wait_for(s, job, until=lambda j: j["state"] != "running", seconds=WAIT):
+    """Polls mesh.job, as the Mesh controls Plugin does, until UNTIL holds; returns that answer. SECONDS is only how
+    long a broken test takes to say so: a Mesh job on Windows' CI runner takes many times as long as here (T151)."""
     import time
     end = time.monotonic() + seconds
     while True:
         j = s.call("mesh.job", {"job": job})["result"]
-        if until(j) or time.monotonic() > end:
+        if until(j):
             return j
+        if time.monotonic() > end:
+            pytest.fail(f"mesh job {job} didn't get there in {seconds} s: {j}")
         time.sleep(0.05)
 
 
 def test_serve_runs_a_mesh_job_in_the_background_and_answers_meanwhile(net, serve):
     s = serve("-c", str(net.cfg_path))
     assert s.call("mesh.job")["result"] is None                         # no job yet
-    (net.host("orion-2") / "slow").write_text("1")                      # its step takes a second
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")                                                 # its step waits until we let it go
     started = s.call("mesh.plan", {"background": True})["result"]
     assert started["action"] == "plan" and started["total"] > 0 and isinstance(started["job"], int)
     # serve answers other requests while the job runs, and another Mesh run is refused
@@ -1057,6 +1085,7 @@ def test_serve_runs_a_mesh_job_in_the_background_and_answers_meanwhile(net, serv
     busy = s.call("mesh.apply", {"background": True})["error"]
     assert busy["code"] == 111 and busy["data"]["job"] == started["job"]
     assert s.call("mesh.apply")["error"]["code"] == 111
+    hold.unlink()
     j = wait_for(s, started["job"])
     assert j["state"] == "done" and j["done"] == j["total"] == started["total"]
     assert j["result"]["applied"] is False and not j["result"]["already"]
@@ -1071,18 +1100,23 @@ def test_serve_runs_a_mesh_job_in_the_background_and_answers_meanwhile(net, serv
 
 def test_a_background_job_reports_how_far_it_has_got(net, serve):
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("1")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     started = s.call("mesh.apply", {"background": True})["result"]
     j = wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2" or j["state"] != "running")
     assert j["state"] == "running" and 0 <= j["done"] < j["total"] and "result" not in j
+    hold.unlink()
+    wait_for(s, started["job"])
 
 
 def test_stopping_a_job_leaves_the_rest_pending_for_the_next_run(net, serve):
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("1")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     started = s.call("mesh.apply", {"background": True})["result"]
     wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2")
     assert s.call("mesh.stop", {"job": started["job"]})["result"] == {"job": started["job"], "stopping": True}
+    hold.unlink()
     j = wait_for(s, started["job"])
     assert j["state"] == "done" and j["stopped"] is True
     assert j["result"]["pending"] and all("stopped" in why for why in j["result"]["pending"].values())
@@ -1202,18 +1236,67 @@ def test_a_via_link_whose_jump_host_has_no_recorded_host_key_is_not_written(net,
     assert "ProxyJump" not in net.file("orion-3", "home/.ssh/roster-mesh/config")
 
 
+STOPPED_PART_WAY = r"""
+import sys
+from roster import mesh
+from roster.config import load_config
+at_stop = []
+real = mesh.on_host
+
+
+def on_host(h, script, timeout=mesh.STEP_TIMEOUT):
+    if h["name"] == "orion-2" and not at_stop:          # serve closes while its ssh runs: close() ends it
+        at_stop.append(set(sys.modules))
+        return None, mesh.CLOSED
+    return real(h, script, timeout)
+
+
+mesh.on_host = on_host
+mesh.run(load_config(sys.argv[1]), apply=True, stopped=lambda: bool(at_stop))
+print(" ".join(sorted(m for m in set(sys.modules) - at_stop[0] if "." not in m)))
+"""
+
+
+def test_a_run_stopped_part_way_loads_nothing_before_it_records(net):
+    # T161: serve gives a stopped job CLOSE_WAIT (0.8 s) to record what it didn't do, then exits. The first host-key
+    # lookup after the stop imported paramiko (0.13 s on an idle box, past 0.8 s on a busy one or on Windows), so
+    # serve could exit before mesh.json said which Hosts were left. A fresh process, so nothing is loaded already.
+    r = subprocess.run([sys.executable, "-c", STOPPED_PART_WAY, str(net.cfg_path)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == [], f"loaded after the stop: {r.stdout}"
+    assert "orion-2" in mesh.load_state()["pending"]
+
+
+def connected(net, name, seconds=WAIT):
+    """Waits until a connection to stand-in Host NAME has started (the stand-in ssh logs it before it waits on the
+    Host's hold file), so its ssh is running. SECONDS is only how long a broken test takes to say so."""
+    import time
+    end = time.monotonic() + seconds
+    while f"start {name}" not in net.connections():
+        if time.monotonic() > end:
+            pytest.fail(f"no connection to {name} in {seconds} s: {net.connections()}")
+        time.sleep(0.02)
+
+
+def serve_waits_for_the_app_at_most():
+    """How long the app gives serve to exit after closing its stdin (EXIT_GRACE in rpc.rs), in seconds."""
+    rpc = (Path(__file__).parents[1] / "crates/roster-core/src/rpc.rs").read_text()
+    return int(re.search(r"pub const EXIT_GRACE: Duration = Duration::from_secs\((\d+)\);", rpc)[1])
+
+
 def test_serve_closing_mid_job_stops_it_and_records_what_it_didnt_finish(net, serve):
     # review 8 #4: closing serve (the app closes its stdin, then kills it a second later) stopped a scan but left a
     # Mesh job's daemon thread to die mid-apply, so mesh.json never said which Hosts were left to do
-    import time
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("60")                     # its step would take a minute
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")                                                 # its step waits until we let it go: never
     started = s.call("mesh.apply", {"background": True})["result"]
     assert wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2")["state"] == "running"
-    time.sleep(0.3)                                                     # its ssh has started
-    t = time.monotonic()
+    connected(net, "orion-2")                                           # its ssh has started
     code, _, _ = s.close()
-    assert code == 0 and time.monotonic() - t < 5                     # not after the step (a minute)
+    assert code == 0
+    # T161: serve ended the step's ssh rather than wait for it (the step never ended; nobody let it go)
+    assert hold.exists() and "end orion-2" not in net.connections()
     pending = mesh.load_state()["pending"]
     assert "orion-2" in pending and "serve closed" in pending["orion-2"]
     assert set(pending) >= {"orion-3", "nas-1"}                         # not visited: the next run finishes them
@@ -1222,18 +1305,19 @@ def test_serve_closing_mid_job_stops_it_and_records_what_it_didnt_finish(net, se
 def test_serve_closing_mid_foreground_apply_stops_it_and_records_it_too(net, serve):
     # T104 (#182): the waiting form (no background) is a job as well, so quitting the app stops it and mesh.json
     # says what it didn't do, as for a background run
-    import time
+    from roster import serve as rpc
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("60")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     s.request("mesh.apply")                                             # waits for its result: never answered here
-    end = time.monotonic() + 15
     while not any(n["params"].get("at") == "orion-2" for n in s.notes if n["method"] == "job.progress"):
-        assert time.monotonic() < end, "never got to orion-2"
-        s.notes.append(json.loads(s.p.stdout.readline()))
-    time.sleep(0.3)                                                     # its ssh has started
-    t = time.monotonic()
+        s.notes.append(json.loads(s.p.stdout.readline()))               # pytest-timeout ends it if it never comes
+    connected(net, "orion-2")
     code, out, _ = s.close()
-    assert code == 0 and time.monotonic() - t < 3                     # inside the app's EXIT_GRACE
+    assert code == 0
+    assert hold.exists() and "end orion-2" not in net.connections()     # it didn't wait for the step
+    # inside the app's EXIT_GRACE, from serve's own waits (T161: not a stopwatch, which a busy runner overran)
+    assert rpc.DRAIN_WAIT + rpc.CLOSE_WAIT < serve_waits_for_the_app_at_most()
     pending = mesh.load_state()["pending"]
     assert "orion-2" in pending and "serve closed" in pending["orion-2"]
     assert set(pending) >= {"orion-3", "nas-1"}
@@ -1255,7 +1339,7 @@ def test_a_background_run_works_out_the_mesh_once_while_serve_waits(net, monkeyp
                                           "params": {"background": True}}))
         assert len(calls) == 1
     job = state.jobs.latest("mesh")
-    assert job.wait(20)
+    assert job.wait(WAIT), f"the job didn't end in {WAIT} s: {job.view()}"      # T161: was 20 s, past on Windows
     assert len(calls) == 1 and job.result["pending"] == {}
     assert r["result"]["total"] == job.total == job.done
 
@@ -1298,10 +1382,12 @@ def test_a_mesh_job_pushes_its_progress_and_its_end(net, serve):
 
 def test_jobs_stop_stops_a_mesh_job_as_mesh_stop_does(net, serve):
     s = serve("-c", str(net.cfg_path))
-    (net.host("orion-2") / "slow").write_text("1")
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")
     started = s.call("mesh.apply", {"background": True})["result"]
     wait_for(s, started["job"], until=lambda j: j["at"] == "orion-2")
     assert s.call("jobs.stop", {"kind": "mesh", "job": started["job"]})["result"]["stopping"] is True
+    hold.unlink()
     j = wait_for(s, started["job"])
     assert j["state"] == "done" and j["stopped"] is True and j["result"]["pending"]
 
@@ -1336,3 +1422,657 @@ def test_a_cut_whose_write_waits_too_long_for_roster_yml_says_so_and_still_cut(n
     change = job.result["change"]
     assert change["written"] is False and "roster.yml is busy: changes.publish is still running" in change["error"]
     assert "mesh: false" in change["fix"]
+
+
+# ---------------------------------------------------------------- one mesh.json per Inventory (T182, #346)
+
+def config_dir():
+    from roster.common import user_config_dir
+    return user_config_dir()
+
+
+def test_a_named_inventorys_mesh_state_is_its_own(net, capsys):
+    """Two named Inventories share no Mesh state: a Host name in both doesn't collide, and a run on one doesn't see
+    the other's Hosts. The unnamed Inventory keeps ~/.config/roster/mesh.json."""
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert main(["mesh"]) == 0
+    capsys.readouterr()
+    named = json.loads((config_dir() / "mesh-lab.json").read_text())
+    assert {"orion-2", "orion-3", "nas-1", "db-9"} <= set(named["members"])
+    assert not (config_dir() / "mesh.json").exists()
+
+
+def test_the_unnamed_inventorys_mesh_state_is_where_it_always_was(net):
+    mesh.run(net.cfg(), apply=True)
+    assert mesh.state_file() == config_dir() / "mesh.json"
+    assert not list(config_dir().glob("mesh-*"))
+
+
+def unnamed_ssh_config_from(isolated, path):
+    """roster's unnamed ssh config, as `roster -c PATH sync` heads it (only its header matters here)."""
+    f = isolated["home"] / ".ssh/config.d/roster"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f"# Generated by roster from {path}\n")
+
+
+def test_naming_the_inventory_the_mesh_state_is_from_moves_it_once(net, isolated, capsys):
+    mesh.run(net.cfg(), apply=True)
+    before = (config_dir() / "mesh.json").read_bytes()
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert "Mesh state" in capsys.readouterr().out
+    assert (config_dir() / "mesh-lab.json").read_bytes() == before
+    assert not (config_dir() / "mesh.json").exists()
+    main(["sync"])                                  # named: its own ssh config, as after any `inv add`
+    capsys.readouterr()
+    assert main(["mesh"]) == 0                      # its entries now carry the Inventory too (T199): tagged once
+    assert "tag key from orion-2 as this Box's" in capsys.readouterr().out
+    assert any(x.endswith("roster-mesh:orion-2@box/lab") for x in net.mesh_lines("nas-1"))
+    assert main(["mesh"]) == 0 and "already in the mesh" in capsys.readouterr().out
+
+
+def test_another_files_mesh_state_stays_with_the_unnamed_inventory(net, isolated, write_config, capsys):
+    mesh.run(net.cfg(), apply=True)
+    before = (config_dir() / "mesh.json").read_bytes()
+    other = isolated["home"] / "other"
+    other.mkdir()
+    (other / "roster.yml").write_text(CONFIG)
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "other", str(other / "roster.yml")]) == 0
+    out = capsys.readouterr().out
+    assert "Mesh state (from" not in out and "mesh.json stays with the unnamed Inventory" in out
+    assert (config_dir() / "mesh.json").read_bytes() == before
+    assert not (config_dir() / "mesh-other.json").exists()
+
+
+def test_without_an_unnamed_ssh_config_the_state_isnt_moved_and_that_is_said(net, capsys):
+    """#367's review, F2: with nothing to say which file the Box's Mesh state is from, it stays the unnamed one's."""
+    mesh.run(net.cfg(), apply=True)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert "mesh.json stays with the unnamed Inventory" in capsys.readouterr().out
+    assert (config_dir() / "mesh.json").exists() and not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_a_state_naming_a_host_the_file_doesnt_have_isnt_moved_though_the_header_matches(net, isolated, capsys):
+    """F2's case: mesh.json is another file's Mesh (`hbox` isn't a Host here); the unnamed ssh config being this
+    file's only says what synced last."""
+    mesh.run(net.cfg(), apply=True)
+    st = json.loads((config_dir() / "mesh.json").read_text())
+    (config_dir() / "mesh.json").write_text(json.dumps({**st, "members": [*st["members"], "hbox"]}))
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert "mesh.json stays with the unnamed Inventory" in capsys.readouterr().out
+    assert (config_dir() / "mesh.json").exists() and not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_a_state_applied_from_another_version_of_the_mesh_isnt_moved(net, isolated, capsys):
+    mesh.run(net.cfg(), apply=True)
+    net.cfg_path.write_text(CONFIG.replace("  - { from: orion-3, to: db-9, both: true }\n", ""))
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert "mesh.json stays with the unnamed Inventory" in capsys.readouterr().out
+    assert not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_a_named_inventorys_own_mesh_state_is_never_overwritten_by_the_move(net, isolated, capsys):
+    mesh.run(net.cfg(), apply=True)
+    (config_dir() / "mesh-lab.json").write_text('{"members": ["orion-2"]}\n')
+    unnamed_ssh_config_from(isolated, net.cfg_path)
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert (config_dir() / "mesh-lab.json").read_text() == '{"members": ["orion-2"]}\n'
+    assert (config_dir() / "mesh.json").exists()
+
+
+def test_removing_a_named_inventory_sets_its_mesh_state_aside(net, capsys):
+    main(["inv", "add", "lab", str(net.cfg_path)])
+    main(["mesh"])
+    capsys.readouterr()
+    assert main(["inv", "remove", "lab"]) == 0
+    out = capsys.readouterr().out
+    kept = list(config_dir().glob("mesh-lab.json.removed-*"))
+    assert len(kept) == 1 and str(kept[0]) in out
+    assert not (config_dir() / "mesh-lab.json").exists()
+
+
+def test_the_mesh_never_reaches_a_host_of_an_inventory_not_synced_here(net, isolated, capsys):
+    """#367's review: with the index in ~/.ssh/config, a name not in this Inventory's part of it reaches another
+    Inventory's Host or nothing roster wrote: the Mesh leaves it pending and never runs `ssh NAME`."""
+    other = isolated["home"] / "other"
+    other.mkdir()
+    (other / "roster.yml").write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      orion-2: 10.0.9.2\n")
+    main(["inv", "add", "lab", str(net.cfg_path)])
+    main(["inv", "add", "other", str(other / "roster.yml")])
+    main(["--inv", "other", "sync"])
+    capsys.readouterr()
+    assert main(["--inv", "lab", "mesh"]) == 1
+    assert net.connections() == []
+    assert "orion-2 is not in this Box's ssh config for this Inventory" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- roster installed or not (T193, #365)
+
+def reinstall():
+    """roster removed from the Box without `roster mesh cut --all` first, then installed again (or another Box, new):
+    no Mesh state here."""
+    mesh.state_file().unlink()
+
+
+# Another Box's Mesh on shared Hosts (#372's review, B1): Box L1's roster.yml meshes orion-2 -> nas-1 (CONFIG); a
+# second Box, new, has a roster.yml with nas-1 and orion-2 too and other Links, or none.
+L2 = "defaults:\n  user: admin\ngroups:\n  storage:\n    hosts:\n      nas-1: 10.0.0.30\n      db-9: 10.0.9.9\n"
+L3 = CONFIG.replace("    mesh: true\n", "").split("links:")[0]
+DROPPED = CONFIG.replace("  - { from: orion-2, to: storage }\n", "")       # this roster.yml without orion-2 -> nas-1
+
+
+@pytest.mark.parametrize("other", [L2, L3])
+def test_a_new_box_leaves_another_boxs_mesh_on_shared_hosts_alone(net, capsys, other):
+    mesh.run(net.cfg(), apply=True)                     # Box L1
+    l1 = net.snapshot()
+    nas, o2 = net.mesh_lines("nas-1"), net.host("orion-2") / "home/.ssh/roster-mesh"
+    reinstall()                                         # Box L2/L3: no Mesh state of its own
+    net.cfg_path.write_text(other)
+    main(["mesh", "--dry-run"])
+    main(["check"])
+    main(["mesh"])
+    out = capsys.readouterr().out
+    assert net.mesh_lines("nas-1") == nas               # L1's orion-2 -> nas-1 still works
+    assert "remove key from orion-2" not in out and "earlier roster" not in out
+    assert net.snapshot() == l1 and (o2 / "id_ed25519").exists()
+
+
+def test_find_leftovers_reports_what_this_roster_yml_doesnt_ask_for_and_changes_nothing(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    net.cfg_path.write_text(DROPPED)
+    (net.root / "connections").unlink()
+    before = net.snapshot()
+    assert main(["mesh", "--find-leftovers"]) == 0
+    out = capsys.readouterr().out
+    assert net.snapshot() == before
+    assert "nas-1: key from orion-2 (from=10.0.0.2)" in out
+    assert "this Box's own (their tag names it)" in out             # T199: this Box's tag, so this Box's
+    logged = [x.split()[1] for x in net.connections() if x.startswith("start")]
+    assert len(logged) == len(set(logged))              # once per Host, one at a time
+
+
+def test_find_leftovers_reports_a_former_sources_files(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    net.cfg_path.write_text(L3)
+    assert main(["mesh", "--find-leftovers"]) == 0
+    out = capsys.readouterr().out
+    o2 = next(x for x in out.splitlines() if x.startswith("orion-2: "))
+    assert "key from orion-3 (from=10.0.0.3)" in o2 and "Mesh key and files in" in o2 and "the Include in ~/.ssh/config" in o2
+
+
+def test_remove_leftovers_asks_says_whose_they_may_be_and_removes_only_them(net, capsys, monkeypatch):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    net.cfg_path.write_text(DROPPED)
+    untag(net)                                          # an older roster's: they may be another Box's
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
+    assert main(["mesh", "--remove-leftovers"]) == 1
+    assert "another Box" in asked[0]
+    assert any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))
+    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert net.mesh_lines("nas-1") == []
+    assert "roster-managed:box" in net.ak("nas-1") and "own@laptop" in net.ak("nas-1")
+    assert any("roster-mesh:orion-3" in x for x in net.mesh_lines("orion-2"))     # still asked for: kept
+    capsys.readouterr()
+    assert main(["mesh", "--find-leftovers"]) == 0
+    assert "no Mesh entries" in capsys.readouterr().out
+
+
+def test_remove_leftovers_takes_a_former_sources_files_too(net):
+    mesh.run(net.cfg(), apply=True)
+    net.cfg_path.write_text(L3)
+    reinstall()
+    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert not any(net.mesh_lines(h) for h in HOSTS)
+    assert not (net.host("orion-2") / "home/.ssh/roster-mesh").exists()
+    assert mesh.MARK not in net.file("orion-2", "home/.ssh/config")
+
+
+def test_remove_leftovers_is_refused_with_another_inventorys_mesh_on_this_box(net, capsys):
+    """With an older roster's lines only (no Box or Inventory in their tag): this Box's own are told apart."""
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    reinstall()
+    (mesh.state_file().parent / "mesh-work.json").write_text("{}\n")
+    net.cfg_path.write_text(DROPPED)
+    with pytest.raises(SystemExit, match="another Inventory"):
+        main(["mesh", "--remove-leftovers", "-y"])
+    assert net.mesh_lines("nas-1")
+
+
+def test_status_says_when_this_box_has_no_mesh_record(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    assert main(["mesh", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "no Mesh record on this Box" in out and "roster mesh --find-leftovers" in out
+    mesh.run(net.cfg(), apply=True)
+    assert main(["mesh", "status"]) == 0
+    assert "no Mesh record" not in capsys.readouterr().out
+
+
+def test_a_users_roster_md_that_mentions_the_mesh_is_never_removed(net):
+    """#372's review, F1: only the Mesh's exact header makes a ROSTER.md roster's."""
+    mine = "# My notes about roster-mesh and other things\n"
+    (net.host("nas-1") / "home/ROSTER.md").write_text(mine)
+    mesh.run(net.cfg(), apply=True)
+    assert net.file("nas-1", "home/ROSTER.md") == mine
+
+
+def test_cut_all_takes_every_mesh_entry_off_every_host_and_keeps_roster_yml(net, capsys):
+    before = net.snapshot()
+    yml = net.cfg_path.read_text()
+    mesh.run(net.cfg(), apply=True)
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert net.snapshot() == before
+    assert net.cfg_path.read_text() == yml                           # uninstalling: roster.yml is the user's
+    assert "cut the Mesh: confirmed on" in capsys.readouterr().out
+
+
+def test_cut_all_with_a_host_down_says_so_and_fails(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    net.down("nas-1")
+    assert main(["mesh", "cut", "--all", "--yes"]) == 1
+    assert "not confirmed  nas-1" in capsys.readouterr().out
+    net.down("nas-1", False)
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert net.mesh_lines("nas-1") == []
+
+
+def test_cut_all_takes_no_host(net, capsys):
+    with pytest.raises(SystemExit):
+        main(["mesh", "cut", "--all", "orion-2", "--yes"])
+
+
+HOSTS_OWN_YML = "groups:\n  home:\n    user: pi\n    hosts:\n      nas-1: 10.0.0.30\n      printer-1: 10.0.0.77\n"
+
+
+def roster_on(net, name, *argv):
+    """The Host NAME's own roster (it's a roster Box too), run there as that Host's user would: HOME is its home."""
+    home = net.host(name) / "home"
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "APPDATA": str(home / "AppData/Roaming"),
+           "LOCALAPPDATA": str(home / "AppData/Local")}
+    r = subprocess.run([sys.executable, "-m", "roster", *argv], env=env, capture_output=True, text=True,
+                       cwd=str(home))
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
+
+
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("mesh_first", [False, True])
+def test_a_meshed_host_that_runs_roster_itself_keeps_both_writers_lines_once(net, named, mesh_first):
+    """T193 (2): the Mesh and the Host's own roster each write ~/.ssh/config; neither overwrites or repeats the
+    other's lines, in either order, and both stay idempotent."""
+    own = net.host("orion-2") / "home/net"
+    own.mkdir()
+    (own / "roster.yml").write_text(HOSTS_OWN_YML)
+    argv = ["--inv", "net"] if named else ["-c", str(own / "roster.yml")]
+
+    if named:
+        roster_on(net, "orion-2", "inv", "add", "net", str(own / "roster.yml"))
+
+    def host_roster():
+        roster_on(net, "orion-2", *argv, "sync")
+
+    if not mesh_first:
+        host_roster()
+    mesh.run(net.cfg(), apply=True)
+    host_roster()
+    assert mesh.run(net.cfg())["already"]
+    host_roster()
+    mesh.run(net.cfg(), apply=True)
+    config = net.file("orion-2", "home/.ssh/config")
+    lines = config.splitlines()
+    mesh_inc = f"Include {net.seen(net.host('orion-2') / 'home/.ssh/roster-mesh')}/config"
+    own_inc = [x for x in lines if x.startswith("Include ") and ("roster.inventories" in x or "config.d/roster" in x)]
+    assert lines.count(mesh.MARK) == 1 and lines.count(mesh_inc) == 1
+    assert lines[lines.index(mesh.MARK) + 1] == mesh_inc
+    assert len(own_inc) == 1, config
+    assert config.endswith("Host *\n    ServerAliveInterval 60\n")
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_a_hosts_own_roster_never_overwrites_the_meshs_roster_md(net):
+    """A Host whose roster.yml sits in its home folder: its ROSTER.md and the Mesh's are the same file; each writer
+    leaves the other's alone and says so."""
+    mesh.run(net.cfg(), apply=True)
+    ours = net.file("orion-2", "home/ROSTER.md")
+    (net.host("orion-2") / "home/roster.yml").write_text(HOSTS_OWN_YML)
+    out = roster_on(net, "orion-2", "-c", str(net.host("orion-2") / "home/roster.yml"), "sync")
+    assert net.file("orion-2", "home/ROSTER.md") == ours
+    assert "ROSTER.md is the Mesh's" in out
+
+
+def test_a_meshed_hosts_own_roster_md_is_left_alone_and_said_to_be_its_own(net):
+    (net.host("orion-2") / "home/roster.yml").write_text(HOSTS_OWN_YML)
+    roster_on(net, "orion-2", "-c", str(net.host("orion-2") / "home/roster.yml"), "sync")
+    its_own = net.file("orion-2", "home/ROSTER.md")
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {} and net.file("orion-2", "home/ROSTER.md") == its_own
+    assert any(w.startswith("orion-2: ") and "ROSTER.md is that Host's own roster's" in w for w in r["warnings"])
+
+
+def test_leftovers_of_a_roster_removed_from_a_host_dont_break_the_mesh(net):
+    """T193 (3): roster ran on orion-2 once and was removed: ~/.ssh/config still includes its deleted config.d/roster,
+    and its ROSTER.md and known_hosts are still there. The Mesh's writes and its test work, and none of those is
+    touched (they're the user's now)."""
+    home = net.host("orion-2") / "home"
+    dangling = f'Include "{net.seen(home)}/.ssh/config.d/roster"'
+    (home / ".ssh/config").write_text(f"{dangling}\n\nHost *\n    ServerAliveInterval 60\n")
+    (home / "ROSTER.md").write_text("<!-- generated by roster from roster.yml - regenerate with `roster sync` -->\n")
+    (home / ".ssh/roster_known_hosts").write_text("10.0.0.30 ssh-ed25519 AAAAstale\n")
+    (home / ".ssh/known_hosts").write_text("10.0.0.30 ssh-ed25519 AAAAstale\n")
+    keep = {p: (home / p).read_text() for p in ("ROSTER.md", ".ssh/roster_known_hosts", ".ssh/known_hosts")}
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {}
+    assert all(x["status"] in ("ok", "skipped") for x in r["links"] if x["from"] == "orion-2")
+    assert key_line_of(net, "orion-2", "10.0.0.2") in net.mesh_lines("nas-1")
+    assert {p: (home / p).read_text() for p in keep} == keep
+    config = net.file("orion-2", "home/.ssh/config")
+    assert config.count(dangling) == 1 and mesh.MARK in config
+    assert "UserKnownHostsFile" in net.file("orion-2", "home/.ssh/roster-mesh/config")   # its own, never the stale one
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_a_dangling_include_the_mesh_relies_on_is_reported_and_written_again(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    (net.host("orion-2") / "home/.ssh/roster-mesh/config").unlink()
+    assert main(["mesh", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "orion-2: ~/.ssh/config includes" in out and "which isn't there" in out
+    r = mesh.run(net.cfg(), apply=True)
+    assert any("which wasn't there" in w for w in r["warnings"])
+    assert (net.host("orion-2") / "home/.ssh/roster-mesh/config").exists()
+    assert mesh.run(net.cfg())["already"]
+
+
+
+def test_a_reinstalled_box_with_the_same_roster_yml_takes_the_mesh_as_it_is(net):
+    mesh.run(net.cfg(), apply=True)
+    reinstall()
+    before = net.snapshot()
+    assert mesh.run(net.cfg())["already"]                # the same keys and lines: nothing to change
+    mesh.run(net.cfg(), apply=True)
+    assert net.snapshot() == before
+
+
+# ---------------------------------------------------------------- whose Mesh it is (T199, #379)
+# Each Box (and named Inventory) tags what it writes with itself: roster-mesh:SOURCE@BOX (BOX/INVENTORY for a named
+# Inventory) in authorized_keys, and the same owner in the Mesh files' headers, so one Box's apply, cut or
+# --remove-leftovers never takes another's.
+
+# Box L3 (#372's review, second pass): orion-2 only as a peer (L1 meshes it as a source), nas-1 as a source
+L3_BOX = """\
+box_name: l3
+defaults:
+  user: admin
+groups:
+  home:
+    hosts:
+      orion-2: 10.0.0.2
+      nas-1: 10.0.0.30
+links:
+  - { from: nas-1, to: orion-2 }
+"""
+
+
+class Box:
+    """Another Box on the same Hosts: its own roster.yml and its own Mesh state (~/.config/roster/mesh.json)."""
+
+    def __init__(self, net, yml):
+        self.net, self.yml, self.state = net, yml, None
+
+    def __enter__(self):
+        f = mesh.state_file()
+        self.mine, self.cfg = (f.read_bytes() if f.exists() else None), self.net.cfg_path.read_text()
+        f.unlink(missing_ok=True)
+        if self.state is not None:
+            f.write_bytes(self.state)
+        self.net.cfg_path.write_text(self.yml)
+        return self
+
+    def __exit__(self, *exc):
+        f = mesh.state_file()
+        self.state = f.read_bytes() if f.exists() else None
+        f.unlink(missing_ok=True)
+        if self.mine is not None:
+            f.write_bytes(self.mine)
+        self.net.cfg_path.write_text(self.cfg)
+
+
+def mesh_files(net, host):
+    """Everything the Mesh keeps on HOST as a source, and the lines it adds to ~/.ssh/config and CLAUDE.md."""
+    d = net.host(host) / "home/.ssh/roster-mesh"
+    files = {p.name: p.read_text() for p in sorted(d.iterdir())} if d.exists() else {}
+    return files, net.file(host, "home/ROSTER.md"), net.file(host, "home/.ssh/config")
+
+
+def test_another_boxs_apply_leaves_this_boxs_mesh_on_a_shared_host_alone(net):
+    """#379: L1 meshes orion-2 -> nas-1; L3 lists orion-2 only as a peer (nas-1 -> orion-2). L3's apply used to remove
+    orion-2's Mesh key, config, known_hosts, Include and ROSTER.md, which L1 wrote."""
+    mesh.run(net.cfg(), apply=True)                                  # Box L1 (box)
+    l1_files, l1_nas = mesh_files(net, "orion-2"), net.mesh_lines("nas-1")
+    assert l1_files[0] and l1_files[1] and all(x.endswith("roster-mesh:orion-2@box") for x in l1_nas)
+    l3 = Box(net, L3_BOX)
+    with l3:
+        r = mesh.run(net.cfg(), apply=True)
+        assert r["pending"] == {}
+        assert not any(c.startswith("remove") for h in r["hosts"] for c in h["changes"])
+        assert mesh.run(net.cfg())["already"]
+    assert mesh_files(net, "orion-2") == l1_files                    # L1's Mesh on orion-2 intact
+    assert [x for x in net.mesh_lines("nas-1") if "@box" in x] == l1_nas
+    assert any(x.endswith("roster-mesh:nas-1@l3") for x in net.mesh_lines("orion-2"))
+    l3_nas = mesh_files(net, "nas-1")
+    assert "(owner l3)" in l3_nas[0]["config"]
+    r = mesh.run(net.cfg(), apply=True)                              # L1 again: L3's Mesh stays
+    assert not any(c.startswith("remove") for h in r["hosts"] for c in h["changes"]), r["hosts"]
+    assert mesh_files(net, "nas-1") == l3_nas
+    assert any(x.endswith("roster-mesh:nas-1@l3") for x in net.mesh_lines("orion-2"))
+    assert mesh.run(net.cfg())["already"]
+    with l3:
+        assert mesh.run(net.cfg())["already"]
+
+
+def test_two_inventories_on_one_box_never_remove_each_others_mesh(net, isolated, capsys):
+    """#379: two named Inventories on this Box that mesh the same machines: each one's apply, and dropping its Link,
+    leaves the other's lines and files alone."""
+    work = isolated["home"] / "work-inv"
+    work.mkdir()
+    (work / "roster.yml").write_text(L3_BOX.replace("box_name: l3\n", "box_name: box\n"))
+    assert main(["inv", "add", "lab", str(net.cfg_path)]) == 0
+    assert main(["inv", "add", "work", str(work / "roster.yml")]) == 0
+    assert main(["--inv", "lab", "mesh"]) == 0
+    lab_o2, lab_nas = mesh_files(net, "orion-2"), net.mesh_lines("nas-1")
+    assert all(x.endswith("roster-mesh:orion-2@box/lab") for x in lab_nas)
+    assert main(["--inv", "work", "mesh"]) == 0
+    assert any(x.endswith("roster-mesh:nas-1@box/work") for x in net.mesh_lines("orion-2"))
+    assert mesh_files(net, "orion-2") == lab_o2 and [x for x in net.mesh_lines("nas-1") if "/lab" in x] == lab_nas
+    work_nas = mesh_files(net, "nas-1")
+    capsys.readouterr()
+    assert main(["--inv", "lab", "mesh"]) == 0
+    assert "already in the mesh" in capsys.readouterr().out
+    (work / "roster.yml").write_text(L3_BOX.replace("box_name: l3\n", "box_name: box\n").split("links:")[0])
+    assert main(["--inv", "work", "mesh"]) == 0                      # work's Link gone: only work's entries go
+    assert not any("@box/work" in x for x in net.mesh_lines("orion-2"))
+    assert mesh_files(net, "nas-1") != work_nas and not (net.host("nas-1") / "home/.ssh/roster-mesh").exists()
+    assert mesh_files(net, "orion-2") == lab_o2 and net.mesh_lines("nas-1") == lab_nas
+
+
+def untag(net):
+    """The Hosts as a roster before #379 left them: no Box in the tag, the key's comment or the files' headers."""
+    for p in net.root.rglob("*"):
+        if p.is_file() and p.name in ("authorized_keys", "id_ed25519.pub", "config", "ROSTER.md"):
+            t = p.read_text()
+            t = re.sub(r"(roster-mesh:[A-Za-z0-9._-]+)@[A-Za-z0-9_/.-]+$", r"\1", t, flags=re.M)
+            t = re.sub(r"^(# Written by roster mesh for \S+) \(owner [^)]*\)", r"\1", t, flags=re.M)
+            t = re.sub(r"^(<!-- roster-mesh: written by roster for \S+) \(owner [^)]*\)", r"\1", t, flags=re.M)
+            p.write_text(t)
+    f = mesh.state_file()
+    if f.exists():                                      # and its Mesh record, which said no owner
+        st = json.loads(f.read_text())
+        st.pop("owner", None)
+        f.write_text(json.dumps(st))
+
+
+def test_an_older_rosters_entries_this_box_wrote_are_tagged_on_its_next_apply(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    tagged = net.snapshot()
+    untag(net)
+    assert not any("@box" in x for h in HOSTS for x in net.mesh_lines(h))
+    r = mesh.run(net.cfg())                                          # the plan says so
+    assert "tag key from orion-2 as this Box's" in next(h for h in r["hosts"] if h["host"] == "nas-1")["changes"]
+    mesh.run(net.cfg(), apply=True)
+    assert net.snapshot() == {k: v for k, v in tagged.items()
+                              if not k.endswith("id_ed25519.pub")} | {k: v for k, v in net.snapshot().items()
+                                                                      if k.endswith("id_ed25519.pub")}
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_an_older_rosters_entries_this_box_has_no_record_of_are_kept_and_found_as_leftovers(net, capsys, monkeypatch):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    reinstall()                                         # no record: nothing proves they're this Box's
+    old = {h: net.mesh_lines(h) for h in HOSTS}
+    o2 = mesh_files(net, "orion-2")
+    net.cfg_path.write_text(DROPPED)                    # orion-2 -> nas-1 no longer asked for
+    mesh.run(net.cfg(), apply=True)
+    assert all(x in net.mesh_lines(h) for h in HOSTS for x in old[h])          # unknown owner: kept
+    assert mesh_files(net, "orion-2")[0] == o2[0]
+    capsys.readouterr()
+    assert main(["mesh", "--find-leftovers"]) == 0
+    out = capsys.readouterr().out
+    assert "nas-1: key from orion-2 (from=10.0.0.2), with no Box in its tag" in out
+    assert "may be another Box's or another Inventory's Mesh" in out
+    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert not any(x.endswith("roster-mesh:orion-2") for x in net.mesh_lines("nas-1"))
+
+
+def test_a_new_box_with_the_same_roster_yml_adds_its_own_lines_and_takes_none(net):
+    mesh.run(net.cfg(), apply=True)
+    box = net.snapshot()
+    other = Box(net, CONFIG.replace("box_name: box\n", "box_name: l2\n"))
+    with other:
+        r = mesh.run(net.cfg(), apply=True)
+        assert r["pending"] == {}                       # the sources' files are box's, with the same peers: fine
+        assert mesh.run(net.cfg())["already"]
+    assert any(x.endswith("roster-mesh:orion-2@l2") for x in net.mesh_lines("nas-1"))
+    assert all(x in net.ak(h) for h in HOSTS for x in net.mesh_lines(h) if "@box" in x)
+    assert mesh_files(net, "orion-2")[0]["config"] == box["orion-2/home/.ssh/roster-mesh/config"].decode()
+    with other:                                         # l2 drops its Link: only its own line goes
+        net.cfg_path.write_text(DROPPED.replace("box_name: box\n", "box_name: l2\n"))
+        mesh.run(net.cfg(), apply=True)
+    assert [x for x in net.mesh_lines("nas-1") if "@" in x] == [key_line_of(net, "orion-2", "10.0.0.2")]
+
+
+def test_a_source_whose_files_are_another_boxs_with_other_peers_is_pending_and_left_alone(net):
+    mesh.run(net.cfg(), apply=True)
+    o2 = mesh_files(net, "orion-2")
+    with Box(net, L3_BOX.replace("from: nas-1, to: orion-2", "from: orion-2, to: nas-1")):
+        r = mesh.run(net.cfg(), apply=True)
+        assert "orion-2" in r["pending"] and "another Box's or Inventory's (box)" in r["pending"]["orion-2"]
+        r = mesh.run(net.cfg(), apply=True, rotate=["orion-2"])         # nor is box's key replaced
+        assert "is another Box's or Inventory's (box): roster doesn't replace it" in r["pending"]["orion-2"]
+    assert mesh_files(net, "orion-2") == o2
+
+
+def test_a_cut_says_when_an_older_rosters_line_it_cant_prove_is_still_there(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    reinstall()                                         # no record: the older lines may be another Box's
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "orion-2: a roster-mesh:orion-3 line with no Box in its tag is still there" in out
+    assert any(x.endswith("roster-mesh:orion-3") for x in net.mesh_lines("orion-2"))
+
+
+def test_cut_takes_this_boxs_lines_and_proven_older_ones_and_leaves_another_boxs(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)                                          # this Box's, from before #379: its record proves it
+    with Box(net, L3_BOX):
+        mesh.run(net.cfg(), apply=True)
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 0
+    assert not any("roster-mesh:orion-2" in x for h in HOSTS for x in net.mesh_lines(h))
+    assert any(x.endswith("roster-mesh:nas-1@l3") for x in net.mesh_lines("orion-2"))   # l3's: kept
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert [x for h in HOSTS for x in net.mesh_lines(h)] == [x for x in net.mesh_lines("orion-2") if "@l3" in x]
+    assert (net.host("nas-1") / "home/.ssh/roster-mesh/config").exists()           # l3's files: kept
+
+
+def test_a_renamed_box_takes_its_entries_under_the_earlier_name_with_it(net):
+    """box_name: changed (or the Inventory named): its record says which owner its entries carry, so they're its own."""
+    mesh.run(net.cfg(), apply=True)
+    net.cfg_path.write_text(DROPPED.replace("box_name: box\n", "box_name: box2\n"))
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {}
+    assert not any("@box" in x and "@box2" not in x for h in HOSTS for x in net.mesh_lines(h))
+    assert not any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))      # its dropped Link's line too
+    assert "(owner box2)" in net.file("orion-2", "home/.ssh/roster-mesh/config")
+    assert mesh.run(net.cfg())["already"]
+
+
+# ---------------------------------------------------------------- Windows Hosts (T196, #376, decision Q176)
+
+WIN_MESH = CONFIG.replace("      new-1: { ip: 10.0.0.40, reviewed: false }\n",
+                          "      new-1: { ip: 10.0.0.40, reviewed: false }\n"
+                          "      win-1: { ip: 10.0.0.50, os: windows }\n") + \
+    "  - { from: win-1, to: storage }\n  - { from: orion-3, to: nas-1, via: win-1 }\n"
+
+
+@pytest.fixture
+def win_net(net):
+    """net, with win-1 (os: windows) in the meshed group, in a Link of its own and as another Link's hop: a stand-in
+    Windows Host that would refuse any sh script the Mesh sent it."""
+    (net.host("win-1") / "home").mkdir(parents=True)
+    (net.host("win-1") / "windows").write_text("cmd")
+    net.cfg_path.write_text(WIN_MESH)
+    return net
+
+
+def test_a_windows_host_is_left_out_of_the_mesh_with_its_reason(win_net):
+    g = mesh.graph(win_net.cfg())
+    assert g["excluded"]["win-1"].startswith("[160] os: windows")
+    assert not any("win-1" in (x["from"], x["to"], x.get("via")) for x in g["links"])
+    assert ("orion-2", "orion-3") in {(x["from"], x["to"]) for x in g["links"]}      # the rest of the group: as before
+    assert "win-1" not in g["visit"]
+
+
+def test_mesh_dry_run_and_apply_never_visit_a_windows_host_and_say_why(win_net, capsys):
+    assert main(["mesh", "--dry-run"]) == 0
+    assert "win-1 ([160] os: windows" in capsys.readouterr().out
+    assert main(["mesh"]) == 0                       # a Link or meshed group naming it isn't an error
+    assert "win-1 ([160] os: windows" in capsys.readouterr().out
+    assert main(["mesh", "cut", "--all", "--yes"]) == 0
+    assert not any(c.endswith(" win-1") for c in win_net.connections())
+
+
+def test_mesh_status_and_check_say_why_a_windows_host_is_left_out(win_net, capsys):
+    main(["mesh", "status"])
+    assert "left out: " in (out := capsys.readouterr().out) and "win-1 ([160] os: windows" in out
+    main(["check"])
+    assert "mesh         left out: win-1 ([160] os: windows" in capsys.readouterr().out
+
+
+def test_a_windows_host_once_in_the_mesh_is_never_visited_to_take_it_back(win_net):
+    """A Host given os: windows after an apply (its Mesh never worked there: sh): the next run leaves it alone."""
+    win_net.cfg_path.write_text(CONFIG)
+    mesh.run(win_net.cfg(), apply=True)
+    st = mesh.load_state()
+    st["members"] = sorted({*st["members"], "win-1"})
+    mesh.save_state(st)
+    win_net.cfg_path.write_text(WIN_MESH)
+    r = mesh.run(win_net.cfg(), apply=True)
+    assert "win-1" not in r["pending"]
+    assert not any(c.endswith(" win-1") for c in win_net.connections())
+
+
+@pytest.mark.parametrize("argv", [["mesh", "cut", "win-1", "--yes"], ["mesh", "--find-leftovers"],
+                                  ["mesh", "--remove-leftovers", "--yes"]])
+def test_cut_and_leftovers_never_log_in_to_a_windows_host(win_net, argv):
+    mesh.run(win_net.cfg(), apply=True)
+    main(argv)
+    assert not any(c.endswith(" win-1") for c in win_net.connections())

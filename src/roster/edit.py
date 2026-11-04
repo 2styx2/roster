@@ -109,7 +109,7 @@ def find_host(text, name):
         _, hosts = child(group, "hosts")
         if isinstance(hosts, yaml.MappingNode):
             k, v = child(hosts, name)
-            if k is not None:
+            if k is not None and v is not None:
                 if v.start_mark.index < k.end_mark.index:      # an alias: the value sits at its anchor
                     raise refuse(f"{name} is a YAML alias (*), so editing it would edit another entry too")
                 return k, v
@@ -188,7 +188,7 @@ def add_key(t, mapping, key, value):
 def remove_key(t, mapping, key):
     """Drop KEY's line from a block mapping, when it has one line to itself. False if it can't."""
     k, v = child(mapping, key)
-    if k is None or mapping.flow_style or len(mapping.value) < 2 or k.start_mark.line != v.end_mark.line:
+    if k is None or v is None or mapping.flow_style or len(mapping.value) < 2 or k.start_mark.line != v.end_mark.line:
         return False
     start, end = t.line_start(k.start_mark.index), t.line_end(v.end_mark.index)
     if t.text[start:k.start_mark.index].strip() or t.text[v.end_mark.index:end].strip():
@@ -531,7 +531,7 @@ def host_entry(groups, name):
         _, hosts = child(g, "hosts") if isinstance(g, yaml.MappingNode) else (None, None)
         if isinstance(hosts, yaml.MappingNode):
             k, v = child(hosts, name)
-            if k is not None:
+            if k is not None and v is not None:
                 if hosts.flow_style:
                     raise refuse(f"group {gk.value}'s hosts: is on one line (line {hosts.start_mark.line + 1})")
                 if v.start_mark.index < k.end_mark.index:

@@ -10,7 +10,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{API_VERSION, Limits, PluginHost, Serve, Source, read_manifest};
+use roster_core::plugin::{API_VERSION, Limits, PluginHost, Serve, Source};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -127,7 +127,7 @@ fn every_first_party_plugin_installs_as_a_package_from_its_folder_and_loads() {
     }
     for name in &names {
         let (dir, config) = packages.loadable(&specs, name).unwrap();
-        let manifest = read_manifest(&dir).unwrap_or_else(|e| panic!("plugins/{name}: {e}"));
+        let manifest = common::read_manifest(&dir).unwrap_or_else(|e| panic!("plugins/{name}: {e}"));
         assert_eq!(
             &manifest.name, name,
             "plugins/{name}: the manifest's name is its folder's"
@@ -155,7 +155,7 @@ fn every_first_party_and_example_plugin_is_written_for_the_current_api() {
     }
     assert!(dirs.len() >= 5, "{dirs:?}");
     for dir in dirs {
-        let manifest = read_manifest(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        let manifest = common::read_manifest(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         assert_eq!(manifest.api, API_VERSION, "{}: api", dir.display());
     }
 }

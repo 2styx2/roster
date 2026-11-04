@@ -13,7 +13,7 @@ Everything the `roster` command reads and does: the `roster.yml` format, resourc
 
 1. Creates an SSH key for that box, tagged with the box's name.
 2. Records every host's fingerprint.
-3. Installs the key on each host that accepts keys, using the password from your password manager once.
+3. Installs the key on each host that accepts keys, using the password from your password manager once. On an `os: windows` Host, in the file its sshd reads ([Windows Hosts](adding-hosts.md#windows-hosts)).
 4. Writes SSH config entries, so `ssh orion-dev-01` just works.
 5. Writes `ROSTER.md`, so Claude knows which hosts exist and how to reach them.
 6. Applies the Mesh when `roster.yml` has one (not with `--only`; see [The Mesh](mesh.md)).
@@ -62,6 +62,7 @@ groups:
 | `ssh` | Optional `{ port, user, auth }` that override the defaults for SSH only |
 | `enroll` | `true` installs a key (default); `false` for gear that only takes passwords |
 | `reviewed` | `false` on scanned hosts; `setup` skips them until you flip it |
+| `os` | `windows` for a Windows Host with OpenSSH Server: `setup`, `revoke` and `check` run PowerShell there (the script on stdin) and use the key file sshd reads for that account, and its ssh config shares no connection (`ControlMaster no`). `posix`, or unset, for everything else. Any case; cascades like the rest. `type:` stays a free label: `type: windows` with no `os:` gets warning 154. See [Windows Hosts](adding-hosts.md#windows-hosts) |
 | `mesh` | `true` lets a group's Hosts reach each other (the [Mesh](mesh.md)); `false` keeps a group or Host out of it and out of every Link. Cascades like the rest |
 | `mesh_dir` | Where a Mesh source keeps its key, known hosts, ssh config (and, on ESXi, `ROSTER.md`), in place of `~/.ssh/roster-mesh` or ESXi's datastore pick: an absolute path, on ESXi on a datastore. Cascades like the rest. See [`mesh_dir:`](mesh.md#esxi) |
 | `seen_as` | The Host's other addresses (one or a list, addresses or networks) that a Mesh peer's `from=` takes beside its `ip`: for a jump Host on several networks or a Host behind NAT. On the Host only. See [`seen_as:`](mesh.md#other-addresses) |
@@ -225,6 +226,7 @@ With nmap installed, discover collects open ports, service versions, web page ti
 - It saves `roster.yml.bak`.
 - It refuses to write a file that wouldn't load.
 - It never overwrites hosts that are already in the file.
+- It then syncs this Box, as `roster sync` does (its ssh config and Claude files). If that fails, the hosts stay written and a `warning:` on stderr says why and to run `roster sync`.
 
 Let your security team know before scanning big ranges.
 
@@ -235,21 +237,22 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | Command | What it does |
 |---|---|
 | `init` | Write the commented example `roster.yml` |
-| `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml` |
+| `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`) |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
-| `check [HOST]` | Reachability of SSH, web UIs and services, and the Mesh's drift (without `--only`). With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)) |
+| `check [HOST]` | Reachability of SSH (a login running `exit 0`, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without `--only`); on an `os: windows` Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)) |
 | `hosts [--find TEXT] [--all] [--long]` | The hosts and resources you can use: name, IP, user, logins (`ssh (key), web (admin), api`, `wifi`) and title. Unreviewed scanned hosts are hidden unless you pass `--all`, `--find` or `--only`. `--long` shows the full table (type, product, web URL, scan description) |
 | `info NAME` | Everything about one host or resource; fuzzy names work (`roster info core switch`) |
 | `resources [--find TEXT]` | List or search Wi-Fi networks, accounts and secrets that aren't hosts |
 | `reveal NAME [--wifi]` | Print a resource's secret for a person to use (`--wifi`: a QR-ready `WIFI:` string) |
-| `run [--sudo] HOST -- CMD` | Run a command; password-only hosts get their password from the provider. `--sudo` runs it as root, handing sudo the login's password (never shown) |
+| `run [--sudo] HOST -- CMD` | Run a command; password-only hosts get their password from the provider. `--sudo` runs it as root, handing sudo the login's password (never shown). On an `os: windows` Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; `--sudo` there is refused (159). See [Windows Hosts](adding-hosts.md#windows-hosts) |
 | `web HOST [SERVICE] METHOD PATH` | HTTP request to a host's web service, logged in with its stored credentials (`-d BODY`, `-H 'Name: value'`, `-k`) |
 | `bw BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts), e.g. `roster bw list items --search proxmox` |
 | `providers` | Available providers, whether their tools are installed, unknown ones in use |
 | `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
-| `revoke` | Remove this box's key from every host |
-| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change; `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
+| `revoke [--all]` | Remove this box's key from every host; it names this box's files to delete only once every Host of this `roster.yml` has lost the key (never with `--only`, and never another `roster.yml`'s `config.d/roster`), and exits 1 when a Host was skipped or none was reached. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
+| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `mesh cut --all [-y]` takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves `roster.yml` as it is (before removing roster: [Uninstalling roster](mesh.md#uninstalling-roster)); `mesh --find-leftovers` lists the Mesh entries on every Host that this `roster.yml` doesn't ask for, changing nothing, and `mesh --remove-leftovers [-y]` removes them after a question (an older roster's may be another Box's: [Whose Mesh it is](mesh.md#whose-mesh-it-is)); `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
+| `inv list\|add NAME PATH\|use NAME\|remove NAME\|which` | Named Inventories, one of them active: list them (`*` marks the active one), name one, make one the active one, forget one (its file stays), or print the `roster.yml` roster uses. See [Named Inventories](#named-inventories) |
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
@@ -258,7 +261,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 
 `--json` on `hosts`, `info`, `resources`, `check`, `discover` (its preview), `mesh status`, `mesh --dry-run`, `providers` and `auth-check` prints the same data as JSON for scripts and tools, never a secret: see [Machine-readable output](#machine-readable-output).
 
-Config lookup order: `-c PATH`, then `$ROSTER_CONFIG`, then `./roster.yml`, then `~/.config/roster/roster.yml`.
+Config lookup order: `-c PATH`, then `--inv NAME`, then `$ROSTER_CONFIG`, then `./roster.yml`, then the active named Inventory, then `~/.config/roster/roster.yml`. `--inv NAME` (before the command: `roster --inv home sync`) runs one command against the named Inventory NAME.
 
 The man page (`man roster`) is generated from this section, Machine-readable output, Files, Environment, Exit status, Examples and roster's own argument parser, so it never drifts from them: after changing either, run `uv run python -m roster.manpage` and commit `src/roster/roster.1`. A test fails until you do.
 
@@ -315,6 +318,26 @@ Vault
 1 warning, no errors
 ```
 
+## Named Inventories
+
+One person may have several Inventories: the team's for work, and their own for home (a Raspberry Pi, the router). They stay separate files (one file would show your home hosts to your teammates and mix two sets of vaults). Name each one on your Box; one is active:
+
+```sh
+roster inv add work ~/infra/roster.yml       # the first one named becomes the active one
+roster inv add home ~/home-net/roster.yml
+roster inv list                              # * work  /home/you/infra/roster.yml
+roster --inv home setup                      # one command against home; work stays active
+roster inv use home                          # home is the active one now
+```
+
+- **Which file roster uses.** `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, then `~/.config/roster/roster.yml`. `roster inv which` prints the file roster would use; the app asks roster the same. With no named Inventories nothing changes.
+- **This Box's files, one set per Inventory.** `setup` and `sync` write each named Inventory's own ssh config (`~/.ssh/roster-inventories/NAME`) and known_hosts (`~/.ssh/roster_known_hosts-NAME`), and `ROSTER.md` next to its `roster.yml`, so syncing home never touches work's. `~/.ssh/config` includes one file, `~/.ssh/config.d/roster.inventories`, that holds every Inventory's Hosts, the active one's first: `ssh pi` works for a Host in any of them. When two have a Host by the same name, only the active one's is there (ssh would offer the other's key too), the warning below says so, and roster won't `run`, `check` or `setup` the other one by that name until its Inventory is the active one. The same goes for an Inventory not synced on this Box (`roster --inv home …` or `-c PATH` before its first `sync` here) and a Host added since the last `sync`: `run`, `check`, `revoke` and the Mesh never `ssh` a name that isn't in that Inventory's part of this Box's ssh config, and say to sync first. A `roster.yml` that isn't named shares one ssh config file (`~/.ssh/config.d/roster`) with every other unnamed one, so `roster -c B.yml …` reaches no Host by name while that file was last written from another `roster.yml`: `roster -c B.yml sync` writes it for B. This Box keeps one key for all of them.
+- **The same machine in two Inventories** is a warning, never an error. `roster check --box`, `setup` and `sync` compare host-key fingerprints, Host names and addresses across your named Inventories: rows 188-195 of the [error catalog](app/errors.md#named-inventories).
+- **Host keys carry over.** Each Inventory you name starts with a copy of `~/.ssh/roster_known_hosts`, so nothing is trusted on first use again. `roster inv remove NAME` forgets the name and its ssh config and sets its known_hosts aside (`roster_known_hosts-NAME.removed-…`); its `roster.yml` stays. After removing the last one, run `roster sync`.
+- **Mesh state, one per Inventory.** What `roster mesh` remembers (pending Hosts, cuts pending, the last apply) is `~/.config/roster/mesh-NAME.json` for a named Inventory and `mesh.json`, as always, for one that isn't named, so a Host name in two Inventories never mixes their Meshes. Naming the Inventory the Box's `mesh.json` is from moves it there, once, when all of these hold: roster's unnamed ssh config was last written from that file, every Host the state names is in it, and its last complete apply was of that file's Mesh as it is now. Otherwise `inv add` says it stays with the unnamed Inventory, and why (move it by hand if it is that file's). `roster inv remove NAME` sets its Mesh state aside (`mesh-NAME.json.removed-…`).
+- **Removing this Box from them all.** `roster revoke` works on one Inventory (`roster --inv home revoke`); `roster revoke --all` removes this Box's key from every named Inventory's Hosts and the unnamed one's (the file roster's unnamed ssh config was last written from), with one question and one summary. It reaches each Host by the name `ssh NAME` takes to that Inventory's Host: a left-out Host is skipped (the other Inventory's Host by that name is revoked with its own), and so is an Inventory not synced on this Box, which it says, exiting 1. When anything was skipped or failed, it says to revoke those first instead of naming the files to delete; the unnamed one is labelled `(unnamed)`.
+- Names are letters, digits, `.` `_` `-`, not ending with a dot, and two names can't differ only in letter case (they'd share files on Windows and macOS). The list lives in `~/.config/roster/inventories.json` (`%APPDATA%\roster\inventories.json` on Windows), never in `init.lua` or a `roster.yml`. Each Inventory keeps its own folder, as `ROSTER.md` is written next to it.
+
 ## Machine-readable output
 
 The read commands take `--json`, for scripts, other tools and Claude: `hosts` (with `--only`, `--find`, `--all`), `info NAME`, `resources`, `check`, `check HOST`, `check --box`, `discover` (its preview, without `--write`), `mesh status`, `mesh --dry-run` (the plan), `providers` and `auth-check`. The CLI is roster's interface for other apps; `roster serve` is the desktop app's own backend, not a public API. With `--json`, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
@@ -334,6 +357,8 @@ The read commands take `--json`, for scripts, other tools and Claude: `hosts` (w
 | `check HOST --json` | `{version, host, ok, steps: [{step, status, message, code?, fix?, details?, data?}]}`, as `host.check`: `status` is `ok`, `fail` or `skipped`. An unknown Host is a failed `inventory` step (code 2), not an error. Exit 1 unless `ok` |
 | `check --box --json` | `{version, checks: [{section, level, message, fix?, topic?}], ok}`, as `box.check`: `level` is `ok`, `warn` or `error`. Exit 1 if one is an `error` |
 | `discover CIDR... --json` | `{version, targets, addresses, ports, scanner, count, quiet, found: [Found], group}`: the preview, after the scan. `targets`, `addresses` (how many it visits), `ports` (how many) and `scanner` (`nmap` or `built-in`) as `discover.plan`; `count`, `quiet` and `found` as `discover.status` (a Found is `{address, name, type, hostname, title, web, known, added, vendor, os, mac, ports}`: `name` the name `--write` would give it, `null` when `known` names the Host already at that address; `added` is always `null` here). `group` is the group `--write` would add the new ones to. Not with `--write` (exit 2). Over 4,096 addresses without `--force`: error `121`. A `roster.yml` that's there but doesn't load (named by `-c`, `ROSTER_CONFIG` or found in the usual places): error `1` with its fix; with none at all (or `ROSTER_CONFIG` naming no file) it scans anyway |
+| `inv list --json` | `{version, active, inventories: [{name, path, active, exists}]}`, as `inventories.list` |
+| `inv which --json` | `{version, path, name, exists}`: the `roster.yml` roster uses and its name among the named Inventories (`null` if it isn't one). Exit 1 if it isn't there |
 | `mesh status --json` | `{version, links, excluded, reach, members, pending, cut_pending, out_of_date}`, as `mesh.status` |
 | `mesh --dry-run --json` | `{version, applied: false, links, hosts: [{host, changes, status, error?}], excluded, reach, pending, already, warnings}`, as `mesh.plan`: it connects to the Hosts, one at a time, and changes nothing. Exit 1 if a Host is `pending` (didn't answer). `--json` goes with `status` and `--dry-run` only, never with an apply or `cut` |
 | `providers --json` | `{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok}`: `tool` is the CLI it runs (`null` for none, and `installed` `null` with it), `used_by` the groups whose Logins use it, `unknown` the providers `roster.yml` names that aren't set up. Exit 1 if there's one |
@@ -358,14 +383,16 @@ $ roster info nope --json
 
 | File | What it is |
 |---|---|
-| `./roster.yml` | The Inventory: hosts, groups, resources and vault references, never passwords. roster looks for it in this order: `-c PATH`, `$ROSTER_CONFIG`, `./roster.yml`, `~/.config/roster/roster.yml` (`%APPDATA%\roster\roster.yml` on Windows) |
+| `./roster.yml` | The Inventory: hosts, groups, resources and vault references, never passwords. roster looks for it in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml` (`%APPDATA%\roster\roster.yml` on Windows) |
 | `~/.config/roster/` | This box's roster folder (on Windows, `%APPDATA%\roster`, next to the app's `init.lua`): `roster.yml` if you keep it here, `providers/` for provider plugins, `bw-session` |
 | `~/.config/roster/bw-session` | A saved Bitwarden session (`bw unlock --raw`), used only if only you can read it |
 | `~/.ssh/roster_ed25519` | This box's SSH key (`key_path:` in `roster.yml` moves it), made by `roster setup` |
-| `~/.ssh/roster_known_hosts` | Host keys recorded on first contact |
-| `~/.ssh/config.d/roster` | The SSH config entries `roster setup` and `roster sync` write |
+| `~/.ssh/roster_known_hosts` | Host keys recorded on first contact (a named Inventory's: `~/.ssh/roster_known_hosts-NAME`) |
+| `~/.ssh/config.d/roster` | The SSH config entries `roster setup` and `roster sync` write (a named Inventory's: `~/.ssh/roster-inventories/NAME`) |
+| `~/.ssh/config.d/roster.inventories` | With named Inventories: what `~/.ssh/config` includes, every Inventory's Hosts with the active one's first (a name an earlier one has is left out) |
+| `~/.config/roster/inventories.json` | The named Inventories and which one is active (`roster inv`) |
 | `ROSTER.md`, `CLAUDE.md`, `.claude/settings.json` | What Claude reads, written next to `roster.yml` by `setup` and `sync` |
-| `~/.config/roster/mesh.json` | What `roster mesh` couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box |
+| `~/.config/roster/mesh.json` | What `roster mesh` couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box (a named Inventory's: `~/.config/roster/mesh-NAME.json`) |
 | `~/.ssh/roster-mesh/` (or the Host's `mesh_dir:`; on ESXi, `.roster-mesh` on a datastore), `~/ROSTER.md` (on Hosts) | A Mesh source's key, known hosts, ssh config and its peers for Claude, written by `roster mesh` ([The Mesh](mesh.md)) |
 | `$XDG_RUNTIME_DIR/roster/` | Short-lived private state: kept web logins and the askpass socket (on Windows, the askpass channel is a named pipe and its folder is in `%TEMP%`) |
 
@@ -373,7 +400,7 @@ $ roster info nope --json
 
 | Variable | What it does |
 |---|---|
-| `ROSTER_CONFIG` | The `roster.yml` to use when `-c` isn't given |
+| `ROSTER_CONFIG` | The `roster.yml` to use when neither `-c` nor `--inv` is given (it comes before the active named Inventory) |
 | `BW_SESSION`, `BW_PASSWORD` | An unlocked Bitwarden session, or the master password to unlock with |
 | `BW_CLIENTID`, `BW_CLIENTSECRET` | A Bitwarden API key, for headless boxes |
 | `OP_SERVICE_ACCOUNT_TOKEN` | A 1Password service account, for headless boxes |
@@ -400,7 +427,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 | `2` | Wrong arguments |
 | `130` | Interrupted with Ctrl+C |
 
-With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` exit 1 while a Host is pending.
+With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `--find-leftovers`/`--remove-leftovers` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
 
 ## Examples
 

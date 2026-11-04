@@ -10,12 +10,16 @@ import {
   BackendStartError,
   type Backend,
   type BackendInfo,
+  type Inventories,
+  InventoriesError,
   type BackendProblem,
   type BoxCheck,
   BOX_CHECK_API_VERSION,
   type HealthCheck,
   type CallErrorData,
+  CHECK_JOBS_API_VERSION,
   CHECK_STEPS,
+  type CheckStarted,
   EditError,
   type Host,
   type HostChange,
@@ -97,6 +101,13 @@ import {
   worstCaseSessions,
 } from "./worstCase";
 
+/** The fake's named Inventories (FakeScenario.inventories). */
+export interface FakeInventories {
+  named: { name: string; path: string; exists?: boolean; hosts?: HostList }[];
+  active: string | null;
+  override?: string;
+}
+
 export interface FakeScenario {
   hosts: HostList;
   /** connect() fails with this (every time, unless `failOnce`). */
@@ -129,6 +140,9 @@ export interface FakeScenario {
   pwfeedback?: Record<string, boolean>;
   /** Per Host: `session.fill` refuses with this (ticket 119: 130, 131, the vault's codes). */
   fillRefusals?: Record<string, Refusal>;
+  /** Sessions run in Windows' ConPTY, as on Windows (decision Q151 (i), ticket 162): the core
+   * fills only sudo's own prompt for the Session's own Host, and refuses every other (row 183). */
+  conpty?: boolean;
   /** Per Host: ssh prints this into the PTY and exits 255 (a refused port, a changed key…). */
   sshFailures?: Record<string, string>;
   /** Per Host: what `host.check` answers (default: every step ok). */
@@ -140,10 +154,20 @@ export interface FakeScenario {
   /** Hosts whose `host.check` waits until the test answers it (`answerCheck`), so it can push the
    * check's `job.progress` (`jobProgress`) in between. */
   heldChecks?: string[];
+  /** Hosts whose check another caller started (a Plugin's `host.check`), so the app's joins it
+   * and it isn't the app's own to stop (#221 item 1). */
+  othersChecks?: string[];
+  /** `stopCheck` fails as when serve went away (errors.md row 203). */
+  stopFails?: boolean;
   /** `box.check`'s checks (default: HEALTHY_BOX, every one ok). */
   boxChecks?: HealthCheck[];
   /** `inventory.info`'s api_version (default 2; editing needs 5). */
   apiVersion?: number;
+  /** Named Inventories (ticket 115, API 27): `inventories.list`'s, the active one, and the file an
+   * earlier step of roster's lookup finds first (`$ROSTER_CONFIG` or `./roster.yml`), if any. Each
+   * (re)start "detects" as the app's probe does: `override` if set, else the active one. A named
+   * Inventory with `hosts` has those once serve runs on it. */
+  inventories?: FakeInventories;
   /** Ticket 10: `inventory.pull` refuses with this (62 diverged, 63 offline…). */
   pullRefusal?: Refusal;
   /** Decision Q88: how long `inventory.pull` takes, in ms (else `delay`). */
@@ -294,13 +318,13 @@ function passingCheck(host: Host): HostCheck {
 /** `box.check` on a Box with nothing wrong. */
 export const HEALTHY_BOX: readonly HealthCheck[] = [
   { section: "roster", level: "ok", message: "roster 0.1.0, serve API 16, Python 3.12.7" },
-  { section: "inventory", level: "ok", message: "roster.yml loads: /home/you/infra/roster.yml (12 Hosts, 3 groups)" },
+  { section: "inventory", level: "ok", message: "roster.yml loads: /home/you/team-inventory/roster.yml (12 Hosts, 3 groups)" },
   { section: "ssh", level: "ok", message: "ssh found: /usr/bin/ssh" },
   { section: "ssh", level: "ok", message: "roster's ssh config has every Host: /home/you/.ssh/config.d/roster" },
   { section: "ssh", level: "ok", message: "roster's known hosts has every Host's key: /home/you/.ssh/roster_known_hosts" },
   { section: "vault", level: "ok", message: "bw (12 Logins): logged in as you@example.com, locked; it asks for the master password when a Login needs it" },
   { section: "askpass", level: "ok", message: "the askpass channel is open" },
-  { section: "repo", level: "ok", message: "clean: /home/you/infra" },
+  { section: "repo", level: "ok", message: "clean: /home/you/team-inventory" },
 ];
 
 /** `box.check` with a vault CLI that isn't logged in, a Host since the last sync, and Pending changes. */
@@ -484,7 +508,7 @@ export const fixtures: Record<string, FakeScenario> = {
       code: PublishError.remoteMoved,
       message: "someone published roster.yml to origin/main since this box pulled (1 new commit), so roster won't publish over it",
       data: {
-        fix: "discard your Pending changes, :pull, and make them again; or merge in a terminal: git -C /home/you/infra stash && git pull --ff-only && git stash pop",
+        fix: "discard your Pending changes, :pull, and make them again; or merge in a terminal: git -C /home/you/team-inventory stash && git pull --ff-only && git stash pop",
         upstream: "origin/main",
         behind: 1,
       },
@@ -497,7 +521,7 @@ export const fixtures: Record<string, FakeScenario> = {
     pullRefusal: {
       code: EditError.diverged,
       message: "this box's infra repo and origin/main have diverged (1 local and 2 new commits there), so roster won't pull",
-      data: { fix: "merge or rebase in a terminal: git -C /home/you/infra pull --rebase", upstream: "origin/main", ahead: 1, behind: 2 },
+      data: { fix: "merge or rebase in a terminal: git -C /home/you/team-inventory pull --rebase", upstream: "origin/main", ahead: 1, behind: 2 },
     },
   },
   /** As many Hosts as the real Inventory (ticket 17's tree check). */
@@ -859,11 +883,20 @@ function fakeSession(
     marks?: boolean | undefined;
     /** The shell `ssh NAME` reaches marks its prompts and commands too (ticket 120). */
     innerMarks?: boolean | undefined;
+    /** The token the Session was opened with (`openSession`'s `marks`): the core follows the marks
+     * that carry it (ticket 162). */
+    token?: string | undefined;
     /** The Inventory Host `ssh TARGET` reaches (by name or address), and whether it asks for its
      * Login's password (ticket 120): then `ssh` asks, without echo, and takes FAKE_LOGIN_PASSWORD. */
     reach?: (target: string) => { name: string; user: string; password: boolean } | null;
   } = {},
-): SessionHandle & { atPasswordPrompt(): boolean; masks(): boolean; endsWith(text: string): boolean; lineIs(text: string): boolean } {
+): SessionHandle & {
+  atPasswordPrompt(): boolean;
+  masks(): boolean;
+  endsWith(text: string): boolean;
+  lineIs(text: string): boolean;
+  ownRun(): number | null;
+} {
   // What it printed, without escapes, for a ConPTY-style repaint.
   let screen = "";
   // Its last output as text, for the core's printed-prompt check (ticket 137).
@@ -921,7 +954,19 @@ function fakeSession(
   // roster's hook line, once the shell has run it (ticket 120): its marks carry this token.
   let token: string | null = null;
   const marksHere = () => (nested === null ? extra.marks || token !== null : extra.innerMarks);
-  const mark = (m: string) => `\x1b]133;${m}${nested === null && token !== null ? `;roster=${token}` : ""}\x07`;
+  // The marks with the token the Session was opened with, as the core follows them (ticket 162):
+  // the commands started, and the last mark's kind.
+  let runs = 0;
+  let lastOwn: string | null = null;
+  const mark = (m: string) => {
+    const own = nested === null && token !== null;
+    if (own && token === extra.token) {
+      const kind = m.split(";")[0] ?? "";
+      if (kind === "C") runs += 1;
+      lastOwn = kind;
+    }
+    return `\x1b]133;${m}${own ? `;roster=${token}` : ""}\x07`;
+  };
   const marked = (p: string) => (marksHere() ? `${mark("A")}${p}${mark("B")}` : p);
   const promptOf = () => marked(`${nested ?? host}$ `);
   // A marked shell's first prompt comes after a D with no command before it, as roster's own hook,
@@ -1047,6 +1092,7 @@ function fakeSession(
       end(null, true);
     },
     atPasswordPrompt: () => password && !ended,
+    ownRun: () => (lastOwn === "C" ? runs : null),
     masks: () => password && masking && !ended,
     // The cursor's line as a terminal draws it (carriage returns and backspaces overwrite) is
     // `text` and nothing else: the core's whole-line check for sudo's pwfeedback (ticket 154).
@@ -1083,11 +1129,14 @@ function asText(s: string): string {
   );
 }
 
+/** sudo's own prompt, whole: the user it names. */
+const SUDO_FOR = /^\[sudo\] password for ([^\s:]+):$/;
+
 /** The password the fake vault holds for every Host Login a prompt fill types (ticket 119). Never
  * shown: tests check it reaches neither the terminal nor the page. */
 export const FAKE_LOGIN_PASSWORD = "fake-login-pw-7q";
 
-const BACKUP = "~/infra/.git/roster/roster.yml.bak";
+const BACKUP = "~/team-inventory/.git/roster/roster.yml.bak";
 
 function unknownGroup(group: string, groups: Record<string, unknown>) {
   return new BackendCallError(`no group named '${group}' in roster.yml (groups: ${Object.keys(groups).join(", ")})`, LiveError.unknownGroup, {
@@ -1192,6 +1241,8 @@ export interface FakeBackend extends Backend {
   /** Answers a held `host.check` (`heldChecks`) with its result, or fails it with an error (the
    * core giving up after 90 s, serve going away). */
   answerCheck(host: string, outcome: HostCheck | Error): void;
+  /** Every check the app asked to stop (`stopCheck`), by job. */
+  stoppedChecks(): string[];
   /** Every `host.get` asked with `settled` so far: the Host's name. */
   settledGets(): string[];
   /** Whether `inventory.watch` asked to apply outside edits (null: not watching). */
@@ -1249,6 +1300,10 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     for (const w of jobWatchers) w(job);
   };
   const heldChecks = new Map<string, { resolve(c: HostCheck): void; reject(e: Error): void }>();
+  /** A held check's job (`check-N`) and whether it's the app's own, by Host. */
+  const heldJobs = new Map<string, CheckStarted>();
+  let heldJobCount = 0;
+  const stoppedChecks: string[] = [];
   let checkJobs = 0;
   /** serve's check job (ticket 108): progress as each step starts, up to where `result` failed or
    * stopped. Never a step's message. */
@@ -1300,8 +1355,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       .map((c) => `@@ -1,1 +0,0 @@\n-      ${c.host}:`)
       .join("\n");
     return {
-      path: scenario.info?.path ?? "~/infra/roster.yml",
-      repo: "~/infra",
+      path: scenario.info?.path ?? "~/team-inventory/roster.yml",
+      repo: "~/team-inventory",
       diff: diff || removedDiff || (groupChanges.length ? groupChanges.map((g) => `${g.change === "added" ? "+" : "-"}  ${g.group}:`).join("\n") : ""),
       hosts: changed,
       groups: groupChanges,
@@ -1563,21 +1618,55 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     }
   };
 
+  // ---- named Inventories (ticket 115): which is active, and which file this serve runs on
+  const namedInvs = scenario.inventories?.named.map((n) => ({ ...n })) ?? [];
+  let activeInventory = scenario.inventories?.active ?? null;
+  let serveOn: { name: string | null; path: string } | null = null;
+  let started = false;
+  /** What a start finds, as the app's probe asks `roster inv which`: an earlier step of the
+   * lookup, else the active named Inventory, else the default file. */
+  const detect = (): { name: string | null; path: string } => {
+    const override = scenario.inventories?.override;
+    const path = override ?? namedInvs.find((n) => n.name === activeInventory)?.path ?? scenario.info?.path ?? "~/team-inventory/roster.yml";
+    return { name: namedInvs.find((n) => n.path === path)?.name ?? null, path };
+  };
+  const inventoriesList = (): Inventories => ({
+    inventories: namedInvs.map((n) => ({ name: n.name, path: n.path, active: n.name === activeInventory, exists: n.exists ?? true })),
+    active: activeInventory,
+    name: serveOn?.name ?? null,
+    path: serveOn?.path ?? null,
+  });
+
   return {
-    async connect(): Promise<BackendInfo> {
+    async connect(options): Promise<BackendInfo> {
       await wait();
       if (scenario.startProblem && !(scenario.failOnce && failures > 0)) {
         failures++;
         throw new BackendStartError(scenario.startProblem);
+      }
+      if (!started || options?.restart) {
+        // A new serve: the lookup runs again, never the last start's file.
+        started = true;
+        const was = serveOn?.path;
+        serveOn = detect();
+        const own = namedInvs.find((n) => n.name === serveOn?.name)?.hosts;
+        if (was !== serveOn.path && (own || was !== undefined)) {
+          // Another file: its Hosts (the scenario's own when it names none).
+          const next = own ?? scenario.hosts;
+          committed = next.hosts;
+          hosts = committed;
+          groups = next.groups;
+          committedGroups = groups;
+        }
       }
       const info = scenario.info ?? {};
       return {
         backend: info.backend ?? "Fake",
         command: info.command ?? ["roster", "serve"],
         inventory: {
-          path: info.path ?? "~/infra/roster.yml",
+          path: serveOn?.path ?? info.path ?? "~/team-inventory/roster.yml",
           box: info.box ?? "browser",
-          host_count: scenario.hosts.hosts.length,
+          host_count: hosts.length,
           providers: ["bw"],
           roster_version: "0.1.0",
           api_version: scenario.apiVersion ?? 2,
@@ -1694,7 +1783,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       inOrder(async () => {
         login = null;
       }),
-    async openSession(host, size, events, typed) {
+    async openSession(host, size, events, typed, marks) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));
       const h = hosts.find((x) => x.name === host);
       if (!h) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
@@ -1757,12 +1846,13 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         pwfeedback: scenario.pwfeedback?.[host],
         marks: scenario.shellMarks,
         innerMarks: scenario.innerMarks,
+        token: marks,
         reach: (target) => {
           const to = hosts.find((x) => x.name.toLowerCase() === target.toLowerCase() || x.ip === target);
           return to ? { name: to.name, user: to.ssh.user, password: authOf(to) === "password" } : null;
         },
       });
-      const { atPasswordPrompt, masks, endsWith, lineIs, ...handle } = session;
+      const { atPasswordPrompt, masks, endsWith, lineIs, ownRun, ...handle } = session;
       // The core's prompt fill (ticket 119), as the Tauri build's: the core's printed-prompt check
       // first (ticket 137), then serve's refusals (the Host changed since the Session connected, a
       // prompt that isn't sudo's or ssh's for this Host's own Login, no saved password, the
@@ -1772,12 +1862,28 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       // A nested ssh's prompt (ticket 120, API 26) names the Host it went to, which then answers.
       const fill = async (prompt: string, hop?: NestedHost) => {
         await wait();
+        // Under ConPTY (Q151 (i)), only sudo's own prompt for the Session's own Host: the core's
+        // refusal, before anything is looked up or typed (no code).
+        if (scenario.conpty && !(hop === undefined && SUDO_FOR.exec(prompt.trim().replace(/\s+/g, " "))?.[1] === connected.user)) {
+          throw new BackendCallError(
+            "on Windows roster fills only sudo's own prompt for this Session's Host: Windows' console can hide an echo of what roster types to check a prompt, so roster can't tell this one doesn't echo; type it yourself",
+          );
+        }
         // The core's check comes first (ticket 137): the Session's output must end with the prompt,
         // or nothing is asked or typed (130, so the app offers it again).
         if (!endsWith(prompt)) {
           throw new BackendCallError("the Session isn't at that prompt now (its output doesn't end with it), so roster didn't fill it", FillRefusal.refused, {
             fix: "press the key again while the prompt is at the cursor",
           });
+        }
+        // A hop's fill goes only while the Session's own shell's last mark (with the token it was
+        // opened with) is the C of that ssh, its `run`th (ticket 162): nothing asked or typed.
+        if (hop && ownRun() !== hop.run) {
+          throw new BackendCallError(
+            "the Session's own shell doesn't show the ssh to that Host still running (it ended, or another command started), so roster didn't fill it",
+            FillRefusal.refused,
+            { fix: "press the key again once roster shows where the Session is" },
+          );
         }
         const self = hosts.find((x) => x.name === host);
         if (!self) throw new BackendCallError(`unknown host '${host}'`, SessionRefusal.unknownHost);
@@ -1796,7 +1902,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         const refusal = scenario.fillRefusals?.[now.name];
         if (refusal) throw refuse(refusal);
         const line = prompt.trim();
-        const sudoFor = /^\[sudo\] password for ([^\s:]+):$/.exec(line)?.[1];
+        const sudoFor = SUDO_FOR.exec(line)?.[1];
         const sshFor = /^([^\s@']+)@([^\s@']+)'s password:$/.exec(line);
         const own = sudoFor === now.ssh.user || (sshFor?.[1] === now.ssh.user && [now.name.toLowerCase(), now.ip.toLowerCase()].includes((sshFor[2] ?? "").toLowerCase()));
         if (!own) {
@@ -1824,7 +1930,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         await handle.write(`${FAKE_LOGIN_PASSWORD}\r`);
         return { host: now.name };
       };
-      return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...handle, fill } : handle;
+      const opened = { ...handle, ...(scenario.conpty ? { conpty: true } : {}), fillUser: connected.user };
+      return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...opened, fill } : opened;
     },
     async openQuickSession(to, password, size, events, options = {}) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));
@@ -1931,7 +2038,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (!(p.group in groups)) groups = { ...groups, [p.group]: { title: "", description: "" } };
       const { save_to: _s, ...shown } = target;
       void _s;
-      return { added: true, host, backup: "/home/you/infra/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [], sync: synced() };
+      return { added: true, host, backup: "/home/you/team-inventory/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [], sync: synced() };
     },
     async saveLogin(p: SaveLoginParams): Promise<SaveLogin> {
       await wait();
@@ -1960,7 +2067,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       hosts = hosts.map((x) => (x.name === name ? host : x));
       const { save_to: _s, ...shown } = target;
       void _s;
-      return { changed: true, host, backup: "/home/you/infra/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [], sync: synced() };
+      return { changed: true, host, backup: "/home/you/team-inventory/.git/roster/roster.yml.bak", item: { provider: "bw", id: `fake-${item}`, name: item, target: shown }, warnings: [], sync: synced() };
     },
     async forgetTyped(held: string) {
       forgets.push(held);
@@ -1975,9 +2082,21 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const checks = scenario.boxChecks ?? [...HEALTHY_BOX];
       return { checks, ok: !checks.some((c) => c.level === "error"), roster_version: "0.1.0", api_version: scenario.apiVersion ?? 2 };
     },
-    async checkHost(host) {
+    async checkHost(host, onStarted) {
       if (scenario.heldChecks?.includes(host)) {
-        return new Promise<HostCheck>((resolve, reject) => heldChecks.set(host, { resolve, reject }));
+        // serve's check job (API 21): one per Host, so asking again while it runs joins it.
+        if ((scenario.apiVersion ?? 2) >= CHECK_JOBS_API_VERSION) {
+          const started = heldJobs.get(host) ?? { job: `check-${++heldJobCount}`, own: !scenario.othersChecks?.includes(host) };
+          heldJobs.set(host, started);
+          onStarted?.(started);
+        }
+        const earlier = heldChecks.get(host);
+        return new Promise<HostCheck>((resolve, reject) =>
+          heldChecks.set(host, {
+            resolve: (c) => (earlier?.resolve(c), resolve(c)),
+            reject: (e) => (earlier?.reject(e), reject(e)),
+          }),
+        );
       }
       await wait();
       const result = ((): HostCheck => {
@@ -1997,10 +2116,19 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (scenario.checkSteps) await runCheckJob(result, scenario.checkSteps);
       return result;
     },
+    async stopCheck(job) {
+      if (scenario.stopFails) throw new BackendCallError("roster serve went away", null, null, true);
+      const held = [...heldJobs.values()].find((s) => s.job === job);
+      if (!held?.own) return false;
+      stoppedChecks.push(job);
+      return true;
+    },
+    stoppedChecks: () => [...stoppedChecks],
     answerCheck(host, outcome) {
       const held = heldChecks.get(host);
       if (!held) throw new Error(`no held check of ${host}`);
       heldChecks.delete(host);
+      heldJobs.delete(host);
       if (outcome instanceof Error) held.reject(outcome);
       else held.resolve(outcome);
     },
@@ -2050,7 +2178,21 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       }
       const updated = withFields(h, wanted);
       hosts = hosts.map((x) => (x.name === host ? updated : x));
-      return { changed: true, host: updated, backup: "~/infra/.git/roster/roster.yml.bak", sync: synced() };
+      return { changed: true, host: updated, backup: "~/team-inventory/.git/roster/roster.yml.bak", sync: synced() };
+    },
+    async listInventories() {
+      await wait();
+      return inventoriesList();
+    },
+    async useInventory(name) {
+      await wait();
+      const chosen = namedInvs.find((n) => n.name === name);
+      if (!chosen) {
+        const names = namedInvs.map((n) => n.name);
+        throw new BackendCallError(`no Inventory named '${name}'`, InventoriesError.unknown, { names, fix: `pick one of ${names.join(", ") || "none"}` });
+      }
+      activeInventory = name;
+      return { active: name, path: chosen.path, restart: true as const };
     },
     async pendingChanges() {
       await wait();
@@ -2061,7 +2203,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (pending().count === 0) return { discarded: false, backup: null };
       hosts = committed;
       groups = committedGroups;
-      return { discarded: true, backup: "~/infra/.git/roster/roster.yml.bak", sync: synced() };
+      return { discarded: true, backup: "~/team-inventory/.git/roster/roster.yml.bak", sync: synced() };
     },
     async publishChanges(message) {
       await wait();
@@ -2189,7 +2331,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       return {
         added: true,
         host,
-        backup: "~/infra/.git/roster/roster.yml.bak",
+        backup: "~/team-inventory/.git/roster/roster.yml.bak",
         verify: login ? passingVerify(p.name) : null,
         item: item
           ? { provider: "bw", id: `fake-${p.name}`, name: item, ...(target ? { target: { id: target.id, kind: target.kind, label: target.label } } : {}) }
@@ -2205,7 +2347,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (h.reviewed === reviewed) return { changed: false, host: h, backup: null };
       const updated = { ...h, reviewed };
       hosts = hosts.map((x) => (x.name === host ? updated : x));
-      return { changed: true, host: updated, backup: "~/infra/.git/roster/roster.yml.bak", sync: synced() };
+      return { changed: true, host: updated, backup: "~/team-inventory/.git/roster/roster.yml.bak", sync: synced() };
     },
     async removeHost(host) {
       await wait();

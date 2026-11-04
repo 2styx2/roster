@@ -5,13 +5,14 @@
 // through the matches, Enter opens a node (or opens and closes a collapsed cluster), o collapses
 // or opens the selected node's cluster and O all of them, + - zoom and 0 fits it all, H J K L pan,
 // t switches to the nodes' list and the edges' list, f goes to the filter (clusters, kinds or states
-// to show, hiding the rest), m moves the selected node with h j k l until Enter keeps it or Esc puts
-// it back (T89), and an action's key runs it on the selected node. Selecting a node lights up what it reaches and what reaches it, with the counts. The mouse
-// works too: a click selects, a double click opens, a drag on a node moves it (kept in the State),
-// a drag elsewhere pans, the wheel zooms.
+// to show, hiding the rest), m moves the selected node (or a collapsed cluster, whole, #237) with
+// h j k l until Enter keeps it or Esc puts it back (T89), and an action's key runs it on the selected
+// node. Selecting a node lights up what it reaches and what reaches it, with the counts. The mouse
+// works too: a click selects, a double click opens, a drag on a node or a collapsed cluster moves it
+// (kept in the State), a drag elsewhere pans, the wheel zooms.
 //
 // Motion (the animate skill): moving, selecting, panning, zooming and collapsing are keys or
-// pointer actions, so they are instant. The one thing that moves is an edge that turns live (a
+// pointer actions, so they are instant (so is a neighbour making room for a cluster put on it). The one thing that moves is an edge that turns live (a
 // Session connecting), drawn in from its start over --dur-draw (120 ms, strong ease-out), as the
 // Sidebar's connect edge is; nothing moves under reduced motion (--dur-draw is 0 there).
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
@@ -215,10 +216,11 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
 
   const [mode, setMode] = useState<Mode>("graph");
   const [chosen, setChosen] = useState<string | null>(openAt ?? null);
-  // Placing a node from the keyboard (`m`, T89): which, and where it was, for Esc.
-  const [moving, setMoving] = useState<{ id: string; from: { x: number; y: number }; wasMine: boolean } | null>(null);
+  // Placing a node or a collapsed cluster from the keyboard (`m`, T89, #237): which, and where it
+  // was, for Esc.
+  const [moving, setMoving] = useState<{ id: string; cluster: boolean; from: { x: number; y: number }; wasMine: boolean } | null>(null);
   const [moveSays, setMoveSays] = useState("");
-  // Why a key did nothing (m on a collapsed cluster, T99): shown under the graph until the next key.
+  // Why a key did nothing: shown under the graph until the next key.
   const [notice, setNotice] = useState("");
   // The selection follows its node: into its cluster when that collapses, back out when it opens.
   const selected = useMemo(() => {
@@ -346,48 +348,68 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (s.x < m || s.y < m || s.x > size.w - m * 3 || s.y > size.h - m) painter.setCamera({ ...c, x, y });
   };
 
-  /** Selects scene node `id` and brings it on screen if it's off. */
-  const select = (id: string | null) => {
+  /** Selects scene node `id` and brings it on screen if it's off (`show`; a press doesn't: the
+   * camera moving under the pointer would make a drag that starts there jump, #341). */
+  const select = (id: string | null, show = true) => {
     if (id === null) return;
     aimed.current = true;
     setAwaited(undefined);
     setChosen(id);
     setMoveSays("");
     const n = scene.byId.get(id);
-    if (n) reveal(n.x, n.y);
+    if (n && show) reveal(n.x, n.y);
   };
 
   /** Puts the node being placed at (x, y): kept in the State, as a drag is (`mine`: placed by the
    * user; false when it's put back where the layout had it). */
-  const place = (id: string, x: number, y: number, mine = true) => {
-    places.move(id, x, y, mine);
+  const place = (id: string, x: number, y: number, mine = true, cluster = false) => {
+    if (cluster) places.moveCluster(id, x, y, mine);
+    else places.move(id, x, y, mine);
     setMoved((m) => m + 1);
     reveal(x, y);
   };
+  /** Lets go of a cluster being moved: a neighbour it's on makes room now. */
+  const letGo = () => {
+    places.hold(null);
+    setMoved((m) => m + 1);
+  };
   const startMoving = () => {
-    if (current?.count !== undefined) return setNotice(`${current.label} is collapsed: o opens it, then m moves one of its nodes`);
+    if (current?.count !== undefined) {
+      // A collapsed cluster moves whole (#237): it's held, so it pushes nothing until Enter.
+      const c = layout.clusters.get(current.id);
+      if (!c) return;
+      places.hold(current.id);
+      setMoving({ id: current.id, cluster: true, from: { x: c.x, y: c.y }, wasMine: places.clusterPlacedByUser(current.id) });
+      setMoveSays(`Moving ${current.label}, collapsed with ${countOf(current.count, "node")}: h, j, k and l or the arrow keys move it, with Shift further; Enter keeps the place, Esc puts it back`);
+      return;
+    }
     const n = currentNode && layout.nodes.get(currentNode.id);
     if (!currentNode || !n) return;
-    setMoving({ id: currentNode.id, from: { x: n.x, y: n.y }, wasMine: places.placedByUser(currentNode.id) });
+    setMoving({ id: currentNode.id, cluster: false, from: { x: n.x, y: n.y }, wasMine: places.placedByUser(currentNode.id) });
     setMoveSays(`Moving ${currentNode.label}: h, j, k and l or the arrow keys move it, with Shift further; Enter keeps the place, Esc puts it back`);
   };
   const stopMoving = (keep: boolean) => {
     if (!moving) return;
-    const name = ix.nodes.get(moving.id)?.label ?? moving.id;
-    if (!keep) place(moving.id, moving.from.x, moving.from.y, moving.wasMine);
+    const name = moving.cluster ? (data.clusters.find((c) => c.id === moving.id)?.title ?? moving.id) : (ix.nodes.get(moving.id)?.label ?? moving.id);
+    if (!keep) place(moving.id, moving.from.x, moving.from.y, moving.wasMine, moving.cluster);
+    if (moving.cluster) letGo();
     setMoving(null);
     setMoveSays(keep ? `${name} placed` : `${name} put back`);
   };
   /** While placing: the key's move, Enter, Esc, zoom; every other key does nothing. */
   const movingKey = (e: KeyboardEvent<HTMLDivElement>, m: NonNullable<typeof moving>): (() => void) | null => {
-    const at = layout.nodes.get(m.id);
-    if (!at) return () => setMoving(null);
+    const at = m.cluster ? layout.clusters.get(m.id) : layout.nodes.get(m.id);
+    if (!at)
+      return () => {
+        if (m.cluster) letGo();
+        setMoving(null);
+      };
     const ways: Record<string, [number, number]> = { h: [-1, 0], l: [1, 0], k: [0, -1], j: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
     const way = ways[e.key] ?? ways[e.key.toLowerCase()];
     if (way) {
       const big = e.shiftKey || /^[HJKL]$/.test(e.key);
       const step = (big ? NUDGE_BIG : NUDGE) / (painter.camera?.k ?? 1);
-      return () => place(m.id, at.x + way[0] * step, at.y + way[1] * step);
+      return () => place(m.id, at.x + way[0] * step, at.y + way[1] * step, true, m.cluster);
     }
     if (e.key === "Enter" || e.key === "m") return e.repeat ? () => {} : () => stopMoving(true);
     if (e.key === "Escape") return () => stopMoving(false);
@@ -543,7 +565,8 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (moving) stopMoving(true);
     const p = local(e);
     const id = hit(p.x, p.y);
-    if (id !== null) select(id);
+    // Selected where it is: brought in only once the press ends without a drag (onPointerUp).
+    if (id !== null) select(id, false);
     drag.current = { id, x: p.x, y: p.y, moved: false, pointer: e.pointerId };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
@@ -554,9 +577,16 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     if (!d.moved && Math.hypot(p.x - d.x, p.y - d.y) < 4) return;
     const c = painter.camera;
     if (!c) return;
-    if (d.id !== null && scene.byId.get(d.id)?.node) {
+    const on = d.id === null ? undefined : scene.byId.get(d.id);
+    if (d.id !== null && on?.node) {
       const w = toWorld(c, size.w, size.h, p.x, p.y);
       places.move(d.id, w.x, w.y);
+      setMoved((m) => m + 1);
+    } else if (d.id !== null && on?.count !== undefined && layout.clusters.has(d.id)) {
+      // A collapsed cluster moves whole, held (it pushes nothing) until the pointer lets go (#237).
+      if (!d.moved) places.hold(d.id);
+      const w = toWorld(c, size.w, size.h, p.x, p.y);
+      places.moveCluster(d.id, w.x, w.y);
       setMoved((m) => m + 1);
     } else {
       painter.setCamera({ ...c, x: c.x - (p.x - d.x) / c.k, y: c.y - (p.y - d.y) / c.k });
@@ -565,7 +595,16 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
     drag.current = { ...d, x: p.x, y: p.y, moved: true };
   };
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (drag.current?.pointer === e.pointerId) drag.current = null;
+    const d = drag.current;
+    if (d?.pointer !== e.pointerId) return;
+    drag.current = null;
+    if (d.moved && d.id !== null && layout.clusters.has(d.id) && scene.byId.get(d.id)?.count !== undefined) letGo();
+    // A click: what it selected is brought in, as a key's selection is (its label clear of the edge).
+    const n = !d.moved && d.id !== null && e.type === "pointerup" ? scene.byId.get(d.id) : undefined;
+    if (n) {
+      reveal(n.x, n.y);
+      redraw();
+    }
   };
   // The wheel zooms where the pointer is; it's not passive, so the page doesn't scroll.
   useEffect(() => {
@@ -724,7 +763,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
           <canvas ref={canvas} aria-hidden="true" style={{ width: size.w, height: size.h }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onDoubleClick={open} />
           {data.nodes.length === 0 ? <p className="graph-empty muted">No nodes yet.</p> : shown.nodes.length === 0 && <p className="graph-empty muted">Nothing here shows with this filter. Esc shows everything.</p>}
           <p id={helpId} className="visually-hidden">
-            h, j, k and l or the arrow keys move between nodes; slash searches; f filters; m moves the selected node; Enter opens; t lists every node and edge.
+            h, j, k and l or the arrow keys move between nodes; slash searches; f filters; m moves the selected node or collapsed cluster; Enter opens; t lists every node and edge.
           </p>
         </div>
       ) : (
@@ -785,7 +824,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
                   <Keys keys="o" leader={leader} /> collapse
                 </span>
               )}
-              {currentNode && (
+              {current && (
                 <span>
                   <Keys keys="m" leader={leader} /> place
                 </span>

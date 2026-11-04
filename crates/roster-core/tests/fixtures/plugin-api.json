@@ -3094,6 +3094,11 @@
           "type": "boolean"
         },
         {
+          "name": "os",
+          "required": false,
+          "type": "string"
+        },
+        {
           "name": "title",
           "required": true,
           "type": "string"

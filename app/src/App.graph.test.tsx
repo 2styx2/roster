@@ -253,27 +253,61 @@ describe("a Plugin's graph", () => {
     });
   });
 
-  it("m on a collapsed cluster says how to move one of its nodes, and moves nothing (T99)", async () => {
+  it("m on a collapsed cluster moves it whole: its nodes keep their places in it, Enter keeps it, Esc puts it back (#237)", async () => {
+    const { user, platform } = await ready();
+    await user.keyboard(`${LEADER}:view topo{Enter}`);
+    await screen.findByRole("application", { name: "Topology" });
+    type Saved = { clusters: Record<string, [number, number]>; nodes: Record<string, [number, number]>; movedClusters?: string[]; folds?: Record<string, boolean> };
+    const saved = async () => (((await platform.loadState()) as Record<string, unknown>)[GRAPHS_KEY] as Saved[] | undefined)?.[0];
+    await user.keyboard("/web-1{Enter}o");
+    expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
+    await waitFor(async () => expect((await saved())?.folds).toEqual({ web: true }));
+    const before = (await saved()) as Saved;
+    const [cx, cy] = before.clusters["web"] as [number, number];
+    await user.keyboard("m");
+    await said(/Moving web, collapsed with 2 nodes/);
+    expect(document.querySelector(".graph-foot .dt-keys")?.textContent).toMatch(/move it.*keep.*put back/);
+    await user.keyboard("llj");
+    // h j k l move the cluster now, not the selection.
+    expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
+    await user.keyboard("{Enter}");
+    await said(/web placed/);
+    let after = (await saved()) as Saved;
+    await waitFor(async () => {
+      after = (await saved()) as Saved;
+      const [x, y] = after.clusters["web"] as [number, number];
+      expect(x).toBeGreaterThan(cx);
+      expect(y).toBeGreaterThan(cy);
+    });
+    expect(after.movedClusters).toEqual(["web"]);
+    // Its nodes went with it, each as far as the cluster did, so opened it looks as it did.
+    const [x1, y1] = after.clusters["web"] as [number, number];
+    for (const id of ["web-1", "appliance"]) expect(after.nodes[id]).toEqual([(before.nodes[id] as [number, number])[0] + x1 - cx, (before.nodes[id] as [number, number])[1] + y1 - cy]);
+    // The other cluster stayed.
+    expect(after.clusters["lab"]).toEqual(before.clusters["lab"]);
+    // Moving it again and Esc puts it back where it was, and the view stays open.
+    await user.keyboard("mHH{Escape}");
+    await said(/web put back/);
+    await waitFor(async () => expect((await saved())?.clusters["web"]).toEqual([x1, y1]));
+    expect((await saved())?.movedClusters).toEqual(["web"]);
+    expect(screen.getByRole("region", { name: "Topology (from topo)" })).toBeInTheDocument();
+    // Out of moving, h j k l go between nodes again.
+    await user.keyboard("k");
+    expect(foot()).not.toMatch(/^web: 2 nodes|^Moving/);
+    expect(document.querySelector(".graph-foot .dt-keys")?.textContent).not.toMatch(/put back/);
+    // Opened, its nodes are where the cluster took them.
+    await user.keyboard("/{Escape}web-1{Enter}");
+    expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
+    await user.keyboard("{Enter}");
+    await waitFor(async () => expect((await saved())?.nodes["web-1"]).toEqual(after.nodes["web-1"]));
+  });
+
+  it("the place key shows on a collapsed cluster too (#237)", async () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}:view topo{Enter}`);
     await screen.findByRole("application", { name: "Topology" });
     await user.keyboard("/web-1{Enter}o");
-    expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
-    await user.keyboard("m");
-    await said("web is collapsed: o opens it, then m moves one of its nodes");
-    expect(foot()).toBe("web is collapsed: o opens it, then m moves one of its nodes");
-    // Any key clears it, even one the graph doesn't use, and the cluster's own words come back.
-    await user.keyboard("z");
-    expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
-    await user.keyboard("m");
-    expect(foot()).toBe("web is collapsed: o opens it, then m moves one of its nodes");
-    // So does a click on the map.
-    await user.pointer({ keys: "[MouseLeft]", target: document.querySelector(".graph-canvas canvas, canvas") as Element });
-    expect(foot()).not.toMatch(/is collapsed: o opens it/);
-    // Not placing (h j k l still go between nodes).
-    await user.keyboard("k");
-    expect(foot()).not.toMatch(/is collapsed: o opens it|^Moving/);
-    expect(document.querySelector(".graph-foot .dt-keys")?.textContent).not.toMatch(/put back/);
+    expect(document.querySelector(".graph-foot .dt-keys")?.textContent).toMatch(/m.*place/);
   });
 
   it("m moves the selected node from the keyboard: Enter keeps the place, Esc puts it back (T89)", async () => {

@@ -41,6 +41,7 @@ import sysconfig
 import tempfile
 import threading
 import time
+from typing import Any
 
 SOCKET_ENV, TOKEN_ENV = "ROSTER_ASKPASS_SOCKET", "ROSTER_ASKPASS_TOKEN"
 LOGIN_ENV = "ROSTER_ASKPASS_LOGGED_IN"     # set only by the logged-in script, never by ssh or the app
@@ -145,11 +146,15 @@ def exchange(address, request, timeout):
         from . import winpipe
         conn = winpipe.connect(address, timeout)
     else:
-        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        conn.settimeout(timeout)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(address)
+        except OSError:
+            sock.close()
+            raise
+        conn = sock
     with conn:
-        if not WINDOWS:
-            conn.connect(address)
         conn.settimeout(timeout)
         conn.sendall(request.encode() + b"\n")
         reply = b""
@@ -185,8 +190,9 @@ def runtime_bases():
     if xdg and os.path.isdir(xdg):
         bases.append(xdg)
     bases.append(tempfile.gettempdir())
-    if not WINDOWS and "/tmp" not in bases and os.path.isdir("/tmp"):
-        bases.append("/tmp")
+    # S108: only the base: serve's folder in it is its own, made 0700 with a name of its own (owner checked)
+    if not WINDOWS and "/tmp" not in bases and os.path.isdir("/tmp"):  # noqa: S108
+        bases.append("/tmp")  # noqa: S108
     return bases
 
 
@@ -228,9 +234,9 @@ def sweep(base):
                 continue                    # ours, or not a pid at all
             try:
                 _sweep_one(base, dfd, name, pid)
-            except Exception:               # noqa: BLE001 - what it can't tell, it leaves
+            except Exception:               # noqa: BLE001, S110 - what it can't tell, it leaves
                 pass
-    except Exception:                       # noqa: BLE001
+    except Exception:                       # noqa: BLE001, S110 - a sweep is tidying, never a reason to fail
         pass
     finally:
         os.close(dfd)
@@ -552,14 +558,16 @@ class Channel:
     def _accept_loop(self):
         while not self.stopping.is_set():
             try:
-                ready, _, _ = select.select([self.server, self.wake_r], [], [], self._next_expiry())
+                waiting: list[Any] = [self.server, self.wake_r]      # a socket and a pipe's fd
+                ready, _, _ = select.select(waiting, [], [], self._next_expiry())
                 if self.wake_r in ready:
                     os.read(self.wake_r, 64)
                 if self.server not in ready:
                     self._prune()           # an unused token (a typed password above all) goes once it expires
                     self._run_tick()
                     continue
-                conn, _ = self.server.accept()
+                # the POSIX loop: self.server is the socket here (Windows' named pipe has a loop of its own)
+                conn, _ = self.server.accept()  # pyright: ignore[reportGeneralTypeIssues]
             except BlockingIOError:
                 continue
             except OSError:

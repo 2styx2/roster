@@ -75,7 +75,17 @@ if roster.themes.update then
 end
 ```
 
-For the rare case a name can't tell, `roster.version` is the app's version (`"0.2.0"`): compare its numbers, not the string. `roster.api_version` is the Plugin API's version too, so it rises when only that changes; it's not the way to tell what `init.lua` has.
+For the rare case a name can't tell (a name that stays but takes or does something else), `roster.config_version` is `init.lua`'s own version (decision Q165). It's 4 for v0.3.0's shape (`roster.o` and the collections' functions) and rises when a name is removed or renamed or changes what it takes, gives or does; a new name doesn't raise it (check that the name isn't nil). An app from before it (v0.4.0 and older) reads it as nil. `roster.api_version` is the Plugin API's version: it rises when only that changes, so it's not the way to tell what `init.lua` has.
+
+```lua
+if (roster.config_version or 0) >= 4 then
+  roster.o.terminal.size = "16pt"
+else
+  roster.set("terminal.size", "16pt")
+end
+```
+
+`roster.version` is the app's version (`"0.2.0"`), for a message or a bug report: compare its numbers, not the string.
 
 ```lua
 local major, minor = roster.version:match("^(%d+)%.(%d+)")
@@ -108,7 +118,7 @@ Everything configurable says its name where it shows, so you can tell where to c
 - **`auto_reload = true` reloads on every save** instead. The core watches the folder, so editors that save by renaming a temp file over it work too. Any `.lua` file in the folder counts, including the modules it `require`s. If `init.lua`, a module or `lua/` is a symlink (stow, chezmoi), saving the file it points to counts too. Events that keep coming (a sync tool) still reload within half a second. Turning it on takes one `:source`, since the Config in effect decides.
 - **Errors.** A Lua error (syntax or runtime), or a name or value the schema doesn't accept, shows a message with the file and line, for example `init.lua:12: terminal.size: 400 is out of range (6 to 72 px, 4.5 to 54 pt)`. The last good Config stays in use. A misspelled name is an error, not silently ignored.
 - **Warnings.** Some things only the app can check: an action that isn't a command, a Theme name that isn't registered, a Sidebar section or status segment it doesn't know. These show as a warning, and the rest of the Config still applies.
-- **Line numbers** come from Lua for Lua errors and for `roster.*` calls (only a call whose value is the one in use: when the returned table wins, its line is given). For a value in the returned table, the core finds its keys in the source (`size =`, `["d d"] =`), each after its parent's, first in `init.lua` and then in the modules it required, and names that file (`lua/opts.lua:4: terminal.size: …`). When it can't find the whole path (a value built in a loop or under a computed key, or a module's table placed under a key: `terminal = require("term")`) the message says `(line unknown)` instead of naming a wrong line.
+- **Line numbers** come from Lua for Lua errors and for `roster.*` calls (only a call whose value is the one in use: when the returned table wins, its line is given). For a value in the returned table, the core finds its keys in the source (`size =`, `["d d"] =`), each after its parent's, outside `roster.*` statements (a Theme's `terminal = { … }` isn't the option `terminal`), first in `init.lua` and then in the modules it required, and names that file (`lua/opts.lua:4: terminal.size: …`). When it can't find the whole path (a value built in a loop or under a computed key, or a module's table placed under a key: `terminal = require("term")`) the message says `(line unknown)` instead of naming a wrong line.
 
 ## The sandbox
 
@@ -127,7 +137,7 @@ A global, and also `require("roster")`. A Plugin gets another table with more in
 
 | Name | What |
 |---|---|
-| `roster.os`, `roster.version`, `roster.config_dir`, `roster.api_version` | Read-only: the OS (`"windows"`, `"linux"` or `"macos"`), the app's version, the config folder, and the table's version (`4`, shared with the Plugin API) |
+| `roster.os`, `roster.version`, `roster.config_dir`, `roster.config_version`, `roster.api_version` | Read-only: the OS (`"windows"`, `"linux"` or `"macos"`), the app's version, the config folder, `init.lua`'s own version (`4`, [Feature detection](#feature-detection)), and the Plugin API's version (`5`; it rises with Plugin-only changes) |
 | `roster.o` | Every option, Neovim style: `roster.o.terminal.size = "16pt"`. Nested objects need no setup; reading gives the value set so far (a copy) or nil, so `if roster.o.vim then` works; `roster.o.get("terminal.size")` reads one by its dotted name and `roster.o.reset("terminal.size")` puts one back to its default |
 | `roster.set(name, value)` | Any option by its dotted name: `roster.set("terminal.size", "16pt")`. The same store as `roster.o`, checked the same way; for a name built at run time, and older Configs. `roster.o` is the usual way |
 | `roster.keymap` | `set(context, keys, action)`, `del(context, keys)`, `get(context, keys)`, `list(context)`: key bindings, as in `keys` below. `action` is a command line, or `false` to unbind one of roster's |
@@ -193,8 +203,9 @@ Their types, defaults and values: [Fonts and the terminal](options.md#fonts-and-
 | `terminal.renderer` | `"webgl"` (fast, the default) or `"dom"`: the browser's own text rendering, a little closer to ClearType and slower with a lot of output (measured in [terminal-vs-wt](design/terminal-vs-wt/README.md)) |
 | `terminal.cursor_style` | `"block"`, `"bar"` or `"underline"` |
 | `terminal.scrollback` | Lines, at most 1,000,000 |
-| `terminal.copy_on_select` | |
-| `terminal.right_click_paste` | Right-click copies the selection, or pastes when there's none |
+| `terminal.copy_on_select` | Also makes right-click always paste, as Windows Terminal's copy-on-select does: a right-click on a selection copies it, clears it and then pastes it ([Copy and paste](keyboard.md#copy-and-paste)) |
+| `terminal.right_click_paste` | Right-click copies the selection, or pastes when there's none; with `copy_on_select` on it copies and then pastes. While a program has mouse reporting on, a right-click is the program's, selection or not ([Copy and paste](keyboard.md#copy-and-paste)) |
+| `terminal.osc52` | A program in the Session on screen may set the clipboard with OSC 52, as in Windows Terminal: how Claude Code, vim and tmux copy what you select in them. Write only (a Host never reads the clipboard), text only, at most 1 MiB. `false` turns it off ([security.md](security.md#the-clipboard)) |
 | `terminal.colors` | Any terminal or ANSI colour, set over the Theme's |
 | `terminal.shell_hooks` | Send each Session's shell one line after login that turns on its prompt marks (OSC 133) and says its folder (OSC 7), in that shell only, never in its rc files ([Shell hooks](../plugins.md#shell-hooks-roster-sets-it-up)). Unset: a Host's `shell_hooks: true` in `roster.yml` decides. `true`: every Session, Quick Connect too, except a Host with `shell_hooks: false`. `false`: none, whatever a Host says. `:integrate` sends the line to the Session on screen whatever this says |
 
@@ -229,7 +240,7 @@ The pieces of a mode:
 | `titlebar` | `true` / `false` | `true` | `false` |
 | `sidebar` | `false`, `true`, or `{ side = "left"\|"right", sections = { "sessions", "folders", "inventory" } }`. `sections` picks and orders them. Leave it out for all | `{ side = "left" }` | `false` |
 | `sessionbar` | `false`, `"bottom"` or `"top"`: the thin tmux-style bar of open Sessions | `false` | `false` |
-| `statusbar` | `false`, `true`, or segments in order: `"backend"`, `"box"`, `"hosts"`, `"path"`, `"changes"` (the Pending changes count, shown only when there are some), `"hints"`, `"mode"`. `hints` and `mode` sit on the right | `true` | `false` |
+| `statusbar` | `false`, `true`, or segments in order: `"backend"`, `"box"`, `"inventory"` (the named Inventory roster runs on, shown only when it runs on one), `"hosts"`, `"path"`, `"changes"` (the Pending changes count, shown only when there are some), `"hints"`, `"mode"`. `hints` and `mode` sit on the right | `true` | `false` |
 | `fullscreen` | `true` / `false`: OS fullscreen | `false` | `true` |
 | `toolbar` | `false`, `true`, or controls in order: `"sidebar"` (the Sidebar's toggle, at the left), `"find"`, `"quick"` (Quick Connect, shown only with a roster that has it, API 12), `"add"` (Add Host), `"changes"` (with the Pending changes count), `"publish"` (shown only while there are Pending changes), `"details"` (Host details for the selected Host, ticket 18, by the window's buttons), and `"cmdline"`, `"keys"`, `"help"` (`:help`'s topic finder), `"lock"`, `"mode"`, which aren't in the default set. A Plugin's controls (`roster.toolbar`) show after these unless the list is given; then name a control's id to show it. In the title bar; a bar of its own when the mode has none (decision Q65) | `true` (sidebar, find, quick, add, changes, publish, details) | `false` |
 
@@ -308,7 +319,7 @@ Plugins fetched from git repos, the way lazy.nvim fetches Neovim's ([plugins.md]
 | Option | |
 |---|---|
 | `packages` | Each one `{ SOURCE, tag = …, config = { … } }`, or just `SOURCE`. SOURCE is `"owner/repo"` (on GitHub) or a git URL: `https://…`, `ssh://…`, `git@host:path`, `file://…`, or a full path to a repo on this machine (plain `http://` and `git://` are refused: anyone on the way could change them). At most one of `tag`, `branch` or `commit`; none means the repo's default branch. `name = "…"` names it (its folder and its line in `roster.lock`) when the repo's name won't do. `dir = "plugins/NAME"` loads the Plugin from that folder of the repo instead of its top, and names the Package after the folder; it must be inside the repo (relative, `/` between folders, no `..`, no `.git`, no symlink that leads out), and two Packages from one repo each get a clone of their own (decision Q94). [First-party Plugins](../plugins.md#first-party-plugins) install this way. `config` is a table of settings the Package reads as `roster.plugin.config`; it can't be a function, since a Package runs in a Lua state of its own (decision Q83) |
-| `plugin_proxy` | The proxy Plugins' network requests go through, on a network that only leaves through one: `"http://10.0.0.5:3128"`. Only `http://HOST:PORT`, with the port written out: never a user or password (roster sends a proxy no credentials, and a Plugin can't set one either), and https still goes end to end, as a tunnel the proxy can't read. Only requests to public names use it; a `private:` site and a site that's an address go direct. Through the proxy, roster still looks the name up itself first and refuses it, as without a proxy, if any address is on this computer or a private network; only when this computer can't look the name up at all (a network where only the proxy resolves names) does it go to the proxy unchecked, and then the proxy decides where the name leads, and could be pointed at a different address than roster saw. So choose a proxy that doesn't let outside names reach inside addresses. Unset: requests go direct, and the environment's and the system's proxy settings are always ignored. A change takes effect at each running Plugin's next request once the Config reloads (`:source`); a request already going finishes as it began (decision Q116) |
+| `plugin_proxy` | The proxy Plugins' network requests go through, on a network that only leaves through one: `"http://10.0.0.5:3128"`. Only `http://HOST:PORT`, with the port written out: never a user or password (roster sends a proxy no credentials, and a Plugin can't set one either), and https still goes end to end, as a tunnel the proxy can't read. Only requests to public names use it; a `private:` site and a site that's an address go direct, a public address too (`network:45.10.20.30`): the proxy is never used for an address, so such a site reaches the network the way this Box does without one. Through the proxy, roster still looks the name up itself first and refuses it, as without a proxy, if any address is on this computer or a private network, then asks the proxy for a tunnel to that checked address (`CONNECT 45.10.20.30:443`), never the name, so the request reaches only the address roster checked (decision Q161). So this computer must be able to look public names up (a name it can't isn't sent), and the proxy must allow a CONNECT to an address, on port 80 too for an `http://` site; a proxy that refuses fails the request, and roster never hands it the name instead. Unset: requests go direct, and the environment's and the system's proxy settings are always ignored. A change takes effect at each running Plugin's next request once the Config reloads (`:source`); a request already going finishes as it began (decision Q116) |
 
 ### Other
 

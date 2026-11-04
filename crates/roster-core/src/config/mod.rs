@@ -20,6 +20,8 @@ mod watch;
 
 pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};
 pub use schema::*;
+#[cfg(feature = "test-hooks")]
+pub use watch::{HeldClock, watch_held};
 pub use watch::{Watcher, watch};
 
 use serde::Serialize;
@@ -29,8 +31,15 @@ use std::time::Duration;
 
 /// The file the app runs.
 pub const FILE_NAME: &str = "init.lua";
-/// The version of the `roster` Lua table (`roster.api_version`), raised when it changes.
+/// The Plugin API's version (`roster.api_version`), which init.lua's table shows too.
 pub const API_VERSION: u32 = 5;
+/// init.lua's own version (`roster.config_version`, decision Q165): 4 is v0.3.0's shape
+/// (`roster.o` and the collections' functions). Raised when a change to init.lua's `roster`
+/// table or an option can't be told by its name: a name removed or renamed, or one that keeps its
+/// name but takes, gives or does something else. A new name doesn't raise it (it reads as nil
+/// in an older app). The Plugin API's changes don't either. tests/config_version.rs holds it to
+/// that against a snapshot of the shape per version (`config::shape::version`, ticket 181).
+pub const CONFIG_VERSION: u32 = 4;
 
 /// What went wrong: where, and what. Shown as `init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -409,6 +418,17 @@ impl<'a> Sources<'a> {
             })
         })
     }
+
+    /// [`Sources::find`] for a value no `roster.*` call set (it's the returned table's, which
+    /// wins over the calls): keys inside a `roster.*` statement aren't it (ticket 148).
+    fn find_outside_calls(&self, path: &[String]) -> Option<Location> {
+        self.each().find_map(|(file, source)| {
+            locate::line_of_outside_calls(source, path).map(|line| Location {
+                file: file.into(),
+                line,
+            })
+        })
+    }
 }
 
 /// Gives a schema error its line: from the API call that set the value, else by finding the
@@ -425,7 +445,7 @@ fn place(mut e: ConfigError, sources: &Sources, api: &[(Vec<String>, Location)])
         e.line = Some(at.line);
         return e;
     }
-    match sources.find(&e.path) {
+    match sources.find_outside_calls(&e.path) {
         Some(at) => {
             e.file = at.file;
             e.line = Some(at.line);
@@ -674,7 +694,7 @@ fn lines(
             out.insert(key, at);
         }
     };
-    let find = |path: &[String]| sources.find(path);
+    let find = |path: &[String]| sources.find_outside_calls(path);
     for b in &c.keys.0 {
         let path = vec!["keys".to_string(), b.context.lua_name().to_string(), b.keys.clone()];
         put(path, &find);

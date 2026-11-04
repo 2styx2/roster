@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { XtermPromptScreen } from "./promptScreen";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "../backend/fake";
-import { BackendCallError, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
+import { BackendCallError, FillRefusal, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
 import { IDLE_MS, hookLine } from "./shellHooks";
 import { PromptWatch } from "./prompt";
 import { Tabs, type TabStatus } from "./tabs";
@@ -337,6 +338,54 @@ describe("Tabs", () => {
       const problem = problemOf(tabs.snapshot().tabs[0]?.status);
       expect(problem).toMatchObject({ code: "dropped", message: `${host} stopped answering, so ssh ended the Session` });
       expect(problem?.details).toContain("Timeout, server 10.0.0.6 not responding.");
+    });
+
+    // #295 review: copied text (OSC 52) never reaches a Problem, so never the message line,
+    // :messages or the State, even when the kept tail cuts the sequence in two.
+    const copiedB64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+    const bigCopy = "pa55w0rd-copied ".repeat(400); // > 4 KB once encoded
+
+    it.each([
+      ["in one chunk", 1],
+      ["split across many chunks", 7],
+    ])("a long OSC 52 (%s) then an ssh drop leaves none of the copied text in the Problem", async (_, parts) => {
+      const { backend, session } = scriptedSessions();
+      const c = clock();
+      const tabs = new Tabs(backend, { now: c.now });
+      const host = reviewed[0]!;
+      tabs.open(host);
+      await settle();
+      session(host).print("admin@web-1:~$ ");
+      c.advance(600_000);
+      const seq = `\x1b]52;c;${copiedB64(bigCopy)}\x07`;
+      const step = Math.ceil(seq.length / parts);
+      for (let i = 0; i < seq.length; i += step) session(host).print(seq.slice(i, i + step));
+      session(host).print("Timeout, server 10.0.0.6 not responding.\r\n");
+      session(host).exit(255);
+      await settle();
+      const problem = problemOf(tabs.snapshot().tabs[0]?.status);
+      expect(problem?.code).toBe("dropped");
+      const all = JSON.stringify(problem);
+      expect(all).not.toContain(copiedB64(bigCopy).slice(-40, -4));
+      expect(all).not.toContain(copiedB64(bigCopy).slice(0, 40));
+      expect(all).not.toContain("pa55w0rd");
+      expect(problem?.details).toContain("Timeout, server 10.0.0.6 not responding.");
+    });
+
+    it("an OSC 52 inside the pre-auth window never reaches its Problem either", async () => {
+      const { backend, session } = scriptedSessions();
+      const c = clock();
+      const tabs = new Tabs(backend, { now: c.now });
+      const host = reviewed[0]!;
+      tabs.open(host);
+      await settle();
+      session(host).print(`\x1b]52;c;${copiedB64("pa55w0rd-early")}\x07`);
+      session(host).print(CHANGED_KEY);
+      session(host).exit(255);
+      await settle();
+      const problem = problemOf(tabs.snapshot().tabs[0]?.status);
+      expect(problem?.code).toBe(43);
+      expect(JSON.stringify(problem)).not.toContain(copiedB64("pa55w0rd-early"));
     });
 
     it("a normal exit after the window is no Problem", async () => {
@@ -1052,6 +1101,50 @@ describe("filling a password prompt (ticket 119)", () => {
     await vi.waitFor(() => expect(seen.join("")).toContain("typed by hand"));
   });
 
+  // Ticket 155 (#284): after a refusal the app sends the Session nothing of its own: no retry, no
+  // shell hook line, no Enter. (The core types only its probe, which holds no Enter: pty_fill.rs.)
+  it("sends the Session nothing after a refused fill, pressed again or left alone", async () => {
+    const backend = fakeBackend({ ...unlocked, hosts });
+    let ev: SessionEvents | null = null;
+    const writes: string[] = [];
+    const refusals = [
+      new BackendCallError("the prompt printed what roster typed to check it, so roster didn't fill it"),
+      new BackendCallError("won't fill on h: h changed since this Session connected", FillRefusal.refused),
+    ];
+    let fills = 0;
+    backend.openSession = async (_host, _size, events) => {
+      ev = events;
+      const done = async () => {};
+      const fill = async () => {
+        fills++;
+        throw refusals[(fills - 1) % refusals.length];
+      };
+      return { id: 1, auth: "key", write: async (d: string) => void writes.push(d), resize: done, close: done, fill };
+    };
+    const tabs = new Tabs(backend);
+    tabs.setShellHooks(() => true, (size) => new XtermPromptScreen(size));
+    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    const id = tabs.open(reviewed[0] ?? "");
+    await settle();
+    const print = async (s: string) => {
+      (ev as SessionEvents | null)?.output(new TextEncoder().encode(s));
+      await settle();
+    };
+    await print("$ sudo -v\r\n[sudo] password for admin: ");
+    await expect(tabs.fill(id)).rejects.toThrow(/printed what roster typed/);
+    // Spent: a second press asks nothing.
+    await expect(tabs.fill(id)).rejects.toThrow(/No password prompt/);
+    // sudo redraws its prompt (Windows' ConPTY does), and the login goes quiet there.
+    await print("\x1b[?25l\r[sudo] password for admin: \x1b[K\x1b[?25h");
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    // The offer is back; a serve refusal (a code) typed nothing either.
+    await expect(tabs.fill(id)).rejects.toThrow(/changed since/);
+    await expect(tabs.fill(id)).rejects.toThrow(/printed what roster typed/);
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    expect(fills).toBe(3);
+    expect(writes).toEqual([]);
+  });
+
   it("watches nothing on an older roster, or a Quick Connect", async () => {
     const backend = fakeBackend({ ...unlocked, hosts });
     const tabs = new Tabs(backend);
@@ -1072,13 +1165,17 @@ describe("a nested ssh (ticket 120)", () => {
     const asked: unknown[] = [];
     const typed: string[] = [];
     let token = "";
-    backend.openSession = async (_host, _size, events) => {
+    let opened: string | undefined;
+    backend.openSession = async (_host, _size, events, _typed, marks) => {
       ev = events;
+      opened = marks;
       const done = async () => {};
       const write = async (d: string) => void typed.push(d);
       return { id: 1, auth: "key", write, resize: done, close: done, fill: async (...args: unknown[]) => (asked.push(args), { host: to.name }) };
     };
     const tabs = new Tabs(backend);
+    // Not by itself: `:integrate` reads the prompt off the Session's screen.
+    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
     tabs.setFillPrompts({
       userOf: () => "admin",
       watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
@@ -1095,7 +1192,7 @@ describe("a nested ssh (ticket 120)", () => {
     await print(`${own("D;0")}${own("A")}$ ${own("B")}`);
     // You type the ssh line and press Enter; the Session echoes it and its shell marks C.
     tabs.write(id, "\r");
-    return { tabs, id, asked, print, typed, own, token: () => token };
+    return { tabs, id, asked, print, typed, own, token: () => token, opened: () => opened };
   }
 
   it("puts the Host the ssh went to on the tab until the outer shell's own D", async () => {
@@ -1110,11 +1207,14 @@ describe("a nested ssh (ticket 120)", () => {
   });
 
   it("sends the Host it went to with the prompt, and nothing of it comes back but the name", async () => {
-    const { tabs, id, asked, print, own } = await onHost();
+    const { tabs, id, asked, print, own, token, opened } = await onHost();
     await print(`ssh ${to.name}\r\n${own("C")}admin@${to.name}'s password: `);
     expect(tabs.snapshot().tabs[0]?.prompt).toMatchObject({ kind: "ssh", elsewhere: null });
     await expect(tabs.fill(id)).resolves.toBe(to.name);
-    expect(asked).toEqual([[`admin@${to.name}'s password:`, { host: to.name, address: to.ip, port: 22, user: "admin" }]]);
+    // The ssh is the Session's own shell's first command (ticket 162), and the core was given the
+    // token its marks carry when the Session opened.
+    expect(asked).toEqual([[`admin@${to.name}'s password:`, { host: to.name, address: to.ip, port: 22, user: "admin", run: 1 }]]);
+    expect(opened()).toBe(token());
   });
 
   it("takes keys typed into the ssh as a reason not to fill its prompt", async () => {
@@ -1146,6 +1246,7 @@ describe("a nested ssh (ticket 120)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void (sent += d), resize: done, close: done };
     };
     const tabs = new Tabs(backend);
+    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
     const seen: string[] = [];
     tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
     const id = tabs.open(reviewed[0] ?? "");
@@ -1218,7 +1319,7 @@ describe("shell hooks (ticket 121, #210)", () => {
     vi.useFakeTimers();
     const { backend, session, typed } = scriptedSessions();
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(on);
+    tabs.setShellHooks(on, (size) => new XtermPromptScreen(size));
     const seen: Uint8Array[] = [];
     const id = tabs.open(reviewed[0]!);
     tabs.attach(id, (d) => seen.push(d));
@@ -1247,8 +1348,9 @@ describe("shell hooks (ticket 121, #210)", () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS * 3);
     expect(typed()).toBe("");
     expect(await tabs.integrate(id)).toBe("no-prompt");
-    // The core types the fill (never through Tabs.write), so the hooks still send at the shell's prompt.
-    s.print("\r\nuser@web-01:~$ ");
+    // The core types the fill (never through Tabs.write), so the hooks still send at the shell's
+    // prompt, once sudo's prompt is more than two rows up (Q150).
+    s.print("\r\nok\r\nok\r\nuser@web-01:~$ ");
     await vi.advanceTimersByTimeAsync(IDLE_MS);
     expect(typed()).toBe(line() + "\r");
   });
@@ -1270,6 +1372,8 @@ describe("shell hooks (ticket 121, #210)", () => {
     const { s, typed, line, tabs, id } = await opened(() => false);
     expect(await tabs.integrate(id)).toBe("no-prompt");
     s.print(PROMPT);
+    // Once the Session's screen has drawn it.
+    await vi.advanceTimersByTimeAsync(0);
     const on = tabs.integrate(id);
     expect(typed()).toBe(line() + "\r");
     s.print(line() + "\r\n" + A + "user@web-01:~$ " + B);
@@ -1277,5 +1381,110 @@ describe("shell hooks (ticket 121, #210)", () => {
     s.exit(0);
     expect(await tabs.integrate(id)).toBe("not-open");
     expect(await tabs.integrate(999)).toBe("not-open");
+  });
+});
+
+describe("Sessions from another named Inventory (ticket 115)", () => {
+  const WORK = { name: "work", path: "/home/you/work-infra/roster.yml" };
+  const HOME = { name: "home", path: "/home/you/home-lab/roster.yml" };
+
+  /** Tabs over the fake, each Session at sudo's prompt, counting fills, starts and hook lines. */
+  async function atPrompts() {
+    const backend = fakeBackend({ ...unlocked, hosts });
+    const events: SessionEvents[] = [];
+    const asked: string[] = [];
+    const opened: string[] = [];
+    backend.openSession = async (host, _size, ev) => {
+      opened.push(host);
+      events.push(ev);
+      const done = async () => {};
+      return { id: events.length, auth: "key", write: done, resize: done, close: done, fill: async (p: string) => (asked.push(p), { host }) };
+    };
+    const tabs = new Tabs(backend);
+    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    const prompt = async (i: number) => {
+      events[i]?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
+      await settle();
+    };
+    const exit = async (i: number) => {
+      events[i]?.exit({ code: 0, closed: false });
+      await settle();
+    };
+    return { tabs, asked, opened, prompt, exit };
+  }
+
+  it("stay open, marked with theirs, and are never filled or reconnected until roster runs on it again", async () => {
+    const { tabs, asked, prompt, exit } = await atPrompts();
+    tabs.serveStarting();
+    // Opened before the app knew where this serve runs: it counts as opened there.
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory(WORK);
+    await settle();
+    await prompt(0);
+    const tab = () => tabs.snapshot().tabs[0]!;
+    expect(tab().label).toBe(reviewed[0]);
+    expect(tab().prompt).not.toBeNull();
+
+    tabs.serveStarting();
+    tabs.setInventory(HOME);
+    expect(tab()).toMatchObject({ label: `${reviewed[0]} · work`, from: "work", prompt: null });
+    await expect(tabs.fill(id)).rejects.toThrow(/came from work/);
+    expect(asked).toEqual([]);
+    await exit(0);
+    expect(tabs.reconnect(id)).toBe(false);
+
+    // A Session opened on home isn't marked; back on work, the first one isn't either.
+    tabs.open(reviewed[1]!);
+    expect(tabs.snapshot().tabs[1]?.label).toBe(reviewed[1]);
+    tabs.serveStarting();
+    tabs.setInventory(WORK);
+    expect(tab().label).toBe(reviewed[0]);
+    expect(tabs.snapshot().tabs[1]).toMatchObject({ label: `${reviewed[1]} · home`, from: "home" });
+    expect(tabs.reconnect(id)).toBe(true);
+  });
+
+  it("fail closed from a restart until the new serve says where it runs, and for good if it never does", async () => {
+    const { tabs, asked, opened, prompt, exit } = await atPrompts();
+    tabs.serveStarting();
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory(WORK);
+    await settle();
+    await prompt(0);
+
+    // serve starts again: until it says, nothing of the old one's is filled or started again.
+    tabs.serveStarting();
+    await expect(tabs.fill(id)).rejects.toThrow(/came from work/);
+    expect(tabs.snapshot().tabs[0]?.prompt).toBeNull();
+    expect(asked).toEqual([]);
+    await exit(0);
+    const starts = opened.length;
+    expect(tabs.reconnect(id)).toBe(false);
+    tabs.resumeAfterUnlock();
+    expect(opened.length).toBe(starts);
+
+    // A tab opened while it's unknown is this serve's: a restart that never says loses it too.
+    const fresh = tabs.open(reviewed[1]!);
+    await settle();
+    tabs.serveStarting();
+    await exit(1);
+    expect(tabs.reconnect(fresh)).toBe(false);
+
+    // The same file again: theirs again.
+    tabs.setInventory(WORK);
+    expect(tabs.reconnect(id)).toBe(true);
+    expect(tabs.reconnect(fresh)).toBe(false);
+  });
+
+  it("tell two unnamed files apart by their path", async () => {
+    const { tabs, asked, prompt } = await atPrompts();
+    tabs.serveStarting();
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory({ name: null, path: "/home/you/a/roster.yml" });
+    await settle();
+    await prompt(0);
+    tabs.serveStarting();
+    tabs.setInventory({ name: null, path: "/home/you/b/roster.yml" });
+    await expect(tabs.fill(id)).rejects.toThrow(/came from \/home\/you\/a\/roster\.yml/);
+    expect(asked).toEqual([]);
   });
 });

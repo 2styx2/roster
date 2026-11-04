@@ -14,6 +14,7 @@ import {
   type HostAdd,
   type HostChanges,
   type BoxCheck,
+  type CheckStarted,
   type HostCheck,
   type HostKeyScan,
   type HostKeyTrust,
@@ -29,6 +30,8 @@ import {
   type InventoryChanged,
   type JobProgress,
   type InventoryReload,
+  type Inventories,
+  type InventoryUsed,
   type PendingChanges,
   type PackageChecked,
   type PackageStatus,
@@ -102,12 +105,13 @@ function sessionChannel(events: SessionEvents): Channel<SessionMessage> {
   return ch;
 }
 
-async function openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword): Promise<SessionHandle> {
+async function openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword, marks?: string): Promise<SessionHandle> {
   // A typed password (ticket 16) goes once to serve's stdin, like vault_unlock's.
-  const { id, auth, held } = await call<{ id: number; auth: SessionAuth; held?: string }>("session_open", {
+  const { id, auth, held, conpty, user } = await call<{ id: number; auth: SessionAuth; held?: string; conpty?: boolean; user?: string }>("session_open", {
     host,
     password: typed?.password ?? null,
     save: typed?.save === true,
+    marks: marks ?? null,
     cols: size.cols,
     rows: size.rows,
     events: sessionChannel(events),
@@ -116,6 +120,8 @@ async function openSession(host: string, size: TermSize, events: SessionEvents, 
     id,
     auth,
     ...(held === undefined ? {} : { held }),
+    ...(conpty === true ? { conpty } : {}),
+    ...(user === undefined ? {} : { fillUser: user }),
     write: (data) => call("session_write", { id, data }),
     resize: ({ cols, rows }) => call("session_resize", { id, cols, rows }),
     close: () => call("session_close", { id }),
@@ -182,10 +188,18 @@ export function tauriBackend(): Backend {
     },
     openSession,
     openQuickSession,
-    checkHost: (host) => call<HostCheck>("host_check", { host }),
+    checkHost: (host, onStarted) => {
+      const started = new Channel<CheckStarted>();
+      if (onStarted) started.onmessage = onStarted;
+      return call<HostCheck>("host_check", { host, started });
+    },
+    stopCheck: (job) => call<{ stopping: boolean }>("host_check_stop", { job }).then((r) => r.stopping),
     checkBox: () => call<BoxCheck>("box_check"),
     listJobs: () => call<{ jobs: JobProgress[] }>("jobs_list").then((r) => r.jobs),
     pullInventory: () => call<PullResult>("inventory_pull"),
+    // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
+    listInventories: () => call<Inventories>("inventories_list"),
+    useInventory: (name) => call<InventoryUsed>("inventories_use", { name }),
     verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
     pendingChanges: () => call<PendingChanges>("changes_diff"),

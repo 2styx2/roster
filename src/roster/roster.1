@@ -17,8 +17,9 @@ roster bw ...
 roster providers [\-\-json]
 roster auth\-check [\-\-only LIST] [\-\-json]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
-roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-json] [{cut,status}] [HOST]
-roster revoke [\-\-only LIST] [\-y]
+roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-find\-leftovers] [\-\-remove\-leftovers] [\-\-json] [{cut,status}] [HOST]
+roster revoke [\-\-only LIST] [\-\-all] [\-y]
+roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
 roster serve
 roster askpass [prompt]
 roster man [\-\-install] [\-\-prefix DIR]
@@ -40,7 +41,10 @@ Give this box (and Claude) access to the hosts in roster.yml.
 show program's version number and exit
 .TP
 \fB\-c, \-\-config PATH\fR
-path to roster.yml (default: $ROSTER_CONFIG, ./roster.yml, then ~/.config/roster/roster.yml)
+path to roster.yml (default: $ROSTER_CONFIG, ./roster.yml, the active named Inventory, then ~/.config/roster/roster.yml)
+.TP
+\fB\-\-inv NAME\fR
+use the named Inventory NAME for this one command (`roster inv list` names them)
 .SH COMMANDS
 .SS init
 .PP
@@ -67,7 +71,7 @@ Rewrite the SSH config and Claude files after editing \fBroster.yml\fR
 .PP
 \fBroster check [\-\-box] [\-\-only LIST] [\-\-json] [host]\fR
 .PP
-Reachability of SSH, web UIs and services, and the Mesh's drift (without \fB\-\-only\fR). With one HOST: why a Session to it would or wouldn't open, step by step (see \fBroster check HOST\fR). With \fB\-\-box\fR: this Box's health, without connecting anywhere (see \fBroster check \-\-box\fR)
+Reachability of SSH (a login running \fBexit 0\fR, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without \fB\-\-only\fR); on an \fBos: windows\fR Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see \fBroster check HOST\fR). With \fB\-\-box\fR: this Box's health, without connecting anywhere (see \fBroster check \-\-box\fR)
 .TP
 \fBHOST\fR
 diagnose this one Host: inventory, ssh config, vault, DNS, port, host key, login (one connection)
@@ -140,7 +144,7 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 .PP
 \fBroster run [\-\-sudo] host ...\fR
 .PP
-Run a command; password\-only hosts get their password from the provider. \fB\-\-sudo\fR runs it as root, handing sudo the login's password (never shown)
+Run a command; password\-only hosts get their password from the provider. \fB\-\-sudo\fR runs it as root, handing sudo the login's password (never shown). On an \fBos: windows\fR Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; \fB\-\-sudo\fR there is refused (159). See Windows Hosts
 .TP
 \fB\-\-sudo\fR
 run it as root with sudo; roster gives sudo the login's password (never shown)
@@ -154,7 +158,7 @@ the command, after \-\-
 .PP
 \fBroster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]\fR
 .PP
-Scan networks; \fB\-\-write\fR adds the results to \fBroster.yml\fR
+Scan networks; \fB\-\-write\fR adds the results to \fBroster.yml\fR, then syncs this Box as \fBroster sync\fR does
 .TP
 \fBCIDR\fR
 e.g. 10.0.1.0/24 (several allowed)
@@ -237,9 +241,9 @@ don't verify the TLS certificate
 how long to wait for the answer (default: 30)
 .SS mesh
 .PP
-\fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-json] [{cut,status}] [HOST]\fR
+\fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-find\-leftovers] [\-\-remove\-leftovers] [\-\-json] [{cut,status}] [HOST]\fR
 .PP
-Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change; \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
+Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change, then syncs this Box as \fBroster sync\fR does; \fBmesh cut \-\-all [\-y]\fR takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves \fBroster.yml\fR as it is (before removing roster: Uninstalling roster); \fBmesh \-\-find\-leftovers\fR lists the Mesh entries on every Host that this \fBroster.yml\fR doesn't ask for, changing nothing, and \fBmesh \-\-remove\-leftovers [\-y]\fR removes them after a question (an older roster's may be another Box's: Whose Mesh it is); \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
 .TP
 \fBACTION\fR
 cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections)
@@ -256,19 +260,48 @@ replace HOST's Mesh key (repeatable)
 \fB\-y, \-\-yes\fR
 with cut: don't ask first
 .TP
+\fB\-\-all\fR
+with cut: every Mesh entry off every Host, roster.yml unchanged (before removing roster from this Box)
+.TP
+\fB\-\-find\-leftovers\fR
+look on every Host, once, for Mesh entries this roster.yml doesn't ask for (this Box's, or an older roster's with no Box in the tag); changes nothing
+.TP
+\fB\-\-remove\-leftovers\fR
+the same, then remove them after a question (\-y doesn't ask): an older roster's may be another Box's Mesh
+.TP
 \fB\-\-json\fR
 with status or \-\-dry\-run: print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS revoke
 .PP
-\fBroster revoke [\-\-only LIST] [\-y]\fR
+\fBroster revoke [\-\-only LIST] [\-\-all] [\-y]\fR
 .PP
-Remove this box's key from every host
+Remove this box's key from every host; it names this box's files to delete only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, and never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories. On an \fBos: windows\fR Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
 .TP
+\fB\-\-all\fR
+every Inventory on this box: each named one and the unnamed one, with one question and one summary
+.TP
 \fB\-y, \-\-yes\fR
 don't ask first
+.SS inv
+.PP
+\fBroster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]\fR
+.PP
+add NAME PATH\e
+.TP
+\fBACTION\fR
+list (the active one marked *), add NAME PATH, use NAME (make it the active one), remove NAME (forget the name; the file stays), which (print the roster.yml roster uses)
+.TP
+\fBNAME\fR
+the Inventory's name: letters, digits, . _ \-
+.TP
+\fBPATH\fR
+with add: its roster.yml
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS serve
 .PP
 \fBroster serve\fR
@@ -328,6 +361,12 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 \fBdiscover CIDR... \-\-json\fR
 \fB{version, targets, addresses, ports, scanner, count, quiet, found: [Found], group}\fR: the preview, after the scan. \fBtargets\fR, \fBaddresses\fR (how many it visits), \fBports\fR (how many) and \fBscanner\fR (\fBnmap\fR or \fBbuilt\-in\fR) as \fBdiscover.plan\fR; \fBcount\fR, \fBquiet\fR and \fBfound\fR as \fBdiscover.status\fR (a Found is \fB{address, name, type, hostname, title, web, known, added, vendor, os, mac, ports}\fR: \fBname\fR the name \fB\-\-write\fR would give it, \fBnull\fR when \fBknown\fR names the Host already at that address; \fBadded\fR is always \fBnull\fR here). \fBgroup\fR is the group \fB\-\-write\fR would add the new ones to. Not with \fB\-\-write\fR (exit 2). Over 4,096 addresses without \fB\-\-force\fR: error \fB121\fR\&. A \fBroster.yml\fR that's there but doesn't load (named by \fB\-c\fR, \fBROSTER_CONFIG\fR or found in the usual places): error \fB1\fR with its fix; with none at all (or \fBROSTER_CONFIG\fR naming no file) it scans anyway
 .TP
+\fBinv list \-\-json\fR
+\fB{version, active, inventories: [{name, path, active, exists}]}\fR, as \fBinventories.list\fR
+.TP
+\fBinv which \-\-json\fR
+\fB{version, path, name, exists}\fR: the \fBroster.yml\fR roster uses and its name among the named Inventories (\fBnull\fR if it isn't one). Exit 1 if it isn't there
+.TP
 \fBmesh status \-\-json\fR
 \fB{version, links, excluded, reach, members, pending, cut_pending, out_of_date}\fR, as \fBmesh.status\fR
 .TP
@@ -359,7 +398,7 @@ $ roster info nope \-\-json
 .SH FILES
 .TP
 \fB\&./roster.yml\fR
-The Inventory: hosts, groups, resources and vault references, never passwords. roster looks for it in this order: \fB\-c PATH\fR, \fB$ROSTER_CONFIG\fR, \fB\&./roster.yml\fR, \fB~/.config/roster/roster.yml\fR (\fB%APPDATA%\eroster\eroster.yml\fR on Windows)
+The Inventory: hosts, groups, resources and vault references, never passwords. roster looks for it in this order: \fB\-c PATH\fR, \fB\-\-inv NAME\fR, \fB$ROSTER_CONFIG\fR, \fB\&./roster.yml\fR, the active named Inventory, \fB~/.config/roster/roster.yml\fR (\fB%APPDATA%\eroster\eroster.yml\fR on Windows)
 .TP
 \fB~/.config/roster/\fR
 This box's roster folder (on Windows, \fB%APPDATA%\eroster\fR, next to the app's \fBinit.lua\fR): \fBroster.yml\fR if you keep it here, \fBproviders/\fR for provider plugins, \fBbw\-session\fR
@@ -371,16 +410,22 @@ A saved Bitwarden session (\fBbw unlock \-\-raw\fR), used only if only you can r
 This box's SSH key (\fBkey_path:\fR in \fBroster.yml\fR moves it), made by \fBroster setup\fR
 .TP
 \fB~/.ssh/roster_known_hosts\fR
-Host keys recorded on first contact
+Host keys recorded on first contact (a named Inventory's: \fB~/.ssh/roster_known_hosts\-NAME\fR)
 .TP
 \fB~/.ssh/config.d/roster\fR
-The SSH config entries \fBroster setup\fR and \fBroster sync\fR write
+The SSH config entries \fBroster setup\fR and \fBroster sync\fR write (a named Inventory's: \fB~/.ssh/roster\-inventories/NAME\fR)
+.TP
+\fB~/.ssh/config.d/roster.inventories\fR
+With named Inventories: what \fB~/.ssh/config\fR includes, every Inventory's Hosts with the active one's first (a name an earlier one has is left out)
+.TP
+\fB~/.config/roster/inventories.json\fR
+The named Inventories and which one is active (\fBroster inv\fR)
 .TP
 \fBROSTER.md\fR, \fBCLAUDE.md\fR, \fB\&.claude/settings.json\fR
 What Claude reads, written next to \fBroster.yml\fR by \fBsetup\fR and \fBsync\fR
 .TP
 \fB~/.config/roster/mesh.json\fR
-What \fBroster mesh\fR couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box
+What \fBroster mesh\fR couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box (a named Inventory's: \fB~/.config/roster/mesh\-NAME.json\fR)
 .TP
 \fB~/.ssh/roster\-mesh/\fR (or the Host's \fBmesh_dir:\fR; on ESXi, \fB\&.roster\-mesh\fR on a datastore), \fB~/ROSTER.md\fR (on Hosts)
 A Mesh source's key, known hosts, ssh config and its peers for Claude, written by \fBroster mesh\fR (The Mesh)
@@ -390,7 +435,7 @@ Short\-lived private state: kept web logins and the askpass socket (on Windows, 
 .SH ENVIRONMENT
 .TP
 \fBROSTER_CONFIG\fR
-The \fBroster.yml\fR to use when \fB\-c\fR isn't given
+The \fBroster.yml\fR to use when neither \fB\-c\fR nor \fB\-\-inv\fR is given (it comes before the active named Inventory)
 .TP
 \fBBW_SESSION\fR, \fBBW_PASSWORD\fR
 An unlocked Bitwarden session, or the master password to unlock with
@@ -417,7 +462,7 @@ Wrong arguments
 \fB130\fR
 Interrupted with Ctrl+C
 .PP
-With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR exit 1 while a Host is pending.
+With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fB\-\-find\-leftovers\fR/\fB\-\-remove\-leftovers\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
 .SH EXAMPLES
 .PP
 .nf

@@ -45,6 +45,10 @@ export interface Vault {
   unlock(password: string): Promise<void>;
   /** Lock now. False if there's nothing to lock. */
   lock(): boolean;
+  /** Lock now and wait for serve to have forgotten every secret (`:inventory`'s switch, ticket
+   * 115, before serve stops). Never rejects: a failure is said on the lock screen, and answered
+   * (its message), so the caller can stop; null when the vault locked. */
+  lockNow(): Promise<string | null>;
   /** `vault.login` (ticket 31). A `done` step unlocks the app. */
   signInStart(start: SignInStart): Promise<SignInStep>;
   signInAnswer(login: string, answer: SignInAnswer): Promise<SignInStep>;
@@ -159,16 +163,24 @@ export function useVault(
     [backend, lockIfServeUnlocked],
   );
 
-  const lock = useCallback((): boolean => {
+  const lockNow = useCallback(async (): Promise<string | null> => {
     const v = viewRef.current;
-    if (v.state === "none") return false;
     // Hide first, then forget: the Sessions are covered before the call goes out.
     if (v.state === "unlocked") setView({ state: "locked", provider: v.provider, error: null, account: v.account });
-    backend.lockVault().catch((e: unknown) => {
-      setView((cur) => (cur.state === "locked" ? { ...cur, error: `Locking the vault failed: ${messageOf(e)}` } : cur));
-    });
-    return true;
+    return backend.lockVault().then(
+      () => null,
+      (e: unknown) => {
+        setView((cur) => (cur.state === "locked" ? { ...cur, error: `Locking the vault failed: ${messageOf(e)}` } : cur));
+        return messageOf(e);
+      },
+    );
   }, [backend]);
+
+  const lock = useCallback((): boolean => {
+    if (viewRef.current.state === "none") return false;
+    void lockNow();
+    return true;
+  }, [lockNow]);
 
   const signedIn = useCallback(
     (step: SignInStep) => {
@@ -243,5 +255,5 @@ export function useVault(
   }, [unlocked, idleMs, clock, lock]);
 
   const locked = view.state !== "unlocked" && view.state !== "none";
-  return { view, locked, check, unlock, lock, signInStart, signInAnswer, signInCancel, askSignOut, keepAccount, signOut };
+  return { view, locked, check, unlock, lock, lockNow, signInStart, signInAnswer, signInCancel, askSignOut, keepAccount, signOut };
 }

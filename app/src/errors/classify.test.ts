@@ -24,9 +24,9 @@ const samples: [string, number, string, "key" | "password", ProblemCode, RegExp]
   ["DNS (glibc)", 255, "ssh: Could not resolve hostname esxi02.lab: Name or service not known\r\n", "key", 40, /resolve 'esxi02\.lab'/],
   ["DNS (no resolver)", 255, "ssh: Could not resolve hostname nope.invalid: Temporary failure in name resolution\r\n", "key", 40, /resolve/],
   ["refused", 255, "ssh: connect to host 10.0.0.6 port 2222: Connection refused\r\n", "key", 41, /10\.0\.0\.6:2222\) refused/],
-  ["timeout", 255, "ssh: connect to host 10.19.77.5 port 22: Connection timed out\r\n", "key", 42, /didn't answer/],
+  ["timeout", 255, "ssh: connect to host 10.0.0.5 port 22: Connection timed out\r\n", "key", 42, /didn't answer/],
   ["no route", 255, "ssh: connect to host 10.9.9.9 port 22: No route to host\r\n", "key", 42, /didn't answer|reach/],
-  ["banner timeout", 255, "Connection timed out during banner exchange\r\nConnection to 10.19.77.5 port 22 timed out\r\n", "key", 42, /didn't answer/],
+  ["banner timeout", 255, "Connection timed out during banner exchange\r\nConnection to 10.0.0.5 port 22 timed out\r\n", "key", 42, /didn't answer/],
   ["host key changed", 255, CHANGED, "key", 43, /host key changed/],
   ["host key unknown", 255, "No ED25519 host key is known for esx and you have requested strict checking.\r\nHost key verification failed.\r\n", "key", 44, /No recorded host key/],
   [
@@ -46,7 +46,7 @@ const samples: [string, number, string, "key" | "password", ProblemCode, RegExp]
   ["closed by remote", 255, "admin@esx:~$ Connection to 10.0.0.6 closed by remote host.\r\nConnection to 10.0.0.6 closed.\r\n", "key", "dropped", /closed by the Host/],
   ["server alive timeout", 255, "Timeout, server 10.0.0.6 not responding.\r\n", "key", "dropped", /stopped answering/],
   ["broken pipe", 255, "packet_write_wait: Connection to 10.0.0.6 port 22: Broken pipe\r\n", "key", "dropped", /connection/i],
-  ["kex reset", 255, "kex_exchange_identification: read: Connection reset by peer\r\nConnection reset by 10.19.77.5 port 22\r\n", "key", "closed-early", /before logging in/],
+  ["kex reset", 255, "kex_exchange_identification: read: Connection reset by peer\r\nConnection reset by 10.0.0.5 port 22\r\n", "key", "closed-early", /before logging in/],
   ["kex closed", 255, "kex_exchange_identification: Connection closed by remote host\r\nConnection closed by 10.0.0.6 port 22\r\n", "key", "closed-early", /before logging in/],
   ["no common host key type", 255, "Unable to negotiate with 10.0.0.9 port 22: no matching host key type found. Their offer: ssh-rsa,ssh-dss\r\n", "key", 48, /agree on/],
   ["askpass: no item", 255, "roster askpass: [32] no vault item named 'esx shh' (ssh Login of esx) - did you mean: 'esx ssh'\r\nroot@esx: Permission denied (publickey,password).\r\n", "password", 32, /^no vault item named 'esx shh'/],
@@ -97,11 +97,11 @@ describe("classifyExit", () => {
   it("names the address and port it couldn't reach, and the 10.19 rate limiter when it applies", () => {
     const p = classifyExit({
       exitCode: 255,
-      tail: "ssh: connect to host 10.19.77.5 port 22: Connection timed out",
+      tail: "ssh: connect to host 10.19.1.5 port 22: Connection timed out",
       host: "esxi-02",
       auth: "key",
     });
-    expect(p?.message).toBe("esxi-02 (10.19.77.5:22) didn't answer");
+    expect(p?.message).toBe("esxi-02 (10.19.1.5:22) didn't answer");
     expect(p?.fix).toMatch(/rate limiter/);
     const q = classifyExit({ exitCode: 255, tail: "ssh: connect to host 10.1.1.1 port 22: Connection timed out", host: "x" });
     expect(q?.fix).not.toMatch(/rate limiter/);
@@ -122,5 +122,41 @@ describe("terminalTail", () => {
 
   it("keeps what a carriage return overwrote last", () => {
     expect(terminalTail("Password: \rroster askpass: [37] spent")).toBe("roster askpass: [37] spent");
+  });
+});
+
+describe("terminalTail drops what's left of an escape sequence cut off at its start (#295 review)", () => {
+  it("drops the body of an OSC whose start was cut off, up to its BEL or ST", () => {
+    expect(terminalTail("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\x07Timeout, server 10.0.0.6 not responding.")).toBe(
+      "Timeout, server 10.0.0.6 not responding.",
+    );
+    expect(terminalTail("c;QUJDREVGR0hJSktM\x1b\\done")).toBe("done");
+  });
+
+  it("keeps the text before a whole OSC", () => {
+    expect(terminalTail("before\x1b]0;title\x07after")).toBe("beforeafter");
+  });
+
+  it("drops a long base64-looking run", () => {
+    const run = "QUJD".repeat(40);
+    expect(terminalTail(`x ${run} y`)).not.toContain(run.slice(0, 64));
+    // A host key fingerprint (43 characters) stays.
+    const fp = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+    expect(terminalTail(fp)).toBe(fp);
+  });
+});
+
+describe("terminalTail keeps the lines before a shell's bell (#295 second pass)", () => {
+  it("a bell after a prompt erases nothing", () => {
+    const out = "line one\r\nadmin@web-1:~$ \x07\r\nConnection to 10.0.0.5 closed by remote host.";
+    expect(terminalTail(out)).toBe("line one\nadmin@web-1:~$\nConnection to 10.0.0.5 closed by remote host.");
+  });
+
+  it("nor a bell right after a short word", () => {
+    expect(terminalTail("ls\x07\r\ndone")).toBe("ls\ndone");
+  });
+
+  it("output already stripped at capture (preAuth, late) keeps what's before a payload-shaped BEL too", () => {
+    expect(terminalTail("QUJDREVGR0hJSktMTU5P\x07after", 30, { strippedAtCapture: true })).toBe("QUJDREVGR0hJSktMTU5Pafter");
   });
 });

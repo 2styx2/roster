@@ -133,6 +133,8 @@ export const defaultBindings: KeymapTables = {
     R: "host rename",
     M: "host move",
     N: "group new",
+    // Another named Inventory (ticket 115): the line, to type or Tab through the names; it asks first.
+    I: "inventory",
     c: "changes",
     r: "reconnect",
     // Fill the password prompt on screen from the vault (ticket 119): offered only at one.
@@ -156,6 +158,9 @@ export const defaultBindings: KeymapTables = {
     Home: "top",
     End: "bottom",
     Enter: "choose",
+    // A Host row's menu (T166, Q156), as a right-click opens it: the Menu key, or Shift+F10.
+    ContextMenu: "menu",
+    "Shift+F10": "menu",
   },
   listVim: { j: "down", k: "up", h: "fold", l: "unfold", "g g": "top", G: "bottom" },
   picker: {

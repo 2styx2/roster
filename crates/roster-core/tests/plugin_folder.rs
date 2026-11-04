@@ -5,7 +5,7 @@
 
 mod common;
 
-use roster_core::plugin::{Limits, PluginHost, Serve, Source, read_manifest};
+use roster_core::plugin::{Limits, PluginHost, Serve, Source};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -98,7 +98,7 @@ fn a_manifest_that_links_outside_the_folder_is_refused() {
     if !dir.join("roster-plugin.lua").exists() {
         return;
     }
-    let e = read_manifest(&dir).unwrap_err();
+    let e = common::read_manifest(&dir).unwrap_err();
     assert_eq!(e.file.as_deref(), Some("roster-plugin.lua"));
     assert!(e.message.contains("outside the Plugin's folder"), "{e}");
 }

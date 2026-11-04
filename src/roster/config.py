@@ -5,17 +5,19 @@ import os
 import re
 import socket
 from pathlib import Path
+from typing import Any, Literal, overload
 from urllib.parse import urlparse
 
 import yaml
 
-from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, die, oneline, user_config_dir
+from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, SSH_UNSAFE, die, oneline, use_inventory, user_config_dir
 from .providers import NO_PASSWORD
 from .resources import load_resources
 
 HOST_DEFAULTS = {"user": None, "port": 22, "enroll": True, "auth": "prompt",
                  "web": None, "services": {}, "notes": "",
-                 "title": "", "description": "", "type": "", "product": "", "reviewed": True, "mac": "", "mesh": None}
+                 "title": "", "description": "", "type": "", "product": "", "reviewed": True, "mac": "", "mesh": None,
+                 "os": None}
 TEXT_FIELDS = ("title", "description", "type", "product")
 GROUP_ONLY = ("hosts", "title", "description")   # describe the group itself, not copied onto hosts
 LOGIN = ("user", "auth")
@@ -23,28 +25,56 @@ SSH_KEYS = ("port", "user", "auth")
 SERVICE_KEYS = ("port", "url", "scheme", "user", "auth", "verify", "login")
 WEB_LOGINS = ("basic", "bearer", "vsphere", "unifi", "openvpnas", "hub", "none")          # how `roster web` sends the service's credentials
 SERVICE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+IPV6_ZONE = re.compile(r"^[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*%[A-Za-z0-9._-]+\Z")   # fe80::1%eth0
 HTTPS_PORTS, HTTP_PORTS = (443, 8443), (80, 8000, 8008, 8080, 8888)
 
 
 # ---------------------------------------------------------------- config
 
-def find_config(arg):
+def find_config(arg, inv=None):
+    """The roster.yml this run uses: `-c PATH` (ARG), `--inv NAME` (INV), $ROSTER_CONFIG, ./roster.yml, the active named
+    Inventory, then ~/.config/roster/roster.yml (ticket 115). It also picks the generated ssh config and known_hosts
+    this run reads and writes: the named Inventory's own when the file is one (common.use_inventory)."""
+    from . import inventories  # Pydantic: only once a roster.yml is looked for
+    path = locate_config(arg, inv)
+    use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path), path)
+    inventories.rebuild_if_stale()
+    return path
+
+
+def locate_config(arg, inv=None):
+    """find_config's lookup alone."""
+    from . import inventories
     if arg:
         return Path(arg).expanduser()
+    if inv:
+        return inventories.path_of(inv)
     if os.environ.get("ROSTER_CONFIG"):
         return Path(os.environ["ROSTER_CONFIG"]).expanduser()
-    for p in (Path.cwd() / "roster.yml", user_config_dir() / "roster.yml"):
-        if p.exists():
-            return p
+    here = Path.cwd() / "roster.yml"
+    if here.exists():
+        return here
+    active = inventories.active_path()
+    if active is not None:
+        return active
+    if (user_config_dir() / "roster.yml").exists():
+        return user_config_dir() / "roster.yml"
     die("no roster.yml found here or in ~/.config/roster/ - run `roster init`, "
         "or pass -c PATH / set ROSTER_CONFIG")
 
 
-def load_config(path):
+def load_inventory(path):
+    """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
     path = Path(path).expanduser().resolve()
     if not path.exists():
         die(f"{path} not found - run `roster init` to create one")
-    return parse_config(path.read_text(), path)
+    return parse_inventory(path.read_text(), path)
+
+
+def load_config(path: Any) -> dict[str, Any]:
+    """load_inventory's dict view, for the code that still reads dicts (it moves to the models when a ticket
+    touches it)."""
+    return load_inventory(path).as_config()
 
 
 def load_config_text(text, path):
@@ -53,7 +83,16 @@ def load_config_text(text, path):
 
 
 def parse_config(text, path):
-    """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked."""
+    """parse_inventory's dict view."""
+    return parse_inventory(text, path).as_config()
+
+
+def parse_inventory(text, path):
+    """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked into an Inventory. A check
+    the code below doesn't make the models do, and their error is roster's own (die), naming the key."""
+    from pydantic import ValidationError  # only when roster.yml is loaded: it costs more than roster's start
+
+    from .models import Inventory, problem
     try:
         raw = yaml.safe_load(text) or {}
     except yaml.YAMLError as e:
@@ -86,15 +125,24 @@ def parse_config(text, path):
                 die(f"host {hname!r} has no user (set it on the host, its group, or defaults)")
             if re.search(r"\s", m["ip"] + m["ssh"]["user"]):
                 die(f"host {hname!r}: ip/user can't contain spaces")
+            for field, value in (("ip", m["ip"]), ("user", m["ssh"]["user"])):
+                if SSH_UNSAFE.search(str(value)):   # written into the ssh config: a quote or newline would break it
+                    die(f"host {hname!r}: {field} can't hold a quote or a control character (it goes into this "
+                        "Box's ssh config)")
+            if "%" in str(m["ssh"]["user"]):     # older OpenSSH (Windows' own) takes a %% in User literally
+                die(f"host {hname!r}: user can't hold a % (it goes into this Box's ssh config)")
+            if "%" in m["ip"] and not IPV6_ZONE.match(m["ip"]):     # a % is an IPv6 zone's, or none (written %%)
+                die(f"host {hname!r}: ip can't hold a % except as an IPv6 address's zone (fe80::1%eth0)")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working
             m["user"], m["port"], m["auth"] = m["ssh"]["user"], m["ssh"]["port"], m["ssh"]["auth"]
-            m["login"] = {k: first(layers, k) for k in LOGIN}    # default login for the host's services
+            m["login"] = {"user": as_user(first(layers, "user")), "auth": as_auth(first(layers, "auth"))}  # for services
             m["services"], m["web"], m["problems"] = resolve_services(hname, m, layers, names)
             m["enroll"] = bool(m["enroll"])
             m["reviewed"] = bool(m["reviewed"])
             m["mesh"] = first(layers, "mesh")
             if m["mesh"] is not None and not isinstance(m["mesh"], bool):
                 die(f"host {hname!r}: mesh: must be true or false")
+            m["os"] = host_os(hname, first(layers, "os"))
             # The app sends this Host's shell its hook line (ticket 121); roster only checks it.
             if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
                 die(f"host {hname!r}: shell_hooks: must be true or false")
@@ -114,15 +162,40 @@ def parse_config(text, path):
     if not hosts:
         die(f"{path} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
-    key = Path(os.path.expanduser(str(raw.get("key_path") or "~/.ssh/roster_ed25519")))
+    key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
+    if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
+        die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
+    key = Path(os.path.expanduser(key_path))
     # matches this box's key line in authorized_keys, including tags from older versions
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
-    return {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
-            "pub": Path(str(key) + ".pub"), "workers": int(raw.get("workers") or 32),
-            "inline_limit": int(raw.get("claude_inline_limit") or 60), "hosts": hosts, "groups": groups, "mesh_dirs": mesh_dirs,
-            "seen_as": seen_as, "sudo": sudo_refs,
-            "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
-            "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])}
+    try:
+        return Inventory.model_validate(
+            {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
+             "pub": Path(str(key) + ".pub"), "workers": raw.get("workers") or 32,
+             "inline_limit": raw.get("claude_inline_limit") or 60, "hosts": hosts, "groups": groups,
+             "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
+             "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
+             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])})
+    except ValidationError as e:
+        die(f"{path}: {problem(e)}")
+
+
+OS_VALUES = ("windows", "posix")
+
+
+def host_os(hname, v):
+    """A Host's `os:` (T195, decision Q174): `windows` (setup, revoke and check run PowerShell there) or `posix` (sh,
+    as for every Host before os:), any case; None when nothing sets it, which is posix."""
+    if v is None:
+        return None
+    if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
+        die(f"host {hname!r}: os: must be windows or posix (unset is posix), not {oneline(v)!r}")
+    return v.strip().lower()
+
+
+def is_windows(h):
+    """Does roster treat Host H (a Host dict) as Windows? Only `os: windows` says so: type: is a free label."""
+    return h.get("os") == "windows"
 
 
 # ---------------------------------------------------------------- the Mesh's links (decision Q63)
@@ -433,7 +506,12 @@ def matches(h, text):
     return bool(words) and all(w in hay for w in words)
 
 
-def selected(cfg, only, resources=False):
+@overload
+def selected(cfg: dict[str, Any], only: str | None, resources: Literal[False] = False) -> list[dict[str, Any]]: ...
+@overload
+def selected(cfg: dict[str, Any], only: str | None,
+             resources: Literal[True]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]: ...
+def selected(cfg: dict[str, Any], only: str | None, resources: bool = False) -> Any:
     """Hosts picked by --only; with resources=True, (hosts, resources), and a match on either is enough."""
     hosts, rs = list(cfg["hosts"].values()), list(cfg["resources"].values()) if resources else []
     if only:

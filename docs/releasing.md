@@ -10,12 +10,12 @@ A Release is one version of the whole repo: the CLI and the app ship together, w
 |---|---|
 | `roster-app-X.Y.Z-windows-x64-setup.exe` | The Windows installer (NSIS), per user |
 | `roster-app-X.Y.Z-windows-x64.msi` | The Windows installer (MSI), for managed installs |
-| `roster-app-X.Y.Z-windows-x64.zip` | `roster-app.exe` and `LICENSE`, nothing installed (needs WebView2, which Windows 10 and 11 have) |
+| `roster-app-X.Y.Z-windows-x64.zip` | `roster-app.exe`, `LICENSE` and `THIRD-PARTY-NOTICES`, nothing installed (needs WebView2, which Windows 10 and 11 have) |
 | `roster-app-X.Y.Z-linux-x64.AppImage` | Linux, one file, built on Ubuntu 22.04 so it runs on that and newer |
 | `roster-app-X.Y.Z-linux-x64.deb` | Debian and Ubuntu |
-| `roster-app-X.Y.Z-linux-x64.tar.gz` | The `roster-app` binary and `LICENSE` (needs WebKitGTK 4.1) |
+| `roster-app-X.Y.Z-linux-x64.tar.gz` | The `roster-app` binary, `LICENSE` and `THIRD-PARTY-NOTICES` (needs WebKitGTK 4.1) |
 | `roster-app-X.Y.Z-macos-universal.dmg` | macOS, Apple silicon and Intel in one app, ad-hoc signed |
-| `roster-app-X.Y.Z-macos.tar.gz` | `Roster.app` and `LICENSE` |
+| `roster-app-X.Y.Z-macos.tar.gz` | `Roster.app`, `LICENSE` and `THIRD-PARTY-NOTICES` |
 | `roster-X.Y.Z-py3-none-any.whl`, `roster-X.Y.Z.tar.gz` | The CLI's wheel and sdist (`uv build`) |
 | `roster-cli-X.Y.Z.tar.gz` | The CLI's source with `install.sh` and `LICENSE`, for a box without git: unpack, `./install.sh`. It has the man page at `share/man/man1/roster.1` too, laid out like a prefix |
 | `roster.1` | The `roster(1)` man page on its own, for packagers (the wheel also installs it to `PREFIX/share/man/man1/`) |
@@ -23,6 +23,26 @@ A Release is one version of the whole repo: the CLI and the app ship together, w
 | `SHA256SUMS` | The SHA-256 of every file above |
 
 The Release notes start with that version's section of [news.md](news.md) (what's new, changed, removed and deprecated, by area; `scripts/news_section.py` makes its links work on GitHub), then a short install note, then the pull requests merged since the last Release (GitHub's generated notes). The Version job fails a tag whose version has no section in `news.md`, before anything is built.
+
+## Third-party notices
+
+The app binaries carry code copied or ported from other projects (today `crates/roster-core/src/wcwidth.rs`, character widths from xterm.js, MIT). Their licences ask that the notice ship with every copy, so `THIRD-PARTY-NOTICES` at the repo root lists each such part with its copyright and licence text, and every app download carries it next to `LICENSE`:
+
+- **The archives** (the Windows `.zip`, the Linux and macOS `.tar.gz`) pack both next to the binary.
+- **The installers** carry both as app resources (`bundle.resources` in `app/src-tauri/tauri.conf.json`), so they land on disk with the installed app: next to `roster-app.exe` in the install folder (the `-setup.exe` and the `.msi`), in `/usr/lib/Roster/` (the `.deb`, and inside the `.AppImage`), in `Roster.app/Contents/Resources/` (the `.dmg`). `bundle.licenseFile` is `LICENSE`, the licence the Windows installers show before installing and the `.dmg` shows as its licence agreement when it's opened.
+- **The app** shows them: `:version` (`:help license`, `:help notices`) is a help page with the version, roster's licence, where each download puts the files and the notices' text, bundled from `THIRD-PARTY-NOTICES` when the app is built (`app/src/help/guides.ts`).
+
+The CLI's files carry no third-party code, so they ship `LICENSE` alone.
+
+**When to update it:** in the same pull request that copies, ports or vendors third-party code into the repo (a file, a table, a function translated from another project). Add its path, where it came from (project, version, file), the copyright line and the licence text. A dependency pulled in by Cargo or npm isn't listed here.
+
+**The checks**, all `scripts/check-release-notices.py`:
+
+- The Version job checks `tauri.conf.json` bundles both files (`--config`), before anything is built.
+- After packing, the `app` job checks its archives: each fails when it holds `LICENSE` without `THIRD-PARTY-NOTICES` beside it.
+- Then it unpacks every installer it built (the `-setup.exe` with 7-Zip, the `.msi` with `msiexec /a`, the `.deb` with `dpkg-deb -x`, the `.AppImage` with `--appimage-extract`, the `.dmg` mounted read-only (agreeing to its licence), and `Roster.app`) and fails when one has no folder with both files; its log names the folder each was found in.
+
+`tests/test_release_notices.py` (run by `uv run pytest` on every pull request) fails if the bundle config loses either file, if a step of `release.yml` that packs `LICENSE` into an app archive doesn't pack the notices too, or if a check step is gone. A pull request that touches `release.yml`, the check script or `tauri.conf.json` runs the whole release as a dry run, installers included.
 
 ## One version
 

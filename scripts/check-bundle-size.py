@@ -31,9 +31,30 @@ KB = 1000
 # build was already a few hundred bytes under 83 (#232, #243). It's the app's own stylesheets, grown a
 # rule at a time with features, not a dependency, so 2 KB of room lets the next small feature through
 # while a stylesheet library (tens of KB) still fails. Measured 83.3 raw / 15.2 gzipped on 2026-11-02.
+# JS 2,500 -> 2,550 raw, 730 -> 745 gzipped on 2026-11-03: a Host row's menu (T166, #314: RowMenu.tsx,
+# hostMenu.ts, the `menu` command and keyboard.md's new Sidebar section, bundled for :help) took it from
+# dev's 2,489.4 raw / 729.7 gzipped (already at the budget) to 2,497.5 / 732.4. The app's own code and
+# the text :help reads, not a dependency, so the budgets follow it with room for the next small feature.
+# CSS measured 2026-11-03 (T173, #324): 84,467 bytes raw / 15,471 gzipped against 85 / 15.5 KB, so 29
+# bytes under the gzipped budget. T173 took two redundant declarations out of the Host row menu's rules
+# (T166) to get there from 84,522 / 15,485. Not raised: the next stylesheet change will go over, and its
+# pull request says why or makes room.
+# CSS measured 2026-11-03 (T178, #340): 83,981 bytes raw / 15,429 gzipped (dev was 84,634 / 15,478 by
+# then). T178 took out declarations that every element they match has overridden (a framed panel's
+# own width and float placement, which its frame sets; a full view's placement and fill; a Session's
+# link edge's base state; the Pending changes diff's padding and tint, which the import diff's rules
+# already replaced) and merged rules repeated for one selector, with every element's computed style
+# and a screenshot of 44 fixture states unchanged. That's 653 B raw, 49 B gzipped: the stylesheet
+# has no dead rules worth 1 KB gzipped, so the gzipped budget stays 71 bytes away. Not raised.
+# JS 2,550 -> 2,600 raw, 745 -> 760 gzipped on 2026-11-03: serve-api.md's Host, Login, service and group tables,
+# now generated from the models (T174, #332) and bundled for :help, took dev's 744.6 gzipped to 745.9 (2,544.5
+# raw). Text :help reads, not a dependency, so the budgets follow it with room for the next small feature.
+# JS 2,600 -> 2,650 raw, 760 -> 775 gzipped on 2026-11-03: Windows Hosts (T195, #375: adding-hosts.md's section,
+# error rows 212-216, serve's error codes and the Host's os field, all bundled for :help) took dev's 2,580.4 raw /
+# 758.9 gzipped to 2,591.5 / 762.8. Text :help reads, not a dependency, so the budgets follow it, as above.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
-    "js": {"raw": 2500, "gzip": 730},
+    "js": {"raw": 2650, "gzip": 775},
     "css": {"raw": 85, "gzip": 15.5},
 }
 

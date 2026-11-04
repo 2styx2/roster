@@ -52,3 +52,35 @@ def test_the_report_names_each_dead_link_and_where_it_is(tmp_path):
 def test_a_flaky_link_gets_a_second_try():
     answers = iter(["timed out", 200])
     assert cl.status("https://a.org/", fetch=lambda url: next(answers)) is None
+
+
+def test_placeholders_in_prose_are_not_links():
+    # #267: a form a sentence describes ("a proxy is http://HOST:PORT") isn't a site to fetch.
+    text = "Write http://HOST:PORT, or http://NAME:PORT/path; a git URL such as https://… or https://…/x.git.\n"
+    assert cl.urls(text) == []
+    assert cl.urls("[real](https://wezterm.org:443/ssh.html)") == ["https://wezterm.org:443/ssh.html"]
+
+
+def test_a_link_with_letters_outside_latin_1_is_fetched_as_ascii(monkeypatch):
+    # #267: urllib can't send a non-latin-1 URL as it is ('latin-1' codec can't encode …).
+    asked = []
+
+    class Answer:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(req, timeout):
+        req.full_url.encode("ascii")
+        asked.append(req.full_url)
+        return Answer()
+
+    monkeypatch.setattr(cl.urllib.request, "urlopen", urlopen)
+    assert cl.fetch("https://bücher.example.org/wiki/Café_—_docs?q=ü#Ä") == 200
+    assert asked == ["https://xn--bcher-kva.example.org/wiki/Caf%C3%A9_%E2%80%94_docs?q=%C3%BC#%C3%84"]
+    assert cl.fetch("https://a.org/already%20quoted") == 200
+    assert asked[-1] == "https://a.org/already%20quoted"

@@ -120,6 +120,33 @@ describe("installing a Package", () => {
     expect(manager.snapshot().declined).toEqual([]);
   });
 
+  it(":packages install NAME fetches again a Package that couldn't be fetched, then asks (errors.md row 116)", async () => {
+    const s = setup({ named: [{ ...repo(), unreachable: true }], lock: {} });
+    await s.manager.syncPackages();
+    expect(s.manager.snapshot().packages[0]?.error).toMatch(/can't fetch/);
+    expect(s.manager.snapshot().prompts).toEqual([]);
+    expect(await s.manager.installPackage("recent-alerts")).toMatch(/^recent-alerts: can't fetch/);
+    const [p] = s.packages.named;
+    if (p) p.unreachable = false;
+    expect(await s.manager.installPackage("recent-alerts")).toBeNull();
+    expect(s.manager.snapshot().prompts[0]).toMatchObject({ kind: "install", path: "package:recent-alerts" });
+    expect(s.registries.commands.get("alerts")).toBeUndefined();
+  });
+
+  it(":packages install NAME on an installed Package that couldn't be fetched says it's fetched once it is", async () => {
+    const first = await installed();
+    first.packages.clones = {};
+    const [p] = first.packages.named;
+    if (p) p.unreachable = true;
+    const again = setup(first.packages, first.state);
+    await again.manager.syncPackages();
+    expect(again.manager.snapshot().packages[0]?.error).toMatch(/can't fetch/);
+    if (p) p.unreachable = false;
+    expect(await again.manager.installPackage("recent-alerts")).toBe("Fetched recent-alerts");
+    expect(again.manager.snapshot().prompts).toEqual([]);
+    expect(again.registries.commands.get("alerts")?.source).toBe("recent-alerts");
+  });
+
   it(":packages install NAME says why when there's nothing to ask", async () => {
     const { manager } = await installed();
     expect(await manager.installPackage("recent-alerts")).toMatch(/installed already/);
@@ -198,11 +225,37 @@ describe(":packages update", () => {
     expect(asked).toEqual(["other", "recent-alerts"]);
   });
 
-  it(":packages update NAME says when there's no such Package, or it isn't installed", async () => {
+  it(":packages update NAME says when there's no such Package", async () => {
     const { manager } = setup({ named: [repo()], lock: {} });
     await manager.syncPackages();
     expect(await manager.checkPackages("nope")).toBe("init.lua names no Package nope");
-    expect(await manager.checkPackages("recent-alerts")).toBe("recent-alerts isn't installed: :packages install recent-alerts asks to install it");
+  });
+
+  it(":packages update NAME on a Package that isn't installed offers the install prompt, and installs nothing until it's allowed (issue #213)", async () => {
+    const s = setup({ named: [repo()], lock: {} });
+    await s.manager.syncPackages();
+    const [first] = s.manager.snapshot().prompts;
+    if (first) await s.manager.answer(first, false);
+    expect(s.manager.snapshot().declined).toEqual(["recent-alerts"]);
+    expect(await s.manager.checkPackages("recent-alerts")).toBeNull();
+    const [prompt] = s.manager.snapshot().prompts;
+    expect(prompt).toMatchObject({ kind: "install", path: "package:recent-alerts", asking: ["terminal.read"], package: { url: "/srv/git/recent-alerts.git" } });
+    expect(s.registries.commands.get("alerts")).toBeUndefined();
+    expect(s.packages.lock).toEqual({});
+    if (prompt) await s.manager.answer(prompt, false);
+    expect(s.registries.commands.get("alerts")).toBeUndefined();
+    expect(s.packages.lock).toEqual({});
+    expect(await s.manager.checkPackages("recent-alerts")).toBeNull();
+    const [again] = s.manager.snapshot().prompts;
+    if (again) await s.manager.answer(again, true);
+    expect(s.registries.commands.get("alerts")?.source).toBe("recent-alerts");
+  });
+
+  it(":packages update NAME while its install prompt is up asks nothing more", async () => {
+    const { manager } = setup({ named: [repo()], lock: {} });
+    await manager.syncPackages();
+    expect(await manager.checkPackages("recent-alerts")).toBeNull();
+    expect(manager.snapshot().prompts).toHaveLength(1);
   });
 
   it("allowed, it moves to the new commit with the new permission", async () => {

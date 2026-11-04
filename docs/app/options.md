@@ -26,10 +26,24 @@ end
 
 `integer`
 
-The version of this table, raised when it changes. Read-only. The Plugin API's version too: it rises with that.
+The Plugin API's version, which init.lua's table shows too. Read-only. It rises when only the Plugin API changes, so it doesn't tell what init.lua has: roster.config_version does.
 
 ```lua
-if roster.api_version >= 4 then roster.o.vim = false end
+print("Plugin API " .. roster.api_version)
+```
+
+### `roster.config_version`
+
+`integer`
+
+init.lua's own version: 4 is v0.3.0's (roster.o and the collections' functions). Read-only. It rises when a name is removed or renamed, or keeps its name but takes, gives or does something else; not for a new name (check that it isn't nil) and not for a Plugin API change. For the rare case a name can't tell. An app from before it (v0.4.0 and older) reads it as nil.
+
+```lua
+if (roster.config_version or 0) >= 4 then
+  roster.o.terminal.size = "16pt"
+else
+  roster.set("terminal.size", "16pt")
+end
 ```
 
 ### `roster.version`
@@ -68,7 +82,7 @@ if roster.o.vim then roster.o.keys.leader.p = "connect esx-02" end
 
 returns `any`
 
-Reads any option by its dotted name: a copy of what init.lua set there, or nil. The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line.
+Reads any option by its dotted name: a copy of what init.lua set there, or nil. The read that always works: a map's key named like a method (get, has, keys, reset) reads as that key here, set or not. A table comes back as a plain copy, to walk with pairs(). An unknown name is an error at its line. A map's key that holds a dot can't be named with dots (`"keys.leader.."` is an unknown name): read it with brackets, the key as a string, as the example's last line does.
 
 | Parameter | Type | |
 |---|---|---|
@@ -77,11 +91,12 @@ Reads any option by its dotted name: a copy of what init.lua set there, or nil. 
 ```lua
 local views = roster.o.get("views") or {}
 for id in pairs(views) do print(id) end
+print(roster.o.keys.leader["."]) -- a key that is a dot
 ```
 
 ### `roster.o.reset(name)`
 
-Puts an option back to its default: what init.lua set there is taken away. Any option: a value, an object, a map or a list. An unknown name is an error at its line.
+Puts an option back to its default: what init.lua set there is taken away. Any option: a value, an object, a map or a list. An unknown name is an error at its line. A map's key that holds a dot can't be named with dots: take it away with brackets, the key as a string, set to nil, as the example's last line does.
 
 | Parameter | Type | |
 |---|---|---|
@@ -89,11 +104,12 @@ Puts an option back to its default: what init.lua set there is taken away. Any o
 
 ```lua
 roster.o.reset("terminal.size")
+roster.o.keys.leader["."] = nil -- a key that is a dot
 ```
 
 ### `roster.set(name, value)`
 
-Sets any option by its dotted name, as roster.o does. The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option.
+Sets any option by its dotted name, as roster.o does. The same store as roster.o: the last write wins. The name and the value are checked at the call's line. The returned table wins over a call that sets the same option. A map's key that holds a dot can't be named with dots: set it through roster.o with brackets, the key as a string, as the example's last line does.
 
 | Parameter | Type | |
 |---|---|---|
@@ -102,6 +118,7 @@ Sets any option by its dotted name, as roster.o does. The same store as roster.o
 
 ```lua
 roster.set("terminal.size", "16pt")
+roster.o.keys.leader["."] = "connect esx-02" -- a key that is a dot
 ```
 
 ### `roster.keymap.set(context, keys, action)`
@@ -760,7 +777,7 @@ roster.o.ui.messages = "all"
 
 The terminal's font, look and behaviour.
 
-Options in it: [`font`](#terminalfont), [`size`](#terminalsize), [`weight`](#terminalweight), [`bold_weight`](#terminalbold_weight), [`bold_is_bright`](#terminalbold_is_bright), [`line_height`](#terminalline_height), [`cell_height`](#terminalcell_height), [`renderer`](#terminalrenderer), [`cursor_style`](#terminalcursor_style), [`scrollback`](#terminalscrollback), [`copy_on_select`](#terminalcopy_on_select), [`right_click_paste`](#terminalright_click_paste), [`colors`](#terminalcolors), [`shell_hooks`](#terminalshell_hooks).
+Options in it: [`font`](#terminalfont), [`size`](#terminalsize), [`weight`](#terminalweight), [`bold_weight`](#terminalbold_weight), [`bold_is_bright`](#terminalbold_is_bright), [`line_height`](#terminalline_height), [`cell_height`](#terminalcell_height), [`renderer`](#terminalrenderer), [`cursor_style`](#terminalcursor_style), [`scrollback`](#terminalscrollback), [`copy_on_select`](#terminalcopy_on_select), [`right_click_paste`](#terminalright_click_paste), [`osc52`](#terminalosc52), [`colors`](#terminalcolors), [`shell_hooks`](#terminalshell_hooks).
 
 Methods: `roster.o.terminal = { … }` · `roster.o.terminal.NAME` · `:get()` · `:reset()`.
 
@@ -918,12 +935,24 @@ roster.o.terminal.copy_on_select = false
 
 `roster.o.terminal.right_click_paste` · `boolean` · default `true`
 
-Right-click copies the selection, or pastes when there's none.
+Right-click copies the selection, or pastes when there's none; with copy_on_select on, it copies and then pastes.
 
 Methods: `roster.o.terminal.right_click_paste = value` · `roster.o.terminal.right_click_paste` · `roster.o.reset("terminal.right_click_paste")`.
 
 ```lua
 roster.o.terminal.right_click_paste = false
+```
+
+### `terminal.osc52`
+
+`roster.o.terminal.osc52` · `boolean` · default `true`
+
+A program in the Session on screen may set the clipboard with OSC 52 (write only, at most 1 MiB), as in Windows Terminal: how Claude Code, vim or tmux copy what you select in them.
+
+Methods: `roster.o.terminal.osc52 = value` · `roster.o.terminal.osc52` · `roster.o.reset("terminal.osc52")`.
+
+```lua
+roster.o.terminal.osc52 = false
 ```
 
 ### `terminal.colors`
@@ -1232,7 +1261,7 @@ roster.o.modes.standard.sessionbar = "top"
 
 The status bar, and its segments.
 
-Takes true, false, or segments in order: `"backend"`, `"box"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
+Takes true, false, or segments in order: `"backend"`, `"box"`, `"inventory"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
 
 Methods: `roster.o.modes.standard.statusbar = { … }` · `:get()` · `:append(value, …)` · `:prepend(value, …)` · `:insert(i, value)` · `:remove(value)` · `:has(value)` · `:clear()` · `:reset()`.
 
@@ -1352,7 +1381,7 @@ roster.o.modes.focus.sessionbar = "top"
 
 The status bar, and its segments.
 
-Takes true, false, or segments in order: `"backend"`, `"box"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
+Takes true, false, or segments in order: `"backend"`, `"box"`, `"inventory"`, `"hosts"`, `"path"`, `"changes"`, `"hints"`, `"mode"`; each item once.
 
 Methods: `roster.o.modes.focus.statusbar = { … }` · `:get()` · `:append(value, …)` · `:prepend(value, …)` · `:insert(i, value)` · `:remove(value)` · `:has(value)` · `:clear()` · `:reset()`.
 
@@ -1538,7 +1567,7 @@ roster.o.packages = { { "someone/recent-alerts", tag = "v1.2.0" }, "someone/pinn
 
 The proxy Plugins' requests to public names go through. Unset, they go direct.
 
-Takes http://HOST:PORT, the port written out, with no user or password.
+Takes `"http://HOST:PORT"`, the port written out, with no user or password.
 
 Methods: `roster.o.plugin_proxy = value` · `roster.o.plugin_proxy` · `roster.o.reset("plugin_proxy")`.
 
@@ -1707,7 +1736,7 @@ A Package spec: { SOURCE, tag = …, config = { … } }, or just SOURCE.
 
 | Field | Type | Default | |
 |---|---|---|---|
-| `source` | `string` | required | Where the repo is: the spec's first item, or source = …. Takes `"owner/repo"` (GitHub), or a git URL: https://…, ssh://…, git@host:path, file://… or a full path. |
+| `source` | `string` | required | Where the repo is: the spec's first item, or source = …. Takes `"owner/repo"` (GitHub), or a git URL: `"https://…"`, `"ssh://…"`, `"git@host:path"`, `"file://…"` or a full path. |
 | `name` | `string` | unset | Its name (its folder and its line in roster.lock); the repo's (or dir's) name when left out. |
 | `tag` | `string` | unset | The tag to pin. At most one of tag, branch and commit; none means the default branch. |
 | `branch` | `string` | unset | The branch to follow. |

@@ -7,6 +7,8 @@
 
 mod common;
 
+use common::unhurried;
+
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::sync::mpsc::{Receiver, channel};
@@ -65,15 +67,6 @@ fn listening(serve: &Arc<Recorded>, limits: Limits) -> (PluginHost, Receiver<Rep
         let _ = tx.lock().unwrap().send(r);
     }));
     (host, rx)
-}
-
-/// Limits far beyond what any machine needs, for tests that aren't about time.
-fn unhurried() -> Limits {
-    Limits {
-        load: Duration::from_secs(60),
-        call: Duration::from_secs(60),
-        ..Limits::default()
-    }
 }
 
 fn load(host: &PluginHost, test: &str, permissions: &[&str], init: &str) -> (Reply, common::Temp) {
