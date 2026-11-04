@@ -20,6 +20,7 @@ CONF_DIR="$HOME/.config/roster"
 SESSION_FILE="$CONF_DIR/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # the line install.sh adds to shell startup files
 PATH_MARK="# roster: uv tools"           # and the PATH line it adds when ~/.local/bin wasn't there
+MAN_MARK="# roster: man page"            # and the MANPATH line, when man didn't find the page by itself
 
 YES=0 DRY=0 PURGE=0 KEEP_HOSTS=0
 while (( $# )); do
@@ -218,7 +219,7 @@ fi
 
 # 3. Shell startup
 stage 3
-for f in ${rc_files[@]+"${rc_files[@]}"}; do drop_lines "$f" "$MARK\$" || true; done
+for f in ${rc_files[@]+"${rc_files[@]}"}; do drop_lines "$f" "$MARK\$" || true; drop_lines "$f" "$MAN_MARK\$" || true; done
 path_files=()
 for f in ${rc_files[@]+"${rc_files[@]}"}; do grep -qF "$PATH_MARK" "$f" && path_files+=("$f"); done
 if (( ${#path_files[@]} )); then

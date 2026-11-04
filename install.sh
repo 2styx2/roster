@@ -19,6 +19,8 @@ LOG="$HOME/.cache/roster/install.log"
 SESSION_FILE="$HOME/.config/roster/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
 PATH_MARK="# roster: uv tools"
+MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+NEED_MANPATH=0
 
 YES=0 DRY=0 PREFIX=${PREFIX:-}
 while (( $# )); do
@@ -176,8 +178,10 @@ if (( ${#missing[@]} )); then
 else
     done_stage
 fi
-if ! have jq || ! have nmap; then
+if ! have man; then warn "man not installed (optional: for man roster; roster man shows the page without it)"; fi
+if ! have jq || ! have nmap || ! have man; then
     opt=(); have jq || opt+=(jq); have nmap || opt+=(nmap)
+    if ! have man; then if have apk; then opt+=(man); elif ! have brew; then opt+=(man-db); fi; fi
     ask "Install the optional tools too (${opt[*]})?" N && pkg_install "${opt[@]}"
 fi
 
@@ -216,8 +220,27 @@ fi
 # The man page goes next to the command, PREFIX/share/man/man1 beside PREFIX/bin: man finds it from PATH. Kept or
 # reinstalled, so a roster from before the man page gets it too.
 page="$(dirname "$bindir")/share/man/man1/roster.1"
-step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
-    "$page" "$src/src/roster/roster.1" || warn "no man page; roster man shows it"
+mandir=$(dirname "$(dirname "$page")")
+if step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
+        "$page" "$src/src/roster/roster.1"; then
+    # man finds PREFIX/share/man from PREFIX/bin on PATH (man-db, mandoc); make sure, with the PATH a new terminal has
+    # A minimized Ubuntu's man is a stand-in that only says so (the real one, if man-db is there, is man.REAL)
+    manbin="man"; minimized=0
+    if have man && man -w man 2>&1 | grep -q 'minimized'; then
+        minimized=1; [[ -x /usr/bin/man.REAL ]] && manbin=/usr/bin/man.REAL
+    fi
+    if (( DRY )) || ! have man; then :
+    elif [[ $(PATH="$bindir:$USER_PATH" MANPATH="${MANPATH:-}" "$manbin" -w roster 2>/dev/null) == "$page"* ]]; then
+        if (( minimized )); then warn "this system is minimized: man shows no page until you run sudo unminimize (roster man works now)"
+        else ok "man roster finds it"; fi
+    elif (( minimized )); then
+        warn "this system is minimized: for man roster, install man-db and run sudo unminimize (roster man works now)"
+    else
+        warn "man doesn't look in ${mandir/#$HOME/\~} by itself: stage 6 adds it to MANPATH"; NEED_MANPATH=1
+    fi
+else
+    warn "no man page; roster man shows it"
+fi
 case ":$USER_PATH:" in
     *":$bindir:"*) ;;
     *":${bindir%/}/:"*) ;;
@@ -290,6 +313,14 @@ for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do [[ -f $f ]] && rc_f
 (( ${#rc_files[@]} )) || rc_files=("$HOME/.profile")
 path_line="export PATH=\"\$HOME/.local/bin:\$PATH\"   $PATH_MARK"
 case ":$USER_PATH:" in *":$HOME/.local/bin:"*|*":$HOME/.local/bin/:"*) local_bin_on_path=1 ;; *) local_bin_on_path=0 ;; esac
+if (( NEED_MANPATH )) && ask "Add ${mandir/#$HOME/\~} to MANPATH (in ${rc_files[*]/#$HOME/\~}) so man roster works?" Y; then
+    # the trailing colon keeps man's own search path after it
+    man_line="export MANPATH=\"${mandir/#$HOME/\$HOME}:\${MANPATH:-}\"   $MAN_MARK"
+    for f in "${rc_files[@]}"; do
+        if (( DRY )); then info "would add MANPATH to $f"
+        elif ! grep -qF "$MAN_MARK" "$f"; then printf '\n%s\n' "$man_line" >> "$f"; ok "updated ${f/#$HOME/\~}"; fi
+    done
+fi
 if [[ -z $CFG ]] && (( local_bin_on_path )); then
     skip "no roster.yml to point at"
 elif [[ -z $CFG ]]; then
@@ -425,5 +456,6 @@ info "Next: open a new terminal, then try"
 printf '    roster hosts                      %s# every host you can reach%s\n' "$D" "$N"
 printf '    ssh <host>                        %s# key hosts%s\n' "$D" "$N"
 printf '    roster run <host> -- hostname     %s# password-only hosts%s\n' "$D" "$N"
+printf '    roster --help, man roster         %s# every command, with examples; the manual%s\n' "$D" "$N"
 (( ${#FAILED[@]} )) && { info "Some stages failed - details in $LOG. Re-running this is safe."; exit 1; }
 exit 0

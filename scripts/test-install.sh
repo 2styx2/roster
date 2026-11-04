@@ -41,6 +41,9 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     check "the Host has this box's key" '[[ $(host_keys) == 1 ]]'
     check "the cron job is there" 'crontab -l | grep -q bin/roster-pull'
     check "man page installed" '[[ -f ~/.local/share/man/man1/roster.1 ]]'
+    # Ubuntu's image is minimized: its man is a stand-in, the real one man.REAL
+    check "man roster finds it" '[[ $(shell "m=man; [ -x /usr/bin/man.REAL ] && m=/usr/bin/man.REAL; \$m -w roster") == ~/.local/share/man/man1/roster.1 ]]'
+    check "roster --help lists the commands" 'shell "roster --help" | grep -q "^Every day:"'
     check "bw installed" '[[ -x ~/.local/bin/bw ]]'
 
     echo "== 2. install.sh again"
@@ -73,9 +76,9 @@ run=$(command -v podman || command -v docker) || { echo "needs podman or docker"
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 case $distro in
     ubuntu) from=docker.io/library/ubuntu:24.04
-            prep="apt-get update && apt-get install -y --no-install-recommends sudo ca-certificates openssh-server cron git" ;;
+            prep="apt-get update && apt-get install -y --no-install-recommends sudo ca-certificates openssh-server cron git man-db" ;;
     fedora) from=registry.fedoraproject.org/fedora:43
-            prep="dnf install -y sudo openssh-server cronie git" ;;
+            prep="dnf install -y sudo openssh-server cronie git man-db" ;;
     *) echo "unknown distro: $distro (ubuntu or fedora)" >&2; exit 2 ;;
 esac
 # openssh-server (for the stand-in Host) brings the ssh client with it; install.sh still installs python3, curl,

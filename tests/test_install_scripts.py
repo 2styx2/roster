@@ -125,6 +125,15 @@ def test_uninstall_keeps_roster_when_the_revoke_failed(box):
 
 
 @posix_shell
+def test_uninstall_removes_the_manpath_line_install_added(box):
+    home, env = box
+    rc = home / ".bashrc"
+    rc.write_text(rc.read_text() + 'export MANPATH="$HOME/.local/share/man:${MANPATH:-}"   # roster: man page\n')
+    run(UNINSTALL_SH, env)
+    assert "MANPATH" not in rc.read_text()
+
+
+@posix_shell
 def test_uninstall_purge_removes_the_path_line_too(box):
     home, env = box
     run(UNINSTALL_SH, env, "--purge")
