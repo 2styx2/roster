@@ -1,7 +1,8 @@
 // The guides' Markdown, which the app loads the first time help needs it (T213, decision Q189), not at
 // start: it's a chunk of its own (guideText.ts, built from docs/ and bundled with the app, so it's
 // read from disk like the rest of the app, never fetched from the network). What startup needs to
-// find a guide's topics before then is the build-time tag table (tags.ts), as Neovim's doc/tags.
+// find a guide's topics before then is the build-time tag table (tagTable.ts, served as
+// `virtual:help-tags`), as Neovim's doc/tags.
 //
 // This is the one place that knows the chunk: `load()` brings it in (once, however many ask; again
 // after a failure), `markdown(id)` reads a guide's text once it's here, and `subscribe` tells
@@ -12,6 +13,7 @@ export type GuideTexts = Readonly<Record<string, string>>;
 export class HelpText {
   private texts: GuideTexts | null = null;
   private loading: Promise<void> | null = null;
+  private error: string | null = null;
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly loader: () => Promise<GuideTexts>) {}
@@ -23,15 +25,23 @@ export class HelpText {
     return this.texts?.[id];
   }
 
+  /** Why the last load failed; null before any, while one is under way and once it's loaded. */
+  failed = (): string | null => this.error;
+
   /** Brings the text in. Resolves when it's here; rejects when it couldn't load (the next call
    * tries again). */
   load(): Promise<void> {
     if (this.texts) return Promise.resolve();
+    if (!this.loading) this.error = null;
     this.loading ??= this.loader().then(
       (texts) => this.use(texts),
       (e: unknown) => {
+        const err = e instanceof Error ? e : new Error(String(e));
         this.loading = null;
-        throw e instanceof Error ? e : new Error(String(e));
+        this.error = err.message;
+        // Who shows the text says it couldn't load (`:helpgrep`, #431's review F4).
+        for (const l of this.listeners) l();
+        throw err;
       },
     );
     return this.loading;

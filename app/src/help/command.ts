@@ -85,7 +85,9 @@ export class HelpView {
     const timer = setTimeout(() => {
       if (this.waiting !== ticket) return;
       ticket.shown = true;
-      this.go(at, { loading: true });
+      // Not a move yet (`moved` null: unset): the tutor hears this open once, when the page is there
+      // (#431's review F2).
+      this.go(at, { loading: true }, null);
     }, LOADING_AFTER);
     const arrive = (failed?: string) => {
       clearTimeout(timer);
@@ -112,7 +114,19 @@ export class HelpView {
     return true;
   }
 
-  /** Starts loading the guides' text, for what's about to need it (`:h <Tab>`, the finders). */
+  /** Drops a `:help` still waiting for the guides' text, so it never opens later over what the
+   * user went on to (another command, a finder: App calls it; #431's review F3). */
+  cancelPending() {
+    this.waiting = null;
+  }
+
+  /** Why the guides' text couldn't load, or null. */
+  textFailed(): string | null {
+    return this.text.failed();
+  }
+
+  /** Starts loading the guides' text, for what's about to need it (`:h <Tab>`, the finders). A
+   * failure is kept (textFailed) for whoever shows the text to say. */
   prefetch() {
     this.text.load().catch(() => {});
   }
@@ -145,19 +159,19 @@ export class HelpView {
     this.changed();
   }
 
-  private go(at: HelpPlace, extra: { loading?: boolean; failed?: string } = {}) {
+  private go(at: HelpPlace, extra: { loading?: boolean; failed?: string } = {}, moved: "open" | null = "open") {
     if (this.snap.at) this.back.push(this.snap.at);
     this.forward = [];
-    this.set(at, "open", extra);
+    this.set(at, moved ?? undefined, extra);
   }
 
-  private set(at: HelpPlace, moved: "open" | "back" | "forward", extra: { loading?: boolean; failed?: string } = {}) {
+  private set(at: HelpPlace, moved: "open" | "back" | "forward" | undefined, extra: { loading?: boolean; failed?: string } = {}) {
     this.snap = {
       at,
       canBack: this.back.length > 0,
       canForward: this.forward.length > 0,
       seq: this.snap.seq + 1,
-      moved,
+      ...(moved ? { moved } : {}),
       loading: extra.loading ?? false,
       ...(extra.failed !== undefined ? { failed: extra.failed } : {}),
     };
@@ -265,7 +279,12 @@ export function helpgrepFinder(view: HelpView): FinderSourceDef {
     const first = query.trim().split(/\s+/)[0];
     // The index and `all` only repeat other pages' titles and summaries.
     const texts = pageTexts(ctx).filter((hit) => hit.page !== "index" && hit.page !== "all");
-    return grepTexts(texts, query).map(({ hit, label }, k) => ({ id: `${k}`, label, path: hit.where, command: `help ${hit.tag} /${first}` }));
+    const found = grepTexts(texts, query).map(({ hit, label }, k): FinderItem => ({ id: `${k}`, label, path: hit.where, command: `help ${hit.tag} /${first}` }));
+    // The guides' text couldn't load (T213): say so, rather than look as if they had no match.
+    const failed = view.textFailed();
+    if (failed === null) return found;
+    const why = `Couldn't load help's guides: ${failed}. Only the other pages are searched.`;
+    return [{ id: "guides-failed", label: why, disabled: `${why} Close this and try :helpgrep again.`, command: "" }, ...found];
   };
   return {
     id: "helpgrep",

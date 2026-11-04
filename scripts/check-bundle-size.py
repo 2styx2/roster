@@ -67,14 +67,15 @@ KB = 1000
 # / 710.0 gzipped.
 # JS split into startup and the help chunk on 2026-11-04 (T213, #405, decision Q189): :help's guides load on the first
 # :help (their text a chunk of its own, the Plugin API bundled once, as data), so the startup JS is the app's code and
-# its dependencies again. Measured that day: startup 1,551.3 raw / 439.1 gzipped (was 2,488.5 / 727.8), the help chunk
-# 996.8 / 302.4. Startup JS 3,000 -> 1,700 raw, 880 -> 480 gzipped, about 10 % above, so it catches a dependency or
-# code growth again; the help chunk 1,500 / 450, the room #377's research gave it, so docs PRs don't move it (it's text
-# loaded on the first :help, and Neovim ships 5.4 MB of help, read a page at a time); raise it as the search index's is.
+# its dependencies again. Measured that day: startup 1,552.1 raw / 439.3 gzipped (was 2,488.5 / 727.8), the help chunk
+# 1,003.1 / 304.4. Startup JS 3,000 -> 1,700 raw, 880 -> 480 gzipped, about 10 % above, so it catches a dependency or
+# code growth again; the help chunk 1,100 / 335, about 10 % above too (#431's review F6), so code or a dependency pulled
+# into its imports shows; it's text loaded on the first :help (Neovim ships 5.4 MB of help, read a page at a time), so a
+# docs PR that takes it over raises it with its reason, as the search index's is.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
     "js": {"raw": 1700, "gzip": 480},
-    "help": {"raw": 1500, "gzip": 450},
+    "help": {"raw": 1100, "gzip": 335},
     "css": {"raw": 90, "gzip": 16.5},
     "fake": {"raw": 199, "gzip": 67},
 }

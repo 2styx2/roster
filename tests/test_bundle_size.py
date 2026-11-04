@@ -72,6 +72,22 @@ def test_its_markers_are_sentences_of_the_guides():
         assert any(marker in f.read_text(encoding="utf-8") for f in [*(ROOT / "docs").rglob("*.md"), ROOT / "app/src/help/guideText.ts"]), marker
 
 
+def test_only_the_help_chunk_imports_the_guides_text():
+    # The marker check above samples two guides; this covers every one (#431's review F5): outside the help
+    # chunk (app/src/help/guideText.ts), only build-time and website code and tests may import docs/'s Markdown
+    # or the stubs, so no guide's text can come back into the startup JS by an import of its own.
+    allowed = {"src/help/guideText.ts"}
+    text_import = re.compile(r"""from\s+["']((?:\.\./)+(?:docs/[^"']*\.md|examples/plugins/types/roster\.lua)[^"']*)["']""")
+    found = []
+    for f in sorted((ROOT / "app/src").rglob("*.ts*")):
+        rel = f.relative_to(ROOT / "app").as_posix()
+        if rel in allowed or ".test." in f.name or rel.startswith("src/docs-site/"):
+            continue
+        found += [f"{rel}: {m.group(1)}" for m in text_import.finditer(f.read_text(encoding="utf-8"))]
+    assert found == []
+    assert text_import.search((ROOT / "app/src/help/guideText.ts").read_text(encoding="utf-8"))
+
+
 def test_it_fails_only_what_is_over_its_budget(tmp_path, capsys):
     dist = build(tmp_path, {"index.js": b"x" * 2000, "index.css": b"y" * 1000})
     budgets = {"js": {"raw": 2, "gzip": 1}, "css": {"raw": 0.5, "gzip": 1}}           # KB

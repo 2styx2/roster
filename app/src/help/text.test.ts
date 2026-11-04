@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConfig } from "../config/fixture";
 import { defaultOptions, keymapOf } from "../keymap";
 import { builtinRegistries } from "../registries";
-import { helpCommand, HelpView } from "./command";
+import type { FinderContext } from "../finder/sources";
+import { helpCommand, helpgrepFinder, HelpView } from "./command";
 import { helpContext } from "./pages";
 import { HelpText } from "./text";
 
@@ -124,5 +125,49 @@ describe("HelpView with the guides' text still to load", () => {
     d.fail(new Error("no chunk"));
     await flush();
     expect(v.snapshot()).toMatchObject({ at: { page: "keyboard" }, loading: false, failed: "no chunk" });
+  });
+
+  it("past 150 ms, it's one open to the tutor, said when the page is there (#431 F2)", async () => {
+    const d = deferred();
+    const v = viewWith(new HelpText(d.loader));
+    const moves: (string | undefined)[] = [];
+    v.subscribe(() => moves.push(v.snapshot().moved));
+    v.openTopic("keyboard");
+    await vi.advanceTimersByTimeAsync(150);
+    expect(v.snapshot()).toMatchObject({ loading: true });
+    expect(v.snapshot().moved).toBeUndefined();
+    d.answer({ keyboard: "# Keyboard" });
+    await flush();
+    expect(v.snapshot()).toMatchObject({ loading: false, moved: "open" });
+    expect(moves.filter((m) => m === "open")).toHaveLength(1);
+  });
+
+  it("cancelPending drops a :help still waiting, so it never opens later (#431 F3)", async () => {
+    const d = deferred();
+    const v = viewWith(new HelpText(d.loader));
+    v.openTopic("keyboard");
+    v.cancelPending();
+    d.answer({ keyboard: "# Keyboard" });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(v.snapshot().at).toBeNull();
+    // Cancelling with nothing waiting changes nothing.
+    v.open({ page: "options" });
+    v.cancelPending();
+    expect(v.snapshot().at).toEqual({ page: "options" });
+  });
+});
+
+describe(":helpgrep when the guides' text can't load (#431 F4)", () => {
+  it("says so above what it found in the other pages", async () => {
+    const d = deferred();
+    const v = viewWith(new HelpText(d.loader));
+    const finder = helpgrepFinder(v);
+    finder.open?.();
+    d.fail(new Error("no chunk"));
+    await new Promise((done) => setTimeout(done, 0));
+    const found = finder.search?.({} as FinderContext, "terminal") ?? [];
+    expect(found[0]).toMatchObject({ label: "Couldn't load help's guides: no chunk. Only the other pages are searched." });
+    expect(found[0]?.disabled).toBeTruthy();
+    expect(found.length).toBeGreaterThan(1);
   });
 });

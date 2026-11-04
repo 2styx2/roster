@@ -6,7 +6,7 @@
 //
 // Prose is Inter; code, names and values are Iosevka; keys are keycaps. Its keycaps are the
 // bindings themselves (`binding-keys`), so `ui.hints = false` never hides them.
-import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import "./doc.css";
@@ -16,6 +16,7 @@ import { highlight, shellCommand } from "./highlight";
 import type { HelpSnapshot, HelpView } from "./command";
 import type { Block, Def, Inline } from "./doc";
 import { linkKind, pageBody, topics, type HelpContext } from "./pages";
+import { helpText } from "./text";
 
 export interface HelpPanelProps {
   view: HelpView;
@@ -77,7 +78,13 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
   }
 
   const page = ctx.pages.find((p) => p.id === at?.page);
-  const blocks = useMemo(() => (at ? pageBody(ctx, at.page) : []), [ctx, at]);
+  // A guide's blocks are empty until the guides' text arrives (T213): read the page again then,
+  // though the place and the context are the same (#431's review F1).
+  const textReady = useSyncExternalStore(helpText.subscribe, helpText.ready);
+  const blocks = useMemo(() => {
+    void textReady;
+    return at ? pageBody(ctx, at.page) : [];
+  }, [ctx, at, textReady]);
   const tags = useMemo(() => new Set(topics(ctx).map((t) => t.tag)), [ctx]);
   const env: RenderEnv = { query, leader, tags, here: at?.anchor ?? at?.page, open: (tag) => view.openTopic(tag) };
 

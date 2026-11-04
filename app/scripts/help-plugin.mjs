@@ -16,6 +16,13 @@ import { thirdPartyNotices } from "./notices-plugin.mjs";
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TAGS = "virtual:help-tags";
 const PICK = "\0roster-json-pick:";
+// A key is exported as `export const KEY`: a plain JS name, not a reserved word.
+const NAME = /^[A-Za-z_$][\w$]*$/;
+const RESERVED = new Set(
+  ("break case catch class const continue debugger default delete do else enum export extends false finally for function if " +
+    "implements import in instanceof interface let new null package private protected public return static super switch this " +
+    "throw true try typeof var void while with yield await arguments eval").split(" "),
+);
 
 /** `FILE.json?pick=a,b`: those keys of FILE as named exports. */
 export const jsonPick = {
@@ -36,6 +43,7 @@ export const jsonPick = {
     return keys
       .split(",")
       .map((k) => {
+        if (!NAME.test(k) || RESERVED.has(k)) throw new Error(`${k} isn't a key ?pick= can export (a JS name, not a reserved word)`);
         if (!(k in data)) throw new Error(`${file} has no key ${k}`);
         return `export const ${k} = ${JSON.stringify(data[k])};`;
       })
