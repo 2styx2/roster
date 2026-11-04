@@ -216,7 +216,10 @@ def local_user():
 
 def imported(path, source):
     src = Path(source or "~/.ssh/config").expanduser()
-    shown = str(src).replace(str(Path.home()), "~", 1) if str(src).startswith(str(Path.home())) else str(src)
+    try:                                            # ~/.ssh/config on every OS (Windows' backslashes too)
+        shown = "~/" + src.relative_to(Path.home()).as_posix()
+    except ValueError:
+        shown = str(src)
     try:
         text = src.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
