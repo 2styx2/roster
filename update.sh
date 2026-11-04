@@ -323,30 +323,13 @@ stage 5
 if (( ! COMPLETION )) || chose no-completion; then
     skip "left off (you said no: delete no-completion from $(home "$CHOICES") to have it turned on)"
 else
-    comp_shell=${SHELL##*/} comp_added=0
-    for sh in bash zsh; do
-        f="$HOME/.${sh}rc"
-        [[ -f $f || $comp_shell == "$sh" ]] || continue
-        comp_added=1
-        if grep -qF "$COMP_MARK" "$f" 2>/dev/null; then ok "already on in $(home "$f")"
-        elif (( DRY )); then info "would turn on Tab completion in $(home "$f")"
-        else
-            printf '\n%s\n' "command -v roster >/dev/null 2>&1 && eval \"\$(roster completion $sh)\"   $COMP_MARK" >> "$f"
-            ok "Tab completion for roster in $(home "$f")"
-        fi
-    done
-    fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
-    if [[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/fish || $comp_shell == fish ]]; then
-        comp_added=1
-        if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then ok "already on for fish"
-        elif [[ -e $fish_file ]]; then warn "$(home "$fish_file") isn't roster's: kept it"
-        elif (( DRY )); then info "would turn on Tab completion in $(home "$fish_file")"
-        elif mkdir -p "$(dirname "$fish_file")" && printf '%s\n' \
-                "$COMP_MARK (install.sh wrote this file; uninstall.sh removes it)" 'roster completion fish | source' \
-                > "$fish_file"; then ok "Tab completion for roster in $(home "$fish_file")"
-        else warn "couldn't write $(home "$fish_file")"; fi
+    # install-lib.sh's step, shared with install.sh (this checkout has it beside this script)
+    # shellcheck source=install-lib.sh
+    if [[ -f $src/install-lib.sh ]] && source "$src/install-lib.sh"; then turn_on_completion
+    else
+        warn "no install-lib.sh beside update.sh: Tab completion left as it is"
+        info "to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc (roster completion zsh, fish or powershell for those)"
     fi
-    (( comp_added )) || info "no bash, zsh or fish here: roster completion SHELL prints Tab completion for yours"
     done_stage
 fi
 # The cron job install.sh sets up: it installs cron itself, so a box without the job is install.sh's to finish

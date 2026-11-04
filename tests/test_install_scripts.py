@@ -15,6 +15,7 @@ ROOT = Path(__file__).parent.parent
 UNINSTALL_SH = ROOT / "uninstall.sh"
 UPDATE_SH = ROOT / "update.sh"
 INSTALL_SH = ROOT / "install.sh"
+INSTALL_LIB = "install-lib.sh"          # what install.sh and update.sh share
 
 FAKES = {
     "roster": '#!/bin/sh\necho "roster $*" >> "$HOME/calls"\n[ "$1" = --version ] && echo "roster 0.4.0"\nexit 0\n',
@@ -424,6 +425,29 @@ def test_install_dry_run_says_where_completion_would_go(tmp_path):
     assert not (home / ".bashrc").exists()
 
 
+def test_install_and_update_turn_completion_on_with_one_shared_step():
+    """#414: one Tab-completion step, in install-lib.sh beside the scripts, shipped wherever they are."""
+    lib = (ROOT / INSTALL_LIB).read_text(encoding="utf-8")
+    assert "roster completion fish | source" in lib
+    for script in (INSTALL_SH, UPDATE_SH):
+        text = script.read_text(encoding="utf-8")
+        assert INSTALL_LIB in text and "turn_on_completion" in text
+        assert "roster completion fish | source" not in text and "fish/completions/roster.fish" not in text
+    tarball = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in tarball      # the Release's roster-cli tarball
+    assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in (ROOT / "scripts/test-install.sh").read_text(encoding="utf-8")
+
+
+@posix_shell
+def test_install_without_its_shared_step_beside_it_says_how_to_turn_completion_on(tmp_path):
+    home, env = install_box(tmp_path)
+    src = source_copy(tmp_path)
+    (src / INSTALL_LIB).unlink()
+    r = run(src / "install.sh", env, "--prefix", str(tmp_path / "opt"))
+    assert "roster completion bash" in r.stdout, r.stdout + r.stderr
+    assert "# roster: completion" not in ((home / ".bashrc").read_text() if (home / ".bashrc").exists() else "")
+
+
 @posix_shell
 def test_uninstall_removes_tab_completion(box):
     home, env = box
@@ -562,7 +586,7 @@ def stale(tmp_path):
     upstream = tmp_path / "upstream"
     (upstream / "src/roster").mkdir(parents=True)
     git(upstream, "init", "-q")
-    for f in ("install.sh", "update.sh"):
+    for f in ("install.sh", "update.sh", INSTALL_LIB):
         (upstream / f).write_bytes((ROOT / f).read_bytes())
     (upstream / "src/roster/roster.1").write_text(".TH ROSTER 1\n")
     release(upstream, "0.1.0")

@@ -35,6 +35,7 @@ SESSION_FILE="$HOME/.config/roster/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
 PATH_MARK="# roster: uv tools"
 MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+# shellcheck disable=SC2034  # read by install-lib.sh's turn_on_completion
 COMP_MARK="# roster: completion"         # the Tab completion line (or fish's file), always added (decision Q183)
 NEED_MANPATH=0
 SRC_STORE="${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"   # the roster install.sh unpacked and installed
@@ -690,42 +691,22 @@ else
     skip "run roster from $cfg_dir, or pass -c $CFG"
 fi
 
-# Tab completion for roster (`roster ho<Tab>`, `roster run <Tab>` for Host names) in each shell this box uses: no
-# question, it's on unless --no-completion (decision Q183). bash and zsh get a marked line that asks roster for its
-# script when the shell starts (so a newer roster's commands complete too), fish a file it loads on the first Tab.
-comp_shell=${SHELL##*/}
+# Tab completion for roster in each shell this box uses: no question, it's on unless --no-completion (decision
+# Q183). The step is install-lib.sh's, shared with update.sh: beside this script, or in the checkout it cloned.
 (( COMPLETION )) || choose no-completion          # update.sh leaves it off too
 if (( ! COMPLETION )) || chose no-completion; then
     (( COMPLETION )) || info "--no-completion: kept in ${CHOICES/#$HOME/\~} (delete the line to have it turned on)"
     info "no Tab completion (to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc;"
     info "roster completion zsh, fish or powershell for those)"
 else
-    comp_added=0
-    for sh in bash zsh; do
-        f="$HOME/.${sh}rc"
-        [[ -f $f || $comp_shell == "$sh" ]] || continue
-        if grep -qF "$COMP_MARK" "$f" 2>/dev/null; then ok "Tab completion already on in ${f/#$HOME/\~}"
-        elif (( DRY )); then info "would turn on Tab completion in ${f/#$HOME/\~}"
-        else
-            printf '\n%s\n' "command -v roster >/dev/null 2>&1 && eval \"\$(roster completion $sh)\"   $COMP_MARK" >> "$f"
-            ok "Tab completion for roster in ${f/#$HOME/\~}"
-        fi
-        comp_added=1
-    done
-    fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
-    if [[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/fish || $comp_shell == fish ]]; then
-        comp_added=1
-        if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
-            ok "Tab completion already on for fish"
-        elif [[ -e $fish_file ]]; then warn "${fish_file/#$HOME/\~} isn't roster's: kept it (roster completion fish prints roster's)"
-        elif (( DRY )); then info "would turn on Tab completion in ${fish_file/#$HOME/\~}"
-        elif mkdir -p "$(dirname "$fish_file")" && printf '%s\n' \
-                "$COMP_MARK (install.sh wrote this file; uninstall.sh removes it)" 'roster completion fish | source' \
-                > "$fish_file"; then
-            ok "Tab completion for roster in ${fish_file/#$HOME/\~}"
-        else warn "couldn't write ${fish_file/#$HOME/\~}"; fi
+    lib=""
+    for f in "$here/install-lib.sh" "$src/install-lib.sh"; do [[ -f $f ]] && { lib=$f; break; }; done
+    # shellcheck source=install-lib.sh
+    if [[ -n $lib ]] && source "$lib"; then turn_on_completion
+    else
+        warn "no install-lib.sh beside install.sh: Tab completion left off"
+        info "to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc (roster completion zsh, fish or powershell for those)"
     fi
-    (( comp_added )) || info "no bash, zsh or fish here: roster completion SHELL prints Tab completion for yours"
 fi
 
 # 7. Unlock the vault
