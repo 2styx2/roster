@@ -10,6 +10,8 @@
 // shows no prompt it knows, so nothing is sent. A shell that looks like bash but doesn't take the
 // line (tcsh with a bash-like prompt) prints at most an error; that's cleared with the echo.
 
+import { folderOf } from "./osc7";
+
 /** Which hook line fits the shell: one for bash and zsh (it checks which it's in, and does
  * nothing in another POSIX shell), one for fish, one for PowerShell. */
 export type ShellKind = "posix" | "fish" | "pwsh";
@@ -64,7 +66,10 @@ const POSIX = /(?:[^\s$#%][$#%]|^\$) $/;
 // The hook lines: the snippets in docs/plugins.md ("Shell integration"), squeezed to one line,
 // plus OSC 7 (the folder) at each prompt. Each starts with a space, so a shell set to leave such
 // lines out of its history (bash's HISTCONTROL=ignorespace or ignoreboth, zsh's
-// HIST_IGNORE_SPACE, fish always) does. docs/plugins.md shows them as sent; keep it in step.
+// HIST_IGNORE_SPACE, fish always) does; elsewhere each keeps its token out itself (#242, Q185):
+// bash deletes its own entry, zsh starts its list again from its file (unless it appends to the
+// file as it goes), PowerShell's ends in a word PSReadLine's default handler keeps out of its
+// file. docs/plugins.md shows them as sent; keep it in step.
 //
 // The POSIX one runs in bash and zsh: each half is a single-quoted string, eval'd only behind a
 // test of $BASH_VERSION or $ZSH_VERSION, so another POSIX shell (dash, busybox ash, ksh) parses
@@ -81,7 +86,8 @@ const BASH =
   '__roster_w(){ case $PS1 in *"roster=@N@"*) ;; *) PS1="\\[\\e]133;A;roster=@N@\\a\\]$PS1\\[\\e]133;B;roster=@N@\\a\\]";; esac; }; ' +
   'case $BASH_VERSION in [1-4].*|5.0.*) PROMPT_COMMAND="__roster_d${PROMPT_COMMAND:+;$PROMPT_COMMAND};__roster_w";; ' +
   '*) PROMPT_COMMAND=(__roster_d ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"} __roster_w);; esac; ' +
-  'case $BASH_VERSION in [1-3].*|4.[0-3].*) ;; *) PS0="\\e]133;C;roster=@N@\\a${PS0-}";; esac' +
+  'case $BASH_VERSION in [1-3].*|4.[0-3].*) ;; *) PS0="\\e]133;C;roster=@N@\\a${PS0-}";; esac; ' +
+  '__roster_n=$(HISTTIMEFORMAT= builtin history 1); case $__roster_n in *"roster=@N@"*) __roster_n=${__roster_n#"${__roster_n%%[0-9]*}"}; builtin history -d "${__roster_n%%[!0-9]*}";; esac; unset __roster_n' +
   "'";
 const ZSH =
   "[ -n \"${ZSH_VERSION-}\" ] && eval '" +
@@ -89,7 +95,9 @@ const ZSH =
   '__roster_d(){ printf "\\e]133;D;%s;roster=@N@\\a\\e]7;file://%s%s\\a" $? "${HOST-}" "$PWD"; }; ' +
   '__roster_c(){ printf "\\e]133;C;roster=@N@\\a"; }; ' +
   '__roster_w(){ [[ $PS1 == *"roster=@N@"* ]] || PS1="%{$(printf "\\e]133;A;roster=@N@\\a")%}$PS1%{$(printf "\\e]133;B;roster=@N@\\a")%}"; }; ' +
-  "precmd_functions=(__roster_d $precmd_functions __roster_w); preexec_functions+=(__roster_c)" +
+  "precmd_functions=(__roster_d $precmd_functions __roster_w); preexec_functions+=(__roster_c); " +
+  "[[ -o histignorespace || -o incappendhistory || -o incappendhistorytime || -o sharehistory ]] || " +
+  '{ __roster_h=${HISTFILE-}; HISTFILE=; if [[ -n $__roster_h ]]; then fc -p "$__roster_h" $HISTSIZE $SAVEHIST; else fc -p; fi; unset __roster_h; }' +
   "'";
 const FISH_HOOK =
   "function __roster_a --on-event fish_prompt; printf '\\e]7;file://%s%s\\a\\e]133;A;roster=@N@\\a' $hostname $PWD; end; " +
@@ -101,7 +109,8 @@ const PWSH_HOOK =
   "$e=[char]27; $b=[char]7; $d='/'+($PWD.ProviderPath -replace '\\\\','/').TrimStart('/'); " +
   '"$e]133;D;$c;roster=@N@$b$e]7;file://$([Environment]::MachineName)$d$b$e]133;A;roster=@N@$b$(& $Global:__roster_p)$e]133;B;roster=@N@$b" }; ' +
   "try { $h=(Get-PSReadLineOption).AddToHistoryHandler; Set-PSReadLineOption -AddToHistoryHandler ({ param($l) " +
-  '[Console]::Write("$([char]27)]133;C;roster=@N@$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}';
+  '[Console]::Write("$([char]27)]133;C;roster=@N@$([char]7)"); if ($h) { $h.Invoke($l) } else { $true } }.GetNewClosure()) } catch {}; ' +
+  "$null='roster token'";
 
 /** The one line roster sends (without the Enter) to turn the marks on in a `kind` shell, every
  * mark carrying the Session's token `nonce` (`roster=NONCE`, ticket 120, decision Q131): only a
@@ -176,19 +185,6 @@ const OSC7_START = "\x1b]7;";
 
 const squash = (s: string) => s.replace(ESCAPES, "").replace(/\s+/g, "");
 const encoder = new TextEncoder();
-
-/** The folder in an OSC 7 `file://host/path`, decoded where it can be; null for anything else. */
-function folderOf(url: string): string | null {
-  const m = /^file:\/\/[^/]*(\/.*)$/.exec(url);
-  if (!m?.[1]) return null;
-  let path = m[1];
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    // Not percent-encoded (the hook sends $PWD as it is): keep it.
-  }
-  return path.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 1024);
-}
 
 /** The bytes as one array. */
 function joined(chunks: readonly Uint8Array[]): Uint8Array {

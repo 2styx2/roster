@@ -36,6 +36,7 @@ import {
   type PendingChanges,
   type PackageChecked,
   type PackageStatus,
+  type OpenSession,
   type PluginReply,
   type PublishResult,
   type PullResult,
@@ -158,6 +159,11 @@ async function openQuickSession(
   };
 }
 
+/** One open Session as plugin_sessions takes it (mod.rs's OpenSession). */
+function openSessionArg(o: OpenSession) {
+  return { session: o.session, host: o.host, cwd: o.cwd ?? null };
+}
+
 function inventoryCall<T>(method: string, params: Record<string, unknown>): Promise<T> {
   return call<T>("inventory_call", { method, params });
 }
@@ -233,7 +239,7 @@ export function tauriBackend(): Backend {
     pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null }),
     pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried" }),
     pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload }),
-    pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map((o) => [o.session, o.host]) }).then(() => undefined),
+    pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg) }).then(() => undefined),
     pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin }),
     pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin }),
     pluginBuiltins: (names) => call<null>("plugin_builtins", { names }).then(() => undefined),
@@ -254,7 +260,7 @@ export function tauriBackend(): Backend {
         pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null, onDemo }),
         pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", onDemo }),
         pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload, onDemo }),
-        pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map((o) => [o.session, o.host]), onDemo }).then(() => undefined),
+        pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg), onDemo }).then(() => undefined),
         pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),
         pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin, onDemo }),
         pluginBuiltins: (names) => call<null>("plugin_builtins", { names, onDemo }).then(() => undefined),

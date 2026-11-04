@@ -694,7 +694,10 @@ function Workspace({
       if (was.state === "live") events.push([() => void plugins.event("session_exit", { session: id, host: was.host, code: null }), () => {}]);
     }
     seenTabs.current = now;
-    const open = [...order].map(([session, host]) => ({ session, host }));
+    // With the folder each one's shell last said (OSC 7, #242): the core gives it to terminal.read's
+    // Plugins only (Q185), and a `cd` sends the list again.
+    const cwds = new Map(sessions.tabs.map((t) => [t.id, t.cwd ?? null]));
+    const open = [...order].map(([session, host]) => ({ session, host, cwd: cwds.get(session) ?? null }));
     const text = JSON.stringify(open);
     if (text !== sentOpen.current) {
       sentOpen.current = text;

@@ -1256,6 +1256,9 @@ export interface PluginReply {
   ops: unknown[];
   error: PluginErrorInfo | null;
   disabled: string | null;
+  /** The events the Plugin listens for now, when that's news (always at load; then only after a
+   * call, event or answer that changed it; null or absent otherwise): #223, decision Q185. */
+  listens?: PluginEventName[] | null;
 }
 
 /** The events a Plugin can listen for (roster-core's plugin::EVENTS). */
@@ -1274,6 +1277,8 @@ export const PLUGIN_EVENTS = [
 export interface OpenSession {
   session: number;
   host: string | null;
+  /** The folder its shell last said it's in (OSC 7, osc7.ts); null until it says one (Q185). */
+  cwd?: string | null;
 }
 
 export type PluginEventName = (typeof PLUGIN_EVENTS)[number];

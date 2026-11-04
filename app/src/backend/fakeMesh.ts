@@ -163,7 +163,7 @@ export function meshPlugin(): FakePlugin {
       version: "1.0.0",
       description: "The Mesh's controls: who reaches whom, plan and apply it, and Cut a Host out",
       author: "roster",
-      api: 5,
+      api: 6,
       permissions: MESH_PERMISSIONS,
     },
     load,

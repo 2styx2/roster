@@ -1006,3 +1006,52 @@ fn text_that_isnt_utf8_is_shown_with_a_replacement_character_not_an_error() {
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(r.ops, [json!({ "op": "copy", "text": shown })]);
 }
+
+/// #223 (Q185): the app keeps a command's output for `command_done` only while a Plugin listens
+/// for it, so each reply says which events the Plugin listens for whenever that's news: at load,
+/// and after a call or an event that added a listener (a reply that changed nothing else too).
+#[test]
+fn replies_say_which_events_a_plugin_listens_for_when_that_changes() {
+    let init = r#"
+        roster.on("session_open", function()
+          roster.on("command_done", function() end)
+        end)
+        roster.commands.add("hear", { run = function() roster.on("terminal_output", function() end) end })
+        roster.commands.add("noop", { run = function() end })
+    "#;
+    let dir = plugin_dir("listens", &manifest("listens", &["terminal.read"]), init);
+    let (host, _) = host();
+    let (_, loaded) = host
+        .load(&Source::Dir(dir.to_path_buf()), &perms(&["terminal.read"]))
+        .unwrap();
+    assert_eq!(loaded.listens, Some(vec!["session_open".to_string()]));
+    let command = |name: &str| {
+        let op = loaded.ops.iter().find(|o| o["name"] == name).unwrap();
+        handler(op, "run")
+    };
+    let noop = host.call("listens", command("noop"), json!({}));
+    assert_eq!(noop.listens, None, "nothing new");
+    let heard = host.event(Event {
+        name: "session_open".into(),
+        payload: json!({ "session": 1, "host": "esx-02" }),
+    });
+    assert_eq!(heard.len(), 1, "a reply with no ops, as the listeners changed");
+    assert_eq!(
+        heard[0].listens,
+        Some(vec!["session_open".to_string(), "command_done".to_string()])
+    );
+    let again = host.event(Event {
+        name: "session_open".into(),
+        payload: json!({ "session": 2, "host": "esx-02" }),
+    });
+    assert!(again.is_empty(), "the same events: nothing to say");
+    let hear = host.call("listens", command("hear"), json!({}));
+    assert_eq!(
+        hear.listens,
+        Some(vec![
+            "session_open".to_string(),
+            "terminal_output".to_string(),
+            "command_done".to_string()
+        ])
+    );
+}

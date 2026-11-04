@@ -356,6 +356,15 @@ fn a_plugin_in_the_demo_lists_the_demos_sessions() {
         notices(&r.ops)
     };
     assert_eq!(call(&host), ["none"]);
-    host.set_sessions(vec![(1, Some("demo-01".into())), (2, None)]);
+    host.set_sessions(
+        [(1, Some("demo-01".to_string())), (2, None)]
+            .into_iter()
+            .map(|(session, host)| roster_core::plugin::OpenSession {
+                session,
+                host,
+                cwd: None,
+            })
+            .collect(),
+    );
     assert_eq!(call(&host), ["1=demo-01 2=quick"]);
 }

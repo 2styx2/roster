@@ -1,5 +1,5 @@
 ---@meta roster
--- roster's Plugin API, roster.api_version 5: LuaCATS annotations for lua-language-server.
+-- roster's Plugin API, roster.api_version 6: LuaCATS annotations for lua-language-server.
 -- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
 -- The reference: docs/plugin-api.md (`:help plugin-api`).
 
@@ -814,6 +814,7 @@
 ---@class roster.Session
 ---@field session integer The Session's id, as its events name it: `roster.terminal.send` and `roster.sessions.show` take it.
 ---@field host? string The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host.
+---@field cwd? string The folder the Session's shell last said it's in, with OSC 7 (since api 6; Shell integration): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, nothing that reorders text, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.
 
 --- `session_open`'s payload
 ---@class roster.SessionOpenEvent
@@ -852,6 +853,7 @@
 ---@field command? string The command line as the shell showed it after its prompt; `nil` when it couldn't be read (the shell sent no `B` mark, or the line scrolled away or was reflowed by a resize before it ran).
 ---@field output string What it printed, each line ending in `\n`, as `terminal_output` sent it (its last line too, if it didn't end in a line feed). At most the last 16 KB.
 ---@field code? integer Its exit code; `nil` when the shell didn't say.
+---@field cwd? string The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As `Session`'s `cwd`: the shell's word, never checked.
 
 ---@class roster.module
 ---@field api_version integer The version of the `roster` module this app has
@@ -1508,7 +1510,7 @@ function roster.sessions.show(session, line) end
 
 --- The Sessions open now, in the order they opened.
 --- Permission: inventory.read or terminal.read. Since: api 4.
----@return roster.Session[] # Each open Session's id and Host, oldest open first.
+---@return roster.Session[] # Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.
 function roster.sessions.list() end
 
 --- Opens a Session on a Host, as `:connect HOST`.

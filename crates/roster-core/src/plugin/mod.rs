@@ -155,6 +155,10 @@ pub struct Reply {
     pub error: Option<PluginError>,
     /// Set when the Plugin is now disabled, with why: the frontend takes its UI away.
     pub disabled: Option<String>,
+    /// The events the Plugin listens for now, in [`EVENTS`]' order, when that's news to the app:
+    /// always at load, then only after a call, event or answer that changed it (#223, decision
+    /// Q185: the app keeps a command's output for `command_done` only while a Plugin listens).
+    pub listens: Option<Vec<String>>,
 }
 
 impl Reply {
@@ -165,6 +169,7 @@ impl Reply {
             ops: Vec::new(),
             error: Some(error),
             disabled,
+            listens: None,
         }
     }
 }
@@ -495,7 +500,7 @@ impl PluginHost {
         let reply = match answer {
             Some((outcome, listens)) => {
                 if let Some(slot) = slot.as_deref_mut() {
-                    slot.listens = listens;
+                    slot.listens.clone_from(&listens);
                 }
                 match outcome.error {
                     Some(error) => {
@@ -511,6 +516,7 @@ impl PluginHost {
                         ops: outcome.ops,
                         error: None,
                         disabled: None,
+                        listens: Some(listens),
                     },
                 }
             }
@@ -572,7 +578,15 @@ impl PluginHost {
     /// The Sessions open now, in the order the app saw them open (`roster.sessions.list()`,
     /// decision Q127): the app's whole list, which replaces the last one. The app sends it on
     /// start, whenever it changes, and before the `session_open` or `session_exit` that changed it.
-    pub fn set_sessions(&self, open: Vec<(u64, Option<String>)>) {
+    /// A `cwd` that isn't a folder ([`is_folder`]) is taken as none.
+    pub fn set_sessions(&self, open: Vec<OpenSession>) {
+        let open = open
+            .into_iter()
+            .map(|s| OpenSession {
+                cwd: s.cwd.filter(|c| is_folder(c)),
+                ..s
+            })
+            .collect();
         *self.sessions.0.lock().expect("open sessions") = open;
     }
 
@@ -604,7 +618,7 @@ impl PluginHost {
                 let answer = rx.and_then(|rx| wait(&rx, start, wall, &serving));
                 self.settle(&n, answer)
             })
-            .filter(|r| !r.ops.is_empty() || r.error.is_some())
+            .filter(|r| !r.ops.is_empty() || r.error.is_some() || r.listens.is_some())
             .collect()
     }
 
@@ -821,7 +835,7 @@ fn deliver(slots: &Slots, listener: &Mutex<Option<Listener>>, limits: Limits, pl
     let start = Instant::now();
     let answer = send(&jobs, job).and_then(|rx| wait(&rx, start, limits.call + limits.grace, &serving));
     let reply = settle(slots, limits, plugin, Some(generation), answer);
-    if reply.ops.is_empty() && reply.error.is_none() {
+    if reply.ops.is_empty() && reply.error.is_none() && reply.listens.is_none() {
         return;
     }
     let listener = listener.lock().expect("plugin listener").clone();
@@ -844,6 +858,7 @@ fn settle(slots: &Slots, limits: Limits, plugin: &str, generation: Option<u64>, 
                 ops: Vec::new(),
                 error: None,
                 disabled: None,
+                listens: None,
             };
         }
         _ => {
@@ -862,7 +877,10 @@ fn settle(slots: &Slots, limits: Limits, plugin: &str, generation: Option<u64>, 
         disable(slot, &why);
         return Reply::failed(plugin, PluginError::new(plugin, None, None, why.clone()), Some(why));
     };
-    slot.listens = listens;
+    let listens = (slot.listens != listens).then(|| {
+        slot.listens.clone_from(&listens);
+        listens
+    });
     let mut disabled = None;
     if outcome.error.is_some() && !outcome.stale {
         slot.errors += 1;
@@ -878,6 +896,7 @@ fn settle(slots: &Slots, limits: Limits, plugin: &str, generation: Option<u64>, 
         ops: outcome.ops,
         error: outcome.error,
         disabled,
+        listens,
     }
 }
 
@@ -918,13 +937,42 @@ fn wait(rx: &Receiver<Answer>, start: Instant, wall: Duration, serving: &ServeWa
 /// whole list on start and whenever it changes, and each list replaces the last, so nothing here
 /// depends on the order its events arrive in, and a reloaded webview's tab ids start clean.
 #[derive(Default)]
-pub(crate) struct OpenSessions(Mutex<Vec<(u64, Option<String>)>>);
+pub(crate) struct OpenSessions(Mutex<Vec<OpenSession>>);
 
 impl OpenSessions {
     /// Every open Session, in the app's order.
-    pub(crate) fn list(&self) -> Vec<(u64, Option<String>)> {
+    pub(crate) fn list(&self) -> Vec<OpenSession> {
         self.0.lock().expect("open sessions").clone()
     }
+}
+
+/// One open Session, as the app lists it ([`PluginHost::set_sessions`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct OpenSession {
+    pub session: u64,
+    /// Its Host; `None` for a Quick Connect Session.
+    pub host: Option<String>,
+    /// The folder its shell last said it's in (OSC 7, #242, decision Q185), as the app read it;
+    /// `None` until it says one. The Host's word, never checked: only Plugins granted
+    /// `terminal.read` see it, as it's something the Session printed.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// The longest folder a Session's `cwd` may be, in characters (app/src/session/osc7.ts's
+/// FOLDER_MAX).
+pub const FOLDER_MAX: usize = 1024;
+
+/// Whether `cwd` is a folder the app would have read from an OSC 7 (osc7.ts): an absolute path of
+/// at most [`FOLDER_MAX`] characters with no control character and nothing that reorders the text
+/// it's shown in. The app checks first; the core takes nothing it wouldn't have, whoever sent it.
+fn is_folder(cwd: &str) -> bool {
+    cwd.starts_with('/')
+        && cwd.chars().count() <= FOLDER_MAX
+        && !cwd.chars().any(|c| {
+            c.is_control()
+                || matches!(c, '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
 }
 
 /// How often the host looks again at a Plugin waiting for roster serve.

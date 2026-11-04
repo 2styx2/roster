@@ -5,7 +5,7 @@
 
 mod common;
 
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{Event, Limits, OpenSession, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
@@ -111,8 +111,66 @@ end
 roster.status.set("open", { text = table.concat(parts, " ") })
 "#;
 
-fn open(list: &[(u64, Option<&str>)]) -> Vec<(u64, Option<String>)> {
-    list.iter().map(|(id, h)| (*id, h.map(str::to_string))).collect()
+fn open(list: &[(u64, Option<&str>)]) -> Vec<OpenSession> {
+    list.iter()
+        .map(|(id, h)| OpenSession {
+            session: *id,
+            host: h.map(str::to_string),
+            cwd: None,
+        })
+        .collect()
+}
+
+/// The open Sessions, each with the folder its shell last said (OSC 7).
+fn open_in(list: &[(u64, &str, Option<&str>)]) -> Vec<OpenSession> {
+    list.iter()
+        .map(|(id, h, cwd)| OpenSession {
+            session: *id,
+            host: Some((*h).to_string()),
+            cwd: cwd.map(str::to_string),
+        })
+        .collect()
+}
+
+const CWDS: &str = r#"
+local roster = require("roster")
+local parts = {}
+for _, s in ipairs(roster.sessions.list()) do
+  parts[#parts + 1] = s.session .. "=" .. tostring(s.cwd)
+end
+roster.status.set("cwd", { text = table.concat(parts, " ") })
+"#;
+
+/// #242 (Q185): the folder is what the Session prints, so only a Plugin that may read that has it.
+#[test]
+fn a_sessions_folder_is_listed_only_for_a_plugin_granted_terminal_read() {
+    let serve = Arc::new(CountingServe::default());
+    let (host, _rx) = host(&serve);
+    host.set_sessions(open_in(&[(1, "esx-02", Some("/srv/app")), (2, "web-1", None)]));
+    let (reader, _a) = load(&host, "cwd-reader", &["terminal.read"], CWDS);
+    ok(&reader);
+    assert_eq!(said(&reader.ops, "cwd"), "1=/srv/app 2=nil");
+    let (inventory, _b) = load(&host, "cwd-inventory", &["inventory.read"], CWDS);
+    ok(&inventory);
+    assert_eq!(said(&inventory.ops, "cwd"), "1=nil 2=nil");
+}
+
+/// The app reads OSC 7 strictly (osc7.ts); the core takes no folder it wouldn't have, whoever sent it.
+#[test]
+fn a_folder_with_control_characters_or_too_long_is_no_folder() {
+    let serve = Arc::new(CountingServe::default());
+    let (host, _rx) = host(&serve);
+    let long = format!("/{}", "a".repeat(1024));
+    host.set_sessions(open_in(&[
+        (1, "esx-02", Some("/srv/\u{1b}[31m")),
+        (2, "esx-02", Some("/srv/\u{202e}gpj")),
+        (3, "esx-02", Some(&long)),
+        (4, "esx-02", Some("srv")),
+        (5, "esx-02", Some("/")),
+    ]));
+    let (reply, _dir) = load(&host, "cwd-strict", &["terminal.read"], CWDS);
+    ok(&reply);
+    assert_eq!(said(&reply.ops, "cwd"), "1=nil 2=nil 3=nil 4=nil 5=/");
 }
 
 #[test]
