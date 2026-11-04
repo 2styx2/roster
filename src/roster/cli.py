@@ -1067,18 +1067,64 @@ def used_for(uses):
     return ", ".join(f"{svc} ({hs[0] if len(hs) == 1 else f'{len(hs)} hosts'})" for svc, hs in by_svc.items())
 
 
+# `roster bw` (T202, decision Q178): which bw commands run, as a fail-closed allowlist. A command in none of these sets
+# (one a newer bw adds, a typo) is refused, never assumed safe.
+BW_READ = frozenset({"list", "get", "status", "sync", "generate", "encode", "receive", "help", "completion", "update"})
+BW_WRITE = frozenset({"create", "edit", "delete", "restore", "move", "share", "confirm", "import", "send",
+                      "device-approval", "export"})  # change the vault, or (export) write all of it out
+BW_ACCOUNT = frozenset({"login", "logout", "unlock", "lock", "config"})  # need --write too
+BW_PROMPTS = frozenset({"login", "unlock"})  # ask for the master password on the terminal: no --nointeraction added
+BW_FLAGS = frozenset({"--pretty", "--raw", "--response", "--cleanexit", "--quiet", "--nointeraction",
+                      "-h", "--help", "-v", "--version"})  # bw's own options that may come before its command
+
+
+def bw_command(argv, write):
+    """The bw command ARGV runs (None for bw's bare options, `--help` or `--version`), or die() saying why it may not
+    run. Nothing after the command is ever repeated: it may hold a password."""
+    from .errors import BW_NEEDS_WRITE, BW_NOT_ALLOWED, BW_REFUSED
+    if any(a == "--session" or a.startswith("--session=") for a in argv):
+        die(f"[{BW_REFUSED}] roster bw won't put a session key on bw's command line, where other programs can read "
+            "it: roster passes this Box's session in bw's environment (drop --session)")
+    if "--write" in argv:
+        die(f"[{BW_NOT_ALLOWED}] --write is roster's, not bw's: put it before bw's arguments "
+            "(roster bw --write edit item ...)")
+    cmd = next((a for a in argv if not a.startswith("-")), None)
+    if any(a not in BW_FLAGS for a in argv[:argv.index(cmd) if cmd else len(argv)]):
+        die(f"[{BW_NOT_ALLOWED}] roster bw takes only these bw options before the command: "
+            f"{', '.join(sorted(BW_FLAGS))}")
+    if cmd is None or cmd in BW_READ:
+        return cmd
+    if cmd == "serve":
+        die(f"[{BW_REFUSED}] roster bw won't run bw serve: it would hand the unlocked vault to every program on this "
+            "Box that can reach its port. Run bw serve yourself if you need it")
+    if cmd in BW_WRITE or cmd in BW_ACCOUNT:
+        if not write:
+            what = "acts on the vault's account" if cmd in BW_ACCOUNT else \
+                "writes the whole vault out" if cmd == "export" else "changes the vault"
+            die(f"[{BW_NEEDS_WRITE}] bw {cmd} {what}, and roster bw is read-only unless you say so: "
+                f"roster bw --write {cmd} ...")
+        return cmd
+    die(f"[{BW_NOT_ALLOWED}] roster bw runs only the bw commands it knows (the first word isn't one of them, and "
+        f"isn't repeated here): {', '.join(sorted(BW_READ))}; with --write, {', '.join(sorted(BW_WRITE | BW_ACCOUNT))}")
+
+
 def cmd_bw(args):
     """The Bitwarden CLI with this box's vault session (~/.config/roster/bw-session), so scripts and
-    Claude sessions don't each carry BW_SESSION around. Never prompts: --nointeraction is added."""
+    Claude sessions don't each carry BW_SESSION around. Read-only unless --write (bw_command); never prompts
+    (--nointeraction is added) except `login` and `unlock`. bw's output goes straight to the terminal: roster never
+    reads it."""
     from .providers.bitwarden import load_session_file, session_key
     argv = args.args[1:] if args.args[:1] == ["--"] else list(args.args)
     if not argv:
-        die("usage: roster bw <bw arguments>   e.g.  roster bw list items --search proxmox")
+        die("usage: roster bw [--write] [--] <bw arguments>   e.g.  roster bw list items --search web-01")
+    cmd = bw_command(argv, args.write)
     load_session_file()
-    if "--nointeraction" not in argv:
+    if "--nointeraction" not in argv and cmd not in BW_PROMPTS:
         argv.append("--nointeraction")
     key = session_key()
-    env = {**os.environ, **({"BW_SESSION": key} if key else {})}
+    # only bw's session: a 1Password sign-in (OP_SESSION_*) never goes to bw (#388). Windows upper-cases env names
+    env = {**{k: v for k, v in os.environ.items() if not k.upper().startswith("OP_SESSION_")},
+           **({"BW_SESSION": key} if key else {})}
     try:
         return subprocess.run(program_argv(["bw", *argv]), env=env).returncode
     except ValueError as e:
@@ -1281,7 +1327,11 @@ def build_parser():
                    help="built-in scanner connect timeout (default: 0.5)")
     s.add_argument("--force", action="store_true", help="allow scanning more than 4096 addresses")
     s.add_argument("--json", **as_json)
-    s = sub.add_parser("bw", help="run the Bitwarden CLI with this box's vault session (bw-session file)")
+    s = sub.add_parser("bw", help="run the Bitwarden CLI with this box's vault session (bw-session file); "
+                       "read-only unless --write")
+    s.add_argument("--write", action="store_true",
+                   help="allow bw commands that change the vault, write it out or act on the account "
+                        "(create, edit, delete, export, login, logout, unlock, lock, config, ...)")
     s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw")
     s = sub.add_parser("providers", help="list password providers (built-in, plugins, roster.yml)")
     s.add_argument("--json", **as_json)

@@ -398,6 +398,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `159` | `roster run --sudo` on an `os: windows` Host: refused, Windows has no sudo over ssh; nothing ran. A CLI error, never a serve answer |
 | `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
 | `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
+| `164` | `roster bw`: a bw command that changes the vault, writes it out (`export`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
+| `165` | `roster bw`: a bw command (or an option before it) roster bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
+| `166` | `roster bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
@@ -607,7 +610,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 |---|---|
 | `13` | The provider has no account to sign out of; roster doesn't try. KeePassXC: "KeePassXC has no account to sign out of: it opens a local database file. To use another one, change vault.kp.database in init.lua"; `env`, `cmd`: "provider 'env' has no account to sign out of - its Logins come from this box itself". Nothing was forgotten |
 | `15` | The CLI isn't signed in, so there's no account to sign out of: "the Bitwarden CLI isn't signed in on this box - there's no account to sign out of". `data.fix`: sign in from the lock screen. Everything was forgotten anyway |
-| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster bw logout` in a terminal shows the same. Everything was forgotten anyway |
+| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster bw --write logout` in a terminal shows the same. Everything was forgotten anyway |
 
 ## Saving to the vault: `vault.create_item`
 
