@@ -226,30 +226,38 @@ def step_vault_item(ctx):
 def step_dns(ctx):
     h = ctx["h"]
     try:
-        socket.getaddrinfo(h["ip"], h["ssh"]["port"], type=socket.SOCK_STREAM)
+        found = socket.getaddrinfo(h["ip"], h["ssh"]["port"], type=socket.SOCK_STREAM)
     except (socket.gaierror, UnicodeError) as e:
         raise Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({h['name']})",
                       fix=f"fix ip: for {h['name']} in roster.yml", details=str(e)) from None
+    ctx["resolved"] = list(dict.fromkeys(str(a[4][0]) for a in found))     # for unreachable_fix (#420)
     return f"{h['ip']} resolves"
 
 
 UNREACHABLE = "retry later; is the Host up and the network path open?"
 
 
-def unreachable_fix(h, limited=()):
+def ip_of(text):
+    try:
+        return ipaddress.ip_address(str(text).partition("%")[0])
+    except ValueError:
+        return None
+
+
+def unreachable_fix(h, limited=(), resolved=None):
     """The fix for a Host that didn't answer (code 42), from `rate_limited:` in roster.yml (LIMITED, its networks;
     T191, decision Q180). An address in one of them names it; an address outside them, when the team listed some,
-    gets no rate-limiter hint; with no list, or a name rather than an address, the hint is the generic one."""
+    gets no rate-limiter hint; with no list the hint is the generic one. A name rather than an address is matched
+    by RESOLVED, the addresses the dns step found for it (#420, decision Q192); without them it gets the generic one."""
     if limited:
-        try:
-            addr = ipaddress.ip_address(str(h["ip"]).partition("%")[0])
-        except ValueError:
-            addr = None
-        if addr is not None:
-            net = next((n for n in limited if addr in ipaddress.ip_network(n)), None)
-            if net is None:
+        addr = ip_of(h["ip"])
+        addrs = [addr] if addr is not None else [a for a in map(ip_of, resolved or ()) if a is not None]
+        if addrs:
+            hit = next(((a, n) for a in addrs for n in limited if a in ipaddress.ip_network(n)), None)
+            if hit is None:
                 return UNREACHABLE
-            return (f"{UNREACHABLE} {h['ip']} is in {net} (rate_limited: in roster.yml): its SSH rate limiter stops "
+            where = h["ip"] if addr is not None else f"{h['ip']} ({hit[0]})"
+            return (f"{UNREACHABLE} {where} is in {hit[1]} (rate_limited: in roster.yml): its SSH rate limiter stops "
                     "answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop")
     return (f"{UNREACHABLE} If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in "
             "a loop")
@@ -265,7 +273,7 @@ def step_tcp(ctx):
                       fix="check the port in roster.yml; is sshd running on the Host?", details=str(e)) from None
     except OSError as e:
         raise Problem(errors.TIMEOUT, f"{h['name']} ({where}) didn't answer within {CONNECT_TIMEOUT} s",
-                      fix=unreachable_fix(h, ctx.get("limited")), details=str(e)) from None
+                      fix=unreachable_fix(h, ctx.get("limited"), ctx.get("resolved")), details=str(e)) from None
     return f"{where} accepts connections"
 
 
@@ -283,7 +291,8 @@ def step_host_key(ctx):
     except (paramiko.SSHException, OSError, EOFError) as e:
         if not isinstance(e, paramiko.SSHException) or "Incompatible" not in str(e):
             raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                          fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
+                          fix=unreachable_fix(h, ctx.get("limited"), ctx.get("resolved")),
+                          details=f"{type(e).__name__}: {e}") from None
         key = None
     finally:
         sock.close()
@@ -321,7 +330,7 @@ def step_auth(ctx):
     r = login_attempt(argv, {**os.environ, **env}, limit, ctx.get("halted"))
     if r is None:
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't finish the login within {limit} s",
-                      fix=unreachable_fix(h, ctx.get("limited")))
+                      fix=unreachable_fix(h, ctx.get("limited"), ctx.get("resolved")))
     if r.returncode == 0:
         return f"logged in as {h['ssh']['user']}"
     details = r.stderr.strip()
@@ -332,7 +341,7 @@ def step_auth(ctx):
             secret = None
         if secret:
             details = details.replace(secret, "****")
-    raise login_failure(h, password, details, ctx.get("limited"))
+    raise login_failure(h, password, details, ctx.get("limited"), ctx.get("resolved"))
 
 
 STOP_POLL = 0.1            # s: how soon a stopped check notices it while its ssh logs in
@@ -396,7 +405,7 @@ def end_process(proc):
     proc.wait()                             # SIGKILL can't be refused: this returns
 
 
-def login_failure(h, password, stderr, limited=()):
+def login_failure(h, password, stderr, limited=(), resolved=None):
     """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions)."""
     name, user = h["name"], h["ssh"]["user"]
     for line in stderr.splitlines():
@@ -431,7 +440,7 @@ def login_failure(h, password, stderr, limited=()):
         return Problem(errors.REFUSED, f"{name} refused the connection",
                        fix="check the port in roster.yml; is sshd running on the Host?", details=stderr)
     if "timed out" in low:
-        return Problem(errors.TIMEOUT, f"{name} didn't answer within {LOGIN_TIMEOUT} s", fix=unreachable_fix(h, limited),
+        return Problem(errors.TIMEOUT, f"{name} didn't answer within {LOGIN_TIMEOUT} s", fix=unreachable_fix(h, limited, resolved),
                        details=stderr)
     if "could not resolve" in low:
         return Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({name})", fix=f"fix ip: for {name} in roster.yml",
