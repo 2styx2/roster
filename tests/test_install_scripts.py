@@ -223,14 +223,124 @@ def test_help_is_the_header_and_nothing_else(script):
     assert r.stdout.startswith(("Install", "Update", "Remove")) and "set -uo" not in r.stdout
 
 
+def install_dry(tmp_path, *args, answers=None, home=None):
+    """install.sh --dry-run in a made-up HOME (never this machine's), with ANSWERS typed (else --yes)."""
+    env = {**os.environ, "HOME": str(home or tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
+    for k in ("ROSTER_INFRA_REPO", "ROSTER_INVENTORY", "ROSTER_CONFIG"):
+        env.pop(k, None)
+    flags = ["--dry-run", *([] if answers is not None else ["--yes"]), *args]
+    script = source_copy(tmp_path) / "install.sh"        # never git on this checkout; no roster: no hand-over
+    return subprocess.run(["bash", str(script), *flags], env=env, capture_output=True, text=True,
+                          input=answers or "", timeout=120, start_new_session=True)
+
+
 @posix_shell
-def test_install_without_a_team_map_skips_the_clone_under_yes(tmp_path):
+def test_install_with_nothing_given_creates_a_blank_inventory_under_yes(tmp_path):
+    """T212: with no repo given, the default is a new, blank Inventory (Y), not nothing."""
+    r = install_dry(tmp_path)
+    cfg = tmp_path / "home" / "infra" / "roster.yml"
+    assert f"would run: roster -c {cfg} init --inventory blank" in r.stdout, r.stdout
+    assert "git clone -q -- " not in r.stdout                  # no Inventory cloned (roster's own source may be)
+    assert "git init" not in r.stdout.replace("Keep its history in git (git init", "")    # offered, default No
+
+
+@pytest.mark.parametrize("how,want", [
+    ("blank", "init --inventory blank"),
+    ("file:/tmp/theirs/roster.yml", "init --inventory file:/tmp/theirs/roster.yml"),
+    ("ssh-config", "init --inventory ssh-config"),
+    ("ssh-config:/tmp/my_ssh_config", "init --inventory ssh-config:/tmp/my_ssh_config"),
+    ("repo:git@example.com:team/map.git", "git clone -q -- git@example.com:team/map.git"),
+])
+@posix_shell
+def test_install_inventory_flag_picks_one_without_prompts(tmp_path, how, want):
+    r = install_dry(tmp_path, "--inventory", how)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert want in r.stdout, r.stdout
+
+
+@posix_shell
+def test_install_inventory_flag_is_checked(tmp_path):
+    for bad in ("nope", "file:", "repo:"):
+        r = install_dry(tmp_path, "--inventory", bad)
+        assert r.returncode == 2 and "--inventory" in r.stderr, bad
+
+
+def install_answering(tmp_path, replies):
+    """install.sh --dry-run in a made-up HOME, answering each question as it's asked: REPLIES maps words in a
+    question to the answer typed; any other question gets Enter (its default). Returns everything it printed."""
     env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
-    env.pop("ROSTER_INFRA_REPO", None)
-    r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
-    assert "no team map given - run again with --infra-repo URL" in r.stdout
-    assert "git clone -q" not in r.stdout
+    for k in ("ROSTER_INFRA_REPO", "ROSTER_INVENTORY", "ROSTER_CONFIG"):
+        env.pop(k, None)
+    script = source_copy(tmp_path) / "install.sh"        # never git on this checkout; no roster: no hand-over
+    p = subprocess.Popen(["bash", str(script), "--dry-run"], env=env, stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    out, line = b"", b""
+    try:
+        while chunk := os.read(p.stdout.fileno(), 4096):
+            out += chunk
+            line = (line + chunk).rsplit(b"\n", 1)[-1]
+            if line.rstrip().endswith(b"]"):                    # a question waits for its answer
+                said = line.decode(errors="replace")
+                reply = next((v for k, v in replies.items() if k in said), "")
+                p.stdin.write((reply + "\n").encode())
+                p.stdin.flush()
+                line = b""
+        p.wait(timeout=60)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    return out.decode(errors="replace")
+
+
+@posix_shell
+@pytest.mark.parametrize("replies,want", [
+    ({}, "init --inventory blank"),
+    ({"1, 2, 3 or 4": "2", "Path of the roster.yml": "/tmp/theirs/roster.yml"},
+     "init --inventory file:/tmp/theirs/roster.yml"),
+    ({"1, 2, 3 or 4": "3", "Git URL": "git@example.com:team/map.git"}, "git clone -q -- git@example.com:team/map.git"),
+    ({"1, 2, 3 or 4": "4"}, "init --inventory ssh-config"),
+])
+def test_install_offers_the_ways_to_start_an_inventory(tmp_path, replies, want):
+    out = install_answering(tmp_path, replies)
+    assert "How do you want to start your Inventory?" in out, out
+    assert want in out, out
+
+
+@posix_shell
+def test_install_can_use_an_imported_file_where_it_is(tmp_path):
+    theirs = tmp_path / "theirs" / "roster.yml"
+    theirs.parent.mkdir()
+    theirs.write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": str(theirs), "Copy ": "n"})
+    assert "init --inventory file:" not in out and f"using {theirs} where it is" in out, out
+
+
+@posix_shell
+def test_install_offers_git_init_after_a_blank_one_default_no(tmp_path):
+    out = install_answering(tmp_path, {"Keep its history in git": "y"})
+    assert "Keep its history in git" in out and f"git -C {tmp_path / 'home' / 'infra'} init -q" in out, out
+
+
+@posix_shell
+def test_install_adds_a_new_one_as_a_named_inventory_beside_the_one_there(tmp_path):
+    home = tmp_path / "home"
+    (home / "infra").mkdir(parents=True)
+    (home / "infra" / "roster.yml").write_text("groups: {}\n")
+    out = install_answering(tmp_path, {"Keep using it": "n", "Name for the new Inventory": "lab",
+                                       "Folder for the new Inventory": str(home / "lab")})
+    assert f"roster -c {home / 'lab' / 'roster.yml'} init --inventory blank --name lab" in out, out
+    assert (home / "infra" / "roster.yml").read_text() == "groups: {}\n"
+
+
+@posix_shell
+def test_install_keeps_a_roster_yml_that_is_there(tmp_path):
+    home = tmp_path / "home"
+    (home / "infra").mkdir(parents=True)
+    (home / "infra" / "roster.yml").write_text("groups: {}\n")
+    r = install_dry(tmp_path, "--inventory", "blank")
+    assert f"found {home / 'infra' / 'roster.yml'}" in r.stdout
+    assert "init --inventory" not in r.stdout and "kept" in r.stdout
+    assert (home / "infra" / "roster.yml").read_text() == "groups: {}\n"
 
 
 @posix_shell
@@ -239,7 +349,7 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), "--dry-run", "--yes", "--infra-repo", "git@example.com:team/map.git"],
                        env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120,
                        start_new_session=True)
-    assert "git clone -q git@example.com:team/map.git" in r.stdout
+    assert "git clone -q -- git@example.com:team/map.git" in r.stdout
     assert "BatchMode=yes" in r.stdout                        # nobody to answer ssh under --yes
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key
 
@@ -350,6 +460,74 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
     assert "dnf install -y cronie" in r.stdout
     assert "would add to crontab:" in r.stdout
     assert "no crontab on this box" not in r.stdout
+
+
+# ---------------------------------------------------------------- PR #409's review: L4, L5, L6
+
+@posix_shell
+@pytest.mark.parametrize("url", ["https://me:s3cret-token@example.com/team/map.git",
+                                 "https://s3cret-token@example.com/team/map.git",
+                                 "https://me:s3cret@-token@example.com/team/map.git"])
+def test_install_never_shows_a_clone_urls_password(tmp_path, url):
+    """L4, N2: https://me:TOKEN@host/..., a token as the user, a password with an @: shown and logged as ***@."""
+    r = install_dry(tmp_path, "--inventory", f"repo:{url}")
+    assert "s3cret" not in r.stdout + r.stderr, r.stdout
+    assert "https://***@example.com/team/map.git" in r.stdout
+
+
+@posix_shell
+def test_install_uses_a_file_in_place_only_as_a_full_path_that_is_there(tmp_path):
+    """L5: '~/x' (bash doesn't expand ~ after file:) and a relative path become full paths; a missing one isn't
+    used (nothing to point ROSTER_CONFIG at)."""
+    home = tmp_path / "home"
+    (home / "mine").mkdir(parents=True)
+    (home / "mine" / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "~/mine/roster.yml",
+                                       "Copy ": "n"})
+    assert f"using {home / 'mine' / 'roster.yml'} where it is" in out, out
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "~/nope/roster.yml",
+                                       "Copy ": "n"})
+    assert "no file at" in out and "where it is" not in out.replace("(n: use it where it is)", ""), out
+
+
+@posix_shell
+def test_install_refuses_a_path_that_would_run_in_the_shell_startup_files(tmp_path):
+    """L5: ROSTER_CONFIG goes into .bashrc in double quotes: a path with $( ` " or a newline is refused."""
+    out = install_answering(tmp_path, {"Folder for your Inventory": "~/in$(touch x)fra"})
+    assert "can't hold" in out, out
+    assert "ROSTER_CONFIG" not in out.split("can't hold")[1].split("Summary")[0].replace("would add ROSTER_CONFIG", "")
+
+
+@posix_shell
+def test_uninstall_never_offers_to_delete_a_folder_that_holds_other_files(box):
+    """L5: a roster.yml used in place in, say, ~/Downloads: only roster's own files there are roster's to remove."""
+    home, env = box
+    (home / "infra" / "holiday.jpg").write_text("x\n")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert "Delete the whole config folder" not in r.stdout and "holds other files" in r.stdout, r.stdout
+    assert (home / "infra" / "roster.yml").exists() and (home / "infra" / "holiday.jpg").exists()
+
+
+@posix_shell
+def test_uninstall_says_a_repo_with_no_remote_is_the_only_copy(box):
+    """L6: a local git repo (install's git init) has no upstream: deleting it loses it."""
+    home, env = box
+    subprocess.run(["git", "-C", str(home / "infra"), "init", "-q"], check=True)
+    r = run(UNINSTALL_SH, env, answers="\n" * 40)
+    assert "only copy" in r.stdout and "a fresh clone brings it back" not in r.stdout, r.stdout
+
+
+@posix_shell
+def test_install_uses_a_relative_file_in_place_with_cdpath_exported(tmp_path, monkeypatch):
+    """N3: an exported CDPATH makes cd print the folder; the full path must still be one line."""
+    home = tmp_path / "home"
+    (home / "mine").mkdir(parents=True)
+    (home / "mine" / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    monkeypatch.chdir(home)
+    (tmp_path / "cd" / "mine").mkdir(parents=True)            # a folder of the same name on CDPATH: cd goes there
+    monkeypatch.setenv("CDPATH", str(tmp_path / "cd"))
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "mine/roster.yml", "Copy ": "n"})
+    assert f"using {home / 'mine' / 'roster.yml'} where it is" in out, out
 
 
 
@@ -635,10 +813,12 @@ def test_a_first_run_without_a_map_is_finished_by_running_install_again_with_it(
     env = {**env, "SHELL": "/bin/bash"}
     home = Path(env["HOME"])
     first = script("install.sh", checkout, env, prefix)
-    assert "no team map given - run again with --infra-repo URL" in first.stdout, first.stdout
+    # T212: with no map given, --yes starts a blank Inventory (the stand-in roster here writes none, so the box
+    # isn't finished, as when a stage failed)
+    assert "roster init --inventory blank" in first.stdout, first.stdout
     r = script("install.sh", checkout, env, prefix, "--infra-repo", str(map_repo(tmp_path)))
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "isn't finished (no the team's map and ROSTER_CONFIG): finishing the install" in r.stdout
+    assert "isn't finished (no an Inventory and ROSTER_CONFIG): finishing the install" in r.stdout
     assert (home / "infra/roster.yml").exists()                                    # the map, cloned
     assert "# roster: ROSTER_CONFIG" in (home / ".bashrc").read_text()
     assert "# roster: completion" in (home / ".bashrc").read_text()
@@ -874,3 +1054,32 @@ def test_ref_is_a_name_not_a_pattern(stale):
     upstream, checkout, env, prefix = stale
     r = script("install.sh", checkout, env, prefix, "--ref", "v0.5.*")
     assert r.returncode == 1 and "no tag or branch v0.5.* on origin" in r.stdout, r.stdout
+
+
+@posix_shell
+def test_a_box_whose_inventory_is_named_is_set_up(stale):
+    """T212 with T215's hand-over: an Inventory roster finds as the active named one (`roster inv`, no ROSTER_CONFIG
+    line), a plain file of your own, counts as the box's map: install.sh is an update."""
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    home = Path(env["HOME"])
+    (home / "mine").mkdir(parents=True)
+    (home / "mine/roster.yml").write_text("groups:\n  servers:\n    hosts:\n")       # a blank one, as stage 5 makes
+    (home / ".config/roster").mkdir(parents=True, exist_ok=True)
+    (home / ".config/roster/inventories.json").write_text(
+        '{"active": "mine", "inventories": [{"name": "mine", "path": "%s"}]}\n' % (home / "mine/roster.yml"))
+    r = script("install.sh", checkout, env, prefix, "--dry-run")
+    assert "already installed on this box: updating it with ./update.sh" in r.stdout, r.stdout
+
+
+@posix_shell
+def test_update_skips_the_pull_of_a_plain_or_local_inventory(stale):
+    """T212: update.sh pulls a team repo; a plain file, or a local repo with no upstream (install's git init), has
+    nothing to pull, and that's not a failure."""
+    upstream, checkout, env, prefix = stale
+    installed(prefix, env=env)
+    home = Path(env["HOME"])
+    git(home / "infra", "init", "-q")
+    r = script("update.sh", checkout, env, prefix, "--dry-run")
+    assert "no upstream to pull from" in r.stdout, r.stdout
+    assert "couldn't fast-forward" not in r.stdout

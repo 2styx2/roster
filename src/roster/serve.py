@@ -34,7 +34,6 @@ from . import (
     __version__,
     askpass,
     boxsync,
-    changes,
     diagnose,
     discover,
     edit,
@@ -44,6 +43,7 @@ from . import (
     jobs,
     mesh,
     providers,
+    store,
 )
 from .common import (
     current_deadline,
@@ -121,7 +121,7 @@ from .sshops import (
     sync_fix,
 )
 
-API_VERSION = 27            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 28            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -251,12 +251,18 @@ def inventory_info(state, params):
     """Which roster.yml, on which box, and which roster and serve API answer: the app's first call.
 
     Params: none
-    Result: `{path, box, host_count, providers: [names], roster_version, api_version}`
+    Result: `{path, box, host_count, providers: [names], store, roster_version, api_version}`
     Since: API 1
+    Params: none
+    Result: `store: {kind, note, repo}` (T212): how `roster.yml` is kept, as the disk and git say now. `kind` is
+        `repo` (committed in a git repo with a remote: edits are Pending changes until `changes.publish`) or `file`
+        (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says
+        which in a sentence; `repo` is the git work tree it's in (`null` outside one)
+    Since: API 28
     """
     cfg = state.inventory()
     return {"path": str(cfg["path"]), "box": cfg["box"], "host_count": len(cfg["hosts"]),
-            "providers": sorted(PROVIDERS), **versions()}
+            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True).view(), **versions()}
 
 
 def hosts_list(state, params):
@@ -716,8 +722,12 @@ def inventory_pull(state, params):
         rebases or stashes
     Errors: 70-73
     Since: API 5
+    Params: none
+    Result: a plain file (`inventory.info`'s `store.kind: file`, T212) has nothing to pull: `{updated: false,
+        upstream: null, commits: 0, ahead: 0, message}`, never an error
+    Since: API 28
     """
-    result = changes.pull(inventory_path(state))
+    result = store.at(inventory_path(state)).pull()
     state.reload()
     if result["updated"]:
         result["sync"] = sync_box(state)
@@ -794,10 +804,9 @@ def host_update(state, params):
         if at is None or time.monotonic() - at > VERIFIED_FOR:
             raise RpcError(NOT_VERIFIED, f"{h['name']}'s new address, user or Login hasn't passed a test login",
                            fix="test the login (host.verify_login) with these values, then save again")
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     old_text, new_text, _ = edit.edited(repo.path, h["name"], wanted)
-    backup = repo.backup(old_text)
-    edit.replace_file(repo.path, new_text)
+    backup = repo.save(old_text, new_text)
     state.verified.pop(key, None)
     warnings = []
     if pin:                     # it moved: the key it was verified with is now recorded for its new address
@@ -821,8 +830,12 @@ def changes_diff(state, params):
         branch's last commit, and whether its upstream has it as this box last fetched)
     Errors: 70
     Since: API 5
+    Params: none
+    Result: `kind` (T212): `repo`, or `file` for a plain file, whose edits are saved already: then `repo: null`,
+        `diff: ""`, `count: 0` and `last_commit: null`, never an error
+    Since: API 28
     """
-    return changes.diff(inventory_path(state))
+    return store.at(inventory_path(state)).diff()
 
 
 def changes_discard(state, params):
@@ -833,8 +846,11 @@ def changes_discard(state, params):
         then `roster sync` (`sync`, T150, as `changes.publish`'s; left out when there was nothing to discard)
     Errors: 70
     Since: API 5
+    Params: none
+    Result: a plain file (T212) has nothing to discard: `{discarded: false, backup: null}`
+    Since: API 28
     """
-    result = changes.discard(inventory_path(state))
+    result = store.at(inventory_path(state)).discard()
     state.reload()
     if result["discarded"]:
         result["sync"] = sync_box(state)
@@ -850,11 +866,16 @@ def changes_publish(state, params):
         commits `roster.yml` alone and pushes it to the branch's upstream, then runs `roster sync`
     Errors: 1, 70, 73, 90-96
     Since: API 7
+    Params: `{message?}`
+    Result: as above, in a repo; a plain file (T212) is error `90`: every edit is saved to it already, so there's
+        nothing to publish
+    Errors: 1, 70, 73, 90-96
+    Since: API 28
     """
     message = params.get("message")
     if message is not None and not isinstance(message, str):
         raise RpcError(INVALID_PARAMS, "params.message must be a string")
-    result = changes.publish(inventory_path(state), message)
+    result = store.at(inventory_path(state)).publish(message)
     state.reload()
     result["sync"] = sync_box(state)
     return result
@@ -1253,8 +1274,7 @@ def save_held(state, repo, hid, password, item, change, what):
     made = make_item(password=password, **item)
     try:                                        # until roster.yml is written, any failure takes the item back out
         old_text, new_text = change(repo.path)
-        backup = repo.backup(old_text)
-        edit.replace_file(repo.path, new_text)
+        backup = repo.save(old_text, new_text)
     except BaseException as e:
         raise take_back(made, write_failed(what, repo.path, e)) from None
     forget_held(state, hid)
@@ -1346,7 +1366,7 @@ def save_quick(state, params):
     except ValueError as e:
         raise RpcError(INVALID_PARAMS, f"params: {e}") from None
     state.fresh()
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name and group, before the vault
     made, backup = save_held(state, repo, hid, password,
                              {"provider": provider, "item": item, "user": q["user"], "address": q["address"],
@@ -1395,7 +1415,7 @@ def save_login(state, params):
                                      "Login) - nothing was saved",
                        fix=f"open a new Session to {name} and save from there")
     wanted = {"auth": f"{provider}:{item}"}
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     edit.edited(repo.path, name, wanted)        # a dry run: the edit must be possible before the vault is touched
     made, backup = save_held(state, repo, hid, password,
                              {"provider": provider, "item": item, "user": h["ssh"]["user"], "address": h["ip"],
@@ -1450,7 +1470,7 @@ def add_host(state, params):
     if typed:
         fields["auth"] = f"{typed['provider']}:{typed['item']}"
     state.fresh()
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name, group and user, before the network
     login = typed is not None or diagnose.stored_password(h) is not None
     fields["reviewed"] = login
@@ -1477,8 +1497,7 @@ def add_host(state, params):
         made = {"provider": typed["provider"], **made}
     try:                                        # until the Host is written, any failure takes the item back out
         old_text, new_text, _ = edit.added(repo.path, group, name, fields)
-        backup = repo.backup(old_text)
-        edit.replace_file(repo.path, new_text)
+        backup = repo.save(old_text, new_text)
     except BaseException as e:
         raise take_back(made, write_failed(f"{name} wasn't added", repo.path, e)) from None
     warnings = []                               # the Host is in roster.yml now: what follows can't un-add it
@@ -1549,24 +1568,24 @@ def host_review(state, params):
         raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
     if h["reviewed"] == wanted:
         return {"changed": False, "host": h, "backup": None}
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     old_text, new_text, _ = edit.reviewed(repo.path, name, wanted)
-    backup = repo.backup(old_text)
-    edit.replace_file(repo.path, new_text)
+    backup = repo.save(old_text, new_text)
     state.reload()
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "sync": sync_box(state)}
 
 
 # ---------------------------------------------------------------- the Live Inventory (ticket 28, decision Q45)
 # Removing, renaming and moving Hosts, and adding, renaming and deleting groups: each a text edit of roster.yml
-# (edit.py) written as a Pending change, like host.update. Removing a Host never touches the vault.
+# (edit.py) written as a Pending change, like host.update (saved straight to a plain file: store.py, T212). Removing a
+# Host never touches the vault.
 
 def write_edit(state, old_text, new_text):
-    """Write an edit of roster.yml (a Pending change), keeping what it replaced as the backup; load it again and
+    """Write an edit of roster.yml (a Pending change in a repo, saved in place in a plain file: store.py), keeping what
+    it replaced as the backup; load it again and
     sync this Box (T150). Returns `{backup, sync}`, for the result."""
-    repo = changes.Repo(state.path)
-    backup = repo.backup(old_text)
-    edit.replace_file(repo.path, new_text)
+    repo = store.at(state.path)
+    backup = repo.save(old_text, new_text)
     state.reload()
     return {"backup": str(backup), "sync": sync_box(state)}
 
@@ -1579,9 +1598,9 @@ def name_param(params, key):
 
 
 def live_repo(state):
-    """roster.yml as it is now, loaded, and in a git repo (Pending changes need one: 70)."""
+    """roster.yml as it is now, loaded, and how it's kept (store.at: a repo or a plain file, T212)."""
     state.fresh()
-    return changes.Repo(state.path)
+    return store.at(state.path)
 
 
 def host_remove(state, params):
@@ -2466,7 +2485,8 @@ def mesh_cut(state, params):
     Result: `{host, confirmed: [host], pending: {host: why}, warnings: [text], change}`: HOST's key off every peer
         and every peer's off HOST, at once. `warnings` (since API 24): what roster left on HOST's own side, an
         earlier `mesh_dir:` that still holds a Mesh key (roster never removes one), one sentence each. `change` is the `mesh: false` written for HOST as a Pending change: `{written: true,
-        backup}` (`backup: null` and a `note` when `roster.yml` isn't in a git repo), `{written: false, note}` when
+        backup, kind}` (since API 28 `kind` is `repo`, or `file` for a plain file it was saved straight to, with
+        `backup` beside it, T212), `{written: false, note}` when
         it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened); a
         written one has `sync` (T150), the `roster sync` after it, as `host.add`'s.
         With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job`

@@ -1276,25 +1276,17 @@ grep -qE "$T" "$AK" 2>/dev/null && {{ echo "ERROR a roster-mesh line is still th
 
 
 def write_cut(cfg, name):
-    """`mesh: false` for Host NAME in roster.yml, as a Pending change (edit.py: every other byte kept), so the cut
-    survives the next Publish. {written, backup?, note?} or {written: False, error, fix}."""
-    from . import changes, edit
-    from .errors import NOT_A_REPO, Problem
+    """`mesh: false` for Host NAME in roster.yml (edit.py: every other byte kept), so the cut survives: a Pending
+    change in a repo, saved straight to a plain file (store.py, T212). {written, backup, kind} or {written: False,
+    note} (already) or {written: False, error, fix}."""
+    from . import edit, store
+    from .errors import Problem
     if cfg["hosts"][name]["mesh"] is False:
         return {"written": False, "note": f"{name} already has mesh: false in roster.yml"}
     try:
-        try:
-            repo = changes.Repo(cfg["path"])
-        except Problem as e:
-            if e.code != NOT_A_REPO:
-                raise
-            repo = None
-        old, new, _ = edit.edited(cfg["path"], name, {"mesh": False})
-        backup = repo.backup(old) if repo else None
-        edit.replace_file(cfg["path"], new)
+        kept = store.at(cfg["path"])
+        old, new, _ = edit.edited(kept.path, name, {"mesh": False})
+        backup = kept.save(old, new)
     except Problem as e:
         return {"written": False, "error": e.message, "fix": f"set mesh: false for {name} in roster.yml by hand"}
-    if repo is None:
-        return {"written": True, "backup": None,
-                "note": f"{cfg['path']} isn't in a git repo: mesh: false was written straight to it"}
-    return {"written": True, "backup": str(backup)}
+    return {"written": True, "backup": str(backup), "kind": kept.kind}

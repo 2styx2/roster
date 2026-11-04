@@ -121,12 +121,13 @@ roster man --install                                      # the man page, next t
 roster --help
 ```
 
-Or use the installer. It walks through every stage (uv, roster, the Bitwarden CLI, your team's config repo, `ROSTER_CONFIG`, unlocking the vault, `roster setup`, auto-updates), asks before each change, and is safe to re-run:
+Or use the installer. It walks through every stage (uv, roster, the Bitwarden CLI, your Inventory, `ROSTER_CONFIG`, unlocking the vault, `roster setup`, auto-updates), asks before each change, and is safe to re-run. For the Inventory it offers four ways to start: a blank `roster.yml` (the default), a copy of one you have, a clone of your team's repo, or the Hosts already in `~/.ssh/config`. A `roster.yml` already in the folder is kept.
 
 ```bash
 git clone https://github.com/2styx2/roster.git && cd roster
-./install.sh                                  # interactive: asks for your team's map repo
-./install.sh --yes --infra-repo GIT-URL       # every default, no questions (bw login and unlock wait for you)
+./install.sh                                  # interactive: asks how to start your Inventory (blank by default)
+./install.sh --yes --inventory repo:GIT-URL   # every default, no questions: the team's repo (bw login and unlock wait for you)
+./install.sh --yes --inventory blank          # ... or a blank one (also file:PATH, ssh-config[:PATH])
 ./install.sh --dry-run                        # show what it would do, change nothing
 ./update.sh                                   # later: newest roster, man page, the map pulled, roster sync (install.sh on a box with roster runs it)
 ./uninstall.sh                                # take this box off its hosts, then remove roster from it
@@ -138,9 +139,12 @@ After installing, either way, `man roster` shows the manual: the man page goes t
 
 ## Quick start
 
+Your Inventory is one `roster.yml`, a plain file or a file in your team's git repo; roster works the same with either. In a team repo, the app's edits are Pending changes you Publish (commit and push); in a plain file every edit is saved straight to it, with nothing to publish and no git needed.
+
 ```bash
 mkdir ~/infra && cd ~/infra
-roster discover 10.0.1.0/24 --write   # start from a scan (or `roster init` for the commented example)
+roster init --blank                   # a short, empty roster.yml (or: --inventory ssh-config, file:PATH, repo:URL)
+roster discover 10.0.1.0/24 --write   # add what a scan finds (or `roster init` alone: the commented example)
 # edit roster.yml: names, users, vault items; set reviewed: true on the groups you checked
 roster auth-check                     # can every login be found? (prints nothing secret)
 roster setup --dry-run && roster setup
@@ -151,7 +155,7 @@ roster run net-sw-core-01 -- show ver # password-only gear; the password is fetc
 
 Point `ROSTER_CONFIG` at the file (`export ROSTER_CONFIG="$HOME/infra/roster.yml"`) so every command and the app find it. Then open the app, unlock the vault, press **Ctrl+Space f**, type part of a Host's name and press **Enter**.
 
-**Your `roster.yml` is private.** It names your hosts, addresses, users and vault items, so it belongs in your team's own private repo, never in a public one and never in this one.
+**Your `roster.yml` is private.** It names your hosts, addresses, users and vault items, so it belongs in your team's own private repo or only on your Box, never in a public one and never in this one.
 
 ## Configuration
 

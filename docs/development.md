@@ -43,6 +43,9 @@ src/roster/
                     the job.progress notification; serve's exit stops every job and records it
   edit.py           editing one Host in roster.yml as text, adding, removing, renaming or moving one, and groups (comments and other entries kept), checked before it's written
   changes.py        Pending changes: the infra repo's git (pull fast-forward only, roster.yml's diff, discard, the .bak, publish)
+  store.py          how roster.yml is kept (T212, Q182): a team repo or a plain file, decided per file; every write saves
+                    through it (serve, discover --write, mesh cut), and pull/diff/discard/publish ask it
+  newinventory.py   a new Inventory (`roster init --inventory`): blank, a copy, a clone, Hosts from an ssh config
   clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
                     and the nearest name for a mistyped command or option
   completion.py     Tab completion: `roster completion SHELL`'s scripts and the hidden `roster __complete` helper that

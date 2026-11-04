@@ -17,7 +17,7 @@ The # is a row's id, given in the order rows were added and cited by the code (`
 
 | # | What happened | Typical cause | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 1 | `roster.yml` doesn't load | Bad YAML or a missing field after a hand edit | Inventory | "roster.yml has an error at line N: …" | Open the file; show roster's message |
+| 1 | `roster.yml` doesn't load | Bad YAML or a missing field after a hand edit; or there's no `roster.yml` yet | Inventory | "roster.yml has an error at line N: …"; "no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, …)" | Open the file; show roster's message. None yet: `roster init --blank` makes one (or `--inventory file:PATH\|repo:URL\|ssh-config`, [A new Inventory](../cli-reference.md#a-new-inventory)) |
 | 2 | Host not in this Box's ssh config | `roster.yml` was edited but `roster sync` wasn't run | Box | "esxi-02 isn't in this Box's ssh config yet" | Button: run `roster sync` |
 | 3 | Host is `reviewed: false` | Came from `discover` | Inventory | "esxi-02 hasn't been reviewed" | Review it (ticket 11) |
 | 4 | No user set | Hand edit left the user out, or `CHANGE-ME` | Inventory | "No SSH user for esxi-02" | Edit the Host |
@@ -89,7 +89,7 @@ The lock screen signs a new Box's vault CLI in through roster's `vault.login` (r
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 38 | 70 | `roster.yml` isn't committed in a git repo, so it can't have Pending changes | `roster.yml`, Box | "/home/you/roster.yml isn't in a git repo, so it can't have Pending changes" | Keep it in the infra repo, or edit by hand |
+| 38 | 70 | `roster.yml` isn't committed in a git repo, so it can't have Pending changes. Since serve API 28 (T212) such a file is a plain file instead, whose edits save straight to it, so roster no longer says this for it: only a roster older than that does | `roster.yml`, Box | "/home/you/roster.yml isn't in a git repo, so it can't have Pending changes" | Upgrade roster; or keep it in the infra repo, or edit by hand |
 | 39 | 71 | The pull found uncommitted changes: Pending changes, or other files | Infra repo | "roster.yml has Pending changes, so roster won't pull over them" | Publish or discard them; button: Show Pending changes |
 | 40 | 72 | This Box's branch and its upstream both have new commits | Infra repo | "this box's infra repo and origin/main have diverged (1 local and 2 new commits there)" | Merge or rebase in a terminal (`git pull --rebase`) |
 | 41 | 73 | The fetch or the fast-forward failed: network, access, a file in the way | Network, infra repo | "couldn't fetch origin/main for the infra repo" | Check the network and access; git's words under Details |
@@ -248,7 +248,7 @@ Scanning a network from the app with the first-party [discover](../../plugins/di
 | 97 | none (the scan's `error`) | nmap failed: not allowed, a bad option, killed | This Box | "The scan of 10.0.0.0/24 failed: nmap failed: …" | See nmap's words; `roster discover` in a terminal shows the same |
 | 98 | 122 | `roster serve` restarted during a scan (its scans don't outlive it) | This Box | "The scan of 10.0.0.0/24 failed: no scan 'scan-1' here" | Scan again |
 | 99 | 123 | An address can't be added: the scan didn't find it, or it's in the Inventory or added already | The Inventory | "Nothing was added: 10.0.0.5: in the Inventory already" | Keep only the new ones |
-| 100 | 70, 74, 100 | Adding: `roster.yml` isn't in a git repo, the result wouldn't load, or the `group` setting names a group that's there | `roster.yml` / init.lua | "Nothing was added: … isn't in a git repo, so it can't have Pending changes" | As for any Pending change; name a new group in the `group` setting |
+| 100 | 70, 74, 100 | Adding: `roster.yml` isn't in a git repo (before serve API 28; since then a plain file is saved straight to), the result wouldn't load, or the `group` setting names a group that's there | `roster.yml` / init.lua | "Nothing was added: … isn't in a git repo, so it can't have Pending changes" | As for any Pending change; name a new group in the `group` setting |
 | 101 | -32601 | The Box's roster is older than serve API 18: it has no `discover.*` | This Box | "Not scanned: the roster on this Box is too old to scan from the app" | Update roster on the Box; `roster discover` works meanwhile |
 
 ## A Plugin's files
@@ -414,6 +414,18 @@ A Host with `os: windows` in `roster.yml` (T195, decision Q174): `roster setup`,
 | 224 | 164 | A bw command that changes the vault (`create`, `edit`, `delete`, `move`, …), writes it out (`export`) or a file on this Box (`receive`, `get attachment`, any `--output`) or acts on the account (`login`, `logout`, `unlock`, `lock`, `config`), without `--write` | Box | "[164] bw edit changes the vault, and roster bw is read-only unless you say so: roster bw --write edit ..." | Add `--write` before bw's arguments |
 | 225 | 165 | A bw command roster bw doesn't know (a newer bw's, a typo), an option before the command that isn't one of bw's own read-only ones (never repeated, even by roster's parser), or `--write` after bw's command (before it, among bw's options too, it's roster's) | Box | "[165] roster bw runs only the bw commands it knows (the first word isn't one of them, and isn't repeated here): …"; "[165] --write is roster's, not bw's: put it before bw's command …" | Use a listed command; put `--write` before bw's command; run bw itself for anything else |
 | 226 | 166 | `bw serve` (it would give the unlocked vault to every program that reaches its port), or `--session` on bw's command line (other programs can read it there) | Box | "[166] roster bw won't run bw serve: …"; "[166] roster bw won't put a session key on bw's command line …" | Run `bw serve` yourself; drop `--session` (roster passes the session in bw's environment) |
+
+## A new Inventory
+
+`roster init --inventory HOW` (and `install.sh`, which runs it) gets a new `roster.yml`: a blank one, a copy of yours, a clone of the team's repo, or the Hosts in an ssh config (T212, decision Q182). See [A new Inventory](../cli-reference.md#a-new-inventory).
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 230 | 170 | A `roster.yml` is there already where the new one would go: roster keeps it as it is and writes nothing | Box | "roster.yml already exists, so roster kept it as it is" | Use it; or make the new one in another folder and name it: `roster -c OTHER-FOLDER/roster.yml init --inventory … --name NAME` |
+| 231 | 171 | `file:PATH`: no file there (or not a regular file, or over 10 MB), no `groups:` in it or not a mapping at its top (an empty file, another YAML file, an ssh config), or it doesn't load (nothing written); `repo:URL`: the clone has no `roster.yml` at its top (the clone is kept, and said where) | `roster.yml` / repo | "/tmp/theirs.yml doesn't load, so nothing was written: …"; "the clone has no roster.yml at its top: it's in /home/you/infra" | Fix that file first (`roster -c PATH check --box` says why); point roster at the clone's roster.yml (`-c`), or remove the clone |
+| 232 | 172 | `repo:URL`: git couldn't clone it (a bad URL, no access, the network), git isn't installed, or the folder for it isn't empty. Nothing written | Box / network / repo | "git couldn't clone git@example.com:team/infra.git"; "/home/you/infra isn't empty, so roster won't clone into it" | Check the URL and your access (`git clone URL` shows the same); pick an empty folder; or copy `roster.yml` over and use `file:PATH` |
+| 233 | 173 | `ssh-config[:PATH]`: the ssh config can't be read (not there, not a regular file, over 1 MB, no permission, or a control character in its path). Nothing written; the ssh config is only ever read | Box | "can't read ~/.ssh/config: No such file or directory" | Give the path of your ssh config: `--inventory ssh-config:PATH` |
+| 235 | 174 | The folder for the new `roster.yml` can't be made or written in (no permission, a read-only disk), or can't be read (a clone's). Nothing written | Box | "roster can't write in /srv/infra: Permission denied" | Pick a folder you can write to, or make this one writable |
 
 ## See also
 

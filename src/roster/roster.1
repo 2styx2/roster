@@ -3,7 +3,7 @@
 roster \- give this box (and Claude) access to the hosts in roster.yml
 .SH SYNOPSIS
 .nf
-roster init
+roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
 roster setup [\-\-only LIST] [\-\-dry\-run]
 roster sync
 roster check [\-\-box] [\-\-only LIST] [\-\-json] [host]
@@ -49,9 +49,18 @@ use the named Inventory NAME for this one command (`roster inv list` names them)
 .SH COMMANDS
 .SS init
 .PP
-\fBroster init\fR
+\fBroster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]\fR
 .PP
-Write the commented example \fBroster.yml\fR
+\-\-inventory HOW] [\-\-name NAME]`
+.TP
+\fB\-\-blank\fR
+a short roster.yml with an empty group, instead of the commented example (same as \-\-inventory blank)
+.TP
+\fB\-\-inventory HOW\fR
+blank, file:PATH (a copy of that roster.yml, once it loads), repo:URL (a git clone of the team's repo into roster.yml's folder, which must be empty) or ssh\-config[:PATH] (Hosts from ~/.ssh/config, or PATH: HostName, User, Port, IdentityFile)
+.TP
+\fB\-\-name NAME\fR
+name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you keep
 .SS setup
 .PP
 \fBroster setup [\-\-only LIST] [\-\-dry\-run]\fR
@@ -480,6 +489,7 @@ With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Mac
 .nf
 .RS 4
 roster init                              # write a commented roster.yml to start from
+roster init \-\-blank                      # ... or a short, empty one (\-\-inventory ssh\-config: your ~/.ssh/config's Hosts)
 roster setup \-\-dry\-run                   # which hosts would get this box's key
 roster hosts \-\-find esx                  # search names, titles, types, addresses
 roster info esx\-02                       # everything about one host

@@ -561,6 +561,7 @@
 ---@field box string This Box's name.
 ---@field host_count integer How many Hosts.
 ---@field providers string[] The password providers roster has.
+---@field store? roster.InventoryStore How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before).
 ---@field roster_version string roster's version.
 ---@field api_version integer roster serve's API version (not `roster.api_version`).
 
@@ -606,10 +607,17 @@
 ---@field details? string The raw text, when there is one (ssh's stderr).
 ---@field data? table What the code's row says it carries.
 
+--- How `roster.yml` is kept: a plain file or a team repo (serve API 28)
+---@class roster.InventoryStore
+---@field kind "repo"|"file" A team repo, or a plain file.
+---@field note string Which, in a sentence, as `roster check --box` says it.
+---@field repo? string The git work tree it's in; `nil` outside one.
+
 --- `changes.diff`'s result: the Pending changes
 ---@class roster.ChangesDiff
 ---@field path string `roster.yml`'s path.
----@field repo string The infra repo's top folder.
+---@field repo? string The infra repo's top folder; `nil` for a plain file.
+---@field kind? "repo"|"file" `file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before).
 ---@field diff string git's diff of `roster.yml` against the last commit; `""` for none. A `cmd:` reference in it reaches a Plugin cut to `cmd:` (the rest of its line), an `env:` one to `env:`.
 ---@field hosts roster.HostChange[] The Hosts it changes.
 ---@field groups roster.GroupChange[] The groups it changes.
@@ -687,8 +695,9 @@
 --- The `mesh: false` a `mesh.cut` writes into `roster.yml`
 ---@class roster.MeshCutChange
 ---@field written boolean Whether it was written now (`false` when it already was, or couldn't be).
----@field backup? string The copy of `roster.yml` from before; `nil` when it isn't in a git repo.
----@field note? string Why nothing was written, or that it went straight to a file outside git.
+---@field backup? string The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git).
+---@field kind? "repo"|"file" A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before).
+---@field note? string Why nothing was written (before serve API 28, also that it went straight to a file outside git).
 ---@field error? string Why it couldn't be written (the cut still happened).
 ---@field fix? string What to do then, in a sentence.
 

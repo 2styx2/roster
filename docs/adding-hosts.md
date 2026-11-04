@@ -2,6 +2,8 @@
 
 The usual flow for bringing a new network or box into roster: scan it, review it, point each host at its vault item, then prove each login works. Passwords stay in the vault the whole time. `roster.yml` only gets the item's name.
 
+`roster.yml` may be a plain file (your own, on this Box) or a file in your team's git repo: every step here works the same on both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)). No `roster.yml` yet? `roster init --blank` writes a short, empty one, and `roster init --inventory ssh-config` starts it from the Hosts in your `~/.ssh/config` ([A new Inventory](cli-reference.md#a-new-inventory)).
+
 ## 1. Scan the network
 
 ```bash
@@ -14,13 +16,13 @@ roster discover 10.0.0.0/24 --json      # the preview as JSON, for a script
 `--write` does the following:
 
 - Adds new hosts to the group with `reviewed: false`, `user: CHANGE-ME` (unless `defaults:` sets a user) and `auth: prompt`.
-- Keeps your comments and saves `roster.yml.bak`.
+- Keeps your comments and saves what it replaced as `roster.yml.bak` (beside it; in a team repo, in its git dir, so it's never committed).
 - Never overwrites hosts that are already in the file.
 - Refuses to write a file that wouldn't load.
 
 Each host gets a guessed `type`, a `title` from its web page, its services, and a description of every open port.
 
-From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.0.0.0/24`, keep the Hosts you want, and they're added unreviewed as Pending changes for you to Publish.
+From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.0.0.0/24`, keep the Hosts you want, and they're added unreviewed: as Pending changes for you to Publish in a team repo, saved straight to a plain file.
 
 Tell your security team before scanning big ranges.
 
@@ -191,7 +193,7 @@ roster adds its key to a Windows Host that runs Microsoft's OpenSSH Server (Wind
 
 ## 6. Share it
 
-Commit and push the updated `roster.yml` to [yourteam/infra](https://example.com/yourteam/infra). Every box picks it up with `~/infra/bin/roster-pull`; add `--setup` to install keys on new key hosts. Vault items need to be shared with them (a shared Bitwarden collection or 1Password vault), or `auth-check` will fail on their box.
+A plain file of your own needs nothing more: every edit is in it already. For a team repo, commit and push the updated `roster.yml` to [yourteam/infra](https://example.com/yourteam/infra) (`:publish` in the app does it for the app's edits). Every box picks it up with `~/infra/bin/roster-pull`; add `--setup` to install keys on new key hosts. Vault items need to be shared with them (a shared Bitwarden collection or 1Password vault), or `auth-check` will fail on their box.
 
 ## Adding a login to a host that's already on the map
 

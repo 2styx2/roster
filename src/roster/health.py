@@ -7,7 +7,7 @@ fetches; `roster check HOST` is the one that connects. No check returns a secret
 import platform
 import shutil
 
-from . import __version__, changes, providers
+from . import __version__, changes, providers, store
 from .common import known_hosts_file, ssh_config_file
 from .errors import Problem
 from .providers import PROVIDERS
@@ -247,9 +247,13 @@ def provider_check(name, n):
 # ---------------------------------------------------------------- the infra repo
 
 def repo(path):
-    """roster.yml's git repo as this Box last saw it (no fetch): clean, Pending changes, or other changes."""
+    """How roster.yml is kept (store.py, T212): a plain file is a note, no warning; in a repo, its git as this Box last
+    saw it (no fetch): clean, Pending changes, or other changes."""
     if path is None:
         return []
+    kept = store.at(path, for_show=True)
+    if kept.kind == store.FILE:
+        return [check("repo", "ok", kept.note)]
     try:
         r = changes.Repo(path)
     except Problem as e:

@@ -5,12 +5,12 @@ Use this to give another machine (your laptop, a teammate's box, a jump host, a 
 You need three things:
 
 1. **roster itself**: this repository.
-2. **The team's `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It lives in [yourteam/infra](https://example.com/yourteam/infra).
+2. **An Inventory, `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It's either your team's, in its git repo ([yourteam/infra](https://example.com/yourteam/infra)), or a plain file of your own on this Box; roster works the same with both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG`, Tab completion for roster in your shell and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). It installs the newest Release (the highest `vX.Y.Z` tag that `origin` has, asked for first), whatever branch your checkout is on, from a clean copy unpacked into `~/.local/share/roster/source/` (kept, because uv's record of the install points there; the next install removes the one before): your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It never installs an older roster over a newer one without a yes (under `--yes` it keeps the newer one; `--allow-downgrade` or `--ref` installs it anyway). It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`).
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG`, Tab completion for roster in your shell and an auto-update cron job. It asks before each stage, and how to start your Inventory when its folder has none: a blank one (the default, so `--yes` alone makes one), a copy of a `roster.yml` you have, a clone of your team's repo, or the Hosts in `~/.ssh/config`. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` is `repo:URL`). A `roster.yml` already there is kept; it can add a new one beside it as a named Inventory instead. After a new one it offers `git init` too, never required. It installs the newest Release (the highest `vX.Y.Z` tag that `origin` has, asked for first), whatever branch your checkout is on, from a clean copy unpacked into `~/.local/share/roster/source/` (kept, because uv's record of the install points there; the next install removes the one before): your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It never installs an older roster over a newer one without a yes (under `--yes` it keeps the newer one; `--allow-downgrade` or `--ref` installs it anyway). It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`).
 
-**Installing or updating.** On a box that's set up (roster and uv, a map roster finds (`ROSTER_CONFIG`, or `~/.config/roster/roster.yml`) that's still there, and the cron job when the map has `bin/roster-pull`), `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run`, `--prefix`, `--no-completion` and `--allow-downgrade`. A box that isn't finished (the first run had no map yet, a stage failed, or it was installed before install.sh set up cron) gets every stage again, each skipping what's done: run `./install.sh --infra-repo GIT-URL` again after a first `--yes` without one, and it clones the map and finishes. `--finish` runs every stage on a set-up box too. A "no" to the cron job or `--no-completion` is kept in `~/.config/roster/install-choices`, so later runs (and `update.sh`) don't ask or add it again; delete the line to change your mind. Update with `./update.sh`, not `uv tool upgrade`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
+**Installing or updating.** On a box that's set up (roster and uv, an Inventory roster finds (`ROSTER_CONFIG`, the active named Inventory, or `~/.config/roster/roster.yml`; a team repo's or a plain one, a blank one included) that's still there, and the cron job when the map has `bin/roster-pull`), `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run`, `--prefix`, `--no-completion` and `--allow-downgrade`. A box that isn't finished (a stage failed, or it was installed before install.sh set up cron) gets every stage again, each skipping what's done. A first `--yes` with no `--inventory` makes a blank Inventory, so the box is set up; to add the team's repo beside it later: `roster -c ~/team/roster.yml init --inventory repo:GIT-URL --name work`. `--finish` runs every stage on a set-up box too. A "no" to the cron job or `--no-completion` is kept in `~/.config/roster/install-choices`, so later runs (and `update.sh`) don't ask or add it again; delete the line to change your mind. Update with `./update.sh`, not `uv tool upgrade`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -40,14 +40,23 @@ No git access on that box? Use `git archive --format=zip -o roster.zip HEAD` on 
 
 ## 3. Put the host list in place
 
-The team's map lives in the [infra repo](https://example.com/yourteam/infra):
+**The team's repo.** The team's map lives in the [infra repo](https://example.com/yourteam/infra):
 
 ```bash
-git clone git@example.com:yourteam/infra.git ~/infra
+git clone git@example.com:yourteam/infra.git ~/infra     # or: roster -c ~/infra/roster.yml init --inventory repo:URL
 cd ~/infra                 # roster reads ./roster.yml; run roster commands from here
 ```
 
-No git access? Copy `roster.yml` into `~/infra/` by hand instead. You'll then need to copy it again whenever it changes.
+No git access? Copy `roster.yml` into `~/infra/` by hand instead (`roster -c ~/infra/roster.yml init --inventory file:PATH` copies it once it loads). You'll then need to copy it again whenever it changes.
+
+**A plain file of your own.** No team repo, or your own machines? Start one:
+
+```bash
+roster -c ~/infra/roster.yml init --blank                  # a short, empty one to add Hosts to
+roster -c ~/infra/roster.yml init --inventory ssh-config   # or the Hosts already in ~/.ssh/config (it isn't changed)
+```
+
+A plain file needs no git: the app's edits, `roster discover --write` and `roster mesh cut` save straight to it, and there's nothing to publish. `git init` in its folder is optional, for history you commit yourself. A `roster.yml` that's already there is never replaced: make the new one in another folder with `--name NAME` to name it beside the first ([A new Inventory](cli-reference.md#a-new-inventory)).
 
 roster looks for its config in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml`. To run roster from any directory, name it (`roster inv add work ~/infra/roster.yml`, see step 9), or add this to `~/.bashrc` (and `~/.zshrc` if you use zsh):
 

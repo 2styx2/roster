@@ -212,9 +212,10 @@ git_net() {                     # git_net DIR ARGS...: git that talks to a remot
 chose() { grep -qx "$1" "$CHOICES" 2>/dev/null; }
 choose() { (( DRY )) || chose "$1" || { mkdir -p "$(dirname "$CHOICES")" && echo "$1" >> "$CHOICES"; }; }
 
-find_map() {                    # the team's map this box uses -> MAP (empty: none) and MAP_FROM; the same in
-    # install.sh and update.sh (Q184): $ROSTER_CONFIG, the line install.sh wrote, ~/.config/roster/roster.yml (roster
-    # finds those by itself), then ~/infra/roster.yml (it doesn't, without ROSTER_CONFIG). Only a file that's there
+find_map() {                    # the Inventory this box uses -> MAP (empty: none) and MAP_FROM; the same in
+    # install.sh and update.sh (Q184): $ROSTER_CONFIG, the line install.sh wrote, the active named Inventory,
+    # ~/.config/roster/roster.yml (roster finds those by itself), then ~/infra/roster.yml (it doesn't, without
+    # ROSTER_CONFIG). Only a file that's there: a team repo's or a plain one, blank included (T212)
     local f v
     MAP="" MAP_FROM=""
     if [[ -n ${ROSTER_CONFIG:-} && -f ${ROSTER_CONFIG:-} ]]; then MAP=$ROSTER_CONFIG MAP_FROM=env; return; fi
@@ -223,6 +224,12 @@ find_map() {                    # the team's map this box uses -> MAP (empty: no
         v=${v//\$HOME/$HOME}
         if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=rc; return; fi
     done
+    # the active named Inventory (`roster inv`, T212: a plain file of your own is as much a map as the team's repo)
+    # shellcheck disable=SC2016  # Python, not shell, in the single quotes
+    v=$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); a = d.get("active")
+print(next((x["path"] for x in d.get("inventories", []) if x.get("name") == a), ""))' \
+        "$HOME/.config/roster/inventories.json" 2>/dev/null)       # roster's own folder (common.user_config_dir)
+    if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=named; return; fi
     if [[ -f $HOME/.config/roster/roster.yml ]]; then MAP=$HOME/.config/roster/roster.yml MAP_FROM=config; return; fi
     if [[ -f $HOME/infra/roster.yml ]]; then MAP=$HOME/infra/roster.yml MAP_FROM=infra; fi
 }
@@ -289,6 +296,9 @@ if [[ -z $cfg || ! -f $cfg ]]; then
     skip "no roster.yml found (set ROSTER_CONFIG, or run ./install.sh)"; cfg=""
 elif [[ ! -d $(dirname "$cfg")/.git ]]; then
     skip "$(home "$(dirname "$cfg")") isn't a git clone: nothing to pull"
+elif ! git -C "$(dirname "$cfg")" -c core.fsmonitor=false rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    # a local repo (install.sh's optional git init): roster saves edits in place, and there's nowhere to pull from
+    skip "$(home "$(dirname "$cfg")") has no upstream to pull from: nothing to pull"
 elif ask "Pull the latest map into $(home "$(dirname "$cfg")")?" Y; then
     if step "git pull" git -C "$(dirname "$cfg")" pull --ff-only --quiet; then done_stage
     else warn "couldn't fast-forward; using the map as it is"; fail_stage; fi

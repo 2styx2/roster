@@ -957,7 +957,10 @@ def test_the_cli_cut_prints_the_cleanup_warnings(net, capsys):
 def test_cut_without_a_git_repo_still_writes_mesh_false(net, capsys):
     assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
     assert net.cfg()["hosts"]["orion-3"]["mesh"] is False
-    assert "isn't in a git repo" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "mesh: false for orion-3, saved in roster.yml" in out     # a plain file (T212): saved, no nag about git
+    assert "git repo" not in out and "Pending" not in out and "publish" not in out
+    assert net.cfg_path.with_name("roster.yml.bak").exists()
 
 
 def test_cut_syncs_this_box_after_writing_mesh_false(net, isolated, capsys):

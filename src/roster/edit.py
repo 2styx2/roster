@@ -264,14 +264,40 @@ def write_text(path, text):
 
 def replace_file(path, text):
     """Write TEXT to PATH all at once (a temporary file beside it, then a rename), keeping PATH's mode."""
+    write_over(path, text, path)
+
+
+def write_over(path, text, like=None):
+    """Write TEXT to PATH all at once: a temporary file beside it (flushed to disk), with LIKE's mode (else 0600,
+    as roster.yml is private), renamed over PATH. A symlink at PATH is replaced, never followed (T212, #409's S1):
+    a planted roster.yml.bak -> ~/.bashrc stays a link to nothing roster wrote."""
+    path = Path(path)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".new", dir=path.parent)
-    os.close(fd)
     try:
-        write_text(tmp, text)
-        shutil.copymode(path, tmp)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if like is not None:
+            shutil.copymode(like, tmp)
+        else:
+            os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+def keep_backup(bak, text, like):
+    """TEXT (what an edit replaced) as the backup BAK, with LIKE's (roster.yml's) mode, never through a symlink:
+    BAK's folder may not be one (a planted .git/roster -> elsewhere), and BAK itself is replaced, not followed."""
+    from .errors import ROSTER_ERROR, Problem
+    d = Path(bak).parent
+    if d.is_symlink():
+        raise Problem(ROSTER_ERROR, f"{d} is a symlink, so roster won't keep the backup through it; nothing was "
+                                    "written", {"path": str(d)}, fix=f"remove the link ({d}), then try again")
+    d.mkdir(mode=0o700, exist_ok=True)
+    write_over(bak, text, like)
+    return Path(bak)
 
 
 def load_text(path, text):

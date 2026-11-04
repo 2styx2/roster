@@ -59,15 +59,29 @@ def locate_config(arg: Any, inv: str | None = None) -> Path:
         return active
     if (user_config_dir() / "roster.yml").exists():
         return user_config_dir() / "roster.yml"
-    die("no roster.yml found here or in ~/.config/roster/ - run `roster init`, "
-        "or pass -c PATH / set ROSTER_CONFIG")
+    die("no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, or `roster init "
+        "--inventory file:PATH|repo:URL|ssh-config`), or pass -c PATH / set ROSTER_CONFIG")
+
+
+TOP_KEYS = {"bitwarden", "box_name", "claude_inline_limit", "defaults", "groups", "key_path", "links", "rate_limited",
+            "provider_dirs", "providers", "resources", "web_login_names", "workers"}
+
+
+def blank_shape(raw):
+    """No Hosts is a valid Inventory only shaped as `roster init --blank` writes it (T212, #409 C2): `groups:`
+    there, each group with a `hosts:` key (empty), and no top-level key roster doesn't know. So an empty file, a
+    typo'd `grups:` or `host:`, or another YAML file still doesn't load, and every Box keeps its ssh config."""
+    groups = raw.get("groups")
+    if not isinstance(groups, dict) or set(raw) - TOP_KEYS:
+        return False
+    return all(isinstance(g, dict) and "hosts" in g for g in groups.values())
 
 
 def load_inventory(path):
     """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
     path = Path(path).expanduser().resolve()
     if not path.exists():
-        die(f"{path} not found - run `roster init` to create one")
+        die(f"{path} not found - make one: roster -c {path} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
     return parse_inventory(path.read_text(), path)
 
 
@@ -94,9 +108,12 @@ def parse_inventory(text, path):
 
     from .models import Inventory, problem
     try:
-        raw = yaml.safe_load(text) or {}
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as e:
         die(f"{path} is not valid YAML:\n{e}")
+    if raw is not None and not isinstance(raw, dict):
+        die(f"{path} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
+    raw = raw or {}
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
     hosts, groups, mesh_dirs, seen_as, sudo_refs = {}, {}, {}, {}, {}
@@ -159,7 +176,7 @@ def parse_inventory(text, path):
                 m[k] = oneline(m.get(k))
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
             hosts[hname] = m
-    if not hosts:
+    if not hosts and not blank_shape(raw):
         die(f"{path} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
     key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
