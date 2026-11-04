@@ -3,6 +3,7 @@
 import argparse
 import concurrent.futures as cf
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -1088,7 +1089,7 @@ def bw_command(argv, write):
         die(f"[{BW_REFUSED}] roster bw won't put a session key on bw's command line, where other programs can read "
             "it: roster passes this Box's session in bw's environment (drop --session)")
     if "--write" in argv:
-        die(f"[{BW_NOT_ALLOWED}] --write is roster's, not bw's: put it before bw's arguments "
+        die(f"[{BW_NOT_ALLOWED}] --write is roster's, not bw's: put it before bw's command "
             "(roster bw --write edit item ...)")
     cmd = next((a for a in argv if not a.startswith("-")), None)
     if any(a not in BW_FLAGS for a in argv[:argv.index(cmd) if cmd else len(argv)]):
@@ -1096,7 +1097,7 @@ def bw_command(argv, write):
             f"{', '.join(sorted(BW_FLAGS))}")
     rest = argv[argv.index(cmd) + 1:] if cmd else []
     writes_file = any(a == "--output" or a.startswith("--output=") for a in argv) or \
-        (cmd == "get" and rest[:1] == ["attachment"])
+        (cmd == "get" and any(a.lower() == "attachment" for a in rest))  # bw lowercases it, options may go first
     if (cmd is None or cmd in BW_READ) and not writes_file:
         return cmd
     if cmd == "serve":
@@ -1245,6 +1246,8 @@ class Parser(argparse.ArgumentParser):
     commands_text = ""
 
     def error(self, message):
+        # a value typed onto a flag that takes none (`roster bw --write=VALUE`) may be a password: never repeat it
+        message = re.sub(r"ignored explicit argument '.*'", "ignored explicit argument (not repeated)", message)
         message = clihelp.suggest(message, self.all_options())
         if Parser.json_errors:
             jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")

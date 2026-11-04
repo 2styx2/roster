@@ -182,3 +182,21 @@ def test_no_session_means_no_bw_session_in_bws_env(isolated, fakes, monkeypatch,
 def test_nointeraction_goes_before_a_double_dash_in_bws_arguments(bw):
     main(["bw", "get", "item", "--", "-odd-name"])
     assert bw() == [["get", "item", "--nointeraction", "--", "-odd-name"]]
+
+
+# second pass of the review (Q178 (m), (n))
+
+@pytest.mark.parametrize("argv", [["get", "ATTACHMENT", "notes.txt", "--itemid", "11111111-aaaa"],
+                                  ["get", "Attachment", "notes.txt", "--itemid", "11111111-aaaa"],
+                                  ["get", "--itemid", "11111111-aaaa", "attachment", "notes.txt"],
+                                  ["get", "--pretty", "attachment", "notes.txt", "--itemid", "11111111-aaaa"]])
+def test_get_attachment_needs_write_in_any_case_and_order(bw, argv):
+    assert "[164]" in refused(*argv) and bw() == []
+
+
+@pytest.mark.parametrize("argv", [[f"--write={SECRET}", "list"], [f"-h{SECRET}"]])
+def test_a_value_on_roster_bws_own_options_is_not_repeated(bw, capfd, argv):
+    with pytest.raises(SystemExit):
+        main(["bw", *argv])
+    out = capfd.readouterr()
+    assert SECRET not in out.out + out.err and bw() == []
