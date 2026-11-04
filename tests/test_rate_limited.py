@@ -17,6 +17,7 @@ groups:
     hosts:
       limited: {ip: 10.0.0.5, auth: "bw:esx ssh"}
       other: {ip: 192.0.2.10, auth: "bw:esx ssh"}
+      named: {ip: nas.example.com, auth: "bw:esx ssh"}
 """
 
 SPECIFIC = "rate limiter"
@@ -89,6 +90,40 @@ def test_the_scan_of_a_listed_address_names_its_network(monkeypatch):
 
 def test_a_name_rather_than_an_address_gets_the_generic_hint():
     assert GENERIC in diagnose.unreachable_fix({"ip": "nas.example.com"}, ["10.0.0.0/8"])
+
+
+@pytest.fixture
+def resolves(monkeypatch):
+    """nas.example.com resolves to ADDRS (what the dns step sees), every other name as before."""
+    real = diagnose.socket.getaddrinfo
+
+    def set_addrs(*addrs):
+        def fake(host, port, *a, **k):
+            if host != "nas.example.com":
+                return real(host, port, *a, **k)
+            return [(diagnose.socket.AF_INET6 if ":" in x else diagnose.socket.AF_INET, diagnose.socket.SOCK_STREAM,
+                     6, "", (x, port)) for x in addrs]
+        monkeypatch.setattr(diagnose.socket, "getaddrinfo", fake)
+    return set_addrs
+
+
+def test_a_name_that_resolves_into_a_listed_network_gets_its_hint(times_out, resolves):
+    """The dns step already resolved the name: the hint matches that address, not the name (#420)."""
+    resolves("192.0.2.99", "10.0.0.9")
+    out = times_out("rate_limited: [10.0.0.0/8]\n", "named")
+    assert SPECIFIC in out and "10.0.0.0/8" in out and "10.0.0.9" in out and "nas.example.com" in out
+    assert GENERIC not in out
+
+
+def test_a_name_that_resolves_outside_the_listed_networks_gets_no_hint(times_out, resolves):
+    resolves("192.0.2.99")
+    out = times_out("rate_limited: [10.0.0.0/8]\n", "named")
+    assert SPECIFIC not in out and "is the Host up" in out
+
+
+def test_a_name_with_no_list_still_gets_the_generic_hint(times_out, resolves):
+    resolves("10.0.0.9")
+    assert GENERIC in times_out("", "named")
 
 
 def test_no_address_range_is_left_in_roster():
