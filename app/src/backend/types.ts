@@ -81,6 +81,20 @@ export interface InventoryInfo {
   providers: string[];
   roster_version: string;
   api_version: number;
+  /** How roster.yml is kept (serve API 28, T212): absent from an older serve, which is a team repo's
+   * Pending changes as always. */
+  store?: InventoryStore;
+}
+
+/** `inventory.info`'s `store` (serve API 28, T212): `repo` when roster.yml is committed in a git repo
+ * with a remote (edits are Pending changes until Publish), `file` for a plain file (every edit is
+ * saved straight to it, and there's nothing to publish). roster decides per file, each time. */
+export interface InventoryStore {
+  kind: "repo" | "file";
+  /** Which, in a sentence, as `roster check --box` says it. */
+  note: string;
+  /** The git work tree it's in, or null. */
+  repo: string | null;
 }
 
 export interface BackendInfo {
@@ -91,7 +105,14 @@ export interface BackendInfo {
   inventory: InventoryInfo;
 }
 
-export type BackendProblemKind = "no-wsl" | "roster-missing" | "roster-too-old" | "inventory-not-found" | "failed";
+export type BackendProblemKind =
+  | "no-wsl"
+  | "roster-missing"
+  | "roster-too-old"
+  | "inventory-not-found"
+  /** A roster.yml was found (or named) but doesn't load: roster's words, never "make one" (#417 M1). */
+  | "inventory-invalid"
+  | "failed";
 
 /** Why the Backend couldn't start: shown as is on the error screen. */
 export interface BackendProblem {
@@ -256,7 +277,10 @@ export interface HostChange {
 /** `changes.diff`: roster.yml's uncommitted diff in the infra repo. */
 export interface PendingChanges {
   path: string;
-  repo: string;
+  /** The infra repo's top folder (null for a plain file, serve API 28). */
+  repo: string | null;
+  /** `file` for a plain file, whose edits are saved already: no diff, count 0 (serve API 28). */
+  kind?: "repo" | "file";
   /** git's unified diff of roster.yml against the last commit ("" when there are none). */
   diff: string;
   hosts: HostChange[];
@@ -497,6 +521,40 @@ export const CHECK_JOBS_API_VERSION = 21;
 
 /** serve API 27 (ticket 115): named Inventories, `inventories.list` and `inventories.use`. */
 export const INVENTORIES_API_VERSION = 27;
+
+/** serve API 28 (T212): `inventory.info`'s `store` (a plain file or a team repo), and
+ * `inventory.create`, the first-run dialog's call when there's no Inventory. */
+export const STORE_API_VERSION = 28;
+
+/** The first-run dialog's three ways (T212): a blank roster.yml, a copy of one, or a clone. */
+export type NewInventoryHow = "blank" | "file" | "repo";
+
+/** `inventory.create`'s params: where roster.yml goes (a full path or `~/...`), and for `file` the
+ * roster.yml to copy, for `repo` the git URL. */
+export interface NewInventoryParams {
+  how: NewInventoryHow;
+  folder: string;
+  source?: string;
+  name?: string;
+}
+
+/** What `inventory.create` made: the new roster.yml, named and made the active Inventory, so the
+ * serve the app starts next finds it. */
+export interface NewInventory {
+  path: string;
+  name: string;
+  how: NewInventoryHow;
+  hosts: number;
+  restart: true;
+}
+
+/** `inventory.create`'s refusals (errors.md rows 230-232): one there already, a file that isn't a
+ * roster.yml, a clone that failed. */
+export const NewInventoryError = {
+  there: 170,
+  notAnInventory: 171,
+  cloneFailed: 172,
+} as const;
 
 /** One named Inventory (`inventories.list`): its name, its `roster.yml`, whether it's the active
  * one, and whether its file is there. */
@@ -1006,6 +1064,13 @@ export interface Backend {
    * its own; the app locks the vault first and restarts serve after. Rejects with BackendCallError
    * (140, 143). */
   useInventory(name: string): Promise<InventoryUsed>;
+  /** `inventory.create` (serve API 28, T212): with no Inventory, a new one made by serve (ADR 0001),
+   * on a serve started for this one call, since `connect()` can't start without one. Connect again
+   * (with restart) after. Rejects with BackendCallError (170-172; -32601 from an older roster). */
+  createInventory(params: NewInventoryParams): Promise<NewInventory>;
+  /** The first-run dialog's Cancel (#417 L5): the serve making it stops, and `createInventory`
+   * rejects with code 5 (nothing was kept). False when nothing was under way. */
+  cancelCreateInventory(): Promise<boolean>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host

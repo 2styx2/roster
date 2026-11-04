@@ -9,6 +9,10 @@ The first argument picks a behaviour:
                      password gets an askpass token in env, and the password itself is never echoed back;
                      save: true (ticket 15) adds held: "q1" and the LocalCommand options
   no-inventory       every method returns error code 1, like serve without a roster.yml
+  broken-inventory   every method returns error code 1 with data.path set: roster.yml is there but doesn't load
+  first-run          as no-inventory, but inventory.create (API 28, T212) answers with the params it got, and
+                     `{"how": "repo"}` is refused with 172; `{"how": "repo", "source": "slow"}` waits for a
+                     `$/cancel` of it, then answers 5 (#417 L5)
   unknown-command    exits 2 at once with argparse's "invalid choice: 'serve'" (a roster from before serve)
   reverse            holds two requests, then answers them in reverse order
   shuffle            as serve's workers do (API 20): holds four requests, then answers them 3rd, 1st, 4th, 2nd, with a
@@ -66,6 +70,7 @@ STOPPED = {"host": "esxi-02", "ok": False, "steps": [
     {"step": "inventory", "status": "ok", "message": "root@10.0.0.10"},
     {"step": "ssh-config", "status": "skipped", "message": "the check was stopped"}]}
 checks, polls, stops = [], [], []
+slow = set()            # first-run: inventory.create calls waiting for their $/cancel
 
 
 def login_of(h):
@@ -76,7 +81,17 @@ def login_of(h):
 def answer(req):
     global minted, trusted
     m = req["method"]
-    if mode == "no-inventory":
+    if mode == "first-run" and m == "inventory.create":
+        p = req.get("params", {})
+        if p.get("how") == "repo":
+            return {"error": {"code": 172, "message": "git couldn't clone it", "data": {"fix": "check the URL"}}}
+        return {"result": {"path": p.get("folder", "") + "/roster.yml", "name": "infra", "how": p.get("how"),
+                           "hosts": 0, "restart": True}}
+    if mode == "broken-inventory":
+        return {"error": {"code": 1, "message": "/home/u/infra/roster.yml is not valid YAML: line 3",
+                          "data": {"path": "/home/u/infra/roster.yml", "line": 3, "fix": "fix /home/u/infra/roster.yml",
+                                   "roster_version": "0.6.0", "api_version": 28}}}
+    if mode in ("no-inventory", "first-run"):
         return {"error": {"code": 1, "message": "no roster.yml found here or in ~/.config/roster/",
                           "data": {"path": None, "roster_version": "0.1.0", "api_version": 1}}}
     if m == "inventory.info":
@@ -242,11 +257,20 @@ for line in sys.stdin:
         reqs = [req]
     for r in reqs:
         if r["method"] == "$/cancel":
+            if mode == "first-run" and (r.get("params") or {}).get("id") in slow:
+                print(json.dumps({"jsonrpc": "2.0", "id": r["params"]["id"],
+                                  "error": {"code": 5, "message": "inventory.create was stopped: nothing was kept"}}),
+                      flush=True)
+                slow.discard(r["params"]["id"])
+                continue
             if mode == "hang":
                 print(json.dumps({"jsonrpc": "2.0", "method": "test.cancelled",
                                   "params": {"params": r.get("params"), "had_id": "id" in r}}), flush=True)
             continue
         if mode == "hang" and r["method"] == "host.get":
+            continue
+        if mode == "first-run" and r["method"] == "inventory.create" and (r.get("params") or {}).get("source") == "slow":
+            slow.add(r["id"])
             continue
         if mode == "notify" and r["method"] == "inventory.watch":
             print(json.dumps({"jsonrpc": "2.0", "method": "inventory.changed", "params": {"applied": True}}), flush=True)

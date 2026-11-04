@@ -50,9 +50,12 @@ export interface SavePanelProps {
   /** The pull before a write (decision Q88), shared with the other forms and `:pull`. */
   pull: PullGate;
   onClose(): void;
+  /** roster.yml is a plain file (T212): the edit is saved straight to it, not a Pending change. */
+  plain?: boolean;
 }
 
 export function SavePanel({
+  plain = false,
   backend,
   hosts,
   what,
@@ -170,7 +173,8 @@ export function SavePanel({
       </header>
       <p className="edit-note">
         <span className="mono">{label}</span> logged in with the password you typed. roster saves it as a Vault item, then{" "}
-        {quick ? "adds the Host" : "points the Host's Login at it"}, as a Pending change.
+        {quick ? "adds the Host" : "points the Host's Login at it"}
+        {plain ? ", saved to roster.yml." : ", as a Pending change."}
       </p>
       <PullStatus pull={formPull} rows={rows} actions={actions} />
       {pulledIn && taken && (

@@ -14,6 +14,11 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **`roster init` gets you an Inventory four ways** (#401): `--blank` (a short, empty `roster.yml` that loads), `--inventory file:PATH` (a copy, once it loads), `repo:URL` (a clone of the team's repo) or `ssh-config[:PATH]` (the Hosts in `~/.ssh/config`: HostName, User, Port and IdentityFile only, wildcards and `Match` blocks skipped, the file never changed). `roster init` alone still writes the commented example. A `roster.yml` already there is kept; `--name NAME` names a new one beside it. See [A new Inventory](cli-reference.md#a-new-inventory).
 - **`install.sh` starts you with an Inventory** (#401): with none in the folder it offers the same four ways, a blank one by default (so `--yes` alone makes one, where it used to leave you with none), then `git init` as an option. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` still works). One already there is kept, or a new one is added beside it as a named Inventory.
 
+**App**
+
+- **No Inventory yet? The app makes one** (#401): on a Box with no `roster.yml`, **Start your Inventory** offers a blank one, a copy of a `roster.yml` you have, or a clone of your team's repo, in a folder you pick (`~/infra` by default). `roster serve` writes it and names it, and the app starts on it. With a roster older than serve API 28 it says to run `roster init --blank` instead.
+- **A plain `roster.yml` says "saved"** (#401): an edit to an Inventory that isn't in a team repo says it was saved to `roster.yml`, never "a Pending change", the toolbar has no Changes button, and `:changes`, `:discard` and `:publish` say there's nothing to publish.
+
 ### Changed
 
 **CLI**
@@ -23,7 +28,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **`roster serve` API 28**
 
-- `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes.
+- `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes. `inventory.create` makes a new Inventory when serve found none (the app's first run): blank, a copy or a clone, named after its folder and made the active one.
 
 ## v0.5.1
 

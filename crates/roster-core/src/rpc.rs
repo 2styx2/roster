@@ -204,6 +204,14 @@ impl RpcClient {
         }
     }
 
+    /// `$/cancel` for every call still waiting for its answer (the first-run dialog's Cancel, #417 L5).
+    pub fn cancel_pending(&self) {
+        let ids: Vec<u64> = self.shared.lock().unwrap().pending.keys().copied().collect();
+        for id in ids {
+            self.cancel(id);
+        }
+    }
+
     /// What the child has written to stderr so far (the last few KB).
     pub fn stderr(&self) -> String {
         self.stderr_tail.lock().unwrap().clone()

@@ -24,8 +24,11 @@ pub enum ErrorKind {
     RosterMissing,
     /// roster has no `serve`, or its API is older than this app needs.
     RosterTooOld,
-    /// roster runs but finds no `roster.yml`, or it doesn't load.
+    /// roster runs but finds no `roster.yml` anywhere: the app offers to make one (T212).
     InventoryNotFound,
+    /// A `roster.yml` was found (or named) but doesn't load: a hand edit's typo, `ROSTER_CONFIG` or the
+    /// active Inventory naming a file that isn't there (#417 M1). roster's own words, never "make one".
+    InventoryInvalid,
     /// Anything else: serve crashed, didn't answer, couldn't be started.
     Failed,
 }

@@ -2,6 +2,7 @@
 a roster.yml, a clone of the team's repo, Hosts imported from an ssh config; a file already there is kept, and a new
 one can be named beside it. Temp HOMEs and folders only: an ssh config here is always a file the test wrote."""
 
+import json
 import os
 import stat
 import subprocess
@@ -333,6 +334,81 @@ def test_sync_keeps_this_boxs_ssh_config_when_a_pull_brings_an_empty_looking_fil
     assert ssh.read_text() == before and "esx" in before
 
 
+# ---------------------------------------------------------------- the app's first run, through serve (inventory.create)
+
+def test_serve_with_no_inventory_makes_a_blank_one_and_names_it(serve, isolated):
+    """T212: the app's first-run dialog. serve, with no roster.yml anywhere, writes one (ADR 0001: never the app),
+    and names it so the next serve finds it."""
+    s = serve()
+    assert s.call("inventory.info")["error"]["code"] == 1
+    folder = isolated["home"] / "infra"
+    r = s.call("inventory.create", {"how": "blank", "folder": str(folder)})["result"]
+    target = folder / "roster.yml"
+    assert r == {"path": str(target.resolve()), "name": "infra", "how": "blank", "hosts": 0, "restart": True}
+    assert load_config(target)["hosts"] == {}
+    assert inventories.load().active == "infra" and inventories.path_of("infra") == target.resolve()
+    s2 = serve()                                            # the restarted serve finds it
+    assert s2.call("inventory.info")["result"]["path"] == str(target.resolve())
+
+
+def test_serve_imports_a_file_and_takes_a_name(serve, isolated, tmp_path):
+    src = tmp_path / "theirs.yml"
+    src.write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    s = serve()
+    folder = isolated["home"] / "lab"
+    r = s.call("inventory.create", {"how": "file", "source": str(src), "folder": str(folder), "name": "work"})
+    assert r["result"]["hosts"] == 1 and r["result"]["name"] == "work"
+    assert (folder / "roster.yml").read_text() == src.read_text()
+
+
+def test_serve_says_why_it_cannot_make_one(serve, isolated, tmp_path):
+    s = serve()
+    folder = str(isolated["home"] / "infra")
+    bad = tmp_path / "broken.yml"
+    bad.write_text("groups: [\n")
+    for params, code in [({"how": "file", "source": str(bad), "folder": folder}, 171),
+                         ({"how": "repo", "source": "-uoops", "folder": folder}, -32602),
+                         ({"how": "nonsense", "folder": folder}, -32602),
+                         ({"how": "blank", "folder": "relative/dir"}, -32602),
+                         ({"how": "blank"}, -32602),
+                         ({"how": "file", "folder": folder}, -32602),
+                         ({"how": "blank", "folder": folder, "name": "bad name"}, -32602),
+                         ({"how": "blank", "folder": folder + "\nkey_path: x"}, -32602),
+                         ({"how": "file", "source": str(bad) + "\n", "folder": folder}, -32602)]:
+        err = s.call("inventory.create", params)["error"]
+        assert err["code"] == code, (params, err)
+    assert not (isolated["home"] / "infra" / "roster.yml").exists()
+    assert not inventories.load().inventories
+
+
+def test_serve_never_makes_one_while_it_has_one(serve, write_config, isolated):
+    path = write_config("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    s = serve("-c", str(path))
+    err = s.call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "infra")})["error"]
+    assert err["code"] == 170 and str(path) in err["message"]
+    assert not (isolated["home"] / "infra").exists()
+
+
+def test_serve_clones_without_asking_anything(serve, isolated, tmp_path, monkeypatch):
+    for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+                 "GIT_COMMITTER_EMAIL": "t@x", "GIT_CONFIG_NOSYSTEM": "1"}.items():
+        monkeypatch.setenv(k, v)
+    team = tmp_path / "team"
+    team.mkdir()
+    (team / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "map"]):
+        subprocess.run(["git", "-C", str(team), *args], check=True, capture_output=True)
+    s = serve()
+    err = s.call("inventory.create", {"how": "repo", "source": str(tmp_path / "nope"),
+                                      "folder": str(isolated["home"] / "other")})["error"]
+    assert err["code"] == 172 and err["data"]["fix"]
+    folder = isolated["home"] / "infra"
+    r = s.call("inventory.create", {"how": "repo", "source": str(team), "folder": str(folder)})["result"]
+    assert r["how"] == "repo" and r["hosts"] == 1
+    err = s.call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "more")})["error"]
+    assert err["code"] == 170                               # one made: this serve makes no other
+
+
 # ---------------------------------------------------------------- #409's second pass (N2, N4) and #417's (M2, L1, L2)
 
 @pytest.mark.parametrize("url,shown", [
@@ -422,3 +498,67 @@ def test_the_blank_shape_knows_every_top_level_key_roster_reads():
     src = Path(__file__).parents[1] / "src" / "roster"
     read = {k for f in src.glob("*.py") for k in re.findall(r'raw(?:\.get\(|\[)"([a-z_]+)"', f.read_text("utf-8"))}
     assert read and read <= TOP_KEYS, read - TOP_KEYS
+
+
+# ---------------------------------------------------------------- #417's review: L3, L4, L5 (serve's side)
+
+posix_shell_only = pytest.mark.skipif(os.name == "nt", reason="a stand-in git written in sh")
+
+
+@posix_shell_only
+def test_a_clone_under_way_stops_on_cancel_and_leaves_nothing(serve, isolated, tmp_path, monkeypatch):
+    """L5: the app's Cancel ($/cancel of inventory.create): git is stopped, its half-made folder taken away, nothing
+    named; the answer is 5."""
+    import time
+    fakes = tmp_path / "fake-bin"
+    fakes.mkdir()
+    (fakes / "git").write_text('#!/bin/sh\n[ "$1" = clone ] || exit 1\nfor a; do d=$a; done\nmkdir -p "$d/.git"\n'
+                               'echo half > "$d/.git/HEAD"\nexec sleep 60\n')
+    (fakes / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fakes}:/usr/bin:/bin")
+    s = serve()
+    folder = isolated["home"] / "infra"
+    rid = s.request("inventory.create", {"how": "repo", "source": "https://example.com/team/infra.git",
+                                         "folder": str(folder)})
+    for _ in range(100):
+        if (folder / ".git" / "HEAD").exists():
+            break
+        time.sleep(0.05)
+    t = time.monotonic()
+    s.p.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "$/cancel", "params": {"id": rid}}) + "\n")
+    s.p.stdin.flush()
+    err = s.answer(rid)["error"]
+    assert err["code"] == 5 and "nothing was kept" in err["message"] and time.monotonic() - t < 10
+    assert not folder.exists() and not inventories.load().inventories
+
+
+def test_two_first_runs_at_once_make_one(serve, isolated):
+    """L3: a lock in roster's config folder: while one inventory.create is under way (any serve), another is 170."""
+    from roster.common import user_config_dir
+    lock = user_config_dir() / "inventory.create.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("4242\n")
+    err = serve().call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "infra")})["error"]
+    assert err["code"] == 170 and "another" in err["message"]
+    assert not (isolated["home"] / "infra").exists()
+    lock.unlink()
+    assert "result" in serve().call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "infra")})
+    assert not lock.exists()
+
+
+def test_a_taken_name_says_how_out(serve, isolated, write_config):
+    """L4: the folder's name is a named Inventory's already (one not active, so serve found none): the refusal names
+    the field (data.field: name) and says how out, and a name given makes it."""
+    lab = write_config("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n", name="lab.yml")
+    (isolated["home"] / "old").mkdir()
+    old = isolated["home"] / "old" / "roster.yml"
+    old.write_text(lab.read_text())
+    inventories.add("lab", lab)                  # the active one...
+    inventories.add("infra", old)
+    inventories.remove("lab")                    # ...gone: infra is named, none is active
+    lab.unlink()
+    s = serve()
+    folder = str(isolated["home"] / "infra")
+    err = s.call("inventory.create", {"how": "blank", "folder": folder})["error"]
+    assert err["code"] == -32602 and err["data"]["field"] == "name" and "another name" in err["data"]["fix"]
+    assert s.call("inventory.create", {"how": "blank", "folder": folder, "name": "infra2"})["result"]["name"] == "infra2"
