@@ -8,7 +8,9 @@ You need three things:
 2. **The team's `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It lives in [yourteam/infra](https://example.com/yourteam/infra).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). It installs the newest Release (the highest `vX.Y.Z` tag on `origin`, fetched first), whatever branch your checkout is on, from a clean copy in a temporary folder: your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`). On a box that already has roster, `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run` and `--prefix`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG`, Tab completion for roster in your shell and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). It installs the newest Release (the highest `vX.Y.Z` tag that `origin` has, asked for first), whatever branch your checkout is on, from a clean copy unpacked into `~/.local/share/roster/source/` (kept, because uv's record of the install points there; the next install removes the one before): your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It never installs an older roster over a newer one without a yes (under `--yes` it keeps the newer one; `--allow-downgrade` or `--ref` installs it anyway). It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`).
+
+**Installing or updating.** On a box that's set up (roster and uv, a map in `ROSTER_CONFIG`, and the cron job when the map has `bin/roster-pull`), `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run`, `--prefix`, `--no-completion` and `--allow-downgrade`. A box that isn't finished (the first run had no map yet, a stage failed, or it was installed before install.sh set up cron) gets every stage again, each skipping what's done: run `./install.sh --infra-repo GIT-URL` again after a first `--yes` without one, and it clones the map and finishes. `--finish` runs every stage on a set-up box too. A "no" to the cron job or `--no-completion` is kept in `~/.config/roster/install-choices`, so later runs (and `update.sh`) don't ask or add it again; delete the line to change your mind. Update with `./update.sh`, not `uv tool upgrade`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -31,6 +33,8 @@ roster man --install       # puts its man page in ~/.local/share/man/man1, next 
 roster --help              # if not found: export PATH="$HOME/.local/bin:$PATH"
 man roster                 # the manual
 ```
+
+Tab completion (`roster ho<Tab>` is `roster hosts`, `roster run <Tab>` lists your Hosts): add `eval "$(roster completion bash)"` to `~/.bashrc` (`zsh` in `~/.zshrc`; for fish, `roster completion fish > ~/.config/fish/completions/roster.fish`). `install.sh` does this without asking; `--no-completion` leaves it off. See [Tab completion](cli-reference.md#tab-completion).
 
 No git access on that box? Use `git archive --format=zip -o roster.zip HEAD` on a box that has it, copy the zip over, unzip it, and run `uv tool install .` inside.
 
@@ -64,7 +68,7 @@ mkdir -p ~/.config/roster
 (umask 077; bw unlock --raw > ~/.config/roster/bw-session)
 ```
 
-roster only uses the session file if only you can read it (mode 600). When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session.
+roster only uses the session file if only you can read it (mode 600). When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a password, what roster can and can't see).
 
 **1Password:** use the desktop app integration, `eval $(op signin)`, or `OP_SERVICE_ACCOUNT_TOKEN` on a headless box.
 
@@ -137,7 +141,7 @@ roster inv list                              # * marks the active one; `roster i
 
 ## Keeping it up to date
 
-`./update.sh` in the roster checkout does the first two lines: it brings the checkout up to date, reinstalls roster from it with its man page, pulls the map and runs `roster sync`. It ends by printing the roster it installed and where from (branch, commit, tag), as `install.sh` does.
+`./update.sh` in the roster checkout does the first two lines: it brings the checkout up to date, reinstalls roster from it with its man page, pulls the map and runs `roster sync`. It also turns on Tab completion where `install.sh` would (a box installed before it did gets it), and says when the map's auto-update cron job is missing (`./install.sh` sets it up). It never installs an older roster over the one this box has without a yes (`--allow-downgrade` to do it anyway). It ends by printing the roster it installed and where from (branch, commit, tag), as `install.sh` does.
 
 The checkout is what it installs, so first it looks at it: it fetches (quietly; offline it carries on with what the clone last fetched), and when your branch is behind its upstream it offers to fast-forward it (`git pull --ff-only`, default yes; under `--yes` it does). It never switches branches and never pulls over uncommitted changes or a branch with commits of its own: then, or when you say no, it says it is installing an older roster. A checkout on no branch (a tag) is installed as it is, and a checkout older than the newest Release tag it can see gets a warning naming that tag. By hand:
 
@@ -149,7 +153,7 @@ roster setup                                             # new key hosts get thi
 
 ## Removing a box
 
-`./uninstall.sh` in the roster checkout does all of this, in this order: the Mesh and this box's key off the hosts first, then the cron job, the shell startup lines, the files below, the vault session, roster and its man page, and the `ROSTER.md` next to `roster.yml`. While a host still has the key (it was down), it keeps the key, the ssh config and roster, so running it again finishes. `--keep-hosts` leaves the hosts alone, and `--purge` also removes `bw`, the `~/.local/bin` PATH line and the config folder (never one with changes not pushed, under `--yes`). By hand:
+`./uninstall.sh` in the roster checkout does all of this, in this order: the Mesh and this box's key off the hosts first, then the cron job, the shell startup lines (and fish's completion file), the files below, the vault session, roster and its man page, and the `ROSTER.md` next to `roster.yml`. While a host still has the key (it was down), it keeps the key, the ssh config and roster, so running it again finishes. `--keep-hosts` leaves the hosts alone, and `--purge` also removes `bw`, the `~/.local/bin` PATH line and the config folder (never one with changes not pushed, under `--yes`). By hand:
 
 ```bash
 roster mesh cut --all      # this box's Mesh entries off every host (with a Mesh)

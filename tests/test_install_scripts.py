@@ -244,6 +244,92 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key
 
 
+COMPLETION_LINE = 'command -v roster >/dev/null 2>&1 && eval "$(roster completion bash)"   # roster: completion'
+
+
+def install_box(tmp_path, login_shell="/bin/bash"):
+    """A HOME before install.sh, and stand-ins for everything install.sh would fetch or change outside it."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)        # conftest's isolated HOME
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    for name, text in {**FAKES, "bw": '#!/bin/sh\necho \'{"status":"unauthenticated"}\'\n'}.items():
+        (fakes / name).write_text(text)
+        (fakes / name).chmod(0o755)
+    env = {"HOME": str(home), "NO_COLOR": "1", "PATH": f"{fakes}:/usr/bin:/bin", "LANG": "C", "SHELL": login_shell}
+    return home, env
+
+
+def install(env, tmp_path, *args):
+    return run(source_copy(tmp_path) / "install.sh", env, "--prefix", str(tmp_path / "opt"), *args)
+
+
+@posix_shell
+def test_install_turns_on_tab_completion_for_the_user_s_shell_without_asking(tmp_path):
+    home, env = install_box(tmp_path)
+    (home / ".zshrc").write_text("# mine\n")
+    r = install(env, tmp_path)
+    assert "Tab completion" in r.stdout, r.stdout + r.stderr
+    assert (home / ".bashrc").read_text().count(COMPLETION_LINE) == 1      # $SHELL's, made if it isn't there
+    zshrc = (home / ".zshrc").read_text()
+    assert zshrc.startswith("# mine\n") and zshrc.count(COMPLETION_LINE.replace("bash", "zsh")) == 1
+    assert "?" not in [line.strip()[:1] for line in r.stdout.splitlines() if "Tab completion" in line]
+    install(env, tmp_path)
+    assert (home / ".bashrc").read_text().count("# roster: completion") == 1     # again: nothing added twice
+
+
+@posix_shell
+def test_install_writes_fish_s_completion_file(tmp_path):
+    home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
+    install(env, tmp_path)
+    fish = home / ".config/fish/completions/roster.fish"
+    assert fish.read_text().splitlines()[1:] == ["roster completion fish | source"]
+    assert not (home / ".bashrc").exists() or "# roster: completion" not in (home / ".bashrc").read_text()
+
+
+@posix_shell
+def test_install_leaves_a_fish_completion_file_it_did_not_write(tmp_path):
+    home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# my own\n")
+    install(env, tmp_path)
+    assert fish.read_text() == "# my own\n"
+
+
+@posix_shell
+def test_install_no_completion_leaves_the_shell_alone(tmp_path):
+    home, env = install_box(tmp_path)
+    (home / ".bashrc").write_text("# mine\n")
+    r = install(env, tmp_path, "--no-completion")
+    assert "# roster: completion" not in (home / ".bashrc").read_text()
+    assert "roster completion bash" in r.stdout                  # says how to turn it on by hand
+
+
+@posix_shell
+def test_install_dry_run_says_where_completion_would_go(tmp_path):
+    home, env = install_box(tmp_path)
+    r = install(env, tmp_path, "--dry-run")
+    assert "would turn on Tab completion in ~/.bashrc" in r.stdout
+    assert not (home / ".bashrc").exists()
+
+
+@posix_shell
+def test_uninstall_removes_tab_completion(box):
+    home, env = box
+    rc = home / ".bashrc"
+    rc.write_text(rc.read_text() + f"{COMPLETION_LINE}\n")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# roster: completion (install.sh wrote this file; uninstall.sh removes it)\n"
+                    "roster completion fish | source\n")
+    mine = home / ".config/fish/completions/other.fish"
+    mine.write_text("complete -c other\n")
+    run(UNINSTALL_SH, env)
+    assert "completion" not in rc.read_text() and 'alias ll="ls -l"' in rc.read_text()
+    assert not fish.exists() and mine.exists()
+
+
 @posix_shell
 def test_install_offers_cron_when_the_box_has_none(tmp_path):
     # a minimal box (Fedora's WSL distro, say) has no crontab: auto-update installs cron instead of skipping
@@ -307,7 +393,9 @@ def stale(tmp_path):
     release(upstream, "0.5.0")                 # after the clone: the checkout doesn't know yet
     fakes = tmp_path / "fakes"
     fakes.mkdir()
-    for name, text in {"uv": INSTALLED_UV, "crontab": FAKES["crontab"], "bw": "#!/bin/sh\nexit 0\n"}.items():
+    # cron's daemon is the box's: systemctl, service and sudo are stand-ins that say it runs
+    for name, text in {"uv": INSTALLED_UV, "crontab": FAKES["crontab"], "bw": "#!/bin/sh\nexit 0\n",
+                       **{n: "#!/bin/sh\nexit 0\n" for n in ("systemctl", "service", "sudo")}}.items():
         (fakes / name).write_text(text)
         (fakes / name).chmod(0o755)
     env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": f"{fakes}:{no_roster_path()}",
@@ -317,10 +405,17 @@ def stale(tmp_path):
     return upstream, checkout, env, tmp_path / "prefix"
 
 
-def installed(prefix, version="0.1.0"):
+def installed(prefix, version="0.1.0", env=None):
+    """A roster VERSION in PREFIX/bin; with ENV, a box that's set up too (a map in ROSTER_CONFIG, its cron job)."""
     (prefix / "bin").mkdir(parents=True, exist_ok=True)
     (prefix / "bin/roster").write_text(f'#!/bin/sh\necho "roster $*" >> "$HOME/calls"\necho "roster {version}"\n')
     (prefix / "bin/roster").chmod(0o755)
+    if env is not None:
+        home = Path(env["HOME"])
+        (home / "infra").mkdir(parents=True, exist_ok=True)
+        (home / "infra/roster.yml").write_text("groups: {}\n")
+        with (home / ".bashrc").open("a") as rc:
+            rc.write('export ROSTER_CONFIG="$HOME/infra/roster.yml"   # roster: ROSTER_CONFIG\n')
 
 
 def script(name, checkout, env, prefix, *args, answers=None):
@@ -420,7 +515,7 @@ def test_update_carries_on_offline(stale):
 @posix_shell
 def test_install_on_a_box_with_roster_runs_update_sh_with_the_same_flags(stale):
     upstream, checkout, env, prefix = stale
-    installed(prefix, "0.4.0")
+    installed(prefix, "0.4.0", env)
     r = script("install.sh", checkout, env, prefix, "--dry-run")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "roster 0.4.0 is already installed on this box: updating it with ./update.sh" in r.stdout
@@ -432,7 +527,7 @@ def test_install_on_a_box_with_roster_runs_update_sh_with_the_same_flags(stale):
 @posix_shell
 def test_install_hands_on_update_sh_s_exit_status(stale):
     upstream, checkout, env, prefix = stale
-    installed(prefix)
+    installed(prefix, env=env)
     (checkout / "update.sh").write_text("#!/bin/sh\necho \"update $*\"\nexit 3\n")
     r = script("install.sh", checkout, env, prefix)
     assert r.returncode == 3
@@ -450,12 +545,13 @@ def test_a_first_install_installs_the_newest_release_whatever_branch_the_checkou
     upstream, checkout, env, prefix = stale
     git(checkout, "switch", "-q", "-c", "old-work")                       # a local branch of its own, at v0.1.0
     before = untouched(checkout)
-    (tmp_path / "tmp").mkdir()
-    r = script("install.sh", checkout, {**env, "TMPDIR": str(tmp_path / "tmp")}, prefix)
+    r = script("install.sh", checkout, env, prefix)
     tag = git(upstream, "rev-parse", "--short", "v0.5.0")
     assert f"Installed roster 0.5.0 from {checkout} (v0.5.0, commit {tag})" in r.stdout, r.stdout
     assert untouched(checkout) == before                                  # never switched, pulled or changed
-    assert list((tmp_path / "tmp").iterdir()) == []                       # the clean copy is gone again
+    store = Path(env["HOME"]) / ".local/share/roster/source"
+    assert [p.name for p in store.iterdir()] == ["v0.5.0"]                # kept: uv's record of the install points here
+    assert f"uv tool install --force --quiet {store / 'v0.5.0'}" in calls(Path(env["HOME"]))
     assert (prefix / "share/man/man1/roster.1").exists()                  # the page came from that copy too
 
 
@@ -466,8 +562,9 @@ def test_a_first_install_dry_run_says_which_release_and_changes_nothing(stale):
     r = script("install.sh", checkout, env, prefix, "--dry-run")
     assert r.returncode == 0, r.stdout + r.stderr
     tag = git(upstream, "rev-parse", "--short", "v0.5.0")
-    assert f"installing v0.5.0, commit {tag} from a clean copy (your checkout stays as it is)" in r.stdout
-    assert "would unpack v0.5.0 into a temporary folder" in r.stdout
+    assert f"installing roster 0.5.0 (v0.5.0, commit {tag}) from a clean copy: your checkout stays as it is" in r.stdout
+    assert "would unpack v0.5.0 into ~/.local/share/roster/source/v0.5.0" in r.stdout
+    assert "dry run: a real run installs roster 0.5.0 from" in r.stdout
     assert "is already installed" not in r.stdout and "git pull" not in r.stdout and " pull --ff-only" not in r.stdout
     assert untouched(checkout) == before
 
@@ -515,3 +612,214 @@ def test_a_first_install_leaves_an_existing_map_as_it_is(stale):
     r = script("install.sh", checkout, env, prefix, "--dry-run")
     assert "Pull the latest map" not in r.stdout and " pull --ff-only" not in r.stdout
     assert "update.sh pulls it" in r.stdout
+
+
+# ---- review of #414: a box that isn't finished, downgrades, origin's tags, the kept copy, --ref, ssh settings
+
+def map_repo(tmp_path):
+    """A team map with its bin/roster-pull, as a git repo to clone."""
+    m = tmp_path / "map"
+    (m / "bin").mkdir(parents=True)
+    (m / "roster.yml").write_text("groups: {}\n")
+    (m / "bin/roster-pull").write_text("#!/bin/sh\nexit 0\n")
+    (m / "bin/roster-pull").chmod(0o755)
+    git(m, "init", "-q")
+    git(m, "add", "-A")
+    git(m, "commit", "-qm", "map")
+    return m
+
+
+@posix_shell
+def test_a_first_run_without_a_map_is_finished_by_running_install_again_with_it(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    env = {**env, "SHELL": "/bin/bash"}
+    home = Path(env["HOME"])
+    first = script("install.sh", checkout, env, prefix)
+    assert "no team map given - run again with --infra-repo URL" in first.stdout, first.stdout
+    r = script("install.sh", checkout, env, prefix, "--infra-repo", str(map_repo(tmp_path)))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "isn't finished (no the team's map and ROSTER_CONFIG): finishing the install" in r.stdout
+    assert (home / "infra/roster.yml").exists()                                    # the map, cloned
+    assert "# roster: ROSTER_CONFIG" in (home / ".bashrc").read_text()
+    assert "# roster: completion" in (home / ".bashrc").read_text()
+    assert "infra/bin/roster-pull" in (home / "crontab").read_text()             # the cron job
+    again = script("install.sh", checkout, env, prefix)                          # finished: now it's an update
+    assert "already installed on this box: updating it with ./update.sh" in again.stdout
+
+
+@posix_shell
+def test_a_box_from_before_cron_gets_it_from_install_sh(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0", env)
+    home = Path(env["HOME"])
+    (home / "infra/bin").mkdir()
+    (home / "infra/bin/roster-pull").write_text("#!/bin/sh\nexit 0\n")
+    (home / "infra/bin/roster-pull").chmod(0o755)
+    (home / "crontab").write_text("0 3 * * * /usr/local/bin/backup\n")
+    r = script("install.sh", checkout, env, prefix)
+    assert "isn't finished (no the auto-update cron job): finishing the install" in r.stdout, r.stdout
+    assert "infra/bin/roster-pull" in (home / "crontab").read_text()
+
+
+@posix_shell
+def test_a_box_that_said_no_to_cron_is_not_asked_again(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0", env)
+    home = Path(env["HOME"])
+    (home / "infra/bin").mkdir()
+    (home / "infra/bin/roster-pull").write_text("#!/bin/sh\nexit 0\n")
+    (home / "infra/bin/roster-pull").chmod(0o755)
+    (home / ".config/roster").mkdir(parents=True)
+    (home / ".config/roster/install-choices").write_text("no-cron\n")
+    r = script("install.sh", checkout, env, prefix)
+    assert "updating it with ./update.sh" in r.stdout
+    assert "no auto-update cron job" not in r.stdout
+
+
+@posix_shell
+def test_update_turns_on_tab_completion_on_a_box_from_before_it(stale):
+    upstream, checkout, env, prefix = stale
+    env = {**env, "SHELL": "/bin/bash"}
+    installed(prefix, "0.1.0", env)
+    r = script("update.sh", checkout, env, prefix)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (Path(env["HOME"]) / ".bashrc").read_text().count("# roster: completion") == 1
+    script("update.sh", checkout, env, prefix)
+    assert (Path(env["HOME"]) / ".bashrc").read_text().count("# roster: completion") == 1     # once
+
+
+@posix_shell
+def test_update_keeps_completion_off_when_install_was_told_so(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    env = {**env, "SHELL": "/bin/bash"}
+    script("install.sh", checkout, env, prefix, "--no-completion")
+    home = Path(env["HOME"])
+    assert (home / ".config/roster/install-choices").read_text() == "no-completion\n"
+    r = script("update.sh", checkout, env, prefix)
+    assert "left off (you said no" in r.stdout, r.stdout
+    assert "# roster: completion" not in ((home / ".bashrc").read_text() if (home / ".bashrc").exists() else "")
+
+
+@posix_shell
+def test_update_never_installs_an_older_roster_under_yes(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0")
+    git(checkout, "checkout", "-q", "v0.1.0")
+    r = script("update.sh", checkout, env, prefix)
+    assert "kept roster 0.5.0: this checkout is the older 0.1.0 (--allow-downgrade installs it anyway)" in r.stdout
+    assert "uv tool install" not in calls(Path(env["HOME"]))
+    assert r.stdout.rstrip().splitlines()[-1].startswith("Kept roster 0.5.0 (not the older 0.1.0 from")
+
+
+@posix_shell
+def test_update_asks_before_an_older_roster_and_takes_allow_downgrade(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0")
+    git(checkout, "checkout", "-q", "v0.1.0")
+    r = script("update.sh", checkout, env, prefix, answers="\n" * 10)                 # Enter: the default, no
+    assert "Install roster 0.1.0 from this checkout over the newer 0.5.0 this box has? [y/N]" in r.stdout
+    assert "uv tool install" not in calls(Path(env["HOME"]))
+    script("update.sh", checkout, env, prefix, "--allow-downgrade")
+    assert "uv tool install --force --reinstall" in calls(Path(env["HOME"]))
+
+
+@posix_shell
+def test_install_never_installs_an_older_release_over_a_newer_roster_unless_asked_by_ref(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.6.0")                                    # newer than any Release, on an unfinished box
+    r = script("install.sh", checkout, env, prefix)
+    assert "kept roster 0.6.0: 0.5.0 is older" in r.stdout, r.stdout
+    assert "uv tool install" not in calls(Path(env["HOME"]))
+    assert "Kept roster 0.6.0 (not the older 0.5.0" in r.stdout
+    r = script("install.sh", checkout, env, prefix, "--ref", "v0.1.0")      # named: that's what you want
+    assert "uv tool install --force --quiet" in calls(Path(env["HOME"]))
+    assert "Installed roster 0.1.0" in r.stdout
+
+
+@posix_shell
+def test_the_newest_release_is_origin_s_not_a_tag_of_your_own(stale):
+    upstream, checkout, env, prefix = stale
+    git(checkout, "tag", "v9.9.9")                                # made here, while testing
+    r = script("install.sh", checkout, env, prefix)
+    assert "Installed roster 0.5.0" in r.stdout and "v9.9.9" not in r.stdout, r.stdout
+
+
+@posix_shell
+def test_a_tag_origin_moved_is_no_reason_to_think_it_is_offline(stale):
+    upstream, checkout, env, prefix = stale
+    git(checkout, "fetch", "-q", "--tags")
+    (upstream / "notes").write_text("x\n")
+    git(upstream, "add", "notes")
+    git(upstream, "commit", "-qm", "retag")
+    git(upstream, "tag", "-f", "v0.5.0")                         # v0.5.0 moved on origin
+    r = script("install.sh", checkout, env, prefix)
+    assert "couldn't reach" not in r.stdout and "failed" not in r.stdout, r.stdout
+    head = git(upstream, "rev-parse", "--short", "HEAD")
+    assert f"(v0.5.0, commit {head})" in r.stdout
+    installed(prefix, "0.1.0")
+    r = script("update.sh", checkout, env, prefix, "--dry-run")
+    assert "couldn't reach" not in r.stdout and "fetch failed" not in r.stdout, r.stdout
+
+
+@posix_shell
+def test_the_next_install_prunes_the_copy_before(stale):
+    upstream, checkout, env, prefix = stale
+    script("install.sh", checkout, env, prefix)
+    release(upstream, "0.6.0")
+    r = script("install.sh", checkout, env, prefix, "--finish")
+    assert "Installed roster 0.6.0" in r.stdout, r.stdout
+    store = Path(env["HOME"]) / ".local/share/roster/source"
+    assert [p.name for p in store.iterdir()] == ["v0.6.0"]
+
+
+@posix_shell
+def test_ref_on_a_box_that_hands_over_to_update_sh_says_it_is_ignored(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0", env)
+    r = script("install.sh", checkout, env, prefix, "--dry-run", "--ref", "v0.1.0")
+    assert "--ref is for a first install: update.sh installs this checkout as it is" in r.stdout
+
+
+@posix_shell
+def test_ref_offline_takes_this_clone_s_copy_or_stops(stale):
+    upstream, checkout, env, prefix = stale
+    git(checkout, "remote", "set-url", "origin", str(upstream.parent / "gone"))
+    r = script("install.sh", checkout, env, prefix, "--ref", "v0.1.0")
+    assert "couldn't reach origin: installing v0.1.0 as this clone has it" in r.stdout, r.stdout
+    assert "Installed roster 0.1.0" in r.stdout
+    r = script("install.sh", checkout, env, prefix.parent / "p2", "--ref", "nope")
+    assert r.returncode == 1 and "couldn't reach origin, and this clone has no nope" in r.stdout
+
+
+@posix_shell
+def test_the_fetch_keeps_your_own_core_ssh_command(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    myssh = tmp_path / "myssh"
+    myssh.write_text('#!/bin/sh\necho myssh >> "$HOME/calls"\nexit 1\n')
+    myssh.chmod(0o755)
+    git(checkout, "remote", "set-url", "origin", "ssh://git.example.invalid/roster.git")
+    git(checkout, "config", "core.sshCommand", str(myssh))      # a deploy key, say
+    script("install.sh", checkout, env, prefix, "--dry-run")
+    assert "myssh" in calls(Path(env["HOME"]))
+
+
+@posix_shell
+def test_update_dry_run_names_the_commit_a_real_run_installs(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    r = script("update.sh", checkout, env, prefix, "--dry-run")
+    head = git(upstream, "rev-parse", "--short", "HEAD")
+    assert f"a real run installs roster 0.5.0 from {checkout} (branch main, commit {head}, v0.5.0)" in r.stdout, r.stdout
+
+
+@posix_shell
+def test_install_finds_a_roster_uv_put_off_path(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0", env)
+    uv = Path(env["PATH"].split(":")[0]) / "uv"
+    uv.write_text(INSTALLED_UV.replace("exit 0\n", f'[ "$3" = --show-paths ] && echo "- roster ({prefix}/bin/roster)"\n'
+                                                   'exit 0\n', 1))
+    r = subprocess.run(["bash", str(checkout / "install.sh"), "--yes", "--dry-run"], env=env, capture_output=True,
+                       text=True, timeout=120, start_new_session=True)                # no --prefix: found by uv
+    assert "roster 0.5.0 is already installed on this box: updating it with ./update.sh" in r.stdout, r.stdout
+    assert f"UV_TOOL_BIN_DIR={prefix}/bin uv tool install" in r.stdout                  # the same copy, not a second

@@ -166,7 +166,7 @@ Every resource has the same fields, plus the fixed fields of its type. Anything 
 
 **Naming vault items:** name each item `<roster host name> <what it opens>` (`orion3 ssh`, `esxi-02 ssh+web`, `shared hub web`, `wifi lab-guest`), and put the address in the item's URI field. The full convention is in [docs/adding-hosts.md](adding-hosts.md#2-add-the-logins-to-the-vault).
 
-**Bitwarden:** run `bw login` once. A locked vault is unlocked once per run, using a master password prompt, `BW_PASSWORD`, or an existing `BW_SESSION`. For headless boxes, set `BW_CLIENTID`/`BW_CLIENTSECRET`.
+**Bitwarden:** run `bw login` (or `roster bw --write login`) once; [`roster bw`](#roster-bw) has the first-time setup, changing a password, and what roster can and can't see. A locked vault is unlocked once per run, using a master password prompt, `BW_PASSWORD`, or an existing `BW_SESSION`. For headless boxes, set `BW_CLIENTID`/`BW_CLIENTSECRET`.
 
 **Where "Save to vault" puts new items** (ticket 35) is a setting, so every Box of a team behaves the same:
 
@@ -249,7 +249,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `reveal NAME [--wifi]` | Print a resource's secret for a person to use (`--wifi`: a QR-ready `WIFI:` string) |
 | `run [--sudo] HOST -- CMD` | Run a command; password-only hosts get their password from the provider. `--sudo` runs it as root, handing sudo the login's password (never shown). On an `os: windows` Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; `--sudo` there is refused (159). See [Windows Hosts](adding-hosts.md#windows-hosts) |
 | `web HOST [SERVICE] METHOD PATH` | HTTP request to a host's web service, logged in with its stored credentials (`-d BODY`, `-H 'Name: value'`, `-k`) |
-| `bw BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts), e.g. `roster bw list items --search proxmox` |
+| `bw [--write] BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts, except `login` and `unlock`), e.g. `roster bw list items --search web-01`. Read-only unless `--write`: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See [`roster bw`](#roster-bw) |
 | `providers` | Available providers, whether their tools are installed, unknown ones in use |
 | `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
 | `revoke [--all]` | Remove this box's key from every host; it names this box's files to delete only once every Host of this `roster.yml` has lost the key (never with `--only`, and never another `roster.yml`'s `config.d/roster`), and exits 1 when a Host was skipped or none was reached. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
@@ -258,6 +258,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
 | `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
+| `completion bash\|zsh\|fish\|powershell` | Print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `info`, `web`, `mesh cut`), groups (`--only`, `discover --group`), resources (`reveal`, `info`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`.
 
@@ -320,6 +321,55 @@ Vault
 1 warning, no errors
 ```
 
+### `roster bw`
+
+`roster bw [--write] [--] BW_ARGS…` runs the Bitwarden CLI with this Box's unlocked vault, so a script, another terminal or a Claude session doesn't have to unlock it again. The session comes from `~/.config/roster/bw-session` (used only if only you can read it) or a `BW_SESSION` in your shell, and goes to `bw` in its environment, never on its command line. bw's input and output are your terminal's: roster never reads, keeps or logs what bw prints. It adds `--nointeraction`, so bw never waits for an answer, except for `login` and `unlock`, which ask for the master password themselves. It exits with bw's status (decision Q178).
+
+**Read-only unless you say so.** Read-only means bw changes nothing in the vault and writes no file on this Box. roster checks bw's command against a list and refuses anything else before bw starts:
+
+| Commands | Run |
+|---|---|
+| `list`, `get`, `status`, `sync`, `generate`, `encode`, `help`, `completion`, `update` | as they are (`sync` updates bw's own copy of the vault) |
+| `create`, `edit`, `delete`, `restore`, `move`, `share`, `confirm`, `import`, `send`, `device-approval`; `export` (it writes the whole vault out), `receive` (it saves a Send from anyone's link), `get attachment` (`attachment` in any case, anywhere after `get`) and any command with `--output` (they write a file) | only with `--write` (else error 164) |
+| `login`, `logout`, `unlock`, `lock`, `config` (the account, not the items) | only with `--write` (else error 164) |
+| `serve` | never: it would hand the unlocked vault to every program on this Box that reaches its port (error 166). Run `bw serve` yourself if you need it |
+| anything else (a newer bw's command, a typo) | never (error 165): the list fails closed |
+
+`--write` is roster's, so it goes before bw's command (`roster bw --write edit item …`, or among bw's options before it); after the command it's refused (165) rather than guessed at. bw's own options before its command (`--pretty`, `--raw`, `--response`, `--quiet`, `--cleanexit`, `--nointeraction`, `--version`) run, as in `roster bw --pretty list items`; any other option there is refused (165). `roster bw --help` is roster's help, `roster bw -- --help` bw's. `--session` is refused anywhere (166): roster passes the session in bw's environment, and on a command line other programs can read it. `roster bw -- --help edit` still needs `--write`; `roster bw help edit` doesn't. A refusal names bw's command only when it's one roster knows, and never repeats bw's arguments. roster's `--nointeraction` goes before any `--` among them, so it's always bw's option. On Windows `bw.exe` and npm's `bw.cmd` both work, with the batch file's limits ([On Windows](#on-windows)).
+
+**First-time setup on a Box:**
+
+```bash
+roster bw --write login                      # once; bw asks for your email and master password itself
+mkdir -p ~/.config/roster
+(umask 077; bw unlock --raw > ~/.config/roster/bw-session)   # or: export BW_SESSION=$(bw unlock --raw)
+chmod 600 ~/.config/roster/bw-session         # umask doesn't tighten a file that was already there
+roster bw status                             # "unlocked"
+roster setup
+```
+
+On a headless Box, sign in with an API key instead: `export BW_CLIENTID=… BW_CLIENTSECRET=…; roster bw --write login --apikey`. `roster bw --write lock` (or `logout`) ends the session; the file goes stale with it.
+
+**Changing a Host's password:** change it on the Host first, then the vault item roster looks up (its `auth: "bw:esx-02 ssh"`). The Bitwarden app or web vault does it by hand. From a terminal, keep the new password off every command line: type it into a variable only `jq` gets, and let bw read the item on its stdin.
+
+```bash
+id=$(roster bw get item "esx-02 ssh" | jq -r .id)
+read -rs NEWPW                               # type the new password; nothing is echoed
+roster bw get item "$id" | NEWPW="$NEWPW" jq '.login.password = env.NEWPW' | roster bw encode \
+  | roster bw --write edit item "$id"
+unset NEWPW
+roster check esx-02                          # the stored Login works again
+```
+
+Other Boxes get it at their next unlock (roster runs `bw sync` then) or with `roster bw sync`.
+
+**What roster can and can't see:**
+
+- **It sees** the arguments you give it, to check bw's command (it never prints, logs or keeps them), the session key it passes to bw, and bw's exit status.
+- **It never sees** what bw prints (a password from `get`, an item's JSON, the key from `unlock --raw`), what you type at bw's prompts (the master password at `login` and `unlock` goes straight to bw), or what you pipe into bw. Nothing is captured, so nothing can end up in roster's logs or errors.
+- **The session reaches only bw:** never a command line, never another program (no 1Password variable in your shell, `OP_SESSION_*`, `OP_SERVICE_ACCOUNT_TOKEN` or any other `OP_*`, is passed to bw either).
+- **What roster can't protect:** whoever runs `roster bw get` reads its output, a Claude session included; read-only doesn't mean nothing secret. bw's arguments are on its command line, where other programs on this Box can read them (`ps`), so never put a password there: pipe it in, as above.
+
 ## Named Inventories
 
 One person may have several Inventories: the team's for work, and their own for home (a Raspberry Pi, the router). They stay separate files (one file would show your home hosts to your teammates and mix two sets of vaults). Name each one on your Box; one is active:
@@ -380,6 +430,19 @@ $ roster check esx-02 --json
 $ roster info nope --json
 {"version": 1, "error": {"code": 2, "message": "unknown host or resource 'nope'", "fix": null}}   (on stderr, exit 1)
 ```
+
+## Tab completion
+
+`install.sh` turns it on without asking (`--no-completion` leaves it off): a line marked `# roster: completion` in `~/.bashrc` and `~/.zshrc` (each one that's there, and your login shell's), and fish's `~/.config/fish/completions/roster.fish`. `uninstall.sh` removes them. By hand, one line in your shell's startup file:
+
+| Shell | Line |
+|---|---|
+| bash (`~/.bashrc`) | `eval "$(roster completion bash)"` |
+| zsh (`~/.zshrc`, after `compinit`) | `eval "$(roster completion zsh)"` |
+| fish | `roster completion fish > ~/.config/fish/completions/roster.fish` (once) |
+| PowerShell (`$PROFILE`) | `roster completion powershell \| Out-String \| Invoke-Expression` |
+
+Each script is short: on every Tab it asks roster (`roster __complete`, hidden) what fits, and roster answers from its own command list, so a new command or option completes without a new script. Names come from the local `roster.yml` (the one `-c` or `--inv` on that line picks, else the usual lookup) and the named Inventories' list, read as plain YAML: no network, no vault, nothing written. A missing or broken `roster.yml` completes no names, and no error is shown. A path (`-c`, `inv add NAME PATH`) is the shell's own file completion.
 
 ## Files
 
@@ -461,7 +524,7 @@ roster reveal lab-guest --wifi | qrencode -t ansiutf8
 - **`CLAUDE.md`** gets an `@ROSTER.md` line added, and its existing content is kept.
 - **`.claude/settings.json`** gets deny rules for reading and editing `~/.ssh`. These are a guardrail, not a wall.
 
-For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster bw …` runs any other `bw` command with it. roster ignores the file unless only you can read it. `bw lock` ends the session, and the file goes stale with it.
+For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster bw …` runs other `bw` commands with it, read-only unless `--write` ([`roster bw`](#roster-bw)). roster ignores the file unless only you can read it. `bw lock` ends the session, and the file goes stale with it.
 
 For password-only gear, start Claude from a shell where your password manager is unlocked, for example `export BW_SESSION=$(bw unlock --raw)`. `roster run` can then fetch the password without Claude ever seeing it.
 

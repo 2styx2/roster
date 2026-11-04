@@ -6,6 +6,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### New
+
+**CLI**
+
+- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
+
 ### Security
 
 **CLI**
@@ -15,6 +21,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **An unanswered sign-in ends after 10 minutes** (#389), stopping `bw login` and forgetting the master password.
 - **The askpass channel checks who connects on macOS** (#390), as on Linux.
 - **`roster web` deletes an expired kept login** (#395).
+- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a Host's password, and what roster can and can't see.
 
 **App**
 
@@ -25,8 +32,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **`install.sh` installs the newest Release, not whatever the checkout is on** (#408): a checkout on a `main` never pulled installed roster 0.1.0 over 0.5.0 without a word. It now fetches `origin` and installs the highest `vX.Y.Z` tag from a clean copy, leaving your checkout as it is (`--ref REF` for another tag or branch; offline, the checkout as it is, with a warning). On a box that already has roster it runs `update.sh` instead, with the same `--yes`, `--dry-run` and `--prefix`; it no longer pulls the map itself.
-- **`update.sh` checks the checkout it installs from** (#408): it fetches, offers to fast-forward a branch that's behind (under `--yes`, only a clean fast-forward), says when it installs an older roster, and warns when the checkout is older than the newest Release tag. It never switches branches or touches uncommitted work.
+- **`install.sh` installs the newest Release, not whatever the checkout is on** (#408): a checkout on a `main` never pulled installed roster 0.1.0 over 0.5.0 without a word. It now fetches `origin` and installs the highest `vX.Y.Z` tag from a clean copy, leaving your checkout as it is (`--ref REF` for another tag or branch; offline, the checkout as it is, with a warning). It never installs an older roster over a newer one without a yes (`--allow-downgrade`). On a box that's set up it runs `update.sh` instead, with the same flags; a box that isn't finished (no map yet, a failed stage, no cron job) gets every stage again, so running it again with `--infra-repo` finishes a first `--yes` run. It no longer pulls the map itself.
+- **`update.sh` checks the checkout it installs from** (#408): it fetches, offers to fast-forward a branch that's behind (under `--yes`, only a clean fast-forward), says when the checkout is older, and never installs an older roster over a newer one without a yes. It never switches branches or touches uncommitted work, and it turns on Tab completion on a box installed before `install.sh` did.
 - **`install.sh` and `update.sh` end with the roster they installed** (#408): `Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`.
 - **`roster -v` prints the version** (#408), as `roster --version` does. Plain `roster` shows the overview and exits 0.
 

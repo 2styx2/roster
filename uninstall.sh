@@ -12,7 +12,7 @@
 #   ./uninstall.sh --prefix DIR  roster is in DIR/bin (as install.sh --prefix DIR put it); or PREFIX=DIR
 #
 # Stages: take this box off its hosts (roster mesh cut --all, roster revoke --all), the auto-update cron job, the
-# lines in shell startup files, this box's SSH key and ssh config, the vault session, roster and its man page, and
+# lines in shell startup files (and fish's Tab completion file), this box's SSH key and ssh config, the vault session, roster and its man page, and
 # the files `roster setup` wrote next to roster.yml. Output of each step goes to ~/.cache/roster-uninstall.log.
 set -uo pipefail
 
@@ -22,6 +22,7 @@ SESSION_FILE="$CONF_DIR/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # the line install.sh adds to shell startup files
 PATH_MARK="# roster: uv tools"           # and the PATH line it adds when ~/.local/bin wasn't there
 MAN_MARK="# roster: man page"            # and the MANPATH line, when man didn't find the page by itself
+COMP_MARK="# roster: completion"         # and the Tab completion line (fish: the file that starts with it)
 
 YES=0 DRY=0 PURGE=0 KEEP_HOSTS=0 PREFIX=${PREFIX:-}
 while (( $# )); do
@@ -234,7 +235,13 @@ fi
 
 # 3. Shell startup
 stage 3
-for f in ${rc_files[@]+"${rc_files[@]}"}; do drop_lines "$f" "$MARK\$" || true; drop_lines "$f" "$MAN_MARK\$" || true; done
+for f in ${rc_files[@]+"${rc_files[@]}"}; do
+    drop_lines "$f" "$MARK\$" || true; drop_lines "$f" "$MAN_MARK\$" || true; drop_lines "$f" "$COMP_MARK\$" || true
+done
+fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
+if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
+    remove "fish's Tab completion for roster ($(home "$fish_file"))" "$fish_file"
+fi
 path_files=()
 for f in ${rc_files[@]+"${rc_files[@]}"}; do grep -qF "$PATH_MARK" "$f" && path_files+=("$f"); done
 if (( ${#path_files[@]} )); then
@@ -337,6 +344,9 @@ else
 fi
 if (( ! keep_roster )); then
 [[ ${page:-} == "$HOME/.local/share/man/man1/roster.1" ]] || remove "the man page" "$HOME/.local/share/man/man1/roster.1"
+remove "the roster source install.sh unpacked" "${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"
+remove "install.sh's kept answers" "$CONF_DIR/install-choices"
+(( DRY )) || rmdir "${XDG_DATA_HOME:-$HOME/.local/share}/roster" 2>/dev/null || true
 # roster's own folder: what roster wrote (Mesh state, the Inventory list) goes; what you put there is asked about.
 # Kept with roster: revoke --all and mesh cut --all need them.
 mine=()

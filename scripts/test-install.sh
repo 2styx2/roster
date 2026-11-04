@@ -47,6 +47,7 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     check "bw installed" '[[ -x ~/.local/bin/bw ]]'
 
     echo "== 2. install.sh again (roster is there: it runs update.sh)"
+    # shellcheck disable=SC2034  # read by the check below, inside its eval
     out=$(./install.sh --yes --infra-repo file:///tmp/map.git); check "exits 0" '[[ $? == 0 ]]'
     check "it hands over to update.sh" 'grep -q "already installed on this box: updating it with ./update.sh" <<<"$out"'
     check "one ROSTER_CONFIG line" '[[ $(grep -c "# roster: ROSTER_CONFIG" ~/.bashrc) == 1 ]]'

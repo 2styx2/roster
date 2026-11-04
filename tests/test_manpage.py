@@ -174,6 +174,10 @@ def test_install_sh_on_a_box_with_roster_updates_it_and_its_page(tmp_path):
     bindir.mkdir(parents=True)
     (bindir / "roster").write_text("#!/bin/sh\necho roster 0.1.0\n")
     (bindir / "roster").chmod(0o755)
+    home = tmp_path / "home"                                  # set up: a map in ROSTER_CONFIG
+    (home / "infra").mkdir(parents=True)
+    (home / "infra/roster.yml").write_text("groups: {}\n")
+    (home / ".bashrc").write_text('export ROSTER_CONFIG="$HOME/infra/roster.yml"   # roster: ROSTER_CONFIG\n')
     out = run_install_sh(tmp_path, "--prefix", str(tmp_path / "opt"), answers="n\n" * 40)
     assert "already installed on this box: updating it with ./update.sh" in out
     assert f"{tmp_path / 'opt'}/share/man/man1/roster.1" in out          # update.sh puts the page beside it
