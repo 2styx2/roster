@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Picker } from "./Picker";
+import { marked, Picker } from "./Picker";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { Host, HostList } from "../backend/types";
 
 function host(name: string, more: Partial<Host> = {}): Host {
@@ -101,6 +102,13 @@ describe("Picker", () => {
     expect(onOpen).toHaveBeenCalledWith(list.hosts[1]);
   });
 
+  it("underlines what the query matched, a term whole where it appears, else its letters", () => {
+    const html = (n: React.ReactNode) => renderToStaticMarkup(<>{n}</>);
+    expect(html(marked("esx-02", "x-0"))).toBe("es<mark>x-0</mark>2");
+    expect(html(marked("proxmox-3-002", "pm3"))).toBe("<mark>p</mark>rox<mark>m</mark>ox-<mark>3</mark>-002");
+    expect(html(marked("router", "zz"))).toBe("router");
+  });
+
   it("marks unreviewed Hosts and won't open them", async () => {
     const { user, onOpen } = setup();
     const row = rows().find((r) => r.dataset.host === "scan-99")!;
@@ -110,7 +118,7 @@ describe("Picker", () => {
     expect(onOpen).not.toHaveBeenCalled();
     // The notice, beside the hidden count that a screen reader hears.
     expect(screen.getAllByRole("status").map((s) => s.textContent).join(" ")).toMatch(/scan-99 isn't reviewed/i);
-    await user.click(screen.getByText("scan-99"));
+    await user.click(screen.getByTitle("scan-99"));
     expect(onOpen).not.toHaveBeenCalled();
   });
 

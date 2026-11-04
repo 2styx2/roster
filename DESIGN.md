@@ -307,7 +307,8 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 ### Picker (signature)
 - **Container:** Panel Graphite, Strong Hairline border, 10px radius, Overlay shadow, over a dimmed backdrop.
 - **Rows:** one shared grid (subgrid) of node, name, IP, group, type, badge and info, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its contents; under 600px only the node, name and IP stay.
-- **Selected:** a raised fill and inset outline. It wraps the full Host name and reveals the info button.
+- **Selected:** a raised fill with a 1px accent outline (the Sidebar cursor's), since it's the row Enter opens. It wraps the full Host name inside the row and reveals the info button.
+- **Matches:** what the query matched is underlined in the text colour (never the accent).
 - **Footer:** 34px, with a tabular Host count and keycap hints (move, open, close). Warnings in the footer use Signal Yellow.
 
 ### Status bar

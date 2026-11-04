@@ -52,6 +52,42 @@ export interface PickerProps {
   live?: ReadonlyMap<string, Light | "connecting">;
 }
 
+/** `text` with what the query's terms matched wrapped in <mark>: each term as one run where it
+ * appears whole (case-insensitive), else its letters in order, as the ranking scatters them. */
+export function marked(text: string, query: string): React.ReactNode {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0 || text === "") return text;
+  const hit = new Array<boolean>(text.length).fill(false);
+  const lower = text.toLowerCase();
+  for (const term of terms) {
+    const at = lower.indexOf(term);
+    if (at >= 0) {
+      for (let i = at; i < at + term.length; i++) hit[i] = true;
+      continue;
+    }
+    const picks: number[] = [];
+    let from = 0;
+    for (const ch of term) {
+      const i = lower.indexOf(ch, from);
+      if (i < 0) break;
+      picks.push(i);
+      from = i + 1;
+    }
+    if (picks.length === term.length) for (const i of picks) hit[i] = true;
+  }
+  if (!hit.includes(true)) return text;
+  const out: React.ReactNode[] = [];
+  let start = 0;
+  for (let i = 1; i <= text.length; i++) {
+    if (i === text.length || hit[i] !== hit[start]) {
+      const part = text.slice(start, i);
+      out.push(hit[start] ? <mark key={start}>{part}</mark> : part);
+      start = i;
+    }
+  }
+  return out;
+}
+
 /** A Host's node in the list, drawn as the Sidebar draws it. */
 function HostNode({ host, how }: { host: Host; how: Light | "connecting" | undefined }) {
   if (!host.reviewed || how === undefined) return <StateDot dot={hostDot(host)} />;
@@ -243,13 +279,13 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
             >
               <HostNode host={host} how={live?.get(host.name)} />
               <span className="host-name" title={host.name}>
-                {host.name}
+                {marked(host.name, query)}
                 {host.reviewed && live?.has(host.name) && (
                   <span className="visually-hidden">{live.get(host.name) === "connecting" ? ", connecting" : ", has a Session"}</span>
                 )}
               </span>
               <span className="host-ip" title={host.ip || undefined}>
-                {host.ip}
+                {marked(host.ip, query)}
               </span>
               <span className="host-group" title={host.group}>
                 {host.group}
