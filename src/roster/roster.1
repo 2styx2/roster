@@ -425,7 +425,7 @@ The Inventory: hosts, groups, resources and vault references, never passwords. r
 This box's roster folder (on Windows, \fB%APPDATA%\eroster\fR, next to the app's \fBinit.lua\fR): \fBroster.yml\fR if you keep it here, \fBproviders/\fR for provider plugins, \fBbw\-session\fR
 .TP
 \fB~/.config/roster/bw\-session\fR
-A saved Bitwarden session (\fBbw unlock \-\-raw\fR), used only if only you can read it
+A saved Bitwarden session (\fBbw unlock \-\-raw\fR), used only if it's yours alone: not a symlink, owned by you, and only you can read it (on Windows: owned by you, and nobody but you, SYSTEM and Administrators may open it)
 .TP
 \fB~/.ssh/roster_ed25519\fR
 This box's SSH key (\fBkey_path:\fR in \fBroster.yml\fR moves it), made by \fBroster setup\fR

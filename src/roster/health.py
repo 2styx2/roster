@@ -5,10 +5,9 @@ vault CLI's own status and the infra repo's git as this Box last saw it. Nothing
 fetches; `roster check HOST` is the one that connects. No check returns a secret (Logins are counted, never read)."""
 
 import platform
-import shutil
 
 from . import __version__, changes, providers, store
-from .common import known_hosts_file, ssh_config_file
+from .common import find_program, known_hosts_file, ssh_config_file
 from .errors import Problem
 from .providers import PROVIDERS
 from .sshops import hk_name, known_names, ssh_config_hosts
@@ -138,7 +137,7 @@ def named(cfg):
 
 def ssh(cfg):
     out = []
-    client = shutil.which("ssh")
+    client = find_program("ssh")
     if client:
         out.append(check("ssh", "ok", f"ssh found: {client}"))
     else:
@@ -228,7 +227,7 @@ def provider_check(name, n):
     except providers.SecretError as e:
         return check("vault", "error", f"{name} ({used}): {e}", None, "E6")
     who = f" as {account['email']}" if account and account.get("email") else ""
-    if status == "missing" or (status == "unsupported" and tool and not shutil.which(tool)):
+    if status == "missing" or (status == "unsupported" and tool and not find_program(tool)):
         return check("vault", "error", f"{name} ({used}): {providers.not_installed(name)}",
                      f"install `{tool or name}`", "E6")
     if status == "unauthenticated":

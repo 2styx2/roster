@@ -7,14 +7,13 @@ returns, prints or logs a password: it is looked up into this process's memory, 
 
 import ipaddress
 import os
-import shutil
 import socket
 import subprocess
 import time
 from contextlib import nullcontext
 
 from . import askpass, errors, providers
-from .common import known_hosts_label, not_reviewed, time_left
+from .common import find_program, known_hosts_label, not_reviewed, time_left
 from .config import is_windows
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
 from .providers import PROVIDERS
@@ -183,7 +182,7 @@ def step_inventory(ctx):
 
 def step_ssh_config(ctx):
     h = ctx["h"]
-    ctx["ssh"] = shutil.which("ssh")
+    ctx["ssh"] = find_program("ssh")
     if ctx["ssh"] is None:
         raise Problem(errors.NOT_SET_UP, "no ssh client on this box's PATH",
                       fix="install OpenSSH (openssh-client)")
