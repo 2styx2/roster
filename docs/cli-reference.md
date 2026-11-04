@@ -69,6 +69,16 @@ groups:
 
 Top-level `links:` add one-way Host-to-Host reach across groups: `- { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true, via: HOST }` (`both` makes it two-way; `via` sends it through a jump Host with `ProxyJump`, and the peer's `from=` names that Host's address). See [The Mesh](mesh.md) and [Through a jump Host](mesh.md#through-a-jump-host).
 
+### Networks with an SSH rate limiter
+
+Some networks have a rate limiter (an IPS, a firewall rule) that stops answering SSH for a few minutes after many connections. If yours does, list those networks at the top level of `roster.yml`, so a Host there that doesn't answer gets a fix that says so:
+
+```yaml
+rate_limited: [10.0.0.0/8, 192.0.2.7, '2001:db8::/32']   # networks or single addresses; quote IPv6 ones. Empty (the default): none
+```
+
+When `roster check HOST`, a Host key scan, Quick Connect or a test login gets no answer (code 42), the fix then reads `10.0.0.5 is in 10.0.0.0/8 (rate_limited: in roster.yml): its SSH rate limiter stops answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop`. An address outside the listed networks gets no rate-limiter hint; with no list, or a Host whose `ip:` is a name, the fix says a rate limiter on the network can cause this. Quote an IPv6 entry (`'2001:db8::/32'`): unquoted, YAML reads some as a number (`1:2:3:4:5:6:7:8`) and can't read others at all (`::1`). A network's address can't have host bits set (`10.0.0.0/8`, not `10.0.0.1/8`), and an entry that isn't a network or an address stops the load, naming the key. The app's Session panel never reads `roster.yml`, so it always gives the generic hint; its `:check HOST` names the network.
+
 ### One login per box, overrides per service
 
 A host's `user` + `auth` are its default login for everything on it. An `ssh:` block or a long-form service entry can override them. This is useful when a web UI uses a different account from SSH:
@@ -283,7 +293,7 @@ Runs the same diagnostics as the app's `:check HOST` (`host.check` below), in th
 | `host-key` | Over that same connection, the key the Host offers matches the one recorded in `~/.ssh/roster_known_hosts`. It's never recorded or accepted here | `43`, `44` |
 | `auth` | One real login with the system ssh: `BatchMode` with the key, or one password prompt through askpass. `StrictHostKeyChecking=yes`, `ControlPath=none` | `45`, `46`, `47`, `36`, `48` |
 
-Key Hosts skip `provider` and `vault-item`. Nothing touches the network once a local step has failed, and a whole check makes at most one TCP connection (port and host key) and one login, so it's safe to run against the 10.19.x rate limiter. It prints one line per step (`ok`, `FAIL` with the code, `skip`), then the fix and ssh's own message under a failure, and exits 1 if a step failed. It never prints a password.
+Key Hosts skip `provider` and `vault-item`. Nothing touches the network once a local step has failed, and a whole check makes at most one TCP connection (port and host key) and one login, so it's safe to run against a network's SSH rate limiter (a no-answer's fix names the network when it's in [`rate_limited:`](#networks-with-an-ssh-rate-limiter)). It prints one line per step (`ok`, `FAIL` with the code, `skip`), then the fix and ssh's own message under a failure, and exits 1 if a step failed. It never prints a password.
 
 ```text
 ok   inventory   root@10.0.0.6:22 (password login)

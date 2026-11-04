@@ -5,6 +5,7 @@
 Every failure is an errors.Problem with a stable code, roster's message and the fix. Nothing here ever
 returns, prints or logs a password: it is looked up into this process's memory, at most."""
 
+import ipaddress
 import os
 import shutil
 import socket
@@ -175,7 +176,7 @@ def step_inventory(ctx):
         raise Problem(errors.NOT_REVIEWED, not_reviewed(h),
                       fix=f"review {h['name']} in roster.yml, then set reviewed: true")
     check_user(h)
-    ctx["cfg"], ctx["h"] = cfg, h
+    ctx["cfg"], ctx["h"], ctx["limited"] = cfg, h, cfg.get("rate_limited") or []
     how = "password" if uses_password(h) else "key" if h["enroll"] else f"auth {h['ssh']['auth'] or 'none'}"
     return f"{h['ssh']['user']}@{h['ip']}:{h['ssh']['port']} ({how} login)"
 
@@ -233,12 +234,26 @@ def step_dns(ctx):
     return f"{h['ip']} resolves"
 
 
-def unreachable_fix(h):
-    fix = "retry later; is the Host up and the network path open?"
-    if h["ip"].startswith("10.19."):
-        fix += (" On 10.19.x the SSH rate limiter stops answering for about 4 minutes after many "
-                "connections: wait a few minutes, don't retry in a loop")
-    return fix
+UNREACHABLE = "retry later; is the Host up and the network path open?"
+
+
+def unreachable_fix(h, limited=()):
+    """The fix for a Host that didn't answer (code 42), from `rate_limited:` in roster.yml (LIMITED, its networks;
+    T191, decision Q180). An address in one of them names it; an address outside them, when the team listed some,
+    gets no rate-limiter hint; with no list, or a name rather than an address, the hint is the generic one."""
+    if limited:
+        try:
+            addr = ipaddress.ip_address(str(h["ip"]).partition("%")[0])
+        except ValueError:
+            addr = None
+        if addr is not None:
+            net = next((n for n in limited if addr in ipaddress.ip_network(n)), None)
+            if net is None:
+                return UNREACHABLE
+            return (f"{UNREACHABLE} {h['ip']} is in {net} (rate_limited: in roster.yml): its SSH rate limiter stops "
+                    "answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop")
+    return (f"{UNREACHABLE} If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in "
+            "a loop")
 
 
 def step_tcp(ctx):
@@ -251,7 +266,7 @@ def step_tcp(ctx):
                       fix="check the port in roster.yml; is sshd running on the Host?", details=str(e)) from None
     except OSError as e:
         raise Problem(errors.TIMEOUT, f"{h['name']} ({where}) didn't answer within {CONNECT_TIMEOUT} s",
-                      fix=unreachable_fix(h), details=str(e)) from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=str(e)) from None
     return f"{where} accepts connections"
 
 
@@ -269,7 +284,7 @@ def step_host_key(ctx):
     except (paramiko.SSHException, OSError, EOFError) as e:
         if not isinstance(e, paramiko.SSHException) or "Incompatible" not in str(e):
             raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                          fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                          fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
         key = None
     finally:
         sock.close()
@@ -307,7 +322,7 @@ def step_auth(ctx):
     r = login_attempt(argv, {**os.environ, **env}, limit, ctx.get("halted"))
     if r is None:
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't finish the login within {limit} s",
-                      fix=unreachable_fix(h))
+                      fix=unreachable_fix(h, ctx.get("limited")))
     if r.returncode == 0:
         return f"logged in as {h['ssh']['user']}"
     details = r.stderr.strip()
@@ -318,7 +333,7 @@ def step_auth(ctx):
             secret = None
         if secret:
             details = details.replace(secret, "****")
-    raise login_failure(h, password, details)
+    raise login_failure(h, password, details, ctx.get("limited"))
 
 
 STOP_POLL = 0.1            # s: how soon a stopped check notices it while its ssh logs in
@@ -382,7 +397,7 @@ def end_process(proc):
     proc.wait()                             # SIGKILL can't be refused: this returns
 
 
-def login_failure(h, password, stderr):
+def login_failure(h, password, stderr, limited=()):
     """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions)."""
     name, user = h["name"], h["ssh"]["user"]
     for line in stderr.splitlines():
@@ -417,7 +432,7 @@ def login_failure(h, password, stderr):
         return Problem(errors.REFUSED, f"{name} refused the connection",
                        fix="check the port in roster.yml; is sshd running on the Host?", details=stderr)
     if "timed out" in low:
-        return Problem(errors.TIMEOUT, f"{name} didn't answer within {LOGIN_TIMEOUT} s", fix=unreachable_fix(h),
+        return Problem(errors.TIMEOUT, f"{name} didn't answer within {LOGIN_TIMEOUT} s", fix=unreachable_fix(h, limited),
                        details=stderr)
     if "could not resolve" in low:
         return Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({name})", fix=f"fix ip: for {name} in roster.yml",
@@ -442,7 +457,7 @@ def stored_password(h):
     return login if login and str(login["auth"]).partition(":")[0].strip() != "prompt" else None
 
 
-def verify_login(h, key_path, previous=None, typed=None, host_key=None):
+def verify_login(h, key_path, previous=None, typed=None, host_key=None, limited=()):
     """One test login to Host H as an edit would leave it (new address, user or Login), or as host.add would add it,
     before anything is written. The same order as check_host, but against H's own values rather than this box's ssh
     config: the local steps, then ONE TCP connection that carries the key exchange and exactly one login attempt.
@@ -455,7 +470,7 @@ def verify_login(h, key_path, previous=None, typed=None, host_key=None):
     with no stored Login (auth: prompt, agent, none) gets everything but the login. A changed Login (auth differs
     from PREVIOUS's) that is a stored password is tested with that password even when H is enroll: true: the key
     login would prove nothing about it. Returns {host, ok, steps} like check_host."""
-    ctx = {"h": h, "key_path": key_path, "previous": previous, "typed": typed, "host_key": host_key,
+    ctx = {"h": h, "key_path": key_path, "previous": previous, "typed": typed, "host_key": host_key, "limited": limited,
            "login_changed": previous is not None and previous["ssh"]["auth"] != h["ssh"]["auth"]}
     steps, failed = [], False
     for step in VERIFY_STEPS:
@@ -555,7 +570,7 @@ def verify_host_key(ctx):
     except (paramiko.SSHException, OSError, EOFError) as e:
         sock.close()
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                      fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
     ctx["transport"] = t
     key = t.get_remote_server_key()
     old = recorded.get(key.get_name())
@@ -581,7 +596,7 @@ def confirmed_host_key(ctx):
     except (paramiko.SSHException, OSError, EOFError) as e:
         sock.close()
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                      fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
     ctx["transport"] = t
     key = t.get_remote_server_key()
     if fingerprint(key) != ctx["host_key"]:
@@ -594,18 +609,18 @@ def confirmed_host_key(ctx):
     return f"the {key.get_name()} key you confirmed, {fingerprint(key)}"
 
 
-def scan_key(h):
+def scan_key(h, limited=()):
     """The host key H's address offers ({key_type, fingerprint}) and how it compares with the one roster recorded
     (recorded: none, match or changed), for the user to confirm before a first login. One connection, key
     exchange only: never logs in, never records anything. Raises Problem 40-42 when it can't get there."""
-    key, state = offered_key(h)
+    key, state = offered_key(h, limited)
     return {"key_type": key.get_name(), "fingerprint": fingerprint(key), "recorded": state}
 
 
-def offered_key(h):
+def offered_key(h, limited=()):
     """scan_key's work: (the paramiko key H's address offers, recorded: none|match|changed)."""
     import paramiko
-    ctx = {"h": h}
+    ctx = {"h": h, "limited": limited}
     step_dns(ctx)
     step_tcp(ctx)
     recorded = recorded_host_keys(h)
@@ -613,7 +628,7 @@ def offered_key(h):
         key = offered_host_key(ctx["sock"], list(recorded), timeout=CONNECT_TIMEOUT)
     except (paramiko.SSHException, OSError, EOFError) as e:
         raise Problem(errors.TIMEOUT, f"{h['ip']} didn't complete the SSH handshake",
-                      fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
     finally:
         ctx["sock"].close()
     old = recorded.get(key.get_name())

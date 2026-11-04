@@ -175,7 +175,8 @@ def parse_inventory(text, path):
              "inline_limit": raw.get("claude_inline_limit") or 60, "hosts": hosts, "groups": groups,
              "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
              "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
-             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])})
+             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or []),
+             "rate_limited": rate_limited(raw.get("rate_limited"))})
     except ValidationError as e:
         die(f"{path}: {problem(e)}")
 
@@ -196,6 +197,35 @@ def host_os(hname, v):
 def is_windows(h):
     """Does roster treat Host H (a Host dict) as Windows? Only `os: windows` says so: type: is a free label."""
     return h.get("os") == "windows"
+
+
+def rate_limited(v):
+    """`rate_limited:` (T191, decision Q180): the networks whose SSH rate limiter stops answering after many
+    connections, as the team knows them; each a network (`10.0.0.0/8`) or one address, IPv4 or IPv6. Empty (the
+    default) when nobody listed any. Returns them as text, one address as a /32 or /128."""
+    if v is None:
+        return []
+    if not isinstance(v, list):
+        die("rate_limited: must be a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]")
+    nets = []
+    for entry in v:
+        text = str(entry).strip()
+        try:
+            nets.append(str(ipaddress.ip_network(text)))
+            continue
+        except ValueError:
+            pass
+        why = f"rate_limited: {oneline(entry)!r} isn't a network or an address (10.0.0.0/8, 192.0.2.7)"
+        if isinstance(entry, int) and not isinstance(entry, bool):
+            why += "; quote an IPv6 one ('2001:db8::/32'): unquoted, YAML can read it as a number"
+        else:
+            try:
+                net = ipaddress.ip_network(text, strict=False)
+                why += f"; a network's address has no host bits set ({net}, not {text})"
+            except ValueError:
+                pass
+        die(why)
+    return nets
 
 
 # ---------------------------------------------------------------- the Mesh's links (decision Q63)

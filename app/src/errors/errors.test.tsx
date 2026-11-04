@@ -161,8 +161,8 @@ describe(":check HOST", () => {
       step: "tcp",
       status: "fail",
       code: 42,
-      message: `${keyHost} (10.19.1.5:22) didn't answer within 5 s`,
-      fix: "retry later; On 10.19.x the SSH rate limiter stops answering for about 4 minutes",
+      message: `${keyHost} (10.0.0.5:22) didn't answer within 5 s`,
+      fix: "retry later; is the Host up and the network path open? 10.0.0.5 is in 10.0.0.0/8 (rate_limited: in roster.yml): its SSH rate limiter stops answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop",
       details: "timed out",
     });
     const { user } = await ready({ checks: { [keyHost]: check } });
