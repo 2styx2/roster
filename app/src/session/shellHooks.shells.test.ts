@@ -10,7 +10,9 @@
 // the test answers the few things they ask the terminal (the device attributes fish 4 waits for at
 // each prompt, the cursor position PSReadLine waits for), as a terminal would.
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { XtermPromptScreen } from "./promptScreen";
 import { hookLine, promptShell, type CursorLine, type ShellKind } from "./shellHooks";
@@ -19,8 +21,9 @@ const has = (shell: string) => spawnSync("sh", ["-c", `command -v ${shell}`]).st
 const ENV = { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: "/tmp", TERM: "xterm-256color", SHELL: "/bin/sh" };
 
 /** Runs `argv` with `lines` piped in, one command a line; what it printed. */
-function run(argv: string[], lines: string[]): string {
+function run(argv: string[], lines: string[], cwd?: string): string {
   const r = spawnSync(argv[0]!, argv.slice(1), {
+    cwd,
     input: lines.join("\n") + "\n",
     encoding: "utf8",
     timeout: 10_000,
@@ -58,6 +61,14 @@ async function screenLine(out: string): Promise<CursorLine> {
   return at;
 }
 
+/** Has the shell drawn `line`, typed in at `mark` in what it printed (`out`)? Read off a screen
+ * of the pty's size, not off the bytes: fish draws a long line in pieces and moves the cursor over
+ * cells it has drawn already (#400), so the bytes needn't hold the line in one piece. The rows from
+ * the one the line went in at, joined (a long line wraps), runs of spaces as one. */
+async function drawnLine(out: string, mark: number, line: string): Promise<boolean> {
+  return Promise.resolve(shown(out.slice(mark)).includes(line.trim()));
+}
+
 /** What the shell printed since the last Enter, and the cursor's line on a screen it's drawn on. */
 type Ready = (since: string, at: CursorLine) => boolean;
 
@@ -73,14 +84,22 @@ function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Pr
     let line: string | undefined;
     let checking = false;
     const next = () => {
+      if (checking) return;
       if (line !== undefined) {
-        if (!shown(out.slice(mark)).includes(line.trim())) return;
-        line = undefined;
-        child.stdin.write("\r");
-        mark = out.length;
+        // Has it drawn the line: on a screen, as a terminal would show it.
+        checking = true;
+        const typed = line;
+        const seen = out.length;
+        void drawnLine(out, mark, typed).then((drawn) => {
+          checking = false;
+          if (!drawn) return out.length !== seen ? next() : undefined; // more came meanwhile: look again
+          line = undefined;
+          child.stdin.write("\r");
+          mark = out.length;
+        });
         return;
       }
-      if (checking || !lines.length) return;
+      if (!lines.length) return;
       // Is it ready: what it printed since the last Enter, drawn on a screen of its own.
       checking = true;
       const since = out.slice(mark);
@@ -144,8 +163,33 @@ const SHELLS: Shell[] = [
   { name: "fish", argv: ["fish", "--no-config", "-i"], kind: "fish", pty: fishReady },
   { name: "pwsh", argv: ["pwsh", "-NoProfile", "-NoLogo"], kind: "pwsh", pty: pwshReady },
 ];
-const runIn = (s: Shell, lines: string[]) => (s.pty ? runPty(s.argv, lines, s.pty) : Promise.resolve(run(s.argv, lines)));
+/** A folder of its own, in no git checkout, for the shells to start in: fish's prompt shows the
+ * folder and the checkout's branch, so a test run in this checkout would see a prompt as long as
+ * the branch name, and the line typed in after it would wrap at another column (#400). */
+const AWAY = mkdtempSync(join(tmpdir(), "roster-shells-"));
+const runIn = (s: Shell, lines: string[], cwd = AWAY) =>
+  s.pty ? runPty(s.argv, lines, s.pty, cwd) : Promise.resolve(run(s.argv, lines, cwd));
 const missing = (s: Shell) => !has(s.name) || (!!s.pty && !hasPty);
+
+// #400: fish draws a long line in pieces, and where a row ends on a cell it has drawn already (a
+// space) it moves the cursor over it rather than print it again: the line is on the screen but not
+// in the bytes, whichever column the prompt (with the branch in it) puts the wrap at.
+describe("telling a shell on a pty has drawn the line typed in", () => {
+  const prompt = "you@esx-02 ~/w/app (main)> ";
+  const line = `${"x".repeat(120 - prompt.length - 7)} printf '%s' end`;
+  // On a 120-column screen "printf" ends the first row; fish moves over the space after it.
+  const head = line.slice(0, line.indexOf(" '"));
+  const drawn = `${prompt}${head}\r\n${ESC}[C'%s' end`;
+
+  it("sees a line whose row ends where fish moves the cursor over a space", async () => {
+    expect(head.length + prompt.length).toBe(120);
+    expect(await drawnLine(drawn, prompt.length, line)).toBe(true);
+  });
+
+  it("waits for a line drawn only in part", async () => {
+    expect(await drawnLine(`${prompt}${head}`, prompt.length, line)).toBe(false);
+  });
+});
 
 describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_, shell) => {
   it.skipIf(missing(shell))("marks prompts, commands and their exit codes, and says the folder", async () => {
@@ -156,6 +200,23 @@ describe.each(SHELLS.map((s) => [s.name, s] as const))("the hook line in %s", (_
     expect(out, tail(out)).toContain(own("D;1"));
     expect(out, tail(out)).toContain(own("D;0"));
     expect(out, tail(out)).toMatch(new RegExp(`${ESC}\\]7;file://[^${BEL}]*/tmp${BEL}`));
+  }, 60_000);
+});
+
+// #400: in a git checkout fish's prompt shows the branch, and the hook line wraps where that puts
+// it: on main's CI (`runner@<host> /h/r/w/r/r/app (main)> `) it never saw the line drawn. With
+// HOME at /tmp, `<tmp>/w/r/r/apps` shows as `~/r/w/r/r/apps`, as long as CI's checkout, so `main`
+// here is that prompt. Whatever the branch, it marks.
+const hasGit = has("git");
+describe.each(["main", "dev", "fix/t211-a-long-branch-name"])("the hook line in fish, in a git checkout on %s", (branch) => {
+  const fish = SHELLS.find((s) => s.name === "fish")!;
+  it.skipIf(missing(fish) || !hasGit)("marks prompts, commands and their exit codes", async () => {
+    const repo = join(mkdtempSync(join(tmpdir(), "roster-shells-git-")), "w", "r", "r", "apps");
+    mkdirSync(repo, { recursive: true });
+    expect(spawnSync("git", ["init", "-q", "-b", branch], { cwd: repo, env: ENV }).status).toBe(0);
+    const out = await runIn(fish, [hookLine("fish", N), "false", "cd /tmp", "exit"], repo);
+    expect(out, tail(out)).toContain(`(${branch})`);
+    for (const mark of ["A", "B", "C", "D;1", "D;0"]) expect(out, tail(out)).toContain(own(mark));
   }, 60_000);
 });
 
