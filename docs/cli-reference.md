@@ -249,7 +249,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `reveal NAME [--wifi]` | Print a resource's secret for a person to use (`--wifi`: a QR-ready `WIFI:` string) |
 | `run [--sudo] HOST -- CMD` | Run a command; password-only hosts get their password from the provider. `--sudo` runs it as root, handing sudo the login's password (never shown). On an `os: windows` Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; `--sudo` there is refused (159). See [Windows Hosts](adding-hosts.md#windows-hosts) |
 | `web HOST [SERVICE] METHOD PATH` | HTTP request to a host's web service, logged in with its stored credentials (`-d BODY`, `-H 'Name: value'`, `-k`) |
-| `bw [--write] BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts, except `login` and `unlock`), e.g. `roster bw list items --search web-01`. Read-only unless `--write`: commands that change the vault, write it out or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See [`roster bw`](#roster-bw) |
+| `bw [--write] BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts, except `login` and `unlock`), e.g. `roster bw list items --search web-01`. Read-only unless `--write`: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See [`roster bw`](#roster-bw) |
 | `providers` | Available providers, whether their tools are installed, unknown ones in use |
 | `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
 | `revoke [--all]` | Remove this box's key from every host; it names this box's files to delete only once every Host of this `roster.yml` has lost the key (never with `--only`, and never another `roster.yml`'s `config.d/roster`), and exits 1 when a Host was skipped or none was reached. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
@@ -324,17 +324,17 @@ Vault
 
 `roster bw [--write] [--] BW_ARGS…` runs the Bitwarden CLI with this Box's unlocked vault, so a script, another terminal or a Claude session doesn't have to unlock it again. The session comes from `~/.config/roster/bw-session` (used only if only you can read it) or a `BW_SESSION` in your shell, and goes to `bw` in its environment, never on its command line. bw's input and output are your terminal's: roster never reads, keeps or logs what bw prints. It adds `--nointeraction`, so bw never waits for an answer, except for `login` and `unlock`, which ask for the master password themselves. It exits with bw's status (decision Q178).
 
-**Read-only unless you say so.** roster checks bw's command against a list and refuses anything else before bw starts:
+**Read-only unless you say so.** Read-only means bw changes nothing in the vault and writes no file on this Box. roster checks bw's command against a list and refuses anything else before bw starts:
 
 | Commands | Run |
 |---|---|
-| `list`, `get`, `status`, `sync`, `generate`, `encode`, `receive`, `help`, `completion`, `update` | as they are |
-| `create`, `edit`, `delete`, `restore`, `move`, `share`, `confirm`, `import`, `send`, `device-approval`, and `export` (it writes the whole vault out) | only with `--write` (else error 164) |
+| `list`, `get`, `status`, `sync`, `generate`, `encode`, `help`, `completion`, `update` | as they are (`sync` updates bw's own copy of the vault) |
+| `create`, `edit`, `delete`, `restore`, `move`, `share`, `confirm`, `import`, `send`, `device-approval`; `export` (it writes the whole vault out), `receive` (it saves a Send from anyone's link), `get attachment` and any command with `--output` (they write a file) | only with `--write` (else error 164) |
 | `login`, `logout`, `unlock`, `lock`, `config` (the account, not the items) | only with `--write` (else error 164) |
 | `serve` | never: it would hand the unlocked vault to every program on this Box that reaches its port (error 166). Run `bw serve` yourself if you need it |
 | anything else (a newer bw's command, a typo) | never (error 165): the list fails closed |
 
-`--write` is roster's, so it goes before bw's arguments: `roster bw --write edit item …`; after them it's refused (165) rather than guessed at. bw's own options before its command (`--pretty`, `--raw`, `--response`, `--quiet`, `--cleanexit`, `--nointeraction`, `--help`, `--version`) need `--` first, as in `roster bw -- --pretty list items`; any other option there is refused (165). `--session` is refused anywhere (166): roster passes the session in bw's environment, and on a command line other programs can read it. `roster bw -- --help edit` still needs `--write`; `roster bw help edit` doesn't. A refusal names bw's command only when it's one roster knows, and never repeats what follows it. On Windows `bw.exe` and npm's `bw.cmd` both work, with the batch file's limits ([On Windows](#on-windows)).
+`--write` is roster's, so it goes before bw's arguments: `roster bw --write edit item …`; after them it's refused (165) rather than guessed at. bw's own options before its command (`--pretty`, `--raw`, `--response`, `--quiet`, `--cleanexit`, `--nointeraction`, `--version`) run, as in `roster bw --pretty list items`; any other option there is refused (165). `roster bw --help` is roster's help, `roster bw -- --help` bw's. `--session` is refused anywhere (166): roster passes the session in bw's environment, and on a command line other programs can read it. `roster bw -- --help edit` still needs `--write`; `roster bw help edit` doesn't. A refusal names bw's command only when it's one roster knows, and never repeats bw's arguments. roster's `--nointeraction` goes before any `--` among them, so it's always bw's option. On Windows `bw.exe` and npm's `bw.cmd` both work, with the batch file's limits ([On Windows](#on-windows)).
 
 **First-time setup on a Box:**
 
@@ -342,6 +342,7 @@ Vault
 roster bw --write login                      # once; bw asks for your email and master password itself
 mkdir -p ~/.config/roster
 (umask 077; bw unlock --raw > ~/.config/roster/bw-session)   # or: export BW_SESSION=$(bw unlock --raw)
+chmod 600 ~/.config/roster/bw-session         # umask doesn't tighten a file that was already there
 roster bw status                             # "unlocked"
 roster setup
 ```
@@ -365,7 +366,7 @@ Other Boxes get it at their next unlock (roster runs `bw sync` then) or with `ro
 
 - **It sees** the arguments you give it, to check bw's command (it never prints, logs or keeps them), the session key it passes to bw, and bw's exit status.
 - **It never sees** what bw prints (a password from `get`, an item's JSON, the key from `unlock --raw`), what you type at bw's prompts (the master password at `login` and `unlock` goes straight to bw), or what you pipe into bw. Nothing is captured, so nothing can end up in roster's logs or errors.
-- **The session reaches only bw:** never a command line, never another program (a 1Password sign-in in your shell isn't passed to bw either).
+- **The session reaches only bw:** never a command line, never another program (no 1Password variable in your shell, `OP_SESSION_*`, `OP_SERVICE_ACCOUNT_TOKEN` or any other `OP_*`, is passed to bw either).
 - **What roster can't protect:** whoever runs `roster bw get` reads its output, a Claude session included; read-only doesn't mean nothing secret. bw's arguments are on its command line, where other programs on this Box can read them (`ps`), so never put a password there: pipe it in, as above.
 
 ## Named Inventories

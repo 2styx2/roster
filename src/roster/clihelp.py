@@ -61,7 +61,7 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
                ("roster revoke --all", "off every Inventory's hosts (before removing roster)")],
     "bw": [("roster bw list items --search web-01", "bw with this box's saved session (read-only)"),
            ("roster bw sync", "pull the vault"),
-           ("roster bw --write login", "sign in (vault-changing and account commands need --write)")],
+           ("roster bw --write login", "sign in (vault-changing, file-writing and account commands need --write)")],
     "providers": [("roster providers", "which password providers work here")],
     "man": [("roster man", "the manual"),
             ("roster man --install", "so `man roster` finds it")],

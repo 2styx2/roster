@@ -398,7 +398,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `159` | `roster run --sudo` on an `os: windows` Host: refused, Windows has no sudo over ssh; nothing ran. A CLI error, never a serve answer |
 | `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
 | `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
-| `164` | `roster bw`: a bw command that changes the vault, writes it out (`export`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
+| `164` | `roster bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
 | `165` | `roster bw`: a bw command (or an option before it) roster bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
 | `166` | `roster bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
 
