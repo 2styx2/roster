@@ -49,14 +49,16 @@ fn said(ops: &[Value], id: &str) -> String {
         .to_string()
 }
 
+/// api 6 (#242, decision Q185) added `cwd` to `roster.sessions.list()`'s Sessions and to
+/// `command_done`; what api 5 brought is unchanged.
 #[test]
-fn the_api_version_is_5() {
+fn the_api_version_is_6() {
     let (ops, error) = load(
         "version",
         r#"roster.status.set("v", { text = tostring(roster.api_version) })"#,
     );
     assert_eq!(error, None);
-    assert_eq!(said(&ops, "v"), "5");
+    assert_eq!(said(&ops, "v"), "6");
 }
 
 #[test]

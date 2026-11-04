@@ -295,6 +295,8 @@ interface Loaded {
   manifest: PluginManifest;
   path: string;
   granted: string[];
+  /** The events it listens for, as the core last said (#223: a reply's `listens`). */
+  listens: Set<string>;
   disposers: Map<string, () => void>;
   /** Its views as last set and updated, so an update changes some rows in place. */
   views?: Map<string, PluginView>;
@@ -304,7 +306,7 @@ export class PluginManager {
   /** The Plugins running now. */
   private readonly loaded = new Map<string, Loaded>();
   /** Every Plugin loaded since the start, running or not: what `:plugins` lists. */
-  private readonly known = new Map<string, Omit<Loaded, "disposers">>();
+  private readonly known = new Map<string, Omit<Loaded, "disposers" | "listens">>();
   private readonly problems = new Map<string, string>();
   /** The replies that came for a Plugin while it loads (answers to what its init.lua asked can
    * overtake the load's own reply): applied once the load's are. */
@@ -844,6 +846,12 @@ export class PluginManager {
     return [...this.loaded.values()].some((l) => l.granted.includes("terminal.read"));
   }
 
+  /** Whether any running Plugin hears `command_done` (#223, Q185): only then is a command's
+   * output kept for it. The core says which events each listens for (a reply's `listens`). */
+  private hearsDone(): boolean {
+    return [...this.loaded.values()].some((l) => l.granted.includes("terminal.read") && l.listens.has("command_done"));
+  }
+
   /** A Session's output (tabs' tap), with the size of its terminal: it goes through a terminal
    * of its own, and the lines it commits go as `terminal_output` to the Plugins granted
    * terminal.read, batched (ticket 79: from the terminal's buffer, not the raw stream). */
@@ -860,7 +868,10 @@ export class PluginManager {
     s.host = host;
     // In order: a resize lands between the output before it and after it.
     const { lines } = s;
+    // Asked as each output comes, so a listener added meanwhile counts from the next command.
+    const wanted = this.hearsDone();
     s.done = s.done.then(() => {
+      lines.collectDone(wanted);
       lines.resize(size);
       return lines.write(data);
     });
@@ -1108,7 +1119,7 @@ export class PluginManager {
     const asked = manifest.permissions.map((p) => p.name);
     const info = { manifest, path, granted: granted === null ? asked : granted.filter((g) => asked.includes(g)) };
     this.known.set(manifest.name, info);
-    this.loaded.set(manifest.name, { ...info, disposers: new Map() });
+    this.loaded.set(manifest.name, { ...info, listens: new Set(), disposers: new Map() });
     this.problems.delete(manifest.name);
     this.apply(reply, { loading: true, background: true });
     this.changed();
@@ -1142,6 +1153,7 @@ export class PluginManager {
   private apply(reply: PluginReply, { loading = false, background = false }: { loading?: boolean; background?: boolean } = {}) {
     const name = reply.plugin;
     const l = this.loaded.get(name);
+    if (l && reply.listens) l.listens = new Set(reply.listens);
     if (l) {
       let copying: Promise<boolean> | null = null;
       for (const raw of reply.ops) {
