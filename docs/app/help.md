@@ -112,7 +112,7 @@ The page starts with the lessons and how far along each is. Each lesson says wha
 
 What's done is kept in the State, so `:tutor` comes back at the first lesson you haven't finished, and `:tutor reset` starts over. Nothing else from the demo is kept: a Theme picked there, its Sessions and its recent Hosts go when you leave. `:config` there opens your real `init.lua`, since that's what the lesson is about.
 
-Tutorials are a registry too (`registries.tutorials`), so a Plugin can ship one (`roster.tutor.set`, [plugins.md](../plugins.md#a-plugins-tutorial)); `:tutor NAME` runs it and `:help tutor-NAME` shows its page.
+Tutorials are a registry too (`registries.tutorials`), so a Plugin can ship one (`roster.tutor.set`, [plugins.md](../plugins.md#a-plugins-tutorial)); `:tutor NAME` runs it and `:help tutor-NAME` shows its page. The first-party [Topology Plugin](../../plugins/topology/README.md) has one: `:tutor topology`.
 
 Your Plugins come along. The ones running in your workspace load in the demo too, with the permissions you granted them, so a Plugin's tutorial can have you run the Plugin itself. There they see the demo's Hosts, not yours: roster serve answers only the demo's Host list, a request to the network is never sent, and what a Plugin keeps in its files starts empty and is thrown away when you leave. Your workspace's copy of each keeps running behind, untouched. One that fails to load in the demo says so in a notice, marked "(in the demo)" after its name, and the tutorial goes on without it ([errors](errors.md#a-plugin-on-the-demo-inventory)).
 
