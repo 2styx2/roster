@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import __version__, boxsync, jsonout, mesh
+from . import __version__, boxsync, clihelp, jsonout, mesh
 from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
 from .config import access_label, find_config, load_config, matches, selected
@@ -1093,19 +1093,41 @@ def main(argv=None):
 
 
 class Parser(argparse.ArgumentParser):
-    """roster's argument parser: with --json on the command line, a usage error is JSON on stderr (exit 2)."""
+    """roster's argument parser: with --json on the command line, a usage error is JSON on stderr (exit 2). A
+    mistyped command gets the nearest name instead of the whole list, and every usage error says where help is.
+    roster's own --help lists the commands in groups (clihelp.GROUPS) before its options."""
     json_errors = False
+    commands_text = ""
 
     def error(self, message):
+        message = clihelp.suggest(message, self.all_options())
         if Parser.json_errors:
             jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")
             sys.exit(2)
-        super().error(message)
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n(`{self.prog} --help` shows how)\n")
+
+    def all_options(self):
+        """Every --option of this parser and its commands' (an unknown one is reported by roster's own parser)."""
+        found = []
+        for a in self._actions:
+            found += [o for o in a.option_strings if o.startswith("--")]
+            if isinstance(a, argparse._SubParsersAction):
+                for s in a.choices.values():
+                    found += s.all_options()
+        return sorted(set(found))
+
+    def format_help(self):
+        text = super().format_help()
+        if not self.commands_text:
+            return text
+        head, sep, tail = text.partition("\noptions:\n")
+        return f"{head}\n{self.commands_text}\n{sep}{tail}" if sep else f"{text}\n{self.commands_text}\n"
 
 
 def build_parser():
     """Every command and option. The man page (roster.manpage) is generated from this too."""
-    p = Parser(prog="roster",
+    p = Parser(prog="roster", usage=clihelp.USAGE, formatter_class=clihelp.Formatter,
                description="Give this box (and Claude) access to the hosts in roster.yml.")
     p.add_argument("--version", action="version", version=f"roster {__version__}")
     which = p.add_mutually_exclusive_group()
@@ -1113,7 +1135,9 @@ def build_parser():
                        "./roster.yml, the active named Inventory, then ~/.config/roster/roster.yml)")
     which.add_argument("--inv", metavar="NAME", help="use the named Inventory NAME for this one command "
                        "(`roster inv list` names them)")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    # no COMMAND: _main shows the overview. The commands are listed by commands_text (in groups), not argparse
+    # prog: each command's usage is `roster run ...`, not built from the usage above (the man page's synopsis too)
+    sub = p.add_subparsers(dest="cmd", metavar="COMMAND", help=argparse.SUPPRESS, prog="roster")
     only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
     as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
                "Machine-readable output in docs/cli-reference.md)"}
@@ -1215,6 +1239,14 @@ def build_parser():
     s.add_argument("--install", action="store_true",
                    help="copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv tool install)")
     s.add_argument("--prefix", metavar="DIR", help="with --install: install into DIR/share/man/man1/ instead")
+    # each command's --help opens with its one-line help as a sentence and ends with examples (clihelp)
+    helps = {a.dest: a.help or "" for a in sub._choices_actions}
+    for name, s in sub.choices.items():
+        s.description = clihelp.description(helps[name])
+        s.epilog = clihelp.examples_text(name) or None
+        s.formatter_class = clihelp.Formatter
+    p.commands_text = clihelp.overview(helps)
+    p.epilog = clihelp.more()
     return p
 
 
@@ -1234,8 +1266,12 @@ def inventory(args):
 
 
 def _main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
+    if args.cmd is None:                    # plain `roster`: what it can do, not an argparse error
+        sys.stdout.write(parser.format_help())
+        return 0
     if args.cmd == "askpass":
         from .askpass import main as askpass_main
         return askpass_main([args.prompt])

@@ -43,6 +43,8 @@ src/roster/
                     the job.progress notification; serve's exit stops every job and records it
   edit.py           editing one Host in roster.yml as text, adding, removing, renaming or moving one, and groups (comments and other entries kept), checked before it's written
   changes.py        Pending changes: the infra repo's git (pull fast-forward only, roster.yml's diff, discard, the .bak, publish)
+  clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
+                    and the nearest name for a mistyped command or option
   manpage.py        roster(1): generated from the parser (cli.build_parser) and docs/cli-reference.md into
                     roster.1 (committed, shipped in the wheel); `roster man`. Regenerate: uv run python -m roster.manpage
   errors.py         the stable error codes and Problem (code, message, fix): what serve, askpass and check report
