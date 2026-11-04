@@ -51,8 +51,8 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "reveal": [("roster reveal lab-guest", "print its secret, for you to type in"),
                ("roster reveal lab-guest --wifi", "a WIFI:... string for a QR code")],
     "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
-            ("roster add nas-01 --auth bw:nas-01 --from-vault --check", "address and user from the vault item, then "
-             "auth-check and setup for it"),
+            ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
+             "setup and check for it"),
             ("roster add web-01 --ip 10.0.0.20 --dry-run", "the lines it would add; nothing written")],
     "discover": [("roster discover 10.0.1.0/24", "preview what answers; nothing written"),
                  ("roster discover 10.0.1.0/24 --write --group lab", "add them, unreviewed, to roster.yml")],

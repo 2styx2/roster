@@ -118,20 +118,34 @@ def test_dry_run_prints_the_lines_and_writes_nothing(capsys, yml):
     assert yml.read_text() == YML and not (yml.parent / "roster.yml.bak").exists()
 
 
-def test_without_check_it_prints_the_next_two_commands(capsys, yml):
+def test_without_setup_it_prints_the_next_two_commands(capsys, yml):
     out = run(capsys, "nas", "--ip", "10.0.0.50", "--yes")[1]
-    assert "roster auth-check --only nas" in out and "roster setup --only nas" in out
+    assert "roster setup --only nas" in out and "roster check nas" in out
 
 
-def test_check_runs_auth_check_and_setup_for_the_new_host(capsys, yml, monkeypatch):
+def test_the_write_is_said_before_this_box_syncs(capsys, yml, isolated):
+    out = run(capsys, "nas", "--ip", "10.0.0.50", "--yes")[1]
+    assert out.index("wrote        nas") < out.index("ssh config") < out.index("next ")
+    assert "nas" in (isolated["home"] / ".ssh/config.d/roster").read_text()       # synced: `ssh nas` works now
+
+
+def test_setup_runs_setup_then_check_for_the_new_host(capsys, yml, monkeypatch, fakes):
     import roster.cli as cli
     monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())     # no network: no host key scan
     monkeypatch.setenv("NAS_PW", "x")
-    rc, out, _ = run(capsys, "nas", "--ip", "10.0.0.50", "--group", "lab", "--auth", "env:NAS_PW", "--no-enroll",
-                     "--check", "--yes")
-    assert rc == 0
-    assert "check        roster auth-check --only nas" in out and "check        roster setup --only nas" in out
-    assert "auth-check   ok" in out and "setup        ok" in out and "1 password-only hosts" in out
+    rc, out, _ = run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW",
+                     "--no-enroll", "--setup", "--yes")                # port 1 here: nothing answers, nothing leaves
+    assert "setup        roster setup --only nas" in out and "check        roster check nas" in out
+    assert out.index("roster setup --only nas") < out.index("roster check nas")
+    assert "1 password-only hosts" in out and "setup        ok" in out
+    assert rc == 1 and "check        FAILED (see above)" in out       # its check found nothing listening
+
+
+def test_name_is_needed_unless_from_vault(capsys, yml):
+    with pytest.raises(SystemExit) as e:
+        main(["add", "--ip", "10.0.0.50"])
+    assert e.value.code == 2 and "needs NAME" in capsys.readouterr().err
+    assert yml.read_text() == YML
 
 
 def git(cwd, *args):

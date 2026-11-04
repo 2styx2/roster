@@ -227,16 +227,16 @@ A local database is this Box's own, so the app's `init.lua` can name it instead:
 
 ```bash
 roster add NAME --ip ADDR [--user USER] [--auth REF] [--group GROUP] [--enroll | --no-enroll] [--os windows|posix]
-           [--title TEXT] [--type TEXT] [--port N] [--from-vault] [--check] [--dry-run] [-y]
+           [--title TEXT] [--type TEXT] [--port N] [--from-vault] [--setup] [--dry-run] [-y]
 ```
 
 `roster add` puts one Host you already know into `roster.yml`, reviewed, the way the app's add-Host form does: it's the same code (serve's `host.add`), so the two check and write a Host the same way.
 
-- **Where:** under `--group`, an existing group or a new one (made after the last group, and said so); without it, the first group in the file. Only the new Host's lines are added: comments, order and quoting stay byte for byte, and it's written only if the result loads to exactly that Host with nothing else changed. A team repo's `roster.yml` gets it as a Pending change (the note says so: publish it from the app, or commit it); a plain file is saved in place, `roster.yml.bak` beside it ([A plain file or a team repo](#a-plain-file-or-a-team-repo)). Then this Box syncs, as `roster sync` does.
+- **Where:** under `--group`, an existing group or a new one (made after the last group, and said so); without it, the first group in the file. Only the new Host's lines are added: comments, order and quoting stay byte for byte, and it's written only if the result loads to exactly that Host with nothing else changed. A team repo's `roster.yml` gets it as a Pending change (the note says so: publish it from the app, or commit it); a plain file is saved in place, `roster.yml.bak` beside it ([A plain file or a team repo](#a-plain-file-or-a-team-repo)). It says what it wrote (`backup`, `wrote`), then syncs this Box as `roster sync` does (its ssh config and Claude files), as `roster discover --write` and `roster mesh cut` do: `ssh NAME` works straight away. If the sync fails, the Host stays written and a `warning:` on stderr says why and to run `roster sync`.
 - **What it refuses**, writing nothing: a bad name (letters, digits, `. _ -`), a bad address (not an IPv4 or IPv6 address or a DNS name, e.g. a URL), a name another Host has (81, naming its group), an address and SSH port another Host has (184, naming that Host: give `--port` for a second sshd on one machine). Values the Host would inherit anyway (its group's `user:`, `auth:`, `enroll:`) aren't written on it.
 - **Asking:** in a terminal it asks for what's missing: the group (the first one is the default), the address, and whether to install this Box's key (`enroll`, the group's setting is the default). With `-y`/`--yes`, or without a terminal, it never asks: a value with a default takes it, and one without (the address; a user or Login when neither the group nor `defaults:` sets one) is an error naming its flag (185).
 - **`--from-vault`** (with `--auth bw:ITEM`): fills `--ip` (and `--port`, from an `ssh://HOST:PORT` URI) from the item's URI and `--user` from its username, with `bw get uri` and `bw get username`, which print only that field, so the item's password never reaches roster. Flags you give win. Several items matching the name need the item's id (roster won't list them: that would read their passwords). Providers that can't give these fields without the password (`op`, `kp`, `pass`, `env`, ...) are refused (186): give `--ip` and `--user`.
-- **`--check`**: then runs `roster auth-check --only NAME` and `roster setup --only NAME` (host key, and this Box's key on it when `enroll` is true), and ends with how each went; it exits 1 if either failed. Without it, roster add prints those two commands as the next step.
+- **`--setup`**: then runs `roster setup --only NAME` (its host key, and this Box's key on it when `enroll` is true) and `roster check NAME` (a Session to it would open, step by step), and ends with how each went; it exits 1 if either failed. Without it, roster add prints those two commands as the next step.
 - **`--dry-run`** prints the lines it would add and writes nothing.
 
 ## Discover
@@ -265,7 +265,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | Command | What it does |
 |---|---|
 | `init [--blank \| --inventory HOW] [--name NAME]` | Write the commented example `roster.yml` (to `-c PATH`, else `./roster.yml`), or a new Inventory: `--blank` (same as `--inventory blank`) a short one with an empty group and a Host to copy commented out; `--inventory file:PATH` a copy of that `roster.yml`, once it loads; `repo:URL` a `git clone` of the team's repo into `roster.yml`'s folder (empty or new); `ssh-config[:PATH]` the Hosts in `~/.ssh/config` (or PATH): see [A new Inventory](#a-new-inventory). A file already there is kept (170): make the new one in another folder, and `--name NAME` names it (`roster inv add`) |
-| `add NAME --ip ADDR […]` | Add one Host you already know to `roster.yml`, reviewed, the way the app's add-Host form does (the same code): under `--group` (new or existing; default the first), with `--user`, `--auth`, `--enroll`/`--no-enroll`, `--os`, `--title`, `--type`, `--port`. Asks in a terminal for what's missing; `-y` never asks. `--from-vault` fills the address and user from the `--auth` item, never its password; `--check` then runs auth-check and setup for it; `--dry-run` writes nothing. See [Adding one Host](#adding-one-host-roster-add) |
+| `add NAME --ip ADDR […]` | Add one Host you already know to `roster.yml`, reviewed, and syncs this Box, the way the app's add-Host form does (the same code): under `--group` (new or existing; default the first), with `--user`, `--auth`, `--enroll`/`--no-enroll`, `--os`, `--title`, `--type`, `--port`. Asks in a terminal for what's missing; `-y` never asks. `--from-vault` fills the address and user from the `--auth` item, never its password; `--setup` then runs setup and check for it; `--dry-run` writes nothing. See [Adding one Host](#adding-one-host-roster-add) |
 | `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`) |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
@@ -555,7 +555,7 @@ roster check esx-02                      # why a Session to esx-02 would or woul
 roster check --box                       # this Box's health: roster.yml, ssh, vault, infra repo
 roster run esx-02 -- uptime              # run a command with the stored login
 roster web esx-02 GET /api/status        # an HTTP request, logged in
-roster add nas-01 --ip 10.0.5.50 --auth bw:nas-01 --check   # one Host you know, then set it up
+roster add nas-01 --ip 10.0.5.50 --auth bw:nas-01 --setup   # one Host you know, then set it up
 roster discover 10.0.5.0/24              # scan a network, preview only
 roster reveal lab-guest --wifi | qrencode -t ansiutf8
 ```

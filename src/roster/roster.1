@@ -12,7 +12,7 @@ roster resources [\-\-only LIST] [\-\-find TEXT] [\-\-json]
 roster reveal [\-\-wifi] name
 roster info [\-\-json] NAME [NAME ...]
 roster run [\-\-sudo] host ...
-roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-check] [\-\-dry\-run] [\-y] NAME
+roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster bw [\-\-write] ...
 roster providers [\-\-json]
@@ -167,12 +167,12 @@ the host to run it on
 the command, after \-\-
 .SS add
 .PP
-\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-check] [\-\-dry\-run] [\-y] NAME\fR
+\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
 .PP
-Add one Host you already know to \fBroster.yml\fR, reviewed, the way the app's add\-Host form does (the same code): under \fB\-\-group\fR (new or existing; default the first), with \fB\-\-user\fR, \fB\-\-auth\fR, \fB\-\-enroll\fR/\fB\-\-no\-enroll\fR, \fB\-\-os\fR, \fB\-\-title\fR, \fB\-\-type\fR, \fB\-\-port\fR\&. Asks in a terminal for what's missing; \fB\-y\fR never asks. \fB\-\-from\-vault\fR fills the address and user from the \fB\-\-auth\fR item, never its password; \fB\-\-check\fR then runs auth\-check and setup for it; \fB\-\-dry\-run\fR writes nothing. See Adding one Host
+Add one Host you already know to \fBroster.yml\fR, reviewed, and syncs this Box, the way the app's add\-Host form does (the same code): under \fB\-\-group\fR (new or existing; default the first), with \fB\-\-user\fR, \fB\-\-auth\fR, \fB\-\-enroll\fR/\fB\-\-no\-enroll\fR, \fB\-\-os\fR, \fB\-\-title\fR, \fB\-\-type\fR, \fB\-\-port\fR\&. Asks in a terminal for what's missing; \fB\-y\fR never asks. \fB\-\-from\-vault\fR fills the address and user from the \fB\-\-auth\fR item, never its password; \fB\-\-setup\fR then runs setup and check for it; \fB\-\-dry\-run\fR writes nothing. See Adding one Host
 .TP
 \fBNAME\fR
-the new Host's name: letters, digits, . _ \-
+the new Host's name: letters, digits, . _ \- (needed unless \-\-from\-vault)
 .TP
 \fB\-\-ip ADDR\fR
 its address: an IPv4 or IPv6 address or a DNS name (asked for in a terminal when it's missing)
@@ -207,8 +207,8 @@ its SSH port (default: 22)
 \fB\-\-from\-vault\fR
 fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw); flags given win
 .TP
-\fB\-\-check\fR
-then run auth\-check and setup for it alone, and say how each went
+\fB\-\-setup\fR
+then run setup for it alone (its host key, and this Box's key on it when enrolled) and check it, and say how each went
 .TP
 \fB\-\-dry\-run\fR
 print the lines it would add; write nothing
@@ -548,7 +548,7 @@ roster check esx\-02                      # why a Session to esx\-02 would or wo
 roster check \-\-box                       # this Box's health: roster.yml, ssh, vault, infra repo
 roster run esx\-02 \-\- uptime              # run a command with the stored login
 roster web esx\-02 GET /api/status        # an HTTP request, logged in
-roster add nas\-01 \-\-ip 10.0.5.50 \-\-auth bw:nas\-01 \-\-check   # one Host you know, then set it up
+roster add nas\-01 \-\-ip 10.0.5.50 \-\-auth bw:nas\-01 \-\-setup   # one Host you know, then set it up
 roster discover 10.0.5.0/24              # scan a network, preview only
 roster reveal lab\-guest \-\-wifi | qrencode \-t ansiutf8
 .RE

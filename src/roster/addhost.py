@@ -28,14 +28,16 @@ from .errors import (
 )
 
 
-def add(path, group, name, fields, sync=None, dry_run=False, new_address=False):
+def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, on_write=None):
     """Host NAME (FIELDS: edit.NEW_FIELDS, already checked with edit.check_new) added to GROUP of roster.yml at PATH,
     the group made when it's new. Returns `{host, group, new_group, lines, kind, note, backup, sync}`: the Host as
     it loads now, the lines added, how roster.yml is kept (store.py: `repo` or `file`, and its note), the backup and
     SYNC()'s answer (default: boxsync's for PATH; never raises, the Host is written by then). With DRY_RUN nothing is
     written: `backup` and `sync` are None. NEW_ADDRESS (`roster add`): refuse an address and SSH port another Host
     has already (184); the app's form allows it (two Logins on one machine, Q190). Raises Problem: 80 a bad name,
-    group, address or value, 81 the name is taken, 184, 74 the result doesn't come out right, or store.py's."""
+    group, address or value, 81 the name is taken, 184, 74 the result doesn't come out right, or store.py's.
+    ON_WRITE(result) runs once the Host is written, before the sync (the CLI says what it wrote there, so the sync's
+    own lines come after it, as after `discover --write`)."""
     kept = store.at(path)
     old, new, h = edit.added(kept.path, group, name, fields)
     other = same_address(load_config(kept.path), h) if new_address else None
@@ -49,8 +51,10 @@ def add(path, group, name, fields, sync=None, dry_run=False, new_address=False):
             "kind": kept.kind, "note": kept.note, "backup": None, "sync": None}
     if dry_run:
         return done
-    backup = kept.save(old, new)
-    return {**done, "backup": str(backup), "sync": safely(sync or (lambda: boxsync.sync(lambda: load_config(kept.path))))}
+    done["backup"] = str(kept.save(old, new))
+    if on_write is not None:
+        on_write(done)
+    return {**done, "sync": safely(sync or (lambda: boxsync.sync(lambda: load_config(kept.path))))}
 
 
 def same_address(cfg, h):
@@ -136,12 +140,14 @@ def uri_address(uri):
 
 def cmd_add(cfg, args):
     """`roster add NAME --ip ADDR ...`: one reviewed Host into roster.yml (add()), its next steps said or, with
-    --check, run (auth-check and setup for it alone)."""
+    --setup, run (setup for it alone, then check it)."""
     import sys
 
     from .common import die, say
     ask = sys.stdin.isatty() and not args.yes
     path = cfg["path"]
+    if args.name is None:                       # T221 (#428) lists the vault's items no Host uses here
+        needs("NAME", "roster add adds one Host by name")
     got = {"ip": args.ip, "user": args.user, "port": args.port}
     if args.from_vault:
         if not args.auth:
@@ -180,50 +186,57 @@ def cmd_add(cfg, args):
         fields = {k: edit.check_new(k, v) for k, v in wanted.items() if v is not None}
     except ValueError as e:
         die(f"[{edit.INVALID_HOST}] {e}")
+    where = f"group '{group}'"
     try:
-        r = add(path, group, args.name, fields, dry_run=args.dry_run, new_address=True)
+        r = add(path, group, args.name, fields, dry_run=args.dry_run, new_address=True,
+                on_write=lambda done: written(args.name, where, path, group, done))
     except Problem as e:
         die(shown(e))
-    where = f"group '{group}'" + (" (a new group)" if r["new_group"] else "")
     if args.dry_run:
-        say(f"would add    {args.name} to {where} in {path} (--dry-run: nothing written):")
+        new = " (a new group)" if r["new_group"] else ""
+        say(f"would add    {args.name} to {where}{new} in {path} (--dry-run: nothing written):")
         for line in r["lines"]:
             say(f"  {line}")
         return 0
+    if not r["sync"]["ok"]:                     # as boxsync.after_edit says it after discover --write
+        print(f"warning: this Box's ssh config didn't follow roster.yml ({r['sync']['error']}): {r['sync']['fix']}",
+              file=sys.stderr, flush=True)
+    return set_up(args, path) if args.setup else next_steps(args.name)
+
+
+def written(name, where, path, group, r):
+    """What `roster add` wrote, said as `discover --write` says it, before this Box's sync."""
+    from .common import say
     say(f"backup       {r['backup']}")
-    say(f"wrote        {args.name} into {where} in {path}")
+    say(f"wrote        {name} into {where}" + (" (a new group)" if r["new_group"] else "") + f" in {path}")
     if r["new_group"]:
         say(f"new group    '{group}': roster.yml had no group by that name, so it's made")
     if r["kind"] == store.REPO:
         say(f"note         {r['note']}")
-    if not r["sync"]["ok"]:
-        print(f"warning: this Box's ssh config didn't follow roster.yml ({r['sync']['error']}): {r['sync']['fix']}",
-              file=sys.stderr, flush=True)
-    return check(args, path) if args.check else next_steps(args.name)
 
 
 def next_steps(name):
     from .common import say
-    say(f"next         roster auth-check --only {name}   (its Login resolves)")
-    say(f"             roster setup --only {name}        (host key, and this Box's key on it when enroll is true)")
+    say(f"next         roster setup --only {name}   (host key, and this Box's key on it when enroll is true)")
+    say(f"             roster check {name}          (a Session to it would open, step by step)")
     return 0
 
 
-def check(args, path):
-    """--check: auth-check and setup for the new Host alone, each one's outcome said; non-zero if either failed."""
+def set_up(args, path):
+    """--setup: `setup --only NAME`, then `check NAME`, each one's outcome said; non-zero if either failed."""
     import argparse
 
     from . import cli
     from .common import say
     cfg = load_config(path)
-    say(f"\ncheck        roster auth-check --only {args.name}")
-    auth = cli.cmd_auth_check(cfg, argparse.Namespace(only=args.name, json=False))
-    say(f"\ncheck        roster setup --only {args.name}")
+    say(f"\nsetup        roster setup --only {args.name}")
     setup = cli.cmd_setup(cfg, argparse.Namespace(only=args.name, dry_run=False))
+    say(f"\ncheck        roster check {args.name}")
+    check = cli.cmd_check_host(argparse.Namespace(host=args.name, config=str(path), inv=None, json=False))
     say()
-    say(f"auth-check   {'ok' if not auth else 'FAILED (see above)'}")
     say(f"setup        {'ok' if not setup else 'FAILED (see above)'}")
-    return 1 if auth or setup else 0
+    say(f"check        {'ok' if not check else 'FAILED (see above)'}")
+    return 1 if setup or check else 0
 
 
 def prompt(text):

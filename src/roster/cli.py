@@ -1386,7 +1386,8 @@ def build_parser():
     s.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
     s = sub.add_parser("add", help="add one Host you already know to roster.yml (reviewed), the app's add-Host "
                        "way")
-    s.add_argument("name", metavar="NAME", help="the new Host's name: letters, digits, . _ -")
+    s.add_argument("name", metavar="NAME", nargs="?", help="the new Host's name: letters, digits, . _ - (needed "
+                   "unless --from-vault)")
     s.add_argument("--ip", metavar="ADDR", help="its address: an IPv4 or IPv6 address or a DNS name (asked for in a "
                    "terminal when it's missing)")
     s.add_argument("--user", metavar="USER", help="the SSH user (default: its group's or defaults')")
@@ -1405,8 +1406,8 @@ def build_parser():
     s.add_argument("--port", type=int, metavar="N", help="its SSH port (default: 22)")
     s.add_argument("--from-vault", action="store_true", help="fill --ip (and --port) from the --auth item's URI and "
                    "--user from its username, never reading its password (bw); flags given win")
-    s.add_argument("--check", action="store_true", help="then run auth-check and setup for it alone, and say how "
-                   "each went")
+    s.add_argument("--setup", action="store_true", help="then run setup for it alone (its host key, and this Box's "
+                   "key on it when enrolled) and check it, and say how each went")
     s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
     s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
                    "error naming its flag")
@@ -1544,6 +1545,8 @@ def _main(argv=None):
         return cmd_inv(args)
     if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
         build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
+    if args.cmd == "add" and args.name is None and not args.from_vault:
+        build_parser().error("roster add needs NAME, the new Host's name")
     if args.cmd == "revoke" and args.all:
         if args.only or args.inv or args.config:
             build_parser().error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
