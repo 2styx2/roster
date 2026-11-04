@@ -611,6 +611,7 @@ def test_run_on_a_windows_host_runs_powershell_whatever_its_default_shell(win, c
 
 
 @needs_powershell
+@SHELLS
 @pytest.mark.parametrize("command, code", [
     ("exit 3", 3),                                                   # the command's own exit
     ("& $env:FAKE_PYTHON -c 'import sys; sys.exit(4)'", 4),          # a native command's $LASTEXITCODE
@@ -618,10 +619,35 @@ def test_run_on_a_windows_host_runs_powershell_whatever_its_default_shell(win, c
     ("throw 'boom'", 1),                                             # a terminating error
     ("& $env:FAKE_PYTHON -c 'import sys; sys.exit(4)'; Write-Output fine", 0),   # the last statement counts
     ("Write-Output fine", 0),
+    ("Write-Error oops", 1),                                         # a cmdlet's error, last
+    # a native command, as the owner tried it (cmd.exe where the stand-in's PowerShell is Windows', else sh)
+    ("if (Get-Command cmd.exe -ErrorAction SilentlyContinue) { cmd /c exit 3 } else { sh -c 'exit 3' }", 3),
 ])
 def test_run_on_a_windows_host_passes_on_its_exit_code(win, capfd, command, code):
+    """The exact code under either DefaultShell: a PowerShell DefaultShell turns any failure into 1 (the stand-in does
+    too), so the code comes back marked on stderr, and the marker isn't shown."""
     rc, out, err = run_on(win, capfd, command)
     assert rc == code, (out, err)
+    assert "ROSTER_EXIT" not in err
+
+
+@needs_powershell
+@SHELLS
+def test_an_exit_marker_in_the_commands_own_output_is_shown_and_ignored(win, capfd):
+    """The marker carries a nonce roster makes for each run, which CMD never sees: one CMD writes is its output."""
+    forged = "ROSTER_EXIT=" + "0" * 32 + ":0"
+    rc, out, err = run_on(win, capfd, f"[Console]::Error.WriteLine('{forged}'); Write-Output '{forged}'; exit 5")
+    assert rc == 5 and forged in err and forged in out
+
+
+def test_a_run_scripts_exit_marker_is_its_own_nonces():
+    from roster import winhost
+    m = winhost.exit_marker("ab" * 16)
+    assert m.fullmatch("ROSTER_EXIT=" + "ab" * 16 + ":3\r\n").group(1) == "3"
+    assert not m.fullmatch("ROSTER_EXIT=" + "cd" * 16 + ":0\n")
+    assert not m.fullmatch("x ROSTER_EXIT=" + "ab" * 16 + ":0\n")
+    script = winhost.run_script("Write-Output hi", "ab" * 16)
+    assert script.isascii() and "Write-Output" not in script        # CMD only as base64, two levels down
 
 
 @needs_powershell
@@ -656,7 +682,7 @@ def test_a_command_past_4096_bytes_runs_though_the_hosts_sshd_never_sends_eof(wi
     from roster import winhost
     monkeypatch.setenv("FAKE_EOF_WAIT", "20")       # a run that waited for EOF fails in 20 s, not 60
     command = "$s = '" + "a" * 6000 + "'; Write-Output $s.Length"
-    assert len(winhost.run_script(command).encode()) > 4096
+    assert len(winhost.run_script(command, "ab" * 16).encode()) > 4096
     rc, out, err = run_on(win, capfd, command)
     assert (rc, out.splitlines()) == (0, ["6000"]), err
 

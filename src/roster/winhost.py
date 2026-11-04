@@ -27,7 +27,7 @@ import re
 import subprocess
 from typing import IO, cast
 
-from .common import program_argv
+from .common import WINDOWS, program_argv
 from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_POWERSHELL, NOT_WINDOWS
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
@@ -434,12 +434,56 @@ exit 1
 """
 
 
-def run_script(command):
-    """The script `roster run` sends an os: windows Host for COMMAND (the person's text). COMMAND goes in as base64 of
-    its UTF-8, decoded there: never PowerShell source, so no quote in it (ASCII or Unicode, which PowerShell also
-    reads as quotes) can end a literal, and non-ASCII text arrives as written (the bootstrap reads stdin as UTF-8)."""
+# What sshd hands back is no exit code to trust: with PowerShell as its DefaultShell, Win32-OpenSSH runs the launch line
+# under `powershell -c`, which turns any failure into 1 (seen on a real Host: `ssh HOST 'cmd /c exit 3'` exits 1). So
+# the script roster sends is a launcher: it starts PowerShell again on this Host (the same program, with the same
+# bootstrap), hands it the run script framed on its stdin, then closed (so CMD reads an end there, not sshd's stdin),
+# and lets its stdout and stderr go straight to the Box's. When it ends, the launcher writes its exit code as the last
+# line on stderr, `ROSTER_EXIT=<nonce>:<code>`, with a nonce roster made for this run (never in what CMD can read), and
+# roster takes the code from there and doesn't show that line. A child process's exit code is exact, and CMD's own
+# `exit N` ends only that child.
+RUN_LAUNCHER = r"""
+$ErrorActionPreference = 'Stop'
+$code = 1
+try {
+    $si = New-Object Diagnostics.ProcessStartInfo
+    $si.FileName = (Get-Process -Id $PID).Path
+    $si.Arguments = $ChildArgs
+    $si.UseShellExecute = $false
+    $si.RedirectStandardInput = $true          # stdout and stderr: this process's own, so the Box gets them as they come
+    $p = [Diagnostics.Process]::Start($si)
+    $b = [Convert]::FromBase64String($Inner)
+    $h = [Text.Encoding]::ASCII.GetBytes("$($b.Length)`n")
+    $in = $p.StandardInput.BaseStream
+    $in.Write($h, 0, $h.Length); $in.Write($b, 0, $b.Length); $in.Close()
+    $p.WaitForExit()
+    $code = $p.ExitCode
+} catch {
+    [Console]::Error.WriteLine("roster: couldn't start PowerShell for the command: " + ("$($_.Exception.Message)" -replace '\s+', ' '))
+} finally {
+    [Console]::Error.WriteLine('ROSTER_EXIT=' + $Nonce + ':' + $code)
+}
+exit $code
+"""
+
+
+def run_script(command, nonce):
+    """The script `roster run` sends an os: windows Host for COMMAND (the person's text), its exit code marked with
+    NONCE (hex). COMMAND goes in as base64 of its UTF-8, decoded there: never PowerShell source, so no quote in it
+    (ASCII or Unicode, which PowerShell also reads as quotes) can end a literal, and non-ASCII text arrives as written
+    (the bootstrap reads stdin as UTF-8). The run script itself goes to the child PowerShell as base64 too."""
+    if not re.fullmatch(r"[0-9a-f]{16,64}", nonce):
+        raise ValueError("the nonce is hex")
     data = base64.b64encode(command.encode("utf-8")).decode("ascii")
-    return f"$Command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{data}'))\n" + RUN_SCRIPT
+    inner = f"$Command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{data}'))\n" + RUN_SCRIPT
+    child = " ".join(remote_command().split()[1:])          # the same flags and bootstrap as the launch line
+    return (f"$Nonce = '{nonce}'\n$ChildArgs = '{child}'\n"
+            f"$Inner = '{base64.b64encode(inner.encode('utf-8')).decode('ascii')}'\n" + RUN_LAUNCHER)
+
+
+def exit_marker(nonce):
+    """The line run's launcher ends with on stderr, for NONCE: a match's group 1 is the exit code."""
+    return re.compile(rf"ROSTER_EXIT={re.escape(nonce)}:(-?\d+)\r?\n?")
 
 
 def run_said(name, err):
@@ -456,13 +500,17 @@ def run_said(name, err):
 
 def run(h, command, password=None, key=True):
     """`roster run` on Windows Host H: COMMAND under PowerShell, its stdout and stderr to ours as they come (a key
-    Host's; a password Host's arrive when it ends, as paramiko gives them), and its exit code. PASSWORD: a password
-    Host's login (paramiko), never in the script."""
+    Host's; a password Host's arrive when it ends, as paramiko gives them), and its exit code: the one the launcher
+    marked (RUN_LAUNCHER), else ssh's own. PASSWORD: a password Host's login (paramiko), never in the script."""
+    import secrets
     import sys
-    script = framed(run_script(command))       # ASCII: CMD is base64 in it; ValueError past 1 MB
+    nonce = secrets.token_hex(16)
+    marker = exit_marker(nonce)
+    script = framed(run_script(command, nonce))   # ASCII: CMD is base64 in it; ValueError past 1 MB
+    marked = None
     sys.stdout.flush()
     if key:
-        # stdout straight through; stderr too, line by line, kept to say why when nothing ran
+        # stdout straight through; stderr a line at a time (only a trailing partial line waits), the marker kept back
         p = subprocess.Popen(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], remote_command()]),
                              stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         stdin, stderr = cast(IO[bytes], p.stdin), cast(IO[bytes], p.stderr)     # both PIPE
@@ -475,6 +523,10 @@ def run(h, command, password=None, key=True):
                 pass
             for raw in stderr:
                 line = raw.decode(errors="replace")
+                m = marker.fullmatch(line)
+                if m:
+                    marked = int(m.group(1))
+                    continue
                 sys.stderr.write(line)
                 sys.stderr.flush()
                 if len(said) < 50:
@@ -486,14 +538,24 @@ def run(h, command, password=None, key=True):
     else:
         from .sshops import password_exec
         rc, out, err = password_exec(h, remote_command(), password, stdin=script)
+        kept = []
+        for line in err.splitlines(keepends=True):
+            m = marker.fullmatch(line)
+            if m:
+                marked = int(m.group(1))
+            else:
+                kept.append(line)
+        err = "".join(kept)
         sys.stdout.write(out)
         sys.stdout.flush()
         sys.stderr.write(err)
+    code = rc if marked is None else marked
     why = run_said(h["name"], err)
     if why:
         print(f"error: {clean(why)}", file=sys.stderr, flush=True)
-        return rc or 1
-    return rc if rc >= 0 else 1
+        return code or 1
+    # a code past 255 (Windows' are 32-bit) would wrap on a POSIX Box: 9009 would read as 49
+    return code if 0 <= code <= (0xFFFFFFFF if WINDOWS else 255) else 1
 
 
 def looks_windows(text):
