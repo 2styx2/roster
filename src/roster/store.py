@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 
 from . import changes, edit
-from .errors import NOTHING_TO_PUBLISH, Problem
+from .errors import NOTHING_TO_PUBLISH, ROSTER_ERROR, Problem
 
 REPO, FILE = "repo", "file"
 
@@ -93,21 +93,41 @@ class RepoStore(Store):
         return changes.publish(self.path, message)
 
 
-def at(path):
+def at(path, for_show=False):
     """How roster.yml at PATH is kept, as the disk and git say now. git that can't answer (it hangs on a slow mount,
-    fails, or isn't there) means a plain file: never an error (inventory.info asks this on every connect)."""
+    or fails) refuses a write: guessing 'plain' there would put a team repo's backup in its work tree (#409 N1).
+    FOR_SHOW (inventory.info, `roster check --box`: nothing is written) says it's a plain file instead, never an
+    error (the app asks on every connect)."""
     path = Path(path).resolve()
     try:
         return detect(path)
-    except (Problem, OSError, subprocess.SubprocessError):
-        return Store(path, f"{path.name} is kept as a plain file (git didn't answer): every edit saves straight to it")
+    except (Problem, OSError, subprocess.SubprocessError) as e:
+        if for_show:
+            return Store(path, f"{path.name} is kept as a plain file for now (git didn't answer): every edit saves "
+                               "straight to it", None, work_tree_git_dir(path))
+        why = e.message if isinstance(e, Problem) else type(e).__name__
+        raise Problem(ROSTER_ERROR, f"git didn't answer about {path.name} ({why}), so roster won't save the edit: "
+                                    "it can't tell whether it's in a team repo", {"path": str(path)},
+                      fix=f"try again; `git -C {path.parent} status` in a terminal shows what git is doing") from None
+
+
+def work_tree_git_dir(path):
+    """The .git folder of the work tree PATH is in, found without git (for a backup that must stay out of the work
+    tree), or None. A .git file (a worktree, a submodule) isn't followed: then there's none."""
+    for d in path.parents:
+        g = d / ".git"
+        if g.is_dir() and not g.is_symlink():
+            return g
+        if g.exists():
+            return None
+    return None
 
 
 def detect(path):
     name = path.name
     if shutil.which("git") is None:
         return Store(path, f"git isn't installed on this Box, so {name} is a plain file: every edit saves straight "
-                           "to it")
+                           "to it", None, work_tree_git_dir(path))
     r = changes.git(path.parent, "rev-parse", "--show-toplevel", "--absolute-git-dir")
     lines = r.stdout.splitlines() if r.returncode == 0 else []
     if len(lines) != 2:

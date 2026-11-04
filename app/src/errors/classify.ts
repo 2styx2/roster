@@ -100,16 +100,10 @@ export function terminalTail(output: string, lines = 30, { strippedAtCapture = f
   return out.slice(-lines).join("\n");
 }
 
-const RATE_LIMITED = /^10\.19\./;
-
-function unreachableFix(address: string | undefined): string {
-  let fix = "Retry later: is the Host up, and the network path open?";
-  if (address && RATE_LIMITED.test(address)) {
-    fix +=
-      " On 10.19.x the SSH rate limiter stops answering for about 4 minutes after many connections: wait a few minutes, don't retry in a loop.";
-  }
-  return fix;
-}
+/** Row 17's fix. Which networks have an SSH rate limiter is roster.yml's `rate_limited:` (#363), which the app
+ * never reads (ADR 0001), so a Session's no-answer gets the generic hint; `:check HOST` (serve) names the network. */
+const UNREACHABLE_FIX =
+  "Retry later: is the Host up, and the network path open? If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in a loop.";
 
 /** ssh's own lines when an open Session's connection goes away (row 20). */
 function dropped(lines: string[], host: string): Omit<Problem, "host" | "details"> | null {
@@ -176,13 +170,13 @@ const rules: Rule[] = [
         fix: "Check the port in roster.yml; is sshd running on the Host?",
       };
     }
-    return { code: 42, message: `${where} didn't answer`, fix: unreachableFix(m[1]) };
+    return { code: 42, message: `${where} didn't answer`, fix: UNREACHABLE_FIX };
   },
   (lines, { host }) => {
     const m = find(lines, /^Connection to (\S+) port (\d+) timed out/);
     if (!m && !find(lines, /^Connection timed out during banner exchange/)) return null;
     const where = m ? `${host} (${m[1]}:${m[2]})` : host;
-    return { code: 42, message: `${where} didn't answer`, fix: unreachableFix(m?.[1]) };
+    return { code: 42, message: `${where} didn't answer`, fix: UNREACHABLE_FIX };
   },
   (lines, { host }) => {
     if (!find(lines, /Too many authentication failures/)) return null;
@@ -201,11 +195,10 @@ const rules: Rule[] = [
   (lines, { host }) => {
     const m = find(lines, /^kex_exchange_identification: (.*)$/);
     if (!m) return null;
-    const addr = find(lines, /^Connection (?:closed|reset) by (\S+) port \d+/)?.[1];
     return {
       code: "closed-early",
       message: `${host} hung up before logging in (${m[1]})`,
-      fix: unreachableFix(addr),
+      fix: UNREACHABLE_FIX,
     };
   },
   (lines, { host }) => {

@@ -346,7 +346,7 @@ async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Val
 }
 
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
-/// first failure. roster makes at most one connection and one login, so this is safe on 10.19.
+/// first failure. roster makes at most one connection and one login, so this is safe on a rate-limited network.
 /// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
 /// worker of serve waits for it. `started` hears the check's job once serve has it under way, and
 /// whether it's the app's own to stop (`host_check_stop`, #221 item 1); an older serve sends none.

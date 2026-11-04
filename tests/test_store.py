@@ -65,7 +65,6 @@ def test_no_git_on_path_is_a_plain_file_even_inside_a_repo(plain, monkeypatch, t
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     s = store.at(plain)
     assert s.kind == "file" and "git isn't installed" in s.note
-    assert s.save(TEXT, TEXT + "# more\n") == plain.with_name("roster.yml.bak")
 
 
 def test_committed_in_a_repo_with_a_remote_is_a_repo(plain, tmp_path):
@@ -168,4 +167,35 @@ def test_git_that_hangs_or_fails_means_a_plain_file(plain, monkeypatch):
     def stuck(*a, **k):
         raise Problem(73, "git rev-parse didn't finish within 1 s")
     monkeypatch.setattr(changes, "git", stuck)
-    assert store.at(plain).kind == "file"
+    assert store.at(plain, for_show=True).kind == "file"
+
+
+# ---------------------------------------------------------------- #409's second pass: N1
+
+def test_git_that_fails_refuses_a_save_rather_than_guess(plain, tmp_path, monkeypatch):
+    """N1: in a team repo, git that can't answer must not make a write think it's a plain file (its backup would
+    land in the work tree). Only what's read for show (inventory.info, check --box) falls back to plain."""
+    from roster import changes
+    committed(plain, tmp_path / "origin.git")
+    real = changes.git
+
+    def stuck(repo, *args, **kw):
+        if "ls-files" in args:
+            raise Problem(73, "git ls-files didn't finish within 1 s")
+        return real(repo, *args, **kw)
+    monkeypatch.setattr(changes, "git", stuck)
+    with pytest.raises(Problem) as e:
+        store.at(plain).save(TEXT, TEXT + "# more\n")
+    assert "won't save" in e.value.message and e.value.data["fix"]
+    assert not plain.with_name("roster.yml.bak").exists() and plain.read_text() == TEXT
+    shown = store.at(plain, for_show=True)
+    assert shown.kind == "file" and "git didn't answer" in shown.note
+
+
+def test_without_git_a_backup_still_goes_in_the_git_dir_of_a_work_tree(plain, tmp_path, monkeypatch):
+    """N1: no git on PATH, but roster.yml sits in a work tree: the backup goes in its .git, never beside it."""
+    committed(plain, tmp_path / "origin.git")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    bak = store.at(plain).save(TEXT, TEXT + "# more\n")
+    assert bak == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
+    assert not plain.with_name("roster.yml.bak").exists()

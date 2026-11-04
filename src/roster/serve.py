@@ -232,6 +232,11 @@ def file_digest(path):
         return None
 
 
+def rate_limited(state):
+    """`rate_limited:` from the loaded roster.yml (T191): the networks a no-answer's fix names; none before a load."""
+    return (state.cfg or {}).get("rate_limited") or []
+
+
 def broken(state):
     """hosts.list's and inventory.reload's `error`: why roster.yml as it is now doesn't load, while the last good
     Inventory is shown ({message, path, line?}); None when it loads."""
@@ -259,7 +264,7 @@ def inventory_info(state, params):
     """
     cfg = state.inventory()
     return {"path": str(cfg["path"]), "box": cfg["box"], "host_count": len(cfg["hosts"]),
-            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"]).view(), **versions()}
+            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True).view(), **versions()}
 
 
 def hosts_list(state, params):
@@ -844,7 +849,7 @@ def host_verify_login(state, params):
     # The vault only now, after the reload: roster.yml before the vault, always (LOCKS' order), or a write holding
     # roster.yml and waiting behind a vault.lock that waits for this request would never end.
     with claimed(state, [("vault", True)], "host.verify_login"):
-        result = diagnose.verify_login(new, state.cfg["key"], previous=h)
+        result = diagnose.verify_login(new, state.cfg["key"], previous=h, limited=rate_limited(state))
     if result["ok"]:
         state.verified[login_key(new)] = (time.monotonic(), result.pop("host_key", None))
     return result
@@ -1020,13 +1025,13 @@ def host_scan_key(state, params):
     """
     if "host" in params:
         h = known_host(state, params)
-        return {"host": h["name"], "address": h["ip"], "port": h["ssh"]["port"], **diagnose.scan_key(h)}
+        return {"host": h["name"], "address": h["ip"], "port": h["ssh"]["port"], **diagnose.scan_key(h, rate_limited(state))}
     fields = add_fields({"address": params.get("address"), "port": params.get("port")})
     if "ip" not in fields:
         raise RpcError(INVALID_PARAMS, "params.address must be a non-empty string")
     port = fields.get("port", 22)
     h = {"name": params.get("name") or fields["ip"], "ip": fields["ip"], "ssh": {"port": port}}
-    return {"address": fields["ip"], "port": port, **diagnose.scan_key(h)}
+    return {"address": fields["ip"], "port": port, **diagnose.scan_key(h, rate_limited(state))}
 
 
 def known_host(state, params):
@@ -1052,7 +1057,7 @@ def host_trust_key(state, params):
     """
     h = known_host(state, params)
     asked = asked_fingerprint(params)
-    key, recorded = diagnose.offered_key(h)
+    key, recorded = diagnose.offered_key(h, rate_limited(state))
     if recorded == "changed":
         raise diagnose.changed_key(h, recorded_host_keys(h), key)
     offered = still_offered(asked, key, h["name"], "nothing was recorded", "Host", "open the Session again")
@@ -1149,7 +1154,7 @@ def quick_prepare(state, params):
         need_askpass(state, "Quick Connects with a password")
     label = quick_label(user, address, port)
     h = {"name": label, "ip": address, "ssh": {"port": port, "user": user}}
-    key, recorded = diagnose.offered_key(h)
+    key, recorded = diagnose.offered_key(h, rate_limited(state))
     if recorded == "changed":
         p = diagnose.changed_key(h, recorded_host_keys(h), key)
         fix = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
@@ -1545,7 +1550,8 @@ def add_host(state, params):
     verify = None
     if login:
         # a new Host's key isn't installed yet, so even an enroll: true Host is tested with its password
-        verify = diagnose.verify_login({**h, "enroll": False}, state.cfg["key"], typed=typed, host_key=host_key)
+        verify = diagnose.verify_login({**h, "enroll": False}, state.cfg["key"], typed=typed, host_key=host_key,
+                                         limited=rate_limited(state))
         if not verify["ok"]:
             raise verify_failed(name, verify)
     made = None

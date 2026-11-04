@@ -1489,7 +1489,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   /** host.scan_key / host.trust_key at an address that doesn't answer (roster's 42). */
   const unanswered = (h: Host) =>
     new BackendCallError(`${h.name} (${h.ip}:${h.ssh.port}) didn't answer within 5 s`, 42, {
-      fix: "retry later; is the Host up and the network path open? On 10.19.x the SSH rate limiter stops answering for about 4 minutes after many connections: wait a few minutes, don't retry in a loop",
+      fix: "retry later; is the Host up and the network path open? If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in a loop",
       details: "timed out",
     });
   const wait = () => new Promise((r) => setTimeout(r, scenario.delay ?? 0));

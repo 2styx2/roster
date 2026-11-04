@@ -46,7 +46,7 @@ from .askpass import LOOKUP_FAILED, NO_SERVE, TOKEN_SPENT, UNEXPECTED_PROMPT  # 
 # host.check's network and Host steps (rows 11-17, 19)
 NO_DNS = 40                 # the address doesn't resolve (row 15)
 REFUSED = 41                # the ssh port refused the connection (row 16)
-TIMEOUT = 42                # no answer from the ssh port (row 17; on 10.19.x often the rate limiter)
+TIMEOUT = 42                # no answer from the ssh port (row 17; a rate limiter can cause it: rate_limited:)
 HOST_KEY_CHANGED = 43       # the Host's key isn't the recorded one (row 13): never accepted automatically
 HOST_KEY_UNKNOWN = 44       # no recorded host key for this Host (row 14)
 PASSWORD_REFUSED = 45       # the Host refused the Login's password (row 11)
@@ -160,17 +160,22 @@ RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has n
 MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
 NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
 
+# Whose it is (#384, catalog row 222): a warning `roster check --box` (box.check) gives
+SHARED_BOX_NAME = 162       # warning: this Box's name is an OS image's default hostname, so another Box likely has
+                            #   it too; Boxes with one name are one owner (its key's tag and the Mesh's)
+
 # `roster bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
 # None of the three messages repeats what came after bw's command: those arguments may hold a password
 BW_NEEDS_WRITE = 164        # a bw command that changes the vault, writes it out, or acts on the account, without --write
 BW_NOT_ALLOWED = 165        # a bw command or option before it that roster bw doesn't know, or --write among bw's own
 BW_REFUSED = 166            # never run: `bw serve` (the vault to every local program) or a session on the command line
 
-# A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233)
+# A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233, 235)
 INVENTORY_THERE = 170       # roster init: a roster.yml is there already, so it's kept as it is; nothing written
 NOT_AN_INVENTORY = 171      # roster init: the file to import isn't there or doesn't load, or a clone has no roster.yml
 CLONE_FAILED = 172          # roster init: git couldn't clone the repo (or isn't installed, or the folder isn't empty)
 SSH_CONFIG_UNREADABLE = 173  # roster init: the ssh config to import Hosts from can't be read; nothing written
+FOLDER_NOT_WRITABLE = 174   # roster init / inventory.create: the folder can't be made or written in; nothing written
 
 
 class Problem(Exception):

@@ -1,6 +1,6 @@
 """Ticket 26: `host.check {host}` (serve) and `roster check HOST` (CLI) run the diagnostics in order and stop
 at the first failure. Nothing touches the network once a local step has failed, and a whole check makes at
-most one TCP connection (port + host key) and one login attempt - the 10.19 rate limiter must never see more.
+most one TCP connection (port + host key) and one login attempt - a network's rate limiter must never see more.
 
 The Host is a local paramiko server that offers a host key and counts connections; the login is the stand-in
 ssh (tests/fakes/ssh), which logs each run and asks SSH_ASKPASS for the password as real ssh does."""

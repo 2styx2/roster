@@ -117,8 +117,10 @@ ask_value() {                   # ask_value "Prompt" default -> echoes the answe
     echo "${reply:-$def}"
 }
 
-redact() {                      # redact TEXT -> TEXT with a URL's password cut out (https://me:***@host/...)
-    sed -E 's#(://[^/:@[:space:]]*):[^@/[:space:]]*@#\1:***@#g' <<<"$1"
+redact() {                      # redact TEXT -> TEXT with a URL's credentials cut out: https://***@host/...
+    # http(s)/ssh: the whole userinfo, up to the last @ before the host (a token as the user, an @ in a password);
+    # elsewhere a password only. As newinventory.py's shown_url (#409 N2)
+    sed -E 's#((https?|ssh|git\+ssh|ftps?)://)[^/[:space:]]*@#\1***@#gI; s#(://[^/:@[:space:]*]*):[^@/[:space:]]*@#\1:***@#g' <<<"$1"
 }
 
 safe_path() {                   # safe_path PATH -> 0 when PATH can go inside "..." in a shell startup file
@@ -345,7 +347,7 @@ choose_how() {                  # choose_how -> echoes blank | file:PATH | repo:
     info "  4  import the Hosts in ~/.ssh/config (it isn't changed)" >&2
     c=$(ask_value "1, 2, 3 or 4" 1)
     case $c in
-        2) p=$(ask_value "Path of the roster.yml to import" ""); [[ -n $p ]] && { echo "file:${p/#\~/$HOME}"; return; } ;;
+        2) p=$(ask_value "Path of the roster.yml to import" ""); [[ -n $p ]] && { echo "file:${p/#\~\//$HOME/}"; return; } ;;
         3) p=$(ask_value "Git URL of your team's repo" ""); [[ -n $p && $p != -* ]] && { echo "repo:$p"; return; } ;;
         4) echo ssh-config; return ;;
     esac
@@ -385,11 +387,11 @@ make_inventory() {              # make_inventory CFG HOW [NAME]: CFG made the HO
             if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$cfg" || return 1; fi
             return 0 ;;
         file:*)
-            src=${how#file:}; src=${src/#\~/$HOME}
+            src=${how#file:}; src=${src/#\~\//$HOME/}
             if ! ask "Copy $src into $dir? (n: use it where it is)" Y; then
                 # a full path that's there, and one a shell startup file can hold (ROSTER_CONFIG="...")
                 if [[ ! -f $src ]]; then bad "no file at $src"; return 1; fi
-                src="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+                src="$(CDPATH='' cd -- "$(dirname -- "$src")" && pwd)/$(basename -- "$src")"
                 if ! safe_path "$src"; then bad "$src can't hold \", \$, \` or a newline: rename it, or copy it"; return 1; fi
                 MADE=$src; ok "using $src where it is"
                 if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$src" || return 1; fi

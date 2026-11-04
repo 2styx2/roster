@@ -1936,6 +1936,66 @@ def test_an_older_rosters_entries_this_box_wrote_are_tagged_on_its_next_apply(ne
     assert mesh.run(net.cfg())["already"]
 
 
+def add_line(net, host, line):
+    p = net.host(host) / "home/.ssh/authorized_keys"
+    p.write_text(p.read_text() + line + "\n")
+
+
+def test_the_one_time_retag_takes_only_a_line_identical_to_this_boxs_own(net, capsys):
+    """#384 (1): another older Box's untagged line for the same source (here another from=) isn't this Box's to take:
+    only the line this Box would write, with no Box in its tag, is re-tagged; the other stays as it was, and is said."""
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    ours = key_line_of(net, "orion-2", "10.0.0.2").removesuffix("@box")
+    theirs = ours.replace('from="10.0.0.2"', 'from="10.0.0.99"')
+    add_line(net, "nas-1", theirs)
+    r = mesh.run(net.cfg())
+    nas = next(h for h in r["hosts"] if h["host"] == "nas-1")
+    assert "tag key from orion-2 as this Box's" in nas["changes"]
+    r = mesh.run(net.cfg(), apply=True)
+    lines = net.mesh_lines("nas-1")
+    assert theirs in lines and ours not in lines
+    assert key_line_of(net, "orion-2", "10.0.0.2") in lines
+    assert any("nas-1" in w and "orion-2" in w and "no Box in its tag" in w for w in r.get("warnings", [])), r
+    assert mesh.run(net.cfg())["already"]
+    assert theirs in net.mesh_lines("nas-1")
+    capsys.readouterr()
+    assert main(["mesh", "--find-leftovers"]) == 0
+    assert "nas-1: key from orion-2 (from=10.0.0.99), with no Box in its tag" in capsys.readouterr().out
+
+
+def test_the_one_time_retag_leaves_an_untagged_line_with_other_options(net):
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    ours = key_line_of(net, "orion-2", "10.0.0.2").removesuffix("@box")
+    other = ours.replace(",no-X11-forwarding", "")      # same key, other options: not the line this Box writes
+    p = net.host("nas-1") / "home/.ssh/authorized_keys"
+    p.write_text(p.read_text().replace(ours + "\n", other + "\n"))
+    r = mesh.run(net.cfg(), apply=True)         # nothing to take on nas-1: the other line is still said
+    assert any(w.startswith("nas-1: a roster-mesh:orion-2 line with no Box in its tag isn't the one")
+               for w in r.get("warnings", [])), r
+    lines = net.mesh_lines("nas-1")
+    assert other in lines and key_line_of(net, "orion-2", "10.0.0.2") in lines
+
+
+def test_rotating_on_the_upgrade_takes_this_boxs_untagged_line_for_the_old_key(net):
+    """--rotate on the first apply after upgrading: the untagged line for the key being replaced was this Box's
+    (identical but for the tag), so it goes; the replaced key keeps no way in."""
+    mesh.run(net.cfg(), apply=True)
+    untag(net)
+    old = key_line_of(net, "orion-2", "10.0.0.2").removesuffix("@box")
+    theirs = old.replace('from="10.0.0.2"', 'from="10.0.0.99"')         # another older Box's, for the same key
+    add_line(net, "nas-1", theirs)
+    r = mesh.run(net.cfg(), rotate=["orion-2"])
+    assert "tag key from orion-2 as this Box's" in next(h for h in r["hosts"] if h["host"] == "nas-1")["changes"]
+    r = mesh.run(net.cfg(), apply=True, rotate=["orion-2"])
+    lines = net.mesh_lines("nas-1")
+    assert old not in lines and theirs in lines                     # left, and said: it still lets the old key in
+    assert any(w.startswith("nas-1: a roster-mesh:orion-2 line with no Box in its tag still lets the replaced key in "
+                            "(from=10.0.0.99)") for w in r.get("warnings", [])), r
+    assert key_line_of(net, "orion-2", "10.0.0.2") in lines
+
+
 def test_an_older_rosters_entries_this_box_has_no_record_of_are_kept_and_found_as_leftovers(net, capsys, monkeypatch):
     mesh.run(net.cfg(), apply=True)
     untag(net)

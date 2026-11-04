@@ -472,11 +472,14 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
 # ---------------------------------------------------------------- PR #409's review: L4, L5, L6
 
 @posix_shell
-def test_install_never_shows_a_clone_urls_password(tmp_path):
-    """L4: https://me:TOKEN@host/... is shown, and logged, without the TOKEN."""
-    r = install_dry(tmp_path, "--inventory", "repo:https://me:s3cret-token@example.com/team/map.git")
-    assert "s3cret-token" not in r.stdout + r.stderr, r.stdout
-    assert "https://me:***@example.com/team/map.git" in r.stdout
+@pytest.mark.parametrize("url", ["https://me:s3cret-token@example.com/team/map.git",
+                                 "https://s3cret-token@example.com/team/map.git",
+                                 "https://me:s3cret@-token@example.com/team/map.git"])
+def test_install_never_shows_a_clone_urls_password(tmp_path, url):
+    """L4, N2: https://me:TOKEN@host/..., a token as the user, a password with an @: shown and logged as ***@."""
+    r = install_dry(tmp_path, "--inventory", f"repo:{url}")
+    assert "s3cret" not in r.stdout + r.stderr, r.stdout
+    assert "https://***@example.com/team/map.git" in r.stdout
 
 
 @posix_shell
@@ -519,3 +522,16 @@ def test_uninstall_says_a_repo_with_no_remote_is_the_only_copy(box):
     subprocess.run(["git", "-C", str(home / "infra"), "init", "-q"], check=True)
     r = run(UNINSTALL_SH, env, answers="\n" * 40)
     assert "only copy" in r.stdout and "a fresh clone brings it back" not in r.stdout, r.stdout
+
+
+@posix_shell
+def test_install_uses_a_relative_file_in_place_with_cdpath_exported(tmp_path, monkeypatch):
+    """N3: an exported CDPATH makes cd print the folder; the full path must still be one line."""
+    home = tmp_path / "home"
+    (home / "mine").mkdir(parents=True)
+    (home / "mine" / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    monkeypatch.chdir(home)
+    (tmp_path / "cd" / "mine").mkdir(parents=True)            # a folder of the same name on CDPATH: cd goes there
+    monkeypatch.setenv("CDPATH", str(tmp_path / "cd"))
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "mine/roster.yml", "Copy ": "n"})
+    assert f"using {home / 'mine' / 'roster.yml'} where it is" in out, out
