@@ -823,3 +823,54 @@ def test_install_finds_a_roster_uv_put_off_path(stale, tmp_path):
                        text=True, timeout=120, start_new_session=True)                # no --prefix: found by uv
     assert "roster 0.5.0 is already installed on this box: updating it with ./update.sh" in r.stdout, r.stdout
     assert f"UV_TOOL_BIN_DIR={prefix}/bin uv tool install" in r.stdout                  # the same copy, not a second
+
+
+# ---- second review of #414: one map lookup, boxes that can't have cron, --ref taken literally
+
+@posix_shell
+def test_a_set_up_box_whose_map_is_gone_gets_the_install_again(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0", env)
+    home = Path(env["HOME"])
+    (home / "infra/roster.yml").unlink()
+    (home / "infra").rmdir()                                    # moved or deleted: the rc line stays
+    r = script("install.sh", checkout, env, prefix, "--infra-repo", str(map_repo(tmp_path)))
+    assert "updating it with ./update.sh" not in r.stdout, r.stdout
+    assert "finishing the install" in r.stdout
+    assert (home / "infra/roster.yml").exists()                 # cloned again
+
+
+@posix_shell
+def test_a_map_in_roster_s_own_folder_counts_as_set_up(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.5.0")
+    home = Path(env["HOME"])
+    (home / ".config/roster").mkdir(parents=True)
+    (home / ".config/roster/roster.yml").write_text("groups: {}\n")    # roster finds it there by itself
+    r = script("install.sh", checkout, env, prefix, "--dry-run")
+    assert "updating it with ./update.sh" in r.stdout, r.stdout
+
+
+@posix_shell
+def test_a_box_that_cannot_have_cron_is_not_finished_again_and_again(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    bin_ = tmp_path / "bin"                                     # this PATH, without crontab or a package manager
+    bin_.mkdir()
+    hidden = {"crontab", "apt-get", "dnf", "yum", "pacman", "brew", "roster"}
+    for d in env["PATH"].split(":"):
+        for p in (Path(d).iterdir() if Path(d).is_dir() else ()):
+            if p.name not in hidden and not os.path.lexists(bin_ / p.name):
+                (bin_ / p.name).symlink_to(p)
+    env = {**env, "PATH": str(bin_)}
+    script("install.sh", checkout, env, prefix, "--infra-repo", str(map_repo(tmp_path)))
+    home = Path(env["HOME"])
+    assert "no-cron" in (home / ".config/roster/install-choices").read_text().split()
+    r = script("install.sh", checkout, env, prefix, "--dry-run")
+    assert "updating it with ./update.sh" in r.stdout, r.stdout
+
+
+@posix_shell
+def test_ref_is_a_name_not_a_pattern(stale):
+    upstream, checkout, env, prefix = stale
+    r = script("install.sh", checkout, env, prefix, "--ref", "v0.5.*")
+    assert r.returncode == 1 and "no tag or branch v0.5.* on origin" in r.stdout, r.stdout

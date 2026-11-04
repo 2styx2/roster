@@ -212,6 +212,21 @@ git_net() {                     # git_net DIR ARGS...: git that talks to a remot
 chose() { grep -qx "$1" "$CHOICES" 2>/dev/null; }
 choose() { (( DRY )) || chose "$1" || { mkdir -p "$(dirname "$CHOICES")" && echo "$1" >> "$CHOICES"; }; }
 
+find_map() {                    # the team's map this box uses -> MAP (empty: none) and MAP_FROM; the same in
+    # install.sh and update.sh (Q184): $ROSTER_CONFIG, the line install.sh wrote, ~/.config/roster/roster.yml (roster
+    # finds those by itself), then ~/infra/roster.yml (it doesn't, without ROSTER_CONFIG). Only a file that's there
+    local f v
+    MAP="" MAP_FROM=""
+    if [[ -n ${ROSTER_CONFIG:-} && -f ${ROSTER_CONFIG:-} ]]; then MAP=$ROSTER_CONFIG MAP_FROM=env; return; fi
+    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+        v=$(grep -F "$MARK" "$f" 2>/dev/null | sed -n 's/^export ROSTER_CONFIG="\(.*\)".*/\1/p' | tail -1)
+        v=${v//\$HOME/$HOME}
+        if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=rc; return; fi
+    done
+    if [[ -f $HOME/.config/roster/roster.yml ]]; then MAP=$HOME/.config/roster/roster.yml MAP_FROM=config; return; fi
+    if [[ -f $HOME/infra/roster.yml ]]; then MAP=$HOME/infra/roster.yml MAP_FROM=infra; fi
+}
+
 installed_roster() {            # the roster command this box has: on PATH (PREFIX/bin first), else where uv put it
     local p
     p=$(command -v roster 2>/dev/null) && [[ -n $p ]] && { echo "$p"; return 0; }
@@ -265,16 +280,10 @@ else
     fail_stage
 fi
 
-# 3. Team map: the roster.yml from $ROSTER_CONFIG, the line install.sh wrote, ~/infra, or ~/.config/roster
-cfg=${ROSTER_CONFIG:-}
-if [[ -z $cfg ]]; then
-    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
-        v=$(grep -F "$MARK" "$f" 2>/dev/null | sed -n 's/^export ROSTER_CONFIG="\(.*\)".*/\1/p' | tail -1)
-        [[ -n $v ]] && { cfg=${v//\$HOME/$HOME}; break; }
-    done
-fi
-[[ -z $cfg && -f $HOME/infra/roster.yml ]] && cfg=$HOME/infra/roster.yml
-[[ -z $cfg && -f $HOME/.config/roster/roster.yml ]] && cfg=$HOME/.config/roster/roster.yml   # as uninstall.sh
+# 3. Team map: the one find_map finds (as install.sh looks for it)
+find_map
+cfg=$MAP
+[[ $MAP_FROM == infra ]] && warn "$(home "$cfg") isn't in ROSTER_CONFIG, so roster finds it only from there: ./install.sh sets it"
 stage 3
 if [[ -z $cfg || ! -f $cfg ]]; then
     skip "no roster.yml found (set ROSTER_CONFIG, or run ./install.sh)"; cfg=""

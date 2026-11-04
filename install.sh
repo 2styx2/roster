@@ -244,6 +244,7 @@ pick_source() {                 # pick_source DIR: which roster to install from 
         [[ -n $REF ]] && warn "--ref $REF needs a git clone: ignored"
         return 0
     fi
+    has_ref() { awk -v r="$1" '$2 == r { found = 1 } END { exit !found }' <<<"$refs"; }   # a name, not a pattern
     local_ref() { git -C "$d" rev-parse -q --verify "refs/remotes/origin/$REF^{commit}" 2>/dev/null ||
                   git -C "$d" rev-parse -q --verify "$REF^{commit}" 2>/dev/null; }
     if ! git -C "$d" remote get-url origin >/dev/null 2>&1 || ! refs=$(git_net "$d" ls-remote --refs --tags --heads origin 2>/dev/null); then
@@ -259,8 +260,8 @@ pick_source() {                 # pick_source DIR: which roster to install from 
         # origin answered: the newest Release is the highest vX.Y.Z tag *origin* has (not a tag of yours, or a fork's)
         if [[ -n $REF ]]; then
             tag=$REF
-            if grep -q "[[:space:]]refs/tags/$REF\$" <<<"$refs"; then spec="+refs/tags/$REF:refs/tags/$REF" ref="refs/tags/$REF"
-            elif grep -q "[[:space:]]refs/heads/$REF\$" <<<"$refs"; then
+            if has_ref "refs/tags/$REF"; then spec="+refs/tags/$REF:refs/tags/$REF" ref="refs/tags/$REF"
+            elif has_ref "refs/heads/$REF"; then
                 spec="+refs/heads/$REF:refs/remotes/origin/$REF" ref="refs/remotes/origin/$REF"
             else commit=$(git -C "$d" rev-parse -q --verify "$REF^{commit}" 2>/dev/null) ||
                      { bad "no tag or branch $REF on origin"; fail_stage; exit 1; }
@@ -271,7 +272,7 @@ pick_source() {                 # pick_source DIR: which roster to install from 
             else                                # no Release yet: origin's default branch
                 def=$(git_net "$d" ls-remote --symref origin HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\(.*\)[[:space:]]HEAD$|\1|p')
                 def=${def:-main} tag="origin/${def:-main}"
-                if ! grep -q "[[:space:]]refs/heads/$def\$" <<<"$refs"; then
+                if ! has_ref "refs/heads/$def"; then
                     warn "origin has no Release tag and no $def branch: installing the checkout as it is ($from_desc)"; return 0
                 fi
                 spec="+refs/heads/$def:refs/remotes/origin/$def" ref="refs/remotes/origin/$def"
@@ -306,15 +307,27 @@ prune_sources() {               # the copies of earlier installs, once this one 
     return 0
 }
 
-box_needs() {                   # what this box is missing that update.sh doesn't do -> the list, empty when none
-    local f cfg="" pull
+find_map() {                    # the team's map this box uses -> MAP (empty: none) and MAP_FROM; the same in
+    # install.sh and update.sh (Q184): $ROSTER_CONFIG, the line install.sh wrote, ~/.config/roster/roster.yml (roster
+    # finds those by itself), then ~/infra/roster.yml (it doesn't, without ROSTER_CONFIG). Only a file that's there
+    local f v
+    MAP="" MAP_FROM=""
+    if [[ -n ${ROSTER_CONFIG:-} && -f ${ROSTER_CONFIG:-} ]]; then MAP=$ROSTER_CONFIG MAP_FROM=env; return; fi
     for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
-        cfg=$(grep -F "$MARK" "$f" 2>/dev/null | sed -n 's/^export ROSTER_CONFIG="\(.*\)".*/\1/p' | tail -1)
-        [[ -n $cfg ]] && { cfg=${cfg//\$HOME/$HOME}; break; }
+        v=$(grep -F "$MARK" "$f" 2>/dev/null | sed -n 's/^export ROSTER_CONFIG="\(.*\)".*/\1/p' | tail -1)
+        v=${v//\$HOME/$HOME}
+        if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=rc; return; fi
     done
-    [[ -z $cfg && -n ${ROSTER_CONFIG:-} && -f ${ROSTER_CONFIG:-} ]] && cfg=$ROSTER_CONFIG
-    if [[ -z $cfg ]]; then echo "the team's map and ROSTER_CONFIG"; return; fi
-    pull="$(dirname "$cfg")/bin/roster-pull"
+    if [[ -f $HOME/.config/roster/roster.yml ]]; then MAP=$HOME/.config/roster/roster.yml MAP_FROM=config; return; fi
+    if [[ -f $HOME/infra/roster.yml ]]; then MAP=$HOME/infra/roster.yml MAP_FROM=infra; fi
+}
+
+box_needs() {                   # what this box is missing that update.sh doesn't do -> the list, empty when none
+    local pull
+    find_map
+    if [[ -z $MAP ]]; then echo "the team's map and ROSTER_CONFIG"; return; fi
+    [[ $MAP_FROM == infra ]] && echo "ROSTER_CONFIG"           # roster finds ~/infra/roster.yml only through it
+    pull="$(dirname "$MAP")/bin/roster-pull"
     if [[ -x $pull ]] && ! chose no-cron && ! { have crontab && crontab -l 2>/dev/null | grep -qF "$pull"; }; then
         echo "the auto-update cron job"
     fi
@@ -698,10 +711,11 @@ elif ! have crontab; then
     pkg=$(cron_pkg)
     if [[ -z $pkg ]]; then
         skip "no crontab, and no package manager to get it with - run $pull yourself to update"; cron_ready=0
+        choose no-cron              # kept, so this box counts as set up (delete it from install-choices to retry)
     elif ! ask "Auto-update runs from cron, which isn't installed. Install $pkg?" Y; then
         skip "no cron - run $pull yourself to update"; cron_ready=0; choose no-cron
     elif ! pkg_install "$pkg" || { (( ! DRY )) && ! have crontab; }; then
-        bad "cron didn't install"; fail_stage; cron_ready=0
+        bad "cron didn't install"; fail_stage; cron_ready=0; choose no-cron
     fi
 fi
 if (( cron_ready )); then
