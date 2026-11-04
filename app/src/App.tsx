@@ -557,12 +557,18 @@ function Workspace({
   const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
   /** The idle pane's Recent list: the last Hosts opened that are still in the Inventory and
    * reviewed, at most six. */
-  const recentShown = useMemo(() => {
-    const byName = new Map((conn.state === "ready" ? conn.hosts.hosts : []).map((h) => [h.name, h]));
-    return appState.recentHosts.flatMap((n) => {
+  // With no history yet (a first launch), the map starts from the Inventory's first reviewed Hosts,
+  // so the first screen shows the network too (Q193).
+  const { recentShown, recentTitle } = useMemo(() => {
+    const all = conn.state === "ready" ? conn.hosts.hosts : [];
+    const byName = new Map(all.map((h) => [h.name, h]));
+    const recent = appState.recentHosts.flatMap((n) => {
       const h = byName.get(n);
       return h && h.reviewed ? [h] : [];
     }).slice(0, 6);
+    return recent.length > 0
+      ? { recentShown: recent, recentTitle: "Recent" }
+      : { recentShown: all.filter((h) => h.reviewed).slice(0, 6), recentTitle: "In the Inventory" };
   }, [conn, appState.recentHosts]);
   // The window's title names the Session on screen ("esx-02 — roster"), as editors name the file.
   const titleOf = sessions.tabs.find((t) => t.id === sessions.active)?.label;
@@ -2214,7 +2220,7 @@ function Workspace({
         ...(sessions.tabs.length > 0 ? [[findKeys, "find", "find"] as [string | null, string, Line]] : []),
         [hintFor(keymap, "help"), "help", "help"],
         [hintFor(keymap, "keys"), "keys", "keys"],
-        [hintFor(keymap, "statusbar"), "hide this bar", "statusbar"],
+        // Hiding the bar is in ␣ K and :help, not a hint every day (Q193).
       ];
   const hints = offered.filter((h): h is Hint => h[0] !== null && h[0] !== undefined && h[0].length > 0);
 
@@ -2491,16 +2497,31 @@ function Workspace({
             <div className="empty">
               <Logo size={48} className="empty-mark" />
               <p className="empty-title">No Sessions open</p>
-              {/* Your network, not just a button (Q188): the Hosts you opened last, each one click
-                  away, drawn as the Sidebar draws them. Left out until there's a history. */}
-              {recentShown.length > 0 && <RecentMap box={info.inventory.box} hosts={recentShown} open={(name) => run(`open ${name}`)} />}
-              <button type="button" className="find primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
-                Find a Host
-              </button>
-              {findKeys && (
-                <p className="empty-hint key-hint">
-                  or press <Keys keys={findKeys} leader={options.leader} />
-                </p>
+              {/* Your network, not just a button (Q188, Q191, Q193): the Hosts you opened last (or,
+                  the first time, the Inventory's first ones), each one click away. */}
+              {recentShown.length > 0 && <RecentMap box={info.inventory.box} hosts={recentShown} title={recentTitle} open={(name) => run(`open ${name}`)} />}
+              {/* While the Sidebar shows its own Find field, the pane's Find is a quiet line, not a
+                  second filled button (Q193); without the Sidebar it's the button. */}
+              {sidebarShown && !sidebarTucked ? (
+                <button type="button" className="empty-find" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
+                  Find a Host
+                  {findKeys && (
+                    <span className="key-hint">
+                      <span className="visually-hidden">,</span> <Keys keys={findKeys} leader={options.leader} />
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="find primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
+                    Find a Host
+                  </button>
+                  {findKeys && (
+                    <p className="empty-hint key-hint">
+                      or press <Keys keys={findKeys} leader={options.leader} />
+                    </p>
+                  )}
+                </>
               )}
             </div>
           ) : (
@@ -3069,13 +3090,13 @@ export function inventoryBroken(e: InventoryFileError): string {
  * node, and the Host as a button (its name in Iosevka, its address). The edges stretch with the
  * list, so they meet each row whatever the UI size; the one to the row under the pointer is drawn
  * in the text colour. Nothing animates: this screen comes back often. */
-function RecentMap({ box, hosts, open }: { box: string; hosts: readonly Host[]; open: (name: string) => void }) {
+function RecentMap({ box, hosts, title, open }: { box: string; hosts: readonly Host[]; title: string; open: (name: string) => void }) {
   const [hover, setHover] = useState<number | null>(null);
   const rows = hosts.length;
   return (
     <section className="recent" aria-labelledby="recent-title">
       <h2 id="recent-title" className="recent-title">
-        Recent
+        {title}
       </h2>
       <div className="recent-map">
         <div className="recent-box" title={`This Box: ${box}`}>

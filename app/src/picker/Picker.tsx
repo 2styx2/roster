@@ -333,8 +333,8 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
           <span className="picker-count" aria-hidden="true">
             {results.length > shown.length
               ? `${formatCount(shown.length)} of ${countOf(results.length, "Host")}`
-              : results.length === 0 && quick
-                ? "Not in the Inventory"
+              : results.length === 0
+                ? "" /* the message (or the Quick Connect row) already says it */
                 : countOf(results.length, "Host")}
           </span>
           {hints.map(

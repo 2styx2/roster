@@ -267,7 +267,7 @@ The one recurring geometry is the network's: **nodes** (6 to 7px circles whose f
 - **Open apricot ring** (a short gap at its upper right, where the logo's Host sits): connecting.
 - **Halo:** a thin ring around a node whose Host has a Session (the one on screen apricot, others Paper), so "has a Session" is a shape too.
 
-With no Session open, the pane draws up to six recent Hosts as a map under the mark: this Box's name and Sea Glass square, a hairline edge from the square to each Host's node (brighter under the pointer), and each Host a Sidebar-style row (node, Iosevka name, muted address), above Find a Host.
+With no Session open, the pane draws up to six recent Hosts (on a first launch, the Inventory's first reviewed Hosts, titled "In the Inventory") as a map under the mark: this Box's name and Sea Glass square, a hairline edge from the square to each Host's node (brighter under the pointer), and each Host a Sidebar-style row (node, Iosevka name, muted address), above Find a Host.
 
 **The Nodes-And-Edges Rule.** The network's own shapes are the only ornament. The Gap orbit mark appears small and still (48 to 64px, muted) in empty states and on the lock screen, and is never used as wallpaper.
 

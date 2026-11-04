@@ -36,9 +36,13 @@ describe("the idle pane's Recent Hosts", () => {
     expect(await screen.findByRole("group", { name: `Session ${reviewed[1]}` })).toBeInTheDocument();
   });
 
-  it("is left out with no history", async () => {
+  it("with no history yet, starts from the Inventory's first reviewed Hosts", async () => {
     await ready([]);
     expect(screen.queryByRole("region", { name: "Recent" })).toBeNull();
-    expect(within(screen.getByRole("main", { name: /workspace/i })).getByRole("button", { name: "Find a Host" })).toBeInTheDocument();
+    const first = screen.getByRole("region", { name: "In the Inventory" });
+    expect(Array.from(first.querySelectorAll(".recent-name")).map((n) => n.textContent)).toEqual(reviewed.slice(0, 6));
+    // The Sidebar shows its own Find field, so the pane's Find is a quiet line, not a filled button.
+    const find = within(screen.getByRole("main", { name: /workspace/i })).getByRole("button", { name: /^Find a Host/ });
+    expect(find).not.toHaveClass("primary");
   });
 });

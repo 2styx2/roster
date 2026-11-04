@@ -245,6 +245,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    node, and the Hosts as rows (the Sidebar's row language). Three columns: the Box, the edges
    (stretched to the list's height), the list. Rows raise under the pointer; no motion. */
 .recent { margin: 10px 0 6px; text-align: left; }
+/* The pane's Find while the Sidebar shows its own: a quiet line with its keys, not a second
+   filled button. */
+.empty .empty-find {
+  height: 28px; padding: 0 8px; display: inline-flex; align-items: center; gap: 8px;
+  background: transparent; border-color: transparent; color: var(--muted); font-size: var(--text-sm); font-weight: 400;
+}
+@media (hover: hover) and (pointer: fine) { .empty .empty-find:hover:not(:disabled) { color: var(--text); background: var(--hover); } }
+/* A short window: the mark gives way so the pane's words and map fit above the status bar. */
+@media (max-height: 460px) { .empty .empty-mark { display: none; } .empty { padding-block: 8px; } }
+.empty { max-height: 100%; overflow-y: auto; }
 .recent-title {
   margin: 0 0 8px; padding-left: 2px; color: var(--muted);
   font-size: max(11px, calc(var(--text-xs) - 1px)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
@@ -388,6 +398,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* With no Hosts there's nothing to drag into a Folder, so its hint waits. */
+.sb-rest:not(:has([data-section="inventory"] .sb-row)) [data-section="folders"] .sb-empty { display: none; }
 /* In a very short window the Folders hint gives way, so the Inventory keeps its rows. */
 @media (max-height: 400px) { .sb-section[data-section="folders"] .sb-empty { display: none; } }
 .sb-empty { margin: 2px 8px 4px 24px; color: var(--muted); font-size: var(--text-sm); line-height: 1.7; text-wrap: pretty; }
@@ -825,7 +837,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* Zero-width edge tracks: with the 12px gap they're the row's side padding, so the node sits
      12px from the row's edge and 12px from the name, as in the Sidebar (a subgrid row's own
      padding would push its first cell into the gap). */
-  grid-template-columns: 0 8px minmax(0, 2fr) fit-content(24ch) minmax(0, 1.2fr) minmax(0, 7em) auto 24px 0;
+  /* The name is the column you scan: it takes the room first (at least 14 characters); the
+     address up to 22, the group up to 18 and the type up to 10 take only what they need, and
+     give way before it. */
+  grid-template-columns: 0 8px minmax(14ch, 1fr) fit-content(22ch) fit-content(18ch) fit-content(10ch) auto 24px 0;
 }
 .picker-row {
   grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
@@ -838,7 +853,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 /* The selected row shows its whole name and address, wrapped (M6): two long Hosts that differ at
    the end can be told apart from the keyboard. */
-.picker-row.selected > .host-name, .picker-row.selected > .host-ip { white-space: normal; overflow-wrap: anywhere; overflow: visible; }
+.picker-row.selected > :is(.host-name, .host-ip, .host-group) { white-space: normal; overflow-wrap: anywhere; overflow: visible; }
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }

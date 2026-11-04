@@ -54,9 +54,9 @@ describe("Hiding the key hints", () => {
     expect(platform.saved()).toMatchObject({ hints: false });
     // Every hint is marked so the stylesheet can hide it: the status bar's, the empty state's.
     for (const hint of statusbar().querySelectorAll(".hint")) expect(hint).toHaveClass("key-hint");
-    expect(document.querySelector(".empty-hint")).toHaveClass("key-hint");
+    expect(document.querySelector(".empty-find .key-hint")).not.toBeNull();
     // The names stay: the Find button still says its keys to assistive tech.
-    expect(screen.getByRole("button", { name: /^Find a Host, Leader f$/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Sidebar" })).getByRole("button", { name: /^Find a Host, Leader f$/ })).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
     const picker = await screen.findByRole("dialog", { name: /find a host/i });
     for (const hint of picker.querySelectorAll(".picker-hint")) expect(hint).toHaveClass("key-hint");
@@ -93,7 +93,7 @@ describe("Hiding the key hints", () => {
     const { user } = await ready();
     const words = () => Array.from(statusbar().querySelectorAll(".hint")).map((h) => h.textContent?.trim().split(" ").at(-1));
     // No Session yet: the empty state offers Find, so the bar doesn't.
-    expect(words()).toEqual(["help", "keys", "bar"]);
+    expect(words()).toEqual(["help", "keys"]);
     await user.keyboard(LEADER);
     expect(words()).toEqual(["move", "open", "menu", "terminal"]);
   });
