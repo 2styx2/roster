@@ -62,11 +62,14 @@ async function screenLine(out: string): Promise<CursorLine> {
   return at;
 }
 
-/** Has the shell drawn `line`, typed in at `mark` in what it printed (`out`)? Read off a screen
- * of the pty's size, not off the bytes: fish draws a long line in pieces and moves the cursor over
- * cells it has drawn already (#400), so the bytes needn't hold the line in one piece. The rows from
- * the one the line went in at, joined (a long line wraps), runs of spaces as one. */
+/** Has the shell drawn `line`, typed in at `mark` in what it printed (`out`)? Either the bytes
+ * since hold it, or a screen of the pty's size shows it from the row it went in at (rows joined,
+ * as a long line wraps; runs of spaces as one). fish draws a long line in pieces and moves the
+ * cursor over cells it has drawn already, so its bytes needn't hold the line in one piece (#400);
+ * pwsh draws where it's told the cursor is, and the test tells it the top row, so its line can be
+ * above that row on the screen. */
 async function drawnLine(out: string, mark: number, line: string): Promise<boolean> {
+  if (shown(out.slice(mark)).includes(line.trim())) return true;
   const term = new Terminal({ cols: 120, rows: 40, scrollback: 1000, allowProposedApi: false });
   const write = (data: string) => new Promise<void>((resolve) => term.write(data, resolve));
   await write(out.slice(0, mark));
