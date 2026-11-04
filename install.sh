@@ -6,17 +6,21 @@
 #   ./install.sh --dry-run     show what would happen, change nothing
 #   ./install.sh --prefix DIR  put the roster command in DIR/bin and its man page in DIR/share/man/man1
 #                              (default: uv's tool bin dir, ~/.local/bin, so ~/.local/share/man/man1); or PREFIX=DIR
+#   ./install.sh --infra-repo URL   the git URL of your team's map (the repo with roster.yml); or ROSTER_INFRA_REPO=URL
 #
 # Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the roster config folder, making roster work from
-# any directory, unlocking the vault, `roster setup`, and auto-updates from cron.
+# any directory, unlocking the vault, `roster setup`, and auto-updates from cron. ./uninstall.sh undoes them.
 # Output of each step goes to ~/.cache/roster/install.log; it is shown only when a step fails.
 set -uo pipefail
 
-ROSTER_REPO="git@github.com:2styx2/roster.git"
-INFRA_REPO="git@example.com:yourteam/infra.git"
+ROSTER_REPO="https://github.com/2styx2/roster.git"   # public: https needs no GitHub key on a new box
+INFRA_REPO=${ROSTER_INFRA_REPO:-}
 LOG="$HOME/.cache/roster/install.log"
 SESSION_FILE="$HOME/.config/roster/bw-session"
-MARK="# roster: ROSTER_CONFIG"           # marks the line we add to shell startup files
+MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
+PATH_MARK="# roster: uv tools"
+MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+NEED_MANPATH=0
 
 YES=0 DRY=0 PREFIX=${PREFIX:-}
 while (( $# )); do
@@ -25,7 +29,9 @@ while (( $# )); do
         -n|--dry-run) DRY=1 ;;
         --prefix) [[ -n ${2:-} ]] || { echo "--prefix needs a directory" >&2; exit 2; }; PREFIX=$2; shift ;;
         --prefix=*) PREFIX=${1#--prefix=} ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --infra-repo) [[ -n ${2:-} ]] || { echo "--infra-repo needs a git URL" >&2; exit 2; }; INFRA_REPO=$2; shift ;;
+        --infra-repo=*) INFRA_REPO=${1#--infra-repo=} ;;
+        -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
     shift
@@ -64,6 +70,7 @@ info() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
 skip() { printf '  %s%s %s%s\n' "$D" "$SKIP" "$*" "$N"; SKIPPED+=("$CUR"); }
 done_stage() { DONE+=("$CUR"); }
 fail_stage() { FAILED+=("$CUR"); }
+listed() { local x=$1 e; shift; for e in "$@"; do [[ $e == "$x" ]] && return 0; done; return 1; }  # listed NAME LIST...
 
 TTY=/dev/tty                    # prompts read the keyboard even when piped into bash
 ( : < "$TTY" ) 2>/dev/null || TTY=/dev/stdin
@@ -88,7 +95,7 @@ ask() {                         # ask "Question?" Y|N  -> 0 for yes
 ask_value() {                   # ask_value "Prompt" default -> echoes the answer
     local q=$1 def=$2 reply
     if (( YES )); then printf '  %s?%s %s %s%s\n' "$C" "$N" "$q" "$def" "$N" >&2; echo "$def"; return; fi
-    printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$def" "$N" > "$TTY"
+    printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$def" "$N" >&2
     read -r reply < "$TTY" || reply=""
     echo "${reply:-$def}"
 }
@@ -121,8 +128,12 @@ live() {                        # live "what" cmd...  - runs in the foreground (
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+APT_UPDATED=0
 pkg_install() {                 # pkg_install name... with the box's package manager
-    if   have apt-get; then step "apt install $*" sudo apt-get install -y "$@"
+    if   have apt-get; then
+        # a fresh box (or container) has no package lists yet: install would say "Unable to locate package"
+        if (( ! APT_UPDATED )); then step "apt update" sudo apt-get update -q || return 1; APT_UPDATED=1; fi
+        step "apt install $*" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
     elif have dnf;     then step "dnf install $*" sudo dnf install -y "$@"
     elif have yum;     then step "yum install $*" sudo yum install -y "$@"
     elif have pacman;  then step "pacman -S $*" sudo pacman -S --noconfirm "$@"
@@ -133,7 +144,7 @@ pkg_install() {                 # pkg_install name... with the box's package man
 
 # ---- start
 
-mkdir -p "$(dirname "$LOG")"
+(( DRY )) || mkdir -p "$(dirname "$LOG")"
 (( DRY )) || : > "$LOG"
 USER_PATH=$PATH                 # the PATH this shell had, before the lines below add to it for this run
 export PATH="$HOME/.local/bin:$PATH"
@@ -167,8 +178,10 @@ if (( ${#missing[@]} )); then
 else
     done_stage
 fi
-if ! have jq || ! have nmap; then
+if ! have man; then warn "man not installed (optional: for man roster; roster man shows the page without it)"; fi
+if ! have jq || ! have nmap || ! have man; then
     opt=(); have jq || opt+=(jq); have nmap || opt+=(nmap)
+    if ! have man && ! have brew; then opt+=(man-db); fi       # macOS has man; man-db is its name elsewhere
     ask "Install the optional tools too (${opt[*]})?" N && pkg_install "${opt[@]}"
 fi
 
@@ -207,8 +220,27 @@ fi
 # The man page goes next to the command, PREFIX/share/man/man1 beside PREFIX/bin: man finds it from PATH. Kept or
 # reinstalled, so a roster from before the man page gets it too.
 page="$(dirname "$bindir")/share/man/man1/roster.1"
-step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
-    "$page" "$src/src/roster/roster.1" || warn "no man page; roster man shows it"
+mandir=$(dirname "$(dirname "$page")")
+if step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
+        "$page" "$src/src/roster/roster.1"; then
+    # man finds PREFIX/share/man from PREFIX/bin on PATH (man-db, mandoc); make sure, with the PATH a new terminal has
+    # A minimized Ubuntu's man is a stand-in that only says so (the real one, if man-db is there, is man.REAL)
+    manbin="man"; minimized=0
+    if have man && man -w man 2>&1 | grep -q 'minimized'; then
+        minimized=1; [[ -x /usr/bin/man.REAL ]] && manbin=/usr/bin/man.REAL
+    fi
+    if (( DRY )) || ! have man; then :
+    elif [[ $(PATH="$bindir:$USER_PATH" MANPATH="${MANPATH:-}" "$manbin" -w roster 2>/dev/null) == "$page"* ]]; then
+        if (( minimized )); then warn "this system is minimized: man shows no page until you run sudo unminimize (roster man works now)"
+        else ok "man roster finds it"; fi
+    elif (( minimized )); then
+        warn "this system is minimized: for man roster, install man-db and run sudo unminimize (roster man works now)"
+    else
+        warn "man doesn't look in ${mandir/#$HOME/\~} by itself: stage 6 adds it to MANPATH"; NEED_MANPATH=1
+    fi
+else
+    warn "no man page; roster man shows it"
+fi
 case ":$USER_PATH:" in
     *":$bindir:"*) ;;
     *":${bindir%/}/:"*) ;;
@@ -220,9 +252,15 @@ esac
 stage 4
 if have bw; then ok "bw $(bw --version 2>/dev/null) already installed"; done_stage
 elif ask "Install the Bitwarden CLI (bw)? roster fetches passwords with it" Y; then
-    if have npm; then
+    # On Linux x86_64 the standalone binary, into ~/.local/bin (no root; a system npm's -g needs it). It's a zip:
+    # a fresh box may have no unzip, so that comes from the package manager first.
+    standalone=0
+    if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
+        if have unzip || { ! have npm && pkg_install unzip; }; then standalone=1; fi
+    fi
+    if (( ! standalone )) && have npm; then
         step "npm install -g @bitwarden/cli" npm install -g @bitwarden/cli && done_stage || fail_stage
-    elif [[ $(uname -s) == Linux ]] && have unzip; then
+    elif (( standalone )); then
         tmp=$(mktemp -d)
         if step "download bw" curl -fsSL -o "$tmp/bw.zip" "https://vault.bitwarden.com/download/?app=cli&platform=linux" \
            && step "unpack bw into ~/.local/bin" sh -c "mkdir -p '$HOME/.local/bin' && unzip -oq '$tmp/bw.zip' -d '$HOME/.local/bin' && chmod +x '$HOME/.local/bin/bw'"
@@ -240,17 +278,33 @@ stage 5
 cfg_dir=$(ask_value "Folder for your roster config (roster.yml)" "$HOME/infra")
 cfg_dir=${cfg_dir/#\~/$HOME}
 CFG="$cfg_dir/roster.yml"
+if [[ ! -f $CFG && -z $INFRA_REPO ]] && (( ! YES )); then
+    INFRA_REPO=$(ask_value "Git URL of your team's map, the repo with roster.yml (Enter for none)" "")
+fi
 if [[ -f "$CFG" ]]; then
     ok "found $CFG"
     if [[ -d "$cfg_dir/.git" ]] && ask "Pull the latest map into $cfg_dir?" Y; then
         step "git pull" git -C "$cfg_dir" pull --ff-only --quiet || warn "couldn't fast-forward; using it as it is"
     fi
     done_stage
-elif ask "Create $cfg_dir with the team's map (clone yourteam/infra)?" Y; then
+elif [[ -n $INFRA_REPO ]] && ask "Create $cfg_dir with the team's map (clone $INFRA_REPO)?" Y; then
     if [[ -e "$cfg_dir" && -n "$(ls -A "$cfg_dir" 2>/dev/null)" ]]; then
         bad "$cfg_dir exists and isn't empty - pick another folder or empty it"; fail_stage
-    elif step "clone yourteam/infra into $cfg_dir" git clone -q "$INFRA_REPO" "$cfg_dir"; then done_stage
+    elif if (( YES )); then
+             # nobody to answer a passphrase question: fail instead of waiting on a hidden prompt. The repo was named
+             # on the command line, so a first-seen host key is taken (accept-new: a changed one still fails). Your
+             # own GIT_SSH_COMMAND or core.sshCommand (a deploy key, say) is left as it is.
+             git_ssh=()
+             if [[ -z ${GIT_SSH_COMMAND:-} ]] && ! git config --get core.sshCommand >/dev/null 2>&1; then
+                 git_ssh=("GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+             fi
+             step "clone $INFRA_REPO into $cfg_dir" \
+                 env GIT_TERMINAL_PROMPT=0 ${git_ssh[@]+"${git_ssh[@]}"} git clone -q "$INFRA_REPO" "$cfg_dir"
+         else live "clone $INFRA_REPO into $cfg_dir" git clone -q "$INFRA_REPO" "$cfg_dir"; fi; then
+        if (( DRY )) || [[ -f $CFG ]]; then done_stage; else warn "the clone has no roster.yml at its top"; fail_stage; fi
     else warn "no git access? copy roster.yml into $cfg_dir by hand"; fail_stage; fi
+elif [[ -z $INFRA_REPO ]] && (( YES )); then
+    skip "no team map given - run again with --infra-repo URL, or copy roster.yml into $cfg_dir"
 elif ask "Start $cfg_dir from the commented example instead (roster init)?" N; then
     if (( DRY )) || mkdir -p "$cfg_dir"; then step "roster init" roster -c "$CFG" init && done_stage || fail_stage; fi
 else
@@ -263,11 +317,29 @@ stage 6
 rc_files=()
 for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do [[ -f $f ]] && rc_files+=("$f"); done
 (( ${#rc_files[@]} )) || rc_files=("$HOME/.profile")
-if [[ -z $CFG ]]; then
+path_line="export PATH=\"\$HOME/.local/bin:\$PATH\"   $PATH_MARK"
+case ":$USER_PATH:" in *":$HOME/.local/bin:"*|*":$HOME/.local/bin/:"*) local_bin_on_path=1 ;; *) local_bin_on_path=0 ;; esac
+if (( NEED_MANPATH )) && ask "Add ${mandir/#$HOME/\~} to MANPATH (in ${rc_files[*]/#$HOME/\~}) so man roster works?" Y; then
+    # the trailing colon keeps man's own search path after it
+    man_line="export MANPATH=\"${mandir/#$HOME/\$HOME}:\${MANPATH:-}\"   $MAN_MARK"
+    for f in "${rc_files[@]}"; do
+        if (( DRY )); then info "would add MANPATH to $f"
+        elif ! grep -qF "$MAN_MARK" "$f"; then printf '\n%s\n' "$man_line" >> "$f"; ok "updated ${f/#$HOME/\~}"; fi
+    done
+fi
+if [[ -z $CFG ]] && (( local_bin_on_path )); then
     skip "no roster.yml to point at"
+elif [[ -z $CFG ]]; then
+    # no map yet, but roster (and uv, bw) are in ~/.local/bin: without it on PATH a new terminal has no roster
+    if ask "Put ~/.local/bin on PATH (in ${rc_files[*]/#$HOME/\~}) so a new terminal finds roster?" Y; then
+        for f in "${rc_files[@]}"; do
+            if (( DRY )); then info "would add ~/.local/bin to PATH in $f"
+            elif ! grep -q '\.local/bin' "$f"; then printf '\n%s\n' "$path_line" >> "$f"; ok "updated ${f/#$HOME/\~}"; fi
+        done
+    fi
+    skip "no roster.yml to point at - once you have one, run this again"
 elif ask "Make roster work from any directory (set ROSTER_CONFIG=$CFG in ${rc_files[*]/#$HOME/\~})?" Y; then
     line="export ROSTER_CONFIG=\"${CFG/#$HOME/\$HOME}\"   $MARK"
-    path_line="export PATH=\"\$HOME/.local/bin:\$PATH\"   # roster: uv tools"
     for f in "${rc_files[@]}"; do
         if (( DRY )); then info "would add ROSTER_CONFIG to $f"; continue; fi
         # replace a line from an earlier run (or a hand-written one), else append
@@ -379,9 +451,9 @@ fi
 
 printf '\n%sSummary%s\n' "$B" "$N"
 for s in "${STAGES[@]}"; do
-    if   [[ " ${FAILED[*]-} " == *" $s "* ]];  then bad "$s"
-    elif [[ " ${SKIPPED[*]-} " == *" $s "* ]]; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
-    elif [[ " ${DONE[*]-} " == *" $s "* ]];    then ok "$s"
+    if   listed "$s" ${FAILED[@]+"${FAILED[@]}"};   then bad "$s"
+    elif listed "$s" ${SKIPPED[@]+"${SKIPPED[@]}"}; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
+    elif listed "$s" ${DONE[@]+"${DONE[@]}"};       then ok "$s"
     else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
     fi
 done
@@ -390,5 +462,6 @@ info "Next: open a new terminal, then try"
 printf '    roster hosts                      %s# every host you can reach%s\n' "$D" "$N"
 printf '    ssh <host>                        %s# key hosts%s\n' "$D" "$N"
 printf '    roster run <host> -- hostname     %s# password-only hosts%s\n' "$D" "$N"
+printf '    roster --help, man roster         %s# every command, with examples; the manual%s\n' "$D" "$N"
 (( ${#FAILED[@]} )) && { info "Some stages failed - details in $LOG. Re-running this is safe."; exit 1; }
 exit 0

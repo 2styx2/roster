@@ -239,7 +239,7 @@ The `Include` the Mesh relies on is checked: when `~/.ssh/config` includes the M
 
 ## Uninstalling roster
 
-Before removing roster from this Box, take off the Hosts what it put there, while it can still log in to them:
+`./uninstall.sh` in the roster checkout does these steps in this order, then removes roster ([Removing a box](new-box.md#removing-a-box)). Before removing roster from this Box by hand, take off the Hosts what it put there, while it can still log in to them:
 
 1. `roster mesh cut --all` (`roster --inv NAME mesh cut --all` for each named Inventory): this Box's Mesh keys, lines and files off every Host, and those an older roster left with no Box in their tag (they may be another Box's or Inventory's; the question says so). Run it again until it exits 0 (a Host that was down).
 2. `roster revoke` (`roster revoke --all` with named Inventories): this Box's own key off every Host. It names this Box's files to delete once every Host has lost the key.

@@ -125,13 +125,16 @@ Or use the installer. It walks through every stage (uv, roster, the Bitwarden CL
 
 ```bash
 git clone https://github.com/2styx2/roster.git && cd roster
-./install.sh              # interactive
-./install.sh --dry-run    # show what it would do, change nothing
+./install.sh                                  # interactive: asks for your team's map repo
+./install.sh --yes --infra-repo GIT-URL       # every default, no questions (bw login and unlock wait for you)
+./install.sh --dry-run                        # show what it would do, change nothing
+./update.sh                                   # later: newest roster, man page, the map pulled, roster sync
+./uninstall.sh                                # take this box off its hosts, then remove roster from it
 ```
 
-A Release also has `roster-cli-<version>.tar.gz`: unpack it and run `./install.sh` inside, no git needed. `install.sh --prefix DIR` puts the command in `DIR/bin` instead of `~/.local/bin`.
+A Release also has `roster-cli-<version>.tar.gz`: unpack it and run `./install.sh` inside, no git needed. `install.sh --prefix DIR` puts the command in `DIR/bin` instead of `~/.local/bin`. All three scripts take `--yes` and `--dry-run`. Before removing anything, `uninstall.sh` takes this box's key off every host (`roster mesh cut --all`, `roster revoke --all`). It keeps the key, and roster, while a host is still unreachable, and leaves uv, `bw`, the `~/.local/bin` PATH line and your config folder unless you say otherwise (or pass `--purge`). `scripts/test-install.sh [ubuntu|fedora]` runs all three on a fresh box in a container.
 
-After installing, either way, `man roster` shows the manual: the man page goes to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster`, where `man` looks. Setting up another box, step by step: [docs/new-box.md](docs/new-box.md).
+After installing, either way, `man roster` shows the manual: the man page goes to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster`, where `man` looks. `install.sh` checks that `man roster` finds it, and adds `MANPATH` only on a box where it doesn't. `roster --help` lists every command, and `roster COMMAND --help` shows a command's examples. Setting up another box, step by step: [docs/new-box.md](docs/new-box.md).
 
 ## Quick start
 
