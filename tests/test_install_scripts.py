@@ -232,7 +232,7 @@ def test_help_is_the_header_and_nothing_else(script):
     assert r.stdout.startswith(("Install", "Update", "Remove")) and "set -uo" not in r.stdout
 
 
-def install(tmp_path, *args, answers=None, home=None):
+def install_dry(tmp_path, *args, answers=None, home=None):
     """install.sh --dry-run in a made-up HOME (never this machine's), with ANSWERS typed (else --yes)."""
     env = {**os.environ, "HOME": str(home or tmp_path / "home"), "NO_COLOR": "1"}
     for k in ("ROSTER_INFRA_REPO", "ROSTER_INVENTORY", "ROSTER_CONFIG"):
@@ -245,7 +245,7 @@ def install(tmp_path, *args, answers=None, home=None):
 @posix_shell
 def test_install_with_nothing_given_creates_a_blank_inventory_under_yes(tmp_path):
     """T212: with no repo given, the default is a new, blank Inventory (Y), not nothing."""
-    r = install(tmp_path)
+    r = install_dry(tmp_path)
     cfg = tmp_path / "home" / "infra" / "roster.yml"
     assert f"would run: roster -c {cfg} init --inventory blank" in r.stdout, r.stdout
     assert "git clone" not in r.stdout
@@ -261,7 +261,7 @@ def test_install_with_nothing_given_creates_a_blank_inventory_under_yes(tmp_path
 ])
 @posix_shell
 def test_install_inventory_flag_picks_one_without_prompts(tmp_path, how, want):
-    r = install(tmp_path, "--inventory", how)
+    r = install_dry(tmp_path, "--inventory", how)
     assert r.returncode == 0, r.stdout + r.stderr
     assert want in r.stdout, r.stdout
 
@@ -269,7 +269,7 @@ def test_install_inventory_flag_picks_one_without_prompts(tmp_path, how, want):
 @posix_shell
 def test_install_inventory_flag_is_checked(tmp_path):
     for bad in ("nope", "file:", "repo:"):
-        r = install(tmp_path, "--inventory", bad)
+        r = install_dry(tmp_path, "--inventory", bad)
         assert r.returncode == 2 and "--inventory" in r.stderr, bad
 
 
@@ -344,7 +344,7 @@ def test_install_keeps_a_roster_yml_that_is_there(tmp_path):
     home = tmp_path / "home"
     (home / "infra").mkdir(parents=True)
     (home / "infra" / "roster.yml").write_text("groups: {}\n")
-    r = install(tmp_path, "--inventory", "blank")
+    r = install_dry(tmp_path, "--inventory", "blank")
     assert f"found {home / 'infra' / 'roster.yml'}" in r.stdout
     assert "init --inventory" not in r.stdout and "kept" in r.stdout
     assert (home / "infra" / "roster.yml").read_text() == "groups: {}\n"
@@ -474,7 +474,7 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
 @posix_shell
 def test_install_never_shows_a_clone_urls_password(tmp_path):
     """L4: https://me:TOKEN@host/... is shown, and logged, without the TOKEN."""
-    r = install(tmp_path, "--inventory", "repo:https://me:s3cret-token@example.com/team/map.git")
+    r = install_dry(tmp_path, "--inventory", "repo:https://me:s3cret-token@example.com/team/map.git")
     assert "s3cret-token" not in r.stdout + r.stderr, r.stdout
     assert "https://me:***@example.com/team/map.git" in r.stdout
 
