@@ -67,8 +67,8 @@ KB = 1000
 # / 710.0 gzipped.
 # JS split into startup and the help chunk on 2026-11-04 (T213, #405, decision Q189): :help's guides load on the first
 # :help (their text a chunk of its own, the Plugin API bundled once, as data), so the startup JS is the app's code and
-# its dependencies again. Measured that day: startup 1,548.5 raw / 438.0 gzipped (was 2,488.5 / 727.8), the help chunk
-# 989.3 / 299.6. Startup JS 3,000 -> 1,700 raw, 880 -> 480 gzipped, about 10 % above, so it catches a dependency or
+# its dependencies again. Measured that day: startup 1,551.3 raw / 439.1 gzipped (was 2,488.5 / 727.8), the help chunk
+# 996.8 / 302.4. Startup JS 3,000 -> 1,700 raw, 880 -> 480 gzipped, about 10 % above, so it catches a dependency or
 # code growth again; the help chunk 1,500 / 450, the room #377's research gave it, so docs PRs don't move it (it's text
 # loaded on the first :help, and Neovim ships 5.4 MB of help, read a page at a time); raise it as the search index's is.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.

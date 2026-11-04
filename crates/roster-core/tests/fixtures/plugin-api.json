@@ -1953,7 +1953,7 @@
         "terminal.read"
       ],
       "returns": "Session[]",
-      "returns_doc": "Each open Session's id and Host, oldest open first.",
+      "returns_doc": "Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.",
       "since": 4,
       "summary": "The Sessions open now, in the order they opened"
     },
@@ -2821,6 +2821,7 @@
           "type": "integer"
         },
         {
+          "doc": "The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As [`Session`](#session)'s `cwd`: the shell's word, never checked.",
           "name": "cwd",
           "required": false,
           "type": "string"
@@ -5558,6 +5559,7 @@
           "type": "string"
         },
         {
+          "doc": "The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.",
           "name": "cwd",
           "required": false,
           "type": "string"
