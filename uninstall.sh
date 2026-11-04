@@ -344,6 +344,9 @@ else
 fi
 if (( ! keep_roster )); then
 [[ ${page:-} == "$HOME/.local/share/man/man1/roster.1" ]] || remove "the man page" "$HOME/.local/share/man/man1/roster.1"
+remove "the roster source install.sh unpacked" "${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"
+remove "install.sh's kept answers" "$CONF_DIR/install-choices"
+(( DRY )) || rmdir "${XDG_DATA_HOME:-$HOME/.local/share}/roster" 2>/dev/null || true
 # roster's own folder: what roster wrote (Mesh state, the Inventory list) goes; what you put there is asked about.
 # Kept with roster: revoke --all and mesh cut --all need them.
 mine=()
@@ -384,7 +387,11 @@ else
     # roster.yml used where it is, in ~/Downloads say, isn't roster's folder)
     others=""
     if [[ ! -d $cfg_dir/.git ]]; then
-        others=$(cd "$cfg_dir" && ls -A | grep -vxE 'roster\.yml|roster\.yml\.bak|ROSTER\.md|CLAUDE\.md|\.claude|bin' | head -n 3)
+        for f in "$cfg_dir"/* "$cfg_dir"/.[!.]*; do
+            [[ -e $f || -L $f ]] || continue
+            case ${f##*/} in roster.yml|roster.yml.bak|ROSTER.md|CLAUDE.md|.claude|bin) ;; *) others+="${f##*/}"$'\n' ;; esac
+        done
+        others=$(head -n 3 <<<"${others%$'\n'}")
     fi
     if [[ -n $unsaved ]]; then info "$(home "$cfg_dir") has $unsaved: it stays unless you say so"; fi
     def=$EXTRA; [[ -n $unsaved ]] && def=N
