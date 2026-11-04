@@ -69,6 +69,7 @@ def walk(parser: argparse.ArgumentParser, words: list[str], current: str) -> "li
     root: dict[str, str | None] = {"config": None, "inv": None}      # -c / --inv before the command, as roster
     level = 0
     positional = 0              # how many words the current parser's positionals took
+    taken: list[str] = []       # those words
     pending: argparse.Action | None = None     # an option waiting for its value
     i = 0
     while i < len(words):
@@ -91,9 +92,10 @@ def walk(parser: argparse.ArgumentParser, words: list[str], current: str) -> "li
             continue
         commands, _ = subcommands(parser)
         if positional == 0 and w in commands:
-            parser, level, positional = commands[w], level + 1, 0
+            parser, level, positional, taken = commands[w], level + 1, 0, []
             continue
         positional += 1
+        taken.append(w)
     if pending is not None:
         return names(pending, current, root)
     if current.startswith("-"):
@@ -102,8 +104,8 @@ def walk(parser: argparse.ArgumentParser, words: list[str], current: str) -> "li
     if commands and positional == 0:
         return [(n, helps.get(n, "")) for n in commands]
     action, first = positional_at(parser, positional)
-    if action is None or (not first and action.nargs == "+"):
-        return []
+    if action is None or (not first and action.nargs == "+") or taken[-1:] == ["add"]:
+        return []               # `inv add NAME`: a new name, so the existing ones would only invite a clash (#420)
     return names(action, current, root)
 
 

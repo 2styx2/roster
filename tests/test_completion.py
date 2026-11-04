@@ -102,6 +102,18 @@ def test_inventory_names_complete(capsys, tmp_path):
     assert complete(capsys, "inv", "use", "w") == ["work"]
 
 
+def test_inv_add_completes_no_name_for_the_new_inventory(capsys, tmp_path):
+    """`inv add NAME PATH` names a new Inventory: offering the existing names there only invites a clash (#420)."""
+    (tmp_path / "inv-work").mkdir()
+    (tmp_path / "inv-work" / "roster.yml").write_text(CONFIG)
+    assert main(["inv", "add", "work", str(tmp_path / "inv-work" / "roster.yml")]) == 0
+    capsys.readouterr()
+    assert complete(capsys, "inv", "add", "") == []
+    assert complete(capsys, "inv", "add", "w") == []
+    assert complete(capsys, "inv", "add", "home", "") == [":files"]
+    assert complete(capsys, "inv", "remove", "") == ["work"]
+
+
 def test_a_missing_roster_yml_completes_no_names(capsys, tmp_path, monkeypatch):
     monkeypatch.setenv("ROSTER_CONFIG", str(tmp_path / "nowhere.yml"))
     assert complete(capsys, "run", "") == []
