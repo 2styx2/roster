@@ -228,7 +228,7 @@ find_map() {                    # the Inventory this box uses -> MAP (empty: non
     # shellcheck disable=SC2016  # Python, not shell, in the single quotes
     v=$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); a = d.get("active")
 print(next((x["path"] for x in d.get("inventories", []) if x.get("name") == a), ""))' \
-        "${XDG_CONFIG_HOME:-$HOME/.config}/roster/inventories.json" 2>/dev/null)
+        "$HOME/.config/roster/inventories.json" 2>/dev/null)       # roster's own folder (common.user_config_dir)
     if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=named; return; fi
     if [[ -f $HOME/.config/roster/roster.yml ]]; then MAP=$HOME/.config/roster/roster.yml MAP_FROM=config; return; fi
     if [[ -f $HOME/infra/roster.yml ]]; then MAP=$HOME/infra/roster.yml MAP_FROM=infra; fi

@@ -13,7 +13,6 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **Your Inventory can be a plain `roster.yml` or a team's git repo, both first-class** (#401): roster decides per file, each time it writes. Committed in a git repo with a remote, edits are Pending changes as before. Anything else (outside a repo, no git on the Box, not committed, a repo with no remote) is a plain file: the app's edits, `roster discover --write` and `roster mesh cut` save straight to it, with `roster.yml.bak` beside it, and nothing asks for git or a Publish. `roster check --box` says which. See [A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo).
 - **`roster init` gets you an Inventory four ways** (#401): `--blank` (a short, empty `roster.yml` that loads), `--inventory file:PATH` (a copy, once it loads), `repo:URL` (a clone of the team's repo) or `ssh-config[:PATH]` (the Hosts in `~/.ssh/config`: HostName, User, Port and IdentityFile only, wildcards and `Match` blocks skipped, the file never changed). `roster init` alone still writes the commented example. A `roster.yml` already there is kept; `--name NAME` names a new one beside it. See [A new Inventory](cli-reference.md#a-new-inventory).
 - **`install.sh` starts you with an Inventory** (#401): with none in the folder it offers the same four ways, a blank one by default (so `--yes` alone makes one, where it used to leave you with none), then `git init` as an option. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` still works). One already there is kept, or a new one is added beside it as a named Inventory.
-- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
 
 **App**
 
@@ -24,18 +23,31 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **Which networks have an SSH rate limiter is your setting** (#363): list them as `rate_limited: [10.0.0.0/8]` at the top of `roster.yml` (empty by default), and a Host there that doesn't answer is told its network's rate limiter may be why. With no list, a no-answer's fix says a rate limiter on the network can cause this; roster no longer assumes one fixed address range has one. See [Networks with an SSH rate limiter](cli-reference.md#networks-with-an-ssh-rate-limiter).
-- **The Mesh's one-time re-tag takes only this Box's own older lines** (#384): on the first `roster mesh` after upgrading to this release (v0.5.1), an untagged `authorized_keys` line (from a roster before v0.5.0) is taken as this Box's only when it's exactly the line this Box writes there, the same key, `from=` and options; another older Box's line for the same source stays, the apply warns about it (and, with `--rotate`, says when it still lets the replaced key in), and `roster mesh --find-leftovers` lists it. v0.5.0's first `roster mesh` took every untagged line for a source it writes, another older Box's too. `roster check --box` warns when this Box's name is an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …): Boxes with the same name are one owner, so each one's `setup` and `revoke` take the other's key and each one's `roster mesh` the other's entries; set `box_name:` (on a Box already set up: `roster revoke` first, then set it and run `roster setup` again). **Upgrading Boxes that share Hosts:** upgrade them together, straight from v0.4 to this release, skipping v0.5.0, and run each one's `roster mesh` once. A Box that already ran v0.5.0's `roster mesh` may have taken another older Box's untagged line for a source it writes; that Box's next `roster mesh` puts it back, and `roster mesh --find-leftovers` lists the untagged lines still there. A roster older than v0.5.0 still running on another Box leaves the new tagged lines alone, but still removes untagged lines, and Mesh files on a Host it doesn't make a source, on every apply. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
 - **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
 - **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
-
-**App**
-
-- A Session that gets no answer says a rate limiter on the network can cause this, for any address; `:check HOST` names the network when it's in `rate_limited:` (#363).
 
 **`roster serve` API 28**
 
 - `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes. `inventory.create` makes a new Inventory when serve found none (the app's first run): blank, a copy or a clone, named after its folder and made the active one.
+
+## v0.5.1
+
+### New
+
+**CLI**
+
+- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
+
+### Changed
+
+**CLI**
+
+- **Which networks have an SSH rate limiter is your setting** (#363): list them as `rate_limited: [10.0.0.0/8]` at the top of `roster.yml` (empty by default), and a Host there that doesn't answer is told its network's rate limiter may be why. With no list, a no-answer's fix says a rate limiter on the network can cause this; roster no longer assumes one fixed address range has one. See [Networks with an SSH rate limiter](cli-reference.md#networks-with-an-ssh-rate-limiter).
+- **The Mesh's one-time re-tag takes only this Box's own older lines** (#384): on the first `roster mesh` after upgrading to this release (v0.5.1), an untagged `authorized_keys` line (from a roster before v0.5.0) is taken as this Box's only when it's exactly the line this Box writes there, the same key, `from=` and options; another older Box's line for the same source stays, the apply warns about it (and, with `--rotate`, says when it still lets the replaced key in), and `roster mesh --find-leftovers` lists it. v0.5.0's first `roster mesh` took every untagged line for a source it writes, another older Box's too. `roster check --box` warns when this Box's name is an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …): Boxes with the same name are one owner, so each one's `setup` and `revoke` take the other's key and each one's `roster mesh` the other's entries; set `box_name:` (on a Box already set up: `roster revoke` first, then set it and run `roster setup` again). **Upgrading Boxes that share Hosts:** upgrade them together, straight from v0.4 to this release, skipping v0.5.0, and run each one's `roster mesh` once. A Box that already ran v0.5.0's `roster mesh` may have taken another older Box's untagged line for a source it writes; that Box's next `roster mesh` puts it back, and `roster mesh --find-leftovers` lists the untagged lines still there. A roster older than v0.5.0 still running on another Box leaves the new tagged lines alone, but still removes untagged lines, and Mesh files on a Host it doesn't make a source, on every apply. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
+
+**App**
+
+- A Session that gets no answer says a rate limiter on the network can cause this, for any address; `:check HOST` names the network when it's in `rate_limited:` (#363).
 
 ### Security
 
