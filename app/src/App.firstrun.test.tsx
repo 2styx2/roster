@@ -52,7 +52,7 @@ describe("a Box with no Inventory", () => {
     const create = vi.spyOn(backend, "createInventory");
     await user.click(await screen.findByRole("radio", { name: /Import a roster\.yml/ }));
     const make = screen.getByRole("button", { name: "Make it" });
-    expect(make).toBeDisabled();                              // no path yet
+    expect(make).toHaveAttribute("aria-disabled", "true");   // no path yet (still focusable, #417 L5)
     await user.type(screen.getByRole("textbox", { name: "Path of the roster.yml" }), "~/Downloads/broken.yml");
     await user.click(make);
     const refusal = await screen.findByRole("alert");
@@ -77,6 +77,44 @@ describe("a Box with no Inventory", () => {
     expect(await screen.findByRole("heading", { name: "No Inventory" })).toBeInTheDocument();
     expect(screen.getByText(/needs serve API 28/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+});
+
+describe("#417's review", () => {
+  it("shows a roster.yml that's there but doesn't load as the error it is, never 'make one' (M1)", async () => {
+    firstRun("inventory-broken");
+    expect(await screen.findByRole("heading", { name: "roster.yml doesn't load" })).toBeInTheDocument();
+    expect(screen.getByText(/not valid YAML/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Start your Inventory" })).toBeNull();
+  });
+
+  it("keeps focus on a live status while it works, and Cancel stops a clone (L5)", async () => {
+    const { user, backend } = firstRun();
+    const cancel = vi.spyOn(backend, "cancelCreateInventory");
+    await user.click(await screen.findByRole("radio", { name: /Clone your team's repo/ }));
+    await user.type(screen.getByRole("textbox", { name: "Git URL of the repo" }), "git@example.com:team/slow.git");
+    await user.click(screen.getByRole("button", { name: "Make it" }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/Making it/);
+    expect(status).toHaveFocus();
+    expect(screen.getByRole("form", { name: "Start your Inventory" })).toHaveAttribute("aria-busy", "true");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancel).toHaveBeenCalled();
+    expect(await screen.findByText(/Stopped: nothing was kept/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make it" })).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("moves focus to a refusal, and a taken name gets a Name field (L4, L5)", async () => {
+    const { user, backend } = firstRun("inventory-missing-name-taken");
+    const create = vi.spyOn(backend, "createInventory");
+    await user.click(await screen.findByRole("button", { name: "Make it" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveFocus();
+    const name = screen.getByRole("textbox", { name: "Name" });
+    await user.type(name, "infra2");
+    await user.click(screen.getByRole("button", { name: "Make it" }));
+    expect(create).toHaveBeenLastCalledWith({ how: "blank", folder: "~/infra", name: "infra2" });
+    expect(await screen.findByText(/the Inventory infra2 now/)).toBeInTheDocument();
   });
 });
 

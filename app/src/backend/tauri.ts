@@ -202,6 +202,7 @@ export function tauriBackend(): Backend {
     listInventories: () => call<Inventories>("inventories_list"),
     useInventory: (name) => call<InventoryUsed>("inventories_use", { name }),
     createInventory: (params) => call<NewInventory>("inventory_create", { params }),
+    cancelCreateInventory: () => call<boolean>("inventory_create_cancel"),
     verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
     pendingChanges: () => call<PendingChanges>("changes_diff"),

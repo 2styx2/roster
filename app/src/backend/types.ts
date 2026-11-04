@@ -105,7 +105,14 @@ export interface BackendInfo {
   inventory: InventoryInfo;
 }
 
-export type BackendProblemKind = "no-wsl" | "roster-missing" | "roster-too-old" | "inventory-not-found" | "failed";
+export type BackendProblemKind =
+  | "no-wsl"
+  | "roster-missing"
+  | "roster-too-old"
+  | "inventory-not-found"
+  /** A roster.yml was found (or named) but doesn't load: roster's words, never "make one" (#417 M1). */
+  | "inventory-invalid"
+  | "failed";
 
 /** Why the Backend couldn't start: shown as is on the error screen. */
 export interface BackendProblem {
@@ -1061,6 +1068,9 @@ export interface Backend {
    * on a serve started for this one call, since `connect()` can't start without one. Connect again
    * (with restart) after. Rejects with BackendCallError (170-172; -32601 from an older roster). */
   createInventory(params: NewInventoryParams): Promise<NewInventory>;
+  /** The first-run dialog's Cancel (#417 L5): the serve making it stops, and `createInventory`
+   * rejects with code 5 (nothing was kept). False when nothing was under way. */
+  cancelCreateInventory(): Promise<boolean>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host

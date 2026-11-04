@@ -3,7 +3,7 @@
 // ADR 0001: the app never writes roster.yml), names it after its folder and makes it the active
 // Inventory, so the serve started next finds it. A roster too old to make one says what to run in a
 // terminal instead, with the start problem's facts and Retry as the error screen has them.
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { BackendProblem, NewInventory, NewInventoryHow, NewInventoryParams } from "../backend/types";
 import { BackendCallError } from "../backend/types";
 import { Logo } from "../chrome/Logo";
@@ -28,6 +28,7 @@ function tooOld(e: unknown): boolean {
 export function FirstRun({
   problem,
   create,
+  cancel,
   onMade,
   onRetry,
   copy,
@@ -36,6 +37,8 @@ export function FirstRun({
   problem: BackendProblem;
   /** `inventory.create`, on a serve of its own. */
   create: (params: NewInventoryParams) => Promise<NewInventory>;
+  /** Stops a create under way (a clone): it then rejects with code 5. */
+  cancel: () => Promise<boolean>;
   /** It's made: connect again. */
   onMade: (made: NewInventory) => void;
   onRetry: () => void;
@@ -47,22 +50,44 @@ export function FirstRun({
   const [source, setSource] = useState("");
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<{ message: string; fix: string | null } | null>(null);
+  const [stopped, setStopped] = useState(false);
   const [old, setOld] = useState(false);
+  // a taken name (the folder's): a Name field of its own, from then on (#417 L4)
+  const [askName, setAskName] = useState(false);
+  const [name, setName] = useState("");
+  const status = useRef<HTMLParagraphElement>(null);
+  const alert = useRef<HTMLDivElement>(null);
 
   const needsSource = how !== "blank";
-  const ready = folder.trim() !== "" && (!needsSource || source.trim() !== "");
+  const ready = folder.trim() !== "" && (!needsSource || source.trim() !== "") && (!askName || name.trim() !== "");
+
+  // Focus follows what's live (#417 L5): the status while it works, the refusal once it's refused.
+  useEffect(() => {
+    if (busy) status.current?.focus();
+  }, [busy]);
+  useEffect(() => {
+    if (refusal) alert.current?.focus();
+  }, [refusal]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (busy || !ready) return;
     setBusy(true);
     setRefusal(null);
-    const params: NewInventoryParams = { how, folder: folder.trim(), ...(needsSource ? { source: source.trim() } : {}) };
+    setStopped(false);
+    const params: NewInventoryParams = {
+      how,
+      folder: folder.trim(),
+      ...(needsSource ? { source: source.trim() } : {}),
+      ...(askName ? { name: name.trim() } : {}),
+    };
     create(params).then(
       (made) => onMade(made),
       (err: unknown) => {
         setBusy(false);
         if (tooOld(err)) return setOld(true);
+        if (err instanceof BackendCallError && err.code === 5) return setStopped(true);
+        if (err instanceof BackendCallError && err.data?.field === "name") setAskName(true);
         const message = err instanceof Error ? err.message : String(err);
         const fix = err instanceof BackendCallError && typeof err.data?.fix === "string" ? err.data.fix : null;
         setRefusal({ message, fix });
@@ -104,7 +129,12 @@ export function FirstRun({
           roster keeps your Hosts in one <code>roster.yml</code>, and found none on this Box. Make one here, or in a
           terminal with <code>roster init</code>.
         </p>
-        <form onSubmit={submit} aria-describedby={refusal ? `${ids}-refusal` : undefined}>
+        <form
+          onSubmit={submit}
+          aria-label="Start your Inventory"
+          aria-busy={busy}
+          aria-describedby={refusal ? `${ids}-refusal` : undefined}
+        >
           <fieldset className="first-run-ways" disabled={busy}>
             <legend>How</legend>
             {WAYS.map((w, i) => (
@@ -168,19 +198,47 @@ export function FirstRun({
               roster.yml goes in it{how === "repo" ? " (an empty or new folder)" : ""}, named after it as an Inventory.
             </span>
           </div>
+          {askName && (
+            <div className="edit-field">
+              <label htmlFor={`${ids}-name`}>Name</label>
+              <input
+                id={`${ids}-name`}
+                className="mono"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={busy}
+                spellCheck={false}
+                autoComplete="off"
+                aria-describedby={`${ids}-name-note`}
+              />
+              <span id={`${ids}-name-note`} className="edit-note">
+                What roster calls it among your named Inventories (<code>roster --inv NAME</code>).
+              </span>
+            </div>
+          )}
+          <p ref={status} className="muted first-run-status" role="status" tabIndex={-1}>
+            {busy ? (how === "repo" ? "Making it: cloning the repo…" : "Making it…") : stopped ? "Stopped: nothing was kept." : ""}
+          </p>
           {refusal && (
-            <div id={`${ids}-refusal`} className="first-run-refusal" role="alert">
+            <div ref={alert} id={`${ids}-refusal`} className="first-run-refusal" role="alert" tabIndex={-1}>
               <p className="problem-message">{withCode(refusal.message)}</p>
               {refusal.fix && <p className="problem-message muted">{withCode(refusal.fix)}</p>}
             </div>
           )}
           <div className="problem-actions">
-            <button type="submit" className="primary" disabled={busy || !ready}>
-              {busy ? "Making it…" : "Make it"}
+            {/* aria-disabled, not disabled: focus never drops to the page while it works (#417 L5) */}
+            <button type="submit" className="primary" aria-disabled={busy || !ready}>
+              Make it
             </button>
-            <button type="button" onClick={onRetry} disabled={busy}>
-              Retry
-            </button>
+            {busy ? (
+              <button type="button" onClick={() => void cancel()}>
+                Cancel
+              </button>
+            ) : (
+              <button type="button" onClick={onRetry}>
+                Retry
+              </button>
+            )}
             <span className="muted">
               <Keys keys="Enter" /> makes it
             </span>

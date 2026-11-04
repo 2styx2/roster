@@ -68,7 +68,7 @@ class Made:
     skipped: list[str] = field(default_factory=list)
 
 
-def create(path, how, value=None, interactive=True):
+def create(path, how, value=None, interactive=True, stop=None):
     """Make the Inventory at PATH (a roster.yml that isn't there yet) the HOW way. INTERACTIVE: a clone may ask for
     a passphrase on this terminal (serve's never does). Returns Made; raises Problem with nothing left half-made,
     except a clone that worked but has no roster.yml (kept, and the Problem says where)."""
@@ -76,7 +76,7 @@ def create(path, how, value=None, interactive=True):
     if path.exists() or path.is_symlink():          # a link to nothing is there too: never written through
         raise there(path)
     if how == "repo":
-        return clone(path, value, interactive)
+        return clone(path, value, interactive, stop)
     if how == "blank":
         text, made = BLANK, Made(path, how)
     elif how == "file":
@@ -162,7 +162,7 @@ def copied(path, source):
     return text
 
 
-def clone(path, url, interactive):
+def clone(path, url, interactive, stop=None):
     folder = path.parent
     try:
         busy = folder.exists() and any(folder.iterdir())
@@ -179,15 +179,18 @@ def clone(path, url, interactive):
     if not interactive:                             # nobody to answer: a passphrase, a password or a new host key
         env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": env.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
     argv = ["git", "clone", "-q", "--", url, str(folder)]
-    try:
-        # stderr is kept (with the URL's password cut out) even in a terminal: git may echo the URL; ssh's and git's
-        # own questions go to the terminal itself
-        r = subprocess.run(argv, env=env, text=True, stdin=None if interactive else subprocess.DEVNULL,
-                           capture_output=True,
-                           timeout=600 if interactive else CLONE_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        raise Problem(CLONE_FAILED, f"git clone didn't finish within {600 if interactive else CLONE_TIMEOUT} s",
-                      fix="check the network; a big repo: `roster init --inventory repo:URL` in a terminal") from None
+    made_folder = not folder.exists()               # what a stopped clone leaves is taken away, never more
+    if stop is not None:
+        r = stoppable(argv, env, folder, made_folder, stop)
+    else:
+        try:
+            # stderr is kept (with the URL's credentials cut out) even in a terminal: git may echo the URL; ssh's
+            # and git's own questions go to the terminal itself
+            r = subprocess.run(argv, env=env, text=True, stdin=None if interactive else subprocess.DEVNULL,
+                               capture_output=True, timeout=600 if interactive else CLONE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise Problem(CLONE_FAILED, f"git clone didn't finish within {600 if interactive else CLONE_TIMEOUT} s",
+                          fix="check the network; a big repo: `roster init --inventory repo:URL` in a terminal") from None
     if r.returncode != 0:
         said = redacted(url, (r.stderr or "").strip())
         asked = "" if interactive else (" (nothing can be answered here: a repo that needs a passphrase, a password "
@@ -251,6 +254,40 @@ def ssh_hosts(text):
 # file://) would show it all. scp-style git@host:path has no secret, and isn't touched.
 USERINFO = re.compile(r"((?:https?|ssh|git\+ssh|ftps?)://)([^/\s]*)@", re.I)
 PASSWORD = re.compile(r"(://[^/@:\s]*):([^@/\s]*)@")
+
+
+def stoppable(argv, env, folder, made_folder, stop):
+    """A clone that STOP (serve's $/cancel, the app's Cancel) or CLONE_TIMEOUT ends: git and what it started are
+    killed, and the folder it was making is taken away (#417 L5). Never asks anything."""
+    import time
+
+    from .changes import kill_group
+    from .errors import CANCELLED
+    p = subprocess.Popen(argv, env=env, text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, start_new_session=True)
+    end = time.monotonic() + CLONE_TIMEOUT
+    while p.poll() is None:
+        if stop.wait(0.1) or time.monotonic() > end:
+            kill_group(p)
+            tidy(folder, made_folder)
+            if stop.is_set():
+                raise Problem(CANCELLED, "inventory.create was stopped while git cloned the repo: nothing was kept")
+            raise Problem(CLONE_FAILED, f"git clone didn't finish within {CLONE_TIMEOUT} s, so nothing was kept",
+                          fix="check the network; a big repo: `roster init --inventory repo:URL` in a terminal")
+    stdout, stderr = p.communicate()
+    return subprocess.CompletedProcess(argv, p.returncode, stdout, stderr)
+
+
+def tidy(folder, made_folder):
+    """Take away what a stopped clone left: the folder if it made it, else what's in it (it was empty before)."""
+    try:
+        if made_folder:
+            shutil.rmtree(folder, ignore_errors=True)
+        elif folder.is_dir():
+            for x in folder.iterdir():
+                (shutil.rmtree if x.is_dir() and not x.is_symlink() else os.remove)(x)
+    except OSError:
+        pass
 
 
 def shown_url(url):

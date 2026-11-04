@@ -58,7 +58,7 @@ from .common import (
     ssh_config_file,
     ssh_path,
 )
-from .config import find_config, load_config, load_inventory
+from .config import find_config, load_config, load_inventory, locate_config
 from .errors import (  # noqa: F401 (the codes are part of serve's API)
     ALREADY_SIGNED_OUT,
     BUSY,
@@ -692,13 +692,17 @@ def inventory_create(state, params):
     `roster init --inventory`'s ways, written by serve (ADR 0001: the app never writes roster.yml). It goes to
     FOLDER/roster.yml and is named (`roster inv add`, NAME or the folder's name) and made the active one, so the
     serve the app starts next finds it. A clone never asks anything (no terminal): a repo that needs a passphrase or
-    a password fails (`172`), and `roster init --inventory repo:URL` in a terminal is the way then.
+    a password fails (`172`), and `roster init --inventory repo:URL` in a terminal is the way then. One at a time on
+    this Box, whichever serve (a lock file in roster's config folder; `170` while another runs, or when an Inventory
+    turns up meanwhile). `$/cancel` stops a clone under way: git is killed, the folder it was making taken away,
+    and the answer is `5`.
 
     Params: `{how: blank|file|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the
-        `roster.yml` to copy (`file`) or the git URL (`repo`)
+        `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`-32602` with
+        `data.field: "name"`)
     Result: `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the
         app restarts serve (as after `inventories.use`)
-    Errors: 140, 143, 170-172
+    Errors: 5, 140, 143, 170-172, 174
     Since: API 28
     """
     from . import newinventory
@@ -737,24 +741,70 @@ def inventory_create(state, params):
         raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
                        fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
     taken = [x.name for x in inv.inventories if inventories.same_name(x.name, name)]
-    if taken:
+    if taken:                                       # the field to change, for the app's form (#417 L4)
         raise RpcError(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
-                       fix="pick another name")
+                       {"field": "name", "name": taken[0]},
+                       fix="give it another name, or pick another folder (its name names the Inventory); "
+                           f"`roster inv remove {taken[0]}` forgets the other one")
     target = folder / "roster.yml"
-    with state.lock:
+    stop = threading.Event()
+    on_cancel(stop.set)                             # the app's Cancel: a clone under way stops (#417 L5)
+    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve (#417 L3)
         if state.path is not None:                  # another create got here first
             raise RpcError(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
-        made = newinventory.create(target, how, source, interactive=False)
+        made = newinventory.create(target, how, source, interactive=False, stop=stop)
         state.path = made.path.resolve()            # this serve makes no other
-    try:
-        inventories.add(name, made.path)
-        inventories.use(name)
-    except SystemExit as e:
-        raise RpcError(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
-                       {"path": str(made.path)}, fix=f"`roster inv add NAME {made.path}` in a terminal") from None
+        try:
+            inventories.add(name, made.path)
+            inventories.use(name)
+        except SystemExit as e:
+            raise RpcError(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
+                           {"path": str(made.path)}, fix=f"`roster inv add NAME {made.path}` in a terminal") from None
     hosts = len(load_config(made.path)["hosts"])
     return {"path": str(made.path.resolve()), "name": inventories.canonical(name), "how": how, "hosts": hosts,
             "restart": True}
+
+
+FIRST_RUN_STALE = 600       # s: a lock older than this is a serve that died making one, and is taken over
+
+
+@contextmanager
+def first_run_lock():
+    """inventory.create one at a time on this Box: a lock file in roster's config folder (O_EXCL), so two app windows
+    (or two serves) can't both make and name one (#417 L3). After it's taken, an Inventory found now means one was
+    made meanwhile: 170."""
+    from .common import user_config_dir
+    lock = user_config_dir() / "inventory.create.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            try:
+                old = time.time() - lock.stat().st_mtime > FIRST_RUN_STALE
+            except OSError:
+                old = True
+            if not old:
+                raise RpcError(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
+                               {"lock": str(lock)}, fix="wait for it, then Retry") from None
+            lock.unlink(missing_ok=True)
+    else:
+        raise RpcError(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
+                       {"lock": str(lock)}, fix="wait for it, then Retry")
+    try:
+        os.write(fd, f"{os.getpid()}\n".encode())
+        os.close(fd)
+        try:
+            found = locate_config(None, None)
+        except SystemExit:
+            found = None
+        if found is not None and Path(found).exists():
+            raise RpcError(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
+                           fix="Retry: roster starts on it")
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 METHODS = {
@@ -3011,7 +3061,7 @@ class claimed:
 # Locking is never cancelled (Q112 (k)).
 
 NEVER_CANCELLED = {"vault.lock", "vault.logout", "$/cancel"}
-CANCEL_RUNNING = {"host.check", "mesh.plan", "mesh.apply", "mesh.cut"}     # each registers on_cancel(its job's stop)
+CANCEL_RUNNING = {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}     # each registers on_cancel(its job's stop)
 UNLOCK_LANE = {"vault.unlock"}  # a worker of its own: never queued behind 8 busy ones (Q112 (r))
 _request = threading.local()    # the Request this worker thread is answering
 MOVED = threading.Condition()   # notified when a request ends or is cancelled (vault.status waits on it)

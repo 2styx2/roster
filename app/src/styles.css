@@ -224,6 +224,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .first-run-way > span { display: flex; flex-direction: column; }
 .first-run-way .muted, .first-run .edit-note { font-size: var(--text-xs); }
 .first-run-refusal p { margin: 0; overflow-wrap: anywhere; }
+.first-run-status { margin: 0; font-size: var(--text-sm); }
+.first-run button[aria-disabled="true"] { opacity: 0.6; }
+.first-run button[aria-disabled="true"]:active { transform: none; }
 .first-run-refusal > p:first-child { color: var(--error); }
 
 /* ---------- Standard layout: [Sidebar | workspace | side panel], command line, status bar ---------- */

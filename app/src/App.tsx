@@ -2157,6 +2157,7 @@ function Workspace({
       <FirstRun
         problem={conn.problem}
         create={(params) => backend.createInventory(params)}
+        cancel={() => backend.cancelCreateInventory()}
         onMade={(made) =>
           void connect(true).then((ok) => {
             if (ok) setMessage(`Made ${made.path}, the Inventory ${made.name} now${made.hosts ? ` (${countOf(made.hosts, "Host")})` : ": add Hosts with + on a group, or :discover"}.`);

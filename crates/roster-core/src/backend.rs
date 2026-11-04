@@ -193,10 +193,19 @@ impl Backend {
     /// the app then connects again, and the new serve finds it. An older serve's refusal comes back
     /// as it is (`-32601`, or `1` from one that answers every method so).
     pub fn create_inventory(c: &Candidate, params: Value) -> Result<Value, CallError> {
-        let client = spawn_serve(c, None).map_err(|e| CallError::Io {
+        Self::create_inventory_with(c, params, &CreateCancel::default())
+    }
+
+    /// As [`Backend::create_inventory`], stoppable through `cancel` from another thread while it
+    /// runs: serve stops a clone under way and takes away what it left (#417 L5).
+    pub fn create_inventory_with(c: &Candidate, params: Value, cancel: &CreateCancel) -> Result<Value, CallError> {
+        let client = std::sync::Arc::new(spawn_serve(c, None).map_err(|e| CallError::Io {
             message: format!("the backend couldn't be started: {e}"),
-        })?;
-        client.call_timeout("inventory.create", params, timeout_for("inventory.create"))
+        })?);
+        *cancel.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::sync::Arc::clone(&client));
+        let r = client.call_timeout("inventory.create", params, timeout_for("inventory.create"));
+        cancel.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        r
     }
 
     /// The `api_version` serve reported at start.
@@ -515,6 +524,24 @@ fn too_old(message: String) -> BackendError {
     )
 }
 
+/// The first-run dialog's create under way, if any, for its Cancel (#417 L5). Cloned handles share it.
+#[derive(Clone, Default)]
+pub struct CreateCancel(std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<RpcClient>>>>);
+
+impl CreateCancel {
+    /// Asks the serve making the Inventory to stop (`$/cancel`): true if a create was under way.
+    pub fn cancel(&self) -> bool {
+        let client = self.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        match client {
+            Some(c) => {
+                c.cancel_pending();
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 /// `roster serve` as `c` runs it, its stdout the JSON-RPC client's.
 fn spawn_serve(c: &Candidate, notify: Option<Notify>) -> std::io::Result<RpcClient> {
     let mut cmd = Command::new(&c.serve_argv[0]);
@@ -548,14 +575,28 @@ fn classify(e: CallError, shown: &str) -> BackendError {
         CallError::Rpc {
             code: INVENTORY_ERROR,
             message,
-            ..
-        } => BackendError::new(
-            ErrorKind::InventoryNotFound,
-            format!("roster couldn't load the Inventory: {message}"),
-            "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for \
-             your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
-        )
-        .with_detail(shown),
+            data,
+        } => {
+            // serve's data.path is null only when it found no roster.yml at all (T212, #417 M1)
+            let found = data.as_ref().and_then(|d| d.get("path")).and_then(Value::as_str);
+            match found {
+                None => BackendError::new(
+                    ErrorKind::InventoryNotFound,
+                    format!("roster couldn't load the Inventory: {message}"),
+                    "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for \
+                     your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
+                ),
+                Some(path) => BackendError::new(
+                    ErrorKind::InventoryInvalid,
+                    format!("roster couldn't load the Inventory: {message}"),
+                    data.as_ref()
+                        .and_then(|d| d.get("fix"))
+                        .and_then(Value::as_str)
+                        .map_or_else(|| format!("Fix {path}, then Retry."), |f| format!("{f}, then Retry.")),
+                ),
+            }
+            .with_detail(shown)
+        }
         CallError::Rpc {
             code: METHOD_NOT_FOUND,
             message,

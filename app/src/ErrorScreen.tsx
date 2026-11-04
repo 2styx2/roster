@@ -10,6 +10,7 @@ const HEADINGS: Record<BackendProblemKind, string> = {
   "roster-missing": "roster wasn't found",
   "roster-too-old": "roster is too old",
   "inventory-not-found": "No Inventory",
+  "inventory-invalid": "roster.yml doesn't load",
   failed: "The backend didn't start",
 };
 
@@ -18,6 +19,7 @@ const WHERE: Record<BackendProblemKind, string> = {
   "roster-missing": "this Box: the roster command",
   "roster-too-old": "this Box: the roster that's installed",
   "inventory-not-found": "roster.yml on this Box",
+  "inventory-invalid": "roster.yml on this Box",
   failed: "this Box: roster serve",
 };
 

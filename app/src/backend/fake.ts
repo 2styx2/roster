@@ -169,7 +169,7 @@ export interface FakeScenario {
   store?: "repo" | "file";
   /** The first-run dialog's `inventory.create` (T212): `old` answers as a roster before API 28 does
    * (unknown method). Otherwise it makes one, and the next connect() starts. */
-  firstRun?: "old";
+  firstRun?: "old" | "name-taken";
   /** Named Inventories (ticket 115, API 27): `inventories.list`'s, the active one, and the file an
    * earlier step of roster's lookup finds first (`$ROSTER_CONFIG` or `./roster.yml`), if any. Each
    * (re)start "detects" as the app's probe does: `override` if set, else the active one. A named
@@ -600,6 +600,25 @@ export const fixtures: Record<string, FakeScenario> = {
       "inventory-not-found",
       "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
       "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
+    ),
+  },
+  /** #417 M1: a roster.yml that's there but doesn't load: the error screen, never Start your Inventory. */
+  "inventory-broken": {
+    hosts: makeHosts(0),
+    startProblem: problem(
+      "inventory-invalid",
+      "roster couldn't load the Inventory: ~/infra/roster.yml is not valid YAML: mapping values are not allowed here (line 3)",
+      "fix ~/infra/roster.yml at line 3, or run `roster init --blank` if there's none yet, then Retry.",
+    ),
+  },
+  /** #417 L4: the folder's name is a named Inventory's already. */
+  "inventory-missing-name-taken": {
+    hosts: makeHosts(0),
+    firstRun: "name-taken",
+    startProblem: problem(
+      "inventory-not-found",
+      "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
+      "Make one: `roster init --blank` in a terminal, then Retry.",
     ),
   },
   /** T212: roster.yml is a plain file (serve API 28): every edit saved straight to it, nothing to publish. */
@@ -1296,6 +1315,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   let failures = 0;
   /** inventory.create made one (T212): connect() starts from now on. */
   let created = false;
+  /** A slow clone's inventory.create under way, for its Cancel (#417 L5). */
+  let stopCreate: (() => void) | null = null;
   const printers: Printers = new Set();
   const { plugin: packagePlugin, ...packageHost } = fakePackageHost(scenario.packages ?? { named: [], lock: {} }, described);
   // ---- the Inventory as committed, and as edited on this Box (ticket 10)
@@ -1709,11 +1730,32 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         },
       };
     },
+    async cancelCreateInventory() {
+      await wait();
+      const stop = stopCreate;
+      if (stop) stop();
+      return stop !== null;
+    },
     async createInventory(params) {
       await wait();
       if (scenario.firstRun === "old") throw new BackendCallError("unknown method 'inventory.create'", -32601);
       if (created) throw new BackendCallError("this roster serve made one already", NewInventoryError.there);
       if (params.how !== "blank" && !params.source) throw new BackendCallError(`params.source: the ${params.how === "file" ? "roster.yml to copy" : "git URL"}`, -32602);
+      if (scenario.firstRun === "name-taken" && !params.name) {
+        throw new BackendCallError("params.name: there's already an Inventory named 'infra'", -32602, {
+          field: "name",
+          name: "infra",
+          fix: "give it another name, or pick another folder (its name names the Inventory); `roster inv remove infra` forgets the other one",
+        });
+      }
+      if (params.how === "repo" && params.source?.includes("slow")) {
+        // a clone that takes a while: Cancel stops it (#417 L5)
+        await new Promise<void>((resolve) => {
+          stopCreate = resolve;
+        });
+        stopCreate = null;
+        throw new BackendCallError("inventory.create was stopped while git cloned the repo: nothing was kept", 5);
+      }
       if (params.how === "repo" && params.source?.includes("nope")) {
         throw new BackendCallError(`git couldn't clone ${params.source}`, NewInventoryError.cloneFailed, {
           fix: "check the URL and your access to the repo (`git clone URL` in a terminal shows the same)",

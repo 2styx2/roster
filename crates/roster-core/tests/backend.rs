@@ -49,6 +49,16 @@ fn no_inventory_is_inventory_not_found_with_roster_wording() {
 }
 
 #[test]
+fn a_roster_yml_that_is_there_but_doesnt_load_is_its_own_kind() {
+    // #417 M1: only "no roster.yml found" (data.path null) is the first-run case; a file that's there but
+    // doesn't load (or ROSTER_CONFIG naming a missing one) is shown with roster's words, never "make one"
+    let e = Backend::start(&fake("broken-inventory")).err().unwrap();
+    assert_eq!(e.kind, ErrorKind::InventoryInvalid);
+    assert!(e.message.contains("not valid YAML: line 3"), "{}", e.message);
+    assert!(e.hint.contains("fix /home/u/infra/roster.yml"), "{}", e.hint);
+}
+
+#[test]
 fn with_no_inventory_a_serve_of_its_own_makes_one() {
     // T212: the first-run dialog's call, on a serve started for it alone (Backend::start can't: no Inventory)
     let r = Backend::create_inventory(
@@ -72,6 +82,31 @@ fn a_refused_create_keeps_servers_code_and_fix() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_create_under_way_can_be_cancelled() {
+    // #417 L5: the app's Cancel sends `$/cancel` for the call to the serve making it; serve answers 5
+    let cancel = roster_core::backend::CreateCancel::default();
+    let c2 = cancel.clone();
+    let t = std::thread::spawn(move || {
+        Backend::create_inventory_with(
+            &fake("first-run"),
+            serde_json::json!({"how": "repo", "source": "slow", "folder": "/x"}),
+            &c2,
+        )
+    });
+    let started = std::time::Instant::now();
+    while !cancel.cancel() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the call never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let e = t.join().unwrap().err().unwrap();
+    assert!(matches!(e, roster_core::rpc::CallError::Rpc { code: 5, .. }), "{e:?}");
+    assert!(!cancel.cancel(), "nothing left to cancel");
 }
 
 #[test]

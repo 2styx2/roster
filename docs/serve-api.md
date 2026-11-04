@@ -35,6 +35,7 @@ The app hands each one to the Plugins as their `job_progress` event ([Plugins](p
 |---|---|
 | queued (every worker busy) | it never runs; it answers `5` |
 | waiting for a lock (`roster.yml`, the vault) or for an unlock sent before it | it stops waiting at once and answers `5`; nothing was done |
+| running: `inventory.create` cloning a repo (API 28): git is killed and the folder it was making taken away; it answers `5` |
 | running: `host.check`, or `mesh.plan`, `mesh.apply`, `mesh.cut` waiting for their job | the job stops at its next step or Host, as `jobs.stop` would; the request answers with what was done. A check stops only if no other request waits for it and none asked for it with `background: true` (API 22): a request that joined another's check leaves it running and answers when it ends |
 | running: anything else | nothing: it runs to its end, so nothing is half-written, and its answer says what it did (the app's check after a timeout, `host.get {settled: true}` or `vault.status`, sees it) |
 | `vault.lock`, `vault.logout` | never cancelled: locking always succeeds |
@@ -64,7 +65,7 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 |---|---|---|---|---|
 | `inventory.info` | none | `{path, box, host_count, providers: [names], store, roster_version, api_version}` |  | 1 |
 | `inventory.info` | none | `store: {kind, note, repo}` (T212): how `roster.yml` is kept, as the disk and git say now. `kind` is `repo` (committed in a git repo with a remote: edits are Pending changes until `changes.publish`) or `file` (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says which in a sentence; `repo` is the git work tree it's in (`null` outside one) |  | 28 |
-| `inventory.create` | `{how: blank\|file\|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the `roster.yml` to copy (`file`) or the git URL (`repo`) | `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the app restarts serve (as after `inventories.use`) | `140`, `143`, `170`-`172` | 28 |
+| `inventory.create` | `{how: blank\|file\|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`-32602` with `data.field: "name"`) | `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the app restarts serve (as after `inventories.use`) | `5`, `140`, `143`, `170`-`172`, `174` | 28 |
 | `hosts.list` | none | `{hosts: [Host, ...], groups: {name: {title, description}}, error}`, hosts in `roster.yml` order. `error` (API 8) is `null`, or why `roster.yml` as it is now doesn't load while these are the last good ones |  | 1 |
 | `host.get` | `{name}` (exact Host name) | one Host | `2` | 1 |
 | `host.get` | `{name, settled: true}` | the Host once no write to `roster.yml` is under way: it waits for one as another write would (the app's check after a `host.add` it stopped waiting for) | `2`, `4` | 20 |

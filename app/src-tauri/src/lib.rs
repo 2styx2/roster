@@ -2,7 +2,7 @@
 //! calls, Sessions).
 //! All logic lives in roster-core so it can be tested without Tauri (docs/app/dev/testing.md).
 
-use roster_core::backend::{Backend, BackendInfo, CheckStarted, QuickTarget, fill_refusal, timeout_for};
+use roster_core::backend::{Backend, BackendInfo, CheckStarted, CreateCancel, QuickTarget, fill_refusal, timeout_for};
 use roster_core::config::{self, Config, Loader, Report};
 use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
 use roster_core::package::{self, Packages};
@@ -93,14 +93,27 @@ async fn backend_connect(
 /// frontend then connects again. The params are the dialog's choice: how, a folder, a path or a
 /// URL. Nothing secret is in them.
 #[tauri::command]
-async fn inventory_create(config: tauri::State<'_, ConfigState>, params: Value) -> Result<Value, CallError> {
+async fn inventory_create(
+    config: tauri::State<'_, ConfigState>,
+    cancel: tauri::State<'_, CreateCancel>,
+    params: Value,
+) -> Result<Value, CallError> {
     let loader = config.0.clone();
+    let cancel = cancel.inner().clone();
     blocking(move || {
         let config = loader.map(|l| l.settled()).unwrap_or_default();
         let c = candidate(&config).map_err(|e| CallError::Io { message: e.message })?;
-        Backend::create_inventory(&c, params)
+        Backend::create_inventory_with(&c, params, &cancel)
     })
     .await
+}
+
+/// The first-run dialog's Cancel (#417 L5): the serve making the Inventory stops (a clone under way
+/// is killed, and what it left taken away). False when nothing was under way.
+#[tauri::command]
+async fn inventory_create_cancel(cancel: tauri::State<'_, CreateCancel>) -> Result<bool, ()> {
+    let cancel = cancel.inner().clone();
+    blocking(move || Ok(cancel.cancel())).await
 }
 
 /// The Config (`init.lua`, roster-core config/): None when there's no config dir. roster-core's
@@ -1320,6 +1333,7 @@ pub fn run() {
         .manage(DemoPlugins::default())
         .manage(Arc::clone(&sessions))
         .manage(ConfigState(loader))
+        .manage(CreateCancel::default())
         .setup(move |app| {
             migrate_state(app.handle());
             // What a Plugin did when one of its requests answered (`roster.http`, the
@@ -1356,6 +1370,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_connect,
             inventory_create,
+            inventory_create_cancel,
             open_url,
             hosts_list,
             host_get,
