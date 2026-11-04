@@ -14,6 +14,7 @@ Standard library only, and roster runs it as `python -I -S` (no site, no user or
 PYTHON* variables), so nothing but this file and the standard library runs with the vault's items in memory."""
 
 import json
+import re
 import sys
 
 CAP = 64 * 1024 * 1024          # bytes of bw output; a vault of thousands of items is a few MB
@@ -21,15 +22,13 @@ CAP = 64 * 1024 * 1024          # bytes of bw output; a vault of thousands of it
 
 def no_userinfo(uri):
     """URI without a `user:password@` before its host (`ssh://u:pw@h:22/x` is `ssh://h:22/x`, `u:pw@h` is `h`), so a
-    password written into a URI never reaches roster."""
-    scheme, sep, rest = uri.partition("://")
-    if not sep:
-        scheme, rest = "", uri
-    end = min([i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0] or [len(rest)])
-    authority, tail = rest[:end], rest[end:]
-    if "@" in authority:
-        authority = authority.rsplit("@", 1)[1]
-    return f"{scheme}{sep}{authority}{tail}"
+    password written into a URI never reaches roster. Everything up to the LAST `@` after the scheme and its slashes
+    goes, whatever is in it: a password may hold `/`, `?` or `#` unencoded (Bitwarden's generator uses `#`). An `@`
+    in the path takes the host with it: no address, never a password."""
+    m = re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?/+", uri)
+    prefix = m.group(0) if m else ""
+    rest = uri[len(prefix):]
+    return prefix + rest.rsplit("@", 1)[-1]
 
 
 def keep(item):

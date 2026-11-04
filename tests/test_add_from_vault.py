@@ -469,6 +469,15 @@ def test_the_filter_drops_a_uris_userinfo():
     assert not any(s.encode() in r.stdout for s in SECRETS)
 
 
+@pytest.mark.parametrize("uri, kept", [
+    ("ssh://admin:ab#cd@host", "ssh://host"), ("admin:ab/cd@host", "host"), ("https://admin:ab?cd@host", "https://host"),
+    ("//u:pw@h", "//h"), ("ssh:/u:pw@h", "ssh:/h"), ("u:pw@h", "h"), ("user@host", "host"),
+    ("ssh://u:pw@[fe80::1]:22", "ssh://[fe80::1]:22"), ("ssh://u:p%40ss@h", "ssh://h"), ("ssh://u:p@ss@h/x", "ssh://h/x"),
+    ("ssh://u:a%2Fb@h", "ssh://h"), ("10.0.0.7:2222", "10.0.0.7:2222"), ("https://h/a?b#c", "https://h/a?b#c")])
+def test_no_password_in_a_uri_gets_past_the_filter(uri, kept):
+    assert bw_items_filter.no_userinfo(uri) == kept
+
+
 def test_op_urls_lose_their_userinfo_too(op, monkeypatch):
     from roster import providers
     monkeypatch.setenv("FAKE_OP_ITEMS", json.dumps([{**OP_ITEMS[0], "urls": ["sftp://admin:pw-nas-SECRET@10.0.0.50"]}]))
