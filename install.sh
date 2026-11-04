@@ -7,9 +7,11 @@
 #   ./install.sh --prefix DIR  put the roster command in DIR/bin and its man page in DIR/share/man/man1
 #                              (default: uv's tool bin dir, ~/.local/bin, so ~/.local/share/man/man1); or PREFIX=DIR
 #   ./install.sh --infra-repo URL   the git URL of your team's map (the repo with roster.yml); or ROSTER_INFRA_REPO=URL
+#   ./install.sh --no-completion    don't turn on Tab completion for roster in your shell (it's on otherwise)
 #
 # Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the roster config folder, making roster work from
 # any directory, unlocking the vault, `roster setup`, and auto-updates from cron. ./uninstall.sh undoes them.
+# "Work from anywhere" also turns on Tab completion for roster in bash, zsh and fish (unless --no-completion).
 # Output of each step goes to ~/.cache/roster/install.log; it is shown only when a step fails.
 set -uo pipefail
 
@@ -20,13 +22,15 @@ SESSION_FILE="$HOME/.config/roster/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
 PATH_MARK="# roster: uv tools"
 MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+COMP_MARK="# roster: completion"         # the Tab completion line (or fish's file), always added (decision Q183)
 NEED_MANPATH=0
 
-YES=0 DRY=0 PREFIX=${PREFIX:-}
+YES=0 DRY=0 COMPLETION=1 PREFIX=${PREFIX:-}
 while (( $# )); do
     case "$1" in
         -y|--yes) YES=1 ;;
         -n|--dry-run) DRY=1 ;;
+        --no-completion) COMPLETION=0 ;;
         --prefix) [[ -n ${2:-} ]] || { echo "--prefix needs a directory" >&2; exit 2; }; PREFIX=$2; shift ;;
         --prefix=*) PREFIX=${1#--prefix=} ;;
         --infra-repo) [[ -n ${2:-} ]] || { echo "--infra-repo needs a git URL" >&2; exit 2; }; INFRA_REPO=$2; shift ;;
@@ -390,6 +394,42 @@ elif ask "Make roster work from any directory (set ROSTER_CONFIG=$CFG in ${rc_fi
 else
     export ROSTER_CONFIG="$CFG"
     skip "run roster from $cfg_dir, or pass -c $CFG"
+fi
+
+# Tab completion for roster (`roster ho<Tab>`, `roster run <Tab>` for Host names) in each shell this box uses: no
+# question, it's on unless --no-completion (decision Q183). bash and zsh get a marked line that asks roster for its
+# script when the shell starts (so a newer roster's commands complete too), fish a file it loads on the first Tab.
+comp_shell=${SHELL##*/}
+if (( ! COMPLETION )); then
+    info "--no-completion: no Tab completion (to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc;"
+    info "roster completion zsh, fish or powershell for those)"
+else
+    comp_added=0
+    for sh in bash zsh; do
+        f="$HOME/.${sh}rc"
+        [[ -f $f || $comp_shell == "$sh" ]] || continue
+        if grep -qF "$COMP_MARK" "$f" 2>/dev/null; then ok "Tab completion already on in ${f/#$HOME/\~}"
+        elif (( DRY )); then info "would turn on Tab completion in ${f/#$HOME/\~}"
+        else
+            printf '\n%s\n' "command -v roster >/dev/null 2>&1 && eval \"\$(roster completion $sh)\"   $COMP_MARK" >> "$f"
+            ok "Tab completion for roster in ${f/#$HOME/\~}"
+        fi
+        comp_added=1
+    done
+    fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
+    if [[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/fish || $comp_shell == fish ]]; then
+        comp_added=1
+        if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
+            ok "Tab completion already on for fish"
+        elif [[ -e $fish_file ]]; then warn "${fish_file/#$HOME/\~} isn't roster's: kept it (roster completion fish prints roster's)"
+        elif (( DRY )); then info "would turn on Tab completion in ${fish_file/#$HOME/\~}"
+        elif mkdir -p "$(dirname "$fish_file")" && printf '%s\n' \
+                "$COMP_MARK (install.sh wrote this file; uninstall.sh removes it)" 'roster completion fish | source' \
+                > "$fish_file"; then
+            ok "Tab completion for roster in ${fish_file/#$HOME/\~}"
+        else warn "couldn't write ${fish_file/#$HOME/\~}"; fi
+    fi
+    (( comp_added )) || info "no bash, zsh or fish here: roster completion SHELL prints Tab completion for yours"
 fi
 
 # 7. Unlock the vault
