@@ -20,12 +20,22 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **No Inventory yet? The app makes one** (#401): on a Box with no `roster.yml`, **Start your Inventory** offers a blank one, a copy of a `roster.yml` you have, or a clone of your team's repo, in a folder you pick (`~/infra` by default). `roster serve` writes it and names it, and the app starts on it. With a roster older than serve API 28 it says to run `roster init --blank` instead.
 - **A plain `roster.yml` says "saved"** (#401): an edit to an Inventory that isn't in a team repo says it was saved to `roster.yml`, never "a Pending change", the toolbar has no Changes button, and `:changes`, `:discard` and `:publish` say there's nothing to publish.
 
+**Plugin API 6**
+
+- **Plugins can know a Session's folder** (#242): with `terminal.read`, each Session from `roster.sessions.list()` has `cwd`, the folder its shell last said it's in (OSC 7), and `command_done` has `cwd`, where the command ran. It's the shell's word, read strictly (a plain `file://` folder, no control or invisible format characters, at most 1024 characters), never checked. [Shell integration](plugins.md#shell-integration).
+
 ### Changed
 
 **CLI**
 
 - **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
 - **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
+
+**App**
+
+- **The shell hooks keep their line out of your history** (#242): bash takes its own entry out, zsh starts its history list again from its file without it (only when you haven't typed in the Session yet; a later `:integrate` leaves zsh's history alone and says the line stays there), and PowerShell's PSReadLine keeps it in memory only, never in its history file. It still stays in zsh with `INC_APPEND_HISTORY` or `SHARE_HISTORY` (without `HIST_IGNORE_SPACE`) and with Windows PowerShell 5.1's own PSReadLine.
+- **The Sidebar's folder is read strictly** (#242): an OSC 7 that isn't a plain `file://` folder, or one with a control character, an invisible format character (bidi marks, zero-width characters) or more than 1024 characters, shows no folder, rather than a cleaned-up one or the one before.
+- **A command's output is kept for `command_done` only while a Plugin listens for it** (#223), not for every marked Session.
 
 **`roster serve` API 28**
 
