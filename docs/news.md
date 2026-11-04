@@ -17,6 +17,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - **The Picker draws the map too** (#418): every row has its Host's node, apricot when the Host has a Session, so you can see what's already open. Columns are as wide as their contents, an address is never cut in the middle, and in a narrow window the Picker keeps the node, the name and the address.
+- **The Picker's edges** (#418): a long selected name grows its row in any list; a Quick Connect row is spaced like the others and its footer says "Not in the Inventory"; with no match the footer offers only the way out, and the message says how to reach a box that isn't in the Inventory.
 - **The Picker shows why a row matched** (#418): the letters your query matched are underlined; the row Enter opens has the accent outline the Sidebar's cursor has; a long selected name wraps inside its row; and notices step out of sight while the Picker is open.
 - **The connect card is bigger and ends in step** (#418): its map is 136 px wide over a 17 px title, the Host's ring is open while connecting and closes when the shell answers (filling for a key login), and the line says "Logged in" as it does.
 - **A slow login says how long it's been** (#418): after 3 seconds the connect card counts the seconds, and after 8 it shows the keys that close the Session.

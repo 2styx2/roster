@@ -791,7 +791,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-query {
   flex: 1; min-width: 0; height: 50px; padding: 0; font-size: var(--text-lg);
   border: 0; background: transparent; border-radius: 0;
-}
+ text-overflow: ellipsis;}
 .picker-query:focus-visible { box-shadow: none; }
 /* The rows share one grid (subgrid), so a column is as wide as its widest cell in the list and no
    wider: the badge column takes room only when a row has a badge, and an address is never cut
@@ -799,7 +799,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    Columns: node, name, address, group, type, badge, details. */
 .picker-list {
   list-style: none; margin: 0; padding: 6px; overflow-y: auto;
-  display: grid; align-content: start; column-gap: 12px;
+  /* max-content rows: a selected row's wrapped name grows its row (auto rows stayed at the
+     unwrapped height in a long, scrolling list and the name spilled over the rows below). */
+  display: grid; align-content: start; column-gap: 12px; grid-auto-rows: max-content;
   /* Zero-width edge tracks: with the 12px gap they're the row's side padding, so the node sits
      12px from the row's edge and 12px from the name, as in the Sidebar (a subgrid row's own
      padding would push its first cell into the gap). */
@@ -843,7 +845,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* Quick Connect (ticket 14): a box that isn't in the Inventory, offered first while the query reads
    as user@address[:port]. The address is data (Iosevka); the words around it are the app's. */
-.picker-row.quick-row { grid-template-columns: auto minmax(0, 1fr) auto; padding: 8px 12px; }
+.picker-row.quick-row { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px; }
 .picker-row.quick-row > :first-child { grid-column-start: auto; }
 .picker-row .quick-label { font-size: var(--text-sm); }
 .picker-row .quick-note { font-size: var(--text-sm); color: var(--muted); }
@@ -852,6 +854,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: var(--radius-sm); padding: 0 5px;
 }
 .picker-empty { margin: 0; padding: 18px 16px; color: var(--muted); }
+.picker-empty-next { display: block; margin-top: 4px; font-size: var(--text-sm); }
 .picker-footer {
   display: flex; align-items: center; gap: 14px; padding: 0 14px; height: 34px; flex: none;
   border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);

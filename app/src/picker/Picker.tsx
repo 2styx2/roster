@@ -321,6 +321,7 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
             {query.trim() === "" && hosts.hosts.length === 0
               ? "The Inventory has no Hosts yet. Add them to roster.yml and they show up here."
               : `No Hosts match “${query}”.`}
+            {onQuick && query.trim() !== "" && <span className="picker-empty-next">To reach a box that isn't in the Inventory, type user@address.</span>}
           </p>
         )}
         <div className="picker-footer">
@@ -332,11 +333,15 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
           <span className="picker-count" aria-hidden="true">
             {results.length > shown.length
               ? `${formatCount(shown.length)} of ${countOf(results.length, "Host")}`
-              : countOf(results.length, "Host")}
+              : results.length === 0 && quick
+                ? "Not in the Inventory"
+                : countOf(results.length, "Host")}
           </span>
           {hints.map(
             ([keys, what]) =>
-              keys && (
+              // Moving and opening need a row: with none, only the way out is offered.
+              keys &&
+              (rowCount > 0 || what === "close") && (
                 <span key={what} className="picker-hint key-hint">
                   <Keys keys={keys} /> {what}
                 </span>
