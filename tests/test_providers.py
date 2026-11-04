@@ -405,3 +405,37 @@ def test_only_providers_that_can_write_create_items(bw_items, monkeypatch):
         providers.delete_item("op", "aaaa-1111")
     with pytest.raises(SecretError, match="unknown password source"):
         providers.create_item("keeper", name="box ssh", password=NEW_PW)
+
+
+@pytest.mark.skipif(WINDOWS, reason="a hard link and a read error: the POSIX half")
+def test_bw_session_file_with_a_second_name_is_ignored(isolated, fakes, capsys):
+    """#424 L6: a hard link elsewhere means someone else may change it under another name."""
+    f = _session_file(isolated, "fake-session-key\n")
+    os.link(f, isolated["work"] / "other-name")
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "other names" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(WINDOWS, reason="the POSIX half")
+def test_bw_session_file_that_cant_be_read_is_a_warning_not_a_crash(isolated, fakes, capsys, monkeypatch):
+    """#424 L7: any read error is the same warning; no traceback."""
+    _session_file(isolated, "fake-session-key\n")
+
+    real = os.read
+
+    def broken(fd, n):                      # the session file's read, the first one; bw's pipes read as usual
+        monkeypatch.setattr(os, "read", real)
+        raise OSError(5, "Input/output error")
+    monkeypatch.setattr(os, "read", broken)
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "can't be read (Input/output error) - ignored" in capsys.readouterr().out
+
+
+def test_a_huge_bw_session_file_is_ignored(isolated, fakes, capsys):
+    """#424 N1: a session key is about 88 bytes; anything past 64 KiB isn't one."""
+    _session_file(isolated, "k" * (65 * 1024))
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "too big" in capsys.readouterr().out

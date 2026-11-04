@@ -20,7 +20,7 @@ import ctypes
 import functools
 import os
 
-from .common import NotPrivate
+from .common import PRIVATE_MAX, NotPrivate
 
 SYSTEM, ADMINISTRATORS = "S-1-5-18", "S-1-5-32-544"
 OWNER_RIGHTS = "S-1-3-4"                    # whoever owns the file, checked on its own
@@ -70,11 +70,16 @@ def read_private(path):
         raise NotPrivate(f"{path} can't be opened ({ctypes.FormatError(err).strip()})")  # pyright: ignore[reportAttributeAccessIssue]
     fd = None
     try:
-        attrs = _attributes(api, handle, path)
+        info = _info(api, handle, path)
+        attrs = info.dwFileAttributes
         if attrs & FILE_ATTRIBUTE_REPARSE_POINT:
             raise NotPrivate(f"{path} is a link (roster never follows one here)")
         if attrs & FILE_ATTRIBUTE_DIRECTORY:
             raise NotPrivate(f"{path} isn't a plain file")
+        if info.nNumberOfLinks != 1:
+            raise NotPrivate(f"{path} has other names (hard links), which may be changed from elsewhere")
+        if (info.nFileSizeHigh << 32 | info.nFileSizeLow) > PRIVATE_MAX:
+            raise NotPrivate(f"{path} is too big to be a session (over {PRIVATE_MAX // 1024} KiB)")
         owner, aces = _security(api, handle, path)
         why = problem(owner, aces, winpipe.user_sid())
         if why:
@@ -82,17 +87,20 @@ def read_private(path):
         import msvcrt
         fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)  # pyright: ignore[reportAttributeAccessIssue] - Windows only
         with os.fdopen(fd, "rb") as f:                   # closes the handle too
-            return f.read().decode("utf-8", "replace")
+            text = f.read(PRIVATE_MAX + 1)
+        if len(text) > PRIVATE_MAX:
+            raise NotPrivate(f"{path} is too big to be a session (over {PRIVATE_MAX // 1024} KiB)")
+        return text.decode("utf-8", "replace")
     finally:
         if fd is None:
             api.CloseHandle(handle)
 
 
-def _attributes(api, handle, path):
+def _info(api, handle, path):
     info = api.BY_HANDLE_FILE_INFORMATION()
     if not api.GetFileInformationByHandle(handle, ctypes.byref(info)):
         raise NotPrivate(f"{path}'s attributes can't be read")
-    return info.dwFileAttributes
+    return info
 
 
 def _security(api, handle, path):

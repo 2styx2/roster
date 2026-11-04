@@ -54,6 +54,7 @@ from .common import (
     failure_text,
     find_program,
     known_hosts_label,
+    never_look_in_the_current_folder,
     not_reviewed,
     ssh_config_file,
     ssh_path,
@@ -3383,6 +3384,7 @@ class Server:
 
 
 def serve(config_arg, inv=None):
+    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd (#424)
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
     for stream in (sys.stdin, sys.stdout):

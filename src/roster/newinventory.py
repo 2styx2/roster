@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from .common import NAME_RE, find_program, program_argv
+from .common import NAME_RE, find_program, git_program, program_argv
 from .config import load_config_text
 from .errors import CLONE_FAILED, FOLDER_NOT_WRITABLE, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
 
@@ -178,7 +178,10 @@ def clone(path, url, interactive, stop=None):
     env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
     if not interactive:                             # nobody to answer: a passphrase, a password or a new host key
         env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": env.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
-    argv = program_argv(["git", "clone", "-q", "--", url, str(folder)])
+    try:
+        argv = program_argv([git_program(), "clone", "-q", "--", url, str(folder)])
+    except ValueError as e:                         # a git.cmd and a URL or folder with what cmd.exe acts on
+        raise Problem(CLONE_FAILED, f"can't run git clone: {e}", fix="install Git for Windows (git.exe)") from None
     made_folder = not folder.exists()               # what a stopped clone leaves is taken away, never more
     if stop is not None:
         r = stoppable(argv, env, folder, made_folder, stop)

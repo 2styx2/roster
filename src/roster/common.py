@@ -103,15 +103,34 @@ class NotPrivate(Exception):
     """read_private: the file is there, but it isn't only yours (the message says how)."""
 
 
+PRIVATE_MAX = 64 * 1024        # read_private: a secret's file is small (a bw session key is about 88 bytes)
+
+
+def never_look_in_the_current_folder() -> None:
+    """Windows: tell Windows itself never to look in the current folder for a program (#424 M1), for roster and all it
+    starts. find_program already keeps it out of what roster runs by name; this covers what goes through cmd.exe (a
+    `cmd:` provider, a `providers:` command template), what Python 3.12+'s shutil.which would find, and the programs
+    roster's programs start (a bw.cmd's node). A no-op elsewhere."""
+    if WINDOWS:
+        os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+
+
 def read_private(path: Path) -> str:
     """PATH's text, read only if it's yours alone (#411), as a secret's file must be: opened without following a link,
     then checked and read through that one open file, so it can't be swapped between the check and the read. On Linux
     and macOS: a plain file (not a link, FIFO or device), owned by you, with no group or other bits. On Windows
     (roster/winfile.py): a plain file (not a link or other reparse point), owned by you, that no one but you, SYSTEM
-    and Administrators may open. FileNotFoundError if there's nothing there; NotPrivate if it isn't yours alone."""
+    and Administrators may open. Either way it has one name (no hard link elsewhere) and is at most PRIVATE_MAX bytes.
+    Only the file itself is checked, not the folders it's in. FileNotFoundError if there's nothing there; NotPrivate if
+    it isn't yours alone or can't be read (whatever went wrong: never a traceback)."""
     if WINDOWS:
         from . import winfile
-        return winfile.read_private(str(path))
+        try:
+            return winfile.read_private(str(path))
+        except (FileNotFoundError, NotPrivate):
+            raise
+        except OSError as e:
+            raise NotPrivate(f"{path} can't be read ({e.strerror or type(e).__name__})") from None
     import stat
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOCTTY", 0)
     try:
@@ -130,10 +149,17 @@ def read_private(path: Path) -> str:
             raise NotPrivate(f"{path} isn't yours (another user owns it)")
         if st.st_mode & 0o077:
             raise NotPrivate(f"{path} is readable by others (chmod 600 {path})")
-        chunks = []
-        while chunk := os.read(fd, 65536):
+        if st.st_nlink != 1:
+            raise NotPrivate(f"{path} has other names (hard links), which may be changed from elsewhere")
+        chunks, size = [], 0
+        while size <= PRIVATE_MAX and (chunk := os.read(fd, 65536)):
             chunks.append(chunk)
+            size += len(chunk)
+        if size > PRIVATE_MAX:
+            raise NotPrivate(f"{path} is too big to be a session (over {PRIVATE_MAX // 1024} KiB)")
         return b"".join(chunks).decode("utf-8", "replace")
+    except OSError as e:
+        raise NotPrivate(f"{path} can't be read ({e.strerror or type(e).__name__})") from None
     finally:
         os.close(fd)
 
@@ -170,26 +196,44 @@ def ssh_path(path: str | Path) -> str:
 CMD_SPECIAL = re.compile(r'["%^&|<>!\r\n]')
 
 
+RUNNABLE = (".com", ".exe", ".bat", ".cmd")      # what Windows' CreateProcess starts (a .cmd or .bat through cmd.exe)
+
+
+def rooted(folder: str) -> bool:
+    """Is FOLDER a fixed place? Absolute, and on Windows with a drive or UNC root as well: before Python 3.13 `\\tools`
+    counts as absolute, but it's on whatever drive the current folder is on (#424 L3)."""
+    import posixpath
+    return bool(folder) and os.path.isabs(folder) and (os.path is posixpath or bool(os.path.splitdrive(folder)[0]))
+
+
 def find_program(name: str) -> str | None:
     """The program roster runs as NAME, as a path, or None: shutil.which, except on Windows, where it's looked up on
     PATH alone, never in the current folder (#411). Windows' own lookup (CreateProcess, and shutil.which before
     Python 3.12; from 3.12 unless NoDefaultCurrentDirectoryInExePath is set) tries the current folder first, so a bw.exe
     or ssh.cmd left in whatever folder roster was started from would run in its place, with the vault's session in its
-    env. A relative PATH entry (empty, ".") is the current folder too, so it's skipped. A NAME with a folder in it is
-    taken as named."""
+    env. A relative PATH entry (empty, ".", or one with no drive) depends on the current folder too, so it's skipped. A
+    NAME with a folder in it is taken as named."""
     if not WINDOWS or "/" in name or "\\" in name:
         return shutil.which(name)
-    exts = [e for e in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";") if e]
-    names = [name] if name.lower().endswith(tuple(e.lower() for e in exts)) else [name + e for e in exts]
+    # only what CreateProcess can start: PATHEXT also lists .JS, .VBS, .MSC, .PY... (#424 L2)
+    exts = [e for e in (x.strip() for x in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";"))
+            if e.lower() in RUNNABLE]
+    names = [name] if name.lower().endswith(RUNNABLE) else [name + e for e in exts]
     for folder in (os.environ.get("PATH") or "").split(os.pathsep):
         folder = folder.strip().strip('"')
-        if not folder or not os.path.isabs(folder):
+        if not rooted(folder):
             continue
         for n in names:
             path = os.path.join(folder, n)
             if os.path.isfile(path):
                 return path
     return None
+
+
+def git_program() -> str:
+    """The git to run: on Windows git.exe wherever it is on PATH, ahead of a git.cmd or git.bat shim earlier on it
+    (which can't be handed a quote, a % or a ! in a commit message or URL; #424 L5)."""
+    return (find_program("git.exe") or "git") if WINDOWS else "git"
 
 
 def program_argv(argv):
@@ -217,9 +261,11 @@ def kill_tree(p):
     """Kill P and everything it started. On Windows a tool is often a batch file (npm's bw.cmd) whose real program is
     its child, which would outlive a plain kill and keep the output pipes open."""
     if WINDOWS:
+        # Windows' own, by its full path: PATH may lack System32 (#424 L4)
+        taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
         try:
-            subprocess.run(program_argv(["taskkill", "/F", "/T", "/PID", str(p.pid)]), capture_output=True)
-        except FileNotFoundError:
+            subprocess.run([taskkill, "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        except OSError:
             pass
     try:
         p.kill()

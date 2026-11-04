@@ -472,3 +472,83 @@ def test_a_git_in_the_current_folder_is_never_run_for_the_inventorys_repo(plante
     with pytest.raises(Problem, match="git isn't installed"):
         changes.git(here, "status")
     assert started == []
+
+
+# ---- #424's security review
+
+def test_roster_tells_windows_never_to_look_in_the_current_folder(as_windows, monkeypatch):
+    """M1: a shell command (a cmd: provider, a providers: template) runs through cmd.exe, which looks in the current
+    folder first unless NoDefaultCurrentDirectoryInExePath is set; roster sets it for itself and all it starts."""
+    from roster import cli
+    monkeypatch.delenv("NoDefaultCurrentDirectoryInExePath", raising=False)
+    monkeypatch.setattr(cli, "_main", lambda argv: 0)
+    assert cli.main(["--version"]) == 0
+    assert os.environ["NoDefaultCurrentDirectoryInExePath"] == "1"
+
+
+@windows_only
+def test_a_cmd_provider_never_runs_a_program_planted_in_the_current_folder(isolated, tmp_path, monkeypatch):
+    from roster import providers
+    common.never_look_in_the_current_folder()
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "roster-probe-xyz.cmd").write_text("@echo planted\r\n")
+    monkeypatch.chdir(here)
+    with pytest.raises(providers.SecretError, match="failed"):
+        providers.get_secret("cmd:roster-probe-xyz", "g")
+
+
+def test_only_what_windows_can_start_is_found(planted, monkeypatch):
+    """L2: PATHEXT also names .JS, .VBS, .PY...: CreateProcess can't start those, so they're never a program."""
+    tools, _ = planted
+    monkeypatch.setenv("PATHEXT", ".js; .vbs;.py; .exe")
+    (tools / "git.js").write_text("")
+    (tools / "git.py").write_text("")
+    assert common.find_program("git") is None
+    (tools / "git.exe").write_text("")
+    assert common.find_program("git") == str(tools / "git.exe")
+
+
+def test_a_path_entry_without_a_drive_is_skipped(planted, monkeypatch):
+    """L3: \\tools is the current drive's, so where it points depends on where roster started."""
+    import ntpath
+    tools, _ = planted
+    (tools / "bw.cmd").write_text("")
+    monkeypatch.setattr(common.os, "path", ntpath)
+    monkeypatch.setenv("PATH", r"\tools;C:foo")
+    assert common.find_program("bw") is None
+
+
+def test_taskkill_is_windows_own(as_windows, monkeypatch):
+    """L4: by its full path in System32, whatever PATH holds."""
+    ran = []
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    monkeypatch.setattr(common.subprocess, "run", lambda argv, **kw: ran.append(argv))
+
+    class P:
+        pid = 42
+
+        def kill(self):
+            pass
+    common.kill_tree(P())
+    assert ran[0][0] == os.path.join(r"C:\Windows", "System32", "taskkill.exe")
+
+
+def test_a_git_batch_file_refusing_an_argument_is_a_problem_not_a_crash(planted, monkeypatch):
+    """L5: a git.cmd shim first on PATH can't be handed a commit message with a quote; that's a Problem that says
+    why. A git.exe further along PATH is preferred to it."""
+    from roster import changes
+    from roster.errors import Problem
+    tools, here = planted
+    (tools / "git.cmd").write_text("")
+    with pytest.raises(Problem, match="batch file"):
+        changes.git(here, "commit", "-m", 'say "hi"')
+    later = tools.parent / "later"
+    later.mkdir()
+    (later / "git.exe").write_text("")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(tools), str(later)]))
+    seen = []
+    monkeypatch.setattr(changes.subprocess, "Popen", lambda argv, **kw: seen.append(argv) or (_ for _ in ()).throw(FileNotFoundError()))
+    with pytest.raises(Problem):
+        changes.git(here, "status")
+    assert seen[0][0] == str(later / "git.exe")

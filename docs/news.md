@@ -34,8 +34,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
-- **A saved Bitwarden session is read only if it's yours alone** (#411): roster no longer follows a symlink at `~/.config/roster/bw-session`, ignores one another user owns, and checks and reads it through the same open file, so it can't be swapped in between. On Windows it checks the file's owner and permissions too: one others may open is ignored with a warning.
-- **On Windows, roster never runs a program from the current folder** (#411): `bw`, `ssh`, `git`, `nmap` and every other program roster runs are found on `PATH` alone, so a `bw.exe` left in the folder you start roster from can't run with your vault's session.
+- **A saved Bitwarden session is read only if it's yours alone** (#411): roster no longer follows a symlink at `~/.config/roster/bw-session`, ignores one another user owns or with a second name (hard link), and checks and reads it through the same open file, so it can't be swapped in between. On Windows it checks the file's owner and permissions too: one others may open is ignored with a warning.
+- **On Windows, roster never runs a program from the current folder** (#411): `bw`, `ssh`, `git`, `nmap` and every other program roster runs are found on `PATH` alone, so a `bw.exe` left in the folder you start roster from can't run with your vault's session. roster sets `NoDefaultCurrentDirectoryInExePath=1`, so `cmd:` providers and `providers:` commands don't look there either.
 
 ## v0.5.1
 

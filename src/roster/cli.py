@@ -13,7 +13,17 @@ from urllib.parse import urlparse
 
 from . import __version__, boxsync, clihelp, jsonout, mesh
 from .claude import write_claude_files
-from .common import die, find_program, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
+from .common import (
+    die,
+    find_program,
+    never_look_in_the_current_folder,
+    not_reviewed,
+    program_argv,
+    run_instead,
+    say,
+    ssh_config_file,
+    tcp_ok,
+)
 from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
@@ -1259,6 +1269,7 @@ def cmd_inv(args):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd (#424)
     if argv[:1] == ["__complete"]:       # the shell's Tab (completion.py): never an error, never a usage message
         from . import completion
         return completion.main(argv[1:])
