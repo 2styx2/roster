@@ -2493,24 +2493,7 @@ function Workspace({
               <p className="empty-title">No Sessions open</p>
               {/* Your network, not just a button (Q188): the Hosts you opened last, each one click
                   away, drawn as the Sidebar draws them. Left out until there's a history. */}
-              {recentShown.length > 0 && (
-                <section className="recent" aria-labelledby="recent-title">
-                  <h2 id="recent-title" className="recent-title">
-                    Recent
-                  </h2>
-                  <ul className="recent-list">
-                    {recentShown.map((h) => (
-                      <li key={h.name}>
-                        <button type="button" className="recent-row" onMouseDown={(e) => e.preventDefault()} onClick={() => run(`open ${h.name}`)}>
-                          <StateDot dot={hostDot(h)} />
-                          <span className="recent-name">{h.name}</span>
-                          {h.ip && <span className="recent-ip">{h.ip}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
+              {recentShown.length > 0 && <RecentMap box={info.inventory.box} hosts={recentShown} open={(name) => run(`open ${name}`)} />}
               <button type="button" className="find primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
                 Find a Host
               </button>
@@ -3080,6 +3063,55 @@ function savedIn(target: Omit<SaveTarget, "save_to"> | undefined): string {
 export function inventoryBroken(e: InventoryFileError): string {
   const at = `roster.yml${e.line ? `:${e.line}` : ""}`;
   return `${at} has an error (${e.message}): the last good Inventory is still in use`;
+}
+
+/** The idle pane's Recent Hosts as a map (Q188, Q191): this Box's square, an edge to each Host's
+ * node, and the Host as a button (its name in Iosevka, its address). The edges stretch with the
+ * list, so they meet each row whatever the UI size; the one to the row under the pointer is drawn
+ * in the text colour. Nothing animates: this screen comes back often. */
+function RecentMap({ box, hosts, open }: { box: string; hosts: readonly Host[]; open: (name: string) => void }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const rows = hosts.length;
+  return (
+    <section className="recent" aria-labelledby="recent-title">
+      <h2 id="recent-title" className="recent-title">
+        Recent
+      </h2>
+      <div className="recent-map">
+        <div className="recent-box" title={`This Box: ${box}`}>
+          <span className="recent-box-name">{box}</span>
+          <span className="box-mark" aria-hidden="true" />
+        </div>
+        <svg className="recent-edges" viewBox={`0 0 48 ${rows * 10}`} preserveAspectRatio="none" aria-hidden="true">
+          {hosts.map((h, i) => {
+            const y = i * 10 + 5;
+            const mid = (rows * 10) / 2;
+            return <path key={h.name} className={hover === i ? "on" : undefined} d={`M0 ${mid} C 24 ${mid}, 24 ${y}, 48 ${y}`} />;
+          })}
+        </svg>
+        <ul className="recent-list">
+          {hosts.map((h, i) => (
+            <li key={h.name}>
+              <button
+                type="button"
+                className="recent-row"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(i)}
+                onBlur={() => setHover(null)}
+                onClick={() => open(h.name)}
+              >
+                <StateDot dot={hostDot(h)} />
+                <span className="recent-name">{h.name}</span>
+                {h.ip && <span className="recent-ip">{h.ip}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
 }
 
 /** Whether a media query matches now, following it as the window changes. */

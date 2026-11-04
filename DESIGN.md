@@ -266,7 +266,7 @@ The one recurring geometry is the network's: **nodes** (6 to 7px circles whose f
 - **Hollow grey:** ended.
 - **Open apricot ring** (a short gap at its upper right, where the logo's Host sits): connecting.
 
-With no Session open, the pane lists up to six recent Hosts under the mark, each a Sidebar-style row (node, Iosevka name, muted address), above Find a Host.
+With no Session open, the pane draws up to six recent Hosts as a map under the mark: this Box's name and Sea Glass square, a hairline edge from the square to each Host's node (brighter under the pointer), and each Host a Sidebar-style row (node, Iosevka name, muted address), above Find a Host.
 
 **The Nodes-And-Edges Rule.** The network's own shapes are the only ornament. The Gap orbit mark appears small and still (48 to 64px, muted) in empty states and on the lock screen, and is never used as wallpaper.
 
