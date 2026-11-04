@@ -42,7 +42,7 @@ def find_config(arg, inv=None):
     return path
 
 
-def locate_config(arg, inv=None):
+def locate_config(arg: Any, inv: str | None = None) -> Path:
     """find_config's lookup alone."""
     from . import inventories
     if arg:

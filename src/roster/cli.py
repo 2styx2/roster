@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from . import __version__, boxsync, clihelp, jsonout, mesh
 from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
+from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
@@ -1205,6 +1206,9 @@ def cmd_inv(args):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["__complete"]:       # the shell's Tab (completion.py): never an error, never a usage message
+        from . import completion
+        return completion.main(argv[1:])
     words = argv[:argv.index("--")] if "--" in argv else argv
     Parser.json_errors = "--json" in words
     try:
@@ -1268,10 +1272,10 @@ def build_parser():
                description="Give this box (and Claude) access to the hosts in roster.yml.")
     p.add_argument("--version", action="version", version=f"roster {__version__}")
     which = p.add_mutually_exclusive_group()
-    which.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, "
-                       "./roster.yml, the active named Inventory, then ~/.config/roster/roster.yml)")
-    which.add_argument("--inv", metavar="NAME", help="use the named Inventory NAME for this one command "
-                       "(`roster inv list` names them)")
+    values(which.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, "
+                       "./roster.yml, the active named Inventory, then ~/.config/roster/roster.yml)"), FILES)
+    values(which.add_argument("--inv", metavar="NAME", help="use the named Inventory NAME for this one command "
+                              "(`roster inv list` names them)"), INVENTORIES)
     # no COMMAND: _main shows the overview. The commands are listed by commands_text (in groups), not argparse
     # prog: each command's usage is `roster run ...`, not built from the usage above (the man page's synopsis too)
     sub = p.add_subparsers(dest="cmd", metavar="COMMAND", help=argparse.SUPPRESS, prog="roster")
@@ -1289,42 +1293,45 @@ def build_parser():
     s.add_argument("--name", metavar="NAME", help="name the new Inventory too (`roster inv add NAME PATH`), e.g. "
                    "beside one you keep")
     s = sub.add_parser("setup", help="one-time setup of this box")
-    s.add_argument("--only", **only)
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
     sub.add_parser("sync", help="rewrite ssh config and Claude files from roster.yml")
     s = sub.add_parser("check", help="test reachability; with HOST, why a Session to it would fail, step by step; "
                        "with --box, this Box's health")
-    s.add_argument("host", nargs="?", help="diagnose this one Host: inventory, ssh config, vault, DNS, port, "
-                   "host key, login (one connection)")
+    values(s.add_argument("host", nargs="?", help="diagnose this one Host: inventory, ssh config, vault, DNS, port, "
+                   "host key, login (one connection)"), HOSTS)
     s.add_argument("--box", action="store_true", help="check this Box instead, without connecting anywhere: "
                    "roster.yml, ssh and its config, vault CLIs, askpass, the infra repo")
-    s.add_argument("--only", **only)
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("hosts", help="list hosts")
-    s.add_argument("--only", **only)
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--find", metavar="TEXT", help="search name, title, description, type, product, group, ip")
     s.add_argument("--all", action="store_true", help="include unreviewed (scanned) hosts")
     s.add_argument("--long", action="store_true", help="full table: type, product, web URL, description")
     s.add_argument("--json", **as_json)
     s = sub.add_parser("resources", help="list Wi-Fi networks, accounts and secrets that aren't hosts")
-    s.add_argument("--only", metavar="LIST", help="resource names, types or groups")
+    values(s.add_argument("--only", metavar="LIST", help="resource names, types or groups"), ONLY, RESOURCES,
+           GROUPS)
     s.add_argument("--find", metavar="TEXT", help="search every field")
     s.add_argument("--json", **as_json)
     s = sub.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) - for people, not Claude")
-    s.add_argument("name", help="the resource")
+    values(s.add_argument("name", help="the resource"), RESOURCES)
     s.add_argument("--wifi", action="store_true", help="print a WIFI:... string for a QR code instead")
     s = sub.add_parser("info", help="show everything about one host or resource")
-    s.add_argument("host", nargs="+", metavar="NAME", help="a host or resource; fuzzy words work")
+    values(s.add_argument("host", nargs="+", metavar="NAME", help="a host or resource; fuzzy words work"), HOSTS,
+           RESOURCES)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("run", help="run a command on a host")
     s.add_argument("--sudo", action="store_true",
                    help="run it as root with sudo; roster gives sudo the login's password (never shown)")
-    s.add_argument("host", help="the host to run it on")
+    values(s.add_argument("host", help="the host to run it on"), HOSTS)
     s.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
     s = sub.add_parser("discover", help="scan networks (nmap if installed) and add what's found to roster.yml")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")
     s.add_argument("--write", action="store_true", help="add new hosts to roster.yml (default: preview only)")
-    s.add_argument("--group", metavar="NAME", help="group name for new hosts (default: discovered-YYYYMMDD)")
+    values(s.add_argument("--group", metavar="NAME", help="group name for new hosts (default: discovered-YYYYMMDD)"),
+           GROUPS)
     s.add_argument("--ports", default=DEFAULT_SCAN_PORTS, help="TCP ports to scan (default: common server, "
                    "web, database, remote-admin and network-gear ports)")
     s.add_argument("--top-ports", type=int, metavar="N", help="nmap only: scan nmap's N most common ports instead")
@@ -1340,11 +1347,11 @@ def build_parser():
     s = sub.add_parser("providers", help="list password providers (built-in, plugins, roster.yml)")
     s.add_argument("--json", **as_json)
     s = sub.add_parser("auth-check", help="test each group's password source, print nothing secret")
-    s.add_argument("--only", **only)
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("web", help="HTTP request to a host's web service, logged in with its stored credentials")
-    s.add_argument("request", nargs="+", metavar="HOST [SERVICE] METHOD PATH",
-                   help="e.g. esxi GET /folder  or  orion3 https GET /api/status")
+    values(s.add_argument("request", nargs="+", metavar="HOST [SERVICE] METHOD PATH",
+                          help="e.g. esxi GET /folder  or  orion3 https GET /api/status"), HOSTS)
     s.add_argument("-d", "--data", metavar="BODY", help="request body (@FILE reads a file)")
     s.add_argument("-H", "--header", action="append", metavar="HEADER", help="extra header 'Name: value' (repeatable)")
     s.add_argument("-k", "--insecure", action="store_true", help="don't verify the TLS certificate")
@@ -1353,9 +1360,10 @@ def build_parser():
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
     s.add_argument("action", nargs="?", choices=["cut", "status"],
                    help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections)")
-    s.add_argument("target", nargs="?", metavar="HOST", help="with cut: the Host to cut out")
+    values(s.add_argument("target", nargs="?", metavar="HOST", help="with cut: the Host to cut out"), HOSTS)
     s.add_argument("--dry-run", action="store_true", help="show the plan; change nothing on any Host")
-    s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)")
+    values(s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)"),
+           HOSTS)
     s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
     s.add_argument("--all", action="store_true", help="with cut: every Mesh entry off every Host, roster.yml "
                    "unchanged (before removing roster from this Box)")
@@ -1366,7 +1374,7 @@ def build_parser():
     s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
-    s.add_argument("--only", **only)
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--all", action="store_true", help="every Inventory on this box: each named one and the unnamed "
                    "one, with one question and one summary")
     s.add_argument("-y", "--yes", action="store_true", help="don't ask first")
@@ -1375,8 +1383,9 @@ def build_parser():
     s.add_argument("action", choices=["list", "add", "use", "remove", "which"],
                    help="list (the active one marked *), add NAME PATH, use NAME (make it the active one), "
                         "remove NAME (forget the name; the file stays), which (print the roster.yml roster uses)")
-    s.add_argument("name", nargs="?", metavar="NAME", help="the Inventory's name: letters, digits, . _ -")
-    s.add_argument("path", nargs="?", metavar="PATH", help="with add: its roster.yml")
+    values(s.add_argument("name", nargs="?", metavar="NAME", help="the Inventory's name: letters, digits, . _ -"),
+           INVENTORIES)
+    values(s.add_argument("path", nargs="?", metavar="PATH", help="with add: its roster.yml"), FILES)
     s.add_argument("--json", **as_json)
     sub.add_parser("serve", help="JSON-RPC API on stdin/stdout for the desktop app (see docs/serve-api.md)")
     s = sub.add_parser("askpass", help="SSH_ASKPASS helper for a `roster serve` password Session (ssh runs it)")
@@ -1384,7 +1393,11 @@ def build_parser():
     s = sub.add_parser("man", help="show the roster(1) man page, or install it where `man roster` finds it")
     s.add_argument("--install", action="store_true",
                    help="copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv tool install)")
-    s.add_argument("--prefix", metavar="DIR", help="with --install: install into DIR/share/man/man1/ instead")
+    values(s.add_argument("--prefix", metavar="DIR", help="with --install: install into DIR/share/man/man1/ instead"),
+           DIRS)
+    s = sub.add_parser("completion", help="print Tab completion for bash, zsh, fish or PowerShell (install.sh "
+                       "turns it on)")
+    s.add_argument("shell", choices=SHELLS, help="the shell to print it for")
     # each command's --help opens with its one-line help as a sentence and ends with examples (clihelp)
     helps = {a.dest: a.help or "" for a in sub._choices_actions}
     for name, s in sub.choices.items():
@@ -1424,6 +1437,9 @@ def _main(argv=None):
 
     if args.cmd == "init":
         return cmd_init(args)
+    if args.cmd == "completion":
+        from .completion import cmd_completion
+        return cmd_completion(args)
     if args.cmd == "man":
         from .manpage import cmd_man
         return cmd_man(args)

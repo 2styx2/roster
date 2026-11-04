@@ -8,7 +8,7 @@ You need three things:
 2. **An Inventory, `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It's either your team's, in its git repo ([yourteam/infra](https://example.com/yourteam/infra)), or a plain file of your own on this Box; roster works the same with both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and how to start your Inventory when its folder has none: a blank one (the default, so `--yes` alone makes one), a copy of a `roster.yml` you have, a clone of your team's repo, or the Hosts in `~/.ssh/config`. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` is `repo:URL`). A `roster.yml` already there is kept; it can add a new one beside it as a named Inventory instead. After a new one it offers `git init` too, never required. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG`, Tab completion for roster in your shell and an auto-update cron job. It asks before each stage, and how to start your Inventory when its folder has none: a blank one (the default, so `--yes` alone makes one), a copy of a `roster.yml` you have, a clone of your team's repo, or the Hosts in `~/.ssh/config`. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` is `repo:URL`). A `roster.yml` already there is kept; it can add a new one beside it as a named Inventory instead. After a new one it offers `git init` too, never required. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -31,6 +31,8 @@ roster man --install       # puts its man page in ~/.local/share/man/man1, next 
 roster --help              # if not found: export PATH="$HOME/.local/bin:$PATH"
 man roster                 # the manual
 ```
+
+Tab completion (`roster ho<Tab>` is `roster hosts`, `roster run <Tab>` lists your Hosts): add `eval "$(roster completion bash)"` to `~/.bashrc` (`zsh` in `~/.zshrc`; for fish, `roster completion fish > ~/.config/fish/completions/roster.fish`). `install.sh` does this without asking; `--no-completion` leaves it off. See [Tab completion](cli-reference.md#tab-completion).
 
 No git access on that box? Use `git archive --format=zip -o roster.zip HEAD` on a box that has it, copy the zip over, unzip it, and run `uv tool install .` inside.
 
@@ -156,7 +158,7 @@ roster setup                                             # new key hosts get thi
 
 ## Removing a box
 
-`./uninstall.sh` in the roster checkout does all of this, in this order: the Mesh and this box's key off the hosts first, then the cron job, the shell startup lines, the files below, the vault session, roster and its man page, and the `ROSTER.md` next to `roster.yml`. While a host still has the key (it was down), it keeps the key, the ssh config and roster, so running it again finishes. `--keep-hosts` leaves the hosts alone, and `--purge` also removes `bw`, the `~/.local/bin` PATH line and the config folder (never one with changes not pushed, under `--yes`). By hand:
+`./uninstall.sh` in the roster checkout does all of this, in this order: the Mesh and this box's key off the hosts first, then the cron job, the shell startup lines (and fish's completion file), the files below, the vault session, roster and its man page, and the `ROSTER.md` next to `roster.yml`. While a host still has the key (it was down), it keeps the key, the ssh config and roster, so running it again finishes. `--keep-hosts` leaves the hosts alone, and `--purge` also removes `bw`, the `~/.local/bin` PATH line and the config folder (never one with changes not pushed, under `--yes`). By hand:
 
 ```bash
 roster mesh cut --all      # this box's Mesh entries off every host (with a Mesh)

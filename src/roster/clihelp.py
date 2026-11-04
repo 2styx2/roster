@@ -17,7 +17,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check", "auth-check"]),
     ("Every day", ["hosts", "info", "run", "web", "resources", "reveal"]),
     ("Inventory and access", ["discover", "inv", "mesh", "revoke"]),
-    ("Tools", ["bw", "providers", "man"]),
+    ("Tools", ["bw", "providers", "man", "completion"]),
     ("Run by the app, not by hand", ["serve", "askpass"]),
 ]
 
@@ -65,6 +65,9 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "bw": [("roster bw list items --search proxmox", "bw with this box's saved session"),
            ("roster bw sync", "pull the vault")],
     "providers": [("roster providers", "which password providers work here")],
+    "completion": [("roster completion bash", "bash's script: eval \"$(roster completion bash)\" in ~/.bashrc"),
+                   ("roster completion fish", "fish's: roster completion fish | source"),
+                   ("roster completion powershell", "PowerShell's: ... | Out-String | Invoke-Expression in $PROFILE")],
     "man": [("roster man", "the manual"),
             ("roster man --install", "so `man roster` finds it")],
 }

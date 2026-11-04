@@ -72,6 +72,12 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      # tests/test_completion.py runs roster's Tab completion in each shell it finds: the image has bash and pwsh
+      - name: Install zsh and fish
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish
+          zsh --version; fish --version; pwsh --version
       - run: uv sync --frozen
       - run: uv run pytest --junitxml=report.xml
       - uses: actions/upload-artifact@v4
