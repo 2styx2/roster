@@ -168,3 +168,42 @@ def test_the_key_scripts_finish_with_or_without_selinux_tools(tmp_path, tools):
     if tools == "working":
         assert f"restorecon -F {ak}" in log.read_text().splitlines()
     assert (home / ".ssh" / "authorized_keys").read_text() == ""
+
+
+def test_a_quiet_command_on_a_password_host_says_it_timed_out_running(monkeypatch, isolated):
+    """paramiko's channel gives up after 120 s with no output: that's the command, not the connection."""
+    import paramiko
+
+    from roster import sshops
+
+    class Quiet:
+        def read(self):
+            raise TimeoutError("timed out")
+
+    class Client:
+        def __init__(self, fail_connect=False):
+            self.fail_connect = fail_connect
+
+        def load_host_keys(self, path):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, *a, **k):
+            if self.fail_connect:
+                raise TimeoutError("timed out")
+
+        def exec_command(self, command, timeout=None):
+            return None, Quiet(), Quiet()
+
+        def close(self):
+            pass
+
+    h = {"name": "dc-01", "ip": "10.0.0.5", "ssh": {"port": 22, "user": "admin"}}
+    monkeypatch.setattr(paramiko, "SSHClient", lambda: Client())
+    with pytest.raises(RuntimeError, match="printed nothing for 120 s"):
+        sshops.password_exec(h, "x", "pw")
+    monkeypatch.setattr(paramiko, "SSHClient", lambda: Client(fail_connect=True))
+    with pytest.raises(RuntimeError, match="can't connect"):
+        sshops.password_exec(h, "x", "pw")

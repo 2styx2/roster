@@ -31,6 +31,7 @@ from .sshops import (
     write_ssh_config,
 )
 from .web import cmd_web, mask
+from .winhost import clean
 
 # ---------------------------------------------------------------- commands
 
@@ -291,6 +292,8 @@ def cmd_mesh(cfg, args):
             return 0
         for n in st["members"]:
             say(f"  {n:<16} can reach {plural(st['reach'].get(n, 0), 'Host')}")
+        if st["excluded"]:
+            say("left out: " + ", ".join(f"{n} ({why})" for n, why in st["excluded"].items()))
         if st["pending"]:
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         warn_cut(st["cut_pending"])
@@ -396,6 +399,10 @@ def cmd_check(cfg, args):
                     or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
+    if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
+        if windows:
+            say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
     return 1 if bad or skipped else 0
@@ -718,6 +725,8 @@ def cmd_run(cfg, args):
     command = " ".join(words)
     if not h["reviewed"]:
         die(not_reviewed(h))
+    if is_windows(h):
+        return run_windows(h, command, args.sudo)
     if args.sudo:
         return run_sudo(h, command)
     if h["enroll"]:
@@ -726,7 +735,7 @@ def cmd_run(cfg, args):
     try:
         rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
     sys.stdout.write(out)
     sys.stderr.write(err)
     if words[0] == "sudo" and rc != 0 and ("password is required" in err or "terminal is required" in err):
@@ -735,12 +744,32 @@ def cmd_run(cfg, args):
     return rc if rc >= 0 else 1
 
 
+def run_windows(h, command, sudo):
+    """`roster run` on an os: windows Host (T196, decision Q176): COMMAND always under PowerShell (winhost.run), the
+    same whatever sshd's DefaultShell. --sudo is refused before the vault is asked: Windows has no sudo over ssh."""
+    from . import winhost
+    from .errors import RUN_SUDO_WINDOWS
+    if sudo:
+        die(f"[{RUN_SUDO_WINDOWS}] {h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
+            "ran. Log in as an account in Administrators (its ssh session is already elevated) and run it without "
+            "--sudo")
+    try:
+        if h["enroll"]:
+            refuse_left_out(h)
+            return winhost.run(h, command)
+        return winhost.run(h, command, get_secret(h["ssh"]["auth"], h["group"]), key=False)
+    except ValueError as e:                 # the script with CMD in it is over 1 MB: nothing was sent
+        die(f"{h['name']}: {e}: nothing ran")
+    except RuntimeError as e:
+        die(f"{h['name']}: {clean(str(e))}")
+
+
 def run_sudo(h, command):
     """Run COMMAND as root: sudo gets the host's login password on stdin, never on screen."""
     try:
         secret = get_secret(h["ssh"]["auth"], h["group"])
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
     if not secret:
         die(f"{h['name']}: --sudo needs the login's password, but its auth is {h['ssh']['auth']!r} "
             "(set auth: to the vault item that holds the password)")
@@ -755,7 +784,7 @@ def run_sudo(h, command):
         try:
             rc, out, err = password_exec(h, wrapped, secret, stdin=secret + "\n")
         except RuntimeError as e:
-            die(f"{h['name']}: {mask(str(e), [secret])}")
+            die(f"{h['name']}: {clean(mask(str(e), [secret]))}")
     sys.stdout.write(mask(out, [secret]))
     sys.stderr.write(mask(err, [secret]))
     if "incorrect password" in err or "no password was provided" in err:

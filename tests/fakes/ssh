@@ -30,6 +30,8 @@
 #                                                   refused as that shell would garble it. `exit 0` is a key login
 #                                                   test; any other command fails as that shell says it isn't one
 #                                                   ("'sh' is not recognized ...", "The term 'sh' is not recognized")
+#                                                   Under PowerShell, a command that failed exits 1, whatever its code
+#                                                   was (as Win32-OpenSSH's `powershell -c` does)
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
 #                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
 import base64, os, shutil, subprocess, sys, time
@@ -159,7 +161,9 @@ def windows_host(root, command):
             t.join()
         sys.stdout.buffer.write(got.get("out", b""))
         sys.stderr.buffer.write(got.get("err", b""))
-        return rc
+        # sshd ran the line under `powershell -c` (DefaultShell PowerShell), which turns any failure into 1 (seen on a
+        # real Host: `ssh HOST 'cmd /c exit 3'` exits 1); cmd.exe passes the code on
+        return 1 if rc and shell == "powershell" else rc
     if words == ["exit", "0"]:        # a login test: this account's key file holds roster's key, and sshd would read it
         return 0 if windows_key_login(root) else 255
     first = words[0] if words else ""

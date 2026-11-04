@@ -346,11 +346,13 @@ def password_exec(h, command, password, timeout=15, stdin=None):
     c.load_host_keys(str(known_hosts_file()))
     c.set_missing_host_key_policy(paramiko.RejectPolicy())
     use_pw = password is not None
+    running = False
     try:
         c.connect(h["ip"], port=h["ssh"]["port"], username=h["ssh"]["user"], password=password,
                   allow_agent=not use_pw, look_for_keys=not use_pw,
                   timeout=timeout, auth_timeout=timeout, banner_timeout=timeout)
         stdin_f, stdout, stderr = c.exec_command(command, timeout=120)
+        running = True
         if stdin is not None:
             stdin_f.write(stdin)
             stdin_f.channel.shutdown_write()
@@ -363,6 +365,11 @@ def password_exec(h, command, password, timeout=15, stdin=None):
         if "known_hosts" in str(e):
             raise RuntimeError("host key not recorded - is the host reachable on its SSH port?")
         raise RuntimeError(str(e))
+    except TimeoutError:
+        if running:     # the channel's own 120 s: logged in, but the command was quiet that long
+            raise RuntimeError("the command printed nothing for 120 s, so roster stopped waiting (it may still be "
+                               "running there)") from None
+        raise RuntimeError("can't connect (timed out)") from None
     except OSError as e:
         raise RuntimeError(f"can't connect ({e.strerror or e})")
     finally:

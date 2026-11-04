@@ -585,3 +585,192 @@ def test_a_refused_key_on_a_windows_host_points_at_its_key_file(write_config):
     p = login_failure(hosts["dc-01"], False, "admin@10.0.0.5: Permission denied (publickey).")
     assert p.code == 46 and "permissions" in p.fix and "administrators_authorized_keys" in p.fix
     assert "administrators_authorized_keys" not in login_failure(hosts["web-1"], False, "Permission denied").fix
+
+
+# ---------------------------------------------------------------- roster run (T196, #376, decision Q176)
+
+def run_on(win, capfd, *words, host="dc-01"):
+    """`roster run HOST -- WORDS` on a stand-in Windows Host: (exit code, stdout, stderr), as the terminal got them."""
+    main(["sync"])
+    capfd.readouterr()
+    rc = main(["run", host, "--", *words])
+    out, err = capfd.readouterr()
+    return rc, out, err
+
+
+@needs_powershell
+@SHELLS
+def test_run_on_a_windows_host_runs_powershell_whatever_its_default_shell(win, capfd):
+    """The same fixed launch line as setup's (base64 only), whatever sshd's DefaultShell; the command goes in the
+    script on stdin, never in argv."""
+    rc, out, err = run_on(win, capfd, "Write-Output", "'a & b | c'; $x = 1 + 1; Write-Output \"two=$x\"")
+    assert (rc, out.splitlines()) == (0, ["a & b | c", "two=2"]) and "CLIXML" not in err
+    ran = [ln for ln in win.ssh_log().splitlines() if " dc-01 " in ln]
+    assert ran and all("Write-Output" not in ln and "a & b" not in ln for ln in ran)
+    assert ran[-1].endswith(" dc-01 " + __import__("roster.winhost").winhost.remote_command())
+
+
+@needs_powershell
+@SHELLS
+@pytest.mark.parametrize("command, code", [
+    ("exit 3", 3),                                                   # the command's own exit
+    ("& $env:FAKE_PYTHON -c 'import sys; sys.exit(4)'", 4),          # a native command's $LASTEXITCODE
+    ("Get-Item -LiteralPath ./no-such-thing", 1),                    # a cmdlet that failed ($? false)
+    ("throw 'boom'", 1),                                             # a terminating error
+    ("& $env:FAKE_PYTHON -c 'import sys; sys.exit(4)'; Write-Output fine", 0),   # the last statement counts
+    ("Write-Output fine", 0),
+    ("Write-Error oops", 1),                                         # a cmdlet's error, last
+    # a native command, as the owner tried it (cmd.exe where the stand-in's PowerShell is Windows', else sh)
+    ("if (Get-Command cmd.exe -ErrorAction SilentlyContinue) { cmd /c exit 3 } else { sh -c 'exit 3' }", 3),
+])
+def test_run_on_a_windows_host_passes_on_its_exit_code(win, capfd, command, code):
+    """The exact code under either DefaultShell: a PowerShell DefaultShell turns any failure into 1 (the stand-in does
+    too), so the code comes back marked on stderr, and the marker isn't shown."""
+    rc, out, err = run_on(win, capfd, command)
+    assert rc == code, (out, err)
+    assert "ROSTER_EXIT" not in err
+
+
+NATIVE3 = "if (Get-Command cmd.exe -ErrorAction SilentlyContinue) { cmd /c exit 3 } else { sh -c 'exit 3' }"
+NATIVE_ERR0 = "& $env:FAKE_PYTHON -c 'import sys; sys.stderr.write(chr(110)+chr(10))'"      # writes to stderr, exits 0
+
+
+@needs_powershell
+@SHELLS
+@pytest.mark.parametrize("command, code", [
+    ("[Console]::Error.Write('no newline'); exit 3", 3),              # CMD's last stderr write had no newline
+    (NATIVE3 + "; break", 3),                                        # break, continue, return: no last statement
+    (NATIVE3 + "; continue", 3),
+    ("Get-Item -LiteralPath ./no-such-thing; return", 1),
+    ("Write-Output fine; return", 0),
+    (NATIVE_ERR0 + "; Get-Item -LiteralPath ./no-such-thing -ErrorAction Ignore", 1),   # failed, though $Error didn't grow
+    (NATIVE_ERR0, 0),
+])
+def test_how_cmd_ends_never_turns_a_failure_into_success(win, capfd, command, code):
+    rc, out, err = run_on(win, capfd, command)
+    assert rc == code, (out, err)
+    assert "ROSTER_" not in err
+
+
+@needs_powershell
+def test_cmds_own_output_never_says_roster_refused_it(win, capfd):
+    """[161] and [156] come only from roster's own (nonce'd) lines, never from what CMD prints."""
+    rc, out, err = run_on(win, capfd, "[Console]::Error.WriteLine('roster: NOT_POWERSHELL: x'); "
+                                      "[Console]::Error.WriteLine('ROSTER_NOT_POWERSHELL=' + '0' * 32 + ':x'); "
+                                      "[Console]::Error.WriteLine('powershell: not found'); exit 0")
+    assert rc == 0 and "[161]" not in err and "[156]" not in err
+
+
+@needs_powershell
+@SHELLS
+def test_a_script_that_never_ran_isnt_mistaken_for_the_commands_exit(win, capfd, monkeypatch):
+    """The bootstrap refuses a malformed frame (exit 3, no marker): roster says the command may not have run, 255."""
+    from roster import winhost
+    monkeypatch.setattr(winhost, "framed", lambda script: "99999\nshort")
+    rc, out, err = run_on(win, capfd, "exit 3")
+    assert rc == 255 and "ended without the command's exit code" in err
+
+
+@needs_powershell
+@SHELLS
+def test_an_exit_marker_in_the_commands_own_output_is_shown_and_ignored(win, capfd):
+    """The marker carries a nonce roster makes for each run, which CMD never sees: one CMD writes is its output."""
+    forged = "ROSTER_EXIT=" + "0" * 32 + ":0"
+    rc, out, err = run_on(win, capfd, f"[Console]::Error.WriteLine('{forged}'); Write-Output '{forged}'; exit 5")
+    assert rc == 5 and forged in err and forged in out
+
+
+def test_roster_reads_only_its_own_lines_from_a_runs_stderr():
+    """The launcher's lines carry this run's nonce, and may come after CMD's last write with no newline before them."""
+    from roster import winhost
+    said = winhost.RunOutcome("ab" * 16)
+    assert said.take("ROSTER_EXIT=" + "ab" * 16 + ":3\r\n") == "" and said.code == 3
+    assert said.take("partial lineROSTER_EXIT=" + "ab" * 16 + ":4\n") == "partial line\n" and said.code == 4
+    forged = "ROSTER_EXIT=" + "cd" * 16 + ":0\n"
+    assert said.take(forged) == forged and said.code == 4
+    assert said.take("ROSTER_NOT_POWERSHELL=" + "cd" * 16 + ":x\n").startswith("ROSTER_") and said.notes == {}
+    script = winhost.run_script("Write-Output hi", "ab" * 16)
+    assert script.isascii() and "Write-Output" not in script        # CMD only as base64
+
+
+@needs_powershell
+def test_run_on_a_windows_host_shows_errors_as_text(win, capfd):
+    """Errors, warnings and a native command's stderr reach stderr as text (no CLIXML); a native command that wrote
+    to stderr but exited 0 succeeded."""
+    rc, out, err = run_on(win, capfd, "Write-Warning careful; Write-Error oops; "
+                                      "& $env:FAKE_PYTHON -c 'import sys; sys.stderr.write(chr(110)+chr(10))'")
+    assert rc == 0 and "CLIXML" not in err and "<Objs" not in err
+    assert "WARNING: careful" in err and "oops" in err and "\nn" in "\n" + err
+    rc, out, err = run_on(win, capfd, "throw 'boom'")
+    assert rc == 1 and "boom" in err and "CLIXML" not in err
+
+
+@needs_powershell
+@pytest.mark.parametrize("command, said", [
+    ("Write-Output 'it''s $(1+1) `n'", "it's $(1+1) `n"),            # PowerShell's own quoting, as the person wrote it
+    # non-ASCII, UTF-8 both ways; a Unicode single quote is just a character inside PowerShell's double quotes
+    ("Write-Output \"caf\u00e9 \u2019quoted\u2019 \u2713\"", "caf\u00e9 \u2019quoted\u2019 \u2713"),
+    ("Write-Output \"$('x')\"", "x"),
+])
+def test_the_command_is_data_in_the_script_whatever_it_holds(win, capfd, command, said):
+    rc, out, err = run_on(win, capfd, command)
+    assert (rc, out.splitlines()) == (0, [said]), err
+
+
+@needs_powershell
+@SHELLS
+def test_a_command_past_4096_bytes_runs_though_the_hosts_sshd_never_sends_eof(win, capfd, monkeypatch):
+    """Win32-OpenSSH never delivers EOF on stdin past 4096 bytes, and run's script carries the person's command: it
+    goes framed (its length first), as setup's does, so a long command runs and ends."""
+    from roster import winhost
+    monkeypatch.setenv("FAKE_EOF_WAIT", "20")       # a run that waited for EOF fails in 20 s, not 60
+    command = "$s = '" + "a" * 6000 + "'; Write-Output $s.Length"
+    assert len(winhost.run_script(command, "ab" * 16).encode()) > 4096
+    rc, out, err = run_on(win, capfd, command)
+    assert (rc, out.splitlines()) == (0, ["6000"]), err
+
+
+def test_a_command_too_long_for_the_script_is_refused_before_anything_is_sent(win, capsys, monkeypatch):
+    from roster import cli
+    main(["sync"])
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
+    from roster import winhost
+    monkeypatch.setattr(winhost.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
+    with pytest.raises(SystemExit) as e:
+        main(["run", "dc-01", "--", "a" * (1 << 20)])
+    assert "over 1 MB" in str(e.value) and "nothing ran" in str(e.value)
+
+
+@needs_powershell
+def test_a_command_that_isnt_powershell_runs_nothing(win, capfd):
+    rc, out, err = run_on(win, capfd, "Write-Output", "ran;", "echo", "(")
+    assert rc == 1 and out == "" and "[161]" in err and "isn't PowerShell" in err
+
+
+@needs_powershell
+def test_run_on_a_windows_password_host_sends_the_same_script(win, capfd, write_config):
+    write_config(WIN.replace("      dc-01: 10.0.0.5\n", "      dc-01: { ip: 10.0.0.5, enroll: false }\n"))
+    rc, out, err = run_on(win, capfd, "Write-Output hello; exit 7")
+    assert (rc, out.splitlines()) == (7, ["hello"])
+    from roster import winhost
+    assert win.sent and win.sent[-1][0] == winhost.remote_command() and "hello" not in win.sent[-1][0]
+
+
+@stand_in_hosts
+@pytest.mark.skipif(WINDOWS, reason="a POSIX stand-in Host on Windows would find this machine's own powershell")
+def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd, monkeypatch):
+    from conftest import POSIX_SH
+    monkeypatch.setenv("FAKE_SH", POSIX_SH)
+    rc, out, err = run_on(win, capfd, "Write-Output hi", host="web-1")
+    assert rc != 0 and "[156]" in err and "os:" in err
+
+
+@pytest.mark.parametrize("enroll", [True, False])
+def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, monkeypatch, capsys, enroll):
+    from roster import cli
+    write_config(WIN.replace("      dc-01: 10.0.0.5\n", f"      dc-01: {{ ip: 10.0.0.5, enroll: {str(enroll).lower()} }}\n"))
+    monkeypatch.setattr(cli, "get_secret", lambda *a: pytest.fail("the vault was asked"))
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
+    with pytest.raises(SystemExit) as e:
+        main(["run", "--sudo", "dc-01", "--", "whoami"])
+    assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)
