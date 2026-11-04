@@ -267,8 +267,8 @@ export function ConnectCard({
     return () => clearTimeout(t);
   }, [phase]);
   // How long it has been connecting (taste.md: honest under failure): a slow Host and a hung one
-  // shouldn't look the same. Seconds from 3 s, once a second, as text (no motion); from 8 s the
-  // way out. While roster waits for an answer from you, there's nothing to time.
+  // shouldn't look the same. Seconds from 3 s, once a second, as text (no motion); the way
+  // out shows from the start. While roster waits for an answer from you, there's nothing to time.
   const [startedAt] = useState(() => Date.now());
   const [now, setNow] = useState(startedAt);
   const waiting =
@@ -556,11 +556,11 @@ export function ConnectCard({
           )}
         </p>
       )}
-      {/* The way out has its line from the start (shown from 3 s, with the timer), so nothing moves when it does. */}
+      {/* The way out shows from the start (round 9: no moment without one); its line is kept, so nothing moves. */}
       {!asking && closeKeys && (
         <p
-          className={`connect-stop key-hint${waiting && seconds >= 3 ? "" : " later"}`}
-          aria-hidden={!(waiting && seconds >= 3)}
+          className={`connect-stop key-hint${waiting ? "" : " later"}`}
+          aria-hidden={!waiting}
         >
           <Keys keys={closeKeys} leader={leader} /> stops it
         </p>

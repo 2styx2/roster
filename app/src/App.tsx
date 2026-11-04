@@ -3525,9 +3525,9 @@ function Workspace({
                   open={(name) => run(`open ${name}`)}
                 />
               )}
-              {/* While the Sidebar shows its own Find field, the pane's Find is a quiet line, not a
-                  second filled button (Q193); without the Sidebar it's the button. */}
-              {sidebarShown && !sidebarTucked ? (
+              {/* A quiet line while the Sidebar's Find field or the map is there (Q193; one form at every
+                  window size, round 9); the filled button only when the pane offers nothing else. */}
+              {(sidebarShown && !sidebarTucked) || recentShown.length > 0 ? (
                 <button
                   type="button"
                   className="empty-find"
@@ -4110,13 +4110,18 @@ function Workspace({
         )}
       {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
           line as visually hidden text, so a screen reader still hears what changed. */}
+      {/* Its line is always there, as Neovim's message row is: a message coming or going never
+          resizes the pane (or the terminal, which would tell the remote side). */}
       <div
-        className={
-          spokenMessage ? "message-line visually-hidden" : "message-line"
-        }
+        className="message-line"
         role="status"
+        title={shownText(message, allMessages) || undefined}
       >
-        {shownText(message, allMessages) || spokenMessage}
+        {spokenMessage ? (
+          <span className="visually-hidden">{spokenMessage}</span>
+        ) : (
+          shownText(message, allMessages)
+        )}
       </div>
       {pieces("bottom")}
       {/* Progress needs a place without the status bar (Focus hides it, ticket 85): a corner. */}

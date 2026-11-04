@@ -692,8 +692,11 @@ export function Sidebar({
     />
   );
 
+  // Nine or more Sessions: the tree's other live rows keep their colour but drop the edge stub, so
+  // stubs stay a signal, not a texture (owner, after round 9; styles.css).
+  const manySessions = (sections.find((s) => s.id === "sessions")?.count ?? 0) >= 9;
   return (
-    <nav className={`sidebar side-${side}`} aria-label="Sidebar">
+    <nav className={`sidebar side-${side}`} aria-label="Sidebar" data-many-sessions={manySessions || undefined}>
       <button type="button" className="sb-find" onMouseDown={keepFocus} onClick={() => run("find")}>
         <SearchIcon />
         <span className="sb-find-label">Find a Host</span>

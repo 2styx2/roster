@@ -358,12 +358,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .changes-dot { width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid currentColor; flex: none; }
 .statusbar .mode .pending { font-family: var(--font-mono); font-weight: 400; }
 
-.message-line:empty { display: none; }
+/* One line, always reserved (round 9: it had pushed the pane 14 px when a message came): a long
+   message is cut here and whole in its tooltip and in :messages. */
 .message-line {
-  flex: none; padding: 4px 12px; font-size: var(--text-sm); color: var(--warn);
+  flex: none; height: 22px; padding: 0 12px; line-height: 22px; font-size: var(--text-sm); color: var(--warn);
   background: var(--chrome); border-top: 1px solid var(--line);
-  transition: opacity var(--dur-fade) ease;
-  @starting-style { opacity: 0; }
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 
 /* ---------- The Sidebar ---------- */
@@ -448,6 +448,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 /* The raised style (decision Q31): a lighter fill and a 1px outline. */
 .sb-row.raised { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--raised-line); }
+/* The live Session's row: the raised fill and its 2px bar, no outline box (round 9: it read as a card). */
+.sb-row.raised.live { box-shadow: none; }
 /* The live Session (decision Q53, S11): the raised row plus a 2px accent bar at its start, 3:1
    against the Sidebar in every Theme. The accent means live (taste.md): an ended Session on
    screen is raised without it. It moves with a key, so it doesn't animate. */
@@ -568,6 +570,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-section[data-section="sessions"] .sb-row .dot { margin-left: 4px; }
 .dot.on line.stub { stroke: var(--text); }
 .dot.lit line.stub { stroke: var(--accent); }
+.sidebar[data-many-sessions] .sb-rest .dot.on line.stub { display: none; }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the
@@ -664,6 +667,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel .keys-source.config { color: var(--accent-ink); }
 /* Its name in init.lua (ticket 32): data, so Iosevka, quiet under the source. */
 .keys-option { display: block; margin-top: 1px; font: var(--text-xs)/16px var(--font-mono); color: var(--muted); }
+/* Said where you look (owner, after round 9): under the binding you point at, or the filter's first
+   match; elsewhere its room is kept, so nothing moves as the pointer goes down the list. */
+.keys-panel .keys-option { visibility: hidden; }
+.keys-panel tr:focus-within .keys-option,
+.keys-panel[data-filtering] tbody:first-of-type tr:nth-child(2) .keys-option { visibility: visible; }
+@media (hover: hover) and (pointer: fine) { .keys-panel tr:hover .keys-option { visibility: visible; } }
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
 }
@@ -1135,9 +1144,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    has gone (the ring's 120 ms beat, then the card's 120 ms fade), so the card's words never sit
    on the first output. Hidden again at once when a card comes back. */
 .pane .term-wrap { transition: opacity var(--dur-fade) ease calc(var(--dur-fade) * 2 + var(--dur-hold)); }
-/* Hidden, not only transparent: Tab must reach the card's buttons, never the waiting terminal's
-   input (round 9). It comes back when the card starts leaving. */
-.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; visibility: hidden; transition-delay: 0s; }
+/* Transparent while the card is up (type-ahead still reaches the terminal); hidden too while it
+   asks a question, so Tab reaches the card's buttons, never the waiting terminal (round 9). */
+.pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; transition-delay: 0s; }
+.pane:has(> .connect-card.key-question:not(.leaving)) .term-wrap { visibility: hidden; }
 /* Words break between words; only a Host name too long for the pane breaks inside itself. */
 .connect-card p { margin: 0; overflow-wrap: break-word; text-wrap: balance; }
 /* Scales with the pane, 160 to 240 px (owner, after rounds 8 and 9); strokes stay 1 and 1.5 px. */

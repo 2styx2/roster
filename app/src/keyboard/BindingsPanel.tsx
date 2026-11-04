@@ -26,7 +26,7 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
   }, [shown]);
 
   return (
-    <aside className="keys-panel" aria-label="Key bindings">
+    <aside className="keys-panel" aria-label="Key bindings" data-filtering={query.trim() !== "" || undefined}>
       <header>
         <h2>Key bindings</h2>
         <span className="panel-head-buttons">
@@ -99,7 +99,7 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
         {shown.length === 0 && <p className="panel-empty">No bindings match “{query}”.</p>}
       </div>
       <p className="panel-foot">
-        Change any of these in init.lua: the name is under each one. <code>:config</code> opens it.
+        Change any of these in init.lua: point at one for its name there. <code>:config</code> opens it.
       </p>
     </aside>
   );

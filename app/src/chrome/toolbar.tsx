@@ -150,7 +150,8 @@ const PATHS: Record<ToolbarIcon, React.ReactNode> = {
     <>
       <rect x="1.75" y="6" width="4" height="4" rx="0.8" />
       <path d="M6.5 8h3" />
-      <circle cx="12.25" cy="8" r="2.5" strokeDasharray="1.6 1.3" />
+      {/* The connecting node: an open ring, its gap at the upper right (round 9: dashed read as "oo"). */}
+      <path d="M14.739 7.765A2.5 2.5 0 1 1 12.485 5.511" />
     </>
   ),
   // Two lines, the second changed: a diff.
