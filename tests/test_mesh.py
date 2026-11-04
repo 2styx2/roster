@@ -2162,6 +2162,12 @@ def box_lines(net, host):
     return [x for x in net.ak(host).splitlines() if "roster-managed:" in x]
 
 
+# On native Windows the stand-in ssh is a batch file, and roster won't hand a batch file the key scripts (their quotes
+# and | are cmd.exe's), as for revoke in test_inventories.py
+key_scripts_run = pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a batch file on Windows")
+
+
+@key_scripts_run
 def test_revoke_on_a_renamed_box_takes_its_key_under_the_earlier_name(net, isolated, capsys):
     renamed_box(net, isolated)
     assert main(["revoke", "-y"]) == 0
@@ -2176,6 +2182,7 @@ def setup_box(monkeypatch):
     monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
 
 
+@key_scripts_run
 def test_setup_on_a_renamed_box_retags_its_key_under_the_new_name_once(net, isolated, capsys, monkeypatch):
     renamed_box(net, isolated)
     setup_box(monkeypatch)
@@ -2200,6 +2207,7 @@ def test_setup_dry_run_on_a_renamed_box_says_it_would_retag_and_changes_nothing(
     assert net.snapshot() == before
 
 
+@key_scripts_run
 def test_setup_with_a_host_down_retags_the_rest_and_again_next_time(net, isolated, capsys, monkeypatch):
     renamed_box(net, isolated)
     setup_box(monkeypatch)
