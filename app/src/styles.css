@@ -257,6 +257,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar .box .statusbar-cut { min-width: 0; }
 .statusbar .path { flex: 1 1 0; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
+/* What the status line names is data (taste.md's paste rule): the Backend, this Box, the Host
+   count and the Inventory's path are in Iosevka, as in a tmux line. The words around them are Inter. */
+.statusbar .backend .statusbar-cut, .statusbar .box .statusbar-cut, .statusbar .count, .statusbar .path { font-family: var(--font-mono); }
 /* The hints and the mode, at the right end whatever the layout shows before them. */
 .statusbar-right { margin-left: auto; flex: 0 1000 auto; min-width: 0; display: flex; align-items: center; gap: 16px; }
 .statusbar-hints {
@@ -322,7 +325,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
-.sb-empty { margin: 2px 8px 4px 24px; color: var(--muted); font-size: var(--text-sm); line-height: 1.7; text-wrap: balance; }
+.sb-empty { margin: 2px 8px 4px 24px; color: var(--muted); font-size: var(--text-sm); line-height: 1.7; text-wrap: pretty; }
 .sb-empty .keys { margin: 0 1px; }
 .keys-with-word { white-space: nowrap; }
 
@@ -413,7 +416,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-tag + .sb-tag { margin-left: 4px; }
 .sb-badge + .sb-detail { display: none; }
 .sidebar .sb-action {
-  display: none; flex: none; width: 22px; height: 22px; margin-right: 2px; place-items: center; color: var(--muted);
+  display: none; flex: none; width: 24px; height: 24px; margin-right: 2px; place-items: center; color: var(--muted);
 }
 @media (hover: hover) and (pointer: fine) {
   .sidebar .sb-action:hover { color: var(--text); background: var(--hover); }
@@ -790,6 +793,12 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .lock-panel { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; }
 .lock-mark { margin-bottom: 6px; }
 .lock-panel h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+/* This Box under the heading (taste.md "Lock screen"): its square in the second tone and its name
+   in Iosevka, as the status line shows them. */
+.lock-box {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0;
+  font: 500 var(--text-sm) var(--font-mono); color: var(--muted);
+}
 .lock-panel p { margin: 0; }
 .lock-form { display: flex; flex-direction: column; gap: 8px; }
 .lock-form > p { color: var(--muted); margin-bottom: 6px; }
@@ -1177,7 +1186,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* ---------- The Config's problems (ticket 21) ---------- */
 
 .config-toast {
-  position: fixed; right: 14px; bottom: 14px; z-index: 40; width: min(520px, calc(100vw - 28px));
+  position: fixed; right: 14px; bottom: calc(var(--statusbar-h) + 10px); z-index: 40; width: min(520px, calc(100vw - 28px));
   padding: 10px 12px; border-radius: var(--radius-lg); font-size: var(--text-sm); color: var(--text);
   background: var(--panel); border: 1px solid var(--line-strong); border-left: 3px solid var(--warn);
   box-shadow: 0 8px 24px var(--shadow);

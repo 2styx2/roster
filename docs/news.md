@@ -16,6 +16,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **Smaller touches** (#418): the lock screen shows this Box's name; the status bar sets the Backend, the Box, the Host count and the path in Iosevka, like the rest of roster's data; an empty Sidebar section no longer shows a "0" beside its sentence; the Inventory's Add a Host button is 24 px; and a config notice no longer covers the status bar.
 - **The status bar teaches the keys that work now** (#418): in App mode it shows moving, opening, the row's menu and the way back to the terminal instead of the Leader's keys, and in Terminal mode it adds `␣ ?` for help. The Sidebar's Keys and Lock buttons show their keys too.
 - **The app works at its smallest size** (#418): in a window under 720 px the Sidebar floats over the terminal instead of squeezing it, under 640 px the title bar's buttons show their icons only, and Minimize, Maximize and Close are never pushed out of the window. The title bar spells the name as **roster**.
 - **Only what's live is apricot** (#418): a Host's node is grey at rest, in the same shape as before (filled for a key login, a ring for a password one), and turns apricot while the Host has a Session that's connected or connecting, in the Sessions list, the Inventory and Folders. An idle Inventory is calm, and the live Session stands out.

@@ -452,7 +452,10 @@ const Section = memo(function Section({
         >
           <Chevron folded={folded} />
           <h2>{section.title}</h2>
-          {section.count !== undefined && <span className="sb-count">{formatCount(section.count)}</span>}
+          {/* An empty section's sentence says it ("No Sessions open."), so it shows no "0". */}
+          {section.count !== undefined && !(section.count === 0 && section.rows.length === 0 && section.empty) && (
+            <span className="sb-count">{formatCount(section.count)}</span>
+          )}
         </div>
         {section.actions && <Actions actions={section.actions} run={run} leader={leader} />}
       </div>

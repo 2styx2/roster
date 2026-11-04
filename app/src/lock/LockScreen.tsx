@@ -26,11 +26,15 @@ interface LockExtras {
 export function LockGate({
   vault,
   hint,
+  box,
   children,
   errorRows,
   copy,
 }: {
   vault: Vault;
+  /** This Box's name, under the mark in Iosevka (taste.md: the lock screen is the mark, the Box
+   * name and one field). Not a secret: the status bar shows it too. */
+  box?: string | undefined;
   /** How to lock by hand, shown under the form (e.g. the Leader and the lock key). */
   hint?: ReactNode;
   children: ReactNode;
@@ -40,7 +44,7 @@ export function LockGate({
       <div className="lock-gate" data-locked={vault.locked || undefined} inert={vault.locked} aria-hidden={vault.locked || undefined}>
         {children}
       </div>
-      {vault.locked && <LockScreen vault={vault} hint={hint} errorRows={errorRows} copy={copy} />}
+      {vault.locked && <LockScreen vault={vault} hint={hint} box={box} errorRows={errorRows} copy={copy} />}
     </>
   );
 }
@@ -73,13 +77,20 @@ function heading(view: VaultView): string {
  * ("run `bw login` once", "install it: `npm install -g @bitwarden/cli`"). */
 const commandIn = (message: string) => message.split("`").find((part, i) => i % 2 === 1 && part.includes(" ")) ?? null;
 
-function LockScreen({ vault, hint, errorRows, copy }: { vault: Vault; hint?: ReactNode } & LockExtras) {
+function LockScreen({ vault, hint, box, errorRows, copy }: { vault: Vault; hint?: ReactNode; box?: string | undefined } & LockExtras) {
   const signingIn = vault.view.state === "signin";
   return (
     <div className="lock" role="dialog" aria-modal="true" aria-labelledby="lock-title">
       <section className="lock-panel">
         <Logo size={40} className="lock-mark" />
         <h1 id="lock-title">{heading(vault.view)}</h1>
+        {box && (
+          <p className="lock-box">
+            <span className="box-mark" aria-hidden="true" />
+            <span className="visually-hidden">This Box: </span>
+            {box}
+          </p>
+        )}
         {vault.view.state === "signin" ? (
           vault.view.signedOut !== undefined ? (
             // Just signed out (ticket 42): the full sign-in form rises into place, confirming the switch.

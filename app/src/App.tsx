@@ -2933,7 +2933,7 @@ function Workspace({
     </>
   );
   return frame(
-    <LockGate vault={vault} hint={lockHint} errorRows={errorRows} copy={copy}>
+    <LockGate vault={vault} hint={lockHint} box={conn.state === "ready" ? conn.info.inventory.box : undefined} errorRows={errorRows} copy={copy}>
       {shell}
     </LockGate>,
   );
