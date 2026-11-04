@@ -433,6 +433,7 @@ impl Run {
             ops: Vec::new(),
             error: None,
             disabled: None,
+            listens: None,
         }));
         ops
     }
@@ -600,7 +601,7 @@ fn it_installs_from_roster_s_repo_with_dir_and_asks_for_exactly_its_permissions(
     let (dir, _) = packages.loadable(&specs, NAME).unwrap();
     let m = common::read_manifest(&dir).unwrap();
     assert_eq!(m.name, NAME);
-    assert_eq!(m.api, 5);
+    assert_eq!(m.api, 6);
     let mut asked: Vec<String> = m.permissions.iter().map(|p| p.to_string()).collect();
     asked.sort();
     let mut want: Vec<String> = ALL.iter().map(|s| s.to_string()).collect();

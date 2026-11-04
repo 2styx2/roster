@@ -2,7 +2,7 @@
 
 <!-- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
 
-Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 5. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
+Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 6. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
 
 Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations write them: `string?` may be `nil`, `Host[]` is a list of Hosts, `table<string, Group>` a table of Groups by name, `"info"|"warn"` one of those strings. The same declarations are [`roster.lua`](../examples/plugins/types/roster.lua), for [your editor](#editor-support).
 
@@ -3270,7 +3270,7 @@ None.
 
 **Returns**
 
-- [`Session`](#session)`[]`: Each open Session's id and Host, oldest open first.
+- [`Session`](#session)`[]`: Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.
 
 **Errors**
 
@@ -4876,6 +4876,7 @@ An open Session, as `roster.sessions.list` gives it.
 |---|---|---|---|
 | `session` | `integer` | yes | The Session's id, as its events name it: `roster.terminal.send` and `roster.sessions.show` take it. |
 | `host` | `string` | no | The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host. |
+| `cwd` | `string` | no | The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now. |
 
 ### `SessionOpenEvent`
 
@@ -4938,6 +4939,7 @@ Read from the OSC 133 marks the Session's own shell prints (its rc file turns th
 | `command` | `string` | no | The command line as the shell showed it after its prompt; `nil` when it couldn't be read (the shell sent no `B` mark, or the line scrolled away or was reflowed by a resize before it ran). |
 | `output` | `string` | yes | What it printed, each line ending in `\n`, as `terminal_output` sent it (its last line too, if it didn't end in a line feed). At most the last 16 KB. |
 | `code` | `integer` | no | Its exit code; `nil` when the shell didn't say. |
+| `cwd` | `string` | no | The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As [`Session`](#session)'s `cwd`: the shell's word, never checked. |
 
 ## Editor support
 

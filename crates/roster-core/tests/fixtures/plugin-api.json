@@ -1,5 +1,5 @@
 {
-  "api_version": 5,
+  "api_version": 6,
   "commands": [
     {
       "name": "finder",
@@ -2181,6 +2181,11 @@
           "name": "code",
           "required": false,
           "type": "integer"
+        },
+        {
+          "name": "cwd",
+          "required": false,
+          "type": "string"
         }
       ],
       "open": false
@@ -4375,6 +4380,11 @@
         },
         {
           "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "cwd",
           "required": false,
           "type": "string"
         }

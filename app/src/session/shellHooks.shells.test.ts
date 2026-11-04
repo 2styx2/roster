@@ -10,7 +10,7 @@
 // the test answers the few things they ask the terminal (the device attributes fish 4 waits for at
 // each prompt, the cursor position PSReadLine waits for), as a terminal would.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Terminal } from "@xterm/xterm";
@@ -22,13 +22,13 @@ const has = (shell: string) => spawnSync("sh", ["-c", `command -v ${shell}`]).st
 const ENV = { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: "/tmp", TERM: "xterm-256color", SHELL: "/bin/sh" };
 
 /** Runs `argv` with `lines` piped in, one command a line; what it printed. */
-function run(argv: string[], lines: string[], cwd?: string): string {
+function run(argv: string[], lines: string[], cwd?: string, env: Record<string, string> = ENV): string {
   const r = spawnSync(argv[0]!, argv.slice(1), {
     cwd,
     input: lines.join("\n") + "\n",
     encoding: "utf8",
     timeout: 10_000,
-    env: ENV,
+    env,
   });
   return r.stdout + r.stderr;
 }
@@ -85,11 +85,11 @@ async function drawnLine(out: string, mark: number, line: string): Promise<boole
 /** What the shell printed since the last Enter, and the cursor's line on a screen it's drawn on. */
 type Ready = (since: string, at: CursorLine) => boolean;
 
-function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Promise<string> {
+function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string, env: Record<string, string> = ENV): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
-    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV, cwd });
+    const child = spawn("script", ["-qfec", command, "/dev/null"], { env, cwd });
     let out = "";
     let answered = 0;
     // Where the last thing typed went in: what the shell printed after it is its answer.
@@ -325,4 +325,91 @@ describe("the POSIX hook line in a POSIX shell that isn't bash or zsh", () => {
     expect(out).toContain("ok");
     expect(out).not.toMatch(/syntax error|not found|unexpected/i);
   });
+});
+
+// #242 (Q185): the hook line holds the Session's token, so it leaves no trace in the shell's
+// history: bash and zsh take it out of the history list once it runs, PowerShell's PSReadLine keeps
+// it in memory only (never its history file). Each shell's history goes to a HOME of its own.
+describe("the hook line and the shell's history", () => {
+  const home = () => mkdtempSync(join(tmpdir(), "roster-history-"));
+  const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
+  const BASH = ["bash", "--norc", "--noprofile", "-i"];
+  /** zsh with a .zshrc of its own (`setup` after the history settings): zsh saves its history at
+   * exit only when it read its rc files, so not with -f. */
+  const zsh = (h: string, setup: string, lines: string[]) => {
+    const zdot = mkdtempSync(join(tmpdir(), "roster-zdot-"));
+    writeFileSync(`${zdot}/.zshrc`, `HISTFILE=${h}/hist; HISTSIZE=100; SAVEHIST=100; ${setup}\n`);
+    return run(["zsh", "-i"], lines, AWAY, { ...ENV, HOME: h, ZDOTDIR: zdot });
+  };
+
+  it.skipIf(!has("bash"))("bash keeps it out of its history when nothing else would, and keeps what came before", () => {
+    const h = home();
+    const out = run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=`, "echo before", hookLine("posix", N), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    expect(out, tail(out)).toContain(own("A"));
+    const saved = read(`${h}/hist`);
+    expect(saved).toContain("echo before");
+    expect(saved).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  it.skipIf(!has("bash"))("bash with HISTCONTROL=ignorespace takes nothing else out", () => {
+    const h = home();
+    run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=ignorespace`, "echo before", hookLine("posix", N), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo before\n(?:.*\n)?echo after/);
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  it.skipIf(!has("zsh"))("zsh without HIST_IGNORE_SPACE keeps it out of its history, and keeps what was there", () => {
+    const h = home();
+    writeFileSync(`${h}/hist`, "echo before\n");
+    // As a login has it: the history file read at the start, the hook line the first one typed.
+    const out = zsh(h, "", [hookLine("posix", N), "echo after", "fc -ln 1", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    expect(out, tail(out)).toMatch(/echo before\s+echo after/);
+    const saved = read(`${h}/hist`);
+    expect(saved).toContain("echo before");
+    expect(saved).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  // Review of #426, M1: what was typed in that shell before a late :integrate stays in its history.
+  it.skipIf(!has("zsh"))("zsh keeps what was typed before a late :integrate, in memory and in its file", () => {
+    const h = home();
+    writeFileSync(`${h}/hist`, "echo before\n");
+    const out = zsh(h, "", ["echo mid", hookLine("posix", N, { typed: true }), "echo after", "fc -ln 1", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    expect(out, tail(out)).toMatch(/echo before\s+echo mid\s+/);
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo before\necho mid\n/);
+    expect(saved).toContain("echo after");
+  });
+
+  it.skipIf(!has("bash"))("bash keeps what was typed before a late :integrate, and still takes the line out", () => {
+    const h = home();
+    run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=`, "echo mid", hookLine("posix", N, { typed: true }), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo mid\necho after/);
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  it.skipIf(!has("zsh"))("zsh with HIST_IGNORE_SPACE leaves it to the option", () => {
+    const h = home();
+    const out = zsh(h, "setopt HIST_IGNORE_SPACE", ["echo before", hookLine("posix", N), "echo after", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    const saved = read(`${h}/hist`);
+    expect(saved).toContain("echo before");
+    expect(saved).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  const pwsh = SHELLS.find((s) => s.name === "pwsh")!;
+  it.skipIf(missing(pwsh))("PowerShell keeps it out of PSReadLine's history file", async () => {
+    const h = home();
+    const out = await runPty(pwsh.argv, [hookLine("pwsh", N), "echo after", "exit"], pwsh.pty!, AWAY, { ...ENV, HOME: h });
+    expect(out, tail(out)).toContain(own("A"));
+    const saved = read(`${h}/.local/share/powershell/PSReadLine/ConsoleHost_history.txt`);
+    expect(saved, tail(out)).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  }, 60_000);
 });

@@ -432,6 +432,7 @@ impl World {
                 ops: Vec::new(),
                 error: None,
                 disabled: None,
+                listens: None,
             });
             if !r.ops.is_empty() {
                 replies.push(r);
@@ -502,7 +503,7 @@ fn it_installs_from_its_folder_asking_for_what_its_readme_explains() {
     let w = World::new("manifest");
     let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 5);
+    assert_eq!(manifest.api, 6);
     let asked: Vec<String> = manifest.permissions.iter().map(|p| p.to_string()).collect();
     assert_eq!(asked, ALL);
     let readme = std::fs::read_to_string(plugins_dir().join("topology/README.md")).unwrap();
@@ -689,7 +690,11 @@ fn a_session_turns_its_node_live_with_its_edge_from_this_box_and_a_failed_one_is
 fn sessions_open_before_it_loaded_are_live_on_the_map() {
     let w = World::new("before");
     // The app listed them before the Plugin loaded: it hears no event for them.
-    w.host.set_sessions(vec![(1, Some("esx-02".into()))]);
+    w.host.set_sessions(vec![roster_core::plugin::OpenSession {
+        session: 1,
+        host: Some("esx-02".into()),
+        cwd: None,
+    }]);
     let reply = w.load(ALL);
     let nodes = &view(&reply)["graph"]["nodes"];
     assert_eq!(by_id(nodes, "esx-02")["state"], "live");
@@ -760,6 +765,7 @@ fn only_a_finished_check_is_asked_about_and_an_older_result_never_overrides_a_ne
         ops: Vec::new(),
         error: None,
         disabled: None,
+        listens: None,
     }));
     assert_eq!(w.serve.called("host.check_job").len(), 2);
     assert!(
@@ -972,6 +978,7 @@ fn it_reads_the_inventory_without_holding_up_its_own_calls() {
         ops: Vec::new(),
         error: None,
         disabled: None,
+        listens: None,
     });
     let added = find(&after.ops, "view_update")
         .iter()
@@ -1158,6 +1165,7 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
         ops,
         error: None,
         disabled: None,
+        listens: None,
     })["text"]
         .as_str()
         .unwrap()
@@ -1369,8 +1377,12 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
             "sessions" => {
                 let open = step["open"].as_array().unwrap().iter();
                 w.host.set_sessions(
-                    open.map(|o| (o[0].as_u64().unwrap(), o[1].as_str().map(str::to_string)))
-                        .collect(),
+                    open.map(|o| roster_core::plugin::OpenSession {
+                        session: o[0].as_u64().unwrap(),
+                        host: o[1].as_str().map(str::to_string),
+                        cwd: None,
+                    })
+                    .collect(),
                 );
                 Vec::new()
             }
