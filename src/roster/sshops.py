@@ -23,6 +23,7 @@ from .common import (
     ssh_dir,
     ssh_path,
 )
+from .config import is_windows
 from .providers import NO_PASSWORD, get_secret
 
 # ---------------------------------------------------------------- keys & known hosts
@@ -234,7 +235,9 @@ def host_block(cfg, name, h):
            "    StrictHostKeyChecking accept-new",
            "    ConnectTimeout 10",
            "    ServerAliveInterval 30"]
-    if not WINDOWS:                         # Windows' OpenSSH can't share a connection (no Unix sockets)
+    if is_windows(h):                       # a Windows Host's sshd refuses a second session on a shared connection
+        out += ["    ControlMaster no"]       # ("No existing session"), so never share one with it (T195)
+    elif not WINDOWS:                       # Windows' OpenSSH can't share a connection (no Unix sockets)
         out += ["    ControlMaster auto",     # reuse one connection for many commands
                 f"    ControlPath {q(ssh_dir())[:-1]}/cm-%C\"",
                 "    ControlPersist 10m"]
@@ -309,13 +312,18 @@ def finish_ssh_config(cfg):
 
 # ---------------------------------------------------------------- remote helpers
 
+# What a login test runs: the same in sh, cmd.exe and PowerShell, so a Windows Host's working login isn't a failure
+# (`true` is POSIX only: under PowerShell or cmd it isn't a command, and the login looked refused).
+LOGIN_PROBE = "exit 0"
+
+
 def ssh_ok(name, timeout=10):
     if not_reached(name):               # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
         return False
     # ControlPath=none: never trust a cached connection, really log in with the key
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none",
-                                         "-o", f"ConnectTimeout={timeout}", name, "true"]),
+                                         "-o", f"ConnectTimeout={timeout}", name, LOGIN_PROBE]),
                            stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout + 20)
         return r.returncode == 0
     except subprocess.TimeoutExpired:
@@ -338,11 +346,13 @@ def password_exec(h, command, password, timeout=15, stdin=None):
     c.load_host_keys(str(known_hosts_file()))
     c.set_missing_host_key_policy(paramiko.RejectPolicy())
     use_pw = password is not None
+    running = False
     try:
         c.connect(h["ip"], port=h["ssh"]["port"], username=h["ssh"]["user"], password=password,
                   allow_agent=not use_pw, look_for_keys=not use_pw,
                   timeout=timeout, auth_timeout=timeout, banner_timeout=timeout)
         stdin_f, stdout, stderr = c.exec_command(command, timeout=120)
+        running = True
         if stdin is not None:
             stdin_f.write(stdin)
             stdin_f.channel.shutdown_write()
@@ -355,6 +365,11 @@ def password_exec(h, command, password, timeout=15, stdin=None):
         if "known_hosts" in str(e):
             raise RuntimeError("host key not recorded - is the host reachable on its SSH port?")
         raise RuntimeError(str(e))
+    except TimeoutError:
+        if running:     # the channel's own 120 s: logged in, but the command was quiet that long
+            raise RuntimeError("the command printed nothing for 120 s, so roster stopped waiting (it may still be "
+                               "running there)") from None
+        raise RuntimeError("can't connect (timed out)") from None
     except OSError as e:
         raise RuntimeError(f"can't connect ({e.strerror or e})")
     finally:
@@ -389,10 +404,25 @@ def remove_key_script(tag_re):
 
 
 def enroll(h, pub, tag_re):
+    """Put this Box's key line PUB on Host H, logging in with its Login's password: the notes to show under its `ok`
+    (on a Windows Host, the file it wrote and any warning). RuntimeError when it can't."""
+    from . import winhost
     pw = get_secret(h["ssh"]["auth"], h["group"])
+    if is_windows(h):
+        done = winhost.install(h, pub, tag_re, pw)
+        if not ssh_ok(h["name"]):
+            raise RuntimeError(f"key written to {', '.join(done.files) or 'its key file'} but key login still fails "
+                               "(check that file's permissions and encoding, and whether sshd_config's Match Group "
+                               "administrators applies to this account)")
+        from .errors import KEY_FILE
+        return ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins else [])
+                + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
     _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, tag_re)), pw)
     if "ROSTER_OK" not in out:
+        if winhost.looks_windows(out + err):
+            raise RuntimeError(winhost.windows_hint(h["name"]))
         raise RuntimeError("couldn't write authorized_keys: " + (err or out).strip()[:200])
     if not ssh_ok(h["name"]):
         raise RuntimeError("key installed but key login still fails "
                            "(sshd PubkeyAuthentication off, or bad home-dir permissions?)")
+    return []

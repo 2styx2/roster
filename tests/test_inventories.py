@@ -865,8 +865,10 @@ revoke_runs = pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a 
 
 
 def revoked(ssh_log):
-    """The Hosts a revoke ran its script on (`ssh -o BatchMode=yes NAME sh -c ...`), in no order."""
-    return sorted(ln.split()[3] for ln in ssh_log() if ln.startswith("ssh -o BatchMode=yes ") and " sh -c " in ln)
+    """The Hosts a revoke ran its script on (`ssh -o BatchMode=yes -o ControlPath=none NAME sh -c ...`), in no
+    order."""
+    return sorted(ln.split()[5] for ln in ssh_log()
+                  if ln.startswith("ssh -o BatchMode=yes -o ControlPath=none ") and " sh -c " in ln)
 
 
 @revoke_runs
@@ -899,7 +901,7 @@ def test_revoke_all_names_every_file_to_delete_once_every_host_is_done(two, caps
     run(capsys, "sync")
     run(capsys, "--inv", "home", "sync")
     done = []
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, script: done.append(h["name"]) or True)
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: done.append(h["name"]))
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert sorted(done) == ["build-pi", "nas-1", "pi"] and code == 0
     summary = out.split("\nremoved from ")[1]
@@ -1002,7 +1004,7 @@ def test_a_synced_inventory_that_isnt_the_active_one_is_still_reached(two, capsy
     home_not_synced(two, capsys)
     run(capsys, "--inv", "home", "sync")
     run(capsys, "--inv", "home", "check")
-    assert any(ln.split()[-2:] == ["pi", "true"] for ln in ssh_log())
+    assert any(ln.split()[-3:] == ["pi", "exit", "0"] for ln in ssh_log())
 
 
 @pytest.mark.parametrize("argv", [["revoke"], ["revoke", "--all"]])
@@ -1058,7 +1060,7 @@ def test_check_and_revoke_never_reach_another_unnamed_files_host(a_synced_b_not,
 
 def test_the_file_the_unnamed_ssh_config_is_from_still_reaches_its_hosts(a_synced_b_not, capsys, ssh_log):
     run(capsys, "-c", str(a_synced_b_not["a"]), "check")
-    assert any(ln.split()[-2:] == ["pi", "true"] for ln in ssh_log())
+    assert any(ln.split()[-3:] == ["pi", "exit", "0"] for ln in ssh_log())
 
 
 def test_serve_on_another_unnamed_file_wont_prepare_a_session_by_that_name(a_synced_b_not, serve):
@@ -1120,7 +1122,7 @@ def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_r
     a = a_synced_b_not["a"]
     a.write_text(A_YML + "      nas-1: {ip: 10.0.0.30}\n")
     run(capsys, "-c", str(a), "sync")
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, script: True)
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
     code, out, _ = run(capsys, "-c", str(a), "revoke", "--only", "pi", "-y")
     assert code == 0 and "removed from 1/1 hosts" in out and "To finish, delete" not in out
     code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
@@ -1131,6 +1133,6 @@ def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_r
 def test_revoke_all_with_a_left_out_host_skipped_fails(two, capsys, ssh_log, monkeypatch):
     monkeypatch.setenv("HOMEPW", "hunter2")
     clashing(two, capsys)
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, script: True)
+    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert "home: pi: left out" in out and "To finish, delete" not in out and code == 1

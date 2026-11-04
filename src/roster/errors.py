@@ -145,6 +145,21 @@ SSH_REFUSES_SCRIPT = 149    # revoke: this Box's ssh is a batch file (a .cmd/.ba
                             #   hand it the key-removal script, which holds characters cmd.exe acts on; nothing is
                             #   revoked (catalog row 207)
 
+# Windows Hosts (T195, #375, decision Q174): `os: windows` in roster.yml, and the PowerShell scripts setup, revoke and
+# check run there (catalog rows 212-216)
+WINDOWS_TYPE_NO_OS = 154    # warning: a Host has type: windows but no os:, so roster treats it as POSIX (sh scripts)
+LOOKS_LIKE_WINDOWS = 155    # a POSIX script failed with Windows' "'sh' is not recognized": the Host wants os: windows
+NOT_WINDOWS = 156           # an os: windows Host has no PowerShell, or says it isn't Windows: nothing was changed
+KEY_FILE = 157              # a Windows Host's key file roster won't touch (UTF-16, a BOM, an sshd_config it can't
+                            #   follow, an ACL it couldn't set), or, as a warning, one whose ACL lets others in
+CONNECTION_SHARING = 158    # ssh's shared connection (ControlMaster) was refused ("No existing session"), not a login
+
+# Windows Hosts, part 2 (T196, #376, decision Q176): `roster run` there under PowerShell, and what roster won't do there
+# (catalog rows 219-221)
+RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has no sudo over ssh; refused before the vault
+MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
+NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

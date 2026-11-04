@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from . import __version__, boxsync, clihelp, jsonout, mesh
 from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
-from .config import access_label, find_config, load_config, matches, selected
+from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
@@ -31,6 +31,7 @@ from .sshops import (
     write_ssh_config,
 )
 from .web import cmd_web, mask
+from .winhost import clean
 
 # ---------------------------------------------------------------- commands
 
@@ -83,6 +84,7 @@ def cmd_setup(cfg, args):
             "roster.yml, set reviewed: true, then re-run setup")
     if not hosts:
         return 0
+    warn_os(hosts)
     say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
     ensure_key(cfg)
     pub = public_key_line(cfg)
@@ -119,9 +121,11 @@ def cmd_setup(cfg, args):
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
-                    f.result()
+                    notes = f.result()
                     installed += 1
                     say(f"  ok    {h['name']}")
+                    for note in notes or ():
+                        say(f"        {note}")
                 except Exception as e:
                     failed[h["name"]] = str(e)
                     say(f"  FAIL  {h['name']}: {e}")
@@ -288,6 +292,8 @@ def cmd_mesh(cfg, args):
             return 0
         for n in st["members"]:
             say(f"  {n:<16} can reach {plural(st['reach'].get(n, 0), 'Host')}")
+        if st["excluded"]:
+            say("left out: " + ", ".join(f"{n} ({why})" for n, why in st["excluded"].items()))
         if st["pending"]:
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         warn_cut(st["cut_pending"])
@@ -359,6 +365,8 @@ def cmd_check(cfg, args):
 
     def check(h):
         res = {"ssh": ssh_ok(h["name"]) if h["enroll"] else tcp_ok(h["ip"], h["ssh"]["port"])}
+        if res["ssh"] and h["enroll"] and is_windows(h):
+            check_windows_key(cfg, h)
         for name, s in h["services"].items():
             res[name] = tcp_ok(urlparse(s["url"]).hostname if s["url"] else h["ip"], s["port"])
         return h, res
@@ -391,9 +399,31 @@ def cmd_check(cfg, args):
                     or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
+    if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
+        if windows:
+            say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
     return 1 if bad or skipped else 0
+
+
+def check_windows_key(cfg, h):
+    """`roster check` on a Windows Host whose key login works: its key file, read-only (winhost's check script), and
+    what sshd could later refuse it for (code 157), as warnings on stderr. Never a failure: the login works."""
+    from . import winhost
+    from .errors import KEY_FILE
+    try:
+        found = winhost.over_key(h, "check", cfg["tag_re"])
+        notes = found.warnings
+        if found.admins:
+            print(f"note: {h['name']}: {found.files[0] if found.files else 'its key file'}: "
+                  f"{winhost.admins_note(h['name'])}", file=sys.stderr, flush=True)
+    except RuntimeError as e:
+        notes = [str(e)]
+    for note in notes:
+        print(f"warning: [{KEY_FILE}] {h['name']}: {note}" if not note.startswith("[") else
+              f"warning: {h['name']}: {note}", file=sys.stderr, flush=True)
 
 
 def cmd_check_host(args):
@@ -488,8 +518,21 @@ def logins_label(h):
     return ", ".join(parts)
 
 
+def warn_os(hosts):
+    """A Host with type: windows but no os: (T195, code 154): roster treats it as POSIX and runs sh scripts there, so
+    say how to mark it. A warning only: roster never infers os: from type:, a free label."""
+    from .errors import WINDOWS_TYPE_NO_OS
+    for h in sorted(hosts, key=lambda h: h["name"]):
+        if h["type"].strip().lower() == "windows" and h.get("os") is None:
+            print(f"warning: [{WINDOWS_TYPE_NO_OS}] {h['name']} has type: windows but no os:, so roster treats it as a "
+                  "POSIX Host (sh scripts)\n         fix: set os: windows for it (or its group) in roster.yml",
+                  file=sys.stderr, flush=True)
+
+
 def warn_problems(hosts):
-    """Service entries roster left out of the Inventory (bad port, url, login...), on stderr: the rest still works."""
+    """Service entries roster left out of the Inventory (bad port, url, login...), on stderr: the rest still works;
+    and Hosts typed windows with no os: (warn_os)."""
+    warn_os(hosts)
     for h in sorted(hosts, key=lambda h: h["name"]):
         for p in h["problems"]:
             print(f"warning: {h['name']} {p['message']} - left out\n         fix: {p['fix']}", file=sys.stderr,
@@ -682,6 +725,8 @@ def cmd_run(cfg, args):
     command = " ".join(words)
     if not h["reviewed"]:
         die(not_reviewed(h))
+    if is_windows(h):
+        return run_windows(h, command, args.sudo)
     if args.sudo:
         return run_sudo(h, command)
     if h["enroll"]:
@@ -690,7 +735,7 @@ def cmd_run(cfg, args):
     try:
         rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
     sys.stdout.write(out)
     sys.stderr.write(err)
     if words[0] == "sudo" and rc != 0 and ("password is required" in err or "terminal is required" in err):
@@ -699,12 +744,32 @@ def cmd_run(cfg, args):
     return rc if rc >= 0 else 1
 
 
+def run_windows(h, command, sudo):
+    """`roster run` on an os: windows Host (T196, decision Q176): COMMAND always under PowerShell (winhost.run), the
+    same whatever sshd's DefaultShell. --sudo is refused before the vault is asked: Windows has no sudo over ssh."""
+    from . import winhost
+    from .errors import RUN_SUDO_WINDOWS
+    if sudo:
+        die(f"[{RUN_SUDO_WINDOWS}] {h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
+            "ran. Log in as an account in Administrators (its ssh session is already elevated) and run it without "
+            "--sudo")
+    try:
+        if h["enroll"]:
+            refuse_left_out(h)
+            return winhost.run(h, command)
+        return winhost.run(h, command, get_secret(h["ssh"]["auth"], h["group"]), key=False)
+    except ValueError as e:                 # the script with CMD in it is over 1 MB: nothing was sent
+        die(f"{h['name']}: {e}: nothing ran")
+    except RuntimeError as e:
+        die(f"{h['name']}: {clean(str(e))}")
+
+
 def run_sudo(h, command):
     """Run COMMAND as root: sudo gets the host's login password on stdin, never on screen."""
     try:
         secret = get_secret(h["ssh"]["auth"], h["group"])
     except RuntimeError as e:
-        die(f"{h['name']}: {e}")
+        die(f"{h['name']}: {clean(str(e))}")
     if not secret:
         die(f"{h['name']}: --sudo needs the login's password, but its auth is {h['ssh']['auth']!r} "
             "(set auth: to the vault item that holds the password)")
@@ -719,7 +784,7 @@ def run_sudo(h, command):
         try:
             rc, out, err = password_exec(h, wrapped, secret, stdin=secret + "\n")
         except RuntimeError as e:
-            die(f"{h['name']}: {mask(str(e), [secret])}")
+            die(f"{h['name']}: {clean(mask(str(e), [secret]))}")
     sys.stdout.write(mask(out, [secret]))
     sys.stderr.write(mask(err, [secret]))
     if "incorrect password" in err or "no password was provided" in err:
@@ -728,12 +793,38 @@ def run_sudo(h, command):
     return rc if rc >= 0 else 1
 
 
-def revoke_on(h, script):
-    """Run the key-removal SCRIPT on Host H by its name (`ssh NAME`); True when it says it's done."""
-    r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], script]),
+def revoke_on(h, tag_re):
+    """Take this Box's key (TAG_RE) off Host H by its name (`ssh NAME`, never a shared connection): None when it says
+    it's done, else why not. A Windows Host (os: windows) gets the PowerShell script (winhost), on stdin."""
+    from . import winhost
+    if is_windows(h):
+        try:
+            done = winhost.over_key(h, "remove", tag_re)
+        except RuntimeError as e:
+            return str(e)
+        from .errors import KEY_FILE
+        for w in done.warnings:             # on stderr: the ok/FAIL lines stay one per Host
+            print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_re.rsplit(':', 1)[-1].rstrip('$')})",
+                  file=sys.stderr, flush=True)
+        return None
+    r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+                                     remove_script(tag_re)]),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
     subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
-    return "ROSTER_OK" in r.stdout
+    if "ROSTER_OK" in r.stdout:
+        return None
+    if winhost.looks_windows(r.stdout + r.stderr):
+        return winhost.windows_hint(h["name"])
+    return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
+
+
+def remove_script(tag_re):
+    """The POSIX key-removal command: sh with the script as its argument."""
+    return "sh -c " + shlex.quote(remove_key_script(tag_re))
+
+
+def revoke_line(label, h, why):
+    say(f"  {'ok  ' if why is None else 'FAIL'}  {label}{h['name']}" + ("" if why is None else f": {why}"))
 
 
 def check_ssh_takes(script):
@@ -749,18 +840,18 @@ def check_ssh_takes(script):
 def cmd_revoke(cfg, args):
     keyed = [h for h in selected(cfg, args.only) if h["enroll"]]
     hosts = skip_left_out(keyed)
-    script = "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))
-    if hosts:
-        check_ssh_takes(script)
+    warn_os(hosts)
+    if any(not is_windows(h) for h in hosts):
+        check_ssh_takes(remove_script(cfg["tag_re"]))
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
     bad = 0
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, ok in zip(hosts, ex.map(lambda h: revoke_on(h, script), hosts), strict=True):
-            bad += not ok
-            say(f"  {'ok  ' if ok else 'FAIL'}  {h['name']}")
+        for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, cfg["tag_re"]), hosts), strict=True):
+            bad += why is not None
+            revoke_line("", h, why)
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
     # T194 (#371): the files go only once every Host this file names has lost the key; with any skipped, failed or
     # left to --only, deleting the key would leave it on those for good
@@ -840,8 +931,8 @@ def cmd_revoke_all(args):
         plan.append((label, cfg, hosts))
     total = sum(len(hosts) for _, _, hosts in plan)
     for _, cfg, hosts in plan:
-        if hosts:
-            check_ssh_takes("sh -c " + shlex.quote(remove_key_script(cfg["tag_re"])))
+        if any(not is_windows(h) for h in hosts):
+            check_ssh_takes(remove_script(cfg["tag_re"]))
     if not args.yes:
         tags = ", ".join(sorted({f"'{cfg['tag']}'" for _, cfg, _ in plan})) or "this box's key"
         counts = ", ".join(f"{label} {len(hosts)}" for label, _, hosts in plan)
@@ -849,13 +940,12 @@ def cmd_revoke_all(args):
                     "access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
-    jobs = [(label, h, "sh -c " + shlex.quote(remove_key_script(cfg["tag_re"]))) for label, cfg, hosts in plan
-            for h in hosts]
+    jobs = [(label, h, cfg["tag_re"]) for label, cfg, hosts in plan for h in hosts]
     bad = 0
     with cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
-        for (label, h, _), ok in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
-            bad += not ok
-            say(f"  {'ok  ' if ok else 'FAIL'}  {label}: {h['name']}")
+        for (label, h, _), why in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
+            bad += why is not None
+            revoke_line(f"{label}: ", h, why)
     files = []
     for _, cfg, _ in plan:
         files += [str(cfg["key"]), str(cfg["pub"])]

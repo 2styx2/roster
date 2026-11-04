@@ -91,6 +91,7 @@ The objects these answer with are generated from their models (`src/roster/model
 | `reviewed` | `boolean` | `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is. |
 | `mac` | `any` | Its MAC address; `""` if unset. |
 | `mesh` | `boolean \| null` | `mesh:` as roster.yml sets it; `null` if nothing does. |
+| `os` | `"windows" \| "posix" \| null` | `os:` as roster.yml sets it (defaults, group, Host): `windows` (setup, revoke and check run PowerShell there) or `posix`; `null` if nothing does, which is `posix`. |
 | `ip` | `string` | Its address (an IP or a DNS name). |
 | `name` | `string` | Its name in the Inventory, unique. |
 | `group` | `string` | The group it's in. |
@@ -389,6 +390,14 @@ One person may have several Inventories, the team's for work and their own for h
 | `147` | A `box.check` warning: the same address and port in two named Inventories, with different host keys |
 | `148` | A warning (stderr, and `box.check`): the named Inventories' ssh config index is out of date and couldn't be rewritten (a read-only `~/.ssh`); everything else goes on |
 | `149` | `roster revoke` (and `--all`): this Box's ssh is a batch file (a `.cmd` or `.bat` shim on Windows), and roster won't hand it the key-removal script, whose characters cmd.exe would act on; nothing is revoked. A CLI error, never a serve answer |
+| `154` | A warning (stderr): a Host has `type: windows` but no `os:`, so roster treats it as POSIX. Never a serve answer |
+| `155` | `roster setup` / `revoke`: a POSIX script failed with Windows' "'sh' is not recognized": set `os: windows`. A CLI error, never a serve answer |
+| `156` | `roster setup` / `revoke` / `check`: an `os: windows` Host has no PowerShell or isn't Windows; nothing was changed. A CLI error |
+| `157` | `roster setup` / `revoke` / `check` on a Windows Host: its key file is refused (UTF-16, a BOM, an `sshd_config` roster can't follow, an ACL it couldn't set; nothing changed), or, as a warning, others can use it |
+| `158` | `host.check`'s `auth` step: the login was refused on ssh's shared connection (ControlMaster, "No existing session"), not for its key or password |
+| `159` | `roster run --sudo` on an `os: windows` Host: refused, Windows has no sudo over ssh; nothing ran. A CLI error, never a serve answer |
+| `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
+| `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
@@ -659,7 +668,7 @@ A Mesh result is `{applied, links, hosts, excluded, reach, pending, already, war
 
 - `links`: `[{from, to, kind, status, why?, via?, skip?}]`. `kind` is `key` or `password` (the peer asks for a password). `via` is the Host the source goes through to the peer (a Link's `via:`; `mesh.status` has it too). `status` is `ok`; `untested` (written, but the source has no `nc` or bash to test the port with, or a hop couldn't be tested); `unreachable` (the source can't reach the peer's ssh port, or a hop can't: left out); `no-host-key` (this Box recorded no host key for the peer, or for its `via` Host: left out); `no-via` (the source has no Link to the `via` Host: left out); `pending` (the source, or the `via` Host, didn't answer); `skipped` (`skip: "password-source"`: roster doesn't write on a password Host). `why` says it in words.
 - `hosts`: `[{host, status, changes, error?}]` for every Host visited. `status` is `same`, `would-change` (plan), `changed` (apply) or `pending` (with `error`). `changes` are short phrases: `make key`, `replace key`, `write ssh config`, `write known_hosts`, `write ROSTER.md`, `write Include in ~/.ssh/config`, `add key from orion-2`, `remove key from orion-2`, `replace key from orion-2`, `remove id_ed25519`, ....
-- `excluded`: `{host: why}` for Hosts kept out (`not reviewed (reviewed: false)`, `mesh: false`).
+- `excluded`: `{host: why}` for Hosts kept out (`not reviewed (reviewed: false)`, `mesh: false`, or `[160] os: windows: …` for a Windows Host, since T196: no API change).
 - `reach`: `{source: how many Hosts it reaches}`, counting the Links that work.
 - `pending`: `{host: why}`, Hosts that didn't answer; `already`: nothing to change and nothing pending ("already in the mesh"); `warnings`: words to show (a `ROSTER.md` that isn't roster's, a Host that left `roster.yml`); `cut_pending`: `{host: [peers]}` from earlier cuts not yet finished.
 - **Grouped** (API 19, `grouped: true` on `mesh.status`): for a map that draws who reaches whom, such as the Topology Plugin ([plugins/topology](../plugins/topology/README.md)). `meshed: {group: [host]}` names each meshed group's Hosts that reach each other both ways (two or more, in `roster.yml` order; a password Host among them is a peer, reached and never reaching), and `links` leaves out the pairs those cover (two Hosts of one meshed group, without a `via`), so 2,000 meshed Hosts are 2,000 names and not 98,000 Links. Everything else is as without it. Not with `brief` (`-32602`).

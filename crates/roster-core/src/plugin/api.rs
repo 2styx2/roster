@@ -4073,6 +4073,11 @@ pub const TYPES: &[Type] = &[
                 "boolean",
                 "`mesh:` as roster.yml sets it; `nil` if nothing does.",
             ),
+            o(
+                "os",
+                "string",
+                "`os:` as roster.yml sets it: `\"windows\"` (setup, revoke and check run PowerShell there) or `\"posix\"`; `nil` if nothing does, which is posix.",
+            ),
             f("title", "string", "One line; `\"\"` if unset."),
             f("description", "string", "One line; `\"\"` if unset."),
             f("type", "string", "What it is (`esxi`, `linux`); `\"\"` if unset."),
