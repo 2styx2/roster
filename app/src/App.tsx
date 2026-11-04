@@ -1208,6 +1208,10 @@ function Workspace({
     [registries, commandList, keymap, options, config, configPath, themeInEffect, hintsStored, messagesStored, theme.id, themeList, helpPages, errorRows, finderSources, healthSections, health, tutorCtx],
   );
   helpView.setContext(() => helpCtx);
+  // Nor over a finder, the picker or the command line opened meanwhile.
+  useEffect(() => {
+    if (overlay !== null) helpView.cancelPending();
+  }, [overlay, helpView]);
   // Where help went, for `:tutor`'s steps: a page opened, Ctrl+O back, Ctrl+I forward.
   useEffect(() => {
     const at = helpAt.at;
@@ -2005,6 +2009,8 @@ function Workspace({
 
   function run(line: Line) {
     setMessage("");
+    // A `:help` still waiting for the guides' text never opens over what ran next (T213, #431 F3).
+    helpView.cancelPending();
     const ran = runLine(commands, ctx, line);
     if (ran) {
       const arg = line.trim().split(/\s+/).slice(1).join(" ");

@@ -127,6 +127,10 @@ describe("the docs website", () => {
     expect(index.texts.some(([, text]) => text === "The sandbox")).toBe(false);
     // The index and `all` only repeat other pages' titles; helpgrep skips them too.
     expect(index.places.some(([href]) => href.startsWith("index.html") || href.startsWith("all.html"))).toBe(false);
+    // plugin-types is the Lua stubs: type signatures plugin-api.html already indexes (T213, Q189). Its
+    // page is still a topic, and is still built.
+    expect(index.places.some(([href]) => href.startsWith("plugin-types.html"))).toBe(false);
+    expect(index.topics.some(([tag]) => tag === "plugin-types")).toBe(true);
     for (const [href] of index.places) {
       const [page = "", anchor] = href.split("#", 2);
       if (anchor) expect(idsOf(file(site.files, page)), href).toContain(decodeURIComponent(anchor));

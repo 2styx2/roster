@@ -37,6 +37,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **The shell hooks keep their line out of your history** (#242): bash takes its own entry out, zsh starts its history list again from its file without it (only when you haven't typed in the Session yet; a later `:integrate` leaves zsh's history alone and says the line stays there), and PowerShell's PSReadLine keeps it in memory only, never in its history file. It still stays in zsh with `INC_APPEND_HISTORY` or `SHARE_HISTORY` (without `HIST_IGNORE_SPACE`) and with Windows PowerShell 5.1's own PSReadLine.
 - **The Sidebar's folder is read strictly** (#242): an OSC 7 that isn't a plain `file://` folder, or one with a control character, an invisible format character (bidi marks, zero-width characters) or more than 1024 characters, shows no folder, rather than a cleaned-up one or the one before.
 - **A command's output is kept for `command_done` only while a Plugin listens for it** (#223), not for every marked Session.
+- **The app starts lighter** (#405): `:help`'s guides load the first time you open help, `:helpgrep` or Tab-complete a topic, read from the app's own files (never the network), instead of with everything else at start. That takes the JS the app reads at start from about 2.5 MB to 1.5 MB. Every page, topic and search is still there; Tab completes a guide's headings before its text has loaded, and the rare wait past 150 ms says the page is loading.
 
 **`roster serve` API 28**
 
