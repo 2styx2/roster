@@ -33,7 +33,7 @@ describe("searchHosts", () => {
         host("a", { ip: "10.0.0.237" }),
         host("b", { type: "switch" }),
         host("c", { product: "ALPHA" }),
-        host("d", { title: "Contoso lab mini" }),
+        host("d", { title: "Fieldwork lab mini" }),
         host("e", { group: "core" }),
       ],
       groups,
@@ -41,7 +41,7 @@ describe("searchHosts", () => {
     expect(names(list, "0.0.237")).toEqual(["a"]);
     expect(names(list, "switch")).toEqual(["b"]);
     expect(names(list, "alph")).toEqual(["c"]);
-    expect(names(list, "contoso")).toEqual(["d"]);
+    expect(names(list, "fieldwork")).toEqual(["d"]);
     expect(names(list, "core")).toEqual(["e"]);
   });
 

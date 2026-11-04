@@ -212,7 +212,7 @@ export function Picker({
       setNotice(
         onReview && review
           ? `${host.name} isn't reviewed yet, so it can't be opened. ${review} marks it reviewed.`
-          : `${host.name} isn't reviewed yet, so it can't be opened. Review it in roster first.`,
+          : `${host.name} isn't reviewed yet, so it can't be opened. Set reviewed: true for it in roster.yml (:help adding-hosts).`,
       );
       return;
     }
@@ -326,7 +326,8 @@ export function Picker({
             <path d="M10.5 10.5L14 14" strokeLinecap="round" />
           </svg>
           <input
-            className="picker-query"
+            // Typed as user@address it's data, so it's set in Iosevka like every address.
+            className={`picker-query${quick ? " data" : ""}`}
             role="combobox"
             aria-expanded="true"
             aria-controls={listId}
@@ -337,7 +338,7 @@ export function Picker({
                 ? "Quick Connect: user@address[:port], or find a Host"
                 : onQuick
                   ? "Find a Host, or user@address to Quick Connect"
-                  : "Find a Host: name, address, type, product, group…"
+                  : "Find a Host by name, address, group…"
             }
             autoFocus
             spellCheck={false}
@@ -418,7 +419,7 @@ export function Picker({
               {!host.reviewed && (
                 <span
                   className="badge"
-                  title="unreviewed: can't be opened until it's reviewed in roster"
+                  title="unreviewed: can't be opened until it's reviewed"
                 >
                   unreviewed
                 </span>

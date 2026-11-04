@@ -11,12 +11,12 @@ import { CHECK_STEPS, SessionRefusal, type Group, type Host, type HostCheck, typ
 export const LONG_NAME = "server-10-0-0-202-very-long-discovered-name";
 /** Same as LONG_NAME up to the last few characters, but reviewed (so it can be opened). */
 export const LONG_NAME_OPEN = "server-10-0-0-203-very-long-discovered-name";
-export const LONG_GROUP = "contoso-east-ridge-building-4-servers-and-storage";
+export const LONG_GROUP = "fieldwork-east-ridge-building-4-servers-and-storage";
 export const UNICODE_GROUP = "Ünïcödé-группа-東京";
 export const EMPTY_GROUP = "decommissioned-2019";
 export const UNDECLARED_GROUP = "discovered-not-yet-sorted";
 export const LONG_BOX = "aleksandra-wisniewska-thinkpad-p16-gen2-fedoralinux-44";
-export const LONG_PATH = "/home/aleksandra.wisniewska-kowalczyk/work/yourteam/infra-checkouts/contoso-east-ridge/roster.yml";
+export const LONG_PATH = "/home/aleksandra.wisniewska-kowalczyk/work/yourteam/infra-checkouts/fieldwork-east-ridge/roster.yml";
 export const LONG_FOLDER = "Building 4 — lab jump boxes, file servers and the consoles they reach";
 export const MISSING_HOST = "decommissioned-old-archive-2019-not-in-inventory";
 export const SHA_OFFERED = "SHA256:mX0xg1jn8T8p0bq2Wl3c7c4pQe0b7aR6E2wV8iY0fUk";
@@ -188,7 +188,7 @@ export const HOST_KEY_CHANGED_OUTPUT = [
 export const ITEM_NOT_FOUND = {
   code: SessionRefusal.itemNotFound,
   message:
-    "vault-item-missing: no Bitwarden item named 'vault-item-missing ssh' (searched the whole vault, including the 'Contoso East Ridge / Building 4 / Servers and Storage' collection)",
+    "vault-item-missing: no Bitwarden item named 'vault-item-missing ssh' (searched the whole vault, including the 'Fieldwork East Ridge / Building 4 / Servers and Storage' collection)",
   data: {
     fix: "Create the item in the vault, or fix ssh.auth in roster.yml so it names the item that exists.",
     near: [
@@ -212,7 +212,7 @@ export function hostKeyCheck(host: string): HostCheck {
             status: "ok" as const,
             message:
               step === "dns"
-                ? `${host}.east-ridge.contoso-corp.example.com resolves to 10.0.0.203, fe80::1ff:fe23:4567:890a`
+                ? `${host}.east-ridge.fieldwork-corp.example.com resolves to 10.0.0.203, fe80::1ff:fe23:4567:890a`
                 : `${step} is fine for ${host}`,
           }
         : i === failAt
@@ -232,8 +232,8 @@ export function hostKeyCheck(host: string): HostCheck {
 /** The backend couldn't start: a long message, an unbreakable path in the hint and a long detail. */
 export const WORST_START_PROBLEM = {
   kind: "inventory-not-found" as const,
-  message: `roster couldn't load the Inventory: ${LONG_PATH} has an error on line 1284 (mapping values are not allowed here; the key 'server-10-0-0-202-very-long-discovered-name' is indented under 'contoso-east-ridge-building-4-servers-and-storage' but its value starts on the same line)`,
-  hint: `Fix line 1284 of ${LONG_PATH} (or set ROSTER_CONFIG=/home/aleksandra.wisniewska-kowalczyk/work/yourteam/infra-checkouts/contoso-east-ridge/roster.yml in ~/.profile), then retry.`,
+  message: `roster couldn't load the Inventory: ${LONG_PATH} has an error on line 1284 (mapping values are not allowed here; the key 'server-10-0-0-202-very-long-discovered-name' is indented under 'fieldwork-east-ridge-building-4-servers-and-storage' but its value starts on the same line)`,
+  hint: `Fix line 1284 of ${LONG_PATH} (or set ROSTER_CONFIG=/home/aleksandra.wisniewska-kowalczyk/work/yourteam/infra-checkouts/fieldwork-east-ridge/roster.yml in ~/.profile), then retry.`,
   detail: [
     "Traceback (most recent call last):",
     '  File "/home/aleksandra.wisniewska-kowalczyk/.local/share/uv/tools/roster/lib/python3.13/site-packages/roster/inventory.py", line 212, in load',
@@ -255,4 +255,4 @@ export const WORST_BINDINGS = {
 
 /** The vault CLI isn't logged in, in roster's words, with a long server URL and command. */
 export const WORST_VAULT_MESSAGE =
-  "Bitwarden CLI isn't logged in on this box (aleksandra-wisniewska-thinkpad-p16-gen2-fedoralinux-44) - run `bw config server https://vault.east-ridge.contoso-corp.example.com && bw login bartholomew.fitzgerald@northwind-industries-holdings.example.com --method 0` once, then `roster sync`";
+  "Bitwarden CLI isn't logged in on this box (aleksandra-wisniewska-thinkpad-p16-gen2-fedoralinux-44) - run `bw config server https://vault.east-ridge.fieldwork-corp.example.com && bw login bartholomew.fitzgerald@harbourline-holdings.example.com --method 0` once, then `roster sync`";

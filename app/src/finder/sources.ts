@@ -118,7 +118,7 @@ export const sessionsFinder: FinderSourceDef = {
   },
 };
 
-const notReviewed = (name: string) => `${name} isn't reviewed yet, so it can't be opened. Review it in roster first.`;
+const notReviewed = (name: string) => `${name} isn't reviewed yet, so it can't be opened. Set reviewed: true for it in roster.yml (:help adding-hosts).`;
 
 export const hostsFinder: FinderSourceDef = {
   id: "hosts",

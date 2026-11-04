@@ -19,7 +19,7 @@
 //
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
-import { Fragment, memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { hopWords, type Breadcrumb } from "../session/breadcrumb";
 import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
@@ -61,6 +61,9 @@ export interface SidebarRow {
   note?: string;
   /** The end of the label that must stay in view when the rest is cut off (a Session's " (2)"). */
   tail?: string;
+  /** A long name's last characters, kept in view when the name is cut, in the name's own colour:
+   * the cut falls in the middle (Q190d). Ignored when `tail` is set. */
+  end?: string;
   /** Right-aligned and faint: an address. It shows whole or not at all: the name comes first. */
   detail?: string;
   /** A Session's breadcrumb (ticket 120): the Host a nested ssh took it to, after the name. */
@@ -328,7 +331,8 @@ const Row = memo(function Row({
 }) {
   const buttons = row.actions && !row.menu;
   const cls = `sb-row${row.raised ? " raised" : ""}${row.raised && row.live ? " live" : ""}${row.also ? " also" : ""}${cursor ? " cursor" : ""}${selected ? " selected" : ""}${buttons ? " has-actions" : ""}${row.pending ? " pending" : ""}${row.link ? ` link-${row.link}` : ""}`;
-  const cut = row.tail !== undefined && row.label.endsWith(row.tail);
+  const keep = row.tail ?? row.end;
+  const cut = keep !== undefined && row.label.endsWith(keep);
   return (
     <li
       role="none"
@@ -379,9 +383,9 @@ const Row = memo(function Row({
               is cut, the label gives way, never the state. */}
           <span className="sb-name">
             <span className="sb-label" dir="auto">
-              {cut ? row.label.slice(0, -(row.tail as string).length) : row.label}
+              {cut ? row.label.slice(0, -(keep as string).length) : row.label}
             </span>
-            {cut && <span className="sb-tail">{row.tail}</span>}
+            {cut && <span className={row.tail !== undefined ? "sb-tail" : "sb-end"}>{keep}</span>}
             {row.note && <span className="sb-note"> {row.note}</span>}
             {row.pending && <span className="sb-pending-dot" aria-hidden="true" title="Not Published yet" />}
             {row.tags?.map((t) => (
@@ -507,6 +511,30 @@ function keepUnderPointer(tree: HTMLElement, delta: number, borrowed: number): n
   return room;
 }
 
+/** After the tree is held (keepUnderPointer), whatever straddles its top edge (a heading, a hint, a
+ * row) would show as a sliver of cut glyphs. The veil (styles.css, `.sb-rest::before`) covers just
+ * that sliver in the Sidebar's own colour, so the top reads as a clean edge. `on` false lifts it. */
+function veilTop(tree: HTMLElement, on: boolean) {
+  if (!on) {
+    tree.style.removeProperty("--veil");
+    delete tree.dataset.veilAt;
+    return;
+  }
+  const edge = tree.getBoundingClientRect().top;
+  let veil = 0;
+  for (const atom of tree.querySelectorAll<HTMLElement>(".sb-heading, .sb-row, .sb-empty")) {
+    const box = atom.getBoundingClientRect();
+    if (box.top < edge && box.bottom > edge) veil = Math.max(veil, box.bottom - edge);
+  }
+  tree.style.setProperty("--veil", `${Math.ceil(veil)}px`);
+  tree.dataset.veilAt = String(tree.scrollTop);
+}
+
+/** A scroll by the user (not the hold) lifts the veil: their scroll cuts rows as any list does. */
+function liftStaleVeil(tree: HTMLElement) {
+  if (tree.dataset.veilAt !== undefined && tree.dataset.veilAt !== String(tree.scrollTop)) veilTop(tree, false);
+}
+
 /** Marks a scrolling list with whether rows are hidden above or below (data-more). */
 function markOverflow(list: HTMLElement) {
   const above = list.scrollTop > 0;
@@ -536,11 +564,13 @@ function Details({ row }: { row: SidebarRow }) {
       {(facts.length > 0 || title) && (
         <p className="sb-details-facts">
           {[...facts, ...(title ? [title] : [])].map((f, i) => (
-            <Fragment key={i}>
-              {i > 0 && " · "}
+            // Each fact keeps its separator: a line never ends on "·" (or breaks inside an address).
+            <span key={i} className="sb-fact">
+              {i > 0 && "· "}
               {/* An address or a range is data (Iosevka); the rest is the app talking. */}
               {DATA_FACT.test(f) ? <span className="data">{f}</span> : f}
-            </Fragment>
+              {i < facts.length + (title ? 1 : 0) - 1 && " "}
+            </span>
           ))}
         </p>
       )}
@@ -616,7 +646,10 @@ export function Sidebar({
       restRef.current,
     ].filter((el): el is HTMLElement => el != null);
     const marks = lists.map((list) => {
-      const mark = () => markOverflow(list);
+      const mark = () => {
+        markOverflow(list);
+        if (list === restRef.current) liftStaleVeil(list);
+      };
       mark();
       list.addEventListener("scroll", mark, { passive: true });
       return [list, mark] as const;
@@ -641,6 +674,7 @@ export function Sidebar({
       scrollBy(rest, -shifted.current);
       shifted.current = 0;
     }
+    veilTop(rest, false);
     if (borrowed.current === 0) return;
     borrowed.current = 0;
     keepUnderPointer(rest, 0, -1);
@@ -660,6 +694,7 @@ export function Sidebar({
     const top = rest.scrollTop;
     borrowed.current = keepUnderPointer(rest, h - before, borrowed.current);
     shifted.current += rest.scrollTop - top;
+    veilTop(rest, shifted.current !== 0);
   });
 
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs

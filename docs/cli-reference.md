@@ -133,7 +133,7 @@ resources:
     ssid: Lab-Guest
     auth: "bw:wifi lab-guest"
     group: subnet-42
-    title: Contoso guest Wi-Fi
+    title: Lab guest Wi-Fi
 ```
 
 Every resource has the same fields, plus the fixed fields of its type. Anything else is an error, so every resource of a type looks the same in every view.

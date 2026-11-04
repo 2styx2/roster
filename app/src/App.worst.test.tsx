@@ -116,7 +116,7 @@ describe("the worst case", () => {
     const row = document.querySelector(`[data-row="inventory:${LONG_NAME}"]`) as HTMLElement;
     expect(row.querySelector(".sb-text")).toHaveAttribute("title", `${LONG_NAME}\nNot reviewed yet: can't be opened`);
     // The count of a long-named group is its own element, never cut with the name.
-    const group = document.querySelector('[data-row^="group:contoso"]') as HTMLElement;
+    const group = document.querySelector('[data-row^="group:fieldwork"]') as HTMLElement;
     expect(group.querySelector(".sb-num")).toHaveTextContent("13");
   }, 30_000);
 

@@ -240,7 +240,8 @@ describe("The Key bindings panel", () => {
     const rowOf = (label: RegExp, source = "") =>
       rows.find((r) => label.test(r.textContent ?? "") && (r.querySelector(".keys-source")?.textContent ?? "") === source);
     const keysOf = (label: RegExp, source = "") => rowOf(label, source)?.querySelector(".keys-keys")?.textContent;
-    const optionOf = (label: RegExp) => rowOf(label)?.querySelector(".keys-option")?.textContent;
+    const optionOf = (label: RegExp) =>
+      (rowOf(label)?.querySelector(".keys-option") ?? rowOf(label)?.closest("tbody")?.querySelector(".keys-option-shared"))?.textContent;
     expect(keysOf(/Next completion/)).toMatch(/^Tab/);
     expect(optionOf(/Next completion/)).toBe("keys.cmdline");
     expect(keysOf(/Previous completion/)).toMatch(/^Shift\+Tab/);

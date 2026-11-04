@@ -202,7 +202,7 @@ describe("N2: domain terms are capitalised as in the glossary", () => {
     const user = await ready();
     expect(screen.getByText("12 Hosts")).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
-    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host: name, address, type, product, group…");
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host by name, address, group…");
     expect(screen.getByRole("dialog", { name: "Find a Host" })).toHaveTextContent("12 Hosts");
   });
 });

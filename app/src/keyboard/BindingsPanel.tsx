@@ -16,7 +16,12 @@ export interface BindingsPanelProps {
   onHelp?(option: string): void;
 }
 
-export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelProps) {
+export function BindingsPanel({
+  rows,
+  leader,
+  onClose,
+  onHelp,
+}: BindingsPanelProps) {
   const [query, setQuery] = useState("");
   const shown = useMemo(() => filterRows(rows, query), [rows, query]);
   const groups = useMemo(() => {
@@ -31,7 +36,12 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
         <h2>Key bindings</h2>
         <span className="panel-head-buttons">
           <PanelButton />
-          <button type="button" className="icon-button keys-close" aria-label="Close key bindings" onClick={onClose}>
+          <button
+            type="button"
+            className="icon-button keys-close"
+            aria-label="Close key bindings"
+            onClick={onClose}
+          >
             <CloseGlyph />
           </button>
         </span>
@@ -57,49 +67,77 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
       />
       <div className="keys-scroll">
         <table>
-          {groups.map(([area, list]) => (
-            <tbody key={area}>
-              <tr className="group">
-                <th colSpan={2} scope="colgroup">
-                  {area}
-                </th>
-              </tr>
-              {list.map((r) => (
-                <tr key={`${r.label}\0${r.source}`}>
-                  <td>
-                    {r.label}
-                    {/* Its name in init.lua (ticket 32), under the label. */}
-                    <code className="keys-option" title="Change it in init.lua">
-                      {r.options.join(" ")}
-                    </code>
-                    {/* Where it comes from, when it isn't built in, on the same line as its name
-                        (a column of its own took the width every description needs). */}
-                    {r.source !== BUILTIN && (
-                      <span className="keys-source config" title={r.source}>
-                        {r.source}
-                      </span>
+          {groups.map(([area, list]) => {
+            // Its name in init.lua (ticket 32): said once on the group's heading when every
+            // binding in it shares one (keys.leader), under each label only when they differ.
+            const shared = list.every(
+              (r) => r.options.join(" ") === list[0]?.options.join(" "),
+            )
+              ? list[0]?.options.join(" ")
+              : undefined;
+            return (
+              <tbody key={area}>
+                <tr className="group">
+                  <th colSpan={2} scope="colgroup">
+                    {area}
+                    {shared && (
+                      <code
+                        className="keys-option keys-option-shared"
+                        title="Change them in init.lua"
+                      >
+                        {shared}
+                      </code>
                     )}
-                  </td>
-                  <td className="keys-keys">
-                    <span className="keys-list">
-                      {r.keys.map((k, i) => (
-                        <span key={k}>
-                          {i > 0 && " "}
-                          {/* The bindings themselves, not hints: shown even with ui.hints = false. */}
-                          <Keys keys={k} leader={leader} className="binding-keys" />
-                        </span>
-                      ))}
-                    </span>
-                  </td>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          ))}
+                {list.map((r) => (
+                  <tr key={`${r.label}\0${r.source}`}>
+                    <td>
+                      {r.label}
+                      {!shared && (
+                        <code
+                          className="keys-option"
+                          title="Change it in init.lua"
+                        >
+                          {r.options.join(" ")}
+                        </code>
+                      )}
+                      {/* Where it comes from, when it isn't built in, on the same line as its name
+                        (a column of its own took the width every description needs). */}
+                      {r.source !== BUILTIN && (
+                        <span className="keys-source config" title={r.source}>
+                          {r.source}
+                        </span>
+                      )}
+                    </td>
+                    <td className="keys-keys">
+                      <span className="keys-list">
+                        {r.keys.map((k, i) => (
+                          <span key={k}>
+                            {i > 0 && " "}
+                            {/* The bindings themselves, not hints: shown even with ui.hints = false. */}
+                            <Keys
+                              keys={k}
+                              leader={leader}
+                              className="binding-keys"
+                            />
+                          </span>
+                        ))}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            );
+          })}
         </table>
-        {shown.length === 0 && <p className="panel-empty">No bindings match “{query}”.</p>}
+        {shown.length === 0 && (
+          <p className="panel-empty">No bindings match “{query}”.</p>
+        )}
       </div>
       <p className="panel-foot">
-        Change any of these in init.lua: the name is under each one. <code>:config</code> opens it.
+        Change any of these in init.lua: the name is on its group, or under the binding.{" "}
+        <code>:config</code> opens it.
       </p>
     </aside>
   );

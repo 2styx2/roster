@@ -386,11 +386,14 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 2px 6px 0; outline: none; }
 .sb-scroll > .sb-section[data-section="sessions"] { flex: none; }
 .sb-rest { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-bottom: 10px; border-top: 1px solid transparent; }
-/* Scrolled: a hairline under Sessions, and the section in view keeps its heading pinned whole at
-   the top, so holding the row under the pointer (Q192) never leaves a heading cut in half or a
-   Folders hint reading as Sessions'. */
+/* Scrolled: a hairline under Sessions. While the tree is held so the row under the pointer stays
+   put (Q192), the veil covers the sliver of whatever straddles its top edge (Sidebar.tsx veilTop),
+   so no heading, hint or row shows cut in half; it takes no room and lifts when the hold does. */
 .sb-rest:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
-.sb-rest > .sb-section > .sb-heading { position: sticky; top: 0; z-index: 1; background: var(--sidebar); }
+.sb-rest::before {
+  content: ""; display: block; position: sticky; top: 0; z-index: 1;
+  height: var(--veil, 0px); margin-bottom: calc(-1 * var(--veil, 0px)); background: var(--sidebar);
+}
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -469,6 +472,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 /* A Session's " (2)": it tells two Sessions to one long-named Host apart, so it's never cut. */
 .sb-tail { flex: none; white-space: pre; color: var(--muted); }
+/* A long Host name's last characters: the name is cut in its middle, its end in its own colour. */
+.sb-end { flex: none; white-space: pre; unicode-bidi: isolate; }
 .sb-row:has(.dot) .sb-name { font-family: var(--font-mono); font-size: var(--text-md); }
 /* An unreviewed Host: its dashed node says so, and its badge shows only when you look at the row
    (ticket 27). A Session's note ("ended (code 0)") sits in the name's line and is never cut: the
@@ -544,6 +549,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* A Host with a Session gets a short edge stub leaving its node (Q194), so "has a Session" is a
    shape, not only a lighter colour (WCAG 1.4.1), in the map's grammar: a connection is an edge. */
 .dot line.stub { stroke-width: 1px; stroke-linecap: butt; }
+/* In Sessions the live row's 2px bar sits at the row's edge: its node steps in, so the stub
+   leaving the node never crowds the bar. */
+.sb-section[data-section="sessions"] .sb-row .dot { margin-left: 4px; }
 .dot.on line.stub { stroke: var(--text); }
 .dot.lit line.stub { stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
@@ -571,6 +579,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-details-name { font-size: var(--text-sm); color: var(--text); unicode-bidi: isolate; }
 .sb-details-name.data { font-family: var(--font-mono); }
 .sb-details-facts { margin-top: 2px; }
+/* A fact and its "·" stay on one line (facts are short); one too long for the line still wraps. */
+.sb-fact { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .sb-details-facts .data { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 
@@ -624,7 +634,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-filter { margin: 0 12px 8px; height: 28px; padding: 0 8px; font-size: var(--text-sm); }
 .keys-scroll { flex: 1; overflow: auto; }
 .keys-panel table { width: 100%; border-collapse: collapse; }
-.keys-panel td { padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; line-height: 18px; }
+.keys-panel td { padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; line-height: 20px; }
 .keys-panel td:first-child { color: var(--muted); padding: 6px 8px 6px 14px; }
 /* The keys column takes what its keycaps need, the description the rest. */
 .keys-keys { text-align: right; width: 1%; padding-right: 14px !important; }
@@ -635,6 +645,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel .keys-source.config { color: var(--accent-ink); }
 /* Its name in init.lua (ticket 32): data, so Iosevka, quiet under the source. */
 .keys-option { display: block; margin-top: 1px; font: var(--text-xs)/16px var(--font-mono); color: var(--muted); }
+/* Shared by the whole group: on its heading, after the group's name, in the data's own case. */
+.keys-panel tr.group .keys-option-shared { display: inline; margin: 0 0 0 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
 }
@@ -800,7 +812,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 
 .cmdline { flex: none; border-top: 1px solid var(--line); background: var(--chrome); font: var(--text-md) var(--font-mono); }
 .cmdline-candidates { border-bottom: 1px solid var(--line); }
-.cmdline-candidates ul { list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto; }
+/* At most 760px wide, so a candidate's key stays near what it does in a wide window. */
+.cmdline-candidates ul { list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto; max-width: 760px; }
 /* A fixed line height: a fallback font (Arabic, CJK) mustn't make its row taller than the rest. */
 .cmdline-candidates li { display: flex; align-items: center; gap: 12px; line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default; }
 .cmdline-candidates li.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--raised-line); }
@@ -835,6 +848,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   border: 0; background: transparent; border-radius: 0;
  text-overflow: ellipsis;}
 .picker-query:focus-visible { box-shadow: none; }
+.picker-query.data { font-family: var(--font-mono); }
 /* The rows share one grid (subgrid), so a column is as wide as its widest cell in the list and no
    wider: the badge column takes room only when a row has a badge, and an address is never cut
    mid-token (taste.md) up to 24 characters; the selected row shows the whole of a longer one.
@@ -1119,11 +1133,12 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .connect-stop { margin: 0; font-size: var(--text-sm); color: var(--muted); }
 .connect-stop.later { visibility: hidden; }
-.connect-phase { min-height: 1lh; white-space: pre-wrap; }
 .connect-title { font-size: var(--text-lg); }
 .connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-.connect-phase { font-size: var(--text-sm); }
+/* One fixed line: Iosevka's `ssh` in "Starting ssh…" had made the line, and the card, 1 px taller
+   than "Logging in…", so the map moved by half a pixel between phases. */
+.connect-phase { font-size: var(--text-sm); line-height: 20px; min-height: 20px; white-space: pre-wrap; }
 /* The host key question (ticket 36) in the same card, so it reads as a step of connecting, not a
    modal. No motion of its own: it's a keyboard-paced swap inside a card that already eased in. The
    edge waits, dashed, until the user answers. The fingerprint is data (Iosevka), whole, selectable. */
@@ -1141,7 +1156,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   padding: 6px 8px; background: var(--raised); border-radius: 4px; user-select: all; max-width: 100%;
 }
 .key-type { color: var(--muted); }
-.key-fingerprint { color: var(--text); overflow-wrap: anywhere; }
+/* A little air between characters, so a long fingerprint is easier to compare by eye. */
+.key-fingerprint { color: var(--text); overflow-wrap: anywhere; letter-spacing: 0.03em; }
 .key-advice { font-size: var(--text-sm); }
 .key-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 /* The question card: the map and title centred as while connecting (nothing moves when the
@@ -1150,6 +1166,17 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-card.key-question { align-items: stretch; text-align: left; }
 .connect-card.key-question > .connect-map, .connect-card.key-question > .connect-title { align-self: center; text-align: center; }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
+/* Its status line takes room only while it speaks ("Recording the key…"), so the card ends at
+   its buttons; the form is the card's measure, as the fingerprint is, with its field kept short. */
+.connect-card.key-question .connect-phase:empty { display: none; }
+.connect-card.key-question .quick-login { width: 100%; }
+.connect-card.key-question .quick-password input { max-width: 320px; }
+/* A short window: the question takes the whole pane (no lift), and the map gives way, so the
+   card's top is never under the title bar and its buttons stay in reach. */
+@media (max-height: 460px) {
+  .connect-card.key-question { inset: 0; margin-block: 8px; }
+  .connect-card.key-question > .connect-map { display: none; }
+}
 .btn-keys { display: inline-flex; margin-left: 8px; }
 .btn-keys .keycap { height: 16px; min-width: 16px; }
 button.primary .btn-keys .keycap { color: inherit; background: transparent; border-color: color-mix(in srgb, currentColor 45%, transparent); }

@@ -131,10 +131,13 @@ describe("Option names where configurable things show", () => {
     await user.keyboard(`${LEADER}K`);
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
     const rowOf = (label: RegExp) => within(panel).getAllByRole("row").find((r) => label.test(r.textContent ?? ""))!;
-    expect(within(rowOf(/^Leader: take the keys back/)).getByText("leader", { selector: "code" })).toBeInTheDocument();
-    expect(rowOf(/^Lock/)).toHaveTextContent("keys.leader");
-    expect(rowOf(/^Copy/)).toHaveTextContent("keys.terminal");
-    expect(within(panel).getByText(/in init\.lua: the name is under each one/)).toBeInTheDocument();
+    // A binding's option is under it, or once on its group's heading when the group shares one.
+    const optionOf = (label: RegExp) =>
+      (rowOf(label).querySelector(".keys-option") ?? rowOf(label).closest("tbody")?.querySelector(".keys-option-shared"))?.textContent;
+    expect(optionOf(/^Leader: take the keys back/)).toBe("leader");
+    expect(optionOf(/^Lock/)).toBe("keys.leader");
+    expect(optionOf(/^Copy/)).toBe("keys.terminal");
+    expect(within(panel).getByText(/in init\.lua: the name is on its group, or under the binding/)).toBeInTheDocument();
     // The filter finds bindings by option name.
     await user.type(within(panel).getByRole("searchbox"), "keys.terminal");
     expect(within(panel).queryByText(/^Lock$/)).toBeNull();

@@ -242,12 +242,17 @@ export function hostDot(host: Host): Dot {
   return host.enroll || ["agent", "key", "none"].includes(host.ssh.auth) ? "key" : "password";
 }
 
+/** How many of a long Host name's last characters stay in view when the Sidebar cuts it. */
+const NAME_END = 6;
+
 /** A Host as a tree row (the Inventory's, and a Plugin's such as Folders): Enter opens it, or
  * goes to its Session. */
 export function hostRow(host: Host, id: string, level: number): SidebarRow {
   return {
     id,
     label: host.name,
+    // A long name is cut in its middle (Q190d), so two that differ at the end stay apart.
+    ...(Array.from(host.name).length > NAME_END + 8 ? { end: Array.from(host.name).slice(-NAME_END).join("") } : {}),
     host: host.name,
     dot: hostDot(host),
     detail: host.ip,
