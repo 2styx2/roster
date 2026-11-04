@@ -36,6 +36,7 @@ from .sshops import (
     box_key_re,
     enroll,
     ensure_key,
+    key_ere,
     key_named,
     password_exec,
     public_key_line,
@@ -162,8 +163,12 @@ def cmd_setup(cfg, args):
     was = key_named(cfg)
     retag = [h for h in key_hosts if works[h["name"]]] if was not in (None, cfg["box"]) else []
     if retag:
-        say(f"key tag      this Box's key is tagged {KEY_TAG}:{was} on its Hosts (box_name:, or the hostname, "
-            f"changed since): re-tag it as {cfg['tag']} on {plural(len(retag), 'host')}")
+        # #423's L1: with no record, only the key's comment says a name (a named Inventory's first setup may never
+        # have been renamed: the key was made by another Inventory's)
+        why = (f"this Box's key is tagged {KEY_TAG}:{was} on its Hosts (box_name:, or the hostname, changed since)"
+               if key_name_file().exists() else
+               f"this Box's key was made as {KEY_TAG}:{was}, so its lines may carry that name")
+        say(f"key tag      {why}: re-tag it as {cfg['tag']} on {plural(len(retag), 'host')} where it works")
 
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if args.dry_run:
@@ -175,9 +180,13 @@ def cmd_setup(cfg, args):
 
     if retag:
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub, box_key_re(cfg)), retag), strict=True):
+            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub), retag), strict=True):
                 if why is None:
                     say(f"  ok    {h['name']} (re-tagged)")
+                elif why is NO_LINE:        # (agent) nothing roster can re-tag there: done, said once
+                    say(f"  note  {h['name']}: the key works, but no {KEY_TAG} line for it is in "
+                        "~/.ssh/authorized_keys (a key file roster doesn't manage, as ESXi's /etc/ssh/keys-USER, or "
+                        "a line written by hand): left as is; change or remove that line by hand")
                 else:
                     failed[h["name"]] = f"re-tag: {why}"
                     say(f"  FAIL  {h['name']}: re-tag: {why}")
@@ -889,12 +898,14 @@ def revoke_on(h, tag_re):
         for w in done.warnings:             # on stderr: the ok/FAIL lines stay one per Host
             print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_name(tag_re)})",
                   file=sys.stderr, flush=True)
+        other_names(h, tag_re, done.tags)
         return None
     r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
                                      remove_script(tag_re)]),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
     subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
     if "ROSTER_OK" in r.stdout:
+        other_names(h, tag_re, [ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("ROSTER_TAG ")])
         return None
     if winhost.looks_windows(r.stdout + r.stderr):
         return winhost.windows_hint(h["name"])
@@ -907,22 +918,42 @@ def tag_name(tag_re):
     return m[1] if m else "?"
 
 
-def retag_on(h, pub, key_re):
-    """Re-tag this Box's key line on key Host H as PUB (T217), where it's there (KEY_RE: by its public key, under an
-    earlier name too), over `ssh NAME` with the key itself: None when done, else why not."""
+NO_LINE = "no line"     # retag_on: the key works there, but no roster-managed line for it was found
+
+
+def retag_on(h, pub):
+    """Re-tag this Box's key lines on key Host H with PUB's tag (T217), in place, found by its public key under any
+    roster-managed name, over `ssh NAME` with the key itself: None when done, NO_LINE when there's none to re-tag,
+    else why not. A Windows Host's warnings go to stderr, as revoke's do."""
     from . import winhost
+    kind, key = pub.split()[:2]
     try:
         if is_windows(h):
-            winhost.over_key(h, "retag", key_re, pub=pub)
-            return None
+            done = winhost.over_key(h, "retag", key_ere(kind, key), pub=pub)
+            from .errors import KEY_FILE
+            for w in done.warnings:
+                print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
+            return NO_LINE if done.noline else None
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                         "sh -c " + shlex.quote(retag_key_script(pub, key_re))]),
+                                         "sh -c " + shlex.quote(retag_key_script(pub))]),
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
         return str(e)
+    if "ROSTER_NONE" in r.stdout.split():
+        return NO_LINE
     if "ROSTER_OK" in r.stdout:
         return None
     return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
+
+
+def other_names(h, tag_re, names):
+    """#423's M3: revoke took this Box's key line tagged with NAMES; one that isn't this Inventory's name (another
+    Inventory's box_name: for the same key, or this Box's earlier name) is said, on stderr."""
+    mine = tag_name(tag_re)
+    for n in sorted(set(names) - {mine}):
+        print(f"note: {h['name']}: also took this Box's key line tagged {KEY_TAG}:{n} (the same key: this Box's "
+              "earlier name, or another Inventory's box_name:, whose `roster setup` puts it back)",
+              file=sys.stderr, flush=True)
 
 
 def remove_script(tag_re):

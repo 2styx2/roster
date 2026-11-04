@@ -2170,7 +2170,15 @@ key_scripts_run = pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh i
 @key_scripts_run
 def test_revoke_on_a_renamed_box_takes_its_key_under_the_earlier_name(net, isolated, capsys):
     renamed_box(net, isolated)
+    hardened = 'from="10.0.0.0/8" ssh-ed25519 AAAAbox roster-managed:box'      # options before it (#423's M1)
+    p = net.host("orion-3") / "home/.ssh/authorized_keys"
+    p.write_text(p.read_text().replace("ssh-ed25519 AAAAbox roster-managed:box\n", hardened + "\n"))
+    capsys.readouterr()
     assert main(["revoke", "-y"]) == 0
+    err = capsys.readouterr().err
+    assert box_lines(net, "orion-3") == []
+    # M3: said, as it may be another Inventory's name for the same key
+    assert "note: orion-2: also took this Box's key line tagged roster-managed:box" in err
     assert box_lines(net, "orion-2") == []
     assert box_lines(net, "nas-1") == [OTHER_BOXS_KEY]          # another Box's key: left
     assert "ssh-ed25519 AAAAown own@laptop" in net.ak("nas-1")
@@ -2186,10 +2194,17 @@ def setup_box(monkeypatch):
 def test_setup_on_a_renamed_box_retags_its_key_under_the_new_name_once(net, isolated, capsys, monkeypatch):
     renamed_box(net, isolated)
     setup_box(monkeypatch)
+    hardened = 'from="10.0.0.0/8" ssh-ed25519 AAAAbox roster-managed:box'      # options before it (#423's M1)
+    p = net.host("orion-3") / "home/.ssh/authorized_keys"
+    p.write_text(p.read_text().replace("ssh-ed25519 AAAAbox roster-managed:box\n", hardened + "\n"))
     assert main(["setup"]) == 0
     out = capsys.readouterr().out
     assert "re-tag" in out and "box2" in out
-    for h in ("orion-2", "orion-3", "nas-1"):
+    assert "this Box's key was made as roster-managed:box, so its lines may carry that name" in out     # L1
+    assert "ok    orion-2 (re-tagged)" in out and "(re-tagged)" not in out.split("esx-02")[1].splitlines()[0]
+    assert "note  esx-02: the key works, but no roster-managed line for it is in ~/.ssh/authorized_keys" in out
+    assert box_lines(net, "orion-3") == ['from="10.0.0.0/8" ssh-ed25519 AAAAbox roster-managed:box2']  # options kept
+    for h in ("orion-2", "nas-1"):
         assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, h), h
         assert "ssh-ed25519 AAAAbox roster-managed:box" not in box_lines(net, h), h
     assert OTHER_BOXS_KEY in box_lines(net, "nas-1")             # another Box's key: left

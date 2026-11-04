@@ -789,7 +789,24 @@ def test_setup_retags_and_revoke_finds_a_renamed_boxs_key_on_a_windows_host(win,
     capsys.readouterr()
     assert main(["setup", "--only", "dc-01"]) == 0
     assert "ok    dc-01 (re-tagged)" in capsys.readouterr().out
-    assert win.admin_file("dc-01").read_bytes() == OTHER + theirs + key_line(win).replace(b":box", b":box2")
+    # in place (#423's M1): the line keeps its spot and line end; another Box's line as it was
+    assert win.admin_file("dc-01").read_bytes() == OTHER + key_line(win).replace(b":box", b":box2") + theirs
     write_config(WIN.replace("box_name: box\n", "box_name: box3\n"))
+    capsys.readouterr()
     assert main(["revoke", "-y", "--only", "dc-01"]) == 0
     assert win.admin_file("dc-01").read_bytes() == OTHER + theirs
+    assert "note: dc-01: also took this Box's key line tagged roster-managed:box2" in capsys.readouterr().err
+
+
+@needs_powershell
+def test_setup_on_a_renamed_box_says_when_a_windows_host_has_no_line_to_retag(win, capsys, write_config,
+                                                                              monkeypatch):
+    assert main(["setup", "--only", "dc-01"]) == 0
+    win.admin_file("dc-01").write_bytes(OTHER)              # the key works some other way: no roster line here
+    write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
+    monkeypatch.setattr("roster.cli.ssh_ok", lambda name: True)
+    capsys.readouterr()
+    main(["setup", "--only", "dc-01"])
+    out = capsys.readouterr().out
+    assert "note  dc-01: the key works, but no roster-managed line for it" in out and "(re-tagged)" not in out
+    assert win.admin_file("dc-01").read_bytes() == OTHER

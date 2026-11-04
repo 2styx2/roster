@@ -6,7 +6,14 @@ import pytest
 from conftest import posix_shell
 
 from roster.config import load_config
-from roster.sshops import add_key_script, box_key_re, public_key_line, remove_key_script, write_ssh_config
+from roster.sshops import (
+    add_key_script,
+    box_key_re,
+    public_key_line,
+    remove_key_script,
+    retag_key_script,
+    write_ssh_config,
+)
 
 PUB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster-managed:ws1"
 TAG_RE = " (roster-managed|fleet-managed):ws1$"
@@ -245,3 +252,63 @@ def test_add_key_retags_this_boxs_line_under_an_earlier_name(tmp_path):
 
 def test_box_key_re_is_the_tag_alone_without_a_public_key(tmp_path):
     assert box_key_re({"tag_re": TAG_RE, "pub": tmp_path / "none.pub"}) == TAG_RE
+
+
+# #423's review M1: a Box key line someone hardened with options before it is still this Box's line (it ends in this
+# Box's key and a roster tag); the re-tag keeps the options, says when there's no line, and a grep error is a failure.
+HARDENED = "from=\"10.0.0.0/8\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster-managed:old-pi"
+OTHER_BOX_NEW_NAME = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherBox+Key/x= roster-managed:ws1"
+
+
+@posix_shell
+def test_remove_key_takes_this_boxs_line_with_options_before_it_and_names_each_tag(tmp_path):
+    cfg, ak = renamed(tmp_path, HARDENED)
+    out = run_remote(remove_key_script(box_key_re(cfg)), tmp_path)
+    assert HARDENED not in ak.read_text() and OLD_NAME_LINE not in ak.read_text()
+    assert "ROSTER_TAG old-pi" in out.splitlines()
+    assert "from=\"10.0.0.2\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly mine" in ak.read_text()
+
+
+@posix_shell
+def test_retag_rewrites_only_this_boxs_lines_in_place_keeping_their_options(tmp_path):
+    cfg, ak = renamed(tmp_path, HARDENED, OTHER_BOX_NEW_NAME)
+    before = ak.read_text().splitlines()
+    for _ in range(2):
+        assert "ROSTER_OK" in run_remote(retag_key_script(PUB), tmp_path)
+    after = ak.read_text().splitlines()
+    want = [PUB if x == OLD_NAME_LINE else x.replace("roster-managed:old-pi", "roster-managed:ws1") if x == HARDENED
+            else x for x in before]
+    assert after == want                                    # in place, options kept; another Box's lines as they were
+    assert OTHER_BOX_NEW_NAME in after and OTHER_BOX_SAME_OLD_NAME in after
+
+
+@posix_shell
+def test_retag_says_when_there_is_no_line_and_changes_nothing(tmp_path):
+    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg["pub"].write_text(OLD_NAME_LINE + "\n")
+    out = run_remote(retag_key_script(PUB), tmp_path)        # no file at all
+    assert "ROSTER_NONE" in out and not (tmp_path / ".ssh").exists()
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    ak.write_text(OTHER_BOX_NEW_NAME + "\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly me@laptop\n")
+    before = ak.read_text()
+    assert "ROSTER_NONE" in run_remote(retag_key_script(PUB), tmp_path)   # L2: not by the name
+    assert ak.read_text() == before
+
+
+@posix_shell
+def test_retag_fails_when_grep_fails(tmp_path):
+    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg["pub"].write_text(OLD_NAME_LINE + "\n")
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    ak.write_text(OLD_NAME_LINE + "\n")
+    ak.chmod(0)                                              # unreadable: grep exits 2
+    try:
+        r = subprocess.run(["sh", "-c", retag_key_script(PUB)],
+                           env={**os.environ, "HOME": str(tmp_path)}, capture_output=True, text=True)
+    finally:
+        ak.chmod(0o600)
+    if os.geteuid() == 0:
+        pytest.skip("root reads any file")
+    assert r.returncode != 0 and "ROSTER_OK" not in r.stdout and "ROSTER_NONE" not in r.stdout
