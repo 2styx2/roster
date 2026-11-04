@@ -164,6 +164,7 @@ export function ConnectCard({
   prompt = null,
   closeKeys = null,
   leader = "",
+  fills = true,
 }: {
   host: string;
   address: string | null;
@@ -185,6 +186,9 @@ export function ConnectCard({
   /** The keys that close the Session ("␣ d d"): offered once connecting has taken a while. */
   closeKeys?: string | null;
   leader?: string;
+  /** It logs in with a key: the Host's node fills when the shell answers (a password one stays a
+   * ring), as in the Sidebar. */
+  fills?: boolean;
 }) {
   const card = useRef<HTMLDivElement>(null);
   const trustButton = useRef<HTMLButtonElement>(null);
@@ -288,14 +292,17 @@ export function ConnectCard({
         className={`connect-map${asking ? " waiting" : ""}`}
         data-phase={phase ?? "up"}
         viewBox="0 0 72 12"
-        width="96"
-        height="16"
+        width="136"
+        height="23"
         aria-hidden="true"
       >
         <rect className="connect-box" x="1" y="2" width="8" height="8" rx="1.6" />
         <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
-        <circle className="connect-host" cx="65" cy="6" r="4.25" />
-        <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />
+        {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
+            closed ring fades in over it when the shell answers, then fills for a key login. */}
+        <circle className="connect-host" cx="65" cy="6" r="4.25" pathLength={100} />
+        <circle className="connect-host-closed" cx="65" cy="6" r="4.25" />
+        {fills && <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />}
       </svg>
       <p className="connect-title">
         <span className="muted">{again ? "Reconnecting to " : "Connecting to "}</span>
@@ -417,7 +424,8 @@ export function ConnectCard({
         </>
       ) : (
         <p className="connect-phase muted">
-          {PHASE_WORDS[words]}
+          {/* As the ring closes the words say so, so the two never disagree. */}
+          {phase === null ? "Logged in" : PHASE_WORDS[words]}
           {/* Not announced: a status that changed every second would talk over everything. */}
           {waiting && seconds >= 3 && (
             <span className="connect-elapsed" aria-hidden="true">
@@ -629,6 +637,7 @@ export function SessionPanes({
                 prompt={s.state === "password" ? s : null}
                 closeKeys={closeKeys}
                 leader={leader}
+                fills={tab.auth !== "password"}
               />
             )}
             {tab.save?.loggedIn && tab.save.saved === null && s.state === "open" && (

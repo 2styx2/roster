@@ -1007,7 +1007,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .pane:has(> .connect-card:not(.leaving)) .term-wrap { opacity: 0; }
 /* Words break between words; only a Host name too long for the pane breaks inside itself. */
 .connect-card p { margin: 0; overflow-wrap: break-word; text-wrap: balance; }
-.connect-map { overflow: visible; margin-bottom: 6px; }
+.connect-map { overflow: visible; margin-bottom: 12px; }
 .connect-box { fill: var(--tone); }
 .connect-edge {
   stroke: var(--accent); stroke-width: 1px; vector-effect: non-scaling-stroke;
@@ -1016,14 +1016,20 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   @starting-style { transform: scaleX(0); }
 }
 .connect-map[data-phase="starting"] .connect-edge { transform: scaleX(0.4); }
-.connect-host { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
-.connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) ease; }
-.connect-card.leaving .connect-host-fill { opacity: 1; }
+/* The Host's ring: open (78 of 100 drawn, the gap centred at -45°, where the logo's Host sits)
+   while connecting; the closed ring and, for a key login, the fill fade in when the shell answers. */
+.connect-host {
+  fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke;
+  stroke-dasharray: 78 22; stroke-dashoffset: 1.5;
+}
+.connect-host-closed { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
+.connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
+.connect-card.leaving :is(.connect-host-closed, .connect-host-fill) { opacity: 1; }
 .connect-cmd { font-family: var(--font-mono); }
 /* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
 .connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .connect-stop { margin: 0; font-size: var(--text-sm); color: var(--muted); }
-.connect-title { font-size: var(--text-md); }
+.connect-title { font-size: var(--text-lg); }
 .connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .connect-phase { font-size: var(--text-sm); }
