@@ -43,6 +43,15 @@ def test_plain_roster_shows_the_commands_in_groups(capsys):
     assert "roster COMMAND --help" in out
 
 
+@pytest.mark.parametrize("flag", ["-v", "--version"])
+def test_dash_v_is_the_version(flag, capsys):
+    from roster import __version__
+    with pytest.raises(SystemExit) as e:
+        main([flag])
+    assert e.value.code == 0
+    assert capsys.readouterr().out == f"roster {__version__}\n"
+
+
 def test_help_is_the_same_as_plain_roster(capsys):
     with pytest.raises(SystemExit) as e:
         main(["--help"])

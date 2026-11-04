@@ -234,7 +234,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 
 ## Commands
 
-`roster` on its own (or `roster --help`) lists these in groups (Start here, Every day, Inventory and access, Tools, and the two the app runs) with the commands you'll type most. `roster COMMAND --help` shows a command's options and examples, each one checked against the parser by a test. A mistyped command or option gets the nearest real one (`roster hots`: did you mean `hosts`?), and a usage error names the `--help` to read.
+`roster -v` (or `--version`) prints roster's version. `roster` on its own (or `roster --help`) exits 0 and lists these in groups (Start here, Every day, Inventory and access, Tools, and the two the app runs) with the commands you'll type most. `roster COMMAND --help` shows a command's options and examples, each one checked against the parser by a test. A mistyped command or option gets the nearest real one (`roster hots`: did you mean `hosts`?), and a usage error names the `--help` to read.
 
 | Command | What it does |
 |---|---|

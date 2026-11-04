@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Install roster on this box, one stage at a time. Every stage asks first and is safe to re-run.
+# On a box that already has roster (and uv), it runs ./update.sh instead, with --yes, --dry-run and --prefix.
 #
 #   ./install.sh               interactive
 #   ./install.sh --yes         accept every default (stages that need a person, like `bw login`, are skipped)
@@ -7,7 +8,10 @@
 #   ./install.sh --prefix DIR  put the roster command in DIR/bin and its man page in DIR/share/man/man1
 #                              (default: uv's tool bin dir, ~/.local/bin, so ~/.local/share/man/man1); or PREFIX=DIR
 #   ./install.sh --infra-repo URL   the git URL of your team's map (the repo with roster.yml); or ROSTER_INFRA_REPO=URL
+#   ./install.sh --ref REF     install REF (a tag, or a branch of origin such as dev) instead of the newest Release
 #
+# roster comes from the newest Release tag (vX.Y.Z) on origin, whatever branch this checkout is on, unpacked into a
+# temporary folder: your checkout is never switched, pulled or changed. Offline, it installs the checkout as it is.
 # Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the roster config folder, making roster work from
 # any directory, unlocking the vault, `roster setup`, and auto-updates from cron. ./uninstall.sh undoes them.
 # Output of each step goes to ~/.cache/roster/install.log; it is shown only when a step fails.
@@ -22,7 +26,7 @@ PATH_MARK="# roster: uv tools"
 MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
 NEED_MANPATH=0
 
-YES=0 DRY=0 PREFIX=${PREFIX:-}
+YES=0 DRY=0 PREFIX=${PREFIX:-} REF=""
 while (( $# )); do
     case "$1" in
         -y|--yes) YES=1 ;;
@@ -31,6 +35,8 @@ while (( $# )); do
         --prefix=*) PREFIX=${1#--prefix=} ;;
         --infra-repo) [[ -n ${2:-} ]] || { echo "--infra-repo needs a git URL" >&2; exit 2; }; INFRA_REPO=$2; shift ;;
         --infra-repo=*) INFRA_REPO=${1#--infra-repo=} ;;
+        --ref) [[ -n ${2:-} ]] || { echo "--ref needs a tag or branch" >&2; exit 2; }; REF=$2; shift ;;
+        --ref=*) REF=${1#--ref=} ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
@@ -176,6 +182,61 @@ start_cron() {                  # make sure the cron daemon runs now and after a
     warn "couldn't find the cron service - start it yourself, or the job never runs"; return 1
 }
 
+in_checkout() { [[ -f "$1/pyproject.toml" ]] && grep -q '^name = "roster"' "$1/pyproject.toml"; }
+
+describe_source() {             # describe_source DIR -> "branch main, commit abc1234, v0.5.0" (as update.sh)
+    local d=$1 branch tag
+    git -C "$d" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
+    branch=$(git -C "$d" symbolic-ref -q --short HEAD)
+    tag=$(git -C "$d" describe --tags 2>/dev/null)
+    printf '%s, commit %s%s' "${branch:+branch $branch}" "$(git -C "$d" rev-parse --short HEAD)" "${tag:+, $tag}" |
+        sed 's/^, //'
+}
+
+pick_source() {                 # pick_source DIR: which roster to install from the checkout DIR -> from, from_desc
+    local d=$1 fetch=(git -C "$1") commit def tag
+    from=$d from_desc=$(describe_source "$d")
+    [[ -d $d ]] || return 0                 # a dry run's clone that didn't happen
+    if [[ $(git -C "$d" rev-parse --show-toplevel 2>/dev/null) != "$(cd "$d" && pwd -P)" ]]; then
+        info "${d/#$HOME/\~} isn't a git clone (a Release tarball): installing it as it is"; return 0
+    fi
+    if ! git -C "$d" remote get-url origin >/dev/null 2>&1; then
+        warn "${d/#$HOME/\~} has no origin to ask for the newest roster: installing the checkout as it is ($from_desc)"
+        return 0
+    fi
+    # nothing to answer a password or host key question; only origin's remote-tracking refs and tags move (a dry run
+    # fetches too: it changes nothing you work on)
+    have timeout && fetch=(timeout 30 git -C "$d")
+    if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-ssh -o BatchMode=yes} \
+            "${fetch[@]}" fetch --quiet --tags origin >/dev/null 2>&1; then
+        warn "couldn't reach origin: installing the checkout as it is ($from_desc), which may not be the newest roster"
+        return 0
+    fi
+    if [[ -n $REF ]]; then
+        tag=$REF
+        commit=$(git -C "$d" rev-parse -q --verify "refs/remotes/origin/$REF^{commit}" 2>/dev/null ||
+                 git -C "$d" rev-parse -q --verify "$REF^{commit}" 2>/dev/null)
+        [[ -n $commit ]] || { bad "no tag or branch $REF on origin"; fail_stage; exit 1; }
+    else
+        tag=$(git -C "$d" tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+        if [[ -n $tag ]]; then
+            commit=$(git -C "$d" rev-parse "$tag^{commit}")
+        else                                # no Release yet: origin's default branch
+            def=$(GIT_TERMINAL_PROMPT=0 git -C "$d" ls-remote --symref origin HEAD 2>/dev/null |
+                  sed -n 's|^ref: refs/heads/\(.*\)[[:space:]]HEAD$|\1|p')
+            tag="origin/${def:-main}"
+            commit=$(git -C "$d" rev-parse -q --verify "refs/remotes/$tag^{commit}" 2>/dev/null)
+            [[ -n $commit ]] || { warn "origin has no Release tag and no $tag: installing the checkout as it is ($from_desc)"; return 0; }
+        fi
+    fi
+    from_desc="$tag, commit $(git -C "$d" rev-parse --short "$commit")"
+    info "installing $from_desc from a clean copy (your checkout stays as it is)"
+    if (( DRY )); then info "would unpack $tag into a temporary folder"; from="${TMPDIR:-/tmp}/roster-$tag"; return 0; fi
+    TMP_SRC=$(mktemp -d) && trap 'rm -rf "$TMP_SRC"' EXIT
+    if git -C "$d" archive --format=tar "$commit" | tar -x -C "$TMP_SRC"; then from=$TMP_SRC
+    else bad "couldn't unpack $tag"; fail_stage; exit 1; fi
+}
+
 # ---- start
 
 (( DRY )) || mkdir -p "$(dirname "$LOG")"
@@ -188,6 +249,25 @@ printf '\n%sroster installer%s\n' "$B" "$N"
 info "Give this box (and Claude on it) access to every host in roster.yml. Passwords stay in the vault."
 (( DRY )) && warn "dry run: nothing will be changed"
 (( YES )) && info "--yes: taking the default answer everywhere"
+
+# Already installed: that's an update, update.sh's job (the same checkout's, with the same flags). roster and uv are
+# what update.sh needs; a config folder or the ROSTER_CONFIG line alone is a half-removed box, so it gets an install.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+if have roster && have uv; then
+    info "roster $(roster --version 2>/dev/null | awk '{print $NF}') is already installed on this box: updating it with ./update.sh"
+    up=$here
+    if ! in_checkout "$up"; then up=$(ask_value "Where is the roster source?" "$HOME/roster"); up=${up/#\~/$HOME}; fi
+    if [[ ! -f "$up/update.sh" ]]; then
+        bad "no update.sh in $up: run update.sh in your roster checkout (or git clone $ROSTER_REPO there first)"; exit 1
+    fi
+    [[ -n $INFRA_REPO ]] && info "--infra-repo is for a first install: update.sh pulls the map you have"
+    flags=()
+    (( YES )) && flags+=(--yes)
+    (( DRY )) && flags+=(--dry-run)
+    [[ -n $PREFIX ]] && flags+=(--prefix "$PREFIX")
+    bash "$up/update.sh" ${flags[@]+"${flags[@]}"} < "$TTY"
+    exit $?
+fi
 
 # 1. Prerequisites
 stage 1
@@ -231,8 +311,7 @@ fi
 
 # 3. roster
 stage 3
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [[ -f "$here/pyproject.toml" ]] && grep -q '^name = "roster"' "$here/pyproject.toml"; then
+if in_checkout "$here"; then
     src=$here
     ok "using this checkout: $src"
 else
@@ -241,12 +320,10 @@ else
     if [[ -d "$src/.git" ]]; then ok "already cloned: $src"
     elif ! step "clone roster into $src" git clone -q "$ROSTER_REPO" "$src"; then fail_stage; exit 1; fi
 fi
-if have roster && ! ask "roster $(roster --version 2>/dev/null | awk '{print $NF}') is installed. Reinstall from $src?" Y; then
-    skip "kept the installed roster"
-    bindir=${PREFIX:+$PREFIX/bin}; bindir=${bindir:-$(dirname "$(command -v roster)")}
-elif bindir=${PREFIX:+$PREFIX/bin}; bindir=${bindir:-$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")}
+pick_source "$src"                      # the newest Release, not whatever this checkout happens to be on (#408)
+if bindir=${PREFIX:+$PREFIX/bin}; bindir=${bindir:-$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")}
      step "install roster (uv tool install) into $bindir" \
-        env "UV_TOOL_BIN_DIR=$bindir" uv tool install --force --quiet "$src"; then
+        env "UV_TOOL_BIN_DIR=$bindir" uv tool install --force --quiet "$from"; then
     done_stage
 else
     fail_stage; exit 1
@@ -256,7 +333,7 @@ fi
 page="$(dirname "$bindir")/share/man/man1/roster.1"
 mandir=$(dirname "$(dirname "$page")")
 if step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
-        "$page" "$src/src/roster/roster.1"; then
+        "$page" "$from/src/roster/roster.1"; then
     # man finds PREFIX/share/man from PREFIX/bin on PATH (man-db, mandoc); make sure, with the PATH a new terminal has
     # A minimized Ubuntu's man is a stand-in that only says so (the real one, if man-db is there, is man.REAL)
     manbin="man"; minimized=0
@@ -316,10 +393,7 @@ if [[ ! -f $CFG && -z $INFRA_REPO ]] && (( ! YES )); then
     INFRA_REPO=$(ask_value "Git URL of your team's map, the repo with roster.yml (Enter for none)" "")
 fi
 if [[ -f "$CFG" ]]; then
-    ok "found $CFG"
-    if [[ -d "$cfg_dir/.git" ]] && ask "Pull the latest map into $cfg_dir?" Y; then
-        step "git pull" git -C "$cfg_dir" pull --ff-only --quiet || warn "couldn't fast-forward; using it as it is"
-    fi
+    ok "found $CFG (as it is: ./update.sh pulls it)"
     done_stage
 elif [[ -n $INFRA_REPO ]] && ask "Create $cfg_dir with the team's map (clone $INFRA_REPO)?" Y; then
     if [[ -e "$cfg_dir" && -n "$(ls -A "$cfg_dir" 2>/dev/null)" ]]; then
@@ -511,5 +585,11 @@ printf '    roster hosts                      %s# every host you can reach%s\n' 
 printf '    ssh <host>                        %s# key hosts%s\n' "$D" "$N"
 printf '    roster run <host> -- hostname     %s# password-only hosts%s\n' "$D" "$N"
 printf '    roster --help, man roster         %s# every command, with examples; the manual%s\n' "$D" "$N"
+printf '\n'
+where="${src/#$HOME/\~}${from_desc:+ ($from_desc)}"
+if (( DRY )); then info "dry run: a real run installs roster from $where"
+elif v=$("$bindir/roster" --version 2>/dev/null | awk '{print $NF}') && [[ -n $v ]]; then
+    printf '%sInstalled roster %s%s from %s\n' "$B" "$v" "$N" "$where"
+else bad "no roster in $bindir answers --version"; fi
 (( ${#FAILED[@]} )) && { info "Some stages failed - details in $LOG. Re-running this is safe."; exit 1; }
 exit 0

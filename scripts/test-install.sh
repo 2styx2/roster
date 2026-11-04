@@ -9,7 +9,7 @@
 # "target", its password in $LAB_PW for an `env:` login) and the team's map (a git repo with roster.yml and
 # bin/roster-pull) let `roster setup` install a real key and `uninstall.sh` take it off again.
 #   1. install.sh --yes --infra-repo   then a new login shell: roster, ROSTER_CONFIG, `ssh lab-01`, cron, man page
-#   2. install.sh again                nothing added twice
+#   2. install.sh again                runs update.sh; nothing added twice
 #   3. update.sh --yes
 #   4. uninstall.sh --yes              the key is off the Host and nothing of roster's is left (uv and bw stay)
 #   5. uninstall.sh again              a clean no-op
@@ -46,8 +46,9 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     check "roster --help lists the commands" 'shell "roster --help" | grep -q "^Every day:"'
     check "bw installed" '[[ -x ~/.local/bin/bw ]]'
 
-    echo "== 2. install.sh again"
-    ./install.sh --yes --infra-repo file:///tmp/map.git >/dev/null; check "exits 0" '[[ $? == 0 ]]'
+    echo "== 2. install.sh again (roster is there: it runs update.sh)"
+    out=$(./install.sh --yes --infra-repo file:///tmp/map.git); check "exits 0" '[[ $? == 0 ]]'
+    check "it hands over to update.sh" 'grep -q "already installed on this box: updating it with ./update.sh" <<<"$out"'
     check "one ROSTER_CONFIG line" '[[ $(grep -c "# roster: ROSTER_CONFIG" ~/.bashrc) == 1 ]]'
     check "one cron job" '[[ $(crontab -l | grep -c bin/roster-pull) == 1 ]]'
 

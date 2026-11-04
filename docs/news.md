@@ -21,6 +21,15 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A password typed but not sent is emptied when the app locks** (#393).
 - **Passwords crossing the app's core are moved, not copied, and wiped after use** (#392).
 
+### Fixed
+
+**CLI**
+
+- **`install.sh` installs the newest Release, not whatever the checkout is on** (#408): a checkout on a `main` never pulled installed roster 0.1.0 over 0.5.0 without a word. It now fetches `origin` and installs the highest `vX.Y.Z` tag from a clean copy, leaving your checkout as it is (`--ref REF` for another tag or branch; offline, the checkout as it is, with a warning). On a box that already has roster it runs `update.sh` instead, with the same `--yes`, `--dry-run` and `--prefix`; it no longer pulls the map itself.
+- **`update.sh` checks the checkout it installs from** (#408): it fetches, offers to fast-forward a branch that's behind (under `--yes`, only a clean fast-forward), says when it installs an older roster, and warns when the checkout is older than the newest Release tag. It never switches branches or touches uncommitted work.
+- **`install.sh` and `update.sh` end with the roster they installed** (#408): `Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`.
+- **`roster -v` prints the version** (#408), as `roster --version` does. Plain `roster` shows the overview and exits 0.
+
 ## v0.5.0
 
 ### New

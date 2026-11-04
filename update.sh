@@ -6,9 +6,11 @@
 #   ./update.sh --dry-run     show what would happen, change nothing
 #   ./update.sh --prefix DIR  roster lives in DIR/bin (as install.sh --prefix DIR put it); or PREFIX=DIR
 #
-# Stages: the roster source (git pull in this checkout), roster itself (uv tool install, and its man page), the
-# team's map (git pull where roster.yml is), and `roster sync` (this box's ssh config and ROSTER.md from it). A
-# host the map gained since needs `roster setup` once; this says so. Output goes to ~/.cache/roster/update.log.
+# Stages: the roster source (this checkout: fetched, fast-forwarded when it's behind, a warning when it's older
+# than the newest Release tag; never another branch, never your uncommitted work), roster itself (uv tool install,
+# and its man page), the team's map (git pull where roster.yml is), and `roster sync` (this box's ssh config and
+# ROSTER.md from it). A host the map gained since needs `roster setup` once; this says so. It ends with the roster
+# it installed and where from. Output goes to ~/.cache/roster/update.log.
 set -uo pipefail
 
 LOG="$HOME/.cache/roster/update.log"
@@ -42,7 +44,7 @@ esac
 
 STAGES=("roster source" "roster" "Team map" "Sync this box")
 TOTAL=${#STAGES[@]}
-DONE=() SKIPPED=() FAILED=()
+DONE=() SKIPPED=() FAILED=() target=""
 
 stage() {
     local n=$1 w=30 fill bar="" i
@@ -94,6 +96,96 @@ have() { command -v "$1" >/dev/null 2>&1; }
 home() { printf '%s' "${1/#$HOME/\~}"; }
 version() { roster --version 2>/dev/null | awk '{print $NF}'; }
 
+# ---- the roster source: is this checkout the roster you mean to install? (#408: a `main` never pulled, at v0.1.0,
+# installed 0.1.0 over 0.5.0 without a word)
+
+checkout_version() {            # checkout_version DIR [REF] -> the version in pyproject.toml (at REF, else on disk)
+    if [[ -n ${2:-} ]]; then git -C "$1" show "$2:pyproject.toml" 2>/dev/null; else cat "$1/pyproject.toml"; fi |
+        sed -n 's/^version = "\(.*\)"/\1/p' | head -1
+}
+
+older() { [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1) == "$1" ]]; }   # older A B: A < B
+
+plural() { (( $1 == 1 )) && echo "$1 $2" || echo "$1 ${2}s"; }
+
+check_source() {                # check_source DIR: fetch, offer a fast-forward, warn about an old version
+    local src=$1 branch upstream remote behind ahead dirty newest version fetch=(git -C "$1")
+    target=""                   # the commit a real run installs: @{u} when a dry run would fast-forward
+    if [[ $(git -C "$src" rev-parse --show-toplevel 2>/dev/null) != "$(cd "$src" && pwd -P)" ]]; then
+        skip "$(home "$src") isn't a git clone (a Release tarball): unpack the newest roster-cli tarball and run its update.sh"
+        return 0
+    fi
+    branch=$(git -C "$src" symbolic-ref -q --short HEAD)
+    upstream=$(git -C "$src" rev-parse -q --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+    remote=$(git -C "$src" config "branch.$branch.remote" 2>/dev/null || true)
+    [[ -n $remote ]] || remote=$(git -C "$src" remote | head -1)
+    if [[ -n $remote ]]; then
+        # best effort: nothing to answer a password or a host key question, and never a failure offline. Only the
+        # remote-tracking refs and tags move (a dry run fetches too: it changes nothing you work on)
+        have timeout && fetch=(timeout 30 git -C "$src")
+        if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-ssh -o BatchMode=yes} \
+                "${fetch[@]}" fetch --quiet --tags "$remote" >/dev/null 2>&1; then
+            warn "couldn't reach $remote: checking against what this clone last fetched"
+        fi
+    fi
+    if [[ -z $branch ]]; then
+        skip "$(home "$src") is on no branch ($(git -C "$src" describe --tags --always 2>/dev/null)): installing it as it is (git switch to a branch to update from it)"
+    elif [[ -z $upstream ]]; then
+        skip "$branch has no upstream to pull from: installing $(home "$src") as it is"
+    else
+        behind=$(git -C "$src" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
+        ahead=$(git -C "$src" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
+        dirty=$(git -C "$src" status --porcelain --untracked-files=no 2>/dev/null)
+        if (( ! behind )); then
+            ok "$branch is up to date with $upstream"; done_stage
+        elif (( ahead )); then
+            warn "$branch and $upstream have diverged ($ahead and $behind commits): installing $branch as it is, $(plural "$behind" commit) behind"
+            skip "an older roster than $upstream's"
+        elif [[ -n $dirty ]] && (( YES )); then
+            warn "$(home "$src") has uncommitted changes: not fast-forwarding it under --yes (commit or stash them, then run this again)"
+            skip "installing $branch as it is: $(plural "$behind" commit) behind $upstream, an older roster"
+        elif [[ -n $dirty ]]; then
+            warn "$(home "$src") has changes of yours: not pulling (commit or stash them, then run this again)"
+            skip "installing $branch as it is: $(plural "$behind" commit) behind $upstream, an older roster"
+        else
+            info "$branch is $(plural "$behind" commit) behind $upstream"
+            if ! ask "Fast-forward it (git pull --ff-only)?" Y; then
+                skip "installing $branch as it is: $(plural "$behind" commit) behind $upstream, an older roster"
+            elif step "git pull in $(home "$src")" git -C "$src" pull --ff-only --quiet; then
+                (( DRY )) && target='@{u}' || info "now at $(git -C "$src" log -1 --format='%h %s' | cut -c1-70)"
+                done_stage
+            else
+                warn "couldn't fast-forward: installing the source as it is"; fail_stage
+            fi
+        fi
+    fi
+    # the newest Release tag this clone has seen (vX.Y.Z, not a pre-release)
+    newest=$(git -C "$src" tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+    version=$(checkout_version "$src" "$target")
+    if [[ -n $newest && -n $version ]] && older "$version" "${newest#v}"; then
+        warn "this checkout is roster $version, older than the newest Release it can see ($newest): git switch to main and pull, or git checkout $newest"
+    fi
+    return 0
+}
+
+installed() {                   # installed SRC BINDIR: the last word, what roster this box has now and where from
+    local from v
+    from=$(describe_source "$1"); from="$(home "$1")${from:+ ($from)}"
+    if (( DRY )); then info "dry run: a real run installs roster $(checkout_version "$1" "$target") from $from"
+    elif v=$("$2/roster" --version 2>/dev/null | awk '{print $NF}') && [[ -n $v ]]; then
+        printf '%sInstalled roster %s%s from %s\n' "$B" "$v" "$N" "$from"
+    else bad "no roster in $(home "$2") answers --version"; fi
+}
+
+describe_source() {             # describe_source DIR -> "branch main, commit abc1234, v0.5.0"
+    local d=$1 branch tag
+    git -C "$d" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
+    branch=$(git -C "$d" symbolic-ref -q --short HEAD)
+    tag=$(git -C "$d" describe --tags 2>/dev/null)
+    printf '%s, commit %s%s' "${branch:+branch $branch}" "$(git -C "$d" rev-parse --short HEAD)" "${tag:+, $tag}" |
+        sed 's/^, //'
+}
+
 (( DRY )) || mkdir -p "$(dirname "$LOG")"
 (( DRY )) || : > "$LOG"
 export PATH="$HOME/.local/bin:$PATH"
@@ -112,22 +204,8 @@ stage 1
 src=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if [[ ! -f $src/pyproject.toml ]] || ! grep -q '^name = "roster"' "$src/pyproject.toml"; then
     bad "run update.sh from the roster source folder (where install.sh is)"; exit 1
-elif [[ ! -d $src/.git ]]; then
-    skip "$(home "$src") isn't a git clone (a Release tarball): unpack the newest roster-cli tarball and run its update.sh"
-elif ! git -C "$src" symbolic-ref -q HEAD >/dev/null; then
-    skip "$(home "$src") is on no branch (a tag, or a detached checkout): git switch to a branch to update from it"
-elif ! git -C "$src" rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
-    skip "$(home "$src")'s branch has no upstream to pull from: installing the source as it is"
-elif [[ -n $(git -C "$src" status --porcelain --untracked-files=no 2>/dev/null) ]]; then
-    warn "$(home "$src") has changes of yours: not pulling (commit or stash them, then run this again)"
-    skip "installing the source as it is"
-elif step "git pull in $(home "$src")" git -C "$src" pull --ff-only --quiet; then
-    info "now at $(git -C "$src" log -1 --format='%h %s' | cut -c1-70)"
-    done_stage
-else
-    warn "couldn't fast-forward (another branch, or it went its own way): installing the source as it is"
-    fail_stage
 fi
+check_source "$src"
 
 # 2. roster
 stage 2
@@ -190,5 +268,7 @@ for s in "${STAGES[@]}"; do
     else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
     fi
 done
+printf '\n'
+installed "$src" "$bindir"
 (( ${#FAILED[@]} )) && { info "Some stages failed - details in $LOG. Re-running this is safe."; exit 1; }
 exit 0

@@ -8,7 +8,7 @@ You need three things:
 2. **The team's `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It lives in [yourteam/infra](https://example.com/yourteam/infra).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG` and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). It installs the newest Release (the highest `vX.Y.Z` tag on `origin`, fetched first), whatever branch your checkout is on, from a clean copy in a temporary folder: your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`). On a box that already has roster, `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run` and `--prefix`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -137,7 +137,9 @@ roster inv list                              # * marks the active one; `roster i
 
 ## Keeping it up to date
 
-`./update.sh` in the roster checkout does the first two lines: it pulls the checkout, reinstalls roster with its man page, pulls the map and runs `roster sync`. By hand:
+`./update.sh` in the roster checkout does the first two lines: it brings the checkout up to date, reinstalls roster from it with its man page, pulls the map and runs `roster sync`. It ends by printing the roster it installed and where from (branch, commit, tag), as `install.sh` does.
+
+The checkout is what it installs, so first it looks at it: it fetches (quietly; offline it carries on with what the clone last fetched), and when your branch is behind its upstream it offers to fast-forward it (`git pull --ff-only`, default yes; under `--yes` it does). It never switches branches and never pulls over uncommitted changes or a branch with commits of its own: then, or when you say no, it says it is installing an older roster. A checkout on no branch (a tag) is installed as it is, and a checkout older than the newest Release tag it can see gets a warning naming that tag. By hand:
 
 ```bash
 cd ~/roster && git pull && uv tool install --force .     # new roster version

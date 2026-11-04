@@ -8,14 +8,13 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from conftest import posix_shell
+from conftest import no_roster_path, posix_shell, source_copy
 
 from roster import manpage
 from roster.cli import build_parser, main
 
 ROOT = Path(__file__).parent.parent
 REFERENCE = ROOT / "docs" / "cli-reference.md"
-INSTALL_SH = ROOT / "install.sh"
 
 
 def all_options(parser):
@@ -127,8 +126,9 @@ def test_the_wheel_carries_the_page_as_package_data_and_for_the_prefix(tmp_path)
 
 @posix_shell
 def test_install_sh_puts_the_page_in_the_prefix_it_installs_roster_into(tmp_path):
-    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1"}
-    r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes", "--prefix", str(tmp_path / "opt")],
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), "--dry-run", "--yes", "--prefix",
+                        str(tmp_path / "opt")],
                        env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
     assert f"{tmp_path / 'opt'}/share/man/man1/roster.1" in r.stdout
     assert f"UV_TOOL_BIN_DIR={tmp_path / 'opt'}/bin" in r.stdout
@@ -160,22 +160,23 @@ def run_install_sh(tmp_path, *args, path=None, answers=None):
     run has no terminal, so it reads them from stdin); without, --yes takes every default."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    env = {**os.environ, "HOME": str(home), "NO_COLOR": "1", "PATH": path or os.environ["PATH"]}
+    env = {**os.environ, "HOME": str(home), "NO_COLOR": "1", "PATH": path or no_roster_path()}
     flags = ["--dry-run", *([] if answers is not None else ["--yes"]), *args]
-    r = subprocess.run(["bash", str(INSTALL_SH), *flags], env=env, capture_output=True, text=True, cwd=tmp_path,
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), *flags], env=env, capture_output=True, text=True, cwd=tmp_path,
                        input=answers or "", timeout=120, start_new_session=True)     # no controlling terminal
     return r.stdout
 
 
 @posix_shell
-def test_install_sh_installs_the_page_when_it_keeps_the_installed_roster(tmp_path):
+@pytest.mark.skipif(not shutil.which("uv"), reason="uv not installed")
+def test_install_sh_on_a_box_with_roster_updates_it_and_its_page(tmp_path):
     bindir = tmp_path / "opt" / "bin"
     bindir.mkdir(parents=True)
     (bindir / "roster").write_text("#!/bin/sh\necho roster 0.1.0\n")
     (bindir / "roster").chmod(0o755)
     out = run_install_sh(tmp_path, "--prefix", str(tmp_path / "opt"), answers="n\n" * 40)
-    assert "kept the installed roster" in out
-    assert f"{tmp_path / 'opt'}/share/man/man1/roster.1" in out
+    assert "already installed on this box: updating it with ./update.sh" in out
+    assert f"{tmp_path / 'opt'}/share/man/man1/roster.1" in out          # update.sh puts the page beside it
 
 
 @posix_shell

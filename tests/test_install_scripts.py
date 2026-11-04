@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import posix_shell
+from conftest import no_roster_path, posix_shell, source_copy
 
 ROOT = Path(__file__).parent.parent
 UNINSTALL_SH = ROOT / "uninstall.sh"
@@ -186,15 +186,6 @@ def test_uninstall_again_is_a_no_op(box):
     assert "roster setup never ran on this box" in r.stdout
 
 
-def source_copy(tmp_path):
-    """The files update.sh reads, in a folder of their own: it must never run git on the checkout running the tests."""
-    src = tmp_path / "src-copy"
-    (src / "src/roster").mkdir(parents=True)
-    for f in ("update.sh", "pyproject.toml", "src/roster/roster.1"):
-        (src / f).write_bytes((ROOT / f).read_bytes())
-    return src
-
-
 @posix_shell
 def test_update_reinstalls_roster_and_syncs_the_map(box, tmp_path):
     home, env = box
@@ -234,18 +225,18 @@ def test_help_is_the_header_and_nothing_else(script):
 
 @posix_shell
 def test_install_without_a_team_map_skips_the_clone_under_yes(tmp_path):
-    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1"}
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
     env.pop("ROSTER_INFRA_REPO", None)
-    r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
     assert "no team map given - run again with --infra-repo URL" in r.stdout
-    assert "git clone" not in r.stdout
+    assert "git clone -q" not in r.stdout
 
 
 @posix_shell
 def test_install_clones_the_team_map_it_is_given(tmp_path):
-    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1"}
-    r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes", "--infra-repo", "git@example.com:team/map.git"],
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), "--dry-run", "--yes", "--infra-repo", "git@example.com:team/map.git"],
                        env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120,
                        start_new_session=True)
     assert "git clone -q git@example.com:team/map.git" in r.stdout
@@ -267,9 +258,260 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
     (bin_ / "dnf").chmod(0o755)
     env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": str(bin_)}
     env.pop("ROSTER_INFRA_REPO", None)
-    r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / "install.sh"), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
     assert "Auto-update runs from cron, which isn't installed. Install cronie?" in r.stdout
     assert "dnf install -y cronie" in r.stdout
     assert "would add to crontab:" in r.stdout
     assert "no crontab on this box" not in r.stdout
+
+
+
+# ---- the checkout roster is installed from (#408: a `main` never pulled, at v0.1.0, installed 0.1.0 over 0.5.0)
+
+INSTALLED_UV = ('#!/bin/sh\necho "uv $*" >> "$HOME/calls"\n'
+                # `uv tool install` leaves a roster that says the checkout's version where it was asked to
+                'if [ "$1 $2" = "tool install" ]; then mkdir -p "$UV_TOOL_BIN_DIR"; for a; do src=$a; done\n'
+                '  v=$(sed -n \'s/^version = "\\(.*\\)"/\\1/p\' "$src/pyproject.toml")\n'
+                '  printf \'#!/bin/sh\\necho "roster %s"\\n\' "$v" > "$UV_TOOL_BIN_DIR/roster"\n'
+                '  chmod +x "$UV_TOOL_BIN_DIR/roster"; fi\nexit 0\n')
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                           "-c", "init.defaultBranch=main", "-c", "advice.detachedHead=false", *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def release(repo, version):
+    """A commit that makes the checkout roster VERSION, tagged vVERSION as a Release is."""
+    (repo / "pyproject.toml").write_text(f'[project]\nname = "roster"\nversion = "{version}"\n')
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", f"roster {version}")
+    git(repo, "tag", f"v{version}")
+
+
+@pytest.fixture
+def stale(tmp_path):
+    """A clone whose `main` sits at v0.1.0 while its upstream has moved on to v0.5.0 (the owner's checkout), uv as a
+    stand-in, and no roster installed yet. `installed()` puts the 0.1.0 one in the prefix."""
+    upstream = tmp_path / "upstream"
+    (upstream / "src/roster").mkdir(parents=True)
+    git(upstream, "init", "-q")
+    for f in ("install.sh", "update.sh"):
+        (upstream / f).write_bytes((ROOT / f).read_bytes())
+    (upstream / "src/roster/roster.1").write_text(".TH ROSTER 1\n")
+    release(upstream, "0.1.0")
+    checkout = tmp_path / "roster"
+    subprocess.run(["git", "clone", "-q", str(upstream), str(checkout)], check=True, capture_output=True)
+    release(upstream, "0.5.0")                 # after the clone: the checkout doesn't know yet
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    for name, text in {"uv": INSTALLED_UV, "crontab": FAKES["crontab"], "bw": "#!/bin/sh\nexit 0\n"}.items():
+        (fakes / name).write_text(text)
+        (fakes / name).chmod(0o755)
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": f"{fakes}:{no_roster_path()}",
+           "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
+    for v in ("ROSTER_INFRA_REPO", "ROSTER_CONFIG", "PREFIX", "GIT_SSH_COMMAND"):
+        env.pop(v, None)
+    return upstream, checkout, env, tmp_path / "prefix"
+
+
+def installed(prefix, version="0.1.0"):
+    (prefix / "bin").mkdir(parents=True, exist_ok=True)
+    (prefix / "bin/roster").write_text(f'#!/bin/sh\necho "roster $*" >> "$HOME/calls"\necho "roster {version}"\n')
+    (prefix / "bin/roster").chmod(0o755)
+
+
+def script(name, checkout, env, prefix, *args, answers=None):
+    flags = [*([] if answers is not None else ["--yes"]), "--prefix", str(prefix), *args]
+    return subprocess.run(["bash", str(checkout / name), *flags], env=env, capture_output=True, text=True,
+                          input=answers or "", timeout=120, start_new_session=True)
+
+
+@posix_shell
+def test_update_offers_to_fast_forward_a_checkout_behind_its_upstream(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    before = git(checkout, "rev-parse", "HEAD")
+    r = script("update.sh", checkout, env, prefix, "--dry-run")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "main is 1 commit behind origin/main" in r.stdout
+    assert "Fast-forward it (git pull --ff-only)? [Y/n] yes" in r.stdout
+    assert f"would run: git -C {checkout} pull --ff-only --quiet" in r.stdout
+    assert "a real run installs roster 0.5.0 from" in r.stdout          # what the fast-forward brings
+    assert git(checkout, "rev-parse", "HEAD") == before                   # a dry run moves nothing
+
+
+@posix_shell
+def test_update_fast_forwards_a_clean_checkout_under_yes_and_says_what_it_installed(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    r = script("update.sh", checkout, env, prefix)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert git(checkout, "rev-parse", "HEAD") == git(upstream, "rev-parse", "HEAD")
+    assert "older" not in r.stdout
+    head = git(checkout, "rev-parse", "--short", "HEAD")
+    assert r.stdout.rstrip().splitlines()[-1] == f"Installed roster 0.5.0 from {checkout} (branch main, commit {head}, v0.5.0)"
+
+
+@posix_shell
+def test_update_says_it_installs_an_older_version_when_you_decline(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    before = git(checkout, "rev-parse", "HEAD")
+    r = script("update.sh", checkout, env, prefix, "--dry-run", answers="n\n" + "\n" * 10)   # no, then defaults
+    assert git(checkout, "rev-parse", "HEAD") == before
+    assert "installing main as it is: 1 commit behind origin/main, an older roster" in r.stdout
+    assert "this checkout is roster 0.1.0, older than the newest Release it can see (v0.5.0)" in r.stdout
+
+
+@posix_shell
+def test_update_never_fast_forwards_over_uncommitted_work(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    (checkout / "update.sh").write_text((checkout / "update.sh").read_text() + "# mine\n")
+    before = git(checkout, "rev-parse", "HEAD")
+    r = script("update.sh", checkout, env, prefix)
+    assert git(checkout, "rev-parse", "HEAD") == before
+    assert "has uncommitted changes: not fast-forwarding it under --yes" in r.stdout
+    assert "an older roster" in r.stdout
+    assert (checkout / "update.sh").read_text().endswith("# mine\n")
+
+
+@posix_shell
+def test_update_never_fast_forwards_a_branch_with_its_own_commits(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    (checkout / "notes").write_text("x\n")
+    git(checkout, "add", "notes")
+    git(checkout, "commit", "-qm", "mine")
+    r = script("update.sh", checkout, env, prefix, "--dry-run")
+    assert "pull --ff-only" not in r.stdout
+    assert "main and origin/main have diverged (1 and 1 commits): installing main as it is" in r.stdout
+
+
+@posix_shell
+def test_update_warns_about_a_checkout_at_an_old_tag_and_leaves_it_there(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    git(checkout, "fetch", "-q", "--tags")
+    git(checkout, "checkout", "-q", "v0.1.0")                              # detached, as `git checkout v0.1.0` leaves it
+    r = script("update.sh", checkout, env, prefix)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "is on no branch (v0.1.0)" in r.stdout
+    assert "this checkout is roster 0.1.0, older than the newest Release it can see (v0.5.0)" in r.stdout
+    assert git(checkout, "describe", "--tags") == "v0.1.0"
+    assert subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"]).returncode != 0   # no branch
+
+
+@posix_shell
+def test_update_carries_on_offline(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    git(checkout, "remote", "set-url", "origin", str(upstream.parent / "gone"))   # nothing answers
+    r = script("update.sh", checkout, env, prefix)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "couldn't reach origin: checking against what this clone last fetched" in r.stdout
+    assert "main is up to date with origin/main" in r.stdout               # as far as it knows
+    assert r.stdout.rstrip().splitlines()[-1].startswith(f"Installed roster 0.1.0 from {checkout}")
+
+
+@posix_shell
+def test_install_on_a_box_with_roster_runs_update_sh_with_the_same_flags(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix, "0.4.0")
+    r = script("install.sh", checkout, env, prefix, "--dry-run")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "roster 0.4.0 is already installed on this box: updating it with ./update.sh" in r.stdout
+    assert "roster update" in r.stdout and "dry run: nothing will be changed" in r.stdout
+    assert f"UV_TOOL_BIN_DIR={prefix}/bin uv tool install --force --reinstall" in r.stdout     # --prefix went along
+    assert "1/9" not in r.stdout                                           # none of install.sh's own stages
+
+
+@posix_shell
+def test_install_hands_on_update_sh_s_exit_status(stale):
+    upstream, checkout, env, prefix = stale
+    installed(prefix)
+    (checkout / "update.sh").write_text("#!/bin/sh\necho \"update $*\"\nexit 3\n")
+    r = script("install.sh", checkout, env, prefix)
+    assert r.returncode == 3
+    assert f"update --yes --prefix {prefix}" in r.stdout
+
+
+def untouched(checkout):
+    """What a first install must leave as it was in the checkout: the branch, the commit, the files, the worktrees."""
+    return (git(checkout, "symbolic-ref", "-q", "--short", "HEAD"), git(checkout, "rev-parse", "HEAD"),
+            git(checkout, "status", "--porcelain"), git(checkout, "worktree", "list", "--porcelain"))
+
+
+@posix_shell
+def test_a_first_install_installs_the_newest_release_whatever_branch_the_checkout_is_on(stale, tmp_path):
+    upstream, checkout, env, prefix = stale
+    git(checkout, "switch", "-q", "-c", "old-work")                       # a local branch of its own, at v0.1.0
+    before = untouched(checkout)
+    (tmp_path / "tmp").mkdir()
+    r = script("install.sh", checkout, {**env, "TMPDIR": str(tmp_path / "tmp")}, prefix)
+    tag = git(upstream, "rev-parse", "--short", "v0.5.0")
+    assert f"Installed roster 0.5.0 from {checkout} (v0.5.0, commit {tag})" in r.stdout, r.stdout
+    assert untouched(checkout) == before                                  # never switched, pulled or changed
+    assert list((tmp_path / "tmp").iterdir()) == []                       # the clean copy is gone again
+    assert (prefix / "share/man/man1/roster.1").exists()                  # the page came from that copy too
+
+
+@posix_shell
+def test_a_first_install_dry_run_says_which_release_and_changes_nothing(stale):
+    upstream, checkout, env, prefix = stale
+    before = untouched(checkout)
+    r = script("install.sh", checkout, env, prefix, "--dry-run")
+    assert r.returncode == 0, r.stdout + r.stderr
+    tag = git(upstream, "rev-parse", "--short", "v0.5.0")
+    assert f"installing v0.5.0, commit {tag} from a clean copy (your checkout stays as it is)" in r.stdout
+    assert "would unpack v0.5.0 into a temporary folder" in r.stdout
+    assert "is already installed" not in r.stdout and "git pull" not in r.stdout and " pull --ff-only" not in r.stdout
+    assert untouched(checkout) == before
+
+
+@posix_shell
+def test_a_first_install_offline_warns_and_installs_the_checkout(stale):
+    upstream, checkout, env, prefix = stale
+    git(checkout, "remote", "set-url", "origin", str(upstream.parent / "gone"))   # nothing answers
+    r = script("install.sh", checkout, env, prefix)
+    assert "couldn't reach origin: installing the checkout as it is (branch main, commit" in r.stdout
+    assert "which may not be the newest roster" in r.stdout
+    assert f"Installed roster 0.1.0 from {checkout} (branch main" in r.stdout
+
+
+@posix_shell
+def test_a_first_install_without_a_release_takes_origin_s_default_branch(stale):
+    upstream, checkout, env, prefix = stale
+    for repo in (upstream, checkout):
+        for t in ("v0.1.0", "v0.5.0"):
+            subprocess.run(["git", "-C", str(repo), "tag", "-d", t], capture_output=True)
+    r = script("install.sh", checkout, env, prefix)
+    head = git(upstream, "rev-parse", "--short", "HEAD")
+    assert f"Installed roster 0.5.0 from {checkout} (origin/main, commit {head})" in r.stdout, r.stdout
+
+
+@posix_shell
+def test_a_first_install_takes_the_ref_it_is_given(stale):
+    upstream, checkout, env, prefix = stale
+    git(upstream, "switch", "-q", "-c", "dev")
+    (upstream / "pyproject.toml").write_text('[project]\nname = "roster"\nversion = "0.6.0"\n')
+    git(upstream, "commit", "-qam", "dev")
+    r = script("install.sh", checkout, env, prefix, "--ref", "dev")
+    assert "Installed roster 0.6.0" in r.stdout and "(dev, commit" in r.stdout, r.stdout
+    r = script("install.sh", checkout, env, prefix.parent / "p2", "--ref", "nope")
+    assert r.returncode == 1 and "no tag or branch nope on origin" in r.stdout
+
+
+@posix_shell
+def test_a_first_install_leaves_an_existing_map_as_it_is(stale):
+    upstream, checkout, env, prefix = stale
+    infra = Path(env["HOME"]) / "infra"
+    infra.mkdir(parents=True)
+    (infra / "roster.yml").write_text("groups: {}\n")
+    git(infra, "init", "-q")
+    r = script("install.sh", checkout, env, prefix, "--dry-run")
+    assert "Pull the latest map" not in r.stdout and " pull --ff-only" not in r.stdout
+    assert "update.sh pulls it" in r.stdout
