@@ -69,7 +69,7 @@ export const fakeFoldersPlugin: FakePlugin = {
           moved = { from, n: folders.length };
           if (folders.length > 0) {
             // A result that needs attention: it shows whatever ui.messages says (ticket 117).
-            roster.notify(`Moved ${count(folders.length, "Folder")} from ${from} into roster's own data${from === "folders.yml" ? ": folders.yml isn't read any more (:check)" : ""}`, "info", {
+            roster.notify(from === "folders.yml" ? `Moved ${count(folders.length, "Folder")} from folders.yml to roster's data folder: folders.yml isn't read any more (:check)` : `Moved ${count(folders.length, "Folder")} to roster's data folder. Nothing to do.`, "info", {
               quiet: false,
             });
           }

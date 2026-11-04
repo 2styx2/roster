@@ -112,8 +112,11 @@ do
       moved = { from = from, n = #folders }
       if #folders > 0 then
         roster.notify(
-          "Moved " .. count(#folders, "Folder") .. " from " .. from .. " into roster's own data"
-            .. (from == "folders.yml" and ": folders.yml isn't read any more (:check)" or ""),
+          -- Said in the user's words: the file they wrote, or no source at all ("the State" is
+          -- roster's word, not theirs).
+          from == "folders.yml"
+              and ("Moved " .. count(#folders, "Folder") .. " from folders.yml to roster's data folder: folders.yml isn't read any more (:check)")
+            or ("Moved " .. count(#folders, "Folder") .. " to roster's data folder. Nothing to do."),
           "info",
           -- A result that needs attention: it shows whatever ui.messages says (ticket 117).
           { quiet = false }

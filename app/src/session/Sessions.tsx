@@ -162,6 +162,8 @@ export function ConnectCard({
   quick = null,
   canSave = false,
   prompt = null,
+  closeKeys = null,
+  leader = "",
 }: {
   host: string;
   address: string | null;
@@ -180,6 +182,9 @@ export function ConnectCard({
   canSave?: boolean;
   /** An `auth: prompt` Host (ticket 16): roster has no saved password, so the card asks for it. */
   prompt?: { user: string; address: string; port: number } | null;
+  /** The keys that close the Session ("␣ d d"): offered once connecting has taken a while. */
+  closeKeys?: string | null;
+  leader?: string;
 }) {
   const card = useRef<HTMLDivElement>(null);
   const trustButton = useRef<HTMLButtonElement>(null);
@@ -217,6 +222,18 @@ export function ConnectCard({
     const t = setTimeout(() => setGone(true), FADE_MS);
     return () => clearTimeout(t);
   }, [phase]);
+  // How long it has been connecting (taste.md: honest under failure): a slow Host and a hung one
+  // shouldn't look the same. Seconds from 3 s, once a second, as text (no motion); from 8 s the
+  // way out. While roster waits for an answer from you, there's nothing to time.
+  const [startedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(startedAt);
+  const waiting = phase === "starting" || phase === "logging-in" || phase === "checking-key" || phase === "trusting";
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [waiting]);
+  const seconds = Math.floor((now - startedAt) / 1000);
   const words = phase ?? (gone ? null : last);
   if (words === null) return null;
   const title = `${again ? "Reconnecting" : "Connecting"} to ${host}`;
@@ -399,7 +416,21 @@ export function ConnectCard({
           </p>
         </>
       ) : (
-        <p className="connect-phase muted">{PHASE_WORDS[words]}</p>
+        <p className="connect-phase muted">
+          {PHASE_WORDS[words]}
+          {/* Not announced: a status that changed every second would talk over everything. */}
+          {waiting && seconds >= 3 && (
+            <span className="connect-elapsed" aria-hidden="true">
+              {" "}
+              · {seconds} s
+            </span>
+          )}
+        </p>
+      )}
+      {waiting && seconds >= 8 && closeKeys && (
+        <p className="connect-stop key-hint">
+          <Keys keys={closeKeys} leader={leader} /> stops it
+        </p>
       )}
     </div>
   );
@@ -514,6 +545,8 @@ export interface SessionPanesProps {
   terminalEnv: TerminalEnv;
   /** The keys that reconnect an ended tab ("␣ r"), if the keymap has them. */
   reconnectKeys: string | null;
+  /** The keys that close a Session ("␣ d d"): a connect that's taking long offers them. */
+  closeKeys?: string | null;
   /** Runs a command line (the Retry and Reconnect buttons run `reconnect`). */
   run(line: CommandLine): void;
   /** The error catalog's rows (docs/app/errors.md), for a refused or failed Session. */
@@ -541,6 +574,7 @@ export function SessionPanes({
   terminalView: TerminalView,
   terminalEnv,
   reconnectKeys,
+  closeKeys = null,
   run,
   errorRows,
   copy,
@@ -593,6 +627,8 @@ export function SessionPanes({
                 quick={tab.quick?.to ?? null}
                 canSave={canSave}
                 prompt={s.state === "password" ? s : null}
+                closeKeys={closeKeys}
+                leader={leader}
               />
             )}
             {tab.save?.loggedIn && tab.save.saved === null && s.state === "open" && (

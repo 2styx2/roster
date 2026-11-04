@@ -12,6 +12,8 @@ import { Keys } from "../ui/Keys";
 import { prefixFill } from "../ui/completion";
 import { searchHosts } from "./match";
 import { formatQuickTarget, parseQuickTarget, type QuickTarget } from "../quick/target";
+import { hostDot } from "../sidebar/sections";
+import { StateDot } from "../ui/StateDot";
 
 /** An i in a ring: a Host's details (ticket 18). */
 export const InfoGlyph = () => (
@@ -45,13 +47,16 @@ export interface PickerProps {
   onInfo?: (host: Host) => void;
   /** `picker.help` (F1): help on the selected row, a topic (ticket 52). */
   onHelp?: (topic: string) => void;
+  /** Hosts with a Session that's connected or connecting: their node is lit, as in the Sidebar
+   * (taste.md: the accent means live). */
+  live?: ReadonlySet<string>;
 }
 
 /** The first key bound to `action`, for the footer's hints. */
 const keyFor = (table: KeyTable<PickerAction>, action: PickerAction) =>
   Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null;
 
-export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onReview, onClose, onQuick, quickFirst = false, onInfo, onHelp }: PickerProps) {
+export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onReview, onClose, onQuick, quickFirst = false, onInfo, onHelp, live }: PickerProps) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [inList, setInList] = useState(false);
@@ -230,8 +235,10 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
                 choose(host);
               }}
             >
+              <StateDot dot={hostDot(host)} lit={host.reviewed && live?.has(host.name)} />
               <span className="host-name" title={host.name}>
                 {host.name}
+                {host.reviewed && live?.has(host.name) && <span className="visually-hidden">, has a Session</span>}
               </span>
               <span className="host-ip" title={host.ip || undefined}>
                 {host.ip}

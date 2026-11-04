@@ -304,7 +304,7 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 
 ### Picker (signature)
 - **Container:** Panel Graphite, Strong Hairline border, 10px radius, Overlay shadow, over a dimmed backdrop.
-- **Rows:** a six-column grid (name, IP, group, type, badge, info) with a minimum height of 34px and 12px gaps. The Host name is Iosevka in Paper and the other columns are muted.
+- **Rows:** one shared grid (subgrid) of node, name, IP, group, type, badge and info, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its contents; under 600px only the node, name and IP stay.
 - **Selected:** a raised fill and inset outline. It wraps the full Host name and reveals the info button.
 - **Footer:** 34px, with a tabular Host count and keycap hints (move, open, close). Warnings in the footer use Signal Yellow.
 
@@ -315,7 +315,7 @@ A tmux-like line on Chrome Graphite: `● backend  ■ this Box  N Hosts  path`,
 - **Unreviewed:** 13px Signal Yellow text with a 45%-yellow 1px border, 4px radius and 5px side padding.
 
 ### Connect card and lock screen (signature)
-- **Connect card:** while a Session starts, the pane itself shows the map: no surface, no border, no shadow. It has this Box's square, an edge and the Host's ring (drawn 96px wide), the Host and its address in Iosevka, and plain progress text (`ssh` in Iosevka). The edge reaches 40% while ssh starts and the Host's ring while it logs in (120ms each). The terminal stays hidden until its first byte, so no cursor blinks behind the card. When the shell answers, the ring fills and then the card fades. It's never a spinner and never a blank terminal. The host-key and password questions keep the Panel Graphite surface, because they ask something.
+- **Connect card:** while a Session starts, the pane itself shows the map: no surface, no border, no shadow. It has this Box's square, an edge and the Host's ring (drawn 96px wide), the Host and its address in Iosevka, and plain progress text (`ssh` in Iosevka). The edge reaches 40% while ssh starts and the Host's ring while it logs in (120ms each). The terminal stays hidden until its first byte, so no cursor blinks behind the card. From 3s it counts the seconds in Iosevka, and from 8s it shows the keys that close the Session. When the shell answers, the ring fills and then the card fades. It's never a spinner and never a blank terminal. The host-key and password questions keep the Panel Graphite surface, because they ask something.
 - **Lock screen:** the Gap orbit mark, the Box name in Iosevka, one field and nothing else. It covers the window instantly; no fade, because hiding Sessions must not lag.
 
 ### Motion

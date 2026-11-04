@@ -551,6 +551,12 @@ function Workspace({
   const [windowsBuild, setWindowsBuild] = useState<number | null>(null);
   const [tabs] = useState(() => new Tabs(backend));
   const sessions = useSyncExternalStore(tabs.subscribe, tabs.snapshot);
+  /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
+   * lit wherever a Host is listed (taste.md: the accent means live, Q185). */
+  const liveHosts = useMemo(
+    () => new Set(sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").map((t) => t.host)),
+    [sessions],
+  );
   // Plugins (ticket 23): the Lua runs in roster-core; they act on the app through command lines,
   // and their UI goes into the registries with their name as its source.
   const runRef = useRef<(line: string) => void>(() => {});
@@ -863,6 +869,15 @@ function Workspace({
   const sidebarAt = layout.pieces.find((p) => p.id === "sidebar")?.at;
   const sidebarSide = sidebarAt === "right" ? "right" : "left";
   const sidebarShown = isShown(layout, "sidebar") && sections.length > 0;
+  // In a window too narrow to dock it (styles.css, 720 px) the Sidebar floats over the terminal.
+  // It then steps aside while a Session is in front and you're in the terminal, and is there in
+  // App mode, where you use it; `sidebar` (␣ e) shows it anyway until the Session changes. Hidden,
+  // not unmounted, so it keeps its scroll; keyboard-paced, so it doesn't animate.
+  const narrow = useMediaMatch("(max-width: 720px)");
+  // The Session the Sidebar was shown over: switching Sessions tucks it away again.
+  const [peekFor, setPeekFor] = useState<number | null>(null);
+  const sidebarPeek = peekFor !== null && peekFor === sessions.active;
+  const sidebarTucked = sidebarShown && narrow && sessions.active !== null && keyState.mode !== "app" && !sidebarPeek;
   const finderCtx = useMemo<FinderContext | null>(
     () =>
       hosts
@@ -1603,6 +1618,10 @@ function Workspace({
       if (id !== null) tabs.close(id);
     },
     toggleSidebar: () => {
+      if (sidebarTucked || (narrow && sidebarPeek)) {
+        setPeekFor(sidebarPeek ? null : sessions.active);
+        return setMessage(quiet(sidebarPeek ? "Sidebar tucked away" : "Sidebar shown", sidebarPeek ? "Sidebar tucked away while the window is narrow" : "Sidebar shown over the terminal until you switch Sessions"));
+      }
       const shown = !isShown(layout, "sidebar");
       const name = `modes.${viewMode}.sidebar`;
       const said = `Sidebar ${shown ? "shown" : "hidden"}`;
@@ -2340,6 +2359,7 @@ function Workspace({
       <div
         className={`body sidebar-${sidebarSide}`}
         {...(sidebarShown ? { "data-sidebar": "" } : {})}
+        {...(sidebarTucked ? { "data-tucked": "" } : {})}
         {...(bodyPanels.includes("d") ? { "data-docked": "" } : {})}
         {...(bodyPanels.includes("f") ? { "data-full": "" } : {})}
       >
@@ -2429,6 +2449,7 @@ function Workspace({
               terminalView={terminalView}
               terminalEnv={terminalEnv}
               reconnectKeys={reconnectKey}
+              closeKeys={hintFor(keymap, "close")}
               run={run}
               errorRows={errorRows}
               copy={copy}
@@ -2893,6 +2914,7 @@ function Workspace({
             : {})}
           hosts={conn.hosts}
           recent={appState.recentHosts}
+          live={liveHosts}
           vim={options.vim}
           keymap={keymap}
           onClose={closeOverlay}
@@ -2989,6 +3011,18 @@ function savedIn(target: Omit<SaveTarget, "save_to"> | undefined): string {
 export function inventoryBroken(e: InventoryFileError): string {
   const at = `roster.yml${e.line ? `:${e.line}` : ""}`;
   return `${at} has an error (${e.message}): the last good Inventory is still in use`;
+}
+
+/** Whether a media query matches now, following it as the window changes. */
+function useMediaMatch(query: string): boolean {
+  return useSyncExternalStore(
+    (changed) => {
+      const mq = typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query) : null;
+      mq?.addEventListener("change", changed);
+      return () => mq?.removeEventListener("change", changed);
+    },
+    () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query).matches : false),
+  );
 }
 
 /** The State's key for the Sidebar shown or hidden, per view mode (issue #78). */

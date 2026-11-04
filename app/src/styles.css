@@ -735,16 +735,24 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   border: 0; background: transparent; border-radius: 0;
 }
 .picker-query:focus-visible { box-shadow: none; }
-.picker-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+/* The rows share one grid (subgrid), so a column is as wide as its widest cell in the list and no
+   wider: the badge column takes room only when a row has a badge, and an address is never cut
+   mid-token (taste.md) up to 24 characters; the selected row shows the whole of a longer one.
+   Columns: node, name, address, group, type, badge, details. */
+.picker-list {
+  list-style: none; margin: 0; padding: 6px; overflow-y: auto;
+  display: grid; align-content: start; column-gap: 12px;
+  grid-template-columns: 8px minmax(0, 2fr) fit-content(24ch) minmax(0, 1.2fr) minmax(0, 7em) auto 24px;
+}
 .picker-row {
-  display: grid; grid-template-columns: minmax(0, 2fr) 9.5em minmax(0, 1fr) minmax(0, 6em) 6.5em 22px;
-  gap: 12px; align-items: center; min-height: 34px; padding: 8px 10px; border-radius: var(--radius); color: var(--muted);
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
+  align-items: center; min-height: 34px; padding: 8px 10px; border-radius: var(--radius); color: var(--muted);
 }
 .picker-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--raised-line); }
-/* The selected row shows its whole name, wrapped (M6): two long Hosts that differ at the end can
-   be told apart from the keyboard. */
-.picker-row.selected > .host-name { white-space: normal; overflow-wrap: anywhere; }
+/* The selected row shows its whole name and address, wrapped (M6): two long Hosts that differ at
+   the end can be told apart from the keyboard. */
+.picker-row.selected > .host-name, .picker-row.selected > .host-ip { white-space: normal; overflow-wrap: anywhere; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
 .picker-row .host-ip { font: var(--text-sm) var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .picker-row .host-group, .picker-row .host-type { font-size: var(--text-sm); color: var(--muted); }
@@ -753,9 +761,14 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-row > .badge { justify-self: end; overflow: visible; }
 /* A Host's details (ticket 18): in the last column, so it never moves the row; shown on the
    selected row only (Ctrl+I is its key), never on hover, as a Sidebar row's buttons (Q88). */
-.picker-row > .badge + .picker-info, .picker-row > .host-type + .picker-info { grid-column: 6; }
+.picker-row > .picker-info { grid-column: -2; }
+/* A narrow window keeps what you pick by: the node, the name and the address. */
+@media (max-width: 600px) {
+  .picker-list { grid-template-columns: 8px minmax(0, 1fr) fit-content(16ch) auto 24px; }
+  .picker-row > .host-group, .picker-row > .host-type { display: none; }
+}
 .picker-info {
-  width: 22px; height: 22px; padding: 0; display: grid; place-items: center; visibility: hidden;
+  width: 24px; height: 24px; padding: 0; display: grid; place-items: center; visibility: hidden;
   background: transparent; border-color: transparent; color: var(--muted);
 }
 .picker-row.selected .picker-info { visibility: visible; }
@@ -958,6 +971,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) ease; }
 .connect-card.leaving .connect-host-fill { opacity: 1; }
 .connect-cmd { font-family: var(--font-mono); }
+/* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
+.connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.connect-stop { margin: 0; font-size: var(--text-sm); color: var(--muted); }
 .connect-title { font-size: var(--text-md); }
 .connect-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .connect-address { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -1086,6 +1102,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   .screen .body.sidebar-right .sidebar {
     left: auto; right: 0; border-right: 0; border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
   }
+  /* Tucked away while a Session is in front and you're in the terminal (App.tsx). */
+  .screen .body[data-tucked] > .sidebar { visibility: hidden; }
 }
 
 /* Too narrow for the Sidebar, a side panel and a usable terminal (1040 = 248 + 320 + 472, about
@@ -1188,12 +1206,16 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .config-toast {
   position: fixed; right: 14px; bottom: calc(var(--statusbar-h) + 10px); z-index: 40; width: min(520px, calc(100vw - 28px));
   padding: 10px 12px; border-radius: var(--radius-lg); font-size: var(--text-sm); color: var(--text);
-  background: var(--panel); border: 1px solid var(--line-strong); border-left: 3px solid var(--warn);
+  background: var(--panel); border: 1px solid var(--line-strong);
   box-shadow: 0 8px 24px var(--shadow);
   transition: opacity var(--dur-fade) ease, transform var(--dur-fade) var(--ease-out);
   @starting-style { opacity: 0; transform: translateY(var(--enter-y)); }
 }
-.config-toast.error { border-left-color: var(--error); }
+/* Its kind is a node before the title (taste.md: nodes are our only ornament), not a coloured
+   stripe: a warn ring for a problem, a raspberry one for an error, a muted one for news. */
+.notice-node { flex: none; width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--warn); }
+.config-toast.error .notice-node { box-shadow: inset 0 0 0 1.5px var(--error); }
+.config-toast.info .notice-node { box-shadow: inset 0 0 0 1.5px var(--muted); }
 .config-toast-head { display: flex; align-items: center; gap: 8px; }
 .config-toast-title { flex: 1; font-weight: 500; }
 .config-toast-close {
@@ -1373,8 +1395,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .statusbar .statusbar-progress-stop svg,
 .corner-progress .statusbar-progress-stop svg { width: 10px; height: 10px; }
+/* Above the status bar, never over it: it carries the live state. */
 .plugin-notices {
-  position: fixed; right: 14px; bottom: 14px; z-index: 40; display: flex; flex-direction: column; gap: 8px;
+  position: fixed; right: 14px; bottom: calc(var(--statusbar-h) + 10px); z-index: 40; display: flex; flex-direction: column; gap: 8px;
   width: min(520px, calc(100vw - 28px));
 }
 .plugin-notices .config-toast { position: static; width: auto; }
