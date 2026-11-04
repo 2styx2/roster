@@ -96,7 +96,7 @@ def test_man_install_into_a_given_prefix(tmp_path):
 
 
 def test_man_install_without_roster_on_path_uses_the_users_local_prefix(isolated, monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setenv("PATH", str(isolated["work"]))      # nothing on it (Windows' lookup never asks shutil.which)
     assert main(["man", "--install"]) == 0
     assert (isolated["home"] / ".local" / "share" / "man" / "man1" / "roster.1").is_file()
 

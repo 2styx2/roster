@@ -179,8 +179,8 @@ def find_program(name: str) -> str | None:
     taken as named."""
     if not WINDOWS or "/" in name or "\\" in name:
         return shutil.which(name)
-    exts = [e.lower() for e in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";") if e]
-    names = [name] if name.lower().endswith(tuple(exts)) else [name + e for e in exts]
+    exts = [e for e in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";") if e]
+    names = [name] if name.lower().endswith(tuple(e.lower() for e in exts)) else [name + e for e in exts]
     for folder in (os.environ.get("PATH") or "").split(os.pathsep):
         folder = folder.strip().strip('"')
         if not folder or not os.path.isabs(folder):

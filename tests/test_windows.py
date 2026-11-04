@@ -372,6 +372,7 @@ ALLOW, DENY, INHERIT_ONLY = 0x00, 0x01, 0x08
     (ME, [(ALLOW, 0, ME), (ALLOW, 0x10, "S-1-5-18"), (ALLOW, 0x10, "S-1-5-32-544")]),   # what %APPDATA% gives it
     ("S-1-5-32-544", [(ALLOW, 0, ME)]),                   # made from an elevated shell: Administrators own it
     (ME, [(ALLOW, 0, ME), (DENY, 0, "S-1-1-0")]),         # a deny entry only narrows
+    (ME, [(ALLOW, 0, ME), (ALLOW, 0x10, "S-1-3-4")]),     # OWNER RIGHTS: the owner, checked already
     (ME, [(ALLOW, 0, ME), (ALLOW, INHERIT_ONLY, "S-1-1-0")]),   # applies to children, not to the file
 ])
 def test_a_file_only_this_user_system_and_administrators_may_open_is_private(owner, aces):
@@ -435,7 +436,7 @@ def planted(as_windows, tmp_path, monkeypatch):
     (here / "bw.cmd").write_text("@echo planted\r\n")
     (here / "ssh.exe").write_text("")
     monkeypatch.chdir(here)
-    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setenv("PATHEXT", ".com;.exe;.bat;.cmd")      # lower case: Linux tells the case apart
     monkeypatch.setenv("PATH", os.pathsep.join(["", ".", "here", str(tools)]))   # cwd-relative entries are skipped
     return tools, here
 

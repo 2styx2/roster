@@ -1,11 +1,12 @@
 """Windows: read a file only if it's this user's alone (#411), the Windows half of common.read_private.
 
 Windows has no mode bits, so "only you can read it" is the file's security descriptor: its owner must be this user
-(the SID roster's askpass pipe names, winpipe.user_sid), or SYSTEM or Administrators (who can take any file anyway, and
-own what an elevated administrator's shell creates), as for a key folder on a Windows Host (winhost.py), and its DACL may let nobody but this user, SYSTEM and
-Administrators open it, the ACL a file in your own %APPDATA% inherits and the one roster gives a key file it creates on
-a Windows Host (this account, SYSTEM, Administrators; winhost.py). A deny entry only narrows, so it's fine; an allow
-entry for anyone else (Users, Everyone, Authenticated Users, another account), one roster can't read, or no DACL at all
+(the SID roster's askpass pipe names, winpipe.user_sid), or SYSTEM or Administrators (who can take any file anyway,
+and own what an elevated administrator's shell creates), as for a key folder on a Windows Host (winhost.py), and its
+DACL may let nobody but this user, SYSTEM and Administrators open it, the ACL a file in your own %APPDATA% inherits
+and the one roster gives a key file it creates on a Windows Host (this account, SYSTEM, Administrators; winhost.py). A
+deny entry only narrows, so it's fine; an allow entry for OWNER RIGHTS is the owner, already checked; an allow entry
+for anyone else (Users, Everyone, Authenticated Users, another account), one roster can't read, or no DACL at all
 (everyone may) is refused.
 
 The file is opened once, without following a link or any other reparse point (FILE_FLAG_OPEN_REPARSE_POINT, then the
@@ -22,6 +23,7 @@ import os
 from .common import NotPrivate
 
 SYSTEM, ADMINISTRATORS = "S-1-5-18", "S-1-5-32-544"
+OWNER_RIGHTS = "S-1-3-4"                    # whoever owns the file, checked on its own
 ACCESS_ALLOWED, ACCESS_ALLOWED_CALLBACK = 0x00, 0x09                     # SID right after the mask
 ACCESS_DENIED_TYPES = {0x01, 0x06, 0x0A, 0x0C}                           # denied, object, callback, callback object
 INHERIT_ONLY = 0x08                                                      # applies to children, not this file
@@ -48,7 +50,7 @@ def problem(owner, aces, me):
             continue
         if kind not in (ACCESS_ALLOWED, ACCESS_ALLOWED_CALLBACK) or sid is None:
             return "has an access entry roster can't check"
-        if sid not in (me, SYSTEM, ADMINISTRATORS):
+        if sid not in (me, SYSTEM, ADMINISTRATORS, OWNER_RIGHTS):
             return f"can be opened by others ({sid})"
     return None
 
