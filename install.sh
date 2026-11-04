@@ -132,18 +132,52 @@ live() {                        # live "what" cmd...  - runs in the foreground (
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+SUDO=sudo                       # root (a container, say) often has no sudo, and doesn't need it
+(( EUID == 0 )) && SUDO=""
+
 APT_UPDATED=0
 pkg_install() {                 # pkg_install name... with the box's package manager
+    if [[ -n $SUDO ]] && ! have sudo && ! have brew; then bad "no sudo - install $* as root yourself"; return 1; fi
     if   have apt-get; then
         # a fresh box (or container) has no package lists yet: install would say "Unable to locate package"
-        if (( ! APT_UPDATED )); then step "apt update" sudo apt-get update -q || return 1; APT_UPDATED=1; fi
-        step "apt install $*" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
-    elif have dnf;     then step "dnf install $*" sudo dnf install -y "$@"
-    elif have yum;     then step "yum install $*" sudo yum install -y "$@"
-    elif have pacman;  then step "pacman -S $*" sudo pacman -S --noconfirm "$@"
+        if (( ! APT_UPDATED )); then step "apt update" $SUDO apt-get update -q || return 1; APT_UPDATED=1; fi
+        step "apt install $*" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+    elif have dnf;     then step "dnf install $*" $SUDO dnf install -y "$@"
+    elif have yum;     then step "yum install $*" $SUDO yum install -y "$@"
+    elif have pacman;  then step "pacman -S $*" $SUDO pacman -S --noconfirm "$@"
     elif have brew;    then step "brew install $*" brew install "$@"
     else bad "no package manager found - install $* yourself"; return 1
     fi
+}
+
+cron_pkg() {                    # the package that brings crontab and the cron daemon, empty if we can't tell
+    if   have apt-get; then echo cron
+    elif have dnf || have yum || have pacman; then echo cronie
+    fi
+}
+
+start_cron() {                  # make sure the cron daemon runs now and after a restart; 0 when it does
+    [[ $(uname -s) == Darwin ]] && return 0             # launchd starts cron on macOS
+    local svc wsl=0
+    grep -qi microsoft /proc/version 2>/dev/null && wsl=1
+    for svc in crond cron cronie; do                    # Fedora/RHEL, Debian/Ubuntu, Arch
+        if [[ -d /run/systemd/system ]]; then
+            systemctl cat "$svc.service" >/dev/null 2>&1 || continue
+            if systemctl is-active --quiet "$svc" && systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+                ok "cron daemon ($svc) running"; return 0
+            fi
+            step "start the cron daemon ($svc), now and at boot" $SUDO systemctl enable --now "$svc"; return
+        elif [[ -x /etc/init.d/$svc ]]; then
+            if ! service "$svc" status >/dev/null 2>&1; then
+                step "start the cron daemon ($svc)" $SUDO service "$svc" start || return 1
+            else ok "cron daemon ($svc) running"; fi
+            # no systemd: nothing starts cron again when WSL (or the container) restarts
+            (( wsl )) && warn "WSL without systemd: cron stops with WSL. Put [boot] systemd=true in /etc/wsl.conf so it starts by itself"
+            return 0
+        fi
+    done
+    if (( DRY )); then info "would start the cron daemon"; return 0; fi
+    warn "couldn't find the cron service - start it yourself, or the job never runs"; return 1
 }
 
 # ---- start
@@ -473,18 +507,32 @@ fi
 stage 9
 pull="$cfg_dir/bin/roster-pull"
 job="*/15 * * * * $pull >> \$HOME/.cache/roster-pull.log 2>&1"
+cron_ready=1
 if [[ ! -x $pull ]] && (( ! DRY )); then
-    skip "no bin/roster-pull in $cfg_dir"
+    skip "no bin/roster-pull in $cfg_dir"; cron_ready=0
 elif ! have crontab; then
-    skip "no crontab on this box - run $pull yourself to update"
-elif crontab -l 2>/dev/null | grep -qF "$pull"; then
-    ok "cron job already there"; done_stage
-elif ask "Pull map updates every 15 minutes (cron job running bin/roster-pull)?" Y; then
-    if (( DRY )); then info "would add to crontab: $job"; done_stage
-    elif (crontab -l 2>/dev/null; echo "$job") | crontab -; then ok "cron job added"; done_stage
-    else bad "couldn't write the crontab"; fail_stage; fi
-else
-    skip "update by hand: $pull"
+    # a minimal box or WSL distro (Fedora's, say) ships without cron
+    pkg=$(cron_pkg)
+    if [[ -z $pkg ]]; then
+        skip "no crontab, and no package manager to get it with - run $pull yourself to update"; cron_ready=0
+    elif ! ask "Auto-update runs from cron, which isn't installed. Install $pkg?" Y; then
+        skip "no cron - run $pull yourself to update"; cron_ready=0
+    elif ! pkg_install "$pkg" || { (( ! DRY )) && ! have crontab; }; then
+        bad "cron didn't install"; fail_stage; cron_ready=0
+    fi
+fi
+if (( cron_ready )); then
+    if ! start_cron; then
+        fail_stage
+    elif crontab -l 2>/dev/null | grep -qF "$pull"; then
+        ok "cron job already there"; done_stage
+    elif ask "Pull map updates every 15 minutes (cron job running bin/roster-pull)?" Y; then
+        if (( DRY )); then info "would add to crontab: $job"; done_stage
+        elif (crontab -l 2>/dev/null; echo "$job") | crontab -; then ok "cron job added"; done_stage
+        else bad "couldn't write the crontab"; fail_stage; fi
+    else
+        skip "update by hand: $pull"
+    fi
 fi
 
 # ---- summary
