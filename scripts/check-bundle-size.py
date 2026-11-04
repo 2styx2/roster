@@ -52,10 +52,14 @@ KB = 1000
 # JS 2,600 -> 2,650 raw, 760 -> 775 gzipped on 2026-11-03: Windows Hosts (T195, #375: adding-hosts.md's section,
 # error rows 212-216, serve's error codes and the Host's os field, all bundled for :help) took dev's 2,580.4 raw /
 # 758.9 gzipped to 2,591.5 / 762.8. Text :help reads, not a dependency, so the budgets follow it, as above.
+# CSS 85 -> 90 raw, 15.5 -> 16.5 gzipped on 2026-11-04 (T192, #364, owner's call): dev's build was 83,981 bytes raw /
+# 15,429 gzipped, 71 bytes under the gzipped budget, after T178 found no dead rules left to take out, so the next
+# stylesheet change would fail. The app's own stylesheets, grown a rule at a time with features, not a dependency;
+# 1 KB gzipped lets the next few small features through while a stylesheet library (tens of KB) still fails.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
     "js": {"raw": 2650, "gzip": 775},
-    "css": {"raw": 85, "gzip": 15.5},
+    "css": {"raw": 90, "gzip": 16.5},
 }
 
 
