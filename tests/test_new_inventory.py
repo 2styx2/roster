@@ -283,7 +283,7 @@ def test_import_refuses_a_huge_or_special_file(isolated, capsys, tmp_path):
 
 def test_a_clone_url_never_shows_its_credentials(isolated, capsys, tmp_path):
     from roster.newinventory import shown_url
-    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://***@example.com:8443/team/map.git"
+    assert shown_url("https://me:tok@example.com:8443/team/map.git") == "https://me:***@example.com:8443/team/map.git"
     assert shown_url("file://me:tok@D:\\a\\nope") == "file://me:***@D:\\a\\nope"        # a Windows path after it
     assert shown_url("git@example.com:team/map.git") == "git@example.com:team/map.git"     # scp form: no password
     """L4: https://user:TOKEN@host/... in an error is shown without the TOKEN."""
@@ -389,6 +389,23 @@ def test_serve_never_makes_one_while_it_has_one(serve, write_config, isolated):
 
 
 def test_serve_clones_without_asking_anything(serve, isolated, tmp_path, monkeypatch):
+    for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+                 "GIT_COMMITTER_EMAIL": "t@x", "GIT_CONFIG_NOSYSTEM": "1"}.items():
+        monkeypatch.setenv(k, v)
+    team = tmp_path / "team"
+    team.mkdir()
+    (team / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "map"]):
+        subprocess.run(["git", "-C", str(team), *args], check=True, capture_output=True)
+    s = serve()
+    err = s.call("inventory.create", {"how": "repo", "source": str(tmp_path / "nope"),
+                                      "folder": str(isolated["home"] / "other")})["error"]
+    assert err["code"] == 172 and err["data"]["fix"]
+    folder = isolated["home"] / "infra"
+    r = s.call("inventory.create", {"how": "repo", "source": str(team), "folder": str(folder)})["result"]
+    assert r["how"] == "repo" and r["hosts"] == 1
+    err = s.call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "more")})["error"]
+    assert err["code"] == 170                               # one made: this serve makes no other
 
 
 # ---------------------------------------------------------------- #409's second pass (N2, N4) and #417's (M2, L1, L2)
@@ -421,17 +438,6 @@ def test_a_cloned_repo_keeps_no_credential_in_its_config(isolated, capsys, tmp_p
     (team / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
     for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "map"]):
         subprocess.run(["git", "-C", str(team), *args], check=True, capture_output=True)
-    s = serve()
-    err = s.call("inventory.create", {"how": "repo", "source": str(tmp_path / "nope"),
-                                      "folder": str(isolated["home"] / "other")})["error"]
-    assert err["code"] == 172 and err["data"]["fix"]
-    folder = isolated["home"] / "infra"
-    r = s.call("inventory.create", {"how": "repo", "source": str(team), "folder": str(folder)})["result"]
-    assert r["how"] == "repo" and r["hosts"] == 1
-    err = s.call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "more")})["error"]
-    assert err["code"] == 170                               # one made: this serve makes no other
-
-
     from roster.newinventory import strip_credentials
     target = isolated["home"] / "infra" / "roster.yml"
     main(["-c", str(target), "init", "--inventory", f"repo:{team}"])
