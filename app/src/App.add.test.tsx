@@ -132,6 +132,19 @@ describe("the add form", () => {
     expect(within(panel).getByText("A vault reference, like bw:esx-02 ssh")).toBeInTheDocument();
   });
 
+  it("empties a typed password that wasn't sent when the app locks", async () => {
+    const { user, calls } = await ready();
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "nas-01", Address: "10.19.1.50", User: "root", Type: "nas" });
+    await user.type(within(panel).getByLabelText("Password"), FAKE_HOST_PASSWORD);
+    await user.keyboard(`${LEADER}:lock{Enter}`);
+    await screen.findByRole("dialog", { name: /locked/i });
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(within(await form()).getByLabelText("Password")).toHaveValue("");
+    expect(JSON.stringify(calls)).not.toContain(FAKE_HOST_PASSWORD);
+  });
+
   it("shows the host key to confirm, then tests the login, saves the password and adds the Host", async () => {
     const { user, backend, calls } = await ready();
     // The confirmation's whole text shows with every message on (ticket 111).

@@ -36,6 +36,7 @@ import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import { useFormPull, type PullGate } from "./pull";
 import { PullStatus } from "./PullStatus";
+import { useForgetOnLock } from "../lock/forgetOnLock";
 import { SaveToField, useSaveTo } from "./SaveTo";
 import {
   addParams,
@@ -180,6 +181,8 @@ export function AddPanel({
     // Emptied on purpose: no "type the password" nag until the next try.
     setTouched((t) => new Set([...t].filter((f) => f !== "password" && f !== "*")));
   };
+  // And when the app locks: a password typed here but not sent yet doesn't outlast the lock.
+  useForgetOnLock(forgetPassword);
 
   const add = async (hostKey?: string) => {
     const params = addParams(draft, hosts, login === "password" ? password.current?.value : undefined, target?.save_to);
