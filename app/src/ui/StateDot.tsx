@@ -30,6 +30,7 @@ export function StateDot({ dot, lit }: { dot: Dot; lit?: Light | false | undefin
   return (
     <svg className={`dot ${dot}${lit === "current" ? " lit" : lit === "live" ? " on" : ""}`} data-shape={SHAPES[dot]} viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
       <circle cx="4" cy="4" r="3.25" />
+      {lit && <circle className="halo" cx="4" cy="4" r="5.25" />}
     </svg>
   );
 }

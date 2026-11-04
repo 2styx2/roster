@@ -363,7 +363,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .sb-icon { flex: none; color: var(--faint); }
 
-.sb-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 2px 6px 10px; outline: none; }
+/* overflow-anchor: none, as Sidebar.tsx keeps the row under the pointer itself when Sessions open
+   or close (the browser's own anchoring would move it a second time). */
+.sb-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 2px 6px 10px; outline: none; overflow-anchor: none; }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -376,6 +378,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* In a very short window the Folders hint gives way, so the Inventory keeps its rows. */
+@media (max-height: 400px) { .sb-section[data-section="folders"] .sb-empty { display: none; } }
 .sb-empty { margin: 2px 8px 4px 24px; color: var(--muted); font-size: var(--text-sm); line-height: 1.7; text-wrap: pretty; }
 .sb-empty .keys { margin: 0 1px; }
 .keys-with-word { white-space: nowrap; }
@@ -383,6 +387,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-rows { list-style: none; margin: 0; padding: 0; }
 /* Sessions show at most eight rows, scrolling in place beyond that, so fifty open Sessions never
    push the Inventory out of the Sidebar (the cursor scrolls them into view as it moves). */
+/* With no Session the section keeps one row's room, so the first Session fills it rather than
+   pushing the tree down under the pointer. */
+.sb-section[data-section="sessions"]:not(:has(.sb-row)) { padding-bottom: var(--row-h); }
 .sb-section[data-section="sessions"] > .sb-rows { max-height: calc(8 * var(--row-h)); overflow-y: auto; overscroll-behavior: contain; }
 .sb-row { position: relative; display: flex; align-items: center; height: var(--row-h); border-radius: var(--radius); color: var(--muted); }
 @media (hover: hover) and (pointer: fine) {
@@ -503,6 +510,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.on.password circle { fill: none; stroke: var(--text); }
 .dot.lit circle { fill: var(--accent); }
 .dot.lit.password circle { fill: none; stroke: var(--accent); }
+/* A Host with a Session gets a thin halo, so "has a Session" is a shape, not only a lighter
+   colour (WCAG 1.4.1): the node with its connection around it. */
+.dot circle.halo { fill: none !important; stroke-width: 1px; stroke-dasharray: none; opacity: 0.55; }
+.dot.on circle.halo { stroke: var(--text); }
+.dot.lit circle.halo { stroke: var(--accent); }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the
@@ -512,7 +524,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    Static: the edge in the pane is the motion. */
 .dot.connecting circle {
   fill: none; stroke: var(--accent); stroke-width: 1.5px;
-  stroke-dasharray: 15.92 4.5; stroke-dashoffset: 0.28;
+  stroke-dasharray: 17.34 3.06; stroke-dashoffset: 1.02;
 }
 
 /* A Session's link (issue #78, taste.md "Connect"): the edge is drawn in the pane's connect card,

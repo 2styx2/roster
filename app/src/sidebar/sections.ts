@@ -212,7 +212,7 @@ export const sessionsSection: SidebarSectionDef = {
           id: "sessions",
           title: "Sessions",
           count: sessions.tabs.length,
-          empty: "No Sessions open.",
+          // No sentence when empty: the pane says "No Sessions open" already (it'd be said twice).
           rows: sessions.tabs.map((tab, i) => {
             const facts = tabFacts(tab);
             return {

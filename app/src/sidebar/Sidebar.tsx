@@ -450,8 +450,8 @@ const Section = memo(function Section({
         >
           <Chevron folded={folded} />
           <h2>{section.title}</h2>
-          {/* An empty section's sentence says it ("No Sessions open."), so it shows no "0". */}
-          {section.count !== undefined && !(section.count === 0 && section.rows.length === 0 && section.empty) && (
+          {/* An empty section shows no "0": its sentence, or the pane, says it. */}
+          {section.count !== undefined && !(section.count === 0 && section.rows.length === 0) && (
             <span className="sb-count">{formatCount(section.count)}</span>
           )}
         </div>
@@ -475,6 +475,24 @@ const Section = memo(function Section({
 
 /** The cursor row, whole (M6): a cut-off name, its state and address, readable from the keyboard.
  * It repeats what the tree item's name already tells assistive tech, so it's hidden from it. */
+/** Scrolls the tree by `delta` so the row under the pointer stays put when the Sessions section
+ * above it grows or shrinks. A short tree has no room to scroll by, so the room is borrowed at its
+ * bottom; returns how much is borrowed now. `borrowed` -1 gives it all back. */
+function keepUnderPointer(tree: HTMLElement, delta: number, borrowed: number): number {
+  if (borrowed < 0) {
+    tree.style.paddingBottom = "";
+    return 0;
+  }
+  let room = borrowed;
+  const short = tree.scrollTop + delta - (tree.scrollHeight - tree.clientHeight);
+  if (delta > 0 && short > 0) {
+    room += short;
+    tree.style.paddingBottom = `calc(10px + ${room}px)`;
+  }
+  tree.scrollTop += delta;
+  return room;
+}
+
 /** An IPv4 or IPv6 address, or a range (10.0.0.0/24). */
 const DATA_FACT = /^[0-9a-f:.]+(\/\d+)?$/i;
 
@@ -547,6 +565,41 @@ export function Sidebar({
     el?.scrollIntoView?.({ block: "nearest" });
   }, [cursor]);
 
+  // The live Session's row stays in view inside the capped Sessions list (its own scroller only:
+  // the Sidebar itself doesn't jump to it). Instant, as every keyboard move is.
+  const liveRow = allRows(sections).find((r) => r.live)?.id ?? null;
+  useLayoutEffect(() => {
+    if (liveRow === null) return;
+    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(liveRow)}"]`);
+    const list = row?.closest<HTMLElement>(".sb-section > .sb-rows");
+    if (!row || !list || list.scrollHeight <= list.clientHeight) return;
+    const top = row.offsetTop - list.offsetTop;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + row.offsetHeight - list.clientHeight;
+  }, [liveRow]);
+
+  // A Session opening or closing changes the Sessions section's height, above everything else in
+  // the tree. With the pointer in the Sidebar that would slide the row under it (the next click
+  // opening a neighbour), so the scroll moves by the same amount and the row stays put.
+  const pointerIn = useRef(false);
+  const sessionsHeight = useRef<number | null>(null);
+  const borrowed = useRef(0);
+  useLayoutEffect(() => {
+    const el = scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
+    const h = el?.offsetHeight ?? null;
+    const before = sessionsHeight.current;
+    sessionsHeight.current = h;
+    const tree = scrollRef.current;
+    if (h === null || before === null || h === before || !pointerIn.current || !tree) return;
+    borrowed.current = keepUnderPointer(tree, h - before, borrowed.current);
+  });
+  const giveBack = () => {
+    pointerIn.current = false;
+    if (borrowed.current === 0 || !scrollRef.current) return;
+    borrowed.current = 0;
+    keepUnderPointer(scrollRef.current, 0, -1);
+  };
+
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs
   // some data for a drag to start).
   const dragged = useRef<SidebarRow | null>(null);
@@ -617,6 +670,8 @@ export function Sidebar({
       <div
         className="sb-scroll"
         ref={setTree}
+        onPointerEnter={() => (pointerIn.current = true)}
+        onPointerLeave={giveBack}
         role="tree"
         aria-label="Sessions and Hosts"
         tabIndex={0}
