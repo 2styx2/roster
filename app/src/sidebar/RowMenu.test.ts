@@ -31,6 +31,13 @@ describe("hostMenu", () => {
   const all: HostMenuOptions = { reviewed: true, live: true, edit: true, folders: true, keys: (c: string) => (c === "host rename" ? "␣ R" : null) };
   const labels = (r: SidebarRow, o = all) => hostMenu(r, o).map((e) => ("separator" in e ? "|" : e.label));
 
+  it("says Open goes to the Host's Session when it has one, and shows the open key", () => {
+    expect(labels(row, { ...all, hasSession: true })[0]).toBe("Go to its Session");
+    expect(labels(row, { ...all, hasSession: false })[0]).toBe("Open");
+    const first = hostMenu(row, { ...all, openKeys: "Enter" })[0];
+    expect(first && "keys" in first ? first.keys : null).toBe("Enter");
+  });
+
   it("groups open, look, change and remove, with a row's own actions among the changes", () => {
     const own = { ...row, actions: [{ label: "Mark unreviewed", icon: "unreview" as const, command: "host unreview esx-02" }] };
     expect(labels(own)).toEqual([

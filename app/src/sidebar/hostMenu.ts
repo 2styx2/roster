@@ -29,6 +29,10 @@ export interface HostMenuOptions {
   folders: boolean;
   /** The keys bound to a command line ("host rename"), or null. */
   keys(command: string): string | null;
+  /** The Host already has a Session: Open goes to it, so it says so. */
+  hasSession?: boolean;
+  /** The list's key for Enter on a row ("Enter"), which opens it: shown beside Open. */
+  openKeys?: string | null;
 }
 
 /** A Host row's menu: open, look, change, then remove, separated; the row's own actions (an
@@ -41,8 +45,10 @@ export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
   const groups: MenuEntry[][] = [
     o.reviewed
       ? [
-          { label: "Open", command: `open ${host}` },
-          { label: "New Session", command: `connect ${host}` },
+          // Open goes to the Host's Session when it has one, so it says that; New Session always
+          // opens another. Each names its key where one is bound.
+          { label: o.hasSession ? "Go to its Session" : "Open", command: `open ${host}`, keys: o.openKeys ?? null },
+          { label: "New Session", command: `connect ${host}`, keys: o.keys(`connect`) },
         ]
       : [{ label: "Mark reviewed", command: `review ${host}` }],
     [

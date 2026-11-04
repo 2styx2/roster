@@ -94,11 +94,13 @@ describe("a Host row's menu (T166, Q156)", () => {
     // Opened by the pointer: focus is on the menu, no item yet.
     expect(menu()).toHaveFocus();
     await user.keyboard("{ArrowDown}");
-    expect(within(menu()).getByRole("menuitem", { name: /^Open/ })).toHaveFocus();
+    // The click opens a Session (asynchronously), so the first item is Open or, once that Session
+    // is there, "Go to its Session".
+    expect(within(menu()).getByRole("menuitem", { name: /^(Open|Go to its Session)\b/ })).toHaveFocus();
     await user.keyboard("{ArrowUp}");
     expect(within(menu()).getByRole("menuitem", { name: /^Remove/ })).toHaveFocus();
     await user.keyboard("{Home}");
-    expect(within(menu()).getByRole("menuitem", { name: /^Open/ })).toHaveFocus();
+    expect(within(menu()).getByRole("menuitem", { name: /^(Open|Go to its Session)\b/ })).toHaveFocus();
     await user.keyboard("{End}");
     expect(within(menu()).getByRole("menuitem", { name: /^Remove/ })).toHaveFocus();
     await user.keyboard("c");
@@ -115,7 +117,7 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(rowOf("linux-1-000")).toHaveClass("cursor");
     await user.keyboard("{ContextMenu}");
     expect(menu()).toHaveAccessibleName("linux-1-000");
-    expect(within(menu()).getByRole("menuitem", { name: /^Open/ })).toHaveFocus();
+    expect(within(menu()).getByRole("menuitem", { name: /^(Open|Go to its Session)\b/ })).toHaveFocus();
     // Esc goes back to the tree, still in App mode.
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();

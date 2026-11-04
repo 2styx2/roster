@@ -2196,7 +2196,8 @@ function Workspace({
     ? [
         [moveKeys, "move"],
         [listKey("choose"), "open"],
-        [listKey("menu"), "menu"],
+        // The menu key people know: Shift+F10 over the Menu key's name ("ContextMenu").
+        [Object.keys(keymap.list).find((k) => keymap.list[k]?.action === "menu" && k.includes("F10")) ?? listKey("menu"), "menu"],
         [listKeyFor(keymap.leader, "terminal"), "terminal"],
       ]
     : [
@@ -2419,6 +2420,8 @@ function Workspace({
                 edit: canEdit,
                 folders: commands.get("folder") !== undefined,
                 keys: (command) => hintFor(keymap, command),
+                hasSession: h !== undefined && liveHosts.has(h.name),
+                openKeys: listKeyFor(keymap.list, "choose"),
               });
             }}
             onTreeFocus={(from) => {

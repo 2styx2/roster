@@ -148,7 +148,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .wordmark { font: 500 var(--text-sm) var(--font-mono); color: var(--muted); letter-spacing: 0.01em; }
 /* The window's own buttons never give way: in a frameless window they're the only way to close it,
    so the toolbar shrinks before they move (the minimum window is 480 px). */
-.window-controls { display: flex; height: 100%; flex: none; }
+.window-controls { display: flex; height: 100%; flex: none; position: relative; margin-left: 4px; }
+/* A hairline between the toolbar and the window's own buttons, so the last control (Lock, a
+   panel toggle) never reads as a fourth window button. */
+.window-controls::before { content: ""; position: absolute; left: 0; top: 50%; height: 14px; margin-top: -7px; width: 1px; background: var(--line-strong); }
 .window-controls button {
   width: 46px; height: 100%; padding: 0; display: grid; place-items: center;
   border: 0; border-radius: 0; background: transparent; color: var(--muted);
@@ -333,7 +336,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sidebar .sb-heading-button {
   flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: inherit;
   border-radius: var(--radius); cursor: default;
-  font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: max(11px, calc(var(--text-xs) - 1px)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
 }
 .sb-heading h2 { margin: 0; font: inherit; }
 @media (hover: hover) and (pointer: fine) {
@@ -429,7 +432,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .sb-tag + .sb-tag { margin-left: 4px; }
-.sb-badge + .sb-detail { display: none; }
+/* The badge takes the address's place only where it shows (on the row on screen, the cursor, the
+   selection); at rest an unreviewed Host keeps its address like every other row. */
+.sb-row:is(.raised, .cursor, .selected) .sb-badge + .sb-detail { display: none; }
 .sidebar .sb-action {
   display: none; flex: none; width: 24px; height: 24px; margin-right: 2px; place-items: center; color: var(--muted);
 }
