@@ -66,7 +66,9 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     byDefault: true,
     pressed: (c) => c.sidebarShown,
   }),
-  control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true, iconOnly: (c) => c.sidebarShown }),
+  // Find is the Sidebar's own field while the Sidebar shows; the title bar offers it only when it
+  // doesn't (Q190).
+  control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true, when: (c) => !c.sidebarShown }),
   // Quick Connect (ticket 14): the Picker, ready for user@address[:port].
   control({
     id: "quick",
@@ -77,7 +79,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     byDefault: true,
     when: (c) => c.quickConnect,
   }),
-  control({ id: "add", label: () => "Add a Host", text: "Add Host", icon: "add", command: "host add", byDefault: true }),
+  control({ id: "add", label: () => "Add a Host", icon: "add", command: "host add", byDefault: true }),
   control({
     id: "changes",
     label: (c) => (c.pendingCount > 0 ? `Pending changes: ${c.pendingCount}` : "Pending changes"),
@@ -85,6 +87,8 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     icon: "changes",
     command: "changes",
     byDefault: true,
+    // Only while there's something to review: an empty "Changes" is noise (Q190).
+    when: (c) => c.pendingCount > 0,
     count: (c) => (c.pendingCount > 0 ? c.pendingCount : null),
   }),
   control({

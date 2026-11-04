@@ -427,6 +427,7 @@ const Section = memo(function Section({
     <section
       role="group"
       className="sb-section"
+      data-section={section.id}
       aria-label={section.title}
       onDragOver={section.drop ? (e) => drag.over(e, section.drop) : undefined}
       onDrop={section.drop ? (e) => drag.drop(e, section.drop) : undefined}

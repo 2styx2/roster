@@ -43,10 +43,14 @@ function withToolbar(toolbar: Config["modes"]["standard"]["toolbar"]): Config {
 }
 
 describe("the toolbar", () => {
-  it("shows Find, Add Host, Changes, Host details and Lock in the title bar by default; Add Host opens the form", async () => {
+  it("shows Add Host, Host details and Lock by default (Find while the Sidebar is hidden, Changes while there are some); Add Host opens the form", async () => {
     const user = await ready();
     expect(within(screen.getByRole("banner")).getByRole("toolbar", { name: "Commands" })).toBeInTheDocument();
-    expect(names()).toEqual(["Find a Host", "Add a Host", "Pending changes", "Show Host details", "Lock"]);
+    expect(names()).toEqual(["Add a Host", "Show Host details", "Lock"]);
+    // The Sidebar has its own Find field; hidden, the title bar offers Find.
+    await user.click(within(screen.getByRole("banner")).getByRole("button", { name: "Hide the Sidebar" }));
+    expect(names()).toEqual(["Find a Host", "Add a Host", "Show Host details", "Lock"]);
+    await user.click(within(screen.getByRole("banner")).getByRole("button", { name: "Show the Sidebar" }));
     await user.click(within(toolbar()).getByRole("button", { name: "Add a Host" }));
     expect(await screen.findByRole("region", { name: "Add a Host" })).toBeInTheDocument();
   });
@@ -62,7 +66,8 @@ describe("the toolbar", () => {
 
   it("follows init.lua's layout table: modes.standard.toolbar picks and orders the controls", async () => {
     await ready(fixtures.review as FakeScenario, withToolbar({ shown: true, controls: ["changes", "add", "lock"] }));
-    expect(names()).toEqual(["Pending changes", "Add a Host", "Lock"]);
+    // No Pending changes in this fixture, so Changes isn't drawn.
+    expect(names()).toEqual(["Add a Host", "Lock"]);
   });
 
   it("has a help control (ticket 37), off by default like keys, that init.lua can add", async () => {

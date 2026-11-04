@@ -118,8 +118,10 @@ do
               and ("Moved " .. count(#folders, "Folder") .. " from folders.yml to roster's data folder: folders.yml isn't read any more (:check)")
             or ("Moved " .. count(#folders, "Folder") .. " to roster's data folder. Nothing to do."),
           "info",
-          -- A result that needs attention: it shows whatever ui.messages says (ticket 117).
-          { quiet = false }
+          -- From the State there's nothing to do, so it's quiet (in :messages, not a notice over the
+          -- terminal, Q190); from a folders.yml you wrote it needs attention: that file isn't read
+          -- any more.
+          { quiet = from ~= "folders.yml" }
         )
       end
     end

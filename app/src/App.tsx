@@ -134,7 +134,7 @@ import { defaultAppearance, terminalTheme, type AppearanceOptions } from "./them
 import { chosenAppearance, registerThemePicker, stateChoiceWins, ThemeChoice } from "./theme/picker";
 import { useTheme } from "./theme/useTheme";
 import { Logo } from "./chrome/Logo";
-import { countOf } from "./ui/format";
+import { countOf, middleCut } from "./ui/format";
 import { afterSwitch, NONE_NAMED, switchPlan, type SwitchPlan } from "./inventory/switch";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
 import { PromptWatch } from "./session/prompt";
@@ -2268,7 +2268,7 @@ function Workspace({
           <span key={id} className="session-seg" title={`Session ${tab.label}`}>
             <StateDot dot={dot} lit={ended || connectPhase(tab) ? undefined : "current"} />
             <span className="visually-hidden">Session </span>
-            <span className="statusbar-cut">{tab.label}</span>
+            <span className="statusbar-cut">{middleCut(tab.label, 24)}</span>
           </span>
         );
       }
@@ -2283,8 +2283,8 @@ function Workspace({
         );
       case "path":
         return (
-          <span key={id} className="statusbar-cut path" title={`${info.inventory.path}\n${info.command.join(" ")}`}>
-            {info.inventory.path}
+          <span key={id} className="path" title={`${info.inventory.path}\n${info.command.join(" ")}`}>
+            <span className="path-text">{info.inventory.path}</span>
           </span>
         );
       case "changes":
