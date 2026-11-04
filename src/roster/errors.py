@@ -171,7 +171,7 @@ INVENTORY_THERE = 170       # roster init: a roster.yml is there already, so it'
 NOT_AN_INVENTORY = 171      # roster init: the file to import isn't there or doesn't load, or a clone has no roster.yml
 CLONE_FAILED = 172          # roster init: git couldn't clone the repo (or isn't installed, or the folder isn't empty)
 SSH_CONFIG_UNREADABLE = 173  # roster init: the ssh config to import Hosts from can't be read; nothing written
-CANT_WRITE = 174            # roster init / inventory.create: the folder can't be made or written in; nothing written
+FOLDER_NOT_WRITABLE = 174   # roster init / inventory.create: the folder can't be made or written in; nothing written
 
 
 class Problem(Exception):

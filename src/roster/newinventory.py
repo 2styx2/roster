@@ -18,7 +18,7 @@ import yaml
 
 from .common import NAME_RE
 from .config import load_config_text
-from .errors import CANT_WRITE, CLONE_FAILED, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
+from .errors import CLONE_FAILED, FOLDER_NOT_WRITABLE, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
 
 HOWS = ("blank", "file", "repo", "ssh-config")
 ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports (#409 L3)
@@ -108,7 +108,7 @@ def there(path):
 
 def cant_write(folder, e):
     """An OSError making the new Inventory, as a Problem (#417 L1): never a traceback, nor serve's -32603."""
-    return Problem(CANT_WRITE, f"roster can't write in {folder}: {e.strerror or type(e).__name__}",
+    return Problem(FOLDER_NOT_WRITABLE, f"roster can't write in {folder}: {e.strerror or type(e).__name__}",
                    {"path": str(folder)}, fix="pick a folder you can write to (or make this one writable)")
 
 
