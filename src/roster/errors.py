@@ -160,6 +160,10 @@ RUN_SUDO_WINDOWS = 159      # `run --sudo` on an os: windows Host: Windows has n
 MESH_WINDOWS = 160          # a note, not an error: an os: windows Host is left out of the Mesh (its scripts are sh)
 NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't parse as PowerShell, so nothing ran
 
+# Whose it is (#384, catalog row 222): a warning `roster check --box` (box.check) gives
+SHARED_BOX_NAME = 162       # warning: this Box's name is an OS image's default hostname, so another Box likely has
+                            #   it too; Boxes with one name are one owner (its key's tag and the Mesh's)
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

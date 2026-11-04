@@ -6,6 +6,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### Changed
+
+**CLI**
+
+- **The Mesh's one-time re-tag takes only this Box's own older lines** (#384): on the first `roster mesh` after upgrading to v0.5.0 or later, an untagged `authorized_keys` line (from an older roster) is taken as this Box's only when it's exactly the line this Box writes there, the same key, `from=` and options; another older Box's line for the same source stays, the apply warns about it, and `roster mesh --find-leftovers` lists it. `roster check --box` warns when this Box's name is an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …): Boxes with the same name are one owner, so each one's `revoke` and `roster mesh` take the other's entries; set `box_name:`. **Upgrading Boxes that share Hosts:** upgrade them together, and run each one's `roster mesh` once. A roster older than v0.5.0 still running on another Box leaves the new tagged lines alone, but still removes untagged lines, and Mesh files on a Host it doesn't make a source, on every apply. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
+
 ### Security
 
 **CLI**

@@ -86,7 +86,7 @@ roster setup
 
 On this box, setup does the following:
 
-1. Creates `~/.ssh/roster_ed25519`, tagged with this box's name (`box_name:` in roster.yml, or the hostname).
+1. Creates `~/.ssh/roster_ed25519`, tagged with this box's name (`box_name:` in roster.yml, or the hostname). Give each Box a name no other Box uses: two Boxes with the same name (a hostname every machine of that image has, such as `ubuntu`, `raspberrypi` or `localhost`, or a cloned VM) are one owner to roster, so each one's `roster revoke` takes the other's key off the Hosts they share, and each one's `roster mesh` takes the other's Mesh entries ([Whose Mesh it is](mesh.md#whose-mesh-it-is)). `roster check --box` warns about a common default name; it can't see the other Boxes, so a name two of them share by chance isn't caught. Set `box_name:` before the first `roster setup`.
 2. Records each host's fingerprint in `~/.ssh/roster_known_hosts`.
 3. Installs the key on every `enroll: true` host that doesn't accept it yet. It logs in once with the vault password to do this.
 4. Writes `~/.ssh/config.d/roster`, so `ssh <name>` works.

@@ -269,6 +269,8 @@ if ! ours_by "$WHO"; then   # another's Mesh key: used as it is (its public half
   [ "$ROTATE" = 1 ] && { echo "ERROR its Mesh key in $P is $(whose_words "$WHO"): roster doesn't replace it"; echo ROSTER_DONE; exit 0; }
   { [ -f "$K" ] && [ -f "$K.pub" ]; } || { echo "ERROR $P holds Mesh files that are $(whose_words "$WHO"), and no key"; echo ROSTER_DONE; exit 0; }
 fi
+# the key being replaced: an older roster's untagged line for it on a peer is this Box's to take too (#384)
+[ "$ROTATE" = 1 ] && [ -f "$K.pub" ] && echo "OLDPUB $(cat "$K.pub")"
 if [ "$ROTATE" = 1 ] && [ -f "$K" ]; then
   if [ "$MODE" = apply ]; then rm -f "$K" "$K.pub"; fi
   echo "KEY rotate"
@@ -412,12 +414,18 @@ AUTHORIZED = r"""
 TAGS=" roster-mesh:[A-Za-z0-9][A-Za-z0-9._-]*@$OWNER_RE\$"
 H=$(mktemp); grep -E "$TAGS" "$AK" 2>/dev/null > "$H"
 [ -n "$KEEP" ] && grep -E " roster-mesh:($KEEP)@$OWNER_RE\$" "$H" >> "$W"
-# on a Host its record says it wrote on, the lines this Box wrote before (RETAG, a whole ERE): an older roster's (no
-# Box in the tag) for a source it writes here, and every line under an earlier owner of its own; they go, and its
-# own lines (W) take their place. A pending source's (KEEP) stay as they are.
+# on a Host its record says it wrote on, the lines this Box wrote before: every line under an earlier owner of its
+# own (RETAG, a whole ERE), and an older roster's (no Box in the tag) only when it is exactly a line this Box writes
+# here, but for the tag (ADOPT, whole lines; #384); they go, and its own lines (W) take their place. Any other
+# untagged line for a source it writes here may be another older Box's: it stays, and is said (UNTAGGED). A pending
+# source's (KEEP) stay as they are.
 OL=$(mktemp)
 if [ -n "$RETAG" ]; then
   grep -E "$RETAG" "$AK" 2>/dev/null | { if [ -n "$KEEP" ]; then grep -vE " roster-mesh:($KEEP)(@[^ ]*)?\$"; else cat; fi; } > "$OL"
+fi
+[ -s "$ADOPT" ] && grep -xFf "$ADOPT" "$AK" 2>/dev/null >> "$OL"
+if [ -n "$UNT" ]; then
+  grep -E " roster-mesh:($UNT)\$" "$AK" 2>/dev/null | grep -vxFf "$OL" | while read -r l; do echo "UNTAGGED ${l##*:}"; done
 fi
 grep -vxFf "$W" "$H" | while read -r l; do t=${l##*:}; echo "DROP ${t%%@*}"; done
 grep -vxFf "$H" "$W" | while read -r l; do t=${l##*:}; echo "ADD ${t%%@*}"; done
@@ -434,7 +442,7 @@ if [ "$MODE" = apply ] && { ! cmp -s "$S1" "$S2" || [ -s "$OL" ]; }; then
   [ -n "$ESXI" ] && [ -n "$NEW" ] && [ -f "$AK" ] && chmod 1600 "$AK"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
-rm -f "$H" "$W" "$S1" "$S2" "$OL"
+rm -f "$H" "$W" "$S1" "$S2" "$OL" "$ADOPT"
 """
 
 
@@ -496,12 +504,14 @@ def hop_script(peers):
     return REACH + "".join(f"reach {q(p['name'])} {q(p['ip'])} {p['ssh']['port']}\n" for p in peers) + "echo ROSTER_DONE\n"
 
 
-def write_script(h, mode, files, keys, keep, own, prev=()):
+def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
     """Phase 2 on any Host roster visits: as a source (FILES, {name: text}, or None to remove its source files),
     and as a peer (KEYS: the authorized_keys lines it should hold; KEEP: sources whose lines stay as they are).
     OWN: whose Mesh this is; PREV: this Box's record says it wrote on this Host before as these owners, so their
-    Mesh files and their lines for the sources in KEYS are this Box's, and get its tag. A Host that isn't a source
-    keeps an older roster's Mesh files (-): which Box made it a source isn't on record (#372's L1/L3)."""
+    Mesh files and their lines for the sources in KEYS are this Box's, and get its tag. An older roster's (-) line
+    is taken only when it's in ADOPT: exactly a line this Box writes there (KEYS, or the line for a key --rotate
+    replaces), with no Box in the tag (#384); another older Box's for the same source stays. A Host that isn't a
+    source keeps an older roster's Mesh files (-): which Box made it a source isn't on record (#372's L1/L3)."""
     s = [preamble(h, mode, own, prev if files is not None else [p for p in prev if p != "-"]), WRITE]
     if files is not None:
         s.append(SOURCE)
@@ -521,9 +531,11 @@ def write_script(h, mode, files, keys, keep, own, prev=()):
     s.append("W=$(mktemp)\ncat > \"$W\" " + heredoc("".join(line + "\n" for line in keys)))
     s.append(f"KEEP={q('|'.join(ere(k) for k in sorted(keep)))}\n")
     retag = sorted({k.rsplit(":", 1)[1].split("@", 1)[0] for k in keys} - set(keep))
-    pattern = [f"( {TAG}:({'|'.join(ere(k) for k in retag)})$)"] if retag and "-" in prev else []
-    pattern += [f"( {TAG}:[A-Za-z0-9][A-Za-z0-9._-]*@{ere(p)}$)" for p in prev if p != "-"]
+    old = "-" in prev and bool(retag)
+    pattern = [f"( {TAG}:[A-Za-z0-9][A-Za-z0-9._-]*@{ere(p)}$)" for p in prev if p != "-"]
     s.append(f"RETAG={q('|'.join(pattern))}\n")
+    s.append("ADOPT=$(mktemp)\ncat > \"$ADOPT\" " + heredoc("".join(line + "\n" for line in sorted(adopt)) if old else ""))
+    s.append(f"UNT={q('|'.join(ere(k) for k in retag) if old else '')}\n")
     s.append(AUTHORIZED)
     return "".join(s) + "echo ROSTER_DONE\n"
 
@@ -739,8 +751,9 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
         if err or lines is None:
             out["probe"][name] = {"error": err}
             continue
-        pub = report(lines, "PUB ")
+        pub, oldpub = report(lines, "PUB "), report(lines, "OLDPUB ")
         out["probe"][name] = {"dir": report(lines, "DIR ")[0], "esxi": "PLATFORM esxi" in lines, "pub": pub[0] if pub else None,
+                              "oldpub": oldpub[0] if oldpub else None,
                               "key": report(lines, "KEY "),
                               "reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
         stale(out, name, lines)
@@ -823,7 +836,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             files = {"known_hosts": "".join(line + "\n" for t in peers for line in host_key_lines(t)),
                      "config": ssh_config(cfg, name, peers, d, vias),
                      "ROSTER.md": roster_md(name, peers, d, p["esxi"], vias, own)}
-        keys, keep = [], set()
+        keys, keep, adopt = [], set(), []
         for x in links:
             if x["to"] != name or x["kind"] != "key" or "skip" in x:
                 continue
@@ -831,11 +844,15 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             if x["status"] == "pending":
                 keep.add(x["from"])
             elif x["status"] in ("ok", "untested"):
-                keys.append(key_line(hosts[x["from"]], src["pub"], own, hosts.get(x.get("via"))) if src.get("pub")
+                via = hosts.get(x.get("via"))
+                keys.append(key_line(hosts[x["from"]], src["pub"], own, via) if src.get("pub")
                             else f"new-key {x['from']} {TAG}:{x['from']}@{own}")
+                # an older roster's line this Box would write (key and options alike), only the tag without a Box
+                adopt += [key_line(hosts[x["from"]], k, own, via).removesuffix(f"@{own}")
+                          for k in (src.get("pub"), src.get("oldpub")) if k]
         say(f"  {'write' if apply else 'check'}  {name}")
         lines, err = on_host(h, write_script(h, mode, files, sorted(keys, key=lambda k: k.rsplit(":", 1)[1]), keep,
-                                             own, was if name in proven else ()))
+                                             own, was if name in proven else (), adopt))
         if err:
             finish(name, [], err)
             continue
@@ -861,6 +878,10 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             "roster leaves them alone; that Box's (or Inventory's) roster.yml can add these Links")
             if theirs and differs else None)
         stale(out, name, lines)                 # a source that left with its mesh_dir: (NOT_SOURCE)
+        for src in sorted(set(report(lines, "UNTAGGED "))):
+            out.setdefault("warnings", []).append(
+                f"{name}: a roster-mesh:{src} line with no Box in its tag isn't the one this Box writes (another "
+                "Box's, or other options), so roster left it: roster mesh --find-leftovers lists it")
         for path in report(lines, "CONFLICT "):
             out.setdefault("warnings", []).append(
                 f"{name}: {path} isn't roster's, so roster left it alone (move it away and apply again)")
@@ -1150,7 +1171,9 @@ def others_here():
 def find_leftovers(cfg, say=None):
     """`roster mesh --find-leftovers`: on every key, reviewed Host of roster.yml, once each, one at a time, the Mesh
     entries this roster.yml doesn't ask for, found by roster's own tag and mark (read-only): this Box's (and
-    Inventory's), and an older roster's (no Box in the tag), never another Box's or Inventory's (T199). Returns
+    Inventory's), and an older roster's (no Box in the tag; also for a source asked for, beside this Box's own line:
+    #384), never
+    another Box's or Inventory's (T199). Returns
     {hosts: {host: {lines: [(source, from, older)], files: [dir], include, md, older}}, pending: {host: why}}: only
     Hosts holding any; older: some of them are an older roster's."""
     say = say or (lambda msg: None)
@@ -1170,10 +1193,13 @@ def find_leftovers(cfg, say=None):
             continue
         found: dict[str, Any] = {}
         older = False
-        for x in report(lines, "LINE "):
-            tag, frm = (x.split(" ", 1) + [""])[:2]
+        seen = [((x.split(" ", 1) + [""])[:2]) for x in report(lines, "LINE ")]
+        tagged = {t.partition("@")[0] for t, _ in seen if t.partition("@")[2] == own}
+        for tag, frm in seen:
             src, _, by = tag.partition("@")
-            if by in ("", own) and src not in wanted.get(name, set()):
+            # an older roster's line for a source asked for here, too, once this Box's own tagged line is beside it
+            # (one the one-time re-tag didn't take: not the line this Box writes, #384)
+            if src not in wanted.get(name, set()) and by in ("", own) or not by and src in tagged:
                 found.setdefault("lines", []).append((src, frm, not by))
                 older = older or not by
         # Mesh files: on a Host that isn't a source here, this Box's or an older roster's; on a source, an older

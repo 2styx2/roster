@@ -398,6 +398,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `159` | `roster run --sudo` on an `os: windows` Host: refused, Windows has no sudo over ssh; nothing ran. A CLI error, never a serve answer |
 | `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
 | `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
+| `162` | A `box.check` warning (topic `E222`): this Box's name is an OS image's default hostname, so another Box likely has it too; Boxes with the same name are one owner |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
