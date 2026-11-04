@@ -365,7 +365,7 @@ class BwLogin:
         if status.get("status") != "unauthenticated":
             who = f" as {status['userEmail']}" if status.get("userEmail") else ""
             raise AlreadyLoggedIn(f"the Bitwarden CLI is already logged in on this box{who} - unlock it instead "
-                                  "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw logout`)")
+                                  "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw --write logout`)")
         self.server = status.get("serverUrl") or CLOUD
         if params.get("server"):
             self.set_server(server_url(params["server"]))
@@ -624,7 +624,7 @@ class BwLogin:
             return ApiKeyRejected("Bitwarden didn't accept that API key (client_id or client_secret)")
         if "already logged in" in low:
             return AlreadyLoggedIn("the Bitwarden CLI is already logged in on this box - unlock it instead "
-                                   "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw logout`)")
+                                   "(to sign in as someone else, sign out first: 'Use a different account' in the app, or `roster bw --write logout`)")
         if after in (CODE, NEW_DEVICE):
             return CodeRejected("Bitwarden didn't accept that code (wrong or expired)")
         if "invalid master password" in low or "username or password is incorrect" in low:

@@ -163,6 +163,11 @@ NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't 
 # Whose it is (#384, catalog row 222): a warning `roster check --box` (box.check) gives
 SHARED_BOX_NAME = 162       # warning: this Box's name is an OS image's default hostname, so another Box likely has
                             #   it too; Boxes with one name are one owner (its key's tag and the Mesh's)
+# `roster bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
+# None of the three messages repeats what came after bw's command: those arguments may hold a password
+BW_NEEDS_WRITE = 164        # a bw command that changes the vault, writes it out, or acts on the account, without --write
+BW_NOT_ALLOWED = 165        # a bw command or option before it that roster bw doesn't know, or --write among bw's own
+BW_REFUSED = 166            # never run: `bw serve` (the vault to every local program) or a session on the command line
 
 
 class Problem(Exception):

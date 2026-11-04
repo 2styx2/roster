@@ -232,4 +232,4 @@ def test_a_failed_logout_carries_the_apps_fix(bw, isolated, monkeypatch):
     monkeypatch.setitem(providers.PROVIDERS["bw"], "logout", refuse)
     r = rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": "vault.logout", "params": {}}))
     assert r["error"]["code"] == 16
-    assert r["error"]["data"]["fix"] == "see the message; `roster bw logout` in a terminal shows the same"
+    assert r["error"]["data"]["fix"] == "see the message; `roster bw --write logout` in a terminal shows the same"
