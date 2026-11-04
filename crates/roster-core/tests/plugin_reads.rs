@@ -167,10 +167,21 @@ fn a_folder_with_control_characters_or_too_long_is_no_folder() {
         (3, "esx-02", Some(&long)),
         (4, "esx-02", Some("srv")),
         (5, "esx-02", Some("/")),
+        // Review of #426, L1: every format character (Unicode's Cf), as osc7.ts refuses.
+        (6, "esx-02", Some("/srv/a\u{200b}b")),
+        (7, "esx-02", Some("/srv/a\u{061c}b")),
+        (8, "esx-02", Some("/srv/a\u{feff}b")),
+        (9, "esx-02", Some("/srv/a\u{00ad}b")),
+        (10, "esx-02", Some("/srv/a\u{2063}b")),
+        (11, "esx-02", Some("/srv/a\u{e0041}b")),
+        (12, "esx-02", Some("/srv/caf\u{e9}")),
     ]));
     let (reply, _dir) = load(&host, "cwd-strict", &["terminal.read"], CWDS);
     ok(&reply);
-    assert_eq!(said(&reply.ops, "cwd"), "1=nil 2=nil 3=nil 4=nil 5=/");
+    assert_eq!(
+        said(&reply.ops, "cwd"),
+        "1=nil 2=nil 3=nil 4=nil 5=/ 6=nil 7=nil 8=nil 9=nil 10=nil 11=nil 12=/srv/caf\u{e9}"
+    );
 }
 
 #[test]

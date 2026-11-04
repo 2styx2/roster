@@ -1055,3 +1055,28 @@ fn replies_say_which_events_a_plugin_listens_for_when_that_changes() {
         ])
     );
 }
+
+/// Review of #426, I1: `command_done`'s `cwd` is checked in the core as a Session's is: one the
+/// app's OSC 7 reader wouldn't take never reaches a Plugin.
+#[test]
+fn command_done_carries_only_a_folder_the_core_would_take() {
+    let init = r#"
+        roster.on("command_done", function(e) roster.notify(tostring(e.cwd)) end)
+    "#;
+    let dir = plugin_dir("done-cwd", &manifest("donecwd", &["terminal.read"]), init);
+    let (host, _) = host();
+    host.load(&Source::Dir(dir.to_path_buf()), &perms(&["terminal.read"]))
+        .unwrap();
+    let heard = |cwd: Value| {
+        let r = host.event(Event {
+            name: "command_done".into(),
+            payload: json!({ "session": 1, "host": "esx-02", "command": "ls", "output": "", "code": 0, "cwd": cwd }),
+        });
+        r[0].ops[0]["text"].as_str().unwrap().to_string()
+    };
+    assert_eq!(heard(json!("/srv/app")), "/srv/app");
+    assert_eq!(heard(json!("/srv/\u{1b}[31m")), "nil");
+    assert_eq!(heard(json!("/srv/a\u{200b}b")), "nil");
+    assert_eq!(heard(json!("srv")), "nil");
+    assert_eq!(heard(json!(7)), "nil");
+}

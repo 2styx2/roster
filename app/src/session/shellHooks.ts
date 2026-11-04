@@ -10,7 +10,7 @@
 // shows no prompt it knows, so nothing is sent. A shell that looks like bash but doesn't take the
 // line (tcsh with a bash-like prompt) prints at most an error; that's cleared with the echo.
 
-import { folderOf } from "./osc7";
+import { folderOf, TEXT_MAX } from "./osc7";
 
 /** Which hook line fits the shell: one for bash and zsh (it checks which it's in, and does
  * nothing in another POSIX shell), one for fish, one for PowerShell. */
@@ -95,10 +95,14 @@ const ZSH =
   '__roster_d(){ printf "\\e]133;D;%s;roster=@N@\\a\\e]7;file://%s%s\\a" $? "${HOST-}" "$PWD"; }; ' +
   '__roster_c(){ printf "\\e]133;C;roster=@N@\\a"; }; ' +
   '__roster_w(){ [[ $PS1 == *"roster=@N@"* ]] || PS1="%{$(printf "\\e]133;A;roster=@N@\\a")%}$PS1%{$(printf "\\e]133;B;roster=@N@\\a")%}"; }; ' +
-  "precmd_functions=(__roster_d $precmd_functions __roster_w); preexec_functions+=(__roster_c); " +
-  "[[ -o histignorespace || -o incappendhistory || -o incappendhistorytime || -o sharehistory ]] || " +
-  '{ __roster_h=${HISTFILE-}; HISTFILE=; if [[ -n $__roster_h ]]; then fc -p "$__roster_h" $HISTSIZE $SAVEHIST; else fc -p; fi; unset __roster_h; }' +
+  "precmd_functions=(__roster_d $precmd_functions __roster_w); preexec_functions+=(__roster_c)@H@" +
   "'";
+/** zsh's way of keeping the line out of its history (#242, Q185): it starts the history list again
+ * from its file. That's the old list less the line only while nothing was typed in the shell, so
+ * it goes only then (review of #426, M1): after, it would lose what was typed. */
+const ZSH_HISTORY =
+  "; [[ -o histignorespace || -o incappendhistory || -o incappendhistorytime || -o sharehistory ]] || " +
+  '{ __roster_h=${HISTFILE-}; HISTFILE=; if [[ -n $__roster_h ]]; then fc -p "$__roster_h" $HISTSIZE $SAVEHIST; else fc -p; fi; unset __roster_h; }';
 const FISH_HOOK =
   "function __roster_a --on-event fish_prompt; printf '\\e]7;file://%s%s\\a\\e]133;A;roster=@N@\\a' $hostname $PWD; end; " +
   "functions -c fish_prompt __roster_p; function fish_prompt; __roster_p; printf '\\e]133;B;roster=@N@\\a'; end; " +
@@ -114,10 +118,12 @@ const PWSH_HOOK =
 
 /** The one line roster sends (without the Enter) to turn the marks on in a `kind` shell, every
  * mark carrying the Session's token `nonce` (`roster=NONCE`, ticket 120, decision Q131): only a
- * mark with it is the Session's own shell's, since no other machine ever sees it. */
-export function hookLine(kind: ShellKind, nonce: string): string {
+ * mark with it is the Session's own shell's, since no other machine ever sees it. `typed`: the
+ * user has typed in the Session, so zsh's part leaves its history alone (the line may stay in it). */
+export function hookLine(kind: ShellKind, nonce: string, { typed = false }: { typed?: boolean } = {}): string {
   if (!/^[0-9a-f]{8,64}$/.test(nonce)) throw new Error("a shell hook token is hex");
-  const line = kind === "fish" ? FISH_HOOK : kind === "pwsh" ? PWSH_HOOK : `${BASH}; ${ZSH}`;
+  const zsh = ZSH.replace("@H@", typed ? "" : ZSH_HISTORY);
+  const line = kind === "fish" ? FISH_HOOK : kind === "pwsh" ? PWSH_HOOK : `${BASH}; ${zsh}`;
   return ` ${line.replaceAll("@N@", nonce)}`;
 }
 
@@ -150,17 +156,19 @@ export const HOLD_MS = 2_000;
 const HOLD_MAX = 16 * 1024;
 const TAIL_MAX = 1024;
 
-/** What `:integrate` found: the marks are on (`on`), the line went but no marked prompt came
- * back (`no-marks`), or why nothing was sent. */
-export type IntegrateResult = "on" | "no-marks" | "marked" | "no-prompt" | "not-open";
+/** What `:integrate` found: the marks are on (`on`; `on-kept` when a POSIX shell got the line after
+ * the user had typed in it, so zsh may keep it in its history), the line went but no marked prompt
+ * came back (`no-marks`), or why nothing was sent. */
+export type IntegrateResult = "on" | "on-kept" | "no-marks" | "marked" | "no-prompt" | "not-open";
 
 export interface ShellHooksIo {
   /** Writes `line` to the Session; false when it isn't open (yet). */
   write(line: string): boolean;
   /** Puts output on the screen (and in its replay), after it was held. */
   show(data: Uint8Array): void;
-  /** The shell said its folder (OSC 7). */
-  cwd(path: string): void;
+  /** The shell said its folder (OSC 7); null: it said one roster doesn't take (osc7.ts), so the
+   * folder isn't known any more (review of #426, L2). */
+  cwd(path: string | null): void;
   /** Whether roster may send the line by itself (`shell_hooks`). */
   enabled(): boolean;
   /** What came of the line, once it's known (ticket 120: the echo window for Plugins closes). */
@@ -220,6 +228,8 @@ export class ShellHooks {
   private typedYet = false;
   private marked = false;
   private sentLine: string | null = null;
+  /** The line went to a POSIX shell after the user had typed in it: zsh's history keeps it. */
+  private kept = false;
   /** The prompt line the line was sent at, as text. */
   private sentAt = "";
   /** What came of the line: null while it's out (or before it went). */
@@ -277,7 +287,7 @@ export class ShellHooks {
   /** `:integrate`: sends the line now if the shell is at a prompt roster knows, and answers once
    * a marked prompt came back, or didn't. */
   integrate(): Promise<IntegrateResult> {
-    if (this.outcome) return Promise.resolve(this.outcome);
+    if (this.outcome) return Promise.resolve(this.said(this.outcome));
     if (this.sentLine !== null) return new Promise((resolve) => this.waiting.push(resolve));
     // Marks that aren't roster's (the shell's own integration) don't stop it: the user asked, and
     // roster's marks, with the token, go round them.
@@ -320,9 +330,10 @@ export class ShellHooks {
   }
 
   private send(kind: ShellKind): boolean {
-    const line = hookLine(kind, this.nonce);
+    const line = hookLine(kind, this.nonce, { typed: this.typedYet });
     if (!this.io.write(line + "\r")) return false;
     this.sentLine = line;
+    this.kept = kind === "posix" && this.typedYet;
     this.sentAt = this.screen?.line().text ?? "";
     this.armed = false;
     clearTimeout(this.idleTimer);
@@ -335,7 +346,12 @@ export class ShellHooks {
   private settle(outcome: "on" | "no-marks") {
     this.outcome = outcome;
     this.io.settled?.(outcome);
-    for (const resolve of this.waiting.splice(0)) resolve(outcome);
+    for (const resolve of this.waiting.splice(0)) resolve(this.said(outcome));
+  }
+
+  /** What `:integrate` says of `outcome`. */
+  private said(outcome: "on" | "no-marks"): IntegrateResult {
+    return outcome === "on" && this.kept ? "on-kept" : outcome;
   }
 
   /** The new prompt is in (its `A` and `B` marks) after nothing but the echo: the old prompt is
@@ -411,12 +427,13 @@ export class ShellHooks {
     let end = 0;
     for (const m of s.matchAll(OSC7)) {
       end = m.index + m[0].length;
-      const folder = folderOf(m[1] ?? "");
-      if (folder) this.io.cwd(folder);
+      this.io.cwd(folderOf(m[1] ?? ""));
     }
     // An OSC 7 cut off at the end of this read: the rest comes in the next.
     const open = s.lastIndexOf(OSC7_START);
-    if (open >= end && s.length - open < 2048) this.oscCarry = s.slice(open);
+    // Up to the longest the parser looks at (and its ESC ] 7 ; and terminator): longer is refused.
+    if (open >= end && s.length - open <= TEXT_MAX + OSC7_START.length + 2) this.oscCarry = s.slice(open);
+    else if (open >= end && open >= 0) this.io.cwd(null);
     else {
       for (let n = OSC7_START.length - 1; n > 0; n--) {
         if (s.endsWith(OSC7_START.slice(0, n))) {

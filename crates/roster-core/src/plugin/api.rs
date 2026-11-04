@@ -4965,7 +4965,7 @@ pub const TYPES: &[Type] = &[
             o(
                 "cwd",
                 "string",
-                "The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, nothing that reorders text, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.",
+                "The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.",
             ),
         ],
         open: false,

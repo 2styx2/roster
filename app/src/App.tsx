@@ -102,6 +102,7 @@ import { SavePanel } from "./quick/SavePanel";
 import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
+import { SessionList } from "./plugins/sessionList";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
 import { hostMenu } from "./sidebar/hostMenu";
@@ -250,6 +251,8 @@ interface WorkspaceProps extends AppProps {
 /** What `:integrate` says (ticket 121). */
 const INTEGRATE_SAYS: Record<IntegrateResult, (label: string) => string> = {
   on: (t) => `Shell integration is on in ${t}: its prompts are marked.`,
+  "on-kept": (t) =>
+    `Shell integration is on in ${t}: its prompts are marked. You'd typed in it already, so if it's zsh the hook line stays in its history (:help shell-hooks).`,
   "no-marks": (t) =>
     `Sent ${t}'s shell the hook line, but no marked prompt came back: its shell or prompt framework doesn't take it (:help shell-hooks).`,
   marked: (t) => `${t}'s shell marks its prompts already: nothing to send.`,
@@ -666,7 +669,12 @@ function Workspace({
   // the whole list goes to the core on start and whenever it changes, before the events that
   // changed it, for `roster.sessions.list()` (ticket 96, decision Q127).
   const openOrder = useRef(new Map<number, string | null>());
-  const sentOpen = useRef<string | null>(null);
+  // A folder change waits a little (SessionList: review of #426, L3); an open or an end goes at once.
+  const pluginsRef = useRef(plugins);
+  pluginsRef.current = plugins;
+  const sessionList = useRef<SessionList | null>(null);
+  sessionList.current ??= new SessionList((open) => pluginsRef.current.sessions(open));
+  useEffect(() => () => sessionList.current?.stop(), []);
   useEffect(() => {
     const before = seenTabs.current;
     const now = new Map<number, { state: "live" | "ended"; host: string | null }>();
@@ -697,12 +705,7 @@ function Workspace({
     // With the folder each one's shell last said (OSC 7, #242): the core gives it to terminal.read's
     // Plugins only (Q185), and a `cd` sends the list again.
     const cwds = new Map(sessions.tabs.map((t) => [t.id, t.cwd ?? null]));
-    const open = [...order].map(([session, host]) => ({ session, host, cwd: cwds.get(session) ?? null }));
-    const text = JSON.stringify(open);
-    if (text !== sentOpen.current) {
-      sentOpen.current = text;
-      plugins.sessions(open);
-    }
+    sessionList.current?.update([...order].map(([session, host]) => ({ session, host, cwd: cwds.get(session) ?? null })));
     for (const [toPlugins, toTutor] of events) {
       toPlugins();
       toTutor();

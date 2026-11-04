@@ -1,4 +1,3 @@
-/* eslint-disable no-control-regex -- the characters refused are control characters */
 // The folder a shell says it's in, with OSC 7 (`ESC ] 7 ; file://HOST/PATH BEL`): ticket 121
 // (#210, Q130e), read strictly since #242 (Q185), as Plugins get it too. It comes from the Host's
 // shell, in its output, so it's that shell's word and anything the Host prints can forge it: it's
@@ -7,13 +6,15 @@
 /** The longest folder roster takes, in characters once decoded; a longer one is no folder. */
 export const FOLDER_MAX = 1024;
 /** The longest OSC 7 text looked at (a folder of FOLDER_MAX characters, every byte escaped). */
-const TEXT_MAX = 4 * 3 * FOLDER_MAX + 300;
+export const TEXT_MAX = 4 * 3 * FOLDER_MAX + 300;
 /** A host name: letters, digits, `.`, `-`, `_`, at most 253 (none, as in `file:///tmp`, is fine). */
 const HOST = /^[A-Za-z0-9._-]{0,253}$/;
-/** What a folder may not hold: C0 and C1 controls, DEL, and the characters that reorder or break
- * the text around them (bidi marks, embeddings, overrides and isolates; line and paragraph
- * separators), so a folder shown in a tooltip or by a Plugin is the text it looks like. */
-const REFUSED = /[\x00-\x1f\x7f-\x9f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+/** What a folder may not hold: C0 and C1 controls and DEL (Unicode's Cc), every format character
+ * (Cf: bidi marks, embeddings, overrides and isolates, zero-width characters, the soft hyphen,
+ * the byte order mark, tags; review of #426, L1), and line and paragraph separators, so a folder
+ * shown in a tooltip or by a Plugin is the text it looks like. roster-core's `is_folder` refuses
+ * the same. */
+const REFUSED = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 /** The folder in an OSC 7's text (`file://HOST/PATH`, percent-decoded as UTF-8; a `%` that

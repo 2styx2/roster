@@ -373,6 +373,26 @@ describe("the hook line and the shell's history", () => {
     expect(saved).not.toContain(`roster=${N}`);
   });
 
+  // Review of #426, M1: what was typed in that shell before a late :integrate stays in its history.
+  it.skipIf(!has("zsh"))("zsh keeps what was typed before a late :integrate, in memory and in its file", () => {
+    const h = home();
+    writeFileSync(`${h}/hist`, "echo before\n");
+    const out = zsh(h, "", ["echo mid", hookLine("posix", N, { typed: true }), "echo after", "fc -ln 1", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    expect(out, tail(out)).toMatch(/echo before\s+echo mid\s+/);
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo before\necho mid\n/);
+    expect(saved).toContain("echo after");
+  });
+
+  it.skipIf(!has("bash"))("bash keeps what was typed before a late :integrate, and still takes the line out", () => {
+    const h = home();
+    run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=`, "echo mid", hookLine("posix", N, { typed: true }), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo mid\necho after/);
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
   it.skipIf(!has("zsh"))("zsh with HIST_IGNORE_SPACE leaves it to the option", () => {
     const h = home();
     const out = zsh(h, "setopt HIST_IGNORE_SPACE", ["echo before", hookLine("posix", N), "echo after", "exit"]);

@@ -51,6 +51,15 @@ describe("the folder in an OSC 7", () => {
     expect(folderOf("file://web-01/srv/%E2%80%AEgpj")).toBeNull();
   });
 
+  // Review of #426, L1: every format character (Unicode's Cf), not only the bidi ones.
+  it("is nothing with an invisible format character in it, raw or percent-encoded", () => {
+    for (const c of ["\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\u2064", "\ufeff", "\u00ad", "\u{e0001}", "\u{e0041}", "\u{e007f}"]) {
+      expect(folderOf(`file://web-01/srv/a${c}b`), JSON.stringify(c)).toBeNull();
+      const encoded = [...new TextEncoder().encode(c)].map((b) => `%${b.toString(16).toUpperCase().padStart(2, "0")}`).join("");
+      expect(folderOf(`file://web-01/srv/a${encoded}b`), encoded).toBeNull();
+    }
+  });
+
   it("is nothing when the escapes aren't UTF-8", () => {
     expect(folderOf("file://web-01/srv/%FF%FE")).toBeNull();
     expect(folderOf("file://web-01/srv/%C3")).toBeNull();

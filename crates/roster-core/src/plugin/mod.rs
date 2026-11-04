@@ -593,8 +593,16 @@ impl PluginHost {
     /// Sends `event` to every Plugin that listens and may hear it, all at once; the slow ones
     /// are given up on together. Only Plugins that changed something or failed answer.
     pub fn event(&self, event: Event) -> Vec<Reply> {
+        let mut payload = runtime::heard_payload(&event.name, event.payload);
+        // A command's folder is checked as a Session's is ([`is_folder`]): none, if it isn't one.
+        if event.name == "command_done"
+            && let Some(p) = payload.as_object_mut()
+            && p.get("cwd").is_some_and(|c| !c.as_str().is_some_and(is_folder))
+        {
+            p.remove("cwd");
+        }
         let event = Event {
-            payload: runtime::heard_payload(&event.name, event.payload),
+            payload,
             name: event.name,
         };
         let targets: Vec<(String, Target)> = {
@@ -964,15 +972,44 @@ pub struct OpenSession {
 pub const FOLDER_MAX: usize = 1024;
 
 /// Whether `cwd` is a folder the app would have read from an OSC 7 (osc7.ts): an absolute path of
-/// at most [`FOLDER_MAX`] characters with no control character and nothing that reorders the text
-/// it's shown in. The app checks first; the core takes nothing it wouldn't have, whoever sent it.
+/// at most [`FOLDER_MAX`] characters with no control character, format character (Cf) or line or
+/// paragraph separator. The app checks first; the core checks again both places a folder reaches
+/// Plugins (a Session's `cwd` in [`PluginHost::set_sessions`], `command_done`'s in
+/// [`PluginHost::event`]), so neither takes one the app wouldn't have, whoever sent it.
 fn is_folder(cwd: &str) -> bool {
     cwd.starts_with('/')
         && cwd.chars().count() <= FOLDER_MAX
-        && !cwd.chars().any(|c| {
-            c.is_control()
-                || matches!(c, '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-        })
+        && !cwd
+            .chars()
+            .any(|c| c.is_control() || is_format(c) || matches!(c, '\u{2028}' | '\u{2029}'))
+}
+
+/// Unicode's format characters (general category Cf, Unicode 15.1), which osc7.ts refuses as
+/// `\p{Cf}`: bidi marks, embeddings, overrides and isolates, zero-width characters, the soft
+/// hyphen, the byte order mark, tags (review of #426, L1).
+fn is_format(c: char) -> bool {
+    matches!(c,
+        '\u{00ad}'
+        | '\u{0600}'..='\u{0605}'
+        | '\u{061c}'
+        | '\u{06dd}'
+        | '\u{070f}'
+        | '\u{0890}'..='\u{0891}'
+        | '\u{08e2}'
+        | '\u{180e}'
+        | '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{206f}'
+        | '\u{feff}'
+        | '\u{fff9}'..='\u{fffb}'
+        | '\u{110bd}'
+        | '\u{110cd}'
+        | '\u{13430}'..='\u{1343f}'
+        | '\u{1bca0}'..='\u{1bca3}'
+        | '\u{1d173}'..='\u{1d17a}'
+        | '\u{e0001}'
+        | '\u{e0020}'..='\u{e007f}')
 }
 
 /// How often the host looks again at a Plugin waiting for roster serve.
