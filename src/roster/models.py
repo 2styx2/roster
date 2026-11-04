@@ -84,6 +84,9 @@ class Host(Model, frozen=True):
                            "opened until it is.")
     mac: Any = Field(repr=False, description="Its MAC address; `\"\"` if unset.")
     mesh: bool | None = Field(description="`mesh:` as roster.yml sets it; `null` if nothing does.")
+    os: Literal["windows", "posix"] | None = Field(description="`os:` as roster.yml sets it (defaults, group, Host): "
+                                                   "`windows` (setup, revoke and check run PowerShell there) or "
+                                                   "`posix`; `null` if nothing does, which is `posix`.")
     ip: str = Field(description="Its address (an IP or a DNS name).")
     name: str = Field(description="Its name in the Inventory, unique.")
     group: str = Field(description="The group it's in.")

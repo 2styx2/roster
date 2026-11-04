@@ -71,7 +71,7 @@ Rewrite the SSH config and Claude files after editing \fBroster.yml\fR
 .PP
 \fBroster check [\-\-box] [\-\-only LIST] [\-\-json] [host]\fR
 .PP
-Reachability of SSH, web UIs and services, and the Mesh's drift (without \fB\-\-only\fR). With one HOST: why a Session to it would or wouldn't open, step by step (see \fBroster check HOST\fR). With \fB\-\-box\fR: this Box's health, without connecting anywhere (see \fBroster check \-\-box\fR)
+Reachability of SSH (a login running \fBexit 0\fR, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without \fB\-\-only\fR); on an \fBos: windows\fR Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see \fBroster check HOST\fR). With \fB\-\-box\fR: this Box's health, without connecting anywhere (see \fBroster check \-\-box\fR)
 .TP
 \fBHOST\fR
 diagnose this one Host: inventory, ssh config, vault, DNS, port, host key, login (one connection)
@@ -275,7 +275,7 @@ with status or \-\-dry\-run: print JSON for scripts and tools, never a secret (s
 .PP
 \fBroster revoke [\-\-only LIST] [\-\-all] [\-y]\fR
 .PP
-Remove this box's key from every host; it names this box's files to delete only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, and never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories
+Remove this box's key from every host; it names this box's files to delete only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, and never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories. On an \fBos: windows\fR Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)

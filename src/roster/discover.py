@@ -210,6 +210,8 @@ def scan_entry(rec, taken, today):
 
     page_title = next((p["title"] for p in rec["ports"] if p["title"]), "")
     entry = {"ip": rec["ip"], "title": page_title, "type": kind}   # web page title is a good first guess
+    if kind == "windows":
+        entry["os"] = "windows"         # what setup, revoke and check act on (PowerShell there): type: is a label
     if ssh and ssh["port"] != 22:
         entry["port"] = ssh["port"]
     # Only plain servers get a key installed by default; switches, BMCs and Windows log in by password.

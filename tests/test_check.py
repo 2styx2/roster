@@ -157,6 +157,8 @@ def test_a_key_host_has_no_vault_steps_and_logs_in_with_batchmode(check, box, mo
                                 ("dns", "ok", None), ("tcp", "ok", None), ("host-key", "ok", None),
                                 ("auth", "ok", None)]
     assert "BatchMode=yes" in box.ssh_runs()[0]
+    # `exit 0`, not `true`: the same under sh, cmd.exe and PowerShell, so a Windows Host's login isn't a failure (T195)
+    assert box.ssh_runs()[0].endswith(" keyed exit 0")
 
 
 LOCAL_FAILURES = [
@@ -246,6 +248,8 @@ def test_the_host_refuses_the_password(check, box, monkeypatch):
     ("root@127.0.0.1: Permission denied (publickey).", 46),
     ("Received disconnect from 127.0.0.1 port 22:2: Too many authentication failures", 47),
     ("kex_exchange_identification: read: Connection reset by peer", 48),
+    # a shared connection (ControlMaster) the Host's sshd won't open a second session on: Windows' (T195)
+    ("mux_client_request_session: session request failed: Session open refused by peer\nNo existing session", 158),
 ])
 def test_a_key_login_that_fails(check, box, monkeypatch, stderr, code):
     monkeypatch.setenv("FAKE_SSH_STDERR", stderr)
