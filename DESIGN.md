@@ -233,7 +233,7 @@ A fixed desktop shell rather than a page:
 
 Floating pieces sit over the terminal: the Picker (up to 680px wide, 12vh from the top, at most 68vh tall), side panels (320px Key bindings) and full-window panels. A single z-order rule keeps them in order: float 5, full 6, full-top 7, over-full 8, and the Picker and lock above them all.
 
-Density is high and regular. Rows are `2 × ui-size` (30px), and spacing runs on small steps (2, 4, 6, 8, 10, 12, 16, 24px), with 6 to 12px doing most of the work. The minimum window is 480 × 320. Under 1040px, side panels float over the terminal instead of docking; under 900px and 720px, secondary text gives way. In the status bar, long values give way in a fixed order (path, then hints, then the Box's name), each with its whole text in a tooltip.
+Density is high and regular. Rows are `2 × ui-size` (30px), and spacing runs on small steps (2, 4, 6, 8, 10, 12, 16, 24px), with 6 to 12px doing most of the work. The minimum window is 480 × 320. Under 1040px, side panels float over the terminal instead of docking; under 720px the Sidebar floats over the terminal too (as in Focus), so the terminal keeps the window's width; under 640px the toolbar is icon-only. The window controls never give way. In the status bar, long values give way in a fixed order (path, then hints, then the Box's name), each with its whole text in a tooltip.
 
 **The Terminal-Is-The-Hero Rule.** Chrome recedes. If a pixel isn't helping you reach or use a shell, it's quiet.
 

@@ -146,7 +146,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* Clicks on the mark fall through to the drag region. */
 .titlebar-mark * { pointer-events: none; }
 .wordmark { font: 500 var(--text-sm) var(--font-mono); color: var(--muted); letter-spacing: 0.01em; }
-.window-controls { display: flex; height: 100%; }
+/* The window's own buttons never give way: in a frameless window they're the only way to close it,
+   so the toolbar shrinks before they move (the minimum window is 480 px). */
+.window-controls { display: flex; height: 100%; flex: none; }
 .window-controls button {
   width: 46px; height: 100%; padding: 0; display: grid; place-items: center;
   border: 0; border-radius: 0; background: transparent; color: var(--muted);
@@ -161,7 +163,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    commands one click away. Chrome recedes (taste.md): no fills at rest, muted until hovered, the
    same hairline-free look as the window's buttons; a count is data, so it's in Iosevka. Pressing
    uses the app's press scale. No motion of their own: they're used many times a day. */
-.toolbar { display: flex; align-items: center; gap: 2px; height: 100%; padding: 0 4px; }
+.toolbar { display: flex; align-items: center; gap: 2px; height: 100%; padding: 0 4px; min-width: 0; overflow: hidden; }
+/* A narrow window keeps the toolbar's icons and drops their words; each keeps its name and its
+   keys in the tooltip and for assistive tech (aria-label). */
+@media (max-width: 640px) {
+  .toolbar-text { display: none; }
+  .toolbar-button.with-text { padding: 0 7px; }
+}
 .toolbar-end { padding-right: 8px; }
 .toolbar-button {
   height: 24px; padding: 0 7px; display: inline-flex; align-items: center; gap: 6px;
@@ -1051,6 +1059,21 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .screen[data-view="focus"] .body.sidebar-right .sidebar {
   left: auto; right: 0; border-right: 0; border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
+}
+
+/* Too narrow for the Sidebar beside a usable terminal (720 = 285 + about 48 columns): the Sidebar
+   floats over the terminal, as in Focus, instead of squeezing it to a few columns that a remote
+   shell would wrap into. The terminal keeps the window's width; hiding the Sidebar (␣ e, or the
+   title bar's toggle) uncovers it. It shows from a key or a click, so it doesn't animate. */
+@media (max-width: 720px) {
+  .body[data-sidebar] { --sidebar-room: 0px; }
+  .screen .sidebar {
+    position: absolute; top: 0; bottom: 0; left: 0; z-index: var(--z-float);
+    border-right: 1px solid var(--line-strong); box-shadow: 8px 0 32px var(--shadow);
+  }
+  .screen .body.sidebar-right .sidebar {
+    left: auto; right: 0; border-right: 0; border-left: 1px solid var(--line-strong); box-shadow: -8px 0 32px var(--shadow);
+  }
 }
 
 /* Too narrow for the Sidebar, a side panel and a usable terminal (1040 = 248 + 320 + 472, about
