@@ -230,7 +230,7 @@ roster add NAME --ip ADDR [--user USER] [--auth REF] [--group GROUP] [--enroll |
            [--title TEXT] [--type TEXT] [--port N] [--from-vault] [--check] [--dry-run] [-y]
 ```
 
-`roster add` puts one Host you already know into `roster.yml`, reviewed, the way the app's add-Host form does: it's the same code (serve's `host.add`, decision Q190), so the two check and write a Host the same way.
+`roster add` puts one Host you already know into `roster.yml`, reviewed, the way the app's add-Host form does: it's the same code (serve's `host.add`), so the two check and write a Host the same way.
 
 - **Where:** under `--group`, an existing group or a new one (made after the last group, and said so); without it, the first group in the file. Only the new Host's lines are added: comments, order and quoting stay byte for byte, and it's written only if the result loads to exactly that Host with nothing else changed. A team repo's `roster.yml` gets it as a Pending change (the note says so: publish it from the app, or commit it); a plain file is saved in place, `roster.yml.bak` beside it ([A plain file or a team repo](#a-plain-file-or-a-team-repo)). Then this Box syncs, as `roster sync` does.
 - **What it refuses**, writing nothing: a bad name (letters, digits, `. _ -`), a bad address (not an IPv4 or IPv6 address or a DNS name, e.g. a URL), a name another Host has (81, naming its group), an address and SSH port another Host has (184, naming that Host: give `--port` for a second sshd on one machine). Values the Host would inherit anyway (its group's `user:`, `auth:`, `enroll:`) aren't written on it.
