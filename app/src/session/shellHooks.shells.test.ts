@@ -13,6 +13,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 import { XtermPromptScreen } from "./promptScreen";
 import { hookLine, promptShell, type CursorLine, type ShellKind } from "./shellHooks";
@@ -66,7 +67,16 @@ async function screenLine(out: string): Promise<CursorLine> {
  * cells it has drawn already (#400), so the bytes needn't hold the line in one piece. The rows from
  * the one the line went in at, joined (a long line wraps), runs of spaces as one. */
 async function drawnLine(out: string, mark: number, line: string): Promise<boolean> {
-  return Promise.resolve(shown(out.slice(mark)).includes(line.trim()));
+  const term = new Terminal({ cols: 120, rows: 40, scrollback: 1000, allowProposedApi: false });
+  const write = (data: string) => new Promise<void>((resolve) => term.write(data, resolve));
+  await write(out.slice(0, mark));
+  const b = term.buffer.active;
+  const from = b.baseY + b.cursorY;
+  await write(out.slice(mark));
+  let text = "";
+  for (let r = from; r < b.length; r++) text += b.getLine(r)?.translateToString(false) ?? "";
+  term.dispose();
+  return text.replace(/ +/g, " ").includes(line.trim().replace(/ +/g, " "));
 }
 
 /** What the shell printed since the last Enter, and the cursor's line on a screen it's drawn on. */
