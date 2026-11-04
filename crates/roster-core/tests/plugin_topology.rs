@@ -1165,6 +1165,7 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
         ops,
         error: None,
         disabled: None,
+        listens: None,
     })["text"]
         .as_str()
         .unwrap()
