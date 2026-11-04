@@ -66,6 +66,8 @@ import type { InventoryOp } from "./inventory/commands";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
 import type { BoxSync, CheckStarted, InventoryFileError } from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
+import { FirstRun } from "./inventory/FirstRun";
+import { isPlainFile, keptAs, nothingPending } from "./inventory/store";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
@@ -964,6 +966,9 @@ function Workspace({
   );
   const canEdit = apiVersion >= EDIT_API_VERSION;
   const canPublish = apiVersion >= PUBLISH_API_VERSION;
+  // T212: a plain roster.yml saves every edit straight away; a team repo's are Pending changes
+  const plain = isPlainFile(connInfo?.inventory);
+  const kept = keptAs(plain);
   const canAdd = apiVersion >= ADD_API_VERSION;
   const canLive = apiVersion >= LIVE_API_VERSION;
   const canJobs = apiVersion >= JOBS_API_VERSION;
@@ -1822,8 +1827,8 @@ function Workspace({
       const already = reviewed ? `${host} is already reviewed.` : `${host} isn't reviewed.`;
       if (h.reviewed === reviewed) return setMessage(already);
       const done = reviewed
-        ? `Marked ${host} reviewed, as a Pending change. It can be opened now.`
-        : `Marked ${host} unreviewed, as a Pending change. It can't be opened until it's reviewed again.`;
+        ? `Marked ${host} reviewed${plain ? kept : `,${kept}`}. It can be opened now.`
+        : `Marked ${host} unreviewed${plain ? kept : `,${kept}`}. It can't be opened until it's reviewed again.`;
       backend.reviewHost(host, reviewed).then(
         (r) => {
           reloadHosts();
@@ -1836,6 +1841,7 @@ function Workspace({
     },
     showChanges: (then) => {
       if (!canEdit) return setMessage(`:changes needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (plain && connInfo) return setMessage(nothingPending(connInfo.inventory));
       if (then === "publish" && !canPublish) {
         return setMessage(`:publish needs a newer roster (API version ${PUBLISH_API_VERSION}; this one speaks ${apiVersion})`);
       }
@@ -1934,40 +1940,39 @@ function Workspace({
   }
 
   async function inventoryCall(op: InventoryOp): Promise<Message> {
-    const pendingNote = "as a Pending change";
     switch (op.op) {
       case "remove": {
         const r = await backend.removeHost(op.host);
-        return routine(`Removed ${r.removed}`, `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`, afterChange(r));
+        return routine(`Removed ${r.removed}`, `Removed ${r.removed} from ${r.group}${kept}. Its vault item, if any, is untouched.`, afterChange(r));
       }
       case "rename": {
         const r = await backend.renameHost(op.host, op.to);
         return r.changed
-          ? routine(`Renamed ${op.host} to ${op.to}`, `Renamed ${op.host} to ${op.to} ${pendingNote}.`, afterChange(r))
+          ? routine(`Renamed ${op.host} to ${op.to}`, `Renamed ${op.host} to ${op.to}${kept}.`, afterChange(r))
           : `${op.host} already has that name.`;
       }
       case "move": {
         const r = await backend.moveHost(op.host, op.group);
         if (!r.changed) return `${op.host} is already in ${op.group}.`;
         // What it keeps from its old group is worth knowing: said whatever the setting.
-        if (r.pinned.length) return `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` + butWarnings(afterChange(r));
-        return routine(`Moved ${op.host} to ${op.group}`, `Moved ${op.host} to ${op.group} ${pendingNote}.`, afterChange(r));
+        if (r.pinned.length) return `Moved ${op.host} to ${op.group}${kept}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` + butWarnings(afterChange(r));
+        return routine(`Moved ${op.host} to ${op.group}`, `Moved ${op.host} to ${op.group}${kept}.`, afterChange(r));
       }
       case "group-new": {
         const r = await backend.newGroup(op.name);
-        return routine(`Added group ${op.name}`, `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`, afterChange(r));
+        return routine(`Added group ${op.name}`, `Added group ${op.name}${kept}. Drag Hosts onto it, or + adds one.`, afterChange(r));
       }
       case "group-rename": {
         const r = await backend.renameGroup(op.group, op.to);
         return r.changed
-          ? routine(`Renamed group ${op.group} to ${op.to}`, `Renamed group ${op.group} to ${op.to} ${pendingNote}.`, afterChange(r))
+          ? routine(`Renamed group ${op.group} to ${op.to}`, `Renamed group ${op.group} to ${op.to}${kept}.`, afterChange(r))
           : `${op.group} already has that name.`;
       }
       case "group-delete": {
         const r = await backend.deleteGroup(op.group, op.to);
         return r.moved.length
-          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.` + butWarnings(afterChange(r))
-          : routine(`Deleted group ${op.group}`, `Deleted group ${op.group} ${pendingNote}.`, afterChange(r));
+          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}${plain ? kept : `,${kept}`}.` + butWarnings(afterChange(r))
+          : routine(`Deleted group ${op.group}`, `Deleted group ${op.group}${kept}.`, afterChange(r));
       }
     }
   }
@@ -2104,7 +2109,7 @@ function Workspace({
   // The toolbar (decision Q65): in the title bar once the app is ready and unlocked (the lock
   // screen shows nothing but the mark), else a bar of its own at the top.
   const detailsHost = details === null ? undefined : hostByName.get(details);
-  const toolbarCtx: ToolbarContext = { pendingCount, sidebarShown, quickConnect: quickConnects, detailsShown: detailsHost !== undefined };
+  const toolbarCtx: ToolbarContext = { pendingCount, sidebarShown, quickConnect: quickConnects, detailsShown: detailsHost !== undefined, plain };
   const toolbarControls =
     ready && isShown(layout, "toolbar") ? shownControls(toolbarDefs, layout.controls, toolbarCtx) : [];
   const toolbar = (side: "start" | "end") => (
@@ -2144,6 +2149,22 @@ function Workspace({
       <div className="screen center">
         <p className="muted starting">Starting the backend…</p>
       </div>,
+    );
+  }
+  if (conn.state === "failed" && conn.problem.kind === "inventory-not-found") {
+    // T212: no Inventory on this Box: the three ways to make one, through serve
+    return frame(
+      <FirstRun
+        problem={conn.problem}
+        create={(params) => backend.createInventory(params)}
+        onMade={(made) =>
+          void connect(true).then((ok) => {
+            if (ok) setMessage(`Made ${made.path}, the Inventory ${made.name} now${made.hosts ? ` (${countOf(made.hosts, "Host")})` : ": add Hosts with + on a group, or :discover"}.`);
+          })
+        }
+        onRetry={() => void connect(true)}
+        copy={copy}
+      />,
     );
   }
   if (conn.state === "failed") {
@@ -2508,7 +2529,7 @@ function Workspace({
               refreshPending();
               setMessage(
                 update.changed
-                  ? routine(`Saved ${update.host.name}`, `Saved ${update.host.name} as a Pending change.`, afterChange(update))
+                  ? routine(`Saved ${update.host.name}`, `Saved ${update.host.name}${plain ? " to roster.yml" : " as a Pending change"}.`, afterChange(update))
                   : `Nothing changed on ${update.host.name}.` + butWarnings(update.warnings),
               );
             }}
@@ -2552,10 +2573,10 @@ function Workspace({
                 r.host.reviewed
                   ? routine(
                       `Added ${where}`,
-                      `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
+                      `Added ${where}${kept}${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
                       afterChange(r),
                     )
-                  : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` + butWarnings(afterChange(r)),
+                  : `Added ${where} unreviewed${plain ? kept : `,${kept}`}. :review ${r.host.name} marks it reviewed.` + butWarnings(afterChange(r)),
               );
             }}
             onClose={closeAdd}
@@ -2564,6 +2585,7 @@ function Workspace({
         {saveTab?.save && hosts && framed("save", "Save to vault", "save", 
           <SavePanel
             key={saveTab.id}
+            plain={plain}
             backend={backend}
             hosts={hosts}
             what={
@@ -2587,12 +2609,12 @@ function Workspace({
                 "added" in r
                   ? routine(
                       `Saved ${r.host.name}`,
-                      `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
+                      `Saved ${r.host.name} to ${r.host.group}${kept}; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
                       afterChange(r),
                     )
                   : routine(
                       `Saved ${r.host.name}'s password`,
-                      `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`,
+                      `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now${plain ? kept : `,${kept}`}.`,
                       afterChange(r),
                     ),
               );
@@ -2644,8 +2666,11 @@ function Workspace({
             title={`Remove ${confirming.host}?`}
             body={
               <>
-                <code>{confirming.host}</code> leaves group {confirming.group} in roster.yml, as a Pending change you can
-                discard until it&rsquo;s Published. Its vault item, if it has one, stays in the vault.
+                <code>{confirming.host}</code> leaves group {confirming.group} in roster.yml,{" "}
+                {plain
+                  ? "saved straight away (roster keeps the file as it was in roster.yml.bak)."
+                  : "as a Pending change you can discard until it\u2019s Published."}{" "}
+                Its vault item, if it has one, stays in the vault.
               </>
             }
             action="Remove"

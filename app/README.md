@@ -50,7 +50,7 @@ A fast, keyboard-first desktop app that gets you onto any Host in your team's ro
 | Windows copy | `%LOCALAPPDATA%\roster-app-dev` | `%LOCALAPPDATA%\roster-app-release` |
 | Stop | `app/scripts/app-stop.sh` | `app/scripts/app-stop.sh --release` (or just close the window) |
 
-Both use the installed `roster` (needs `roster serve`, API 3+; asking about a new Host's host key needs API 11, Q60; Quick Connect needs API 12, ticket 14; its "Save to vault" API 13, ticket 15; signing the vault out to use a different account API 14, ticket 42; roster's sections of `:check` with no Host API 16, ticket 49; the Mesh controls need API 17 (Mesh jobs), Discover 18, Topology 19 (`mesh.status`'s `grouped`); Plugins' `job_progress` and `:check` sections that answer later need 20 (concurrent serve); cancelling and check jobs 21) unless `ROSTER_APP_ROSTER` is set, and both share the same State and `init.lua`. The scripts and the app still read the old `ROSTER_DESK_*` env var names when the new ones aren't set.
+Both use the installed `roster` (needs `roster serve`, API 3+; asking about a new Host's host key needs API 11, Q60; Quick Connect needs API 12, ticket 14; its "Save to vault" API 13, ticket 15; signing the vault out to use a different account API 14, ticket 42; roster's sections of `:check` with no Host API 16, ticket 49; the Mesh controls need API 17 (Mesh jobs), Discover 18, Topology 19 (`mesh.status`'s `grouped`); Plugins' `job_progress` and `:check` sections that answer later need 20 (concurrent serve); cancelling and check jobs 21; making an Inventory on a Box with none, and "saved" for a plain `roster.yml`, 28) unless `ROSTER_APP_ROSTER` is set, and both share the same State and `init.lua`. The scripts and the app still read the old `ROSTER_DESK_*` env var names when the new ones aren't set.
 
 Paths below are from the repo root.
 
@@ -171,7 +171,8 @@ app/src/ui/Announce.tsx
 app/src/sidebar/      Sidebar.tsx (sections of rows, raised row, cursor), RowMenu.tsx and hostMenu.ts (a Host row's
                       menu, Q156), sections.ts (section registry, Sessions)
 app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|remove|rename|move`, `:group new|rename|delete`),
-                      ConfirmPanel.tsx (removing a Host asks first)
+                      ConfirmPanel.tsx (removing a Host asks first), store.ts (a plain roster.yml or a team repo: "saved" or
+                      "a Pending change", T212), FirstRun.tsx (Start your Inventory: a Box with none, through serve)
 app/src/folders/      Folders (GLOSSARY), now the built-in Plugin's: folders.ts (the Folder model and the `folders` registry
                       init.lua's go into), file.ts (folders.yml parsed for the one-time move, the Plugin's settings);
                       backend/fakeFolders.ts is the same Plugin for the fake Backend

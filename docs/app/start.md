@@ -13,7 +13,7 @@ These pages are also online, at [2styx2.github.io/roster/](https://2styx2.github
 - **Open a Host.** `␣ f` opens the Picker: type a few letters of a Host's name, address or group, then Enter. `␣ ]` and `␣ [` move between open Sessions.
 - **Run anything by name.** `␣ :` opens the command line, and Tab completes. Every key, button and menu runs a command you could type: [Commands](commands) lists them all.
 - **Learn the keys as you go.** Keycaps sit next to what they do. `␣ K` shows every binding, and [the quick reference](quickref) has the ones you'll use most on one page.
-- **A new Box, or no Hosts yet?** [Set up a Box](../new-box.md), then [add your Hosts](../adding-hosts.md).
+- **A new Box, or no Hosts yet?** With no `roster.yml` on the Box, the app offers to make one: a blank one, a copy of yours, or a clone of your team's repo ([A new Inventory](errors.md#a-new-inventory)). Then [set up the Box](../new-box.md) and [add your Hosts](../adding-hosts.md). A plain `roster.yml` of your own saves every edit straight away; a team repo's are Pending changes until you `:publish` them.
 
 ## Coming from another tool
 

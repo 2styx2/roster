@@ -44,15 +44,14 @@ impl BackendState {
 fn candidate(config: &Config) -> Result<roster_core::detect::Candidate, BackendError> {
     let env_cmd = roster_core::env::roster_override();
     let env_distro = roster_core::env::wsl_distro();
-    let plan = config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref()).map_err(
-        |m| {
+    let plan =
+        config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref()).map_err(|m| {
             BackendError::new(
                 ErrorKind::Failed,
                 m,
                 "Fix it in init.lua (docs/app/config.md), then Retry.",
             )
-        },
-    )?;
+        })?;
     detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)
 }
 

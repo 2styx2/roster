@@ -2833,7 +2833,7 @@ METHODS["discover.add"] = discover_add
 # to check what a step that timed out did: changes.CHECK_TIMEOUT, bitwarden's lookup after a create; and UNDO_TIME
 # to take a new Vault item back out). So serve
 # always answers before the app gives up, and the answer says what happened. Other methods: the app's 60 s.
-DEADLINES = {"inventory.create": 110, "host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
+DEADLINES = {"inventory.create": 75, "host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
              "host.verify_login": 45, "vault.create_item": 45, "quick.save": 45,
              "host.save_login": 45, "box.check": 45, "mesh.plan": 240, "mesh.apply": 240, "mesh.cut": 60}
 AFTER_DEADLINE = 40

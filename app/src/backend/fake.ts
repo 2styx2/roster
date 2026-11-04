@@ -12,6 +12,7 @@ import {
   type BackendInfo,
   type Inventories,
   InventoriesError,
+  NewInventoryError,
   type BackendProblem,
   type BoxCheck,
   BOX_CHECK_API_VERSION,
@@ -163,6 +164,12 @@ export interface FakeScenario {
   boxChecks?: HealthCheck[];
   /** `inventory.info`'s api_version (default 2; editing needs 5). */
   apiVersion?: number;
+  /** How roster.yml is kept (T212, API 28): `file` saves every edit straight to it, so nothing is
+   * ever pending; `repo` (the default) is a team repo's Pending changes. Only sent from API 28. */
+  store?: "repo" | "file";
+  /** The first-run dialog's `inventory.create` (T212): `old` answers as a roster before API 28 does
+   * (unknown method). Otherwise it makes one, and the next connect() starts. */
+  firstRun?: "old";
   /** Named Inventories (ticket 115, API 27): `inventories.list`'s, the active one, and the file an
    * earlier step of roster's lookup finds first (`$ROSTER_CONFIG` or `./roster.yml`), if any. Each
    * (re)start "detects" as the app's probe does: `override` if set, else the active one. A named
@@ -582,9 +589,21 @@ export const fixtures: Record<string, FakeScenario> = {
     startProblem: problem(
       "inventory-not-found",
       "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
-      "Clone the infra repo to ~/infra (or set ROSTER_CONFIG in ~/.profile), then retry.",
+      "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
     ),
   },
+  /** T212: the same, from a roster before serve API 28: the first-run dialog can't make one. */
+  "inventory-missing-old": {
+    hosts: makeHosts(0),
+    firstRun: "old",
+    startProblem: problem(
+      "inventory-not-found",
+      "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
+      "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
+    ),
+  },
+  /** T212: roster.yml is a plain file (serve API 28): every edit saved straight to it, nothing to publish. */
+  "plain-file": { hosts: makeHosts(12), apiVersion: 28, store: "file", info: { path: "~/infra/roster.yml" } },
   locked: { hosts: makeHosts(12) },
   "not-logged-in": { hosts: makeHosts(12), vault: { status: "not-logged-in" } },
   "missing-cli": { hosts: makeHosts(12), vault: { status: "missing-cli" } },
@@ -1275,6 +1294,8 @@ const NAME = /^[A-Za-z0-9._-]+$/;
 
 export function fakeBackend(scenario: FakeScenario): FakeBackend {
   let failures = 0;
+  /** inventory.create made one (T212): connect() starts from now on. */
+  let created = false;
   const printers: Printers = new Set();
   const { plugin: packagePlugin, ...packageHost } = fakePackageHost(scenario.packages ?? { named: [], lock: {} }, described);
   // ---- the Inventory as committed, and as edited on this Box (ticket 10)
@@ -1333,7 +1354,14 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     }
     onDisk = null;
   };
+  const plain = scenario.store === "file" && (scenario.apiVersion ?? 2) >= 28;
   const pending = (): PendingChanges => {
+    if (plain) {
+      // a plain file (T212): every edit was saved to it, so what's on disk is what's "committed"
+      committed = hosts;
+      committedGroups = groups;
+      return { path: scenario.info?.path ?? "~/infra/roster.yml", repo: null, kind: "file", diff: "", hosts: [], groups: [], count: 0, message: "", last_commit: null };
+    }
     const diff = fakeDiff(committed, hosts);
     const before = new Map(committed.map((h) => [h.name, h]));
     const changed = hosts.flatMap((h): HostChange[] => {
@@ -1640,7 +1668,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   return {
     async connect(options): Promise<BackendInfo> {
       await wait();
-      if (scenario.startProblem && !(scenario.failOnce && failures > 0)) {
+      if (scenario.startProblem && !created && !(scenario.failOnce && failures > 0)) {
         failures++;
         throw new BackendStartError(scenario.startProblem);
       }
@@ -1670,8 +1698,37 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           providers: ["bw"],
           roster_version: "0.1.0",
           api_version: scenario.apiVersion ?? 2,
+          ...((scenario.apiVersion ?? 2) >= 28
+            ? {
+                store:
+                  scenario.store === "file"
+                    ? { kind: "file" as const, note: "roster.yml isn't in a git repo, so it's a plain file: every edit saves straight to it", repo: null }
+                    : { kind: "repo" as const, note: "in the git repo ~/team-inventory: edits are Pending changes until you Publish them", repo: "~/team-inventory" },
+              }
+            : {}),
         },
       };
+    },
+    async createInventory(params) {
+      await wait();
+      if (scenario.firstRun === "old") throw new BackendCallError("unknown method 'inventory.create'", -32601);
+      if (created) throw new BackendCallError("this roster serve made one already", NewInventoryError.there);
+      if (params.how !== "blank" && !params.source) throw new BackendCallError(`params.source: the ${params.how === "file" ? "roster.yml to copy" : "git URL"}`, -32602);
+      if (params.how === "repo" && params.source?.includes("nope")) {
+        throw new BackendCallError(`git couldn't clone ${params.source}`, NewInventoryError.cloneFailed, {
+          fix: "check the URL and your access to the repo (`git clone URL` in a terminal shows the same)",
+        });
+      }
+      if (params.how === "file" && params.source?.includes("broken")) {
+        throw new BackendCallError(`${params.source} doesn't load, so nothing was written: groups: isn't a mapping`, NewInventoryError.notAnInventory, {
+          fix: `fix ${params.source} first`,
+        });
+      }
+      created = true;
+      const folder = params.folder.replace(/\/+$/, "");
+      const name = params.name ?? folder.split("/").pop() ?? "infra";
+      const path = `${folder}/roster.yml`;
+      return { path, name, how: params.how, hosts: hosts.length, restart: true as const };
     },
     async listHosts() {
       await wait();

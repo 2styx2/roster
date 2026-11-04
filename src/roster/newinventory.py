@@ -26,7 +26,7 @@ ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: im
 SSH_CONFIG_MAX = 1024 * 1024            # ... and ssh config
 GROUP = "servers"                       # the blank one's empty group
 IMPORTED = "imported"                   # the group Hosts from an ssh config go in
-CLONE_TIMEOUT = 90                      # s: a clone that can ask nothing (serve's)
+CLONE_TIMEOUT = 70                      # s: a clone that can ask nothing (serve's)
 
 HEADER = """\
 # roster.yml - the map of your network. NO PASSWORDS IN THIS FILE: only where they are (auth: bw:ITEM, ...).

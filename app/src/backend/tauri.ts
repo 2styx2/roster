@@ -32,6 +32,7 @@ import {
   type InventoryReload,
   type Inventories,
   type InventoryUsed,
+  type NewInventory,
   type PendingChanges,
   type PackageChecked,
   type PackageStatus,
@@ -200,6 +201,7 @@ export function tauriBackend(): Backend {
     // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
     listInventories: () => call<Inventories>("inventories_list"),
     useInventory: (name) => call<InventoryUsed>("inventories_use", { name }),
+    createInventory: (params) => call<NewInventory>("inventory_create", { params }),
     verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
     pendingChanges: () => call<PendingChanges>("changes_diff"),

@@ -213,6 +213,18 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .error h1 { font-size: var(--text-lg); font-weight: 600; margin: 0; color: var(--error); overflow-wrap: anywhere; }
 .error p { margin: 0; }
 .error .problem-message, .error .problem-facts, .error .problem-actions { margin: 0; overflow-wrap: anywhere; }
+/* No Inventory yet (T212): the three ways to make one, on the bare window. */
+.first-run { width: min(480px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.first-run h1 { font-size: var(--text-lg); font-weight: 600; margin: 0; }
+.first-run p { margin: 0; }
+.first-run form { display: flex; flex-direction: column; gap: 10px; align-self: stretch; }
+.first-run-ways { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.first-run-ways legend { padding: 0 0 2px; color: var(--muted); font-size: var(--text-xs); }
+.first-run-way { display: flex; align-items: baseline; gap: 8px; font-size: var(--text-sm); }
+.first-run-way > span { display: flex; flex-direction: column; }
+.first-run-way .muted, .first-run .edit-note { font-size: var(--text-xs); }
+.first-run-refusal p { margin: 0; overflow-wrap: anywhere; }
+.first-run-refusal > p:first-child { color: var(--error); }
 
 /* ---------- Standard layout: [Sidebar | workspace | side panel], command line, status bar ---------- */
 
