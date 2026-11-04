@@ -6,6 +6,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### New
+
+**CLI**
+
+- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
+
 ### Security
 
 **CLI**

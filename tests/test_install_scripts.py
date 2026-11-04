@@ -251,3 +251,89 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     assert "git clone -q git@example.com:team/map.git" in r.stdout
     assert "BatchMode=yes" in r.stdout                        # nobody to answer ssh under --yes
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key
+
+
+COMPLETION_LINE = 'command -v roster >/dev/null 2>&1 && eval "$(roster completion bash)"   # roster: completion'
+
+
+def install_box(tmp_path, login_shell="/bin/bash"):
+    """A HOME before install.sh, and stand-ins for everything install.sh would fetch or change outside it."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)        # conftest's isolated HOME
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    for name, text in {**FAKES, "bw": '#!/bin/sh\necho \'{"status":"unauthenticated"}\'\n'}.items():
+        (fakes / name).write_text(text)
+        (fakes / name).chmod(0o755)
+    env = {"HOME": str(home), "NO_COLOR": "1", "PATH": f"{fakes}:/usr/bin:/bin", "LANG": "C", "SHELL": login_shell}
+    return home, env
+
+
+def install(env, tmp_path, *args):
+    return run(INSTALL_SH, env, "--prefix", str(tmp_path / "opt"), *args)
+
+
+@posix_shell
+def test_install_turns_on_tab_completion_for_the_user_s_shell_without_asking(tmp_path):
+    home, env = install_box(tmp_path)
+    (home / ".zshrc").write_text("# mine\n")
+    r = install(env, tmp_path)
+    assert "Tab completion" in r.stdout, r.stdout + r.stderr
+    assert (home / ".bashrc").read_text().count(COMPLETION_LINE) == 1      # $SHELL's, made if it isn't there
+    zshrc = (home / ".zshrc").read_text()
+    assert zshrc.startswith("# mine\n") and zshrc.count(COMPLETION_LINE.replace("bash", "zsh")) == 1
+    assert "?" not in [line.strip()[:1] for line in r.stdout.splitlines() if "Tab completion" in line]
+    install(env, tmp_path)
+    assert (home / ".bashrc").read_text().count("# roster: completion") == 1     # again: nothing added twice
+
+
+@posix_shell
+def test_install_writes_fish_s_completion_file(tmp_path):
+    home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
+    install(env, tmp_path)
+    fish = home / ".config/fish/completions/roster.fish"
+    assert fish.read_text().splitlines()[1:] == ["roster completion fish | source"]
+    assert not (home / ".bashrc").exists() or "# roster: completion" not in (home / ".bashrc").read_text()
+
+
+@posix_shell
+def test_install_leaves_a_fish_completion_file_it_did_not_write(tmp_path):
+    home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# my own\n")
+    install(env, tmp_path)
+    assert fish.read_text() == "# my own\n"
+
+
+@posix_shell
+def test_install_no_completion_leaves_the_shell_alone(tmp_path):
+    home, env = install_box(tmp_path)
+    (home / ".bashrc").write_text("# mine\n")
+    r = install(env, tmp_path, "--no-completion")
+    assert "# roster: completion" not in (home / ".bashrc").read_text()
+    assert "roster completion bash" in r.stdout                  # says how to turn it on by hand
+
+
+@posix_shell
+def test_install_dry_run_says_where_completion_would_go(tmp_path):
+    home, env = install_box(tmp_path)
+    r = install(env, tmp_path, "--dry-run")
+    assert "would turn on Tab completion in ~/.bashrc" in r.stdout
+    assert not (home / ".bashrc").exists()
+
+
+@posix_shell
+def test_uninstall_removes_tab_completion(box):
+    home, env = box
+    rc = home / ".bashrc"
+    rc.write_text(rc.read_text() + f"{COMPLETION_LINE}\n")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# roster: completion (install.sh wrote this file; uninstall.sh removes it)\n"
+                    "roster completion fish | source\n")
+    mine = home / ".config/fish/completions/other.fish"
+    mine.write_text("complete -c other\n")
+    run(UNINSTALL_SH, env)
+    assert "completion" not in rc.read_text() and 'alias ll="ls -l"' in rc.read_text()
+    assert not fish.exists() and mine.exists()
