@@ -27,6 +27,9 @@ export interface ToolbarControlDef extends Entry {
   label(ctx: ToolbarContext): string;
   /** A visible word beside the icon; left out, the control is the icon alone. */
   text?: string;
+  /** The word goes (the icon stays) while this holds: Find when the Sidebar's own Find is on
+   * screen, so the window doesn't offer the same thing twice in words. */
+  iconOnly?(ctx: ToolbarContext): boolean;
   /** Its icon; left out (a Plugin's control may), the control is its text alone. */
   icon?: ToolbarIcon;
   command: CommandLine;
@@ -63,7 +66,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     byDefault: true,
     pressed: (c) => c.sidebarShown,
   }),
-  control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true }),
+  control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true, iconOnly: (c) => c.sidebarShown }),
   // Quick Connect (ticket 14): the Picker, ready for user@address[:port].
   control({
     id: "quick",
@@ -107,7 +110,8 @@ export const builtinControls: readonly ToolbarControlDef[] = [
   control({ id: "keys", label: () => "Key bindings", icon: "keys", command: "keys" }),
   // `:help`'s topic finder (ticket 37).
   control({ id: "help", label: () => "Help", icon: "help", command: "help" }),
-  control({ id: "lock", label: () => "Lock", icon: "lock", command: "lock" }),
+  // Locks now (␣ L): by the window's buttons, where the Sidebar's footer used to offer it.
+  control({ id: "lock", label: () => "Lock", icon: "lock", command: "lock", byDefault: true }),
   control({ id: "mode", label: () => "Focus mode", icon: "mode", command: "mode" }),
 ];
 
@@ -232,7 +236,7 @@ export function Toolbar({ controls, ctx, keysFor, leader, run, side }: ToolbarPr
             key={c.id}
             type="button"
             tabIndex={-1}
-            className={`toolbar-button${c.text ? " with-text" : ""}`}
+            className={`toolbar-button${c.text && !c.iconOnly?.(ctx) ? " with-text" : ""}`}
             aria-label={label}
             aria-pressed={pressed}
             title={hints && keys ? `${label} (${keys.replace(LEADER, leader)})` : label}
@@ -241,7 +245,7 @@ export function Toolbar({ controls, ctx, keysFor, leader, run, side }: ToolbarPr
             onClick={() => run(c.command)}
           >
             {c.icon && <ToolbarIconSvg name={c.icon} />}
-            {c.text && <span className="toolbar-text">{c.text}</span>}
+            {c.text && !c.iconOnly?.(ctx) && <span className="toolbar-text">{c.text}</span>}
             {count !== null && <span className="toolbar-count">{count}</span>}
           </button>
         );

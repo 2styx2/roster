@@ -92,7 +92,8 @@ describe("Hiding the key hints", () => {
   it("teach the keys that work now: the Leader's in Terminal mode, the list's in App mode", async () => {
     const { user } = await ready();
     const words = () => Array.from(statusbar().querySelectorAll(".hint")).map((h) => h.textContent?.trim().split(" ").at(-1));
-    expect(words()).toEqual(["find", "help", "keys", "bar"]);
+    // No Session yet: the empty state offers Find, so the bar doesn't.
+    expect(words()).toEqual(["help", "keys", "bar"]);
     await user.keyboard(LEADER);
     expect(words()).toEqual(["move", "open", "menu", "terminal"]);
   });

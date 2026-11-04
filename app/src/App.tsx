@@ -94,7 +94,8 @@ import { actionsOf, chordOf, defaultOptions, keymapOf, type CommandLine as Line,
 import { Picker } from "./picker/Picker";
 import { builtinRegistries, type Registries } from "./registries";
 import { BUILTIN } from "./registry";
-import { SessionPanes, TabStrip } from "./session/Sessions";
+import { connectPhase, SessionPanes, TabStrip } from "./session/Sessions";
+import { StateDot } from "./ui/StateDot";
 import { parseQuickTarget, type QuickTarget } from "./quick/target";
 import { SavePanel } from "./quick/SavePanel";
 import { HostDetails } from "./details/HostDetails";
@@ -103,7 +104,7 @@ import { Tabs } from "./session/tabs";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
 import { hostMenu } from "./sidebar/hostMenu";
-import { hostLights, sectionBuilder } from "./sidebar/sections";
+import { hostDot, hostLights, sectionBuilder } from "./sidebar/sections";
 import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
 import { PluginManager, type DemoPlugins } from "./plugins/manager";
 import { ViewPanel } from "./view/ViewContent";
@@ -554,6 +555,11 @@ function Workspace({
   /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
    * lit wherever a Host is listed (taste.md: the accent means live, Q185). */
   const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
+  // The window's title names the Session on screen ("esx-02 — roster"), as editors name the file.
+  const titleOf = sessions.tabs.find((t) => t.id === sessions.active)?.label;
+  useEffect(() => {
+    document.title = titleOf ? `${titleOf} — roster` : "roster";
+  }, [titleOf]);
   // Plugins (ticket 23): the Lua runs in roster-core; they act on the app through command lines,
   // and their UI goes into the registries with their name as its source.
   const runRef = useRef<(line: string) => void>(() => {});
@@ -2183,21 +2189,23 @@ function Workspace({
   const listKey = (action: string) =>
     (options.vim ? listKeyFor(keymap.listVim, action) : null) ?? listKeyFor(keymap.list, action);
   const moveKeys = [listKey("down"), listKey("up")].filter((k): k is string => k !== null);
-  const hints: [string | string[], string][] = (
-    appMode
-      ? [
-          [moveKeys, "move"],
-          [listKey("choose"), "open"],
-          [listKey("menu"), "menu"],
-          [listKeyFor(keymap.leader, "terminal"), "terminal"],
-        ]
-      : [
-          [findKeys, "find"],
-          [hintFor(keymap, "help"), "help"],
-          [hintFor(keymap, "keys"), "keys"],
-          [hintFor(keymap, "statusbar"), "hide this bar"],
-        ]
-  ).filter((h): h is [string | string[], string] => h[0] !== null && h[0] !== undefined && h[0].length > 0);
+  // A hint with a command is also a button for it. With no Session open the empty state already
+  // offers Find, so the bar doesn't say it a third time.
+  type Hint = [string | string[], string, Line?];
+  const offered: [string | string[] | null | undefined, string, Line?][] = appMode
+    ? [
+        [moveKeys, "move"],
+        [listKey("choose"), "open"],
+        [listKey("menu"), "menu"],
+        [listKeyFor(keymap.leader, "terminal"), "terminal"],
+      ]
+    : [
+        ...(sessions.tabs.length > 0 ? [[findKeys, "find", "find"] as [string | null, string, Line]] : []),
+        [hintFor(keymap, "help"), "help", "help"],
+        [hintFor(keymap, "keys"), "keys", "keys"],
+        [hintFor(keymap, "statusbar"), "hide this bar", "statusbar"],
+      ];
+  const hints = offered.filter((h): h is Hint => h[0] !== null && h[0] !== undefined && h[0].length > 0);
 
   const modeKeys = [hintFor(keymap, "mode"), hintFor(keymap, "focus"), ...globalKeysFor(keymap, ["mode", "focus"])].filter(
     (k): k is string => k !== null,
@@ -2238,6 +2246,22 @@ function Workspace({
             <span className="statusbar-cut">{info.inventory.box}</span>
           </span>
         );
+      case "session": {
+        // The Session on screen, as tmux names its window: its node (as in the Sidebar) and its
+        // name in Iosevka, so you know where you are with the Sidebar hidden or in Focus.
+        const tab = sessions.tabs.find((t) => t.id === sessions.active);
+        if (!tab) return null;
+        const ended = tab.status.state === "ended" || tab.status.state === "failed";
+        const known = hostByName.get(tab.host);
+        const dot = ended ? "ended" : connectPhase(tab) ? "connecting" : (tab.auth ?? (known ? hostDot(known) : "key"));
+        return (
+          <span key={id} className="session-seg" title={`Session ${tab.label}`}>
+            <StateDot dot={dot} lit={ended || connectPhase(tab) ? undefined : "current"} />
+            <span className="visually-hidden">Session </span>
+            <span className="statusbar-cut">{tab.label}</span>
+          </span>
+        );
+      }
       case "inventory":
         // The named Inventory serve runs on (ticket 115): always in sight while there is one.
         return (
@@ -2288,14 +2312,25 @@ function Workspace({
                 )}
               </span>
             )}
-            {hints.map(([k, what]) => (
-              <span key={what} className="hint key-hint">
-                {(Array.isArray(k) ? k : [k]).map((one) => (
-                  <Keys key={one} keys={one} leader={options.leader} />
-                ))}{" "}
-                {what}
-              </span>
-            ))}
+            {hints.map(([k, what, command]) => {
+              const caps = (
+                <>
+                  {(Array.isArray(k) ? k : [k]).map((one) => (
+                    <Keys key={one} keys={one} leader={options.leader} />
+                  ))}{" "}
+                  {what}
+                </>
+              );
+              return command ? (
+                <button key={what} type="button" tabIndex={-1} className="hint key-hint" onMouseDown={(e) => e.preventDefault()} onClick={() => run(command)}>
+                  {caps}
+                </button>
+              ) : (
+                <span key={what} className="hint key-hint">
+                  {caps}
+                </span>
+              );
+            })}
           </span>
         );
       case "mode":
@@ -2369,7 +2404,6 @@ function Workspace({
             onSelect={setSelected}
             leaderHint={options.leader}
             findKeys={hintFor(keymap, "find")}
-            footKeys={{ keys: hintFor(keymap, "keys"), lock: hintFor(keymap, "lock") }}
             run={(line) => {
               setMode(terminalMode);
               run(line);
