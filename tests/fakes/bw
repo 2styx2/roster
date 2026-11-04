@@ -229,8 +229,12 @@ q = a[2]
 def stdout_was(what):
     """FAKE_BW_STDOUT_LOG: where this call's stdout goes, "devnull" or "pipe" (roster must never read an item)."""
     if os.environ.get("FAKE_BW_STDOUT_LOG"):
-        st, null = os.fstat(1), os.stat(os.devnull)
-        where = "devnull" if (st.st_dev, st.st_ino, st.st_rdev) == (null.st_dev, null.st_ino, null.st_rdev) else "pipe"
+        if os.name == "nt":                                # NUL is a character device; a captured stdout a pipe
+            import ctypes, msvcrt
+            where = "devnull" if ctypes.windll.kernel32.GetFileType(msvcrt.get_osfhandle(1)) == 2 else "pipe"
+        else:
+            st, null = os.fstat(1), os.stat(os.devnull)
+            where = "devnull" if (st.st_dev, st.st_ino, st.st_rdev) == (null.st_dev, null.st_ino, null.st_rdev) else "pipe"
         open(os.environ["FAKE_BW_STDOUT_LOG"], "a").write(f"{what} {where}\n")
 
 
