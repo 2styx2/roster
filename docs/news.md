@@ -6,6 +6,16 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
+### Changed
+
+**CLI**
+
+- **Which networks have an SSH rate limiter is your setting** (#363): list them as `rate_limited: [10.0.0.0/8]` at the top of `roster.yml` (empty by default), and a Host there that doesn't answer is told its network's rate limiter may be why. With no list, a no-answer's fix says a rate limiter on the network can cause this; roster no longer assumes one fixed address range has one. See [Networks with an SSH rate limiter](cli-reference.md#networks-with-an-ssh-rate-limiter).
+
+**App**
+
+- A Session that gets no answer says a rate limiter on the network can cause this, for any address; `:check HOST` names the network when it's in `rate_limited:` (#363).
+
 ### Security
 
 **CLI**

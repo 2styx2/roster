@@ -46,7 +46,7 @@ from .askpass import LOOKUP_FAILED, NO_SERVE, TOKEN_SPENT, UNEXPECTED_PROMPT  # 
 # host.check's network and Host steps (rows 11-17, 19)
 NO_DNS = 40                 # the address doesn't resolve (row 15)
 REFUSED = 41                # the ssh port refused the connection (row 16)
-TIMEOUT = 42                # no answer from the ssh port (row 17; on 10.19.x often the rate limiter)
+TIMEOUT = 42                # no answer from the ssh port (row 17; a rate limiter can cause it: rate_limited:)
 HOST_KEY_CHANGED = 43       # the Host's key isn't the recorded one (row 13): never accepted automatically
 HOST_KEY_UNKNOWN = 44       # no recorded host key for this Host (row 14)
 PASSWORD_REFUSED = 45       # the Host refused the Login's password (row 11)
