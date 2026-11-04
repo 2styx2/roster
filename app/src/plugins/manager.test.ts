@@ -221,6 +221,38 @@ describe("running", () => {
     expect(heard.map(([n]) => n)).toEqual(["terminal_output", "terminal_output", "command_done"]);
   });
 
+  // #223 (Q185): a command's output is kept for command_done only while a Plugin listens for it.
+  it("keeps no command's output until a Plugin listens for command_done; one that started before makes none", async () => {
+    const heard: [string, Record<string, unknown>][] = [];
+    const late: FakePlugin = {
+      manifest: { name: "late", version: "1.0.0", description: "Listens when asked", author: "A. Author", api: 4, permissions: ["terminal.read"] },
+      load(roster) {
+        roster.on("terminal_output", (e) => void heard.push(["terminal_output", e]));
+        roster.commands.add("hear", { run: () => roster.on("command_done", (e) => void heard.push(["command_done", e])) });
+      },
+    };
+    const state = { [STATE_KEY]: [{ path: "~/plugins/late", name: "late", granted: ["terminal.read"], asked: ["terminal.read"] }] };
+    const { manager, registries } = setup({ "~/plugins/late": late }, state);
+    await manager.start();
+    say(manager, cmd("df -h", "disk full\r\n", 1) + "\x1b]133;A\x07esx-02$ \x1b]133;B\x07make\r\n\x1b]133;C\x07step 1\r\n");
+    await manager.flushOutput();
+    expect(heard.map(([n]) => n)).not.toContain("command_done");
+    registries.commands.get("hear")?.run({} as never, undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    say(manager, "step 2\r\n\x1b]133;D;0\x07" + cmd("ls", "file\r\n", 0));
+    await manager.flushOutput();
+    expect(heard.filter(([n]) => n === "command_done")).toEqual([["command_done", { session: 4, host: "esx-02", command: "ls", output: "file\n", code: 0 }]]);
+  });
+
+  // #242 (Q185): where a command ran, as the shell said with OSC 7 before it ran.
+  it("a command_done says the folder the shell said it was in", async () => {
+    const { heard, manager } = listening();
+    await manager.start();
+    say(manager, `\x1b]7;file://esx-02/srv/app\x07${cmd("make", "built\r\n", 0)}`);
+    await manager.flushOutput();
+    expect(heard.find(([n]) => n === "command_done")?.[1]).toEqual({ session: 4, host: "esx-02", command: "make", output: "built\n", code: 0, cwd: "/srv/app" });
+  });
+
   it("a function it handed over runs through `plugins call`, and its float shows", async () => {
     const { manager, registries } = setup({ [ALERTS]: alerts(["esx-02: ERROR"]) }, { ...installed });
     await manager.start();

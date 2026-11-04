@@ -120,7 +120,7 @@ export function recentAlerts(options: RecentAlertsOptions = {}): FakePlugin {
       version: options.version ?? "1.0.0",
       description: "Lines your Sessions print that look like trouble: ERROR, panic, disk full",
       author: "A. N. Author",
-      api: 5,
+      api: 6,
       permissions: options.permissions ?? ["terminal.read"],
     },
     load: (roster) => load(roster, options),

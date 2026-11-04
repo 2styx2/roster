@@ -149,7 +149,7 @@ export function discoverPlugin(options: { permissions?: string[] } = {}): FakePl
       version: "1.0.0",
       description: "Scan a network from the app and add what it finds, as Pending changes you review",
       author: "roster",
-      api: 5,
+      api: 6,
       permissions: options.permissions ?? [...SCANS, ADDS],
     },
     load: (roster) => load(roster),
