@@ -114,6 +114,10 @@ if [[ ! -f $src/pyproject.toml ]] || ! grep -q '^name = "roster"' "$src/pyprojec
     bad "run update.sh from the roster source folder (where install.sh is)"; exit 1
 elif [[ ! -d $src/.git ]]; then
     skip "$(home "$src") isn't a git clone (a Release tarball): unpack the newest roster-cli tarball and run its update.sh"
+elif ! git -C "$src" symbolic-ref -q HEAD >/dev/null; then
+    skip "$(home "$src") is on no branch (a tag, or a detached checkout): git switch to a branch to update from it"
+elif ! git -C "$src" rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
+    skip "$(home "$src")'s branch has no upstream to pull from: installing the source as it is"
 elif [[ -n $(git -C "$src" status --porcelain --untracked-files=no 2>/dev/null) ]]; then
     warn "$(home "$src") has changes of yours: not pulling (commit or stash them, then run this again)"
     skip "installing the source as it is"

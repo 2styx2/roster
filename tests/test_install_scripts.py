@@ -186,17 +186,42 @@ def test_uninstall_again_is_a_no_op(box):
     assert "roster setup never ran on this box" in r.stdout
 
 
+def source_copy(tmp_path):
+    """The files update.sh reads, in a folder of their own: it must never run git on the checkout running the tests."""
+    src = tmp_path / "src-copy"
+    (src / "src/roster").mkdir(parents=True)
+    for f in ("update.sh", "pyproject.toml", "src/roster/roster.1"):
+        (src / f).write_bytes((ROOT / f).read_bytes())
+    return src
+
+
 @posix_shell
-def test_update_reinstalls_roster_and_syncs_the_map(box):
+def test_update_reinstalls_roster_and_syncs_the_map(box, tmp_path):
     home, env = box
+    src = source_copy(tmp_path)
     (home / ".local/bin").mkdir(parents=True)                 # roster where install.sh puts it: the page goes beside
     (Path(env["PATH"].split(":")[0]) / "roster").rename(home / ".local/bin/roster")
-    r = run(UPDATE_SH, env)
+    r = run(src / "update.sh", env)
     assert r.returncode == 0, r.stdout + r.stderr
+    assert "isn't a git clone (a Release tarball)" in r.stdout
     log = calls(home)
-    assert f"uv tool install --force --reinstall --quiet {ROOT}" in log
+    assert f"uv tool install --force --reinstall --quiet {src}" in log
     assert "roster sync" in log
     assert (home / ".local/share/man/man1/roster.1").read_text() == (ROOT / "src/roster/roster.1").read_text()
+
+
+@posix_shell
+def test_update_on_a_detached_checkout_skips_the_pull(box, tmp_path):
+    home, env = box
+    src = source_copy(tmp_path)
+    git = ["git", "-C", str(src), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "v1"], check=True)
+    subprocess.run([*git, "checkout", "-q", "--detach"], check=True)     # as CI checks a pull request out, or a tag
+    r = run(src / "update.sh", env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "is on no branch" in r.stdout and "git pull" not in calls(home)
 
 
 @posix_shell
