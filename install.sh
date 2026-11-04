@@ -181,7 +181,7 @@ fi
 if ! have man; then warn "man not installed (optional: for man roster; roster man shows the page without it)"; fi
 if ! have jq || ! have nmap || ! have man; then
     opt=(); have jq || opt+=(jq); have nmap || opt+=(nmap)
-    if ! have man; then if have apk; then opt+=(man); elif ! have brew; then opt+=(man-db); fi; fi
+    if ! have man && ! have brew; then opt+=(man-db); fi       # macOS has man; man-db is its name elsewhere
     ask "Install the optional tools too (${opt[*]})?" N && pkg_install "${opt[@]}"
 fi
 
@@ -291,9 +291,15 @@ elif [[ -n $INFRA_REPO ]] && ask "Create $cfg_dir with the team's map (clone $IN
     if [[ -e "$cfg_dir" && -n "$(ls -A "$cfg_dir" 2>/dev/null)" ]]; then
         bad "$cfg_dir exists and isn't empty - pick another folder or empty it"; fail_stage
     elif if (( YES )); then
-             # nobody to answer ssh's host-key or passphrase question: fail instead of waiting on a hidden prompt
+             # nobody to answer a passphrase question: fail instead of waiting on a hidden prompt. The repo was named
+             # on the command line, so a first-seen host key is taken (accept-new: a changed one still fails). Your
+             # own GIT_SSH_COMMAND or core.sshCommand (a deploy key, say) is left as it is.
+             git_ssh=()
+             if [[ -z ${GIT_SSH_COMMAND:-} ]] && ! git config --get core.sshCommand >/dev/null 2>&1; then
+                 git_ssh=("GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+             fi
              step "clone $INFRA_REPO into $cfg_dir" \
-                 env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git clone -q "$INFRA_REPO" "$cfg_dir"
+                 env GIT_TERMINAL_PROMPT=0 ${git_ssh[@]+"${git_ssh[@]}"} git clone -q "$INFRA_REPO" "$cfg_dir"
          else live "clone $INFRA_REPO into $cfg_dir" git clone -q "$INFRA_REPO" "$cfg_dir"; fi; then
         if (( DRY )) || [[ -f $CFG ]]; then done_stage; else warn "the clone has no roster.yml at its top"; fail_stage; fi
     else warn "no git access? copy roster.yml into $cfg_dir by hand"; fail_stage; fi

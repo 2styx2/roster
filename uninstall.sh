@@ -9,6 +9,7 @@
 #                                become yes (a config folder with changes not pushed still defaults to no)
 #   ./uninstall.sh --keep-hosts  don't touch the hosts (no mesh cut, no revoke): this box's key stays on them
 #   ./uninstall.sh --dry-run     show what would happen, change nothing
+#   ./uninstall.sh --prefix DIR  roster is in DIR/bin (as install.sh --prefix DIR put it); or PREFIX=DIR
 #
 # Stages: take this box off its hosts (roster mesh cut --all, roster revoke --all), the auto-update cron job, the
 # lines in shell startup files, this box's SSH key and ssh config, the vault session, roster and its man page, and
@@ -22,13 +23,15 @@ MARK="# roster: ROSTER_CONFIG"           # the line install.sh adds to shell sta
 PATH_MARK="# roster: uv tools"           # and the PATH line it adds when ~/.local/bin wasn't there
 MAN_MARK="# roster: man page"            # and the MANPATH line, when man didn't find the page by itself
 
-YES=0 DRY=0 PURGE=0 KEEP_HOSTS=0
+YES=0 DRY=0 PURGE=0 KEEP_HOSTS=0 PREFIX=${PREFIX:-}
 while (( $# )); do
     case "$1" in
         -y|--yes) YES=1 ;;
         -n|--dry-run) DRY=1 ;;
         --purge) PURGE=1 ;;
         --keep-hosts) KEEP_HOSTS=1 ;;
+        --prefix) [[ -n ${2:-} ]] || { echo "--prefix needs a directory" >&2; exit 2; }; PREFIX=$2; shift ;;
+        --prefix=*) PREFIX=${1#--prefix=} ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
@@ -116,7 +119,16 @@ drop_lines() {                  # drop_lines FILE PATTERN  - delete the lines ma
     local f=$1 re=$2 tmp
     grep -qE "$re" "$f" 2>/dev/null || return 1
     if (( DRY )); then info "would remove from ${f/#$HOME/\~}: $(grep -E "$re" "$f" | head -1)"; return 0; fi
-    tmp=$(mktemp) && grep -vE "$re" "$f" > "$tmp"; cat "$tmp" > "$f"; rm -f "$tmp"
+    # rewritten in place (a symlinked dotfile stays a symlink, its mode stays) and only from a complete copy: a failed
+    # mktemp or a full disk must never empty ~/.bashrc. The copy is smaller than the file, whose space the rewrite
+    # frees first. grep -v exits 1 when no line is left: a complete copy too.
+    local rc=0
+    tmp=$(mktemp) || { bad "couldn't edit ${f/#$HOME/\~} (no temp file): remove its line marked # roster: yourself"; return 1; }
+    grep -vE "$re" "$f" > "$tmp" || rc=$?
+    if (( rc > 1 )); then
+        rm -f "$tmp"; bad "couldn't edit ${f/#$HOME/\~}: remove its line marked # roster: yourself"; return 1
+    fi
+    cat "$tmp" > "$f"; rm -f "$tmp"
     ok "removed roster's line from ${f/#$HOME/\~}"
 }
 
@@ -128,6 +140,8 @@ home() { printf '%s' "${1/#$HOME/\~}"; }
 (( DRY )) || mkdir -p "$(dirname "$LOG")"
 (( DRY )) || : > "$LOG"
 export PATH="$HOME/.local/bin:$PATH"
+PREFIX=${PREFIX/#\~/$HOME}
+[[ -n $PREFIX ]] && export PATH="$PREFIX/bin:$PATH"     # install.sh --prefix DIR put roster in DIR/bin
 rc_files=()
 for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do [[ -f $f ]] && rc_files+=("$f"); done
 
@@ -151,10 +165,11 @@ if [[ -f $CONF_DIR/inventories.json ]]; then
         < <(grep -o '"path": *"[^"]*"' "$CONF_DIR/inventories.json" | sed 's/.*: *"\(.*\)"/\1/')
 fi
 keys=("$HOME/.ssh/roster_ed25519")
+other_keys=()        # a key_path: of a roster.yml: may be a key you use for more than roster, so asked about apart
 for y in ${yamls[@]+"${yamls[@]}"}; do
     k=$(sed -n 's/^key_path: *["'\'']\{0,1\}\([^"'\'' #]*\).*/\1/p' "$y" | head -1)
     k=${k/#\~/$HOME}
-    [[ -n $k ]] && ! listed "$k" "${keys[@]}" && keys+=("$k")
+    [[ -n $k && $k != "${keys[0]}" ]] && ! listed "$k" ${other_keys[@]+"${other_keys[@]}"} && other_keys+=("$k")
 done
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)       # before any cd: BASH_SOURCE may be relative
 
@@ -269,6 +284,14 @@ else
         skip "kept this box's key and ssh config"
     fi
 fi
+# A key_path: elsewhere (~/.ssh/id_ed25519?) may be your own key for other servers too: never deleted by default
+for k in ${other_keys[@]+"${other_keys[@]}"}; do
+    [[ -e $k ]] || continue
+    warn "roster.yml's key_path: is $(home "$k"): if roster made it just for this box, it can go too"
+    if (( REVOKED )) && ask "Delete $(home "$k") and its .pub? (no if you use it for anything else)" N; then
+        remove "$(home "$k")" "$k" "$k.pub"
+    else info "kept $(home "$k")"; fi
+done
 
 # 5. Vault
 stage 5
@@ -321,7 +344,9 @@ for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.rem
 remove "roster's state in $(home "$CONF_DIR")" ${mine[@]+"${mine[@]}"}
 yours=()
 for p in "$CONF_DIR"/*; do [[ -e $p ]] && yours+=("$p"); done
-if (( ${#yours[@]} )); then
+if (( ${#yours[@]} )) && [[ ${cfg_dir:-} == "$CONF_DIR" ]]; then
+    info "kept $(home "$CONF_DIR"): your roster.yml is there (the next stage asks about it, checking it's saved)"
+elif (( ${#yours[@]} )); then
     info "$(home "$CONF_DIR") also has: ${yours[*]/#$CONF_DIR\//}"
     if ask "Delete $(home "$CONF_DIR") with those too (your roster.yml or provider plugins, if they're there)?" "$EXTRA"; then
         remove "$(home "$CONF_DIR")" "$CONF_DIR"

@@ -81,6 +81,15 @@ def test_a_mistyped_option_gets_the_nearest_one(capsys):
     assert "unrecognized arguments: --jsn - did you mean `--json`?" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("argv", [["--json"], ["hosts", "--sudo"]])
+def test_a_real_option_in_the_wrong_place_is_not_suggested_back(capsys, argv):
+    with pytest.raises(SystemExit):
+        main(argv)
+    err = capsys.readouterr().err
+    assert "did you mean" not in err
+    assert "goes after a command that takes it" in err
+
+
 def test_a_command_error_points_at_its_own_help(capsys):
     with pytest.raises(SystemExit):
         main(["run"])

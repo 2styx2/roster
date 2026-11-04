@@ -143,7 +143,7 @@ else
     fail_stage
 fi
 
-# 3. Team map: the roster.yml from $ROSTER_CONFIG, the line install.sh wrote, or ~/infra
+# 3. Team map: the roster.yml from $ROSTER_CONFIG, the line install.sh wrote, ~/infra, or ~/.config/roster
 cfg=${ROSTER_CONFIG:-}
 if [[ -z $cfg ]]; then
     for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
@@ -152,6 +152,7 @@ if [[ -z $cfg ]]; then
     done
 fi
 [[ -z $cfg && -f $HOME/infra/roster.yml ]] && cfg=$HOME/infra/roster.yml
+[[ -z $cfg && -f $HOME/.config/roster/roster.yml ]] && cfg=$HOME/.config/roster/roster.yml   # as uninstall.sh
 stage 3
 if [[ -z $cfg || ! -f $cfg ]]; then
     skip "no roster.yml found (set ROSTER_CONFIG, or run ./install.sh)"; cfg=""

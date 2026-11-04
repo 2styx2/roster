@@ -125,6 +125,43 @@ def test_uninstall_keeps_roster_when_the_revoke_failed(box):
 
 
 @posix_shell
+def test_uninstall_never_deletes_a_personal_key_named_by_key_path(box):
+    home, env = box
+    (home / "infra/roster.yml").write_text("key_path: ~/.ssh/id_ed25519\ngroups: {}\n")
+    for f in ("id_ed25519", "id_ed25519.pub"):
+        (home / ".ssh" / f).write_text("mine\n")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert (home / ".ssh/id_ed25519").exists() and (home / ".ssh/id_ed25519.pub").exists()
+    assert "kept ~/.ssh/id_ed25519" in r.stdout
+    assert not (home / ".ssh/roster_ed25519").exists()       # roster's own key still goes
+
+
+@posix_shell
+def test_purge_keeps_a_roster_yml_in_roster_s_own_folder(box):
+    """~/.config/roster/roster.yml is the map: never deleted under --yes (it isn't a pushed git clone)."""
+    home, env = box
+    (home / "infra/roster.yml").unlink()
+    (home / ".config/roster/roster.yml").write_text("groups: {}\n")
+    rc = home / ".bashrc"
+    rc.write_text(rc.read_text().replace("$HOME/infra/roster.yml", "$HOME/.config/roster/roster.yml"))
+    run(UNINSTALL_SH, env, "--purge")
+    assert (home / ".config/roster/roster.yml").read_text() == "groups: {}\n"
+
+
+@posix_shell
+def test_uninstall_finds_roster_in_its_prefix(box, tmp_path):
+    home, env = box
+    fakes = Path(env["PATH"].split(":")[0])
+    (tmp_path / "opt/bin").mkdir(parents=True)
+    (fakes / "roster").rename(tmp_path / "opt/bin/roster")
+    (tmp_path / "opt/share/man/man1").mkdir(parents=True)
+    (tmp_path / "opt/share/man/man1/roster.1").write_text(".TH\n")
+    run(UNINSTALL_SH, env, "--prefix", str(tmp_path / "opt"))
+    assert "roster revoke --all -y" in calls(home)
+    assert not (tmp_path / "opt/share/man/man1/roster.1").exists()
+
+
+@posix_shell
 def test_uninstall_removes_the_manpath_line_install_added(box):
     home, env = box
     rc = home / ".bashrc"
@@ -188,3 +225,4 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
                        start_new_session=True)
     assert "git clone -q git@example.com:team/map.git" in r.stdout
     assert "BatchMode=yes" in r.stdout                        # nobody to answer ssh under --yes
+    assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key

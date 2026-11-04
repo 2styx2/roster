@@ -148,6 +148,8 @@ def suggest(message: str, options: list[str] | None = None) -> str:
     (every --option roster has), "unrecognized arguments: --jsn" gets the nearest one too."""
     if message.startswith("unrecognized arguments: ") and options:
         for word in message.removeprefix("unrecognized arguments: ").split():
+            if word in options:                 # a real option, in the wrong place: `roster --json`, `hosts --sudo`
+                return f"{message} - {word} goes after a command that takes it (`roster COMMAND --help` lists them)"
             near = difflib.get_close_matches(word, options, n=1, cutoff=0.7) if word.startswith("-") else []
             if near:
                 return f"{message} - did you mean `{near[0]}`?"
