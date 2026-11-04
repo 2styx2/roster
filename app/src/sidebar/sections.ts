@@ -3,6 +3,7 @@
 // ticket 17 registers the Inventory the same way, and Folders (folders/) from outside, as a Plugin
 // will. Sections only say what rows they have; buildSections folds them by State, finds each
 // row's parent, and raises the on-screen Host's first row (the others are "also").
+import { addressCut } from "../ui/format";
 import type { Host, HostList } from "../backend/types";
 import { connectPhase, linkOf, statusText } from "../session/Sessions";
 import { tabFacts, type Tab, type TabsSnapshot } from "../session/tabs";
@@ -242,20 +243,17 @@ export function hostDot(host: Host): Dot {
   return host.enroll || ["agent", "key", "none"].includes(host.ssh.auth) ? "key" : "password";
 }
 
-/** How many of a long Host name's last characters stay in view when the Sidebar cuts it. */
-const NAME_END = 6;
-
 /** A Host as a tree row (the Inventory's, and a Plugin's such as Folders): Enter opens it, or
  * goes to its Session. */
 export function hostRow(host: Host, id: string, level: number): SidebarRow {
   return {
     id,
     label: host.name,
-    // A long name is cut in its middle (Q190d), so two that differ at the end stay apart.
-    ...(Array.from(host.name).length > NAME_END + 8 ? { end: Array.from(host.name).slice(-NAME_END).join("") } : {}),
     host: host.name,
     dot: hostDot(host),
-    detail: host.ip,
+    // A long address (IPv6) drops whole groups from its middle, so the name keeps room; the
+    // details footer and the tooltip have it whole.
+    detail: addressCut(host.ip, 17),
     // Its details, review, rename, remove… are in its menu, not buttons (T166, Q156: hostMenu.ts).
     menu: true,
     ...(host.reviewed ? {} : { badge: "unreviewed", title: "Not reviewed yet: can't be opened" }),

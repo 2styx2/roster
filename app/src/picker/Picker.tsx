@@ -460,16 +460,12 @@ export function Picker({
         </ul>
         {/* The selected Host whole, on one steady line: rows never wrap, so the list never jumps
             as the selection moves (Q195). The option itself carries the name for screen readers. */}
-        {rowCount > 0 && (
+        {selected && (
           <div className="picker-detail" aria-hidden="true">
-            {selected && (
-              <>
-                <span className="host-name">{selected.name}</span>
-                {selected.ip && <span className="host-ip">{selected.ip}</span>}
-                {selected.group && <span>{selected.group}</span>}
-                {selected.type && <span>{selected.type}</span>}
-              </>
-            )}
+            <span className="host-name">{selected.name}</span>
+            {selected.ip && <span className="host-ip">{selected.ip}</span>}
+            {selected.group && <span>{selected.group}</span>}
+            {selected.type && <span>{selected.type}</span>}
           </div>
         )}
         {rowCount === 0 && (

@@ -61,9 +61,6 @@ export interface SidebarRow {
   note?: string;
   /** The end of the label that must stay in view when the rest is cut off (a Session's " (2)"). */
   tail?: string;
-  /** A long name's last characters, kept in view when the name is cut, in the name's own colour:
-   * the cut falls in the middle (Q190d). Ignored when `tail` is set. */
-  end?: string;
   /** Right-aligned and faint: an address. It shows whole or not at all: the name comes first. */
   detail?: string;
   /** A Session's breadcrumb (ticket 120): the Host a nested ssh took it to, after the name. */
@@ -331,8 +328,7 @@ const Row = memo(function Row({
 }) {
   const buttons = row.actions && !row.menu;
   const cls = `sb-row${row.raised ? " raised" : ""}${row.raised && row.live ? " live" : ""}${row.also ? " also" : ""}${cursor ? " cursor" : ""}${selected ? " selected" : ""}${buttons ? " has-actions" : ""}${row.pending ? " pending" : ""}${row.link ? ` link-${row.link}` : ""}`;
-  const keep = row.tail ?? row.end;
-  const cut = keep !== undefined && row.label.endsWith(keep);
+  const cut = row.tail !== undefined && row.label.endsWith(row.tail);
   return (
     <li
       role="none"
@@ -383,9 +379,9 @@ const Row = memo(function Row({
               is cut, the label gives way, never the state. */}
           <span className="sb-name">
             <span className="sb-label" dir="auto">
-              {cut ? row.label.slice(0, -(keep as string).length) : row.label}
+              {cut ? row.label.slice(0, -(row.tail as string).length) : row.label}
             </span>
-            {cut && <span className={row.tail !== undefined ? "sb-tail" : "sb-end"}>{keep}</span>}
+            {cut && <span className="sb-tail">{row.tail}</span>}
             {row.note && <span className="sb-note"> {row.note}</span>}
             {row.pending && <span className="sb-pending-dot" aria-hidden="true" title="Not Published yet" />}
             {row.tags?.map((t) => (
@@ -486,53 +482,23 @@ const Section = memo(function Section({
 
 /** The cursor row, whole (M6): a cut-off name, its state and address, readable from the keyboard.
  * It repeats what the tree item's name already tells assistive tech, so it's hidden from it. */
-/** Scrolls the tree by `delta` so the row under the pointer stays put when the Sessions section
- * above it grows or shrinks. A short tree has no room to scroll by, so the room is borrowed at its
- * bottom; returns how much is borrowed now. `borrowed` -1 gives it all back. */
-function keepUnderPointer(tree: HTMLElement, delta: number, borrowed: number): number {
-  if (borrowed < 0) {
-    tree.style.paddingBottom = "";
-    return 0;
-  }
-  let room = borrowed;
-  if (delta > 0) {
-    // Where the content really ends (scrollHeight is never less than the viewport, so it can't
-    // say how short a short tree is), and the padding that leaves room to scroll by `delta`.
-    const last = tree.lastElementChild;
-    const top = tree.getBoundingClientRect().top;
-    const contentEnd = last ? last.getBoundingClientRect().bottom - top + tree.scrollTop : 0;
-    const need = tree.scrollTop + delta + tree.clientHeight - contentEnd;
-    if (need > 10 + room) {
-      room = need - 10;
-      tree.style.paddingBottom = `${need}px`;
-    }
-  }
-  tree.scrollTop += delta;
-  return room;
-}
-
-/** After the tree is held (keepUnderPointer), whatever straddles its top edge (a heading, a hint, a
- * row) would show as a sliver of cut glyphs. The veil (styles.css, `.sb-rest::before`) covers just
- * that sliver in the Sidebar's own colour, so the top reads as a clean edge. `on` false lifts it. */
-function veilTop(tree: HTMLElement, on: boolean) {
+/** Holds the Sessions section at its height while the pointer is on the tree under it (`on`), so
+ * a Session opening or closing never moves the tree: the row under the pointer stays the row
+ * you clicked, with nothing scrolled away (Q197). A new Session scrolls into view inside the
+ * held list; the section takes its new height when the pointer leaves. */
+function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
+  if (!section) return;
   if (!on) {
-    tree.style.removeProperty("--veil");
-    delete tree.dataset.veilAt;
+    section.classList.remove("held");
+    section.style.removeProperty("--held-h");
+    section.style.removeProperty("--held-rows");
     return;
   }
-  const edge = tree.getBoundingClientRect().top;
-  let veil = 0;
-  for (const atom of tree.querySelectorAll<HTMLElement>(".sb-heading, .sb-row, .sb-empty")) {
-    const box = atom.getBoundingClientRect();
-    if (box.top < edge && box.bottom > edge) veil = Math.max(veil, box.bottom - edge);
-  }
-  tree.style.setProperty("--veil", `${Math.ceil(veil)}px`);
-  tree.dataset.veilAt = String(tree.scrollTop);
-}
-
-/** A scroll by the user (not the hold) lifts the veil: their scroll cuts rows as any list does. */
-function liftStaleVeil(tree: HTMLElement) {
-  if (tree.dataset.veilAt !== undefined && tree.dataset.veilAt !== String(tree.scrollTop)) veilTop(tree, false);
+  if (section.classList.contains("held")) return;
+  const rows = section.querySelector<HTMLElement>(":scope > .sb-rows");
+  section.style.setProperty("--held-h", `${section.offsetHeight}px`);
+  section.style.setProperty("--held-rows", `${rows?.offsetHeight ?? 0}px`);
+  section.classList.add("held");
 }
 
 /** Marks a scrolling list with whether rows are hidden above or below (data-more). */
@@ -542,11 +508,6 @@ function markOverflow(list: HTMLElement) {
   const more = above && below ? "both" : above ? "above" : below ? "below" : "";
   if (more) list.dataset.more = more;
   else delete list.dataset.more;
-}
-
-/** Scrolls an element by `by` px (a helper, so the component never writes to the DOM itself). */
-function scrollBy(el: HTMLElement, by: number) {
-  el.scrollTop += by;
 }
 
 /** An IPv4 or IPv6 address, or a range (10.0.0.0/24). */
@@ -569,7 +530,6 @@ function Details({ row }: { row: SidebarRow }) {
               {i > 0 && "· "}
               {/* An address or a range is data (Iosevka); the rest is the app talking. */}
               {DATA_FACT.test(f) ? <span className="data">{f}</span> : f}
-              {i < facts.length + (title ? 1 : 0) - 1 && " "}
             </span>
           ))}
         </p>
@@ -648,7 +608,6 @@ export function Sidebar({
     const marks = lists.map((list) => {
       const mark = () => {
         markOverflow(list);
-        if (list === restRef.current) liftStaleVeil(list);
       };
       mark();
       list.addEventListener("scroll", mark, { passive: true });
@@ -657,45 +616,8 @@ export function Sidebar({
     return () => marks.forEach(([list, mark]) => list.removeEventListener("scroll", mark));
   });
 
-  // A Session opening or closing changes the Sessions section's height, above everything else in
-  // the tree. With the pointer in the Sidebar that would slide the row under it (the next click
-  // opening a neighbour), so the scroll moves by the same amount and the row stays put.
-  const pointerIn = useRef(false);
-  const sessionsHeight = useRef<number | null>(null);
-  const borrowed = useRef(0);
-  // How far the scroll-keeping has moved the tree, given back when the pointer leaves (Q194).
-  const shifted = useRef(0);
-  const giveBack = () => {
-    pointerIn.current = false;
-    const rest = restRef.current;
-    if (!rest) return;
-    // Back to where the tree was before Sessions moved it, so no heading stays half cut.
-    if (shifted.current !== 0) {
-      scrollBy(rest, -shifted.current);
-      shifted.current = 0;
-    }
-    veilTop(rest, false);
-    if (borrowed.current === 0) return;
-    borrowed.current = 0;
-    keepUnderPointer(rest, 0, -1);
-  };
-  useLayoutEffect(() => {
-    const el = scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
-    const h = el?.offsetHeight ?? null;
-    const before = sessionsHeight.current;
-    sessionsHeight.current = h;
-    const rest = restRef.current;
-    if (h === null || before === null || h === before || !rest) return;
-    if (!pointerIn.current) {
-      // The pointer isn't on the tree (Sessions closed by a key): give back what was held.
-      if (shifted.current !== 0) giveBack();
-      return;
-    }
-    const top = rest.scrollTop;
-    borrowed.current = keepUnderPointer(rest, h - before, borrowed.current);
-    shifted.current += rest.scrollTop - top;
-    veilTop(rest, shifted.current !== 0);
-  });
+  // While the pointer is on the tree, the Sessions above it keep their height (Q197).
+  const sessionsSection = () => scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
 
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs
   // some data for a drag to start).
@@ -819,7 +741,7 @@ export function Sidebar({
             the sections under it scroll, and that scroller keeps the row under the pointer. */}
         {/* Only when Sessions come first (init.lua can order the sections otherwise). */}
         {sections.slice(0, lifted).map(renderSection)}
-        <div className="sb-rest" ref={restRef} role="none" tabIndex={-1} onPointerEnter={() => (pointerIn.current = true)} onPointerLeave={giveBack}>
+        <div className="sb-rest" ref={restRef} role="none" tabIndex={-1} onPointerEnter={() => holdSessions(sessionsSection(), true)} onPointerLeave={() => holdSessions(sessionsSection(), false)}>
           {sections.slice(lifted).map(renderSection)}
         </div>
       </div>

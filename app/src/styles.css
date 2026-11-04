@@ -386,14 +386,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 2px 6px 0; outline: none; }
 .sb-scroll > .sb-section[data-section="sessions"] { flex: none; }
 .sb-rest { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-bottom: 10px; border-top: 1px solid transparent; }
-/* Scrolled: a hairline under Sessions. While the tree is held so the row under the pointer stays
-   put (Q192), the veil covers the sliver of whatever straddles its top edge (Sidebar.tsx veilTop),
-   so no heading, hint or row shows cut in half; it takes no room and lifts when the hold does. */
+/* Scrolled: a hairline under Sessions. */
 .sb-rest:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
-.sb-rest::before {
-  content: ""; display: block; position: sticky; top: 0; z-index: 1;
-  height: var(--veil, 0px); margin-bottom: calc(-1 * var(--veil, 0px)); background: var(--sidebar);
-}
+/* Held while the pointer is on the tree (Sidebar.tsx holdSessions, Q197): the section keeps its
+   height and its list scrolls inside it, so the tree under the pointer never moves. */
+.sb-section[data-section="sessions"].held { height: var(--held-h); overflow: hidden; }
+.sb-section[data-section="sessions"].held > .sb-rows { max-height: var(--held-rows); }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -472,8 +470,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 /* A Session's " (2)": it tells two Sessions to one long-named Host apart, so it's never cut. */
 .sb-tail { flex: none; white-space: pre; color: var(--muted); }
-/* A long Host name's last characters: the name is cut in its middle, its end in its own colour. */
-.sb-end { flex: none; white-space: pre; unicode-bidi: isolate; }
+/* A Host row keeps its address in its column: the name, cut at its end, takes what's left (the
+   round-8 middle cut put a name's end where addresses go, and split right-to-left names). A long
+   address (IPv6) is already shortened by whole groups (sections.ts). */
+.sb-row:has(.dot) .sb-text { flex-wrap: nowrap; }
+.sb-row:has(.dot) .sb-text > .sb-name { flex: 1 1 auto; min-width: 6ch; overflow: hidden; }
 .sb-row:has(.dot) .sb-name { font-family: var(--font-mono); font-size: var(--text-md); }
 /* An unreviewed Host: its dashed node says so, and its badge shows only when you look at the row
    (ticket 27). A Session's note ("ended (code 0)") sits in the name's line and is never cut: the
@@ -580,7 +581,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-details-name.data { font-family: var(--font-mono); }
 .sb-details-facts { margin-top: 2px; }
 /* A fact and its "·" stay on one line (facts are short); one too long for the line still wraps. */
-.sb-fact { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.sb-fact { display: inline-block; max-width: 100%; overflow-wrap: anywhere; margin-inline-end: 0.3em; }
 .sb-details-facts .data { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 
@@ -645,8 +646,6 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel .keys-source.config { color: var(--accent-ink); }
 /* Its name in init.lua (ticket 32): data, so Iosevka, quiet under the source. */
 .keys-option { display: block; margin-top: 1px; font: var(--text-xs)/16px var(--font-mono); color: var(--muted); }
-/* Shared by the whole group: on its heading, after the group's name, in the data's own case. */
-.keys-panel tr.group .keys-option-shared { display: inline; margin: 0 0 0 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
 }
@@ -918,12 +917,18 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    columns are sized by every Host and hold still as a query narrows the list. */
 .picker-row.picker-sizer { visibility: hidden; height: 0; min-height: 0; padding-block: 0; overflow: hidden; }
 .picker-detail {
-  flex: none; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; min-height: 30px;
-  padding: 6px 16px; border-top: 1px solid var(--line); font-size: var(--text-sm); color: var(--muted);
+  flex: none; display: flex; align-items: baseline; column-gap: 10px; height: 30px; padding: 0 16px;
+  border-top: 1px solid var(--line); font-size: var(--text-sm); line-height: 30px; color: var(--muted);
+  white-space: nowrap; overflow: hidden;
 }
-.picker-detail > span { min-width: 0; overflow-wrap: anywhere; }
+/* One line, always (it must never move the list): the name gives way last, the group first. */
+.picker-detail > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.picker-detail > .host-name { flex-shrink: 0.2; }
+.picker-detail > .host-ip { flex-shrink: 0; }
 .picker-detail > span + span::before { content: "·"; margin-right: 10px; color: var(--muted); }
 .picker-detail .host-name { font-family: var(--font-mono); color: var(--text); }
+/* A short window keeps its rows: the strip gives way, and the selected row's tooltip has it all. */
+@media (max-height: 460px) { .picker-detail { display: none; } }
 .picker-detail .host-ip { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .picker-footer {
   display: flex; align-items: center; gap: 14px; padding: 0 14px; height: 34px; flex: none;
