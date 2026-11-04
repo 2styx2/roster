@@ -41,7 +41,7 @@ def _bw(ctx, *args, env=None, input=None, floor=1):
 # The unlocked vault's session key. It goes into each `bw` call's env and nowhere else, never os.environ: every other
 # program roster starts (ssh and what its config runs, git and its hooks, nmap, another vault's CLI) would inherit it
 # from there, and with bw's local data the key opens the whole vault.
-_session = {"key": None}
+_session: dict[str, str | None] = {"key": None}
 
 
 def session_key():

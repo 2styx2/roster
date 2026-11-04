@@ -285,14 +285,14 @@ def fake_getpeereid(uid, ret=0):
     return lambda: fn
 
 
-@pytest.mark.parametrize("uid, ret, same", [
-    (os.getuid(), 0, True),             # this user
-    (os.getuid() + 1, 0, False),        # anyone else is refused
-    (os.getuid(), -1, False),           # getpeereid can't say: refused
+@pytest.mark.parametrize("other, ret, same", [   # the uid is read in the test: os.getuid isn't on Windows
+    (0, 0, True),                       # this user
+    (1, 0, False),                      # anyone else is refused
+    (0, -1, False),                     # getpeereid can't say: refused
 ])
-def test_without_so_peercred_getpeereid_checks_the_peer(monkeypatch, uid, ret, same):
+def test_without_so_peercred_getpeereid_checks_the_peer(monkeypatch, other, ret, same):
     monkeypatch.delattr(socket, "SO_PEERCRED", raising=False)
-    monkeypatch.setattr(askpass, "getpeereid", fake_getpeereid(uid, ret))
+    monkeypatch.setattr(askpass, "getpeereid", fake_getpeereid(os.getuid() + other, ret))
     a, b = socket.socketpair(socket.AF_UNIX)
     with a, b:
         assert askpass.same_user(a) is same
