@@ -1,6 +1,8 @@
 """How roster.yml is kept (T212): a plain file or a team's git repo, told apart per file (store.at). A plain file's
 edits save straight to it and it has nothing to pull, diff, discard or publish; a repo's are Pending changes."""
 
+import os
+import stat
 import subprocess
 
 import pytest
@@ -91,3 +93,79 @@ def test_a_file_not_committed_in_a_repo_saves_in_place(plain, tmp_path):
     s = store.at(plain)
     assert s.kind == "file" and "isn't committed" in s.note
     assert s.view() == {"kind": "file", "note": s.note, "repo": str(plain.parent.resolve())}
+
+
+# ---------------------------------------------------------------- PR #409's review: S1-S3
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="symlinks and modes as POSIX has them")
+
+
+@posix_only
+def test_a_planted_backup_symlink_is_replaced_never_followed(plain, tmp_path):
+    """S1: roster.yml.bak -> another file (a folder someone else made): the backup replaces the link itself."""
+    victim = tmp_path / "victim"
+    victim.write_text("keep me\n")
+    plain.with_name("roster.yml.bak").symlink_to(victim)
+    store.at(plain).save(TEXT, TEXT + "# more\n")
+    assert victim.read_text() == "keep me\n"
+    bak = plain.with_name("roster.yml.bak")
+    assert not bak.is_symlink() and bak.read_text() == TEXT
+
+
+@posix_only
+def test_a_planted_symlink_for_the_git_dirs_backup_folder_is_refused(plain, tmp_path):
+    committed(plain, tmp_path / "origin.git")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (plain.parent / ".git" / "roster").symlink_to(elsewhere)
+    with pytest.raises(Problem):
+        store.at(plain).save(TEXT, TEXT + "# more\n")
+    assert list(elsewhere.iterdir()) == [] and plain.read_text() == TEXT       # nothing written anywhere
+
+
+@posix_only
+def test_the_backup_keeps_roster_yml_private(plain, tmp_path):
+    """S2: a 0600 roster.yml's backup is 0600 too (in the git dir as well), whatever the umask."""
+    plain.chmod(0o600)
+    old = os.umask(0o022)
+    try:
+        bak = store.at(plain).save(TEXT, TEXT + "# more\n")
+        assert stat.S_IMODE(bak.stat().st_mode) == 0o600 and stat.S_IMODE(plain.stat().st_mode) == 0o600
+        committed(plain, tmp_path / "origin.git")
+        bak = store.at(plain).save(TEXT + "# more\n", TEXT)
+        assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+    finally:
+        os.umask(old)
+
+
+@posix_only
+def test_detection_never_runs_the_repos_fsmonitor(plain, tmp_path):
+    """S3: a folder's own .git/config can't make roster run a program (core.fsmonitor runs on reading the index)."""
+    committed(plain, tmp_path / "origin.git")
+    ran = tmp_path / "ran"
+    git(plain.parent, "config", "core.fsmonitor", f"touch {ran}")
+    assert store.at(plain).kind == "repo"
+    store.at(plain).save(TEXT, TEXT + "# more\n")
+    store.at(plain).diff()
+    assert not ran.exists()
+
+
+def test_an_inherited_git_dir_never_decides(plain, tmp_path, monkeypatch):
+    """S3: GIT_DIR from a dotfiles setup would make any file 'committed' in that repo: roster ignores it."""
+    other = tmp_path / "dotfiles"
+    other.mkdir()
+    (other / "x").write_text("x\n")
+    committed(other / "x", tmp_path / "dot-origin.git")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(plain.parent))
+    assert store.at(plain).kind == "file"
+
+
+def test_git_that_hangs_or_fails_means_a_plain_file(plain, monkeypatch):
+    """S3: detection that can't get an answer from git is a plain file, never an error on inventory.info."""
+    from roster import changes
+
+    def stuck(*a, **k):
+        raise Problem(73, "git rev-parse didn't finish within 1 s")
+    monkeypatch.setattr(changes, "git", stuck)
+    assert store.at(plain).kind == "file"

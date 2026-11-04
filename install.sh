@@ -113,10 +113,18 @@ ask_value() {                   # ask_value "Prompt" default -> echoes the answe
     echo "${reply:-$def}"
 }
 
+redact() {                      # redact TEXT -> TEXT with a URL's password cut out (https://me:***@host/...)
+    sed -E 's#(://[^/:@[:space:]]*):[^@/[:space:]]*@#\1:***@#g' <<<"$1"
+}
+
+safe_path() {                   # safe_path PATH -> 0 when PATH can go inside "..." in a shell startup file
+    [[ $1 != *[\"\$\`\\]* && $1 != *$'\n'* ]]
+}
+
 step() {                        # step "what" cmd...  - runs with a spinner, output to the log
-    local what=$1; shift
-    if (( DRY )); then info "would run: $*"; return 0; fi
-    printf '\n==== %s: %s\n' "$what" "$*" >> "$LOG"
+    local what; what=$(redact "$1"); shift
+    if (( DRY )); then info "would run: $(redact "$*")"; return 0; fi
+    printf '\n==== %s: %s\n' "$what" "$(redact "$*")" >> "$LOG"
     "$@" >> "$LOG" 2>&1 &
     local pid=$! i=0
     if [[ -t 1 ]]; then
@@ -133,8 +141,8 @@ step() {                        # step "what" cmd...  - runs with a spinner, out
 }
 
 live() {                        # live "what" cmd...  - runs in the foreground (it needs the keyboard)
-    local what=$1; shift
-    if (( DRY )); then info "would run: $*"; return 0; fi
+    local what; what=$(redact "$1"); shift
+    if (( DRY )); then info "would run: $(redact "$*")"; return 0; fi
     info "$what"
     if "$@" < "$TTY"; then ok "$what"; else bad "$what failed"; return 1; fi
 }
@@ -373,8 +381,12 @@ make_inventory() {              # make_inventory CFG HOW [NAME]: CFG made the HO
             if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$cfg" || return 1; fi
             return 0 ;;
         file:*)
-            src=${how#file:}
+            src=${how#file:}; src=${src/#\~/$HOME}
             if ! ask "Copy $src into $dir? (n: use it where it is)" Y; then
+                # a full path that's there, and one a shell startup file can hold (ROSTER_CONFIG="...")
+                if [[ ! -f $src ]]; then bad "no file at $src"; return 1; fi
+                src="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+                if ! safe_path "$src"; then bad "$src can't hold \", \$, \` or a newline: rename it, or copy it"; return 1; fi
                 MADE=$src; ok "using $src where it is"
                 if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$src" || return 1; fi
                 return 0
@@ -391,7 +403,11 @@ make_inventory() {              # make_inventory CFG HOW [NAME]: CFG made the HO
 cfg_dir=$(ask_value "Folder for your Inventory (roster.yml)" "$HOME/infra")
 cfg_dir=${cfg_dir/#\~/$HOME}
 CFG="$cfg_dir/roster.yml"
-if [[ -f "$CFG" ]]; then
+if ! safe_path "$cfg_dir"; then
+    # ROSTER_CONFIG="..." goes into the shell startup files (stage 6): a $( or ` there would run at every start
+    bad "the folder can't hold \", \$, \` or a newline (it goes into your shell startup files): run this again with another"
+    CFG=""; fail_stage
+elif [[ -f "$CFG" ]]; then
     ok "found $CFG"
     if [[ -d "$cfg_dir/.git" ]] && ask "Pull the latest map into $cfg_dir?" Y; then
         step "git pull" git -C "$cfg_dir" pull --ff-only --quiet || warn "couldn't fast-forward; using it as it is"

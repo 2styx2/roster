@@ -66,7 +66,7 @@ def cmd_init(args):
 
 
 def say_made(made, value):
-    from . import store
+    from . import newinventory, store
     path = made.path
     if made.how == "blank":
         say(f"wrote {path}, a blank Inventory - add Hosts under hosts: (or `roster discover CIDR --write`), then "
@@ -74,7 +74,7 @@ def say_made(made, value):
     elif made.how == "file":
         say(f"copied {value} to {path} - then run: roster setup")
     elif made.how == "repo":
-        say(f"cloned {value} into {path.parent} - then run: roster setup")
+        say(f"cloned {newinventory.shown_url(value)} into {path.parent} - then run: roster setup")
     elif made.hosts:
         say(f"wrote {path} with {plural(len(made.hosts), 'Host')} from {value or '~/.ssh/config'} (your ssh config "
             "is unchanged) - check them, then run: roster setup")

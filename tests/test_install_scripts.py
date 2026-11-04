@@ -315,9 +315,11 @@ def test_install_offers_the_ways_to_start_an_inventory(tmp_path, replies, want):
 
 @posix_shell
 def test_install_can_use_an_imported_file_where_it_is(tmp_path):
-    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "/tmp/theirs/roster.yml",
-                                       "Copy /tmp/theirs/roster.yml": "n"})
-    assert "init --inventory file:" not in out and "using /tmp/theirs/roster.yml where it is" in out, out
+    theirs = tmp_path / "theirs" / "roster.yml"
+    theirs.parent.mkdir()
+    theirs.write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": str(theirs), "Copy ": "n"})
+    assert "init --inventory file:" not in out and f"using {theirs} where it is" in out, out
 
 
 @posix_shell
@@ -379,3 +381,55 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
     assert "dnf install -y cronie" in r.stdout
     assert "would add to crontab:" in r.stdout
     assert "no crontab on this box" not in r.stdout
+
+
+# ---------------------------------------------------------------- PR #409's review: L4, L5, L6
+
+@posix_shell
+def test_install_never_shows_a_clone_urls_password(tmp_path):
+    """L4: https://me:TOKEN@host/... is shown, and logged, without the TOKEN."""
+    r = install(tmp_path, "--inventory", "repo:https://me:s3cret-token@example.com/team/map.git")
+    assert "s3cret-token" not in r.stdout + r.stderr, r.stdout
+    assert "https://me:***@example.com/team/map.git" in r.stdout
+
+
+@posix_shell
+def test_install_uses_a_file_in_place_only_as_a_full_path_that_is_there(tmp_path):
+    """L5: '~/x' (bash doesn't expand ~ after file:) and a relative path become full paths; a missing one isn't
+    used (nothing to point ROSTER_CONFIG at)."""
+    home = tmp_path / "home"
+    (home / "mine").mkdir(parents=True)
+    (home / "mine" / "roster.yml").write_text("groups:\n  lab:\n    user: root\n    hosts:\n      esx: 10.0.0.5\n")
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "~/mine/roster.yml",
+                                       "Copy ": "n"})
+    assert f"using {home / 'mine' / 'roster.yml'} where it is" in out, out
+    out = install_answering(tmp_path, {"1, 2, 3 or 4": "2", "Path of the roster.yml": "~/nope/roster.yml",
+                                       "Copy ": "n"})
+    assert "no file at" in out and "where it is" not in out.replace("(n: use it where it is)", ""), out
+
+
+@posix_shell
+def test_install_refuses_a_path_that_would_run_in_the_shell_startup_files(tmp_path):
+    """L5: ROSTER_CONFIG goes into .bashrc in double quotes: a path with $( ` " or a newline is refused."""
+    out = install_answering(tmp_path, {"Folder for your Inventory": "~/in$(touch x)fra"})
+    assert "can't hold" in out, out
+    assert "ROSTER_CONFIG" not in out.split("can't hold")[1].split("Summary")[0].replace("would add ROSTER_CONFIG", "")
+
+
+@posix_shell
+def test_uninstall_never_offers_to_delete_a_folder_that_holds_other_files(box):
+    """L5: a roster.yml used in place in, say, ~/Downloads: only roster's own files there are roster's to remove."""
+    home, env = box
+    (home / "infra" / "holiday.jpg").write_text("x\n")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert "Delete the whole config folder" not in r.stdout and "holds other files" in r.stdout, r.stdout
+    assert (home / "infra" / "roster.yml").exists() and (home / "infra" / "holiday.jpg").exists()
+
+
+@posix_shell
+def test_uninstall_says_a_repo_with_no_remote_is_the_only_copy(box):
+    """L6: a local git repo (install's git init) has no upstream: deleting it loses it."""
+    home, env = box
+    subprocess.run(["git", "-C", str(home / "infra"), "init", "-q"], check=True)
+    r = run(UNINSTALL_SH, env, answers="\n" * 40)
+    assert "only copy" in r.stdout and "a fresh clone brings it back" not in r.stdout, r.stdout

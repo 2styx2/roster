@@ -40,14 +40,8 @@ class Store:
 
     def backup(self, text):
         """Keep TEXT (what an edit is about to replace) as the backup; returns its path."""
-        if self.git_dir is not None:
-            d = self.git_dir / "roster"
-            d.mkdir(exist_ok=True)
-            bak = d / (self.path.name + ".bak")
-        else:
-            bak = self.path.with_name(self.path.name + ".bak")
-        edit.write_text(bak, text)
-        return bak
+        bak = (self.git_dir / "roster" if self.git_dir is not None else self.path.parent) / (self.path.name + ".bak")
+        return edit.keep_backup(bak, text, self.path)
 
     def save(self, old_text, new_text):
         """Write an edit of roster.yml: OLD_TEXT (what it held) kept as the backup, then NEW_TEXT all at once (mode
@@ -100,17 +94,25 @@ class RepoStore(Store):
 
 
 def at(path):
-    """How roster.yml at PATH is kept, as the disk and git say now."""
+    """How roster.yml at PATH is kept, as the disk and git say now. git that can't answer (it hangs on a slow mount,
+    fails, or isn't there) means a plain file: never an error (inventory.info asks this on every connect)."""
     path = Path(path).resolve()
+    try:
+        return detect(path)
+    except (Problem, OSError, subprocess.SubprocessError):
+        return Store(path, f"{path.name} is kept as a plain file (git didn't answer): every edit saves straight to it")
+
+
+def detect(path):
     name = path.name
     if shutil.which("git") is None:
         return Store(path, f"git isn't installed on this Box, so {name} is a plain file: every edit saves straight "
                            "to it")
-    top = changes.out(path.parent, "rev-parse", "--show-toplevel")
-    if top is None:
+    r = changes.git(path.parent, "rev-parse", "--show-toplevel", "--absolute-git-dir")
+    lines = r.stdout.splitlines() if r.returncode == 0 else []
+    if len(lines) != 2:
         return Store(path, f"{name} isn't in a git repo, so it's a plain file: every edit saves straight to it")
-    top = Path(top).resolve()
-    git_dir = Path(changes.out(top, "rev-parse", "--absolute-git-dir") or top / ".git")
+    top, git_dir = Path(lines[0]).resolve(), Path(lines[1])
     try:
         rel = path.relative_to(top).as_posix()
     except ValueError:                                  # git names the top another way (a drive letter's case)
@@ -121,7 +123,4 @@ def at(path):
     if not changes.out(top, "remote"):
         return Store(path, f"{top} has no remote, so {name} is kept as a plain file: every edit saves straight to it "
                            "(commit when you like; add a remote for Pending changes and Publish)", top, git_dir)
-    try:
-        return RepoStore(changes.Repo(path))
-    except (Problem, subprocess.SubprocessError):       # it moved under us: a plain file is the safe answer
-        return Store(path, f"{name} is kept as a plain file: every edit saves straight to it", top, git_dir)
+    return RepoStore(changes.Repo(path))

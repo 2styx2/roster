@@ -335,12 +335,12 @@ An Inventory is one `roster.yml`, and roster works the same whether it's a plain
 
 | HOW | What you get |
 |---|---|
-| `blank` (or `--blank`) | A short `roster.yml` that loads: a header, `key_path:`, and an empty group `servers` with a Host to copy commented out |
-| `file:PATH` | A copy of the `roster.yml` at PATH, made only once it loads (171 if it doesn't). To use it where it is instead, point roster at it (`-c PATH`, `ROSTER_CONFIG`, `roster inv add`) |
+| `blank` (or `--blank`) | A short `roster.yml` that loads: a header, `key_path:`, and an empty group `servers` with a Host to copy commented out. A `roster.yml` with no Hosts loads only in this shape (`groups:`, each group with `hosts:`, no unknown top-level key), so an empty file or a typo'd `grups:` is still an error |
+| `file:PATH` | A copy of the `roster.yml` at PATH, made only once it has `groups:` and loads (171 if not). To use it where it is instead, point roster at it (`-c PATH`, `ROSTER_CONFIG`, `roster inv add`) |
 | `repo:URL` | `git clone URL` into the folder `roster.yml` goes in, which must be empty or new (172); the clone must have `roster.yml` at its top (171). A team repo from the start |
 | `ssh-config[:PATH]` | The Hosts in `~/.ssh/config` (or PATH), in a group `imported`: each `Host` block's names, with its `HostName` (its address), `User`, `Port`, and `auth: agent` when it has an `IdentityFile` (named in a comment). Wildcards (`*`, `?`), negations (`!`) and `Match` blocks are skipped, `Include` isn't followed, and no other setting is read, so nothing secret is copied. The ssh config itself is only read, never changed (173 if it can't be). A Host with no `User` gets your login name, as ssh does |
 
-The new file goes to `-c PATH`, else `./roster.yml`. One that's already there is kept as it is (170): to start another beside it, give another folder and a name, `roster -c ~/home-net/roster.yml init --blank --name home`, which names it as `roster inv add` does. Then run `roster setup`.
+The new file goes to `-c PATH`, else `./roster.yml`, and is private (mode 0600). Every backup roster keeps of it (`roster.yml.bak`) has its mode, and a `.bak` that's a symlink is replaced, never written through. A password in a `repo:` URL never shows in roster's output. One that's already there is kept as it is (170): to start another beside it, give another folder and a name, `roster -c ~/home-net/roster.yml init --blank --name home`, which names it as `roster inv add` does. Then run `roster setup`.
 
 ## Named Inventories
 
