@@ -313,7 +313,7 @@ This Box's health, like Neovim's `:checkhealth`: the same checks as the app's `:
 |---|---|
 | roster | roster's version and Python's |
 | Inventory | `roster.yml` is found and loads (its path, or the error and its line); Hosts waiting for review, Hosts with no SSH user, service entries left out |
-| ssh | `ssh` is on `PATH`; roster's ssh config is written, included from `~/.ssh/config` and has every Host (else run `roster sync`); this Box's key exists if a Host uses key Logins; roster's known hosts has every Host's key |
+| ssh | `ssh` is on `PATH`; roster's ssh config is written, included from `~/.ssh/config` and has every Host (else run `roster sync`); this Box's key exists if a Host uses key Logins; roster's known hosts has every Host's key; this Box's name isn't an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …) that another Box likely shares (row 222) |
 | Vault | Each provider the Logins use: its CLI is installed, logged in, and locked or unlocked (from its own status command, as the lock screen asks it) |
 | askpass | The askpass channel (the private socket password Sessions get their password through) opens on this Box |
 | Infra repo | `roster.yml` is in a git repo, and whether it has Pending changes, other uncommitted files, or commits the upstream doesn't have (as last fetched) |
