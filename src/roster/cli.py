@@ -14,7 +14,17 @@ from urllib.parse import urlparse
 from . import __version__, boxsync, clihelp, jsonout, mesh
 from .addhost import cmd_add
 from .claude import write_claude_files
-from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
+from .common import (
+    die,
+    find_program,
+    never_look_in_the_current_folder,
+    not_reviewed,
+    program_argv,
+    run_instead,
+    say,
+    ssh_config_file,
+    tcp_ok,
+)
 from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
@@ -1020,7 +1030,6 @@ AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
 
 
 def cmd_providers(cfg, args):
-    import shutil
     used = {}
     for h in (cfg or {}).get("hosts", {}).values():
         for ref in {h["ssh"]["auth"], *(s["auth"] for s in h["services"].values())} - {None}:
@@ -1032,7 +1041,7 @@ def cmd_providers(cfg, args):
     if args.json:
         rows = [{"name": name, "kind": PROVIDERS[name]["kind"], "help": PROVIDERS[name]["help"],
                  "tool": PROVIDERS[name].get("tool") or None,
-                 "installed": bool(shutil.which(PROVIDERS[name]["tool"])) if PROVIDERS[name].get("tool") else None,
+                 "installed": bool(find_program(PROVIDERS[name]["tool"])) if PROVIDERS[name].get("tool") else None,
                  "used_by": sorted(used.get(name, ()))} for name in sorted(PROVIDERS)]
         rows.append({"name": "agent", "kind": "built-in", "help": AGENT_HELP, "tool": None, "installed": None,
                      "used_by": sorted(used.get("agent", ()))})
@@ -1043,7 +1052,7 @@ def cmd_providers(cfg, args):
     for name in sorted(PROVIDERS):
         p = PROVIDERS[name]
         tool = p.get("tool") or ""
-        installed = "" if not tool else ("  [tool found]" if shutil.which(tool) else f"  [`{tool}` NOT installed]")
+        installed = "" if not tool else ("  [tool found]" if find_program(tool) else f"  [`{tool}` NOT installed]")
         groups = f"  - used by: {', '.join(sorted(used[name]))}" if name in used else ""
         say(f"  {name:<8} {p['kind']:<10} {p['help']}{installed}{groups}")
     say(f"  {'agent':<8} {'built-in':<10} {AGENT_HELP}")
@@ -1261,6 +1270,7 @@ def cmd_inv(args):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd (#424)
     if argv[:1] == ["__complete"]:       # the shell's Tab (completion.py): never an error, never a usage message
         from . import completion
         return completion.main(argv[1:])

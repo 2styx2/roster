@@ -12,11 +12,11 @@ tells them apart (`at(path)`, per file, every time: nothing is cached) and knows
 Every caller (serve's edits, `roster discover --write`, the Mesh's cut, `roster check --box`) asks this module and
 never branches on git itself."""
 
-import shutil
 import subprocess
 from pathlib import Path
 
 from . import changes, edit
+from .common import find_program
 from .errors import NOTHING_TO_PUBLISH, ROSTER_ERROR, Problem
 
 REPO, FILE = "repo", "file"
@@ -125,7 +125,7 @@ def work_tree_git_dir(path):
 
 def detect(path):
     name = path.name
-    if shutil.which("git") is None:
+    if find_program("git") is None:
         return Store(path, f"git isn't installed on this Box, so {name} is a plain file: every edit saves straight "
                            "to it", None, work_tree_git_dir(path))
     r = changes.git(path.parent, "rev-parse", "--show-toplevel", "--absolute-git-dir")

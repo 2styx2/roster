@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .common import find_program, program_argv
+
 PAGE = Path(__file__).with_name("roster.1")
 REFERENCE = Path(__file__).resolve().parents[2] / "docs" / "cli-reference.md"    # in a clone only
 
@@ -28,7 +30,7 @@ SECTIONS = [("Machine-readable output", "JSON OUTPUT"), ("Files", "FILES"), ("En
 def install_prefix():
     """The prefix the `roster` command was installed into: PREFIX/bin/roster (~/.local/bin/roster for
     `uv tool install`). Not resolved through symlinks: man maps the PATH entry PREFIX/bin to PREFIX/share/man."""
-    found = shutil.which("roster")
+    found = find_program("roster")
     return Path(found).parent.parent if found else Path.home() / ".local"
 
 
@@ -47,10 +49,10 @@ def cmd_man(args):
         print(f"installed {dest}")
         print("try: man roster")
         return 0
-    if not shutil.which("man"):
+    if not find_program("man"):
         print(f"man isn't installed; the page is {PAGE}", file=sys.stderr)
         return 1
-    return subprocess.run(["man", str(PAGE)]).returncode    # a path with a slash: man reads that file
+    return subprocess.run(program_argv(["man", str(PAGE)])).returncode    # a path with a slash: man reads that file
 
 
 # ---------------------------------------------------------------- markdown (the little cli-reference uses)

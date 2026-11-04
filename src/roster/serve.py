@@ -21,7 +21,6 @@ import os
 import queue
 import re
 import secrets
-import shutil
 import signal
 import sys
 import threading
@@ -54,7 +53,9 @@ from .common import (
     deadline_at,
     die_message,
     failure_text,
+    find_program,
     known_hosts_label,
+    never_look_in_the_current_folder,
     not_reviewed,
     ssh_config_file,
     ssh_path,
@@ -348,7 +349,7 @@ def session_prepare(state, params):
     if not h["reviewed"]:
         raise RpcError(NOT_REVIEWED, not_reviewed(h))
     diagnose.check_user(h)
-    ssh = shutil.which("ssh")         # absolute: the app spawns it with `wsl.exe --exec`, where PATH is thin
+    ssh = find_program("ssh")         # absolute: the app spawns it with `wsl.exe --exec`, where PATH is thin
     if ssh is None:
         raise RpcError(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
     if not in_ssh_config(h["name"]):
@@ -1195,7 +1196,7 @@ def quick_prepare(state, params):
     save = save_param(params, password)
     if save:
         saving_provider(state, params)
-    ssh = shutil.which("ssh")
+    ssh = find_program("ssh")
     if ssh is None:
         raise RpcError(NOT_SET_UP, "there's no ssh on this box's PATH - install OpenSSH's client")
     if state.askpass is None:
@@ -3409,6 +3410,7 @@ class Server:
 
 
 def serve(config_arg, inv=None):
+    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd (#424)
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
     for stream in (sys.stdin, sys.stdout):

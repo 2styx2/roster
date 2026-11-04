@@ -3,9 +3,8 @@
 import base64
 import json
 import os
-import shutil
 
-from ..common import WINDOWS, say, user_config_dir
+from ..common import NotPrivate, find_program, read_private, say, user_config_dir
 from . import (
     PROVIDERS,
     ItemExists,
@@ -72,15 +71,18 @@ def session_file():
 
 def load_session_file():
     """BW_SESSION from ~/.config/roster/bw-session, so sessions without your shell's env (background jobs,
-    other terminals) can use an unlocked vault. Ignored unless only you can read it (on Windows the file is in your own
-    %APPDATA%, which only you can open)."""
+    other terminals) can use an unlocked vault. Ignored, with a warning, unless it's yours alone (common.read_private:
+    not a link, owned by you, nobody else can read it; #411)."""
+    if session_key():
+        return False
     f = session_file()
-    if session_key() or not f.is_file():
+    try:
+        key = read_private(f).strip()
+    except FileNotFoundError:
         return False
-    if not WINDOWS and f.stat().st_mode & 0o077:
-        say(f"warning      {f} is readable by others - ignored (chmod 600 {f})")
+    except NotPrivate as e:
+        say(f"warning      {e} - ignored")
         return False
-    key = f.read_text().strip()
     if key:
         set_session(key)
     return bool(key)
@@ -148,12 +150,12 @@ def _bw_unlock(password, ctx):
 
 def _bw_vault_status(ctx):
     """`bw status` as-is (this process's session key only, never the session file); "missing" if no bw."""
-    return _bw_status(ctx) if shutil.which("bw") else "missing"
+    return _bw_status(ctx) if find_program("bw") else "missing"
 
 
 def _bw_account(ctx):
     """vault_account for bw: the status and {email, server} (server None: bitwarden.com) from one `bw status`."""
-    if not shutil.which("bw"):
+    if not find_program("bw"):
         return "missing", None
     st = _bw_status_json(ctx)
     status = st.get("status")
