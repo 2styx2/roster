@@ -45,6 +45,8 @@ src/roster/
   changes.py        Pending changes: the infra repo's git (pull fast-forward only, roster.yml's diff, discard, the .bak, publish)
   clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
                     and the nearest name for a mistyped command or option
+  completion.py     Tab completion: `roster completion SHELL`'s scripts and the hidden `roster __complete` helper that
+                    walks the parser and reads names from the local roster.yml (decision Q183)
   manpage.py        roster(1): generated from the parser (cli.build_parser) and docs/cli-reference.md into
                     roster.1 (committed, shipped in the wheel); `roster man`. Regenerate: uv run python -m roster.manpage
   errors.py         the stable error codes and Problem (code, message, fix): what serve, askpass and check report
