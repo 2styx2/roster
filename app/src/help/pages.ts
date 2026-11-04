@@ -2,7 +2,8 @@
 // (ticket 23) registers its own page the same way the built-ins do. Most built-in pages are
 // generated each time they're shown from the live registries (the command table, the keymap,
 // Themes, finder sources, the error catalog) and the Config in effect, so they can't go stale; the
-// guides are docs/'s Markdown, bundled at build time (guides.ts). The index groups the pages the
+// guides are docs/'s Markdown, bundled at build time (guides.ts) and loaded the first time help
+// needs them (text.ts, T213), their topics known before then from the build's tag table. The index groups the pages the
 // way Neovim's help.txt does (ticket 43, decision Q73): Getting started, Make it yours, Reference,
 // Extending.
 //
@@ -19,8 +20,11 @@ import { BUILTIN, Registry, type Entry, type Source } from "../registry";
 import type { Theme } from "../theme/theme";
 import { healthSummary, type HealthReport, type HealthSection } from "../health/health";
 import { code, h, keys, link, p, plain, slug, text, type Block, type Inline } from "./doc";
-import { guideLink, guides, PARTS, type Guide } from "./guides";
-import { inline, parseMarkdown, withoutDevNotes } from "./markdown";
+import { blockTags, guideBlocks, headingTag, type PageTag, type Topic } from "./guideBlocks";
+import { guides, PARTS, type Guide } from "./guides";
+import { inline, withoutDevNotes } from "./markdown";
+import { helpText } from "./text";
+import guideTags from "virtual:help-tags";
 import { optionRows, optionTag, reference, referenceAliases } from "../config/reference";
 import type { StateChoices } from "./options";
 
@@ -60,6 +64,9 @@ export interface HelpPage extends Entry {
   part?: string;
   /** Other names that find it or a place on it (`init.lua` → `config`), as tag → topic. */
   aliases?: Record<string, string>;
+  /** The topics on it, when they're known before its body is (a guide, from the build's tag table:
+   * its text loads later, T213). Otherwise they're read off the body. */
+  tags?: readonly PageTag[];
   body(ctx: HelpContext): Block[];
 }
 
@@ -90,19 +97,7 @@ export function helpContext(
 
 // ---------- Topics ----------
 
-export interface Topic {
-  /** What `:help` takes: `options`, `terminal.size`, `config#the-sandbox`. */
-  tag: string;
-  page: string;
-  /** The entry or heading on the page; none for the page itself. */
-  anchor?: string;
-  /** What the topic finder shows. */
-  label: string;
-  /** The page's title, for an entry on it. */
-  path?: string;
-  /** A page, a heading on one, an entry (an option, a command, an error…), or another name. */
-  kind: "page" | "heading" | "entry" | "alias";
-}
+export { headingTag, type Topic };
 
 /** A page's blocks; an unknown page gives none. */
 export function pageBody(ctx: HelpContext, id: string): Block[] {
@@ -122,18 +117,7 @@ export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[
   };
   for (const pg of ctx.pages) add({ tag: pg.id, page: pg.id, label: pg.title, kind: "page" });
   for (const pg of ctx.pages) {
-    for (const b of pg.body(ctx)) {
-      if (b.t === "h" && b.level > 1) {
-        const tag = headingTag(pg.id, b.anchor);
-        add({ tag, page: pg.id, anchor: tag, label: plain(b.text), path: pg.title, kind: "heading" });
-      } else if (b.t === "defs") {
-        for (const d of b.items) {
-          if (d.anchor) add({ tag: d.anchor, page: pg.id, anchor: d.anchor, label: d.anchor, path: clip(plain(d.body), 80) || pg.title, kind: "entry" });
-        }
-      } else if (b.t === "table" && b.anchors) {
-        for (const a of b.anchors) if (a) add({ tag: a, page: pg.id, anchor: a, label: a, path: pg.title, kind: "entry" });
-      }
-    }
+    for (const t of pg.tags ?? blockTags(pg.id, pg.title, pg.body(ctx))) add({ ...t, page: pg.id });
   }
   for (const pg of ctx.pages) {
     for (const [alias, to] of Object.entries(pg.aliases ?? {})) {
@@ -144,12 +128,6 @@ export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[
   }
   return { topics: out, clashes };
 }
-
-/** `s` cut to at most `max` characters, ending with an ellipsis when it was cut. */
-const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
-
-/** A heading's topic: its anchor, which a page may write whole (`commands#hosts`) or as a slug. */
-export const headingTag = (page: string, anchor: string): string => (anchor.includes("#") ? anchor : `${page}#${anchor}`);
 
 /** Every topic (topicIndex's). */
 export function topics(ctx: HelpContext): Topic[] {
@@ -745,38 +723,13 @@ function allPage(ctx: HelpContext): Block[] {
 
 const guideCache = new Map<string, Block[]>();
 
-/** A guide's inlines with its links made help links (guideLink). */
-function fixLinks(guide: Guide, inlines: readonly Inline[]): Inline[] {
-  return inlines.map((i): Inline => {
-    if (i.t === "link") return { ...i, href: guideLink(guide, i.href), children: fixLinks(guide, i.children) };
-    if (i.t === "strong" || i.t === "em") return { ...i, children: fixLinks(guide, i.children) };
-    return i;
-  });
-}
-
-/** A guide's blocks: its notes for developers left out, its anchors made topics
- * (`config#the-sandbox`) and its links help links (guideLink). */
-function guideBlocks(guide: Guide): Block[] {
+/** A guide's blocks once its text is loaded (none before: HelpView waits for it). */
+function guideBody(guide: Guide): Block[] {
   const cached = guideCache.get(guide.id);
   if (cached) return cached;
-  const fix = (inlines: Inline[]) => fixLinks(guide, inlines);
-  const blocks = parseMarkdown(withoutDevNotes(guide.markdown)).map((b): Block => {
-    switch (b.t) {
-      case "h":
-        return { ...b, text: fix(b.text), anchor: `${guide.id}#${b.anchor}` };
-      case "p":
-      case "quote":
-        return { ...b, text: fix(b.text) };
-      case "list":
-        return { ...b, items: b.items.map(fix) };
-      case "table": {
-        const anchors = guide.rowTopics ? b.rows.map((r) => (slug(plain(r[0] ?? [])) ? `${guide.id}#${slug(plain(r[0] ?? []))}` : undefined)) : undefined;
-        return { ...b, head: b.head.map(fix), rows: b.rows.map((r) => r.map(fix)), ...(anchors ? { anchors } : {}) };
-      }
-      default:
-        return b;
-    }
-  });
+  const markdown = helpText.markdown(guide.id);
+  if (markdown === undefined) return [];
+  const blocks = guideBlocks(guide, markdown);
   guideCache.set(guide.id, blocks);
   return blocks;
 }
@@ -805,7 +758,7 @@ export const builtinHelpPages: readonly HelpPage[] = [
   page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage),
   page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { checkhealth: "health" }),
   page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { "help-index": "all" }),
-  ...guides.map((g) => page(g.id, g.order, g.part, g.title, g.summary, () => guideBlocks(g), g.aliases)),
+  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, () => guideBody(g), g.aliases), tags: guideTags[g.id] ?? [] })),
 ];
 
 export function builtinHelpRegistry(): HelpRegistry {

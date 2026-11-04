@@ -1,27 +1,9 @@
-// The hand-written guides, bundled from docs/ at build time. The Markdown in docs/ is the one
-// copy: Vite reads it as text (`?raw`) when the app is built, so a guide in the app is always the
-// docs of the commit it was built from, and there's nothing to copy by hand. lint.test.ts fails
-// CI on a link in any of them that goes nowhere.
-import config from "../../../docs/app/config.md?raw";
-import errors from "../../../docs/app/errors.md?raw";
-import extending from "../../../docs/app/extending.md?raw";
-import help from "../../../docs/app/help.md?raw";
-import keyboard from "../../../docs/app/keyboard.md?raw";
-import recipes from "../../../docs/app/recipes.md?raw";
-import start from "../../../docs/app/start.md?raw";
-import themes from "../../../docs/app/themes.md?raw";
-import addingHosts from "../../../docs/adding-hosts.md?raw";
-import cli from "../../../docs/cli-reference.md?raw";
-import deprecated from "../../../docs/deprecated.md?raw";
-import news from "../../../docs/news.md?raw";
-import meshGuide from "../../../docs/mesh.md?raw";
-import newBox from "../../../docs/new-box.md?raw";
-import plugins from "../../../docs/plugins.md?raw";
-import pluginApi from "../../../docs/plugin-api.md?raw";
-import pluginStubs from "../../../examples/plugins/types/roster.lua?raw";
-import pluginApiData from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
-import serveApi from "../../../docs/serve-api.md?raw";
-import notices from "virtual:third-party-notices";
+// The hand-written guides: each one's topic, title, place on the index and other names. Their text
+// is docs/'s Markdown, bundled at build time (guideText.ts, `?raw`), so a guide in the app is always
+// the docs of the commit it was built from, and there's nothing to copy by hand; it loads the first
+// time help needs it (text.ts, T213), and the tag table (`virtual:help-tags`) has their topics
+// before then. lint.test.ts fails CI on a link in any of them that goes nowhere.
+import { tags as pluginApiTags } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { version as APP_VERSION } from "../../package.json";
 
 /** Where a page sits on the index, in this order (Neovim's help.txt groups its files the same way,
@@ -45,7 +27,6 @@ export interface Guide {
   /** Each table row is a topic, `<id>#<slug of its first cell>` (deprecated.md's old names), so
    * an alias can land on the row itself. */
   rowTopics?: boolean;
-  markdown: string;
 }
 
 export const guides: readonly Guide[] = [
@@ -57,7 +38,6 @@ export const guides: readonly Guide[] = [
     part: "Getting started",
     order: 1,
     aliases: { intro: "start", "new-to-roster": "start", "coming-from": "start#coming-from-another-tool" },
-    markdown: start,
   },
   {
     id: "help",
@@ -67,7 +47,6 @@ export const guides: readonly Guide[] = [
     part: "Getting started",
     order: 2,
     aliases: { links: "help#links", helpgrep: "help#searching-every-page", outline: "help#the-outline" },
-    markdown: help,
   },
   {
     id: "new-box",
@@ -76,7 +55,6 @@ export const guides: readonly Guide[] = [
     summary: "Install roster on a machine, unlock the vault, run setup, and test it",
     part: "Getting started",
     order: 3,
-    markdown: newBox,
   },
   {
     id: "adding-hosts",
@@ -85,7 +63,6 @@ export const guides: readonly Guide[] = [
     summary: "Scan a network, put its logins in the vault, fill in roster.yml, test every login",
     part: "Getting started",
     order: 4,
-    markdown: addingHosts,
   },
   {
     id: "config",
@@ -95,7 +72,6 @@ export const guides: readonly Guide[] = [
     part: "Make it yours",
     order: 20,
     aliases: { "init.lua": "config", "folders.yml": "config#foldersyml", sandbox: "config#the-sandbox", layout: "config#layout" },
-    markdown: config,
   },
   {
     id: "recipes",
@@ -104,7 +80,6 @@ export const guides: readonly Guide[] = [
     summary: "Short init.lua snippets to paste: the Leader, keys, Themes, fonts, layout, modules",
     part: "Make it yours",
     order: 21,
-    markdown: recipes,
   },
   {
     id: "keyboard",
@@ -114,7 +89,6 @@ export const guides: readonly Guide[] = [
     part: "Make it yours",
     order: 22,
     aliases: { "two-modes": "keyboard#two-modes" },
-    markdown: keyboard,
   },
   {
     id: "themes-guide",
@@ -123,7 +97,6 @@ export const guides: readonly Guide[] = [
     summary: "The bundled Themes, their colour tokens, and making your own",
     part: "Make it yours",
     order: 23,
-    markdown: themes,
   },
   {
     id: "errors-guide",
@@ -132,7 +105,6 @@ export const guides: readonly Guide[] = [
     summary: "Every connection error: what happened, the cause, where it lives, the fix",
     part: "Reference",
     order: 61,
-    markdown: errors,
   },
   {
     id: "cli",
@@ -149,7 +121,6 @@ export const guides: readonly Guide[] = [
       resources: "cli#resources-secrets-with-no-address",
       json: "cli#machine-readable-output",
     },
-    markdown: cli,
   },
   {
     id: "mesh",
@@ -166,7 +137,6 @@ export const guides: readonly Guide[] = [
       mesh_dir: "mesh#esxi",
       seen_as: "mesh#other-addresses",
     },
-    markdown: meshGuide,
   },
   {
     id: "serve-api",
@@ -176,7 +146,6 @@ export const guides: readonly Guide[] = [
     part: "Reference",
     order: 71,
     aliases: { "roster serve": "serve-api" },
-    markdown: serveApi,
   },
   {
     id: "extending",
@@ -186,7 +155,6 @@ export const guides: readonly Guide[] = [
     part: "Extending",
     order: 80,
     aliases: { registries: "extending#the-registries" },
-    markdown: extending,
   },
   {
     id: "plugins",
@@ -206,7 +174,6 @@ export const guides: readonly Guide[] = [
       "shell_hooks": "plugins#shell-hooks-roster-sets-it-up",
       "osc-7": "plugins#shell-hooks-roster-sets-it-up",
     },
-    markdown: plugins,
   },
   {
     id: "plugin-api",
@@ -217,8 +184,7 @@ export const guides: readonly Guide[] = [
     order: 82,
     // `:help roster.inventory.host()`, `:help roster-Host`: one topic per function, value, module
     // and type, written by the generator with the page (crates/roster-core/src/plugin/api.rs).
-    aliases: { "roster-api": "plugin-api", ...pluginApiData.tags },
-    markdown: pluginApi,
+    aliases: { "roster-api": "plugin-api", ...pluginApiTags },
   },
   {
     id: "plugin-types",
@@ -228,7 +194,6 @@ export const guides: readonly Guide[] = [
     part: "Extending",
     order: 83,
     aliases: { "roster.lua": "plugin-types", luals: "plugin-types", "lua-language-server": "plugin-types" },
-    markdown: `# roster.lua: the Plugin API's types\n\nThe whole [Plugin API](../../../docs/plugin-api.md) as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations. \`:plugins types PATH\` writes it as \`types/roster.lua\` in your Plugin's folder (or save it there yourself); point lua-language-server at it: [Editor support](../../../docs/plugin-api.md#editor-support). It's the copy this app was built with, so it matches this app's API.\n\n\`\`\`lua\n${pluginStubs}\n\`\`\`\n`,
   },
   {
     // `:version` (T180): the licences every copy of the app must carry, and where the installers put them.
@@ -239,28 +204,6 @@ export const guides: readonly Guide[] = [
     part: "What's new",
     order: 94,
     aliases: { license: "version", licence: "version", notices: "version", "third-party-notices": "version", about: "version" },
-    markdown: `# roster ${APP_VERSION}
-
-roster is free software under the GNU General Public License, version 3 or later (GPL-3.0-or-later): \`LICENSE\` has its text. Some of the app's code comes from other projects, under their own licences: \`THIRD-PARTY-NOTICES\`, below, lists each part with its copyright and licence. What changed in this version: [What's new](docs/news.md).
-
-## Where they're installed
-
-Every download carries \`LICENSE\` and \`THIRD-PARTY-NOTICES\`, side by side:
-
-| Download | Where |
-|---|---|
-| Windows \`-setup.exe\` and \`.msi\` | In the folder the app is installed in, next to \`roster-app.exe\` |
-| Linux \`.deb\` | \`/usr/lib/Roster/\` |
-| Linux \`.AppImage\` | Inside the image, at \`usr/lib/Roster/\` (\`--appimage-extract\` unpacks it) |
-| macOS \`.dmg\` | \`Roster.app/Contents/Resources/\` |
-| The \`.zip\` and \`.tar.gz\` | Next to the app |
-
-## Third-party notices
-
-\`\`\`text
-${notices.trimEnd()}
-\`\`\`
-`,
   },
   {
     id: "news",
@@ -270,7 +213,6 @@ ${notices.trimEnd()}
     part: "What's new",
     order: 95,
     aliases: { "whats-new": "news", changelog: "news" },
-    markdown: news,
   },
   {
     id: "deprecated",
@@ -286,7 +228,6 @@ ${notices.trimEnd()}
       ROSTER_DESK_ROSTER: "deprecated#roster_desk_roster",
       ROSTER_DESK_WSL_DISTRO: "deprecated#roster_desk_wsl_distro",
     },
-    markdown: deprecated,
   },
 ];
 

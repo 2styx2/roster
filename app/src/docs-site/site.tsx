@@ -13,6 +13,8 @@ import { registerHelp, HelpView } from "../help/command";
 import { blockLinks, type Block } from "../help/doc";
 import helpDocCss from "../help/doc.css?raw";
 import { guides, PARTS } from "../help/guides";
+import { guideTexts } from "../help/guideText";
+import { helpText } from "../help/text";
 import { HelpDoc, type RenderEnv } from "../help/HelpPanel";
 import { headingTag, helpContext, linkKind, pageTexts, topicIndex, type HelpContext, type HelpPage, type Topic } from "../help/pages";
 import { defaultOptions, keymapOf } from "../keymap";
@@ -62,6 +64,9 @@ export const FONTS = [
 /** What every page is generated from on the website: the built-in registries and the Config's
  * defaults, as the app has them with no init.lua (the same context lint.test.ts checks). */
 export function siteContext(): HelpContext {
+  // The website builds every page at once: the guides' text is an ordinary import here, not the
+  // app's lazy chunk (T213).
+  helpText.use(guideTexts);
   const r = builtinRegistries();
   registerHelp(r, new HelpView());
   return helpContext(r, {
@@ -192,8 +197,9 @@ function searchIndexOf(ctx: HelpContext, topics: readonly Topic[], urlOf: (tag: 
   const texts: SearchIndex["texts"] = [];
   for (const hit of pageTexts(ctx)) {
     // The index and `all` only repeat other pages' titles and summaries (as in :helpgrep), and
-    // a heading is a topic already.
-    if (hit.page === "index" || hit.page === "all" || hit.heading) continue;
+    // a heading is a topic already. plugin-types is the Lua stubs, signatures plugin-api's text
+    // already has (T213, Q189): the page is still a topic, its text isn't searched twice.
+    if (hit.page === "index" || hit.page === "all" || hit.page === "plugin-types" || hit.heading) continue;
     const href = urlOf(hit.tag) || `${hit.page}.html`;
     const key = `${href}\n${hit.where}`;
     let place = placeOf.get(key);

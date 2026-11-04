@@ -31,7 +31,7 @@ import { bindingId, type KeymapContext } from "../keymap";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
 import type { SidebarRow } from "../sidebar/Sidebar";
-import pluginApi from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
+import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { lineRefused } from "./cmd";
 import { CommittedLines, lastLines, OUTPUT_MAX, type Run as OutputRun, type ScreenSize } from "./committed";
 import {
@@ -724,7 +724,7 @@ export class PluginManager {
   async writeTypes(path: string): Promise<string> {
     try {
       const file = await this.backend.pluginTypes(path);
-      return `Wrote ${file}: the Plugin API ${pluginApi.api_version}'s types, for lua-language-server`;
+      return `Wrote ${file}: the Plugin API ${pluginApiVersion}'s types, for lua-language-server`;
     } catch (e) {
       return `Couldn't write the types: ${e instanceof Error ? e.message : String(e)}`;
     }

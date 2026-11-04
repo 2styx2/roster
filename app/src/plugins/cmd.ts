@@ -4,7 +4,7 @@
 // and only the commands of roster's the core's table lists (api.rs COMMANDS, in
 // plugin-api.json), each with the permission it needs there. Never `:plugins`, `:packages`,
 // `:publish` or another Plugin's commands.
-import api from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
+import { commands, roster_only } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { BUILTIN } from "../registry";
 
 interface CommandRule {
@@ -12,11 +12,11 @@ interface CommandRule {
   permission: string | null;
 }
 
-export const PLUGIN_COMMANDS: readonly CommandRule[] = (api as { commands: CommandRule[] }).commands;
+export const PLUGIN_COMMANDS: readonly CommandRule[] = commands as CommandRule[];
 
 /** roster's commands that change trust or writes (api.rs's ROSTER_ONLY): never a Plugin's own,
  * even before the app has told the core its built-in commands (`pluginBuiltins`, issue #184). */
-export const ROSTER_ONLY: readonly string[] = api.roster_only;
+export const ROSTER_ONLY: readonly string[] = roster_only;
 
 /** Why `plugin` (granted `granted`) may not run `line`, or null when it may. `sourceOf` is the
  * command table's: who registered the command named so (undefined: there's none). */
