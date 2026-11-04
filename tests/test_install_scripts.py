@@ -251,3 +251,25 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     assert "git clone -q git@example.com:team/map.git" in r.stdout
     assert "BatchMode=yes" in r.stdout                        # nobody to answer ssh under --yes
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key
+
+
+@posix_shell
+def test_install_offers_cron_when_the_box_has_none(tmp_path):
+    # a minimal box (Fedora's WSL distro, say) has no crontab: auto-update installs cron instead of skipping
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    hidden = {"crontab", "apt-get", "dnf", "yum", "pacman", "brew"}
+    for d in (Path("/usr/local/bin"), Path("/usr/bin"), Path("/bin")):
+        for p in (d.iterdir() if d.is_dir() else ()):
+            if p.name not in hidden and not os.path.lexists(bin_ / p.name):     # /usr/bin has dangling links
+                (bin_ / p.name).symlink_to(p)
+    (bin_ / "dnf").write_text("#!/bin/sh\nexit 0\n")
+    (bin_ / "dnf").chmod(0o755)
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": str(bin_)}
+    env.pop("ROSTER_INFRA_REPO", None)
+    r = subprocess.run(["bash", str(INSTALL_SH), "--dry-run", "--yes"], env=env, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
+    assert "Auto-update runs from cron, which isn't installed. Install cronie?" in r.stdout
+    assert "dnf install -y cronie" in r.stdout
+    assert "would add to crontab:" in r.stdout
+    assert "no crontab on this box" not in r.stdout
