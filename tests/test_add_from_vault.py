@@ -211,16 +211,29 @@ def kp(fakes, tmp_path):
     return tmp_path
 
 
-def test_kp_entries_are_their_paths_and_only_username_and_url_are_read(kp, monkeypatch):
+def test_kp_lists_entry_paths_only_and_never_shows_an_entry(kp, monkeypatch):
+    # `show -a UserName -a URL` resolves placeholders ({PASSWORD}, {REF:P@I:...}): it could print a password, so
+    # roster never runs it here; the walk asks for the address and user instead (review of #439, M2)
     from roster import providers
     monkeypatch.setenv("FAKE_ARGV_LOG", str(kp / "argv.log"))
     providers.unlock("kp", "hunter2")
-    found = providers.vault_items("kp", mapped=lambda i: "esx-02 ssh" in i["keys"])
+    found = providers.vault_items("kp")
     assert [(i["id"], i["name"], i["uri"], i["username"]) for i in found] == [
-        ("esx-02 ssh", "esx-02 ssh", None, None), ("Lab/nas-01 ssh", "nas-01 ssh", "10.0.0.50", "admin")]
-    shows = [c for c in calls(kp) if c[0] == "show"]
-    assert shows == [["show", "-a", "UserName", "-a", "URL", str(kp / "lab.kdbx"), "Lab/nas-01 ssh"]]
+        ("esx-02 ssh", "esx-02 ssh", None, None), ("Lab/nas-01 ssh", "nas-01 ssh", None, None)]
+    assert not any(c[0] == "show" for c in calls(kp))
     assert not any(s in repr(found) for s in SECRETS)
+
+
+def test_a_kp_entry_like_an_option_is_left_out_and_kp_ends_its_options(kp, monkeypatch):
+    from roster import providers
+    db = kp / "lab.kdbx"
+    data = json.loads(db.read_text())
+    data["entries"].append({"path": "-s evil", "UserName": "x", "Password": "pw-old-SECRET"})
+    db.write_text(json.dumps(data))
+    monkeypatch.setenv("FAKE_ARGV_LOG", str(kp / "argv.log"))
+    providers.unlock("kp", "hunter2")
+    assert "-s evil" not in [i["id"] for i in providers.vault_items("kp")]
+    assert all(c[c.index(str(db)) - 1] == "--" for c in calls(kp))
 
 
 def test_a_locked_kp_database_is_never_opened_by_asking(kp, monkeypatch):
@@ -442,3 +455,88 @@ def test_setup_flag_sets_each_added_host_up_without_asking(capsys, yml, bw, monk
     asked = walk(monkeypatch, "", "lab", "n", "n", "n")
     assert add(capsys, "--no-sync", "--setup")[0] == 0
     assert done == ["nas-01"] and not any("up now" in a for a in asked)
+
+
+# ---------------------------------------------------------------- review of #439: L1, L2, L5
+
+def test_the_filter_drops_a_uris_userinfo():
+    items = [{"id": "u-1", "name": "n", "type": 1, "login": {"uris": [
+        {"uri": "ssh://admin:pw-nas-SECRET@10.0.0.50:2200/x"}, {"uri": "https://u:pw-web-SECRET@[fe80::1]/a?b#c"},
+        {"uri": "admin:pw-old-SECRET@10.0.0.9"}, {"uri": "10.0.0.7"}]}}]
+    r = filtered(json.dumps(items).encode())
+    assert json.loads(r.stdout)["uris"] == ["ssh://10.0.0.50:2200/x", "https://[fe80::1]/a?b#c", "10.0.0.9",
+                                           "10.0.0.7"]
+    assert not any(s.encode() in r.stdout for s in SECRETS)
+
+
+def test_op_urls_lose_their_userinfo_too(op, monkeypatch):
+    from roster import providers
+    monkeypatch.setenv("FAKE_OP_ITEMS", json.dumps([{**OP_ITEMS[0], "urls": ["sftp://admin:pw-nas-SECRET@10.0.0.50"]}]))
+    [item] = providers.vault_items("op")
+    assert item["uris"] == ["sftp://10.0.0.50"] and "pw-nas-SECRET" not in repr(item)
+
+
+def test_control_characters_never_reach_the_terminal_or_the_login(capsys, yml, bw):
+    items = json.loads((bw / "items.json").read_text())
+    items.append({"id": "ffff-6", "name": "nas-03 ssh\x1b[2K\rAdd it as esx-02", "type": 1,
+                  "login": {"username": "ad\u202emin", "uris": [{"uri": "10.0.0.53"}]}})
+    (bw / "items.json").write_text(json.dumps(items))
+    rc, out, err = add(capsys, "--no-sync")
+    assert "\x1b" not in out + err and "\u202e" not in out + err and "\r" not in out
+    assert "bw:ffff-6" in out                               # the Login names it by id, not by that name
+    doc = json.loads(add(capsys, "--json", "--no-sync")[1])
+    [row] = [i for i in doc["items"] if i["id"] == "ffff-6"]
+    assert row["auth"] == "bw:ffff-6" and "user" not in row
+
+
+def test_the_walk_asks_for_a_user_when_the_item_has_none(capsys, yml, bw, monkeypatch):
+    # old box: no URI, no username: asked for its address (roster add) and its user (the walk)
+    asked = walk(monkeypatch, "n", "n", "", "root", "lab", "10.0.0.80", "n", "n")
+    add(capsys, "--no-sync", "--all")
+    assert any(a.startswith("User") for a in asked)
+    assert "old-box: {ip: 10.0.0.80, user: root, auth: bw:old box, enroll: false}" in yml.read_text()
+
+
+def test_a_filter_that_takes_too_long_stops_both_programs(tmp_path):
+    from roster import common
+    with pytest.raises(subprocess.TimeoutExpired):
+        common.run_filtered([sys.executable, "-c", "import time; time.sleep(30)"],
+                            [sys.executable, "-c", "import sys; sys.stdin.read()"], timeout=1,
+                            filter_env=common.filter_env())
+
+
+def test_roster_never_reads_the_producers_output(monkeypatch):
+    """The producer's stdout is handed to the filter and closed: nothing in roster reads from it."""
+    from roster import common
+    real = subprocess.Popen
+    made = []
+
+    class Unreadable:
+        def __init__(self, f):
+            self.f = f
+
+        def fileno(self):
+            return self.f.fileno()
+
+        def close(self):
+            self.f.close()
+
+        @property
+        def closed(self):
+            return self.f.closed
+
+        def __getattr__(self, name):
+            raise AssertionError(f"roster touched the producer's stdout ({name})")
+
+    def spy(*a, **kw):
+        p = real(*a, **kw)
+        if not made:
+            p.stdout = Unreadable(p.stdout)
+        made.append(p)
+        return p
+    monkeypatch.setattr(subprocess, "Popen", spy)
+    prod, filt = common.run_filtered([sys.executable, "-c", "print('pw-nas-SECRET')"],
+                                     [sys.executable, "-c", "import sys; sys.stdin.read(); print('ok')"],
+                                     filter_env=common.filter_env())
+    assert made[0].stdout.closed and prod.stdout is None and filt.stdout.strip() == "ok"
+    assert "pw-nas-SECRET" not in prod.stderr + filt.stdout + filt.stderr

@@ -142,7 +142,11 @@ def listing(path, sync=True, interactive=False):
         free = [i for i in found if not mapped(i)]
         names = [i["name"].casefold() for i in found]
         for i in free:
-            rows.append(row(p, i, names.count(i["name"].casefold()) == 1, i["id"] not in seen["items"].get(p, {})))
+            r = row(p, i, names.count(i["name"].casefold()) == 1, i["id"] not in seen["items"].get(p, {}))
+            if r is None:
+                skipped.append(f"{p}: an item whose name and id both hold a control character or start with '-'")
+            else:
+                rows.append(r)
     return {"synced": synced, "items": rows, "skipped": skipped, "seen": seen}
 
 
@@ -155,11 +159,21 @@ def problem(provider, e):
     return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster auth-check tests the vault")
 
 
+def plain(text):
+    """Is TEXT safe to show on a terminal and to write into an `auth:` reference: no control, escape, bidi or other
+    format character (str.isprintable), so a vault item can't rewrite the prompt it's offered in (review of #439)?"""
+    return bool(text) and text.isprintable()
+
+
 def row(provider, item, unique, new):
-    """What a list shows of ITEM, and the Host it suggests: name, address, SSH port and user."""
-    safe = unique and not item["name"].startswith("-") and not re.search(r"[#/\n]", item["name"]) and item["name"]
-    out = {"provider": provider, "id": item["id"], "name": item["name"],
-           "auth": f"{provider}:{item['name'] if safe else item['id']}", "new": new}
+    """What a list shows of ITEM, and the Host it suggests: name, address, SSH port and user; or None when neither
+    its name nor its id is fit for an `auth:` reference (a control character, or a leading '-')."""
+    name = item["name"]
+    safe = unique and plain(name) and not name.startswith("-") and not re.search(r"[#/]", name)
+    ref = name if safe else item["id"]
+    if not plain(ref) or ref.startswith("-"):
+        return None
+    out = {"provider": provider, "id": item["id"], "name": name, "auth": f"{provider}:{ref}", "new": new}
     host = host_name(item["name"])
     if host:
         out["host"] = host
@@ -173,7 +187,7 @@ def row(provider, item, unique, new):
             note = None
             break
         note = note or why
-    if item["username"]:
+    if item["username"] and plain(item["username"]):
         out["user"] = item["username"]
     if note:
         out["note"] = note
@@ -313,6 +327,11 @@ def walk(cfg, args, shown, seen):
             if not got:
                 return failed
             fields["host"] = got
+        if not fields["user"] and answer not in ("edit", "e"):  # none in the item (kp never says): Enter keeps the group's
+            got = ask("User (Enter: its group's): ")
+            if got is None:
+                return failed
+            fields["user"] = got or None
         port = r.get("port") if fields["address"] == r.get("address") else None
         one = argparse.Namespace(name=fields["host"], ip=fields["address"] or None, user=fields["user"] or None,
                                  port=port, auth=r["auth"], group=args.group, enroll=args.enroll, os=None,

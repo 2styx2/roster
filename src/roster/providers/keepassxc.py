@@ -87,7 +87,8 @@ def _kp(ctx, command, *options, entry=None, password=None, then="", floor=1):
     if password is None:
         raise VaultLocked(f"{NAME} database is locked - unlock it first")
     key = _path(ctx, "key_file")
-    argv = [TOOL, command, *(["-k", str(key)] if key else []), *options, str(db), *([entry] if entry else [])]
+    # `--` ends the options: a database or entry path starting with '-' is never read as one
+    argv = [TOOL, command, *(["-k", str(key)] if key else []), *options, "--", str(db), *([entry] if entry else [])]
     r = ctx.run(argv, input=f"{password}\n{then}", floor=floor)
     err = _errtext(r)
     if r.returncode != 0 and "Invalid credentials" in err:
@@ -288,25 +289,15 @@ def _delete(item_id, ctx):
         raise WriteFailed(f"{NAME} didn't delete entry '{item_id}': {_scrub(_errtext(r), ctx.state.get('password'))}")
 
 
-# ---- every entry, never its password (Q191): `ls -R -f` gives the paths, and `show -a UserName -a URL` just those two
-# attributes of each entry roster.yml doesn't name yet. A locked database is never opened by asking here: the caller
-# says how to unlock.
+# ---- every entry, never its password (Q191): `ls -R -f`'s paths, and nothing more. Not `show -a UserName -a URL`:
+# keepassxc-cli resolves placeholders in what it prints for -a ({PASSWORD}, {REF:P@I:...}), so a URL or user name
+# written that way would print a password (review of #439, M2). The walk asks for the address and user. An entry whose
+# path starts with '-' is left out, as a name like that is never handed to a vault CLI.
 
 def _items(ctx, mapped):
     _ready(ctx)
-    out = []
-    for path in _entries(ctx):
-        title = path.rsplit("/", 1)[-1]
-        item = {"id": path, "name": title, "keys": [path, title], "uris": [], "username": None}
-        if not mapped(item):
-            r = _kp(ctx, "show", "-a", "UserName", "-a", "URL", entry=path)
-            if r.returncode == 0:
-                username, _, url = r.stdout.partition("\n")
-                url = url.rstrip("\r\n")
-                item["username"] = username.rstrip("\r") or None
-                item["uris"] = [url] if url else []
-        out.append(item)
-    return out
+    return [{"id": path, "name": path.rsplit("/", 1)[-1], "keys": [path, path.rsplit("/", 1)[-1]], "uris": [],
+             "username": None} for path in _entries(ctx) if not path.startswith("-")]
 
 
 PROVIDERS["kp"].update(items=_items)

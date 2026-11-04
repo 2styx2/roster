@@ -5,6 +5,7 @@ import os
 import re
 
 from . import PROVIDERS, SecretError, errtext, register, split_field
+from .bw_items_filter import no_userinfo
 
 # ---- built-in: 1Password
 
@@ -111,7 +112,8 @@ def _op_items(ctx, mapped):
         item = {"id": i["id"], "name": title, "keys": [i["id"], title] + ([f"{where}/{title}"] if where else []),
                 "uris": [], "username": None}
         if not mapped(item):
-            item["uris"] = [u["href"] for u in i.get("urls") or [] if isinstance(u, dict) and isinstance(u.get("href"), str)]
+            item["uris"] = [no_userinfo(u["href"]) for u in i.get("urls") or []       # never a URL's user:password@
+                            if isinstance(u, dict) and isinstance(u.get("href"), str)]
             item["username"] = _op_username(ctx, i["id"])
         out.append(item)
     return out
