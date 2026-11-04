@@ -25,6 +25,7 @@ A fast, keyboard-first desktop app that gets you onto any Host in your team's ro
 | [docs/plugins.md](../docs/plugins.md), [docs/plugin-api.md](../docs/plugin-api.md), [plugins/](../plugins/README.md) | Writing a Plugin, its API, and roster's first-party Plugins |
 | [docs/news.md](../docs/news.md) | What's new in each Release, and on `dev` |
 | [docs/app/design/taste.md](../docs/app/design/taste.md) | roster's own design identity: what makes it look and feel like ours |
+| [PRODUCT.md](../PRODUCT.md), [DESIGN.md](../DESIGN.md) | The product record and the visual system (tokens, rules, components) that the `impeccable` design skill reads; `taste.md` and the code win when they disagree |
 | [docs/app/decisions.md](../docs/app/decisions.md) | Every design question we asked and the answer |
 | [docs/adr/](../docs/adr/) | Architecture decisions for the CLI and the app (0001–0002 roster serve and ssh, 0003–0006 the app, 0007 one repo, 0008 the docs website and PDF) |
 | [docs/app/spec/](../docs/app/spec/) | Product specs. Start with [0001](../docs/app/spec/0001-roster-app.md) |
