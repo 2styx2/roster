@@ -49,6 +49,13 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A saved Bitwarden session is read only if it's yours alone** (#411): roster no longer follows a symlink at `~/.config/roster/bw-session`, ignores one another user owns or with a second name (hard link), and checks and reads it through the same open file, so it can't be swapped in between. On Windows it checks the file's owner and permissions too: one others may open is ignored with a warning.
 - **On Windows, roster never runs a program from the current folder** (#411): `bw`, `ssh`, `git`, `nmap` and every other program roster runs are found on `PATH` alone, so a `bw.exe` left in the folder you start roster from can't run with your vault's session. roster sets `NoDefaultCurrentDirectoryInExePath=1`, so `cmd:` providers and `providers:` commands don't look there either.
 
+### Fixed
+
+**CLI**
+
+- **Renaming a Box takes its key with it** (#412): after `box_name:` (or the hostname) changes on a Box already set up, `roster setup` re-tags this Box's key on the Hosts where it already works (`ok    nas-1 (re-tagged)`), and `roster revoke` finds the key under the earlier name too. Both match the line by this Box's own public key, so another Box's line, even under the same name, is never touched. Before, `revoke` looked only for the new name and left the key on every Host. A line's options (`from="…"`) are kept. To rename a Box: set `box_name:`, then run `roster setup`; where it says it found no line (ESXi's `/etc/ssh/keys-root`, a line you wrote), change that line by hand. Since the key is one per Box, `roster revoke` for one Inventory also takes it off a machine another Inventory lists under another `box_name:`, and says so.
+- **`roster check` says when another Box replaced a shared Mesh key** (#412): when the Box whose Mesh files a source's are rotates that key or cuts the source, this Box's own lines for the old key stay on its peers until its next `roster mesh`; its `roster check` (and `roster mesh --dry-run`) now warns, per peer, that the line still lets the old key in, from its `from=` address.
+
 ## v0.5.1
 
 ### New
