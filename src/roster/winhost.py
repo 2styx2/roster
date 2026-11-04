@@ -27,7 +27,7 @@ import re
 import subprocess
 from typing import IO, cast
 
-from .common import WINDOWS, program_argv
+from .common import KEY_TRAIL, WINDOWS, program_argv
 from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_POWERSHELL, NOT_WINDOWS
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
@@ -312,11 +312,27 @@ function Main {
     $userSecure = { param($f) Set-UserAcl $f $me }
 
     $Retagged = $null
+    $Read = $null
+    if ($Mode -in 'add', 'retag') {
+        # read once (#423's S5): the text the re-tag or the add is made from is the text replaced
+        $Read = Read-Keys $mine
+        if ($Taken -and $null -ne $Read) {
+            # T226: on a renamed Box, another key's line under the new name is another Box's: said, nothing changed
+            foreach ($l in @($Read -split '\n')) {
+                $body = $l.TrimEnd()
+                if (($body -cmatch $Taken) -and -not ($body -cmatch $Own)) {
+                    Say 'TAKEN'; Say "FILE $mine"; Say 'ROSTER_OK'; return
+                }
+            }
+        }
+    }
     if ($Mode -eq 'retag') {
         # T217: this Box's key lines ($TagRe: its key under any roster name, options and all) get $Pub's tag, in
-        # place: options, line ends and every other line stay; nothing is added (NOLINE: none found here)
-        $old = Read-Keys $mine
+        # place: options, line ends and every other line stay, a second copy of one goes (#423's S2); nothing is
+        # added (NOLINE: none found here, with the FILE looked in)
+        $old = $Read
         $tag = ($Pub -split ' ')[-1]
+        $seen = @{}
         $hit = $false
         if ($null -ne $old) {
             $Retagged = -join @(foreach ($l in @($old -split '(?<=\n)')) {
@@ -324,11 +340,12 @@ function Main {
                 $body = $l.TrimEnd()
                 if ($body -cmatch $TagRe) {
                     $hit = $true
-                    ($body -creplace ' (roster-managed|fleet-managed):[A-Za-z0-9_-]+$', (' ' + $tag)) + $l.Substring($body.Length)
+                    $new = $body -creplace ' (roster-managed|fleet-managed):[A-Za-z0-9_-]+$', (' ' + $tag)
+                    if (-not $seen.ContainsKey($new)) { $seen[$new] = 1; $new + $l.Substring($body.Length) }
                 } else { $l }
             })
         }
-        if (-not $hit) { Say 'NOLINE'; Say 'ROSTER_OK'; return }
+        if (-not $hit) { Say 'NOLINE'; Say "FILE $mine"; Say 'ROSTER_OK'; return }
         $Mode = 'add'
     }
     if ($Mode -eq 'add') {
@@ -339,7 +356,7 @@ function Main {
             if (-not (Test-Path -LiteralPath $sshDir)) { New-Item -ItemType Directory -Path $sshDir | Out-Null }
             Assert-Folder $sshDir $me @($me, $Admins, $System)
         }
-        $old = Read-Keys $mine
+        $old = $Read
         $new = if ($null -ne $Retagged) { $Retagged } else { New-Text $old $Pub }
         $created = $null -eq $old
         $secure = if ($mine -eq $adminFile) { $adminSecure } elseif ($created) { $userSecure } else { $null }
@@ -400,13 +417,17 @@ try { Main } catch {
 MODES = ("add", "remove", "check", "retag")
 
 
-def script(mode, tag_re, pub=""):
+def script(mode, tag_re, pub="", taken="", own=""):
     """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE; retag: the lines
     TAG_RE matches, this Box's key under any roster name, get PUB's tag in place, NOLINE when there's none): sent on
-    stdin."""
+    stdin. TAKEN and OWN (add and retag on a renamed Box, T226): a line TAKEN (the new name's tag) matches that OWN
+    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing."""
     if mode not in MODES:
         raise ValueError(mode)
-    header = f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
+    # Is-Mine trims each line first, and .NET reads [[:space:]] as a set of its letters: the plain end of line
+    tag_re, taken, own = (x.replace(KEY_TRAIL, "$") for x in (tag_re, taken, own))
+    header = (f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
+              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n")
     return header + SCRIPT
 
 
@@ -653,9 +674,10 @@ class Result:
     """What the script said: the files it wrote or read, its warnings, and whether the file is the administrators'
     (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
-    def __init__(self, files, warnings, admins=False, tags=(), noline=False):
+    def __init__(self, files, warnings, admins=False, tags=(), noline=False, taken=False):
         self.files, self.warnings, self.admins = files, warnings, admins
         self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
+        self.taken = taken                                # add, retag: another key's line under the new name (T226)
 
 
 def admins_note(name):
@@ -679,7 +701,7 @@ def outcome(name, rc, out, err):
             raise RuntimeError(not_windows(name))
     if "ROSTER_OK" in lines:
         return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
-                      "NOLINE" in lines)
+                      "NOLINE" in lines, "TAKEN" in lines)
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):
@@ -692,13 +714,14 @@ def not_windows(name):
             "changed. Fix os: for it in roster.yml")
 
 
-def over_key(h, mode, tag_re, timeout=60, pub=""):
+def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own=""):
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError. PUB: the key line retag writes."""
+    RuntimeError. PUB: the key line retag writes; TAKEN, OWN: script's."""
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
                                          remote_command()]),
-                           input=framed(script(mode, tag_re, pub)).encode(), capture_output=True, timeout=timeout)
+                           input=framed(script(mode, tag_re, pub, taken, own)).encode(), capture_output=True,
+                           timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None
     out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
@@ -707,8 +730,10 @@ def over_key(h, mode, tag_re, timeout=60, pub=""):
     return outcome(h["name"], r.returncode, out, err)
 
 
-def install(h, pub, tag_re, password):
-    """Add this Box's key line PUB on Windows Host H, logging in with PASSWORD (paramiko; None: an agent's key)."""
+def install(h, pub, tag_re, password, taken="", own=""):
+    """Add this Box's key line PUB on Windows Host H, logging in with PASSWORD (paramiko; None: an agent's key).
+    TAKEN, OWN: script's."""
     from .sshops import password_exec
-    rc, out, err = password_exec(h, remote_command(), password, timeout=15, stdin=framed(script("add", tag_re, pub)))
+    rc, out, err = password_exec(h, remote_command(), password, timeout=15,
+                                 stdin=framed(script("add", tag_re, pub, taken, own)))
     return outcome(h["name"], rc, out, err)

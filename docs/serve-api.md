@@ -413,6 +413,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `184` | `roster add`: another Host has that address and SSH port already; `data.host`, `data.group` (T220). A CLI error: the app's `host.add` allows it |
 | `185` | `roster add` without a terminal (or with `--yes`): a value it can't default is missing, and the message names its flag (T220). A CLI error |
 | `186` | `vault.item_fields` (and `roster add --from-vault`): the provider can't give an item's address and username without roster reading its password, so it isn't asked (T220, API 29) |
+| `190` | `roster setup` on a renamed Box: a Host's key file has another key's line under the new name (another Box uses it), so that Host is left as it is; `setup --force` goes ahead (T226). A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
