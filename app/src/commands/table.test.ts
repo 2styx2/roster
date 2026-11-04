@@ -221,7 +221,7 @@ describe("runLine", () => {
     runLine(ctx, "session x");
     runLine(ctx, "  ");
     expect(calls).toEqual([
-      "say Not a command: conect",
+      "say Not a command: conect. :help commands lists them.",
       "say connect needs a Host name",
       "say lock takes no argument",
       "say session needs a number",

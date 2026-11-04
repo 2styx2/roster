@@ -311,7 +311,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The path takes only the room left over, and goes rather than showing a stub ("/ho…"): under
    eight characters' room it isn't drawn (its whole text stays in the tooltip). */
 .statusbar .path { flex: 1 1 0; min-width: 0; container-type: inline-size; }
-.statusbar .path-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar .path-text { display: flex; min-width: 0; white-space: nowrap; }
+.statusbar .path-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.statusbar .path-base { flex: none; }
 @container (max-width: 8ch) { .statusbar .path-text { visibility: hidden; } }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
@@ -360,9 +362,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 
 /* One line, always reserved (round 9: it had pushed the pane 14 px when a message came): a long
    message is cut here and whole in its tooltip and in :messages. */
+/* The bottom line (Neovim's message row): one 22px line, always there, in the pane's own colour so
+   it reads as margin while empty (round 10: a chrome band read as a second footer). Messages show
+   in it, and the command line types in it, so neither ever resizes the pane or the terminal. */
+.bottom-line { flex: none; position: relative; height: 22px; background: var(--bg); }
 .message-line {
-  flex: none; height: 22px; padding: 0 12px; line-height: 22px; font-size: var(--text-sm); color: var(--warn);
-  background: var(--chrome); border-top: 1px solid var(--line);
+  height: 100%; padding: 0 12px; line-height: 22px; font-size: var(--text-sm); color: var(--warn);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 
@@ -667,12 +672,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel .keys-source.config { color: var(--accent-ink); }
 /* Its name in init.lua (ticket 32): data, so Iosevka, quiet under the source. */
 .keys-option { display: block; margin-top: 1px; font: var(--text-xs)/16px var(--font-mono); color: var(--muted); }
-/* Said where you look (owner, after round 9): under the binding you point at, or the filter's first
-   match; elsewhere its room is kept, so nothing moves as the pointer goes down the list. */
-.keys-panel .keys-option { visibility: hidden; }
-.keys-panel tr:focus-within .keys-option,
-.keys-panel[data-filtering] tbody:first-of-type tr:nth-child(2) .keys-option { visibility: visible; }
-@media (hover: hover) and (pointer: fine) { .keys-panel tr:hover .keys-option { visibility: visible; } }
+/* The pointed binding (its name is in the footer, owner after round 10): the row's hover fill. */
+.keys-panel tr.named td { background: var(--hover); }
+.panel-foot .keys-option { display: inline; margin: 0; color: var(--text); }
+.keys-panel .panel-foot { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
 }
@@ -836,13 +839,17 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 
 /* ---------- The command line ---------- */
 
-.cmdline { flex: none; border-top: 1px solid var(--line); background: var(--chrome); font: var(--text-md) var(--font-mono); }
-.cmdline-candidates { border-bottom: 1px solid var(--line); }
+/* Typed in the bottom line, over the message; its completions float above it, over the pane. */
+.cmdline { position: absolute; inset: 0; z-index: var(--z-float); background: var(--bg); font: var(--text-md) var(--font-mono); }
+.cmdline-candidates {
+  position: absolute; left: 0; right: 0; bottom: 100%;
+  background: var(--panel); border-top: 1px solid var(--line-strong); box-shadow: 0 -8px 24px var(--shadow);
+}
 /* At most 760px wide, so a candidate's key stays near what it does in a wide window. */
 .cmdline-candidates ul { list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto; max-width: 760px; }
 /* A fixed line height: a fallback font (Arabic, CJK) mustn't make its row taller than the rest. */
 .cmdline-candidates li { display: flex; align-items: center; gap: 12px; line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default; }
-.cmdline-candidates li.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--raised-line); }
+.cmdline-candidates li.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 .cmdline-candidates .more { margin: 0; padding: 0 12px 4px; line-height: 20px; color: var(--muted); }
 /* A candidate: the command, what it does, its key (S8). */
 .cmd-id { flex: none; min-width: 12ch; white-space: pre; }
@@ -852,7 +859,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 .cmdline-candidates li.selected .cmd-label { color: var(--text); }
 .cmd-keys { margin-left: auto; flex: none; }
-.cmdline-input { display: flex; align-items: center; gap: 4px; padding: 5px 12px; color: var(--accent-ink); }
+.cmdline-input { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 12px; color: var(--accent-ink); }
 .cmdline-input input { flex: 1; height: auto; padding: 0; border: 0; background: transparent; color: var(--text); }
 .cmdline-input input:focus-visible { box-shadow: none; }
 
@@ -1407,7 +1414,8 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 }
 .finder-query input { flex: 1; min-width: 0; height: auto; padding: 0; font: inherit; border: 0; background: transparent; }
 .finder-query input:focus-visible { box-shadow: none; }
-.finder-prompt { color: var(--accent-ink); font-size: var(--text-md); }
+/* The finder's name before its query: muted, as a breadcrumb (the accent is for what's live). */
+.finder-prompt { color: var(--muted); font-size: var(--text-md); }
 .finder-count { color: var(--muted); font: var(--text-xs) var(--font-ui); font-variant-numeric: tabular-nums; }
 /* The Finder borrows the Picker's list box (padding, scrolling) but not its column grid: its rows
    are one flex line each, stacked. (Round 2 made .picker-list a grid and laid every Finder row
@@ -1434,7 +1442,12 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 /* Their path (the heading an entry sits under) stays at the right, apart from the label, so the
    outline's "Themes and colours" never reads as part of the option's name (ticket 54). */
 .finder.prose .finder-path { flex: 0 1 auto; margin-left: auto; text-align: right; }
-.finder-detail { margin-left: auto; flex: none; font-size: var(--text-sm); color: var(--muted); }
+/* The detail (a help tag, an option's name) gives way before the label: cut at its end, never wider
+   than 40% of the row, so a long tag can't squeeze the title (round 10). Data, so Iosevka. */
+.finder-detail {
+  margin-left: auto; flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: var(--text-sm) var(--font-mono); color: var(--muted);
+}
 .finder-legend { font-family: var(--font-mono); white-space: nowrap; }
 
 /* ---------- The Config's problems (ticket 21) ---------- */

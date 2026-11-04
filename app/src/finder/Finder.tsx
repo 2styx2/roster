@@ -4,9 +4,22 @@
 // query with what the matching labels share, ticket 34); Enter or a click runs the item's command
 // line, Esc closes. It's the same in every view mode; Focus leans on it to reach what the Sidebar
 // shows in Standard (decision Q36).
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { chordOf, type Keymap } from "../keymap";
-import { finderResults, type FinderContext, type FinderItem, type FinderSourceDef } from "./sources";
+import {
+  finderResults,
+  type FinderContext,
+  type FinderItem,
+  type FinderSourceDef,
+} from "./sources";
 import { prefixFill } from "../ui/completion";
 import { Announce } from "../ui/Announce";
 import { countOf, formatCount } from "../ui/format";
@@ -32,7 +45,16 @@ export interface FinderProps {
   onHelp?(item: FinderItem): void;
 }
 
-export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, onClose, onHelp }: FinderProps) {
+export function Finder({
+  source,
+  ctx,
+  keymap,
+  vim,
+  initialQuery = "",
+  onChoose,
+  onClose,
+  onHelp,
+}: FinderProps) {
   const [query, setQuery] = useState(initialQuery);
   const [moved, setMoved] = useState<number | null>(null);
   const [inList, setInList] = useState(false);
@@ -40,9 +62,15 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
 
-  const results = useMemo(() => finderResults(source, ctx, query), [source, ctx, query]);
+  const results = useMemo(
+    () => finderResults(source, ctx, query),
+    [source, ctx, query],
+  );
   const shown = results.items.slice(0, MAX_ROWS);
-  const current = Math.max(0, Math.min(moved ?? results.selected, shown.length - 1));
+  const current = Math.max(
+    0,
+    Math.min(moved ?? results.selected, shown.length - 1),
+  );
 
   // A source may preview the selected item (the `themes` finder), and undo it when the Finder
   // closes, however it closes.
@@ -54,7 +82,9 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
   useEffect(() => opened.current?.(), []);
 
   useLayoutEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-index="${current}"]`)?.scrollIntoView?.({ block: "nearest" });
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-index="${current}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
   }, [current]);
 
   function choose(item: FinderItem | undefined) {
@@ -65,7 +95,10 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     const chord = chordOf(e);
-    const action = (keymap.picker[chord] ?? (vim && inList ? keymap.pickerVim[chord] : undefined))?.action;
+    const action = (
+      keymap.picker[chord] ??
+      (vim && inList ? keymap.pickerVim[chord] : undefined)
+    )?.action;
     if (!action) {
       if (chord.length === 1 || chord === "Backspace") setInList(false);
       return;
@@ -83,7 +116,13 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
         break;
       case "picker.next":
       case "picker.prev": {
-        const fill = action === "picker.next" && !inList ? prefixFill(query, shown.map((i) => i.label)) : null;
+        const fill =
+          action === "picker.next" && !inList
+            ? prefixFill(
+                query,
+                shown.map((i) => i.label),
+              )
+            : null;
         if (fill !== null) {
           setQuery(fill);
           setMoved(null);
@@ -91,7 +130,10 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
           break;
         }
         if (shown.length === 0) break;
-        setMoved((current + (action === "picker.next" ? 1 : -1) + shown.length) % shown.length);
+        setMoved(
+          (current + (action === "picker.next" ? 1 : -1) + shown.length) %
+            shown.length,
+        );
         setInList(true);
         break;
       }
@@ -113,8 +155,15 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
   const activeId = shown[current] ? `${listId}-${current}` : undefined;
 
   return (
-    <div className="picker-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`picker finder${source.prose ? " prose" : ""}`} role="dialog" aria-label={source.title}>
+    <div
+      className="picker-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className={`picker finder${source.prose ? " prose" : ""}`}
+        role="dialog"
+        aria-label={source.title}
+      >
         <div className="finder-query">
           <span className="finder-prompt">{source.prompt} ›</span>
           <input
@@ -141,7 +190,13 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
               : formatCount(results.items.length)}
           </span>
         </div>
-        <ul className="picker-list finder-list" role="listbox" id={listId} ref={listRef} aria-label={source.prompt}>
+        <ul
+          className="picker-list finder-list"
+          role="listbox"
+          id={listId}
+          ref={listRef}
+          aria-label={source.prompt}
+        >
           {shown.map((item, i) => (
             <li
               key={item.id}
@@ -175,15 +230,36 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
                   {item.path}
                 </span>
               )}
-              {item.detail && <span className="finder-detail">{item.detail}</span>}
+              {item.detail && (
+                <span className="finder-detail" title={item.detail}>
+                  {item.detail}
+                </span>
+              )}
             </li>
           ))}
         </ul>
         {/* How many results the query left, said once typing pauses (the count above is only seen). */}
-        <Announce text={results.items.length ? countOf(results.items.length, "result") : query ? "No matches" : ""} />
-        {shown.length === 0 && <p className="picker-empty">{query ? `Nothing matches “${query}”.` : (source.empty ?? "Nothing here yet.")}</p>}
+        <Announce
+          text={
+            results.items.length
+              ? countOf(results.items.length, "result")
+              : query
+                ? "No matches"
+                : ""
+          }
+        />
+        {shown.length === 0 && (
+          <p className="picker-empty">
+            {query
+              ? `Nothing matches “${query}”.`
+              : (source.empty ?? "Nothing here yet.")}
+          </p>
+        )}
         <div className="picker-footer">
-          <span role="status" title={notice || source.note?.(shown[current]) || undefined}>
+          <span
+            role="status"
+            title={notice || source.note?.(shown[current]) || undefined}
+          >
             {notice || source.note?.(shown[current])}
           </span>
           {shown.some((i) => i.mark) && (

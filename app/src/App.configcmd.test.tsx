@@ -131,17 +131,22 @@ describe("Option names where configurable things show", () => {
     await user.keyboard(`${LEADER}K`);
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
     const rowOf = (label: RegExp) => within(panel).getAllByRole("row").find((r) => label.test(r.textContent ?? ""))!;
-    // A binding's option is under it, or once on its group's heading when the group shares one.
-    const optionOf = (label: RegExp) =>
-      (rowOf(label).querySelector(".keys-option") ?? rowOf(label).closest("tbody")?.querySelector(".keys-option-shared"))?.textContent;
-    expect(optionOf(/^Leader: take the keys back/)).toBe("leader");
-    expect(optionOf(/^Lock/)).toBe("keys.leader");
-    expect(optionOf(/^Copy/)).toBe("keys.terminal");
-    expect(within(panel).getByText(/in init\.lua: point at one for its name there/)).toBeInTheDocument();
+    // A binding's option name shows in the panel's footer while the pointer is on its row.
+    expect(within(panel).getByText(/Point at a binding for its name in init\.lua/)).toBeInTheDocument();
+    const optionOf = async (label: RegExp) => {
+      await user.hover(rowOf(label));
+      return panel.querySelector(".panel-foot .keys-option")?.textContent;
+    };
+    expect(await optionOf(/^Leader: take the keys back/)).toBe("leader");
+    expect(await optionOf(/^Lock/)).toBe("keys.leader");
+    expect(await optionOf(/^Copy/)).toBe("keys.terminal");
+    await user.unhover(rowOf(/^Copy/));
     // The filter finds bindings by option name.
     await user.type(within(panel).getByRole("searchbox"), "keys.terminal");
     expect(within(panel).queryByText(/^Lock$/)).toBeNull();
     expect(within(panel).getByText("Copy")).toBeInTheDocument();
+    // With a filter, the first match is named without pointing.
+    expect(panel.querySelector(".panel-foot .keys-option")).toHaveTextContent("keys.terminal");
   });
 
   it("the theme finder names the option for the Theme under the cursor", async () => {

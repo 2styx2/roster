@@ -493,7 +493,7 @@ export function parseLine(commands: Commands, line: string): ParsedLine {
   const [name, ...rest] = line.trim().split(/\s+/).filter(Boolean);
   if (!name) return { kind: "empty" };
   const command = commands.get(name);
-  if (!command) return { kind: "error", message: `Not a command: ${name}` };
+  if (!command) return { kind: "error", message: `Not a command: ${name}. :help commands lists them.` };
   const arg = rest.length ? rest.join(" ") : undefined;
   if (!command.arg) {
     return arg === undefined ? { kind: "ok", command, arg } : { kind: "error", message: `${name} takes no argument` };

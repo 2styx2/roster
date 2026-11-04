@@ -3233,7 +3233,11 @@ function Workspace({
             className="path"
             title={`${info.inventory.path}\n${info.command.join(" ")}`}
           >
-            <span className="path-text">{info.inventory.path}</span>
+            {/* Cut before its file name, never through it (round 10: "…/infra-c..." lost roster.yml). */}
+            <span className="path-text">
+              <span className="path-dir">{dirPart(info.inventory.path)}</span>
+              <span className="path-base">{basePart(info.inventory.path)}</span>
+            </span>
           </span>
         );
       case "changes":
@@ -4054,74 +4058,83 @@ function Workspace({
             />,
           )}
       </div>
-      {overlay !== null &&
-        typeof overlay === "object" &&
-        "cmdline" in overlay && (
-          <CommandLine
-            key={overlay.cmdline}
-            initial={overlay.cmdline}
-            complete={(input) =>
-              complete(commands, input, hosts?.hosts.map((h) => h.name) ?? [], {
-                foldIds: rows.filter((r) => r.foldable).map((r) => r.id),
-                sessions: sessions.tabs.map((t) => t.host),
-                groupNames,
-                inventoryNames:
-                  inventories?.inventories.map((i) => i.name) ?? [],
-                webServices: (name) => {
-                  const h = hostByName.get(
-                    name ?? details ?? ctx.selectedHost() ?? "",
+      {/* The bottom line, as Neovim's: the message row, where the command line types too, so
+          opening it never resizes the pane or the terminal (round 10); its completions float above. */}
+      <div className="bottom-line">
+        {overlay !== null &&
+          typeof overlay === "object" &&
+          "cmdline" in overlay && (
+            <CommandLine
+              key={overlay.cmdline}
+              initial={overlay.cmdline}
+              complete={(input) =>
+                complete(
+                  commands,
+                  input,
+                  hosts?.hosts.map((h) => h.name) ?? [],
+                  {
+                    foldIds: rows.filter((r) => r.foldable).map((r) => r.id),
+                    sessions: sessions.tabs.map((t) => t.host),
+                    groupNames,
+                    inventoryNames:
+                      inventories?.inventories.map((i) => i.name) ?? [],
+                    webServices: (name) => {
+                      const h = hostByName.get(
+                        name ?? details ?? ctx.selectedHost() ?? "",
+                      );
+                      return h ? webServices(h) : [];
+                    },
+                  },
+                )
+              }
+              describe={(candidate) => {
+                // A command name: its label and key. A Session's number: its Host.
+                const [id = "", arg = ""] = candidate.split(" ");
+                const command = commands.get(id);
+                if (command && arg === "")
+                  return { label: command.label(), keys: hintFor(keymap, id) };
+                const tab =
+                  command?.arg === "number"
+                    ? sessions.tabs[Number(arg) - 1]
+                    : undefined;
+                return tab ? { label: tab.host, keys: null } : null;
+              }}
+              keys={keymap.cmdline}
+              leader={options.leader}
+              {...(overlay.caret !== undefined ? { caret: overlay.caret } : {})}
+              onHelp={(line, caret) => {
+                const topic = lineTopic(commands, line);
+                if (!topic)
+                  return setMessage(
+                    `No command starts with ${line.trim().split(/\s+/)[0]}: Tab lists them`,
                   );
-                  return h ? webServices(h) : [];
-                },
-              })
-            }
-            describe={(candidate) => {
-              // A command name: its label and key. A Session's number: its Host.
-              const [id = "", arg = ""] = candidate.split(" ");
-              const command = commands.get(id);
-              if (command && arg === "")
-                return { label: command.label(), keys: hintFor(keymap, id) };
-              const tab =
-                command?.arg === "number"
-                  ? sessions.tabs[Number(arg) - 1]
-                  : undefined;
-              return tab ? { label: tab.host, keys: null } : null;
-            }}
-            keys={keymap.cmdline}
-            leader={options.leader}
-            {...(overlay.caret !== undefined ? { caret: overlay.caret } : {})}
-            onHelp={(line, caret) => {
-              const topic = lineTopic(commands, line);
-              if (!topic)
-                return setMessage(
-                  `No command starts with ${line.trim().split(/\s+/)[0]}: Tab lists them`,
-                );
-              closeOverlay();
-              backToLine.current = { line, caret };
-              run(`help ${topic}`);
-              if (!helpView.snapshot().at) backToLine.current = null;
-            }}
-            onClose={closeOverlay}
-            onRun={(line) => {
-              closeOverlay();
-              run(line);
-            }}
-          />
-        )}
-      {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
-          line as visually hidden text, so a screen reader still hears what changed. */}
-      {/* Its line is always there, as Neovim's message row is: a message coming or going never
-          resizes the pane (or the terminal, which would tell the remote side). */}
-      <div
-        className="message-line"
-        role="status"
-        title={shownText(message, allMessages) || undefined}
-      >
-        {spokenMessage ? (
-          <span className="visually-hidden">{spokenMessage}</span>
-        ) : (
-          shownText(message, allMessages)
-        )}
+                closeOverlay();
+                backToLine.current = { line, caret };
+                run(`help ${topic}`);
+                if (!helpView.snapshot().at) backToLine.current = null;
+              }}
+              onClose={closeOverlay}
+              onRun={(line) => {
+                closeOverlay();
+                run(line);
+              }}
+            />
+          )}
+        {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
+            line as visually hidden text, so a screen reader still hears what changed. */}
+        {/* Its line is always there, as Neovim's message row is: a message coming or going never
+            resizes the pane (or the terminal, which would tell the remote side). */}
+        <div
+          className="message-line"
+          role="status"
+          title={shownText(message, allMessages) || undefined}
+        >
+          {spokenMessage ? (
+            <span className="visually-hidden">{spokenMessage}</span>
+          ) : (
+            shownText(message, allMessages)
+          )}
+        </div>
       </div>
       {pieces("bottom")}
       {/* Progress needs a place without the status bar (Focus hides it, ticket 85): a corner. */}
@@ -4399,6 +4412,15 @@ function mapKey(
     e.preventDefault();
     open(host.name);
   }
+}
+
+/** A path's folder part with its last separator ("~/team/"), and its file name ("roster.yml"). */
+function dirPart(path: string): string {
+  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return i < 0 ? "" : path.slice(0, i + 1);
+}
+function basePart(path: string): string {
+  return path.slice(dirPart(path).length);
 }
 
 /** Whether a media query matches now, following it as the window changes. */

@@ -16,22 +16,37 @@ export interface BindingsPanelProps {
   onHelp?(option: string): void;
 }
 
-export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelProps) {
+export function BindingsPanel({
+  rows,
+  leader,
+  onClose,
+  onHelp,
+}: BindingsPanelProps) {
   const [query, setQuery] = useState("");
+  // The binding the pointer is on: its init.lua name shows in the footer (owner, after round 10).
+  const [pointed, setPointed] = useState<BindingRow | null>(null);
   const shown = useMemo(() => filterRows(rows, query), [rows, query]);
   const groups = useMemo(() => {
     const out = new Map<string, BindingRow[]>();
     for (const r of shown) out.set(r.area, [...(out.get(r.area) ?? []), r]);
     return [...out];
   }, [shown]);
+  // Pointed at, or else the filter's first match: whose option the footer names.
+  const named =
+    pointed ?? (query.trim() !== "" ? (groups[0]?.[1][0] ?? null) : null);
 
   return (
-    <aside className="keys-panel" aria-label="Key bindings" data-filtering={query.trim() !== "" || undefined}>
+    <aside className="keys-panel" aria-label="Key bindings">
       <header>
         <h2>Key bindings</h2>
         <span className="panel-head-buttons">
           <PanelButton />
-          <button type="button" className="icon-button keys-close" aria-label="Close key bindings" onClick={onClose}>
+          <button
+            type="button"
+            className="icon-button keys-close"
+            aria-label="Close key bindings"
+            onClick={onClose}
+          >
             <CloseGlyph />
           </button>
         </span>
@@ -65,13 +80,14 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
                 </th>
               </tr>
               {list.map((r) => (
-                <tr key={`${r.label}\0${r.source}`}>
+                <tr
+                  key={`${r.label}\0${r.source}`}
+                  className={named === r ? "named" : undefined}
+                  onMouseEnter={() => setPointed(r)}
+                  onMouseLeave={() => setPointed((p) => (p === r ? null : p))}
+                >
                   <td>
                     {r.label}
-                    {/* Its name in init.lua (ticket 32), under the label. */}
-                    <code className="keys-option" title="Change it in init.lua">
-                      {r.options.join(" ")}
-                    </code>
                     {/* Where it comes from, when it isn't built in, on the same line as its name
                         (a column of its own took the width every description needs). */}
                     {r.source !== BUILTIN && (
@@ -86,7 +102,11 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
                         <span key={k}>
                           {i > 0 && " "}
                           {/* The bindings themselves, not hints: shown even with ui.hints = false. */}
-                          <Keys keys={k} leader={leader} className="binding-keys" />
+                          <Keys
+                            keys={k}
+                            leader={leader}
+                            className="binding-keys"
+                          />
                         </span>
                       ))}
                     </span>
@@ -96,10 +116,32 @@ export function BindingsPanel({ rows, leader, onClose, onHelp }: BindingsPanelPr
             </tbody>
           ))}
         </table>
-        {shown.length === 0 && <p className="panel-empty">No bindings match “{query}”.</p>}
+        {shown.length === 0 && (
+          <p className="panel-empty">No bindings match “{query}”.</p>
+        )}
       </div>
-      <p className="panel-foot">
-        Change any of these in init.lua: point at one for its name there. <code>:config</code> opens it.
+      {/* One line, always: the pointed binding's name in init.lua (ticket 32), or how to find it.
+          Its rows stay one line each, so nothing moves as the pointer goes down the list. */}
+      <p
+        className="panel-foot"
+        title={
+          named
+            ? `In init.lua: ${named.options.join(" ")}${named.source !== BUILTIN ? ` · from ${named.source}` : ""}`
+            : "Point at a binding for its name in init.lua. :config opens it."
+        }
+      >
+        {named ? (
+          <>
+            In init.lua:{" "}
+            <code className="keys-option">{named.options.join(" ")}</code>
+            {named.source !== BUILTIN && <> · from {named.source}</>}
+          </>
+        ) : (
+          <>
+            Point at a binding for its name in init.lua. <code>:config</code>{" "}
+            opens it.
+          </>
+        )}
       </p>
     </aside>
   );
