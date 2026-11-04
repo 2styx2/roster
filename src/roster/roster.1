@@ -13,7 +13,7 @@ roster reveal [\-\-wifi] name
 roster info [\-\-json] NAME [NAME ...]
 roster run [\-\-sudo] host ...
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
-roster bw ...
+roster bw [\-\-write] ...
 roster providers [\-\-json]
 roster auth\-check [\-\-only LIST] [\-\-json]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
@@ -195,9 +195,12 @@ allow scanning more than 4096 addresses
 print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS bw
 .PP
-\fBroster bw ...\fR
+\fBroster bw [\-\-write] ...\fR
 .PP
-The Bitwarden CLI with this box's vault session from \fB~/.config/roster/bw\-session\fR (never prompts), e.g. \fBroster bw list items \-\-search proxmox\fR
+The Bitwarden CLI with this box's vault session from \fB~/.config/roster/bw\-session\fR (never prompts, except \fBlogin\fR and \fBunlock\fR), e.g. \fBroster bw list items \-\-search web\-01\fR\&. Read\-only unless \fB\-\-write\fR: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See \fBroster bw\fR
+.TP
+\fB\-\-write\fR
+allow bw commands that change the vault, write a file here or act on the account (create, edit, delete, export, receive, \-\-output, login, logout, unlock, lock, config, ...)
 .TP
 \fBBW_ARGS\fR
 arguments for bw
