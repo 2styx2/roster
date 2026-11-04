@@ -33,6 +33,7 @@ from typing import Any
 
 from . import (
     __version__,
+    addhost,
     askpass,
     boxsync,
     diagnose,
@@ -123,7 +124,7 @@ from .sshops import (
     sync_fix,
 )
 
-API_VERSION = 28            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 29            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -1563,7 +1564,7 @@ def ssh_value(path):
 
 
 def host_add(state, params):
-    """Add a Host to roster.yml as a Pending change (edit.added). With a Login (an existing vault item in auth, or
+    """Add a Host to roster.yml as a Pending change (addhost.add, the one `roster add` uses: T220, Q190). With a Login (an existing vault item in auth, or
     a password typed into the form) it's a verified add (Q43): the test login first; then, for a typed password,
     the Vault item; then the Host. Nothing is written when the test login fails, and the item is taken back out
     when writing the Host fails. Without a Login the Host goes in unreviewed, as discover adds them.
@@ -1574,7 +1575,8 @@ def host_add(state, params):
         `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made
         (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the
         Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`,
-        its `error` and `fix`)
+        its `error` and `fix`). Since API 29 (T220) its checks are `roster add`'s (addhost.py): `80` also for an
+        address that's neither an IP address nor a DNS name
     Errors: 80, 81, 74, 61, 11, 12, 14, 30-35, 40-48, 60, 62, 64, 65
     Since: API 6
     """
@@ -1593,8 +1595,7 @@ def add_host(state, params):
     if typed:
         fields["auth"] = f"{typed['provider']}:{typed['item']}"
     state.fresh()
-    repo = store.at(state.path)
-    _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name, group and user, before the network
+    h = addhost.add(state.path, group, name, fields, dry_run=True)["host"]   # every check, before the network
     login = typed is not None or diagnose.stored_password(h) is not None
     fields["reviewed"] = login
     verify = None
@@ -1618,22 +1619,25 @@ def add_host(state, params):
         finally:
             del password
         made = {"provider": typed["provider"], **made}
+    warnings = []
+
+    def after():                                # the Host is in roster.yml now: what follows can't un-add it
+        if verify and verify.get("host_key"):
+            k = verify["host_key"]
+            try:
+                record_host_key(h, k["type"], k["base64"])
+            except Exception as e:
+                warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
+                                f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
+        state.reload()
+        return sync_box(state)
+
     try:                                        # until the Host is written, any failure takes the item back out
-        old_text, new_text, _ = edit.added(repo.path, group, name, fields)
-        backup = repo.save(old_text, new_text)
+        written = addhost.add(state.path, group, name, fields, sync=after)
     except BaseException as e:
-        raise take_back(made, write_failed(f"{name} wasn't added", repo.path, e)) from None
-    warnings = []                               # the Host is in roster.yml now: what follows can't un-add it
-    if verify and verify.get("host_key"):
-        k = verify["host_key"]
-        try:
-            record_host_key(h, k["type"], k["base64"])
-        except Exception as e:
-            warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
-                            f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
-    state.reload()
-    return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "verify": verify,
-            "item": made, "warnings": warnings, "sync": sync_box(state)}
+        raise take_back(made, write_failed(f"{name} wasn't added", state.path, e)) from None
+    return {"added": True, "host": state.inventory()["hosts"][name], "backup": written["backup"], "verify": verify,
+            "item": made, "warnings": warnings, "sync": written["sync"]}
 
 
 def write_failed(what, path, e):
@@ -2333,6 +2337,27 @@ def vault_targets(state, params):
             "problem": problem and {"code": problem.code, "message": problem.message, "fix": (problem.data or {}).get("fix")}}
 
 
+def vault_item_fields(state, params):
+    """What a vault item says about its Host (T220, Q190), for an add-Host form's "fill from a vault item": the
+    address and SSH port from its URI, the user from its username (addhost.vault_fields, as `roster add
+    --from-vault`). Never the password: only a provider that gives these fields without it (Bitwarden's `bw get uri`
+    and `bw get username`) can answer; any other is `186`. A field the item doesn't have is left out.
+
+    Params: `{item, provider?}`: `item` the item's name or id (as after `bw:` in auth), `provider` the vault (default:
+        the Inventory's, as vault.status's)
+    Result: `{provider, item, address?, port?, user?}`
+    Errors: 13, 14, 11, 12, 31, 32, 33, 35, 186
+    Since: API 29
+    """
+    provider = vault_provider(state, params)
+    item = params.get("item")
+    if not isinstance(item, str) or not item.strip() or "\n" in item:
+        raise RpcError(INVALID_PARAMS, "params.item must be a vault item's name or id, one line")
+    item = item.strip()
+    return {"provider": provider, "item": item, **addhost.vault_fields(f"{provider}:{item}")}
+
+
+METHODS["vault.item_fields"] = vault_item_fields
 METHODS["vault.create_item"] = vault_create_item
 METHODS["vault.undo_create"] = vault_undo_create
 METHODS["vault.targets"] = vault_targets
@@ -3017,7 +3042,8 @@ LOCKS = {
         "inventory.reload")},
     **{m: [("inventory", False), ("vault", True)] for m in ("host.add", "quick.save", "host.save_login")},
     **{m: [("vault", True)] for m in (
-        "session.prepare", "session.fill", "quick.prepare", "vault.status", "vault.targets", "vault.create_item",
+        "session.prepare", "session.fill", "quick.prepare", "vault.status", "vault.targets", "vault.item_fields",
+        "vault.create_item",
         "vault.undo_create")},
     # vault.lock and vault.logout aren't here: they forget first and then wait, never refused (vault_lock); nor is
     # host.check: its job shares the vault (check_job), not the request waiting for it

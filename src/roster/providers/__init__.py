@@ -187,6 +187,8 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #             "targets": fn(ctx) -> [target], where the provider can save: each {id, kind, label, save_to}
 #             "resolve": fn(setting, field, ctx) -> the target a save_to setting names (UnknownTarget,
 #                        ReadOnlyTarget); field(part) names the setting for messages
+#             "login_fields": fn(spec, ctx) -> {"uri", "username"} (each None when the item has none): an
+#                             item's address and user, read without its password ever reaching roster (Q190)
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -535,6 +537,22 @@ def delete_item(provider, item_id):
         for ref in [r for r in _secrets if str(r[0] if isinstance(r, tuple) else r).startswith(provider + ":")]:
             del _secrets[ref]
     fn(item_id, Ctx(provider, None))
+
+
+def login_fields(provider, spec):
+    """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
+    None when the item has none. Only a provider that can read them without the password reaching roster has this
+    (bw's `bw get uri` / `bw get username`); any other is Unsupported."""
+    fn = _vault_op(provider, "login_fields")
+    if not fn:
+        raise Unsupported(f"provider '{provider}' can't give an item's address and username without roster reading "
+                          "its password too, so roster doesn't ask it")
+    name, _ = split_field(spec)
+    if not name:
+        raise SecretError(f"{provider}: needs an item name or id")
+    with _secret_lock:
+        found = fn(name, Ctx(provider, None))
+    return {"uri": found.get("uri") or None, "username": found.get("username") or None}
 
 
 # ---- extension points

@@ -427,6 +427,32 @@ def _bw_delete(item_id, ctx):
         raise WriteFailed(f"Bitwarden didn't delete item {item_id}: {errtext(r)}")
 
 
+# ---- an item's address and user, never its password (Q190): `bw get uri` and `bw get username` print just that
+# field, so the password stays inside bw. Several matches aren't listed here (`bw list items` would hand roster every
+# match's password): the message asks for the item's id.
+
+def _bw_login_fields(name, ctx):
+    _bw_ready(ctx)
+    out = {}
+    for field in ("uri", "username"):
+        r = _bw(ctx, "get", field, name)
+        if r.returncode == 0:
+            out[field] = r.stdout.strip() or None
+            continue
+        err = errtext(r, stdout=False)
+        if "More than one" in err:
+            raise SeveralItems(f"several Bitwarden items match '{name}' - use the item's id instead (find it with: "
+                               f"roster bw list items --search \"{name}\")", name, [], exact=False)
+        if "Not found" in err:
+            raise ItemNotFound(f"no Bitwarden item matches '{name}'", name)
+        if "available" in err:                  # bw: "No uri available for this login."
+            out[field] = None
+            continue
+        raise SecretError(f"`bw get {field}` failed: {err}")
+    return out
+
+
 PROVIDERS["bw"].update(unlock=_bw_unlock, lock=_bw_lock, forget=_bw_forget, status=_bw_vault_status,
                        account=_bw_account, logout=_bw_logout, not_logged_in=NOT_LOGGED_IN,
-                       create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve)
+                       create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
+                       login_fields=_bw_login_fields)

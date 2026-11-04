@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Test stand-in for the Bitwarden CLI (bw). Logged in, locked; master password "hunter2".
 # FAKE_BW_LOGGED_OUT=1: not logged in (status "unauthenticated", unlock fails).
+# `bw get uri ITEM` / `bw get username ITEM`: just that field (the login's first URI), as bw prints it.
 # FAKE_BW_ITEMS=FILE: a JSON list of items to use instead of the ones below (read on every call). `bw create item`
 #   (base64 JSON on stdin or as an argument, like bw) and `bw delete item ID` write it back.
 # FAKE_BW_WRITE_FAIL=TEXT: create and delete fail with TEXT on stderr (e.g. a server or policy refusal).
@@ -227,4 +228,12 @@ if a[:2] == ["get", "item"]:
     if not hits: print("Not found.", file=sys.stderr); sys.exit(1)
     if len(hits) > 1: print("More than one result was found. Try getting a specific object by `id` instead.", file=sys.stderr); sys.exit(1)
     print(json.dumps(hits[0])); sys.exit()
+if a[:2] in (["get", "uri"], ["get", "username"]):        # just that field, as bw prints it: never the password
+    hits = [i for i in items if i["id"] == q] or [i for i in items if q.lower() in i["name"].lower()]
+    if not hits: print("Not found.", file=sys.stderr); sys.exit(1)
+    if len(hits) > 1: print("More than one result was found. Try getting a specific object by `id` instead.", file=sys.stderr); sys.exit(1)
+    login = hits[0].get("login") or {}
+    value = ((login.get("uris") or [{}])[0].get("uri") if a[1] == "uri" else login.get("username"))
+    if not value: print(f"No {a[1]} available for this login.", file=sys.stderr); sys.exit(1)
+    print(value); sys.exit()
 sys.exit(2)

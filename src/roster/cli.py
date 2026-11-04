@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from . import __version__, boxsync, clihelp, jsonout, mesh
+from .addhost import cmd_add
 from .claude import write_claude_files
 from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
 from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
@@ -1383,6 +1384,32 @@ def build_parser():
                    help="run it as root with sudo; roster gives sudo the login's password (never shown)")
     values(s.add_argument("host", help="the host to run it on"), HOSTS)
     s.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
+    s = sub.add_parser("add", help="add one Host you already know to roster.yml (reviewed), the app's add-Host "
+                       "way")
+    s.add_argument("name", metavar="NAME", help="the new Host's name: letters, digits, . _ -")
+    s.add_argument("--ip", metavar="ADDR", help="its address: an IPv4 or IPv6 address or a DNS name (asked for in a "
+                   "terminal when it's missing)")
+    s.add_argument("--user", metavar="USER", help="the SSH user (default: its group's or defaults')")
+    s.add_argument("--auth", metavar="REF", help="its Login: a vault item (bw:ITEM, op:...), env:VAR, prompt, key "
+                   "... (default: its group's or defaults')")
+    values(s.add_argument("--group", metavar="GROUP", help="the group it goes in: an existing one, or a new one "
+                          "(default: the first group; asked in a terminal)"), GROUPS)
+    on = s.add_mutually_exclusive_group()
+    on.add_argument("--enroll", dest="enroll", action="store_true", default=None,
+                    help="install this Box's key on it at setup (asked in a terminal; default: its group's)")
+    on.add_argument("--no-enroll", dest="enroll", action="store_false", help="password logins only, no key")
+    s.add_argument("--os", choices=["windows", "posix"], help="windows for a Windows Host with OpenSSH Server "
+                   "(default: posix)")
+    s.add_argument("--title", metavar="TEXT", help="a one-line title")
+    s.add_argument("--type", metavar="TEXT", help="a free label (nas, switch, esxi, ...)")
+    s.add_argument("--port", type=int, metavar="N", help="its SSH port (default: 22)")
+    s.add_argument("--from-vault", action="store_true", help="fill --ip (and --port) from the --auth item's URI and "
+                   "--user from its username, never reading its password (bw); flags given win")
+    s.add_argument("--check", action="store_true", help="then run auth-check and setup for it alone, and say how "
+                   "each went")
+    s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
+    s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
+                   "error naming its flag")
     s = sub.add_parser("discover", help="scan networks (nmap if installed) and add what's found to roster.yml")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")
     s.add_argument("--write", action="store_true", help="add new hosts to roster.yml (default: preview only)")
@@ -1541,4 +1568,4 @@ def _main(argv=None):
     setup_providers(cfg)
     return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "info": cmd_info,
             "run": cmd_run, "revoke": cmd_revoke, "resources": cmd_resources, "reveal": cmd_reveal, "auth-check": cmd_auth_check, "web": cmd_web,
-            "mesh": cmd_mesh}[args.cmd](cfg, args)
+            "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)

@@ -12,6 +12,7 @@ roster resources [\-\-only LIST] [\-\-find TEXT] [\-\-json]
 roster reveal [\-\-wifi] name
 roster info [\-\-json] NAME [NAME ...]
 roster run [\-\-sudo] host ...
+roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-check] [\-\-dry\-run] [\-y] NAME
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster bw [\-\-write] ...
 roster providers [\-\-json]
@@ -164,6 +165,56 @@ the host to run it on
 .TP
 \fBCOMMAND\fR
 the command, after \-\-
+.SS add
+.PP
+\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-check] [\-\-dry\-run] [\-y] NAME\fR
+.PP
+Add one Host you already know to \fBroster.yml\fR, reviewed, the way the app's add\-Host form does (the same code): under \fB\-\-group\fR (new or existing; default the first), with \fB\-\-user\fR, \fB\-\-auth\fR, \fB\-\-enroll\fR/\fB\-\-no\-enroll\fR, \fB\-\-os\fR, \fB\-\-title\fR, \fB\-\-type\fR, \fB\-\-port\fR\&. Asks in a terminal for what's missing; \fB\-y\fR never asks. \fB\-\-from\-vault\fR fills the address and user from the \fB\-\-auth\fR item, never its password; \fB\-\-check\fR then runs auth\-check and setup for it; \fB\-\-dry\-run\fR writes nothing. See Adding one Host
+.TP
+\fBNAME\fR
+the new Host's name: letters, digits, . _ \-
+.TP
+\fB\-\-ip ADDR\fR
+its address: an IPv4 or IPv6 address or a DNS name (asked for in a terminal when it's missing)
+.TP
+\fB\-\-user USER\fR
+the SSH user (default: its group's or defaults')
+.TP
+\fB\-\-auth REF\fR
+its Login: a vault item (bw:ITEM, op:...), env:VAR, prompt, key ... (default: its group's or defaults')
+.TP
+\fB\-\-group GROUP\fR
+the group it goes in: an existing one, or a new one (default: the first group; asked in a terminal)
+.TP
+\fB\-\-enroll\fR
+install this Box's key on it at setup (asked in a terminal; default: its group's)
+.TP
+\fB\-\-no\-enroll\fR
+password logins only, no key
+.TP
+\fB\-\-os OS\fR
+windows for a Windows Host with OpenSSH Server (default: posix)
+.TP
+\fB\-\-title TEXT\fR
+a one\-line title
+.TP
+\fB\-\-type TEXT\fR
+a free label (nas, switch, esxi, ...)
+.TP
+\fB\-\-port N\fR
+its SSH port (default: 22)
+.TP
+\fB\-\-from\-vault\fR
+fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw); flags given win
+.TP
+\fB\-\-check\fR
+then run auth\-check and setup for it alone, and say how each went
+.TP
+\fB\-\-dry\-run\fR
+print the lines it would add; write nothing
+.TP
+\fB\-y, \-\-yes\fR
+never ask: a missing value it can't default is an error naming its flag
 .SS discover
 .PP
 \fBroster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]\fR
@@ -497,6 +548,7 @@ roster check esx\-02                      # why a Session to esx\-02 would or wo
 roster check \-\-box                       # this Box's health: roster.yml, ssh, vault, infra repo
 roster run esx\-02 \-\- uptime              # run a command with the stored login
 roster web esx\-02 GET /api/status        # an HTTP request, logged in
+roster add nas\-01 \-\-ip 10.0.5.50 \-\-auth bw:nas\-01 \-\-check   # one Host you know, then set it up
 roster discover 10.0.5.0/24              # scan a network, preview only
 roster reveal lab\-guest \-\-wifi | qrencode \-t ansiutf8
 .RE

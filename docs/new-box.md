@@ -56,7 +56,7 @@ roster -c ~/infra/roster.yml init --blank                  # a short, empty one 
 roster -c ~/infra/roster.yml init --inventory ssh-config   # or the Hosts already in ~/.ssh/config (it isn't changed)
 ```
 
-A plain file needs no git: the app's edits, `roster discover --write` and `roster mesh cut` save straight to it, and there's nothing to publish. `git init` in its folder is optional, for history you commit yourself. A `roster.yml` that's already there is never replaced: make the new one in another folder with `--name NAME` to name it beside the first ([A new Inventory](cli-reference.md#a-new-inventory)).
+A plain file needs no git: the app's edits, `roster add`, `roster discover --write` and `roster mesh cut` save straight to it, and there's nothing to publish. `git init` in its folder is optional, for history you commit yourself. A `roster.yml` that's already there is never replaced: make the new one in another folder with `--name NAME` to name it beside the first ([A new Inventory](cli-reference.md#a-new-inventory)).
 
 roster looks for its config in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml`. To run roster from any directory, name it (`roster inv add work ~/infra/roster.yml`, see step 9), or add this to `~/.bashrc` (and `~/.zshrc` if you use zsh):
 
@@ -145,6 +145,8 @@ roster inv add home ~/home-net/roster.yml    # your own, with its own vault Logi
 roster --inv home setup                      # its own ssh config, known_hosts and ROSTER.md; work's stay as they are
 roster inv list                              # * marks the active one; `roster inv use home` switches
 ```
+
+Add a machine you know with one command, in the Inventory you name: `roster --inv home add pi --ip 10.0.0.30 --auth prompt --check` ([One Host you already know](adding-hosts.md#one-host-you-already-know)).
 
 `ssh pi` then works for a Host in either one (the active one's wins if both have that name), and `roster check --box` warns if the same machine is in both. `ROSTER.md` (and the `CLAUDE.md` import) is written for this Box: it marks Hosts another Inventory's name shadows here, so keep it out of the shared repo (add `ROSTER.md` to its `.gitignore`). See [Named Inventories](cli-reference.md#named-inventories).
 
