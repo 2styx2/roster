@@ -770,6 +770,23 @@ export function ConnectCard({
   );
 }
 
+type Exit = Extract<Tab["status"], { state: "ended" }>["exit"];
+
+/** An ended Session's pane note, in the Sidebar row's words (round 21): "ended" for a clean exit
+ * (code 0), "closed" for one closed here, and the code or the signal only when it says
+ * something went wrong. */
+export function endedWords(exit: Exit): string {
+  if (exit.closed) return "closed";
+  if (exit.code === 0) return "ended";
+  return exit.code === null ? "ended (signal)" : `ended (code ${exit.code})`;
+}
+
+/** Its tone: warn for a non-zero code or a signal; none (muted) for a clean exit or a close. A
+ * refused or failed Session shows its error panel instead, in the error colour. */
+export function endedTone(exit: Exit): "warn" | null {
+  return exit.closed || exit.code === 0 ? null : "warn";
+}
+
 /** Cancel's keys on a key question: Esc always, and ↵ before it while Cancel has focus (Enter
  * then cancels, as the question opens; round 21). The ↵ keeps its room when hidden, so focus
  * never resizes the button. */
@@ -1117,8 +1134,11 @@ export function SessionPanes({
               </div>
             )}
             {s.state === "ended" && !s.problem && (
-              <div className="session-note ended">
-                <span>{statusText(tab)}</span>
+              <div
+                className="session-note ended"
+                data-tone={endedTone(s.exit) ?? undefined}
+              >
+                <span>{endedWords(s.exit)}</span>
                 {reconnectKeys && (
                   <span className="muted key-hint">
                     {" "}

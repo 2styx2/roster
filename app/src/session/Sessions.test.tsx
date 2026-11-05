@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../App";
 import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts } from "../backend/fake";
 import { StubTerminal } from "../terminal/StubTerminal";
+import { endedTone, endedWords } from "./Sessions";
 
 const hosts = makeHosts(12);
 const reviewed = hosts.hosts.filter((h) => h.reviewed);
@@ -90,9 +91,21 @@ describe("Sessions", () => {
     await openFromPicker(user, reviewed[0]!.name);
     await within(output()).findByText(/Connected to/);
     await user.keyboard("exit{Enter}");
-    // The Sidebar's row says it in one word (round 20); the pane says the code.
+    // The Sidebar's row says it in one word (round 20); so does the pane for a clean exit, muted
+    // (round 21: "ended (code 0)" in warn yellow read as trouble).
     expect(await within(sidebar()).findByRole("treeitem", { name: new RegExp(`^${reviewed[0]!.name}, ended$`) })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: `Session ${reviewed[0]!.name}` })).toHaveTextContent("ended (code 0)");
+    const pane = screen.getByRole("group", { name: `Session ${reviewed[0]!.name}` });
+    const note = pane.querySelector(".session-note.ended")!;
+    expect(note.querySelector("span")).toHaveTextContent(/^ended$/);
+    expect(pane).not.toHaveTextContent("code 0");
+    expect(note).not.toHaveAttribute("data-tone");
+  });
+
+  it("an ended Session's pane note says the code, in warn, only when something went wrong (round 21)", () => {
+    expect([endedWords({ code: 0, closed: false }), endedTone({ code: 0, closed: false })]).toEqual(["ended", null]);
+    expect([endedWords({ code: 0, closed: true }), endedTone({ code: 0, closed: true })]).toEqual(["closed", null]);
+    expect([endedWords({ code: 3, closed: false }), endedTone({ code: 3, closed: false })]).toEqual(["ended (code 3)", "warn"]);
+    expect([endedWords({ code: null, closed: false }), endedTone({ code: null, closed: false })]).toEqual(["ended (signal)", "warn"]);
   });
 
   it("an ended tab says so, and the Leader then r reconnects it", async () => {
@@ -101,7 +114,7 @@ describe("Sessions", () => {
     await within(output()).findByText(/Connected to/);
     await user.keyboard("exit{Enter}");
     const panel = await screen.findByRole("group", { name: `Session ${reviewed[0]!.name}` });
-    await within(panel).findByText(/ended \(code 0\)/);
+    await within(panel).findByText("ended");
     expect(within(panel).getByTitle(/Leader \(Ctrl\+Space\)/)).toBeInTheDocument();
     await user.keyboard("{Control>} {/Control}r");
     expect(await within(sidebar()).findByRole("treeitem", { name: new RegExp(`^${reviewed[0]!.name},`) })).toBeInTheDocument();
