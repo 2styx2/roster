@@ -191,6 +191,12 @@ NO_LISTABLE_VAULT = 188     # roster.yml uses no vault that can list its items w
 # A Box's key (T226, #435, decision Q193; catalog row 251)
 BOX_NAME_TAKEN = 190        # setup on a renamed Box: another key's line on that Host has the new name; --force goes on
 
+# `roster vault op` (T223, #432, decision Q197): read-only unless --write, a fail-closed allowlist, as bw's (catalog rows
+# 258-260). None of the three messages repeats what came after op's command: those arguments may hold a password
+OP_NEEDS_WRITE = 196        # an op command that changes the vault or the account, or writes a file here, without --write
+OP_NOT_ALLOWED = 197        # an op command or option before it that roster vault op doesn't know, or --write among op's own
+OP_REFUSED = 198            # never run: `op run`/`op plugin run` (another program with the sign-in), --session, --config
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

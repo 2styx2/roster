@@ -13,7 +13,7 @@ roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab --no-enroll 
 roster add nas-01 --auth "bw:nas-01 ssh" --from-vault --setup                   # address and user from the item, then set up
 ```
 
-It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --only nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks.
+It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden and 1Password; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --only nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks.
 
 ### After you put a login in the vault
 

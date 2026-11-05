@@ -1394,6 +1394,107 @@ def cmd_bw(args):
         die("bw (the Bitwarden CLI) isn't installed")
 
 
+# `roster vault op` (T223, #432, decision Q197): the 1Password CLI as `roster vault bw` runs bw (Q178). op's commands are
+# a tree (op item get, op vault user grant), checked against 1Password's CLI reference, as a fail-closed allowlist: a
+# command in none of these sets (one a newer op adds, an alias, a typo) is refused, never assumed safe. Read-only means
+# no change to the vault or the account and no file written on this Box.
+OP_READ = frozenset({"account get", "account list", "completion", "connect server get", "connect server list",
+                     "connect token list", "document get", "document list", "group get", "group list",
+                     "group user list", "help", "inject", "item get", "item list", "item template get",
+                     "item template list", "plugin inspect", "plugin list", "read", "service-account ratelimit",
+                     "user get", "user list", "vault get", "vault list", "vault group list", "vault user list",
+                     "whoami"})
+OP_WRITE = frozenset({"connect group grant", "connect group revoke", "connect server create", "connect server delete",
+                      "connect server edit", "connect token create", "connect token delete", "connect token edit",
+                      "connect vault grant", "connect vault revoke", "document create", "document delete",
+                      "document edit", "events-api create", "group create", "group delete", "group edit",
+                      "group user grant", "group user revoke", "item create", "item delete", "item edit", "item move",
+                      "item share", "plugin clear", "plugin init", "service-account create", "update",
+                      "user confirm", "user delete", "user edit", "user provision", "user reactivate",
+                      "user recovery begin", "user suspend", "vault create", "vault delete", "vault edit",
+                      "vault group grant", "vault group revoke", "vault user grant", "vault user revoke"})
+OP_ACCOUNT = frozenset({"account add", "account forget", "signin", "signout"})  # need --write too
+OP_NEVER = frozenset({"run", "plugin run"})      # start another program with op's sign-in and secrets in its env
+OP_COMMANDS = OP_READ | OP_WRITE | OP_ACCOUNT | OP_NEVER
+OP_GROUPS = frozenset(" ".join(c.split()[:n]) for c in OP_COMMANDS for n in range(1, len(c.split())))
+OP_FLAGS = frozenset({"--debug", "--no-color", "--iso-timestamps", "-h", "--help"})  # op's own options that take no
+#                                                                    value and may come before its command
+
+
+def op_writes_file(a):
+    """Does argument A ask op to write a file here: --out-file in any form, or a short-option cluster with o in it
+    (-o, -fo PATH, -oPATH; pflag reads -abc as -a -b -c)? Over-strict for an odd positional, which fails closed."""
+    return a == "--out-file" or a.startswith("--out-file=") or (a.startswith("-") and not a.startswith("--")
+                                                                 and "o" in a.split("=", 1)[0])
+
+
+def op_command(argv, write):
+    """The op command ARGV runs ("item get"; None for op's bare options, `--help`), or die() saying why it may not run.
+    The command is the words right after op's own valueless options, and must be one op has (or one of its groups,
+    alone, which prints its help): an option among the words could make op take another command than roster checked.
+    Nothing past the command is ever repeated: it may hold a password or a token."""
+    from .errors import OP_NEEDS_WRITE, OP_NOT_ALLOWED, OP_REFUSED
+    for a in argv:
+        flag = a.split("=", 1)[0]
+        if flag == "--session":
+            die(f"[{OP_REFUSED}] roster vault op won't put a session token on op's command line, where other programs "
+                "can read it: op takes your sign-in from its environment (drop --session)")
+        if flag == "--config":
+            die(f"[{OP_REFUSED}] roster vault op won't point op at another configuration folder (--config): it holds "
+                "op's accounts and sign-ins. Drop --config, or run op yourself")
+    if "--write" in argv:
+        die(f"[{OP_NOT_ALLOWED}] --write is roster's, not op's: put it before op's command "
+            "(roster vault op --write -- item edit ...)")
+    start = next((i for i, a in enumerate(argv) if not a.startswith("-")), len(argv))
+    if any(a not in OP_FLAGS for a in argv[:start]):
+        die(f"[{OP_NOT_ALLOWED}] roster vault op takes only these op options before the command: "
+            f"{', '.join(sorted(OP_FLAGS))}; put the others (--account, --format, --vault, ...) after it")
+    words = []
+    for a in argv[start:]:
+        if a.startswith("-") or " ".join([*words, a]) not in OP_COMMANDS | OP_GROUPS:
+            break
+        words.append(a)
+    cmd = " ".join(words) or None
+    rest = argv[start + len(words):]
+    if cmd in OP_GROUPS and not all(a in ("-h", "--help") for a in rest):    # alone, a group prints its help
+        die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows, written out in full before any "
+            f"option (op {' '.join(words)} ... isn't one of them, and isn't repeated here)")
+    if cmd is None and start < len(argv):
+        die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows (the first word isn't one of "
+            f"them, and isn't repeated here): {', '.join(sorted(OP_READ))}; with --write, "
+            f"{', '.join(sorted(OP_WRITE | OP_ACCOUNT))}")
+    writes_file = any(op_writes_file(a) for a in rest)
+    if cmd in OP_NEVER:
+        die(f"[{OP_REFUSED}] roster vault op won't run op {cmd}: it starts another program with op's sign-in and your "
+            "secrets in its environment. Run op yourself if you need it")
+    if (cmd is None or cmd in OP_READ or cmd in OP_GROUPS) and not writes_file:
+        return cmd
+    if not write:
+        what = "acts on the account" if cmd in OP_ACCOUNT else \
+            "writes a file on this Box" if writes_file or cmd in ("update", "connect server create") else \
+            "changes the vault or the account"
+        die(f"[{OP_NEEDS_WRITE}] op {cmd} {what}, and roster vault op is read-only unless you say so: "
+            f"roster vault op --write -- {cmd} ...")
+    return cmd
+
+
+def cmd_op(args):
+    """The 1Password CLI, read-only unless --write (op_command). op's sign-in (the app integration, or an
+    OP_SESSION_* / OP_SERVICE_ACCOUNT_TOKEN in your shell) reaches op in its environment, never its command line, and
+    no Bitwarden variable (BW_*) does. op's input and output are the terminal's: roster never reads them."""
+    argv = args.args[1:] if args.args[:1] == ["--"] else list(args.args)
+    if not argv:
+        die("usage: roster vault op [--write] -- <op arguments>   e.g.  roster vault op -- item list --vault Infra")
+    op_command(argv, args.write)
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("BW_")}  # Windows upper-cases env names
+    try:
+        return subprocess.run(program_argv(["op", *argv]), env=env).returncode
+    except ValueError as e:
+        die(str(e))
+    except FileNotFoundError:
+        die("op (the 1Password CLI) isn't installed")
+
+
 def cmd_inv(args):
     """`roster inv`: name Inventories, pick the active one, forget one, and say which roster.yml roster uses."""
     from . import inventories
@@ -1615,7 +1716,7 @@ def build_parser():
     s.add_argument("--type", metavar="TEXT", help="a free label (nas, switch, esxi, ...)")
     s.add_argument("--port", type=int, metavar="N", help="its SSH port (default: 22)")
     s.add_argument("--from-vault", action="store_true", help="fill --ip (and --port) from the --auth item's URI and "
-                   "--user from its username, never reading its password (bw); flags given win. With no NAME: list "
+                   "--user from its username, never reading its password (bw, op); flags given win. With no NAME: list "
                    "the vault items no Login in roster.yml names (new ones since the last run), and in a terminal "
                    "add each one [Y/n/edit/skip]")
     s.add_argument("--json", action="store_true", help="with --from-vault and no NAME: print the list as JSON, add "
@@ -1686,8 +1787,8 @@ def build_parser():
            INVENTORIES, new_after=("add",))
     values(s.add_argument("path", nargs="?", metavar="PATH", help="with add: its roster.yml"), FILES)
     s.add_argument("--json", **as_json)
-    s = sub.add_parser("vault", help="roster's own views of the vault: status, sync, reveal NAME, and bw -- ARGS (the "
-                       "Bitwarden CLI itself)")
+    s = sub.add_parser("vault", help="roster's own views of the vault: status, sync, reveal NAME, and bw -- ARGS "
+                       "and op -- ARGS (the Bitwarden and 1Password CLIs themselves)")
     vault = s.add_subparsers(dest="vault_cmd", metavar="ACTION", title="actions", prog="roster vault",
                              help="what to do with the vault (plain `roster vault` lists them)")
     s = vault.add_parser("status", help="the password providers here (built-in, plugins, roster.yml), whether their "
@@ -1706,6 +1807,12 @@ def build_parser():
                    help="allow bw commands that change the vault, write a file here or act on the account "
                         "(create, edit, delete, export, receive, --output, login, logout, unlock, lock, config, ...)")
     s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw, after --")
+    s = vault.add_parser("op", help="run the 1Password CLI itself with your op sign-in, read-only unless --write; "
+                         "roster never reads what it prints")
+    s.add_argument("--write", action="store_true",
+                   help="allow op commands that change the vault or the account or write a file here (item create, "
+                        "item edit, item delete, item share, --out-file, signin, signout, account add, update, ...)")
+    s.add_argument("args", nargs=argparse.REMAINDER, metavar="OP_ARGS", help="arguments for op, after --")
     s = sub.add_parser("help", help="this overview; help COMMAND: a command's options and examples; --man: the "
                        "manual; --completion SHELL: Tab completion")
     values(s.add_argument("topic", nargs="*", metavar="COMMAND", help="the command (and its action: vault bw) to show "
@@ -1769,8 +1876,8 @@ def inventory(args):
 def _main(argv=None):
     parser = build_parser()
     args, extra = parser.parse_known_args(argv)
-    is_bw = args.cmd == "vault" and args.vault_cmd == "bw"
-    if extra and is_bw:                  # options before bw's command are bw's: its allowlist judges them, unrepeated
+    passthrough = args.cmd == "vault" and args.vault_cmd in ("bw", "op")
+    if extra and passthrough:                  # options before the tool's command are its own: its allowlist judges them, unrepeated
         args.args = [*extra, *args.args]
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
@@ -1793,8 +1900,8 @@ def _main(argv=None):
         if args.json and args.write:
             build_parser().error("--json goes with discover's preview, not --write: drop one of them")
         return cmd_discover(args)
-    if is_bw:
-        return cmd_bw(args)
+    if passthrough:
+        return cmd_bw(args) if args.vault_cmd == "bw" else cmd_op(args)
     if args.cmd == "inv":
         return cmd_inv(args)
     if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):

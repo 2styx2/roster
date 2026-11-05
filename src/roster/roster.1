@@ -20,6 +20,7 @@ roster vault status [\-\-json]
 roster vault sync
 roster vault reveal [\-\-wifi] name
 roster vault bw [\-\-write] ...
+roster vault op [\-\-write] ...
 roster help [\-\-man] [\-\-install] [\-\-prefix DIR] [\-\-completion SHELL] [COMMAND ...]
 roster serve
 roster askpass [prompt]
@@ -179,7 +180,7 @@ a free label (nas, switch, esxi, ...)
 its SSH port (default: 22)
 .TP
 \fB\-\-from\-vault\fR
-fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw); flags given win. With no NAME: list the vault items no Login in roster.yml names (new ones since the last run), and in a terminal add each one [Y/n/edit/skip]
+fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw, op); flags given win. With no NAME: list the vault items no Login in roster.yml names (new ones since the last run), and in a terminal add each one [Y/n/edit/skip]
 .TP
 \fB\-\-json\fR
 with \-\-from\-vault and no NAME: print the list as JSON, add nothing
@@ -323,7 +324,7 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 .PP
 \fBroster vault ACTION ...\fR
 .PP
-roster's own views of the vault, one action each (below); plain \fBroster vault\fR lists them. One home per provider: \fBvault bw\fR is Bitwarden's own CLI
+roster's own views of the vault, one action each (below); plain \fBroster vault\fR lists them. One home per provider: \fBvault bw\fR is Bitwarden's own CLI, \fBvault op\fR 1Password's
 .SS vault status
 .PP
 \fBroster vault status [\-\-json]\fR
@@ -359,6 +360,17 @@ allow bw commands that change the vault, write a file here or act on the account
 .TP
 \fBBW_ARGS\fR
 arguments for bw, after \-\-
+.SS vault op
+.PP
+\fBroster vault op [\-\-write] ...\fR
+.PP
+The 1Password CLI itself with your op sign\-in (the 1Password app's CLI integration, or an \fBOP_SESSION_*\fR or \fBOP_SERVICE_ACCOUNT_TOKEN\fR in your shell), e.g. \fBroster vault op \-\- item list \-\-vault Infra\fR\&. Read\-only unless \fB\-\-write\fR: commands that change the vault or the account, or write a file on this Box, need it; \fBop run\fR, \fB\-\-session\fR and \fB\-\-config\fR are refused; commands roster doesn't know are refused. roster never reads what op prints. See \fBroster vault op\fR
+.TP
+\fB\-\-write\fR
+allow op commands that change the vault or the account or write a file here (item create, item edit, item delete, item share, \-\-out\-file, signin, signout, account add, update, ...)
+.TP
+\fBOP_ARGS\fR
+arguments for op, after \-\-
 .SS help
 .PP
 \fBroster help [\-\-man] [\-\-install] [\-\-prefix DIR] [\-\-completion SHELL] [COMMAND ...]\fR
@@ -534,7 +546,7 @@ Wrong arguments
 \fB130\fR
 Interrupted with Ctrl+C
 .PP
-With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster vault bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
+With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, \fBroster vault bw\fR with \fBbw\fR\&'s, and \fBroster vault op\fR with \fBop\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
 .SH EXAMPLES
 .PP
 .nf

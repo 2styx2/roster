@@ -416,6 +416,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `187` | `roster add --from-vault` (no NAME): the vault couldn't list its items or sync (T221). A CLI error so far |
 | `188` | `roster add --from-vault` (no NAME): roster.yml uses no vault that can list its items without roster reading their passwords (T221). A CLI error so far |
 | `190` | `roster setup` on a renamed Box: a Host's key file has another key's line under the new name (another Box uses it), so that Host is left as it is; `setup --force` goes ahead (T226). A CLI error |
+| `196` | `roster vault op`: an op command that changes the vault or the account (`item create`, `item edit`, `item delete`, `item share`, `signin`, `signout`, `account add`, …) or writes a file here (`update`, `connect server create`, any `--out-file`/`-o`), without `--write`; op didn't run (T223). A CLI error, never a serve answer |
+| `197` | `roster vault op`: an op command roster vault op doesn't know (or an option among its words, or before it, that isn't one of op's valueless ones), or `--write` among op's arguments; op didn't run. A CLI error |
+| `198` | `roster vault op`: `op run`, `op plugin run`, `--session` or `--config` on op's command line, always refused; op didn't run. A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
