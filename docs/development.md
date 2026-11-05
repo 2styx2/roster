@@ -116,10 +116,11 @@ A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) an
 | `plugins/` | the frontend and Rust |
 | `docs/`, `examples/`, a `*.md` at the root | the frontend, Rust and pytest on Linux (each checks the docs) |
 | `tests/vectors/` | pytest on Linux and Windows, the frontend and Rust |
+| `install.sh`, `update.sh`, `uninstall.sh`, `install-lib.sh`, `scripts/test-install.sh` | pytest on Linux and Windows, and the install test (`scripts/test-install.sh` on Ubuntu and Fedora, in containers) |
 | `.github/workflows/release.yml` | the release builds (and release.yml's own dry run, [releasing.md](releasing.md)) |
 | `.github/workflows/ci.yml`, `scripts/`, or anything else | everything |
 
-`Checks` (ruff, pyright, one version, the lua-language-server checks and the wheel build) always runs: one job, since each takes seconds, so a run takes fewer of the free plan's 20 parallel jobs (T233). The release builds, `App Windows release build` and `App Linux release build`, run on a pull request only when it touches what they build; every push to `dev` runs them. A pull request's older run is cancelled when a newer push comes; a push to `main` or `dev` runs to the end. The Rust jobs restore the cache `dev`'s last run saved and don't save their own, so pull requests don't push `dev`'s cache out of the 10 GB GitHub keeps. The last job, `CI`, always reports: green when every job that ran passed, red when one failed or was cancelled, so branch protection can require that one name.
+The install test needs the network (apt or dnf, astral.sh, Bitwarden), so off a pull request it runs only on Monday's nightly run and on a run by hand, not on every push or tag (decision Q199). `Checks` (ruff, pyright, one version, the lua-language-server checks and the wheel build) always runs: one job, since each takes seconds, so a run takes fewer of the free plan's 20 parallel jobs (T233). The release builds, `App Windows release build` and `App Linux release build`, run on a pull request only when it touches what they build; every push to `dev` runs them. A pull request's older run is cancelled when a newer push comes; a push to `main` or `dev` runs to the end. The Rust jobs restore the cache `dev`'s last run saved and don't save their own, so pull requests don't push `dev`'s cache out of the 10 GB GitHub keeps. The last job, `CI`, always reports: green when every job that ran passed, red when one failed or was cancelled, so branch protection can require that one name.
 
 ## Languages and types
 

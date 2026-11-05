@@ -11,17 +11,29 @@ assert _spec and _spec.loader
 ci_changes = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ci_changes)
 
-ALL = {"cli", "windows", "frontend", "rust", "release"}
+ALL = {"cli", "windows", "frontend", "rust", "release", "install"}
+NOT_INSTALL = ALL - {"install"}
 
 
 def run(*files: str) -> set[str]:
     return ci_changes.areas("pull_request", list(files))
 
 
-def test_a_push_a_tag_or_the_schedule_runs_everything():
-    for event in ("push", "schedule", "workflow_dispatch"):
-        assert ci_changes.areas(event, []) == ALL
-        assert ci_changes.areas(event, ["docs/news.md"]) == ALL
+def test_a_push_a_tag_or_the_schedule_runs_everything_but_the_install_test():
+    for event in ("push", "schedule"):
+        assert ci_changes.areas(event, [], weekday=3) == NOT_INSTALL
+        assert ci_changes.areas(event, ["docs/news.md"], weekday=3) == NOT_INSTALL
+
+
+def test_the_install_test_runs_weekly_by_hand_and_on_the_install_scripts():
+    # #444: test-install.sh needs the network (apt, dnf, astral.sh, Bitwarden): Monday's nightly run, a run by
+    # hand, and a pull request that touches what it tests
+    assert ci_changes.areas("schedule", [], weekday=1) == ALL
+    assert ci_changes.areas("push", [], weekday=1) == NOT_INSTALL
+    assert ci_changes.areas("workflow_dispatch", [], weekday=3) == ALL
+    for f in ("install.sh", "update.sh", "uninstall.sh", "install-lib.sh", "scripts/test-install.sh"):
+        assert run(f) == {"cli", "windows", "install"}, f
+    assert "install" not in run("src/roster/cli.py", "app/src/App.tsx", "docs/news.md")
 
 
 def test_a_cli_only_pr_skips_the_app_and_the_release_builds():
@@ -77,6 +89,7 @@ def test_main_writes_the_github_outputs(tmp_path):
     lines = dict(line.split("=", 1) for line in out.read_text().splitlines())
     assert lines["cli"] == "true" and lines["windows"] == "true"
     assert lines["frontend"] == "false" and lines["rust"] == "false" and lines["release"] == "false"
+    assert lines["install"] == "false"
     assert json.loads(lines["python"]) == ["3.12"]
 
 
@@ -85,7 +98,7 @@ def test_main_runs_every_python_off_a_pull_request(tmp_path):
     assert ci_changes.main(["--event", "push", "--output", str(out)]) == 0
     lines = dict(line.split("=", 1) for line in out.read_text().splitlines())
     assert json.loads(lines["python"]) == ["3.10", "3.12", "3.13"]
-    assert all(lines[a] == "true" for a in ALL)
+    assert all(lines[a] == "true" for a in NOT_INSTALL) and lines["install"] == "false"
 
 
 def collected(*args: str) -> list[str]:

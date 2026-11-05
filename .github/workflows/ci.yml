@@ -1,8 +1,10 @@
 # roster CI: both halves of the repo, on pull requests, on pushes to main/dev and tags, and every night.
 #   What runs when (decision Q196, docs/development.md "What CI runs when"): a push to main or dev, a tag, the
-#   nightly schedule and a run by hand run every job, on every supported Python. A pull request runs a PR-sized
+#   nightly schedule and a run by hand run every job (but the install test: Q199), on every supported Python. A pull request runs a PR-sized
 #   set: Python 3.12 only, and only the jobs its changed files need (the `changes` job, scripts/ci_changes.py);
 #   the `CI` job at the end always reports, and fails if any job that ran failed.
+#   Install (install.sh, update.sh, uninstall.sh): scripts/test-install.sh on Ubuntu and Fedora in containers, on
+#        a pull request that touches them, on Monday's nightly run and by hand (it needs the network; decision Q199).
 #   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows
 #        (in 3 shards balanced by time, tests/durations-windows.json), build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
@@ -51,6 +53,7 @@ jobs:
       frontend: ${{ steps.areas.outputs.frontend }}
       rust: ${{ steps.areas.outputs.rust }}
       release: ${{ steps.areas.outputs.release }}
+      install: ${{ steps.areas.outputs.install }}
       python: ${{ steps.areas.outputs.python }}
     steps:
       - uses: actions/checkout@v4
@@ -417,6 +420,25 @@ jobs:
           path: target/release/roster-app
           retention-days: 14
 
+  # install.sh, update.sh and uninstall.sh on a fresh box, in a container (scripts/test-install.sh; #444, decision
+  # Q199): a new user's whole roster life, against a stand-in Host. It needs the network (apt or dnf, astral.sh,
+  # Bitwarden), so it runs on a pull request that touches the install scripts, on Monday's nightly run and by hand
+  # (ci_changes.py "install"). The runner has podman.
+  install-test:
+    name: Install test (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.install == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ubuntu, fedora]
+    steps:
+      - uses: actions/checkout@v4
+      - run: podman --version
+      - run: scripts/test-install.sh ${{ matrix.distro }}
+
   # One check that always reports, under one name: green when every job that ran passed (a job the change didn't
   # need is skipped, and that's fine), red when one failed or was cancelled. Branch protection can require "CI".
   ci:
@@ -424,7 +446,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [changes, checks, cli-test, cli-test-windows, windows-durations, app-frontend, app-rust, core-test-windows,
-            app-windows, app-linux]
+            app-windows, app-linux, install-test]
     if: always()
     steps:
       - name: Every job that ran passed

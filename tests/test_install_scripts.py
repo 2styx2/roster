@@ -443,13 +443,29 @@ def test_install_and_update_turn_completion_on_with_one_shared_step():
 
 
 @posix_shell
-def test_install_without_its_shared_step_beside_it_says_how_to_turn_completion_on(tmp_path):
+@pytest.mark.parametrize("name", ["install.sh", "update.sh"])
+def test_install_and_update_without_their_shared_steps_stop_before_changing_anything(tmp_path, name):
+    """#444 (3): install-lib.sh holds what both scripts share; without it beside them they say where to get it."""
     home, env = install_box(tmp_path)
     src = source_copy(tmp_path)
     (src / INSTALL_LIB).unlink()
-    r = run(src / "install.sh", env, "--prefix", str(tmp_path / "opt"))
-    assert "roster help --completion bash" in r.stdout, r.stdout + r.stderr
-    assert "# roster: completion" not in ((home / ".bashrc").read_text() if (home / ".bashrc").exists() else "")
+    r = run(src / name, env, "--prefix", str(tmp_path / "opt"))
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert f"needs {INSTALL_LIB} beside it" in r.stderr and "roster-cli tarball" in r.stderr
+    assert calls(home) == "" and sorted(p.name for p in home.iterdir()) == []
+
+
+SHARED = ("find_map", "installed_roster", "chose", "choose", "git_net", "older", "version_in", "have", "ask",
+          "stage", "ok", "warn", "bad", "info", "skip", "listed", "summary")
+
+
+def test_install_and_update_share_their_helpers_from_install_lib():
+    """#444 (3): one copy of each helper both scripts use (find_map and friends), in install-lib.sh."""
+    lib = (ROOT / INSTALL_LIB).read_text(encoding="utf-8")
+    for fn in SHARED:
+        assert f"\n{fn}() " in lib or lib.startswith(f"{fn}() "), fn
+        for script in (INSTALL_SH, UPDATE_SH):
+            assert f"\n{fn}() " not in script.read_text(encoding="utf-8"), f"{script.name} has its own {fn}"
 
 
 @posix_shell
@@ -488,6 +504,71 @@ def test_install_offers_cron_when_the_box_has_none(tmp_path):
     assert "dnf install -y cronie" in r.stdout
     assert "would add to crontab:" in r.stdout
     assert "no crontab on this box" not in r.stdout
+
+
+def no_init_box(tmp_path, daemon=True):
+    """A box with no init system (a Fedora container, #444): no systemctl or service, crontab there, and a cron
+    daemon only when DAEMON (a stand-in `crond` that logs being started; the stand-in pgrep sees it after). The map
+    in ~/infra has bin/roster-pull, so install.sh's Auto-update stage has a job to add."""
+    home, env = install_box(tmp_path)
+    infra = home / "infra"
+    (infra / "bin").mkdir(parents=True)
+    (infra / "roster.yml").write_text("groups: {}\n")
+    (infra / "bin/roster-pull").write_text("#!/bin/sh\n")
+    (infra / "bin/roster-pull").chmod(0o755)
+    hidden = {"systemctl", "service", "crond", "cron", "pgrep", "sudo", "crontab", "roster", "uv", "bw"}
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for d in (Path("/usr/local/bin"), Path("/usr/bin"), Path("/bin"), Path("/usr/sbin"), Path("/sbin")):
+        for p in (d.iterdir() if d.is_dir() else ()):
+            if p.name not in hidden and not os.path.lexists(bin_ / p.name):     # /usr/bin has dangling links
+                (bin_ / p.name).symlink_to(p)
+    fakes = tmp_path / "fakes"
+    stand_ins = {"sudo": '#!/bin/sh\nexec "$@"\n',
+                 "pgrep": '#!/bin/sh\n[ -e "$HOME/crond-running" ]\n'}
+    if daemon:
+        stand_ins["crond"] = '#!/bin/sh\necho "crond" >> "$HOME/calls"\ntouch "$HOME/crond-running"\n'
+    for name, text in stand_ins.items():
+        (fakes / name).write_text(text)
+        (fakes / name).chmod(0o755)
+    env["PATH"] = f"{fakes}:{bin_}"
+    (home / "crontab").unlink(missing_ok=True)
+    return home, env
+
+
+@posix_shell
+def test_install_starts_crond_itself_on_a_box_with_no_init_system(tmp_path):
+    """#444: no systemctl or service (a container): install.sh starts the cron daemon directly, and exits 0."""
+    home, env = no_init_box(tmp_path)
+    r = install(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "crond" in calls(home).splitlines()                          # started, once
+    assert "nothing starts crond again" in r.stdout                       # it says the next restart stops it
+    assert "bin/roster-pull" in (home / "crontab").read_text()
+    assert "couldn't find the cron service" not in r.stdout
+
+
+@posix_shell
+def test_install_without_a_cron_daemon_skips_the_job_and_keeps_that_answer(tmp_path):
+    """#444: crontab but no init system and no daemon to start: no job, a clear "run it yourself", exit 0, and the
+    no-cron answer kept, so the box counts as set up (the next install.sh hands over to update.sh)."""
+    home, env = no_init_box(tmp_path, daemon=False)
+    r = install(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"run {home}/infra/bin/roster-pull yourself" in r.stdout
+    assert not (home / "crontab").exists()
+    assert "no-cron" in (home / ".config/roster/install-choices").read_text().splitlines()
+    assert "Auto-update (skipped)" in r.stdout
+
+
+@posix_shell
+def test_install_leaves_a_running_crond_alone_on_a_box_with_no_init_system(tmp_path):
+    home, env = no_init_box(tmp_path)
+    (home / "crond-running").touch()
+    r = install(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cron daemon (crond) running" in r.stdout
+    assert "crond" not in calls(home).splitlines()
 
 
 # ---------------------------------------------------------------- PR #409's review: L4, L5, L6
