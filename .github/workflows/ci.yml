@@ -1,4 +1,8 @@
-# roster CI: both halves of the repo on every pull request and on pushes to main/dev and tags.
+# roster CI: both halves of the repo, on pull requests, on pushes to main/dev and tags, and every night.
+#   What runs when (decision Q196, docs/development.md "What CI runs when"): a push to main or dev, a tag, the
+#   nightly schedule and a run by hand run every job, on every supported Python. A pull request runs a PR-sized
+#   set: Python 3.12 only, and only the jobs its changed files need (the `changes` job, scripts/ci_changes.py);
+#   the `CI` job at the end always reports, and fails if any job that ran failed.
 #   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows,
 #        build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
@@ -17,11 +21,14 @@ on:
   push:
     branches: [main, dev]
     tags: ["v*"]
+  schedule:
+    - cron: "23 3 * * *"        # nightly, 03:23 UTC, on main: the full set
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A pull request's older run gives way to the newer push; a push to main or dev runs to the end.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -32,6 +39,35 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Which jobs this run needs. Off a pull request: all of them. On one: what its files need (scripts/ci_changes.py,
+  # tests/test_ci_changes.py). The checkout is the PR's merge commit, so HEAD^1 is the base it merges into.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cli: ${{ steps.areas.outputs.cli }}
+      windows: ${{ steps.areas.outputs.windows }}
+      frontend: ${{ steps.areas.outputs.frontend }}
+      rust: ${{ steps.areas.outputs.rust }}
+      release: ${{ steps.areas.outputs.release }}
+      python: ${{ steps.areas.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: areas
+        name: What the change needs
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD > files.txt
+          else
+            : > files.txt
+          fi
+          echo "Changed files: $(wc -l < files.txt)"
+          python3 -I scripts/ci_changes.py --event "$GITHUB_EVENT_NAME" --files files.txt --output "$GITHUB_OUTPUT" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
   cli-lint:
     name: CLI lint (ruff)
     runs-on: ubuntu-latest
@@ -56,10 +92,13 @@ jobs:
   cli-test:
     name: CLI tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.12", "3.13"]   # requires-python >= 3.10
+        # requires-python >= 3.10: 3.10, 3.12 and 3.13 off a pull request, 3.12 alone on one (ci_changes.py)
+        python: ${{ fromJSON(needs.changes.outputs.python) }}
     env:
       UV_PYTHON: ${{ matrix.python }}      # overrides .python-version for every uv command
     steps:
@@ -79,7 +118,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends zsh fish
           zsh --version; fish --version; pwsh --version
       - run: uv sync --frozen
-      - run: uv run pytest --junitxml=report.xml
+      # On the runner's 4 cores (pytest-xdist); every test is safe beside others (docs/development.md, "Tests").
+      - run: uv run pytest -n auto --durations=10 --junitxml=report.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -90,23 +130,19 @@ jobs:
   # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
   # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
-  # It took 15-19 min, nearly all of it pytest (918-1148 s against Linux's 233-266 s), and 62% of that the Mesh
-  # suite: each stand-in Host command starts Python and Git for Windows' sh, whose every fork is slow, so a Mesh
-  # test there takes about 7 times as long as on Linux (#234). So it's two jobs side by side: the Mesh suite on
-  # the runner's 4 cores (pytest-xdist), and the rest one at a time as before, since many of those time how soon
-  # serve answers or notices a change (within a second) and miss it when 4 workers share the cores.
-  # --durations lists the slowest, to measure again.
+  # The suite there takes 47-58 min of test time (each stand-in Host command starts Python and Git for Windows'
+  # sh, whose every fork is slow: a Mesh test takes about 7 times as long as on Linux, #234), so it runs in 3 shards
+  # side by side (conftest.py's --shard: every 3rd test, so test_mesh.py spreads evenly), each on the runner's 4
+  # cores. --durations lists the slowest, to measure again.
   cli-test-windows:
-    name: CLI tests (Windows, ${{ matrix.part }})
+    name: CLI tests (Windows, ${{ matrix.shard }}/3)
     runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - part: Mesh
-            args: tests/test_mesh.py -n 4
-          - part: the rest
-            args: --ignore=tests/test_mesh.py
+        shard: [1, 2, 3]
     env:
       UV_PYTHON: "3.12"
     steps:
@@ -120,18 +156,20 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen
-      - run: uv run pytest ${{ matrix.args }} --durations=10 --junitxml=report.xml
+      - run: uv run pytest --shard ${{ matrix.shard }}/3 -n 4 --durations=10 --junitxml=report.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pytest-report-windows-${{ strategy.job-index }}
+          name: pytest-report-windows-${{ matrix.shard }}
           path: report.xml
           retention-days: 7
 
   cli-build:
     name: CLI build (wheel + sdist)
     runs-on: ubuntu-latest
-    needs: [cli-lint, cli-test, cli-test-windows]
+    needs: [changes, cli-lint, cli-test, cli-test-windows]
+    # After the tests that ran; Windows' are skipped on a pull request that only touches the app or the docs.
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.cli == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -151,6 +189,8 @@ jobs:
   app-frontend:
     name: App frontend (tsc, ESLint, Vitest)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     defaults:
       run:
         working-directory: app
@@ -224,6 +264,8 @@ jobs:
   app-rust:
     name: App Rust (fmt, clippy, cargo test)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       # What Tauri needs to build on Linux (app/src-tauri): WebKitGTK 4.1, GTK, D-Bus, appindicator, rsvg.
@@ -237,6 +279,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: cargo fmt --all --check
       # The Tauri crate embeds the built frontend (app/dist) at compile time; clippy only needs it to exist.
       - name: Stub the frontend build for clippy
@@ -264,6 +308,8 @@ jobs:
   core-test-windows:
     name: Core tests (Windows)
     runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       # tests/fake_serve.py stands in for roster serve; the tests run it as python3, which Windows lacks.
@@ -278,6 +324,8 @@ jobs:
           python3 --version
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: cargo test
         shell: pwsh
         run: |
@@ -299,6 +347,10 @@ jobs:
   app-windows:
     name: App Windows release build
     runs-on: windows-latest
+    needs: changes
+    # On a pull request only when it touches what the build builds (ci_changes.py "release"); release.yml's dry run
+    # covers its own files (docs/releasing.md).
+    if: needs.changes.outputs.release == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -308,6 +360,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: npm ci
         working-directory: app
       - run: npm run tauri build -- --no-bundle
@@ -324,6 +378,8 @@ jobs:
   app-linux:
     name: App Linux release build
     runs-on: ubuntu-22.04
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Install the Tauri system packages
@@ -339,6 +395,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: npm ci
         working-directory: app
       - run: npm run tauri build -- --no-bundle
@@ -348,3 +406,25 @@ jobs:
           name: roster-app-linux
           path: target/release/roster-app
           retention-days: 14
+
+  # One check that always reports, under one name: green when every job that ran passed (a job the change didn't
+  # need is skipped, and that's fine), red when one failed or was cancelled. Branch protection can require "CI".
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, cli-lint, cli-test, cli-test-windows, cli-build, app-frontend, plugin-types, app-rust,
+            core-test-windows, app-windows, app-linux]
+    if: always()
+    steps:
+      - name: Every job that ran passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -Ic '
+          import json, sys
+          bad = {name: job["result"] for name, job in json.load(sys.stdin).items()
+                 if job["result"] not in ("success", "skipped")}
+          for name, result in bad.items():
+              print(f"::error::{name}: {result}")
+          sys.exit(1 if bad else 0)'
