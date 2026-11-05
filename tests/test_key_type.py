@@ -217,11 +217,11 @@ def test_setup_key_type_overrides_roster_yml_for_that_run_and_says_so(lab, capsy
     assert main(["setup", "--host", "fips-01", "--key-type", "ecdsa"]) == 0
     out = capsys.readouterr().out
     assert "--key-type ecdsa for 1 host whose roster.yml says otherwise (fips-01)" in out
-    assert "set key_type: ecdsa on them in roster.yml" in out
+    assert "set key_type: ecdsa in roster.yml to keep it" in out
     assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384"] and lab.lines("web-01") == []
     assert not (isolated["home"] / ".ssh" / "roster_ed25519").exists()      # no key it didn't need
     with pytest.raises(SystemExit, match="--key-type: 'rsa-1024' isn't a key type"):
-        main(["setup", "--key-type", "rsa-1024"])
+        main(["setup", "--host", "fips-01", "--key-type", "rsa-1024"])
 
 
 def test_setup_on_a_renamed_box_retags_each_key_type(lab, capsys, write_config):
@@ -343,12 +343,142 @@ def test_moving_a_host_out_of_its_key_type_group_keeps_its_key_type(write_config
     assert h["key_type"] == "ed25519" and "key_type" in pinned
 
 
-def test_a_stray_public_key_without_its_private_key_never_widens_what_revoke_matches(write_config, isolated):
+def keypair(path, kind="rsa", bits="3072"):
+    import subprocess
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for f in (path, path.with_name(path.name + ".pub")):
+        f.unlink(missing_ok=True)
+    subprocess.run(["ssh-keygen", "-q", "-t", kind, *(["-b", bits] if bits else []), "-N", "", "-f", str(path)],
+                   check=True)
+    return path.with_name(path.name + ".pub").read_text().split()
+
+
+def test_a_leftover_key_counts_only_when_its_private_key_gives_its_public_key(write_config, isolated):
+    """#471's review LOW-3: a roster_<type>.pub beside key_path widens what setup and revoke take only when this Box
+    holds its private key (ssh-keygen -y of it gives that key), never a stray .pub or an empty file beside it."""
     from roster.sshops import box_key_re
     cfg = load_config(write_config(FIPS_YML))
     ssh = isolated["home"] / ".ssh"
     ssh.mkdir()
     (ssh / "roster_rsa-4096.pub").write_text("ssh-rsa AAAAothersbox roster-managed:ws9\n")
     assert "AAAAothersbox" not in box_key_re(cfg)
-    (ssh / "roster_rsa-4096").write_text("private")            # this Box's own leftover key of a type no Host uses now
-    assert "AAAAothersbox" in box_key_re(cfg)
+    (ssh / "roster_rsa-4096").write_text("")                    # not a key at all
+    assert "AAAAothersbox" not in box_key_re(cfg)
+    keypair(ssh / "roster_rsa-4096", bits="4096")              # this Box's own key: its .pub then another's
+    (ssh / "roster_rsa-4096.pub").write_text("ssh-rsa AAAAothersbox roster-managed:ws9\n")
+    assert "AAAAothersbox" not in box_key_re(cfg)
+    mine = keypair(ssh / "roster_rsa-8192", bits="3072")        # name and size disagree, but it's this Box's
+    (ssh / "roster_rsa-8192").chmod(0o600)
+    from roster.sshops import key_ere
+    assert key_ere(mine[0], mine[1]) in box_key_re(cfg)
+
+
+def test_ensure_key_refuses_a_public_key_that_isnt_its_private_keys(write_config, isolated):
+    from roster import boxkeys
+    from roster.sshops import ensure_key
+    cfg = load_config(write_config(FIPS_YML))
+    key = boxkeys.for_host(cfg["hosts"]["fips-01"])
+    keypair(key.key, "ecdsa", "384")
+    other = keypair(isolated["home"] / "other", "ecdsa", "384")
+    key.pub.write_text(" ".join(other[:2]) + " roster-managed:ws1\n")
+    with pytest.raises(SystemExit, match=r"\[201\] .*roster_ecdsa.pub isn't the public key of"):
+        ensure_key(key, cfg["tag"])
+
+
+@pytest.mark.parametrize(("want", "have_bits"), [("rsa", "2048"), ("rsa-8192", "3072")])
+def test_ensure_key_refuses_an_rsa_key_with_fewer_bits_than_its_type(write_config, isolated, want, have_bits):
+    """#471's review LOW-2: an existing RSA key's size is checked too, not only its type word."""
+    from roster import boxkeys
+    from roster.sshops import ensure_key
+    cfg = load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {want}")))
+    key = boxkeys.for_host(cfg["hosts"]["fips-02"])
+    keypair(key.key, "rsa", have_bits)
+    with pytest.raises(SystemExit, match=rf"\[201\] .* is a {have_bits}-bit RSA key"):
+        ensure_key(key, cfg["tag"])
+
+
+# ---------------------------------------------------------------- #471's review: never lose a working key line
+
+def works(name):
+    from roster.sshops import ssh_ok
+    return ssh_ok(name)
+
+
+def test_key_type_needs_host_and_keeps_the_other_types_line(lab, capsys):
+    """MED-1: --key-type is for one Host, and only adds its line: the next sync's ssh config (roster.yml's type)
+    still finds the line it offers."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    with pytest.raises(SystemExit, match="--key-type goes with --host NAME"):
+        main(["setup", "--key-type", "rsa"])
+    with pytest.raises(SystemExit, match="--key-type goes with --host NAME"):
+        main(["setup", "--only", "lab", "--key-type", "rsa"])
+    assert main(["setup", "--host", "fips-01", "--key-type", "rsa"]) == 0
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ssh-rsa"]
+    assert works("fips-01")                                     # the run's ssh config: rsa
+    assert main(["sync"]) == 0
+    assert works("fips-01") and works("web-01")                 # roster.yml's again: ecdsa, still there
+
+
+def test_a_type_change_the_host_refuses_keeps_the_working_line(lab, capsys, write_config):
+    """LOW-1: the new line goes in, a key login tests it, and only then do this Box's other lines go: when the Host
+    refuses the new type, the line that worked stays."""
+    from roster.cli import main
+    from roster.sshops import write_ssh_config
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    lab.write()                                                 # ed25519: fips-01 refuses it
+    assert main(["setup"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  fips-01: key installed but key login still fails" in out and "kept" in out
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ssh-ed25519"]
+    lab.write(", key_type: ecdsa")
+    from roster.config import locate_config
+    write_ssh_config(load_config(locate_config(None)))
+    assert works("fips-01")
+
+
+def test_renamed_box_own_line_of_another_type_isnt_another_boxs(lab, capsys, write_config):
+    """LOW-4: on a renamed Box, this Box's own line of another key type under the new name isn't 'name taken'."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0                                 # records ws1
+    yml2 = LAB_YML.format(fips=", key_type: ecdsa").replace("box_name: ws1", "box_name: ws2")
+    write_config(yml2)
+    assert main(["setup", "--host", "web-01"]) == 0             # narrowed: re-tags web-01, the record stays ws1
+    write_config(yml2.replace("web-01: 10.0.0.4", "web-01: {ip: 10.0.0.4, key_type: rsa}"))
+    capsys.readouterr()
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    assert [ln.split()[0] + " " + ln.split()[-1] for ln in lab.lines("web-01")] == ["ssh-rsa roster-managed:ws2"]
+
+
+# ---------------------------------------------------------------- #471's review MED-2: the Mesh
+
+def test_a_box_wide_key_type_leaves_password_hosts_in_the_mesh(write_config):
+    from roster import mesh
+    g = mesh.graph(load_config(write_config("key_type: ecdsa\n" + MESH_YML.replace(
+        "      a-02: 10.0.0.2", "      a-02: 10.0.0.2\n      p-01: {ip: 10.0.0.3, enroll: false, auth: env:PW}"))))
+    assert "p-01" not in g["excluded"] and {"a-01", "a-02", "fips-01"} <= set(g["excluded"])
+
+
+def test_setup_doesnt_take_a_member_out_of_the_mesh_for_its_key_type(write_config, capsys, monkeypatch):
+    """A full setup applies the Mesh; when that would take Mesh entries off a Host that is a member now because its
+    key_type leaves it out, it warns and leaves the Mesh alone: `roster mesh --dry-run` shows it, `roster mesh` does it."""
+    from roster import cli, mesh
+    from roster.cli import main
+    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
+    applied = []
+    monkeypatch.setattr(cli, "mesh_apply", lambda cfg: applied.append(1) or {})
+    yml = MESH_YML.replace("      fips-01: {ip: 10.0.0.5, key_type: ecdsa}\n", "      fips-01: 10.0.0.5\n")
+    write_config(yml)
+    mesh.save_state({**mesh.load_state(), "members": ["a-01", "a-02", "b-01", "fips-01"]})
+    main(["setup"])
+    assert applied == [1]                                       # nothing left out for its key type: applied
+    write_config(MESH_YML)
+    capsys.readouterr()
+    main(["setup"])
+    out = capsys.readouterr().out
+    assert applied == [1]                                       # not applied this time
+    assert "mesh         NOT applied" in out and "fips-01" in out and "roster mesh --dry-run" in out
+    assert main(["setup", "--dry-run"]) == 0

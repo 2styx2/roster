@@ -65,7 +65,7 @@ name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you kee
 .PP
 \fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE]\fR
 .PP
-One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR). Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key in place of the old one. \fB\-\-key\-type TYPE\fR uses TYPE for the Hosts this run sets up, over \fBroster.yml\fR, for this run only: the ssh config it writes gives them that key, it says which Hosts \fBroster.yml\fR names otherwise, and the next \fBroster sync\fR writes \fBroster.yml\fR\&'s type back, so set \fBkey_type:\fR to keep it (FIPS Hosts). \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
+One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR). Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. \fB\-\-host NAME \-\-key\-type TYPE\fR tries TYPE on that Host for this run, over \fBroster.yml\fR (it needs \fB\-\-host\fR): its line goes in beside this Box's line of \fBroster.yml\fR\&'s type, which stays, so the next \fBroster sync\fR (which writes \fBroster.yml\fR\&'s type back) still logs in; set \fBkey_type:\fR to keep it (FIPS Hosts). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
@@ -80,7 +80,7 @@ show what would happen, change nothing remote
 on a renamed Box, go ahead on a Host where another Box's key line has the new name (its line is then this Box's to replace or revoke)
 .TP
 \fB\-\-key\-type TYPE\fR
-the SSH key type for the Hosts this run sets up, over roster.yml's key_type: (ed25519, ecdsa, ecdsa\-256, ecdsa\-521, rsa, rsa\-BITS); for this run only, so set key_type: to keep it
+with \-\-host: try this SSH key type there, over roster.yml's key_type: (ed25519, ecdsa, ecdsa\-256, ecdsa\-521, rsa, rsa\-BITS), for this run only; its line goes in beside the one of roster.yml's type, which stays. Set key_type: to keep it
 .SS sync
 .PP
 \fBroster sync\fR

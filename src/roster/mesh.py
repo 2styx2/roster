@@ -43,6 +43,20 @@ WINDOWS_LEFT_OUT = (f"[{MESH_WINDOWS}] os: windows: the Mesh's scripts are sh, w
                     "left out (a Link or meshed group naming it isn't an error)")
 # T239 (decision Q200): the Mesh's keys are Ed25519, which a FIPS-mode Host (the reason for key_type:) refuses and
 # may not even make, so a Host with another key_type stays out of it until the Mesh follows key_type too
+def key_type_out(h):
+    """Does H's key_type keep it out of the Mesh? Only a key Host's (#471's review MED-2): a password Host's key_type
+    means nothing, so a box-wide one never takes it out."""
+    return bool(h["enroll"]) and h.get("key_type", "ed25519") != "ed25519"
+
+
+def key_type_dropped(cfg):
+    """The Hosts the Mesh holds entries on now (mesh.json's members) that key_type leaves out: an apply would take
+    those entries off (MED-2), so setup leaves the Mesh to an explicit `roster mesh`."""
+    excluded = graph(cfg)["excluded"]
+    return sorted(n for n in load_state()["members"] if n in cfg["hosts"] and n in excluded
+                  and key_type_out(cfg["hosts"][n]))
+
+
 def key_type_left_out(h):
     return (f"[{MESH_KEY_TYPE}] key_type: {h['key_type']}: the Mesh's keys are Ed25519 only for now, which a FIPS-mode "
             "Host refuses, so it's left out (a Link or meshed group naming it isn't an error)")
@@ -77,7 +91,7 @@ def graph(cfg):
             excluded[h["name"]] = "mesh: false"
         elif is_windows(h):
             excluded[h["name"]] = WINDOWS_LEFT_OUT
-        elif h.get("key_type", "ed25519") != "ed25519":
+        elif key_type_out(h):
             excluded[h["name"]] = key_type_left_out(h)
         else:
             return True
@@ -104,7 +118,7 @@ def graph(cfg):
                 if via and is_windows(hosts[via]):         # roster can't test a hop it can't run sh on
                     excluded[via] = WINDOWS_LEFT_OUT
                     continue
-                if via and hosts[via].get("key_type", "ed25519") != "ed25519":    # a hop holds a Mesh key too
+                if via and key_type_out(hosts[via]):        # a hop holds a Mesh key too
                     excluded[via] = key_type_left_out(hosts[via])
                     continue
                 if a != b and eligible(hosts[a]) and eligible(hosts[b]):

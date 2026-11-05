@@ -40,13 +40,24 @@ def ensure_key(key, tag):
     if key.key.exists():
         if not key.pub.exists():
             die(f"{key.key} exists but {key.pub} is missing")
+        from . import boxkeys
+        from .errors import KEY_TYPE_MISMATCH
+        fix = "move it away (roster makes the new key there), or point key_path at another file"
         if key.type.name != "ed25519":
             have = (key.pub.read_text().split() or ["nothing"])[0]
             if have != key.type.public_word:
-                from .errors import KEY_TYPE_MISMATCH
                 die(f"[{KEY_TYPE_MISMATCH}] {key.key} is an {have} key, not {key.type.name} "
-                    f"({key.type.public_word}), which key_type: in roster.yml asks for: move it away (roster makes "
-                    "the new key there), or point key_path at another file")
+                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}")
+            bits = boxkeys.rsa_bits(key.pub) if key.type.algorithm == "rsa" else None
+            if bits is not None and key.type.bits is not None and bits < key.type.bits:     # #471's review LOW-2
+                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
+                    f"key_type: {key.type.name} asks for: {fix}")
+        # #471's review (NIT): a .pub that isn't this key's would go on the Hosts and never log in. Checked only when
+        # ssh-keygen can read the key without a passphrase (a key of the user's own may have one, as before)
+        have, words = boxkeys.derived(key.key), boxkeys.public_words(key.pub)
+        if have is not None and have != words:
+            die(f"[{KEY_TYPE_MISMATCH}] {key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
+                f"{fix}")
         say(f"key          {key.key} ({key.type.name}, existing)")
         return
     key.key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -529,23 +540,29 @@ def taken_guard(name_re, own):
             "echo ROSTER_TAKEN; exit 0; fi; ")
 
 
-def add_key_script(pub, tag_re, user, taken=None):
-    """Drops any older key from this same box, appends the current one. Safe to re-run. TAKEN (this Box's name's
-    tag_re, on a renamed Box): a line it matches with another key stops it (ROSTER_TAKEN)."""
+def add_key_script(pub, tag_re, user, taken=None, own=None, others=None):
+    """Drops the lines TAG_RE matches (this same box's), appends the current one. Safe to re-run. TAKEN (this Box's
+    name's tag_re, on a renamed Box): a line it matches with a key OWN (this Box's keys; PUB's when None) doesn't
+    match stops it (ROSTER_TAKEN). OTHERS (T239): after the write, ROSTER_OTHERS when a line OTHERS matches (this
+    Box's, any key) holds another key than PUB's, which a later step takes once PUB's line is shown to work."""
+    this = key_ere(*pub.split()[:2])
+    later = (f"if grep -E -- {shlex.quote(others)} \"$f\" | grep -q -v -E -- {shlex.quote(this)}; then "
+             "echo ROSTER_OTHERS; fi; ") if others else ""
     return (key_script_head(user) + "umask 077; d=${f%/*}; mkdir -p \"$d\"; NEW=; [ -f \"$f\" ] || NEW=1; "
-            "touch \"$f\"; " + taken_guard(taken, key_ere(*pub.split()[:2])) + REPLACE_AK +
+            "touch \"$f\"; " + taken_guard(taken, own or this) + REPLACE_AK +
             f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$f.roster\" || true; "
             f"printf '%s\\n' {shlex.quote(pub)} >> \"$f.roster\"; " + KEY_MODE + KEEP_LABEL +
             "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP +
-            "[ -n \"$ESXI\" ] || chmod 700 \"$d\"; echo ROSTER_OK")
+            "[ -n \"$ESXI\" ] || chmod 700 \"$d\"; " + later + "echo ROSTER_OK")
 
 
-def retag_key_script(pub, user, taken=None):
+def retag_key_script(pub, user, taken=None, own=None):
     """T217: this Box's key lines (PUB's key under any roster-managed name, options and all) get PUB's tag, in place:
     their options stay, every other line stays as it is (never matched by name: #423's review L2), and nothing is
     added; a second copy of one (#423's S2) goes, as the install's rewrite took it. ROSTER_NONE FILE when there's
     no such line (a line written by hand); a grep that fails (2: unreadable) is a failure, never "no line". TAKEN
-    (the new name's tag_re): a line it matches with another key stops it, as ROSTER_TAKEN, before anything changes."""
+    (the new name's tag_re): a line it matches with a key OWN (this Box's keys; PUB's when None) doesn't match stops
+    it, as ROSTER_TAKEN, before anything changes."""
     kind, key, tag = pub.split()[:3]
     found = key_ere(kind, key)
     # the line with a space before it, so the key matches at its start too; awk's own trail (#442's M2: mawk 1.3.3,
@@ -554,7 +571,7 @@ def retag_key_script(pub, user, taken=None):
     return (key_script_head(user) + "[ -f \"$f\" ] || { echo \"ROSTER_NONE $F\"; exit 0; }; rc=0; NEW=; " +
             # the new name first (#442's M1): a Host where no line of this key is tagged may still hold another
             # Box's line under it, which this Box's revoke would take once the new name is recorded
-            taken_guard(taken, found) +
+            taken_guard(taken, own or found) +
             f"grep -q -E -- {shlex.quote(found)} \"$f\" || rc=$?; "
             "[ $rc -eq 1 ] && { echo \"ROSTER_NONE $F\"; exit 0; }; "
             "[ $rc -eq 0 ] || { echo \"grep couldn't read $F (exit $rc)\" >&2; exit 1; }; "
@@ -582,24 +599,32 @@ class NameTaken(RuntimeError):
     """T226 (#435, 2): a Host's key file has another key's line under the name this Box is being renamed to."""
 
 
-def enroll(h, pub, tag_re, taken=None):
+def enroll(h, pub, tag_re, taken=None, own=None, keep_others=False):
     """Put this Box's key line PUB on Host H, logging in with its Login's password: the notes to show under its `ok`
     (on a Windows Host, the file it wrote and any warning). RuntimeError when it can't; NameTaken when TAKEN (this Box's
-    name's tag_re, on a renamed Box) is given and another key's line is under that name there."""
+    name's tag_re, on a renamed Box) is given and another key's line (one OWN, this Box's keys, doesn't match) is under
+    that name there.
+    T239 (#471's review LOW-1): PUB's line goes in first beside this Box's other lines (TAG_RE: another key type's),
+    a key login tests it, and only then do those go, over that key login: a Host that refuses PUB's type keeps the
+    line that worked. KEEP_OTHERS (setup --key-type, MED-1): they stay, so roster.yml's type still works after."""
     from . import winhost
+    this = key_ere(*pub.split()[:2])
     pw = get_secret(h["ssh"]["auth"], h["group"])
     if is_windows(h):
-        done = winhost.install(h, pub, tag_re, pw, taken or "", key_ere(*pub.split()[:2]) if taken else "")
+        done = winhost.install(h, pub, this, pw, taken or "", (own or this) if taken else "")
         if done.taken:
             raise NameTaken(pub.split()[2])
         if not ssh_ok(h["name"]):
             raise RuntimeError(f"key written to {', '.join(done.files) or 'its key file'} but key login still fails "
                                "(check that file's permissions and encoding, and whether sshd_config's Match Group "
-                               "administrators applies to this account)")
+                               "administrators applies to this account); this Box's other key lines there were kept")
+        if not keep_others:
+            winhost.over_key(h, "add", tag_re, pub=pub)         # this Box's other lines go, PUB's stays
         from .errors import KEY_FILE
         return ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins else [])
                 + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
-    _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, tag_re, h["ssh"]["user"], taken)), pw)
+    _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, this, h["ssh"]["user"], taken, own,
+                                                                         others=tag_re)), pw)
     if "ROSTER_TAKEN" in out.split():
         raise NameTaken(pub.split()[2])
     if "ROSTER_OK" not in out:
@@ -607,6 +632,14 @@ def enroll(h, pub, tag_re, taken=None):
             raise RuntimeError(winhost.windows_hint(h["name"]))
         raise RuntimeError("couldn't write authorized_keys: " + (err or out).strip()[:200])
     if not ssh_ok(h["name"]):
-        raise RuntimeError("key installed but key login still fails "
-                           "(sshd PubkeyAuthentication off, or bad home-dir permissions?)")
+        raise RuntimeError("key installed but key login still fails (sshd PubkeyAuthentication off, bad home-dir "
+                           "permissions, or a key type it refuses?)"
+                           + ("; this Box's other key lines there were kept" if "ROSTER_OTHERS" in out.split() else ""))
+    if "ROSTER_OTHERS" in out.split() and not keep_others:
+        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+                                         "sh -c " + shlex.quote(add_key_script(pub, tag_re, h["ssh"]["user"]))]),
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+        if "ROSTER_OK" not in r.stdout:
+            raise RuntimeError("the new key works, but this Box's other key lines there couldn't be taken off: "
+                               + ((r.stderr or r.stdout).strip()[:200] or f"exit {r.returncode}"))
     return []

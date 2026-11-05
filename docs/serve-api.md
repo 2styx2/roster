@@ -423,7 +423,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `198` | `roster vault op`: `op run`, `op plugin run`, `--session` or `--config` on op's command line, always refused; op didn't run. A CLI error |
 | `199` | `host.check`: the Host refused this Box's Ed25519 key and offers only NIST key exchange and host keys (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes Ed25519. The fix is `key_type: ecdsa` for it, then `roster setup --host NAME` (T239); without those signs a refused key is still `46` |
 | `200` | A note, not an error: a Host whose `key_type:` isn't `ed25519` is left out of the Mesh (its keys are Ed25519 only for now). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), as `160` is, never an error code (T239) |
-| `201` | `roster setup`: the file a key type's key goes in (`~/.ssh/roster_ecdsa`, or `key_path:`) holds a key of another type, so roster made none and installed nothing. A CLI error (T239) |
+| `201` | `roster setup`: the file a key type's key goes in (`~/.ssh/roster_ecdsa`, or `key_path:`) holds a key of another type, an RSA key with fewer bits than its type, or a `.pub` that isn't its private key's, so roster made none and installed nothing. A CLI error (T239) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

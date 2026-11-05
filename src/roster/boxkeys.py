@@ -12,7 +12,9 @@ default, as before); every other type's is `roster_<type>` beside it. Every key 
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,6 +86,66 @@ class BoxKey:
         return Path(str(self.key) + ".pub")
 
 
+def derived(key: Path) -> list[str] | None:
+    """[type, key] of the public key the private key KEY gives (`ssh-keygen -y`, never asking for a passphrase), or
+    None when it gives none (not a key, a passphrase on it, no ssh-keygen). Cached by the file's size and time."""
+    try:
+        st = key.stat()
+    except OSError:
+        return None
+    stamp = (str(key), st.st_size, st.st_mtime_ns)
+    if stamp not in _derived:
+        from .common import program_argv
+        try:
+            r = subprocess.run(program_argv(["ssh-keygen", "-y", "-P", "", "-f", str(key)]), capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, timeout=30)
+            words = r.stdout.split() if r.returncode == 0 else []
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            words = []
+        _derived[stamp] = words[:2] if len(words) >= 2 else None
+    return _derived[stamp]
+
+
+_derived: dict[tuple[str, int, int], list[str] | None] = {}
+
+
+def public_words(pub: Path) -> list[str] | None:
+    """[type, key] of the public key file PUB, or None."""
+    try:
+        words = pub.read_text().split()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return words[:2] if len(words) >= 2 else None
+
+
+def matches(key: Path) -> bool:
+    """Does the private key KEY give the public key in KEY.pub?"""
+    have = derived(key)
+    return have is not None and have == public_words(Path(str(key) + ".pub"))
+
+
+def owned(key: Path) -> bool:
+    """KEY is this user's and no one else's to read or write (POSIX; on Windows its ACL isn't read: True)."""
+    if os.name == "nt":
+        return True
+    try:
+        st = key.stat()
+    except OSError:
+        return False
+    return st.st_uid == os.getuid() and not st.st_mode & 0o077
+
+
+def rsa_bits(pub: Path) -> int | None:
+    """An RSA public key's size in bits (`ssh-keygen -l`), or None when it can't tell."""
+    from .common import program_argv
+    try:
+        r = subprocess.run(program_argv(["ssh-keygen", "-l", "-f", str(pub)]), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=30)
+        return int(r.stdout.split()[0]) if r.returncode == 0 else None
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
 def for_host(h: dict[str, Any]) -> BoxKey:
     """The key Host H (a Host dict) logs in with."""
     return BoxKey(parse(h["key_type"]), Path(h["key_file"]))
@@ -121,8 +183,9 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
             kt = parse(pub.name.removeprefix("roster_").removesuffix(".pub"))
         except ValueError:
             continue
-        # only the canonical names roster itself writes, with the private key there too: this Box holds that key, so
-        # its lines are this Box's (a stray .pub alone, another Box's copied here, never widens what revoke takes)
-        if kt.file_name + ".pub" == pub.name and pub.with_suffix("").exists():
+        # only the canonical names roster itself writes, and only a key this Box holds: its private key (this user's,
+        # no one else's to read) gives that very .pub (#471's review LOW-3). A stray .pub (another Box's copied here),
+        # an empty or foreign file beside it, never widens what setup and revoke take
+        if kt.file_name + ".pub" == pub.name and owned(pub.with_suffix("")) and matches(pub.with_suffix("")):
             keys.setdefault(kt.name, BoxKey(kt, key_file(cfg["key"], cfg["key_type"], kt.name)))
     return list(keys.values())

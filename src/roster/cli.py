@@ -40,6 +40,7 @@ from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import (
     NameTaken,
     box_key_re,
+    box_public_keys,
     enroll,
     ensure_key,
     key_ere,
@@ -165,8 +166,12 @@ def cmd_setup(cfg, args):
     if not hosts:
         return 0
     warn_os(hosts)
-    if getattr(args, "key_type", None):
-        cfg, hosts = key_type_for_run(cfg, hosts, args.key_type)
+    override = getattr(args, "key_type", None)
+    if override:
+        if host is None:            # #471's review MED-1: a Host at a time, never a group or the whole Inventory
+            die("--key-type goes with --host NAME (one Host, to try a key type there): for more Hosts, set "
+                "key_type: on them, their group or defaults in roster.yml and run roster setup")
+        cfg, hosts = key_type_for_run(cfg, hosts, override)
     say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
     # T239: one key per key type the Hosts use (this Box's own when none), each made on first need
     keys = boxkeys.in_use(cfg, hosts) or [boxkeys.box_key(cfg)]
@@ -176,6 +181,8 @@ def cmd_setup(cfg, args):
 
     def pub(h):
         return pubs[h["key_type"]]
+    # every key of this Box (LOW-4): a line of any of them under the new name is this Box's own, never "taken"
+    own = "|".join(key_ere(*words[:2]) for words in box_public_keys(cfg))
     no_answer = record_fingerprints(cfg, hosts)
     write_ssh_config(cfg)
 
@@ -211,7 +218,7 @@ def cmd_setup(cfg, args):
     taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not getattr(args, "force", False) else None
     if retag:
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub(h), taken), retag), strict=True):
+            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub(h), taken, own), retag), strict=True):
                 if why is None:
                     say(f"  ok    {h['name']} (re-tagged)")
                 elif isinstance(why, NoLine):   # (agent) nothing roster can re-tag there: done, said once
@@ -237,7 +244,9 @@ def cmd_setup(cfg, args):
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            futs = {ex.submit(enroll, h, pub(h), box_key_re(cfg), taken): h for h in todo}
+            mine = box_key_re(cfg)
+            # --key-type (MED-1): this run's line goes in beside roster.yml's type's, which the next sync offers again
+            futs = {ex.submit(enroll, h, pub(h), mine, taken, own, bool(override)): h for h in todo}
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
@@ -263,6 +272,12 @@ def cmd_setup(cfg, args):
         if narrowed:
             say(f"mesh         not applied with {'--only' if args.only else '--host'} (it covers the whole Mesh): "
                 "run `roster mesh`")
+        elif dropped := mesh.key_type_dropped(cfg):
+            # #471's review MED-2: never take a member's Mesh entries off as a side effect of setup
+            say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
+                "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
+                "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
+                "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
         else:
             say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
             failed.update({n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()})
@@ -288,8 +303,9 @@ def key_type_for_run(cfg, hosts, value):
                if h["enroll"] and h["key_type"] != kt.name}
     if changed:
         say(f"note: --key-type {kt.name} for {plural(len(changed), 'host')} whose roster.yml says otherwise "
-            f"({', '.join(sorted(changed))}): the next `roster sync` writes roster.yml's key type back into the ssh "
-            f"config, so set key_type: {kt.name} on them in roster.yml to keep it")
+            f"({', '.join(sorted(changed))}): its line goes in beside this Box's line of roster.yml's type, which "
+            f"stays, and the next `roster sync` offers roster.yml's type again; set key_type: {kt.name} in "
+            "roster.yml to keep it (the other line stays there until roster revoke, which takes both)")
     cfg = {**cfg, "hosts": {**cfg["hosts"], **changed}}
     return cfg, [changed.get(h["name"], h) for h in hosts]
 
@@ -549,7 +565,7 @@ def cmd_check(cfg, args):
     if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
         # (and T239: a Host whose key_type isn't Ed25519)
         windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items()
-                   if is_windows(cfg["hosts"][n]) or cfg["hosts"][n]["key_type"] != "ed25519"}
+                   if is_windows(cfg["hosts"][n]) or mesh.key_type_out(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if skipped:
@@ -986,7 +1002,7 @@ class NoLine:
 TAKEN = "name taken"        # retag_on: another key's line is under the new name there (T226): nothing changed
 
 
-def retag_on(h, pub, taken=None):
+def retag_on(h, pub, taken=None, own=None):
     """Re-tag this Box's key lines on key Host H with PUB's tag (T217), in place, found by its public key under any
     roster-managed name, over `ssh NAME` with the key itself: None when done, a NoLine when there's none to re-tag,
     TAKEN when TAKEN (the new name's tag_re) matches another key's line there, else why not. A Windows Host's
@@ -996,7 +1012,7 @@ def retag_on(h, pub, taken=None):
     try:
         if is_windows(h):
             done = winhost.over_key(h, "retag", key_ere(kind, key), pub=pub, taken=taken or "",
-                                    own=key_ere(kind, key) if taken else "")
+                                    own=(own or key_ere(kind, key)) if taken else "")
             from .errors import KEY_FILE
             for w in done.warnings:
                 print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
@@ -1004,7 +1020,7 @@ def retag_on(h, pub, taken=None):
                 return TAKEN
             return NoLine(done.files[0] if done.files else "its key file") if done.noline else None
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                         "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken))]),
+                                         "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken, own))]),
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
         return str(e)
@@ -1723,9 +1739,9 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
     s.add_argument("--force", action="store_true", help="on a renamed Box, go ahead on a Host where another Box's "
                    "key line has the new name (its line is then this Box's to replace or revoke)")
-    s.add_argument("--key-type", metavar="TYPE", help="the SSH key type for the Hosts this run sets up, over roster.yml's "
-                   "key_type: (ed25519, ecdsa, ecdsa-256, ecdsa-521, rsa, rsa-BITS); for this run only, so set "
-                   "key_type: to keep it")
+    s.add_argument("--key-type", metavar="TYPE", help="with --host: try this SSH key type there, over roster.yml's "
+                   "key_type: (ed25519, ecdsa, ecdsa-256, ecdsa-521, rsa, rsa-BITS), for this run only; its line goes "
+                   "in beside the one of roster.yml's type, which stays. Set key_type: to keep it")
     sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
     s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
                        "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "

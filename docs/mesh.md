@@ -144,13 +144,15 @@ The Mesh never wrote anything on a Windows Host (sh isn't there), so nothing is 
 
 ## Hosts with another key type
 
-The Mesh's keys are Ed25519 for now, which a FIPS-mode Host refuses (and may not make). So a Host whose `key_type:` isn't `ed25519` ([FIPS Hosts](adding-hosts.md#fips-hosts)) is left out of the Mesh as a Windows Host is (note 200): never a source, a peer or a hop. A meshed group or a Link naming it isn't an error, and `roster mesh --dry-run`, `roster mesh status` and `roster check` list it under "left out":
+The Mesh's keys are Ed25519 for now, which a FIPS-mode Host refuses (and may not make). So a key Host (`enroll: true`) whose `key_type:` isn't `ed25519` ([FIPS Hosts](adding-hosts.md#fips-hosts)) is left out of the Mesh as a Windows Host is (note 200): never a source, a peer or a hop. A password Host stays in whatever its `key_type:`. A meshed group or a Link naming it isn't an error (a Link `via:` it is dropped, not made direct), and `roster mesh --dry-run`, `roster mesh status` and `roster check` list it under "left out":
 
 ```text
 left out: fips-01 ([200] key_type: ecdsa: the Mesh's keys are Ed25519 only for now, which a FIPS-mode Host refuses, so it's left out (a Link or meshed group naming it isn't an error))
 ```
 
 Reach it from the Box (`ssh fips-01`, with the key of its own type).
+
+**A top-level or `defaults:` `key_type:` other than `ed25519` takes every key Host out of the Mesh.** Leaving out a Host that's in the Mesh now takes its Mesh entries off it, and its peers' entries for it, at the next apply. `roster setup` never does that on the way: when it would, it doesn't apply the Mesh and says so (`mesh NOT applied: fips-01 is in the Mesh now, but key_type: leaves them out …`). `roster mesh --dry-run` shows what would change; `roster mesh` does it. Set `key_type:` back (or only on the Hosts that need it) to keep them in.
 
 ## ESXi
 
