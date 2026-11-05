@@ -95,9 +95,12 @@ describe("Hiding the key hints", () => {
     // No Session yet: the empty state offers Find, so the bar doesn't.
     expect(words()).toEqual(["help", "keys"]);
     await user.keyboard(LEADER);
-    // "menu" only on a row that has one (round 16: a heading's hint led to "This row has no menu").
-    const onMenuRow = document.querySelector(".sb-row.cursor") !== null;
-    expect(words()).toEqual(onMenuRow ? ["move", "open", "menu", "terminal"] : ["move", "open", "terminal"]);
+    // The cursor starts on the first Host, which has a menu. With no Session open there's no
+    // terminal to go back to, so Esc says "leave" (round 18).
+    expect(words()).toEqual(["move", "open", "menu", "leave"]);
+    // "menu" only on a row that has one (round 16): the Sessions heading has none.
+    await user.keyboard("kkkkkkkk");
+    expect(words()).toEqual(["move", "open", "leave"]);
   });
 });
 

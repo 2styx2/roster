@@ -916,6 +916,8 @@ export function Sidebar({
       className={`sidebar side-${side}`}
       aria-label="Sidebar"
       data-many-sessions={manySessions || undefined}
+      // A row menu is open: its focused item is the cursor now (styles.css).
+      data-menu={menuShown || undefined}
     >
       <button
         type="button"
@@ -1046,12 +1048,32 @@ function headingRow(section: SidebarSection): SidebarRow {
     foldable: true,
     folded: section.folded ?? false,
     command: `togglefold ${id}`,
+    // Its buttons (the Inventory's +) are its menu too, so Shift+F10 works on every row with
+    // actions (round 18). The heading draws them itself; a heading row is never drawn as a row.
+    ...(section.actions?.length ? { actions: section.actions } : {}),
   };
 }
 
 /** Every cursor stop, top to bottom (the order j/k walk): each heading, then its shown rows. */
 export function allRows(sections: readonly SidebarSection[]): SidebarRow[] {
   return sections.flatMap((s) => [headingRow(s), ...(s.folded ? [] : s.rows)]);
+}
+
+/** App mode's first stop: where the cursor was left, else the Session on screen, else the first
+ * Host (round 18: it began on a section heading, FOLDERS with no Session open), else the top. */
+export function firstStop(
+  rows: readonly SidebarRow[],
+  selected: string | null,
+): string | null {
+  return (
+    (selected !== null && rows.some((r) => r.id === selected)
+      ? selected
+      : null) ??
+    rows.find((r) => r.raised)?.id ??
+    rows.find((r) => r.host !== undefined && r.dot !== undefined)?.id ??
+    rows[0]?.id ??
+    null
+  );
 }
 
 /** The cursor after a list action; it stays put at either end. */

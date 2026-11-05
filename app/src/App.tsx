@@ -150,6 +150,7 @@ import { SessionList } from "./plugins/sessionList";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import {
   allRows,
+  firstStop,
   moveCursor,
   Sidebar,
   type OpenMenu,
@@ -2978,14 +2979,7 @@ function Workspace({
     e.preventDefault();
     e.stopPropagation();
     if (before.mode === "terminal" && r.state.mode === "app") {
-      setCursor(
-        (selected !== null && rows.some((row) => row.id === selected)
-          ? selected
-          : null) ??
-          rows.find((row) => row.raised)?.id ??
-          rows[0]?.id ??
-          null,
-      );
+      setCursor(firstStop(rows, selected));
     }
     setMode(r.state);
     if (r.action) run(r.action);
@@ -3178,7 +3172,11 @@ function Workspace({
               : null,
             "menu",
           ],
-          [listKeyFor(keymap.leader, "terminal"), "terminal"],
+          // With no Session there's no terminal to go back to: Esc only leaves App mode (round 18).
+          [
+            listKeyFor(keymap.leader, "terminal"),
+            sessions.tabs.length > 0 ? "terminal" : "leave",
+          ],
         ]
       : [
           ...(sessions.tabs.length > 0
@@ -3490,14 +3488,7 @@ function Workspace({
               // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
               if (keyRef.current.mode !== "terminal") return;
               beforeTree.current = from;
-              setCursor(
-                (selected !== null && rows.some((row) => row.id === selected)
-                  ? selected
-                  : null) ??
-                  rows.find((row) => row.raised)?.id ??
-                  rows[0]?.id ??
-                  null,
-              );
+              setCursor(firstStop(rows, selected));
               setMode({ mode: "app", pending: [] });
             }}
             onTreeBlur={(to) => {
@@ -3536,7 +3527,9 @@ function Workspace({
               <p className="empty-title">No Hosts in the Inventory yet.</p>
               {/* The next step is the app's own (taste.md: an empty state carries it); the file is
                   the other way, on its own line as data (Iosevka), cut in the middle if it must be. */}
-              {addHost.keys && !addHost.tooOld ? (
+              {/* Offered whenever this roster can add Hosts (round 18: it hung on the key hint, so a
+                  keymap without one hid the button the title bar and the Sidebar still showed). */}
+              {!addHost.tooOld ? (
                 <>
                   <button
                     type="button"
@@ -3547,14 +3540,22 @@ function Workspace({
                     Add a Host
                   </button>
                   <p className="empty-hint key-hint">
-                    or press{" "}
-                    <Keys keys={addHost.keys} leader={options.leader} />, or
-                    edit the file:
+                    {addHost.keys ? (
+                      <>
+                        or press{" "}
+                        <Keys keys={addHost.keys} leader={options.leader} />, or
+                        edit the file:
+                      </>
+                    ) : (
+                      "or edit the file:"
+                    )}
                   </p>
                 </>
               ) : (
-                <p className="empty-hint">
-                  Add Hosts to this file and they show up here.
+                // Why there's no button, in one plain line, and the way that works.
+                <p className="empty-hint" title={addHost.tooOld}>
+                  This roster is too old to add Hosts here. Add them to{" "}
+                  <code>roster.yml</code>:
                 </p>
               )}
               <p className="empty-path" title={info.inventory.path}>

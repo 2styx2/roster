@@ -30,6 +30,15 @@ export interface RowMenuProps {
   close(): void;
 }
 
+/** An item's command as a hint: its words up to the row's own name, which "…" stands for
+ * (`:group rename …`, `:folder add …`, `:host add`). Round 18: the first word alone gave ":group"
+ * for both Rename and Delete. */
+export function commandHint(command: string, subject: string): string {
+  const at = subject === "" ? -1 : command.indexOf(` ${subject}`);
+  const ends = at >= 0 && (command.length === at + subject.length + 1 || command[at + subject.length + 1] === " ");
+  return ends ? `:${command.slice(0, at)} …` : `:${command}`;
+}
+
 /** Where the menu goes: at the point, moved (or flipped) to stay in the window. */
 export function placeMenu(
   point: { x: number; y: number; flipY?: number },
@@ -236,7 +245,7 @@ export function RowMenu({
               // A Plugin's own action has no `:` form worth showing (its first word is "plugins").
               !entry.command.startsWith("plugins") && (
                 <span className="row-menu-cmd key-hint" aria-hidden="true">
-                  :{entry.command.split(" ")[0]}
+                  {commandHint(entry.command, label)}
                 </span>
               )
             )}
