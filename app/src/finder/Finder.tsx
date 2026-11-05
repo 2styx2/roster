@@ -377,7 +377,12 @@ export function Finder({
             </span>
           )}
           <span className="picker-count" aria-hidden="true">
-            {footerCount(results.items.length, shown.length, query, source.noun)}
+            {footerCount(
+              results.items.length,
+              shown.length,
+              query,
+              typeof source.noun === "function" ? source.noun(results.items) : source.noun,
+            )}
           </span>
           {shown.length > 1 && (
             <span className="picker-hint key-hint">

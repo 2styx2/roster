@@ -33,6 +33,8 @@ export interface FinderItem {
   lit?: Light;
   /** The Session on screen, or the one before it (the session bar's `*` and `-`). */
   mark?: "current" | "previous";
+  /** The Host the row stands for (the tree's Host rows). */
+  host?: string;
   /** What Enter or a click runs. */
   command: CommandLine;
   /** Listed, but Enter only says this (an unreviewed Host). */
@@ -54,9 +56,10 @@ export interface FinderSourceDef extends Entry {
   prompt: string;
   /** Its items are prose (help's outline, `:helpgrep`): they read in Inter, not Iosevka. */
   prose?: boolean;
-  /** What its items are, for the footer's count before a query ("topic": "1,360 topics"). Without
-   * it the count always says "results". */
-  noun?: string;
+  /** What its items are, for the footer's count before a query ("topic": "1,360 topics"), or a
+   * function that names them from the list (the tree's "Host" when every row is one). Without it
+   * the count always says "results". */
+  noun?: string | ((items: readonly FinderItem[]) => string);
   /** What an empty list says before anything's typed (default "Nothing here yet."). */
   empty?: string;
   items(ctx: FinderContext): FinderItem[];
@@ -178,6 +181,7 @@ function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
         ...(path.length + chain.length ? { path: [...path, ...chain].join(" › ") } : {}),
         ...(row.detail ? { detail: row.detail } : {}),
         ...(row.dot ? { dot: row.dot } : {}),
+        ...(row.host ? { host: row.host } : {}),
         command: row.command,
         ...(row.badge === "unreviewed" && row.host ? { disabled: notReviewed(row.host) } : {}),
       });
@@ -186,8 +190,12 @@ function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
   return out;
 }
 
+/** The tree's rows are Hosts when every one is (round 19: "300 rows" beside the Picker's
+ * "300 Hosts"), else rows. */
+const rowNoun = (items: readonly FinderItem[]): string => (items.length > 0 && items.every((i) => i.host) ? "Host" : "row");
+
 /** A finder over one Sidebar section's rows (a Plugin's section gets one the same way). */
-export function sectionFinder(sectionId: string, title: string, prompt: string, source = BUILTIN, noun = "row"): FinderSourceDef {
+export function sectionFinder(sectionId: string, title: string, prompt: string, source = BUILTIN, noun: FinderSourceDef["noun"] = rowNoun): FinderSourceDef {
   return {
     id: sectionId,
     source,
@@ -206,7 +214,7 @@ export const treeFinder: FinderSourceDef = {
   source: BUILTIN,
   title: "Find in the tree",
   prompt: "Tree",
-  noun: "row",
+  noun: rowNoun,
   items: (ctx) => treeItems(unfolded(ctx).filter((s) => !OWN_FINDER.has(s.id))),
 };
 

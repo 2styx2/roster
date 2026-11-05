@@ -168,7 +168,7 @@ describe("the worst case", () => {
     await user.keyboard("{Escape}");
     await user.keyboard(`${LEADER}t`);
     const tree = screen.getByRole("dialog", { name: "Find in the tree" });
-    expect(within(tree).getByText(/^1,3\d\d rows$/)).toBeInTheDocument();
+    expect(within(tree).getByText(/^1,3\d\d Hosts$/)).toBeInTheDocument();
     expect(cutWithoutTooltip()).toEqual([]);
     expect(bareLeaders()).toEqual([]);
   }, 30_000);

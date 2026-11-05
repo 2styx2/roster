@@ -117,6 +117,14 @@ describe("the tree finder (␣ e in Focus)", () => {
     expect(labels(items)).toEqual([b]);
   });
 
+  it("counts Hosts when every row is one, as the Picker does (round 19)", () => {
+    const tree = source("tree");
+    const items = finderResults(tree, context(undefined, folders), "").items;
+    expect(typeof tree.noun === "function" ? tree.noun(items) : tree.noun).toBe("Host");
+    const mixed = [...items, { id: "x", label: "x", command: "x" }];
+    expect(typeof tree.noun === "function" ? tree.noun(mixed) : tree.noun).toBe("row");
+  });
+
   it("the Inventory and Folders each have a finder of their own", () => {
     expect(finderResults(source("inventory"), context(undefined, folders), "").items).toHaveLength(12);
   });
