@@ -2433,7 +2433,7 @@ def test_a_fips_hosts_mesh_key_is_made_of_its_own_key_type(net, fips_keygen, cap
     pub = mesh_pub(net, "orion-3", "id_ecdsa")
     assert pub[0] == "ecdsa-sha2-nistp384" and pub[2] == "roster-mesh:orion-3@box"
     assert not (net.host("orion-3") / "home/.ssh/roster-mesh/id_ed25519").exists()
-    for peer, ip in (("orion-2", "10.0.0.3"), ("esx-02", "10.0.0.3"), ("db-9", "10.0.0.3")):
+    for peer in ("orion-2", "esx-02", "db-9"):
         assert any(x.split()[1:3] == pub[:2] and x.endswith("roster-mesh:orion-3@box") for x in net.mesh_lines(peer))
     assert f"IdentityFile {net.seen(net.host('orion-3'))}/home/.ssh/roster-mesh/id_ecdsa" in \
         net.file("orion-3", "home/.ssh/roster-mesh/config")

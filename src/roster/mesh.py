@@ -21,6 +21,7 @@ import subprocess
 import threading
 from typing import Any
 
+from . import boxkeys
 from .common import (
     current_deadline,
     current_inventory,
@@ -32,7 +33,6 @@ from .common import (
     time_left,
 )
 from .config import is_windows
-from . import boxkeys
 from .errors import MESH_KEY_PEER, MESH_WINDOWS
 from .sshops import hk_name, recorded_host_keys
 
