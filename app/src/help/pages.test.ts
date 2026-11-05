@@ -8,6 +8,8 @@ import { CONFIG } from "../registry";
 import { plain, type Block, type Def } from "./doc";
 import { UPGRADE_TOPIC } from "../plugins/PluginsPanel";
 import { findTopic, helpContext, pageBody, topicIndex, topics, type HelpContext } from "./pages";
+import { blockTags } from "./guideBlocks";
+import { guides } from "./guides";
 import { helpText } from "./text";
 
 // The guides' text is a chunk the app loads on the first :help (T213); these read it.
@@ -29,8 +31,12 @@ const defs = (blocks: Block[]): Def[] => blocks.flatMap((b) => (b.t === "defs" ?
 const entry = (ctx: HelpContext, page: string, anchor: string) => defs(pageBody(ctx, page)).find((d) => d.anchor === anchor);
 
 describe("the tag table (T213)", () => {
-  it("gives a guide's headings as its tags", () => {
+  it("is every guide's topics, as its text gives them once loaded", () => {
     const ctx = ctxOf();
+    for (const g of guides) {
+      const pg = ctx.pages.find((x) => x.id === g.id);
+      expect(pg?.tags, g.id).toEqual(blockTags(g.id, g.title, pageBody(ctx, g.id)));
+    }
     expect(ctx.pages.find((x) => x.id === "config")?.tags).toContainEqual(expect.objectContaining({ tag: "config#the-sandbox", label: "The sandbox" }));
   });
 });
