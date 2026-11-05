@@ -17,7 +17,7 @@ fn main() {
     let distro = env::wsl_distro();
     let started = detect(&SystemRunner, Os::current(), &cmd, distro.as_deref()).and_then(|c| {
         println!("{} -> {:?}", c.target.label(), c.serve_argv);
-        Backend::start(&c)
+        Backend::start(&c, None)
     });
     match started {
         Ok(b) => {

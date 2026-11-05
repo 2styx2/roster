@@ -26,17 +26,22 @@ const TOKEN: &str = "0123456789abcdef01234567";
 const RUN: &str = "printf '\\033]133;C;roster=0123456789abcdef01234567\\007'; ";
 
 fn host_sh(script: &str) -> SessionCommand {
-    let mut cmd = SessionCommand::new(vec!["sh".into(), "-c".into(), script.into()], vec![]);
-    cmd.marks = Some(TOKEN.into());
-    cmd.fill_as = Some(FillTarget {
-        host: "esx".into(),
-        login: LoginAs {
-            address: "10.0.0.6".into(),
-            port: 22,
-            user: "ops".into(),
+    host_sh_marked(script, Some(TOKEN))
+}
+
+/// [`host_sh`] with `marks` as the token on roster's own shell marks (None: no token).
+fn host_sh_marked(script: &str, marks: Option<&str>) -> SessionCommand {
+    SessionCommand::new(vec!["sh".into(), "-c".into(), script.into()], vec![]).filling(
+        FillTarget {
+            host: "esx".into(),
+            login: LoginAs {
+                address: "10.0.0.6".into(),
+                port: 22,
+                user: "ops".into(),
+            },
         },
-    });
-    cmd
+        marks.map(String::from),
+    )
 }
 
 fn open(m: &SessionManager, cmd: SessionCommand) -> (u32, Receiver<SessionEvent>) {
@@ -639,10 +644,7 @@ fn a_nested_fill_goes_only_to_the_ssh_the_sessions_own_shell_still_runs() {
     ];
     for (name, script, token, run, filled) in cases {
         let m = SessionManager::new();
-        let mut cmd = host_sh(&script);
-        if !token {
-            cmd.marks = None;
-        }
+        let cmd = host_sh_marked(&script, token.then_some(TOKEN));
         let sig = Sig::new();
         let (id, rx) = open(&m, sig.on(cmd));
         if script.contains(GO) {
@@ -697,8 +699,7 @@ fn a_nested_fill_needs_a_real_token_and_the_hops_run() {
     ];
     for (name, token, run) in cases {
         let m = SessionManager::new();
-        let mut cmd = host_sh(&format!("{}{SUDO}", mark("C", token.unwrap_or(""))));
-        cmd.marks = token.map(String::from);
+        let cmd = host_sh_marked(&format!("{}{SUDO}", mark("C", token.unwrap_or(""))), token);
         let (id, rx) = open(&m, cmd);
         shown(&rx, "ops: ");
         let mut asked = false;

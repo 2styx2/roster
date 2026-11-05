@@ -44,6 +44,29 @@ pub fn settings_paths(local_app_data: &Path) -> Vec<PathBuf> {
     ]
 }
 
+/// Windows Terminal's settings.json on this machine: its path and text (ticket 33). Windows only.
+pub fn read_settings() -> Result<(String, String), String> {
+    read_settings_in(
+        cfg!(windows),
+        std::env::var_os("LOCALAPPDATA").as_deref().map(Path::new),
+    )
+}
+
+/// [`read_settings`] on Windows or not, with `local_app_data` as `%LOCALAPPDATA%` (testable).
+pub fn read_settings_in(windows: bool, local_app_data: Option<&Path>) -> Result<(String, String), String> {
+    if !windows {
+        return Err("import-terminal reads Windows Terminal's settings, so it works on Windows only".into());
+    }
+    let local = local_app_data.ok_or("LOCALAPPDATA isn't set, so Windows Terminal can't be found")?;
+    settings_paths(local)
+        .into_iter()
+        .find_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            Some((path.display().to_string(), text))
+        })
+        .ok_or_else(|| "no Windows Terminal settings.json found (Store, Preview or unpackaged)".into())
+}
+
 /// A colour scheme, with the profile's own colours over it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -281,7 +304,7 @@ pub fn parse(text: &str) -> Result<Profile, String> {
             .to_string(),
         _ => "Campbell".into(),
     };
-    let builtin: Vec<Value> = serde_json::from_str(BUILTIN_SCHEMES).unwrap_or_default();
+    let builtin: Vec<Value> = serde_json::from_str(BUILTIN_SCHEMES).expect("wt_schemes.json is a JSON list");
     let user = root
         .get("schemes")
         .and_then(Value::as_array)

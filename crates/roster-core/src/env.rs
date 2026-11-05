@@ -36,6 +36,12 @@ pub fn state_dir_for(var: impl Fn(&str) -> Option<String>) -> Option<std::path::
         .map(std::path::PathBuf::from)
 }
 
+/// The app's own data folder, for the State, Packages' clones and Plugins' data: [`state_dir`] if
+/// it's set, else `app_local` (the OS's local app-data dir for the app, from Tauri).
+pub fn data_dir(app_local: impl FnOnce() -> Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    state_dir().or_else(app_local)
+}
+
 fn system_var(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }

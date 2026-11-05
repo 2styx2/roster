@@ -17,6 +17,7 @@ pub mod process;
 pub mod proxy;
 pub mod rpc;
 mod screen;
+pub mod serve_api;
 pub mod session;
 pub mod slot;
 pub mod state;

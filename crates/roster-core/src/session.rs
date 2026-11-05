@@ -99,12 +99,22 @@ pub struct SessionCommand {
     /// The Inventory Host the Session is to and what it connected to, as `session.prepare` said:
     /// the only Host a prompt fill may ask serve about ([`SessionManager::fill`]). None for a
     /// Quick Connect, a stub, or a serve too old to say what it connected to.
-    pub fill_as: Option<FillTarget>,
+    fill_as: Option<FillTarget>,
     /// The token on roster's own shell marks in this Session (decision Q131 (a)), as the frontend
     /// made it for the attempt: the core follows the marks that carry it, so a nested ssh's fill
     /// goes only while that ssh runs (ticket 162). Never in a log (its Debug shows only whether
     /// there is one). None: no hop is filled.
-    pub marks: Option<String>,
+    marks: Option<String>,
+}
+
+/// Who a Session is to, as it's opened: what a prompt fill may do in it ([`SessionManager::fill`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FillRule {
+    /// An Inventory Host (`session.prepare`): its own prompts, and a nested ssh's while that ssh
+    /// runs, followed by `marks` ([`SessionCommand::marks`]).
+    Host { marks: Option<String> },
+    /// A Quick Connect: not an Inventory Host, so no Login a fill could use.
+    Never,
 }
 
 impl SessionCommand {
@@ -117,6 +127,19 @@ impl SessionCommand {
             fill_as: None,
             marks: None,
         }
+    }
+
+    /// This command as one to `target`'s Host, its shell's marks carrying `marks`: a stub that
+    /// stands in for a Host's Session (tests, examples).
+    pub fn filling(mut self, target: FillTarget, marks: Option<String>) -> Self {
+        self.fill_as = Some(target);
+        self.marks = marks;
+        self
+    }
+
+    /// The Host a prompt fill may ask serve about, if any (see the field).
+    pub fn fill_as(&self) -> Option<&FillTarget> {
+        self.fill_as.as_ref()
     }
 
     /// `text` (an error about this command) with every env value replaced by `…`, so a message
@@ -165,7 +188,8 @@ pub fn wslenv<'a>(existing: Option<&str>, names: impl IntoIterator<Item = &'a st
 /// and [`COLORTERM`]. That is all the app adds (decision Q37: the user's terminal config wins, so
 /// no PS1, no sourced files); any other variable is `session.prepare`'s. On WSL the variables are
 /// set on wsl.exe and listed in `WSLENV` (appended to the app's own), never put in the argv.
-pub fn session_command(target: &Target, prepared: &Prepared) -> SessionCommand {
+/// `fill` says who the Session is to, so what a prompt fill may do in it.
+pub fn session_command(target: &Target, prepared: &Prepared, fill: FillRule) -> SessionCommand {
     let mut env = vec![
         ("TERM".to_string(), TERM.to_string()),
         ("COLORTERM".to_string(), COLORTERM.to_string()),
@@ -180,15 +204,22 @@ pub fn session_command(target: &Target, prepared: &Prepared) -> SessionCommand {
             target.wrap(&prepared.argv)
         }
     };
+    let (fill_as, marks) = match fill {
+        FillRule::Host { marks } => (
+            prepared.login.clone().map(|login| FillTarget {
+                host: prepared.host.clone(),
+                login,
+            }),
+            marks,
+        ),
+        FillRule::Never => (None, None),
+    };
     SessionCommand {
         argv,
         env,
         auth: prepared.auth.clone(),
-        fill_as: prepared.login.clone().map(|login| FillTarget {
-            host: prepared.host.clone(),
-            login,
-        }),
-        marks: None,
+        fill_as,
+        marks,
     }
 }
 
@@ -265,7 +296,7 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 struct Running {
     /// Dropped (closing the PTY) once the process ends or the Session is closed.
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
-    writer: Mutex<Option<Box<dyn Write + Send>>>,
+    input: Mutex<Input>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     closed: AtomicBool,
     /// The Inventory Host it's to ([`SessionCommand::fill_as`]).
@@ -277,9 +308,14 @@ struct Running {
     shown: Arc<Mutex<Shown>>,
     /// Its PTY is Windows' ConPTY, or a test says to take it as one (decision Q151).
     conpty: bool,
-    /// While a fill checks the prompt: the keys sent meanwhile, held until it ends (the review of
-    /// #299, #2). Lock it before `writer`.
-    held: Mutex<Option<Vec<u8>>>,
+}
+
+/// What goes into a Session, under one lock: its PTY's writer (dropped once the PTY closes), and
+/// while a fill checks the prompt, the keys sent meanwhile, held until it ends (the review of
+/// #299, #2).
+struct Input {
+    writer: Option<Box<dyn Write + Send>>,
+    held: Option<Vec<u8>>,
 }
 
 /// A fill in progress on a Session: while it lives, [`SessionManager::write`] holds the keys sent;
@@ -289,11 +325,11 @@ struct Filling<'a>(&'a Running);
 impl<'a> Filling<'a> {
     /// None if another fill is already checking this Session (T155 item 3).
     fn start(running: &'a Running) -> Option<Self> {
-        let mut held = running.held.lock().unwrap();
-        if held.is_some() {
+        let mut input = running.input.lock().unwrap();
+        if input.held.is_some() {
             return None;
         }
-        *held = Some(Vec::new());
+        input.held = Some(Vec::new());
         Some(Filling(running))
     }
 }
@@ -301,11 +337,11 @@ impl<'a> Filling<'a> {
 impl Drop for Filling<'_> {
     fn drop(&mut self) {
         self.0.shown.lock().unwrap().screen.stop_mask_watch();
-        // Under `held`, so a key sent now waits for these.
-        let mut held = self.0.held.lock().unwrap();
+        // Under the one lock, so a key sent now waits for these. A PTY that's gone takes none.
+        let Input { writer, held } = &mut *self.0.input.lock().unwrap();
         if let Some(keys) = held.take()
             && !keys.is_empty()
-            && let Some(w) = self.0.writer.lock().unwrap().as_mut()
+            && let Some(w) = writer.as_mut()
         {
             let _ = w.write_all(&keys).and_then(|_| w.flush());
         }
@@ -331,7 +367,7 @@ impl Shown {
 
 impl Running {
     fn release_pty(&self) {
-        self.writer.lock().unwrap().take();
+        self.input.lock().unwrap().writer.take();
         self.master.lock().unwrap().take();
     }
 }
@@ -427,13 +463,15 @@ impl SessionManager {
         let running = Arc::new(Running {
             killer: Mutex::new(child.clone_killer()),
             master: Mutex::new(Some(pair.master)),
-            writer: Mutex::new(Some(writer)),
+            input: Mutex::new(Input {
+                writer: Some(writer),
+                held: None,
+            }),
             closed: AtomicBool::new(false),
             fill_as: cmd.fill_as.clone(),
             writes: AtomicU64::new(0),
             shown: Arc::new(Mutex::new(Shown { screen, total: 0 })),
             conpty: self.conpty,
-            held: Mutex::new(None),
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(id, Arc::clone(&running));
@@ -501,13 +539,12 @@ impl SessionManager {
         let running = self.get(id)?;
         running.writes.fetch_add(1, Ordering::SeqCst);
         // While a fill checks the prompt, keys wait for it to end (the review of #299, #2).
-        let mut held = running.held.lock().unwrap();
+        let Input { writer, held } = &mut *running.input.lock().unwrap();
         if let Some(keys) = held.as_mut() {
             keys.extend_from_slice(data);
             return Ok(());
         }
-        let mut w = running.writer.lock().unwrap();
-        let w = w.as_mut().ok_or(SessionError::NotFound(id))?;
+        let w = writer.as_mut().ok_or(SessionError::NotFound(id))?;
         w.write_all(data).and_then(|_| w.flush()).map_err(io)
     }
 
@@ -624,8 +661,8 @@ impl SessionManager {
         // wait, an echoed letter is drawn in a frame and seen here (off ConPTY, it's seen anyway).
         let (first, last) = PROBE.split_at(PROBE_SPLIT);
         {
-            let mut w = running.writer.lock().unwrap();
-            let w = w.as_mut().ok_or(FillError::NotFound(id))?;
+            let mut input = running.input.lock().unwrap();
+            let w = input.writer.as_mut().ok_or(FillError::NotFound(id))?;
             w.write_all(first).and_then(|_| w.flush()).map_err(fill_io)?;
         }
         std::thread::sleep(wait);
@@ -653,8 +690,8 @@ impl SessionManager {
         };
         {
             // Always: it takes the letter back, so a refusal leaves the line empty.
-            let mut w = running.writer.lock().unwrap();
-            let w = w.as_mut().ok_or(FillError::NotFound(id))?;
+            let mut input = running.input.lock().unwrap();
+            let w = input.writer.as_mut().ok_or(FillError::NotFound(id))?;
             w.write_all(last).and_then(|_| w.flush()).map_err(fill_io)?;
         }
         if let Some(watched) = pending {
@@ -666,8 +703,8 @@ impl SessionManager {
             })));
         }
         std::thread::sleep(wait);
-        let mut w = running.writer.lock().unwrap();
-        let w = w.as_mut().ok_or(FillError::NotFound(id))?;
+        let mut input = running.input.lock().unwrap();
+        let w = input.writer.as_mut().ok_or(FillError::NotFound(id))?;
         {
             let mut shown = running.shown.lock().unwrap();
             let watched = maskable.then(|| shown.screen.end_mask_watch(PROBE_KEYS));
@@ -744,6 +781,13 @@ impl SessionManager {
 /// echoes, the letter is printed, which is how roster tells. It goes in two writes, a wait apart
 /// (`PROBE_SPLIT`, decision Q151 (h)).
 pub const PROBE: &[u8] = b"\x15x\x15";
+
+/// How long the app's prompt fill waits for an echo of its probe before it types the secret
+/// (ticket 119, decision Q129): the `wait` of [`SessionManager::fill`]. Longer than an ssh round
+/// trip to a far Host; a link slower than that could echo after it, which is why the docs say so.
+/// The probe goes in two steps with this wait after each (ticket 155, decision Q151 (h)), so a
+/// fill takes about twice this before it types.
+pub const FILL_WAIT: Duration = Duration::from_millis(800);
 
 /// Whether `prompt` is exactly sudo's own prompt for `user` (`[sudo] password for USER:`, read
 /// with runs of whitespace as one and none at the ends), the one prompt where sudo's `pwfeedback`
@@ -1063,22 +1107,25 @@ mod tests {
     #[test]
     fn a_fill_whose_writer_is_gone_leaves_no_fill_state() {
         let m = SessionManager::with_conpty_rules(false);
-        let mut cmd = SessionCommand::new(
+        let cmd = SessionCommand::new(
             vec![
                 "sh".into(),
                 "-c".into(),
                 "trap '' HUP; stty -echo; printf '[sudo] password for ops: '; sleep 5".into(),
             ],
             vec![],
-        );
-        cmd.fill_as = Some(FillTarget {
-            host: "esx".into(),
-            login: LoginAs {
-                address: "10.0.0.6".into(),
-                port: 22,
-                user: "ops".into(),
+        )
+        .filling(
+            FillTarget {
+                host: "esx".into(),
+                login: LoginAs {
+                    address: "10.0.0.6".into(),
+                    port: 22,
+                    user: "ops".into(),
+                },
             },
-        });
+            None,
+        );
         let id = m.open(&cmd, Size { cols: 80, rows: 24 }, |_| {}).unwrap();
         let running = m.get(id).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -1098,12 +1145,12 @@ mod tests {
             Ok::<_, String>(Secret::new("pw".into()))
         });
         assert!(matches!(got, Err(FillError::NotFound(_))), "{got:?}");
-        assert!(running.held.lock().unwrap().is_none(), "keys still held");
+        assert!(running.input.lock().unwrap().held.is_none(), "keys still held");
         assert!(
             !running.shown.lock().unwrap().screen.watching_mask(),
             "mask watch still on"
         );
-        assert!(running.writer.lock().unwrap().is_none());
+        assert!(running.input.lock().unwrap().writer.is_none());
     }
 
     #[test]
@@ -1159,22 +1206,25 @@ mod tests {
     fn the_probes_two_writes_are_a_whole_wait_apart() {
         use std::sync::mpsc::channel;
         let wait = Duration::from_millis(300);
-        let mut cmd = SessionCommand::new(
+        let cmd = SessionCommand::new(
             vec![
                 "sh".into(),
                 "-c".into(),
                 "stty raw -echo; printf 'Password: '; sleep 30".into(),
             ],
             vec![],
-        );
-        cmd.fill_as = Some(FillTarget {
-            host: "esx".into(),
-            login: LoginAs {
-                address: "10.0.0.6".into(),
-                port: 22,
-                user: "ops".into(),
+        )
+        .filling(
+            FillTarget {
+                host: "esx".into(),
+                login: LoginAs {
+                    address: "10.0.0.6".into(),
+                    port: 22,
+                    user: "ops".into(),
+                },
             },
-        });
+            None,
+        );
         let m = SessionManager::with_conpty_rules(false);
         let (tx, rx) = channel();
         let id = m
@@ -1193,9 +1243,9 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         {
             let running = m.get(id).unwrap();
-            let mut w = running.writer.lock().unwrap();
-            let inner = w.take().unwrap();
-            *w = Some(Box::new(Tap {
+            let mut input = running.input.lock().unwrap();
+            let inner = input.writer.take().unwrap();
+            input.writer = Some(Box::new(Tap {
                 inner,
                 seen: Arc::clone(&seen),
             }));

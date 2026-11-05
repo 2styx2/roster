@@ -1,5 +1,7 @@
 // The real Backend: Tauri commands in src-tauri/src/lib.rs, which drive `roster serve` through
-// roster-core. Only imported when running inside Tauri (see index.ts).
+// roster-core. A serve method the app calls as it is goes through the one `serve_call` command
+// (roster-core serve_api.rs lists them); the others are where the core adds something. Only
+// imported when running inside Tauri (see index.ts).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -165,8 +167,10 @@ function openSessionArg(o: OpenSession) {
   return { session: o.session, host: o.host, cwd: o.cwd ?? null };
 }
 
-function inventoryCall<T>(method: string, params: Record<string, unknown>): Promise<T> {
-  return call<T>("inventory_call", { method, params });
+/** A serve method the core passes on as it is (`serve_call`). Secrets in `params` (a typed
+ * password, a vault answer) go once to serve's stdin and are wiped there. */
+function serve<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  return call<T>("serve_call", { method, params });
 }
 
 export function tauriBackend(): Backend {
@@ -179,22 +183,20 @@ export function tauriBackend(): Backend {
         throw callError(e);
       }
     },
-    listHosts: () => call<HostList>("hosts_list"),
-    getHost: (name, options) => call<Host>("host_get", { name, settled: options?.settled ?? false }),
-    vaultStatus: () => call<VaultStatus>("vault_status"),
-    unlockVault: (password) => call<ProviderStatus>("vault_unlock", { password }),
-    lockVault: () => call<{ locked: string[] }>("vault_lock"),
-    signOut: () => call<SignedOut>("vault_logout"),
-    configureVault: (settings) => call<VaultConfigured>("vault_configure", { settings }),
-    saveTargets: () => call<SaveTargets>("vault_targets"),
-    vaultItemFields: (item, provider) =>
-      call<VaultItemFields>("vault_item_fields", { params: { item, ...(provider ? { provider } : {}) } }),
-    // Secrets in these params go once to serve's stdin, like vault_unlock's password.
-    signIn: (start) => call<SignInStep>("vault_login", { params: { action: "start", ...start } }),
-    signInAnswer: (login, answer) =>
-      call<SignInStep>("vault_login", { params: { action: "answer", login, ...answer } }),
+    listHosts: () => serve<HostList>("hosts.list"),
+    // `settled` (serve API 20) only when true, so an older serve gets what it always did.
+    getHost: (name, options) => serve<Host>("host.get", options?.settled === true ? { name, settled: true } : { name }),
+    vaultStatus: () => serve<VaultStatus>("vault.status"),
+    unlockVault: (password) => serve<ProviderStatus>("vault.unlock", { password }),
+    lockVault: () => serve<{ locked: string[] }>("vault.lock"),
+    signOut: () => serve<SignedOut>("vault.logout"),
+    configureVault: (settings) => serve<VaultConfigured>("vault.configure", { ...settings }),
+    saveTargets: () => serve<SaveTargets>("vault.targets"),
+    vaultItemFields: (item, provider) => serve<VaultItemFields>("vault.item_fields", { item, ...(provider ? { provider } : {}) }),
+    signIn: (start) => serve<SignInStep>("vault.login", { action: "start", ...start }),
+    signInAnswer: (login, answer) => serve<SignInStep>("vault.login", { action: "answer", login, ...answer }),
     signInCancel: async () => {
-      await call("vault_login", { params: { action: "cancel" } }).catch(() => {});
+      await serve("vault.login", { action: "cancel" }).catch(() => {});
     },
     openSession,
     openQuickSession,
@@ -204,38 +206,39 @@ export function tauriBackend(): Backend {
       return call<HostCheck>("host_check", { host, started });
     },
     stopCheck: (job) => call<{ stopping: boolean }>("host_check_stop", { job }).then((r) => r.stopping),
-    checkBox: () => call<BoxCheck>("box_check"),
-    listJobs: () => call<{ jobs: JobProgress[] }>("jobs_list").then((r) => r.jobs),
-    pullInventory: () => call<PullResult>("inventory_pull"),
+    checkBox: () => serve<BoxCheck>("box.check"),
+    listJobs: () => serve<{ jobs: JobProgress[] }>("jobs.list").then((r) => r.jobs),
+    pullInventory: () => serve<PullResult>("inventory.pull"),
     // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
-    listInventories: () => call<Inventories>("inventories_list"),
-    useInventory: (name) => call<InventoryUsed>("inventories_use", { name }),
+    listInventories: () => serve<Inventories>("inventories.list"),
+    useInventory: (name) => serve<InventoryUsed>("inventories.use", { name }),
     createInventory: (params) => call<NewInventory>("inventory_create", { params }),
     cancelCreateInventory: () => call<boolean>("inventory_create_cancel"),
-    verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
-    updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
-    pendingChanges: () => call<PendingChanges>("changes_diff"),
-    discardChanges: () => call<{ discarded: boolean; backup: string | null }>("changes_discard"),
-    publishChanges: (message) => call<PublishResult>("changes_publish", { message }),
-    scanKey: (address, port) => call<ScannedKey>("host_scan_key", { address, port }),
-    scanHostKey: (host) => call<HostKeyScan>("host_key_scan", { host }),
+    verifyLogin: (host, changes: HostChanges) => serve<HostCheck>("host.verify_login", { host, changes }),
+    updateHost: (host, changes: HostChanges) => serve<HostUpdate>("host.update", { host, changes }),
+    pendingChanges: () => serve<PendingChanges>("changes.diff"),
+    discardChanges: () => serve<{ discarded: boolean; backup: string | null }>("changes.discard"),
+    publishChanges: (message) => serve<PublishResult>("changes.publish", { message }),
+    scanKey: (address, port) => serve<ScannedKey>("host.scan_key", { address, port }),
+    scanHostKey: (host) => serve<HostKeyScan>("host.scan_key", { host }),
+    // The core sends only a SHA256 fingerprint to be trusted.
     trustHostKey: (host, fingerprint) => call<HostKeyTrust>("host_key_trust", { host, fingerprint }),
-    // A typed password goes once to serve's stdin, like vault_unlock's.
-    addHost: (params: AddHostParams) => call<HostAdd>("host_add", { params }),
-    reviewHost: (host, reviewed = true) => call<HostUpdate>("host_review", { host, reviewed }),
-    // The Live Inventory (ticket 28): one allow-listed Tauri command for its methods.
-    removeHost: (host) => inventoryCall("host.remove", { host }),
-    renameHost: (host, to) => inventoryCall("host.rename", { host, to }),
-    moveHost: (host, group) => inventoryCall("host.move", { host, group }),
-    newGroup: (name, title) => inventoryCall("group.new", { name, ...(title ? { title } : {}) }),
-    renameGroup: (group, to) => inventoryCall("group.rename", { group, to }),
-    deleteGroup: (group, to) => inventoryCall("group.delete", { group, ...(to ? { to } : {}) }),
-    reloadInventory: () => inventoryCall<InventoryReload>("inventory.reload", {}),
-    watchInventory: (auto) => inventoryCall("inventory.watch", { auto }),
+    addHost: (params: AddHostParams) => serve<HostAdd>("host.add", { ...params }),
+    // `reviewed: false` (API 9) only when unmarking, so a review reads as it did for an older roster.
+    reviewHost: (host, reviewed = true) => serve<HostUpdate>("host.review", reviewed ? { host } : { host, reviewed: false }),
+    // The Live Inventory (ticket 28).
+    removeHost: (host) => serve("host.remove", { host }),
+    renameHost: (host, to) => serve("host.rename", { host, to }),
+    moveHost: (host, group) => serve("host.move", { host, group }),
+    newGroup: (name, title) => serve("group.new", { name, ...(title ? { title } : {}) }),
+    renameGroup: (group, to) => serve("group.rename", { group, to }),
+    deleteGroup: (group, to) => serve("group.delete", { group, ...(to ? { to } : {}) }),
+    reloadInventory: () => serve<InventoryReload>("inventory.reload"),
+    watchInventory: (auto) => serve("inventory.watch", { auto }),
     // "Save to vault" after a Session's own login (tickets 15, 16): ids and names only.
-    saveQuick: (params: QuickSaveParams) => call<QuickSave>("save_call", { method: "quick.save", params }),
-    saveLogin: (params: SaveLoginParams) => call<SaveLogin>("save_call", { method: "host.save_login", params }),
-    forgetTyped: (held) => call<{ forgotten: boolean }>("save_call", { method: "vault.forget_typed", params: { held } }),
+    saveQuick: (params: QuickSaveParams) => serve<QuickSave>("quick.save", { ...params }),
+    saveLogin: (params: SaveLoginParams) => serve<SaveLogin>("host.save_login", { ...params }),
+    forgetTyped: (held) => serve<{ forgotten: boolean }>("vault.forget_typed", { held }),
     // Plugins (ticket 23): they run in the core; only data comes back.
     pluginManifest: (path) => call("plugin_manifest", { path }),
     pluginTypes: (path) => call<string>("plugin_types", { path }),
