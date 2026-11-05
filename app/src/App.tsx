@@ -171,7 +171,6 @@ import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
 import { FitBar } from "./chrome/FitBar";
 import { MessageText } from "./ui/MessageText";
-import { basePart, headPart } from "./chrome/path";
 import { PathText } from "./chrome/PathText";
 import { registerPanel } from "./panel/command";
 import { GraphMemory } from "./graph/memory";
@@ -3334,11 +3333,10 @@ function Workspace({
             key={id}
             className="path"
             title={`${info.inventory.path}\n${info.command.join(" ")}`}
-            style={pathKeep(info.inventory.path)}
           >
-            {/* Cut in its middle: its first folder and its file name stay ("~/…/roster.yml"), the
-                folders between give way from their start (round 10: "…/infra-c..." lost roster.yml;
-                round 18: the start went first). */}
+            {/* Whole folders give way for one "…/", its first folder and file name kept longest
+                ("~/…/roster.yml", then "…/roster.yml"; FitBar picks the form, round 20: a folder
+                cut inside read "~/ …ventory/roster.yml"). */}
             <PathText path={info.inventory.path} />
           </span>
         );
@@ -3607,10 +3605,10 @@ function Workspace({
                   to <code>roster.yml</code>:
                 </p>
               )}
-              {/* Cut in its middle as the status bar's is (round 19: cut from its start it lost
-                  its first folder, "…owalczyk/work/…"), whole in the tooltip. */}
+              {/* Whole when the pane has room for it; else whole folders give way as in the status
+                  bar (round 20: it was cut at 56ch with ~700 px to spare), whole in the tooltip. */}
               <p className="empty-path" title={info.inventory.path}>
-                <PathText path={info.inventory.path} />
+                <PathText path={info.inventory.path} fit />
               </p>
               {/* The next action, with its command (taste.md: an empty state carries it). */}
               <button
@@ -4553,13 +4551,6 @@ function mapKey(
 function keepChars(text: string): CSSProperties {
   return { "--keep": `${Math.min(6, [...text].length)}ch` } as CSSProperties;
 }
-/** The least of the Inventory's path the status bar draws: its first folder, "…/" and its file
- * name, in characters (Iosevka), or the whole path when that's shorter (round 18). */
-function pathKeep(path: string): CSSProperties {
-  const least = [...headPart(path)].length + 2 + [...basePart(path)].length;
-  return { "--keep": `${Math.min(least, [...path].length)}ch` } as CSSProperties;
-}
-
 /** Where the idle map's edges end: past the 48px edge column and the row's 10px padding, at the
  * node's left edge, so each edge meets its node (round 12: they stopped ~14px short). */
 const EDGE_END = 48 + 10 + 0.75;

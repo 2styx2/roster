@@ -306,10 +306,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The digit that opens the row (Startify's numbers), as a key. */
 .recent-key { display: flex; justify-content: flex-end; font: var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .empty { min-width: 0; max-width: 100%; }
-/* Cut in its middle as the status bar's path is (round 19): the first folder and the file name
-   stay, the folders between give way from their start; the whole path is its tooltip. */
-.empty-path { display: flex; max-width: min(56ch, calc(100% - 32px)); min-width: 0; color: var(--muted); font-size: var(--text-sm); }
-.empty-path .path-text { display: flex; min-width: 0; white-space: nowrap; font-family: var(--font-mono); font-size: 0.95em; }
+/* Whole when the pane has room (round 20: it was cut at 56ch with ~700 px to spare); else whole
+   folders give way as in the status bar (PathText's fit); the whole path is its tooltip. */
+.empty-path { max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); }
+.empty-path .path-text { font-family: var(--font-mono); font-size: 0.95em; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
 
 .statusbar {
@@ -320,7 +320,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar > * { flex: none; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the path cut in its middle (down to "~/…/roster.yml"), the
+/* Long values give way in order: the path by whole folders (down to "…/roster.yml"), the
    hints (removed whole, last first, FitBar), the path (removed), then the Backend's label, then this Box's name, and the Session on
    screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
    count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
@@ -337,19 +337,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
 .statusbar .box .statusbar-cut { min-width: 0; }
-/* The path is cut in its middle down to its least: its first folder, "…/" and its file name
-   (--keep, from App.tsx). Past that it's removed whole (FitBar), never left as a blank box or a
-   stub ("/ho…"). It takes no more than its text: the free room is the bar's, not the path's. */
-.statusbar .path { flex: 0 1e10 auto; min-width: var(--keep, 8ch); overflow: hidden; display: flex; }
-.statusbar .path-text { flex: 1 1 auto; min-width: 0; display: flex; white-space: nowrap; }
-/* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
-   cut from their start ("~/…ventory/roster.yml"): an rtl box with ltr text. The empty Inventory's
-   pane draws it the same way (.empty-path, PathText). */
-.path-base { flex: none; }
-/* The folders between give way, down to "…/"; the first folder and the file name never. */
-.path-head { flex: none; }
-.path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
-.path-dir > span { direction: ltr; unicode-bidi: isolate; }
+/* The path takes its text's width: whole, or with whole folders given way for one "…/" (FitBar
+   picks the form; PathText). Past "…/roster.yml" it's removed (FitBar), never left as a blank box,
+   a stub ("/ho…") or a folder cut inside ("~/ …ventory/", round 19). */
+.statusbar .path { flex: none; }
+/* A path's forms (PathText): one is shown, the others aren't there. */
+.path-cut[data-off] { display: none; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
@@ -747,7 +740,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel header { display: flex; align-items: center; padding: 10px 10px 8px 14px; }
 .keys-panel h2 { margin: 0; font-size: var(--text-md); font-weight: 600; }
 .keys-filter { margin: 0 12px 8px; height: 28px; padding: 0 8px; font-size: var(--text-sm); }
-.keys-scroll { flex: 1; overflow: auto; }
+.keys-scroll { flex: 1; overflow: auto; scroll-padding-bottom: 24px; }
+/* More below: the last 24 px fade into the footer's edge, as the tree's (round 20: the footer
+   sliced the last row at 480 × 320). A mask on the scroller: it moves nothing. */
+.keys-scroll[data-more="below"] { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
 .keys-panel table { width: 100%; border-collapse: collapse; }
 .keys-panel td { padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; line-height: 20px; }
 /* Every row is one line (Q220 e; round 18 still found three wrapping at 1280): each row lays out
@@ -771,10 +767,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel tr.named td { background: var(--hover); }
 .panel-foot .keys-option { display: inline; margin: 0; color: var(--text); }
 /* Two lines at most, never cut mid-token (round 12: "…:con…"); in a short window one line, cut at
-   its end (whole in its tooltip), so the rows keep the room (round 19: 54 px at 480 × 320). */
+   its end (whole in its tooltip), so the rows keep the room (round 19: 54 px at 480 × 320). The
+   command comes first and never gives way: only the words after it are cut (round 20). */
 .keys-panel .panel-foot { text-wrap: balance; }
 @media (max-height: 480px) {
-  .keys-panel .panel-foot { padding-block: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .keys-panel .panel-foot { display: flex; align-items: baseline; gap: 0.3em; padding-block: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .keys-panel .panel-foot > code { flex: none; }
+  .keys-panel .panel-foot > .panel-foot-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 }
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
@@ -1773,6 +1772,18 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
   flex: 0 0 min(var(--finder-title-w, 42%), 42%); max-width: none; min-width: 0;
 }
 .finder.prose .finder-label > .finder-name { flex: 0 1 auto; }
+/* What a help entry is, after its name ("E31 · Pick Bitwarden cloud…"), muted; it's cut before
+   the name is (round 20: it had taken the middle column, which is the page on every other row). */
+.finder-note { flex: 0 1e3 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: var(--text-sm) var(--font-ui); white-space: pre; }
+.finder-note .data { font-family: var(--font-mono); }
+.finder.prose .finder-label > .finder-name:has(+ .finder-note) { flex-shrink: 0; max-width: 100%; }
+.finder-row.selected .finder-note { color: var(--muted); }
+/* A help tag is what you type after :help: never a stub (round 20: "host-k…"). Up to 16
+   characters it's whole; a longer one gives way first, cut in its middle down to its first 4
+   and last 10 characters (TagText; --tag-min from Finder.tsx), and only then is the page cut. */
+.finder.prose .finder-detail { display: flex; justify-content: flex-end; flex: 0 1e5 auto; min-width: var(--tag-min, 8ch); }
+.tag-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tag-tail { flex: none; }
 
 /* ---------- The Config's problems (ticket 21) ---------- */
 

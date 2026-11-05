@@ -132,7 +132,10 @@ describe("Option names where configurable things show", () => {
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
     const rowOf = (label: RegExp) => within(panel).getAllByRole("row").find((r) => label.test(r.textContent ?? ""))!;
     // A binding's option name shows in the panel's footer while the pointer is on its row.
-    expect(within(panel).getByText(/Point at a binding for its name in init\.lua/)).toBeInTheDocument();
+    // The command first, so a one-line footer never cuts it (round 20).
+    const foot = panel.querySelector(".panel-foot");
+    expect(foot?.firstElementChild).toHaveTextContent(/^:config$/);
+    expect(foot).toHaveTextContent(":config opens init.lua. Point at a binding for its name there.");
     const optionOf = async (label: RegExp) => {
       await user.hover(rowOf(label));
       return panel.querySelector(".panel-foot .keys-option")?.textContent;

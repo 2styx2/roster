@@ -32,6 +32,14 @@ function callContext(text: string): HandlerContext {
   }
 }
 
+/** What `:plugins ARG` is titled. A command line a Plugin handed over (`run NAME LINE`, its keys
+ * and buttons) reads as the Plugin's and its line ("folders: folder add"), not as the plumbing
+ * that runs it (round 20: "Plugins: run folders folder add" was cut in Key bindings at 800). */
+export function pluginsLabel(arg: string): string {
+  const run = /^run\s+(\S+)\s+(.+)$/.exec(arg.trim());
+  return run ? `${run[1]}: ${run[2]}` : `Plugins: ${arg}`;
+}
+
 export function pluginsCommand(manager: PluginManager, openPanel: () => void): CommandDef {
   return {
     id: "plugins",
@@ -40,7 +48,7 @@ export function pluginsCommand(manager: PluginManager, openPanel: () => void): C
     arg: "text",
     optionalArg: true,
     seldom: true,
-    label: (a) => (a ? `Plugins: ${a}` : "Show the Plugins, what each may do, and revoke it"),
+    label: (a) => (a ? pluginsLabel(a) : "Show the Plugins, what each may do, and revoke it"),
     complete: (arg) => {
       const words = arg.split(" ");
       if (words.length <= 1) return matching(SUBCOMMANDS, arg);

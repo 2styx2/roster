@@ -1,10 +1,11 @@
 // The status bar, one line that gives way in a fixed order when it runs out of room (round 19):
-// the hints go whole, last first, then the Inventory's path (once it's cut down to its least,
-// "~/…/roster.yml"), and only then do the Backend's label, this Box and the Session on screen get
+// the Inventory's path drops whole folders, form by form down to "~/…/roster.yml" (round 20,
+// PathText), the hints go whole, last first, then "~/" ("…/roster.yml"), then the path, and only then do the Backend's label, this Box and the Session on screen get
 // cut (CSS, shrink factors). A segment that gives way is removed (display: none, out of the
 // accessibility tree), so it never keeps room it draws nothing in; round 18 let them wrap to a
 // hidden second line, which left their boxes blank (98 px at 480, ~190 px at 800).
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { cutCount, showCut } from "./PathText";
 
 /** The segments that are cut rather than removed: when one of them is cut, the bar is tight. */
 const KEPT = ":scope > :is(.backend, .box, .session-seg) .statusbar-cut";
@@ -20,20 +21,30 @@ function hide(el: HTMLElement) {
   el.setAttribute("aria-hidden", "true");
 }
 
-/** Shows every segment that can give way, then removes them in order (the hints last first, then
- * the path) while the bar is tight: its content wider than it, or a kept segment cut. */
+/** Shows every segment that can give way, the path whole, then while the bar is tight (its
+ * content wider than it, or a kept segment cut) takes the next step: the path's next shorter form
+ * (whole folders dropped) down to "~/…/roster.yml", then each hint (last first), then
+ * "…/roster.yml", then the path. */
 export function giveWay(bar: HTMLElement) {
   const hints = [...bar.querySelectorAll<HTMLElement>(".statusbar-hints > *")].reverse();
   const path = bar.querySelector<HTMLElement>(":scope > .path");
-  const order = path ? [...hints, path] : hints;
-  for (const el of order) show(el);
+  const text = path?.querySelector<HTMLElement>(".path-text");
+  for (const el of path ? [...hints, path] : hints) show(el);
+  if (text) showCut(text, 0);
   // No layout (a hidden bar, or jsdom): nothing gives way.
   if (bar.clientWidth === 0) return;
+  // Its least form, "…/roster.yml", only once the hints are gone: "~/…/roster.yml" says more.
+  const forms = text ? cutCount(text) : 0;
+  const steps: (() => void)[] = [];
+  for (let i = 1; i < forms - 1; i++) steps.push(() => text && showCut(text, i));
+  for (const el of hints) steps.push(() => hide(el));
+  if (text && forms > 1) steps.push(() => showCut(text, forms - 1));
+  if (path) steps.push(() => hide(path));
   const tight = () =>
     bar.scrollWidth > bar.clientWidth || [...bar.querySelectorAll<HTMLElement>(KEPT)].some((c) => c.scrollWidth > c.clientWidth);
-  for (const el of order) {
+  for (const step of steps) {
     if (!tight()) break;
-    hide(el);
+    step();
   }
 }
 

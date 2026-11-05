@@ -13,9 +13,13 @@ export interface Topic {
   anchor?: string;
   /** What the topic finder shows. */
   label: string;
-  /** The page's title, for an entry on it. */
+  /** The page's title, for an entry or a heading on it: the finder's middle column, always a page
+   * (round 20: an entry's description there made it mean two things). */
   path?: string;
-  /** What in `path` is code (`roster sync`): set in Iosevka there (round 19, the paste rule). */
+  /** What an entry says it is, its first 80 characters ("Pick Bitwarden cloud…" for `E31`): the
+   * finder puts it after the title ("E31 · Pick…"), muted. */
+  note?: string;
+  /** What in `note` is code (`roster sync`): set in Iosevka there (round 19, the paste rule). */
   codes?: string[];
   /** A page, a heading on one, an entry (an option, a command, an error…), or another name. */
   kind: "page" | "heading" | "entry" | "alias";
@@ -52,9 +56,9 @@ export function blockTags(page: string, title: string, blocks: readonly Block[])
     } else if (b.t === "defs") {
       for (const d of b.items) {
         if (!d.anchor) continue;
-        const path = clip(plain(d.body), 80);
-        const codes = path ? codesIn(d.body) : [];
-        out.push({ tag: d.anchor, anchor: d.anchor, label: entryLabel(d.anchor, plain(d.term)), path: path || title, ...(codes.length ? { codes } : {}), kind: "entry" });
+        const note = clip(plain(d.body), 80);
+        const codes = note ? codesIn(d.body) : [];
+        out.push({ tag: d.anchor, anchor: d.anchor, label: entryLabel(d.anchor, plain(d.term)), path: title, ...(note ? { note } : {}), ...(codes.length ? { codes } : {}), kind: "entry" });
       }
     } else if (b.t === "table" && b.anchors) {
       b.anchors.forEach((a, i) => {

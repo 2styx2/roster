@@ -3,7 +3,7 @@ import { giveWay } from "./FitBar";
 
 /** A 400 px bar whose segments are `widths` wide (jsdom has no layout): a Box, a path and three
  * hints. The bar's content is the sum of what's still shown. */
-function bar(widths: { box: number; path: number; hints: number[] }) {
+function bar(widths: { box: number; path: number; hints: number[]; forms?: number[] }) {
   const el = document.createElement("footer");
   Object.defineProperty(el, "clientWidth", { value: 400 });
   const box = document.createElement("span");
@@ -15,6 +15,17 @@ function bar(widths: { box: number; path: number; hints: number[] }) {
   box.append(cut);
   const path = document.createElement("span");
   path.className = "path";
+  // Its forms (PathText): whole, then whole folders dropped, each 40 px shorter.
+  const text = document.createElement("span");
+  text.className = "path-text";
+  const forms = (widths.forms ?? [widths.path]).map((_, i) => {
+    const f = document.createElement("span");
+    f.className = "path-cut";
+    if (i > 0) f.setAttribute("data-off", "");
+    return f;
+  });
+  text.append(...forms);
+  path.append(text);
   const hints = document.createElement("span");
   hints.className = "statusbar-hints";
   const right = document.createElement("span");
@@ -24,13 +35,43 @@ function bar(widths: { box: number; path: number; hints: number[] }) {
   el.append(box, path, right);
   const width = () =>
     widths.box +
-    (path.hasAttribute("data-off") ? 0 : widths.path) +
+    (path.hasAttribute("data-off") ? 0 : (widths.forms?.[forms.findIndex((f) => !f.hasAttribute("data-off"))] ?? widths.path)) +
     parts.reduce((sum, p, i) => sum + (p.hasAttribute("data-off") ? 0 : (widths.hints[i] ?? 0)), 0);
   Object.defineProperty(el, "scrollWidth", { get: () => Math.max(400, width()) });
-  return { el, path, parts };
+  return { el, path, parts, forms };
 }
 
 describe("the status bar gives way in order (round 19)", () => {
+  it("first drops the path's folders form by form, and only as far as it must (round 20)", () => {
+    const shown = (forms: HTMLElement[]) => forms.findIndex((f) => !f.hasAttribute("data-off"));
+    const sizes = { box: 160, path: 0, hints: [60, 60], forms: [260, 160, 100, 90, 80] };
+    const { el, path, parts, forms } = bar(sizes);
+    giveWay(el);
+    // 160 + 120 of hints leaves 120 for the path: the third form (100) is the first that fits.
+    expect(shown(forms)).toBe(2);
+    expect(parts.some((p) => p.hasAttribute("data-off"))).toBe(false);
+    expect(path).not.toHaveAttribute("data-off");
+    // Wider: back to the whole path.
+    sizes.box = 20;
+    giveWay(el);
+    expect(shown(forms)).toBe(0);
+    // Narrower than the least form beside the hints: the hints go, then the path.
+    sizes.box = 300;
+    giveWay(el);
+    // Its next-to-least form (90) beside no hints; the least (80) comes only after the hints.
+    expect(shown(forms)).toBe(3);
+    expect(parts.every((p) => p.hasAttribute("data-off"))).toBe(true);
+    expect(path).not.toHaveAttribute("data-off");
+    sizes.box = 315;
+    giveWay(el);
+    expect(shown(forms)).toBe(4);
+    sizes.box = 340;
+    giveWay(el);
+    expect(parts.every((p) => p.hasAttribute("data-off"))).toBe(true);
+    expect(path).toHaveAttribute("data-off");
+  });
+
+
   it("removes the hints last first, then the path, and only as many as it must", () => {
     const { el, path, parts } = bar({ box: 160, path: 120, hints: [60, 60, 60] });
     giveWay(el);
