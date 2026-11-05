@@ -58,7 +58,8 @@ class SignOutFailed(SecretError):
 
 
 class VaultLocked(SecretError):
-    """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK)."""
+    """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK), or has nothing to unlock
+    it with (no terminal to ask in, no password variable): 14, never 35 (#437)."""
 
 
 # What can go wrong signing in (`roster serve`'s vault.login). `step`: where the sign-in carries on (the provider

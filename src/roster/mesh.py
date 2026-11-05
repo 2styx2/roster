@@ -800,7 +800,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             x["status"], x["why"] = "pending", f"{x['from']}: {p['error']}"
         elif not recorded_host_keys(t):
             x["status"] = "no-host-key"
-            x["why"] = f"no recorded host key for {x['to']} on this Box (roster setup --only {x['to']})"
+            x["why"] = f"no recorded host key for {x['to']} on this Box (roster setup --host {x['to']})"
         elif via and (x["from"], via) not in live:
             x["status"] = "no-via"
             x["why"] = (f"{x['from']} has no Link to {via}, its hop to {x['to']} "
@@ -808,7 +808,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
         elif via and not recorded_host_keys(hosts[via]):      # its Link to VIA isn't written: no Host VIA to jump through
             x["status"] = "no-host-key"
             x["why"] = (f"no recorded host key for {via} ({x['from']}'s hop to {x['to']}) on this Box "
-                        f"(roster setup --only {via})")
+                        f"(roster setup --host {via})")
         elif via and "error" in hop:
             x["status"], x["why"] = "pending", f"{via}: {hop['error']}"
         elif via and p["reach"].get(via) == "fail":

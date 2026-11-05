@@ -229,7 +229,7 @@ def cmd_add(cfg, args):
     if not r["sync"]["ok"]:                     # as boxsync.after_edit says it after discover --write
         print(f"warning: this Box's ssh config didn't follow roster.yml ({r['sync']['error']}): {r['sync']['fix']}",
               file=sys.stderr, flush=True)
-    return set_up(args, path) if args.setup else next_steps(args.name, path)
+    return set_up(args, path) if args.setup else next_steps(args.name)
 
 
 def written(name, where, path, group, r):
@@ -243,19 +243,11 @@ def written(name, where, path, group, r):
         say(f"note         {r['note']}")
 
 
-def next_steps(name, path):
-    """The two commands that set the new Host up and test it. `setup --only NAME` also selects a Host whose group,
-    type or product is NAME: then that's said, with `roster add`'s --setup-alone way round it."""
+def next_steps(name):
+    """The two commands that set the new Host up and test it: `setup --host NAME` takes that Host alone, even when
+    a group, type or product is NAME too (#437)."""
     from .common import say
-    from .config import selected
-    more = sorted(h["name"] for h in selected(load_config(path), name) if h["name"] != name)
-    if more:
-        say(f"next         roster check {name}          (a Session to it would open, step by step)")
-        say(f"note         --only {name} also selects {', '.join(more)} (group, type or product {name}), so "
-            f"`roster setup --only {name}` would set those up too: run setup without --only, or set {name} up by "
-            "hand")
-        return 0
-    say(f"next         roster setup --only {name}   (host key, and this Box's key on it when enroll is true)")
+    say(f"next         roster setup --host {name}   (host key, and this Box's key on it when enroll is true)")
     say(f"             roster check {name}          (a Session to it would open, step by step)")
     return 0
 
@@ -267,10 +259,10 @@ def set_up(args, path):
     from . import cli
     from .common import say
     cfg = load_config(path)
-    say(f"\nsetup        roster setup --only {args.name}")
-    # exactly this Host (`names`), never what --only NAME would match too (a group, type or product NAME); the
-    # whole Inventory stays in cfg, as setup writes the ssh config from all of it
-    setup = cli.cmd_setup(cfg, argparse.Namespace(only=args.name, names=[args.name], dry_run=False))
+    say(f"\nsetup        roster setup --host {args.name}")
+    # exactly this Host, never what --only NAME would match too (a group, type or product NAME); the whole
+    # Inventory stays in cfg, as setup writes the ssh config from all of it
+    setup = cli.cmd_setup(cfg, argparse.Namespace(only=None, host=args.name, dry_run=False))
     say(f"\ncheck        roster check {args.name}")
     check = cli.cmd_check_host(argparse.Namespace(host=args.name, config=str(path), inv=None, json=False))
     say()

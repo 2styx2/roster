@@ -139,7 +139,7 @@ def _bw_ready(ctx):
     if status == "locked" and from_file:
         forget_session()
         if not (os.environ.get("BW_PASSWORD") or ctx.interactive):
-            raise SecretError(f"the Bitwarden session in {session_file()} has expired (vault locked) - refresh it: "
+            raise VaultLocked(f"the Bitwarden session in {session_file()} has expired (vault locked) - refresh it: "
                               f"(umask 077; bw unlock --raw > {session_file()})")
     if status == "locked" and manual_unlock():
         raise VaultLocked("Bitwarden vault is locked - unlock it first")
@@ -150,7 +150,7 @@ def _bw_ready(ctx):
             r = _bw(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER",
                     env={"ROSTER_BW_MASTER": ctx.ask("Bitwarden master password: ")})
         else:
-            raise SecretError("Bitwarden vault is locked and there's no terminal to unlock it. In the shell "
+            raise VaultLocked("Bitwarden vault is locked and there's no terminal to unlock it. In the shell "
                               "you start Claude (or roster) from, run:  export BW_SESSION=$(bw unlock --raw)  "
                               f"- or, for every session on this box:  (umask 077; bw unlock --raw > {session_file()})")
         if r.returncode != 0 or not r.stdout.strip():

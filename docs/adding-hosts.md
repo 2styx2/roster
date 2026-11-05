@@ -13,7 +13,7 @@ roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab --no-enroll 
 roster add nas-01 --auth "bw:nas-01 ssh" --from-vault --setup                   # address and user from the item, then set up
 ```
 
-It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --only nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks.
+It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --host nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks, but for one: an address and port another Host has is a warning there, naming that Host, not a refusal (a second Login to one machine). Its **Fill from this item** (with "An existing vault item") is `--from-vault`: the item's address, SSH port and user, never its password.
 
 ### After you put a login in the vault
 
@@ -154,7 +154,7 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 ```bash
 roster check --auth --only discovered-20261012   # every vault reference resolves ("ok")
-roster setup --only HOST1,HOST2                  # records fingerprints, installs keys on enroll: true hosts
+roster setup --only HOST1,HOST2                  # (or --host HOST: that Host alone) records fingerprints, installs keys on enroll: true hosts
 roster run HOST -- hostname                      # SSH password login
 ssh HOST hostname                                # SSH key login (enroll: true)
 roster web HOST [SERVICE] GET /path              # web API with basic or bearer auth
@@ -166,7 +166,7 @@ What the errors mean:
 
 | Message | Meaning |
 |---|---|
-| `host key not recorded` | `roster setup --only HOST` hasn't been run for it yet, or the SSH port didn't answer when it ran |
+| `host key not recorded` | `roster setup --host HOST` hasn't been run for it yet, or the SSH port didn't answer when it ran |
 | `no answer on SSH port` | SSH is off or filtered. ESXi often switches SSH off: enable it under Host → Actions → Services. |
 | `login refused (wrong user or password?)` | Wrong item, wrong user, or a different box from the one you think. Check the host key (step 3). |
 | `warning: HOST service 'NAME': ... - left out` | That service entry has a mistake roster can't work around, so the rest of the Host loads without it. The `fix:` line under it says what to change. |

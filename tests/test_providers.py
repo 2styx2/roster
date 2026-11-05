@@ -123,7 +123,7 @@ def test_bitwarden_unlock_password_and_fields(fakes, monkeypatch):
 
 
 def test_bitwarden_errors(fakes, monkeypatch):
-    with pytest.raises(SecretError, match="locked and there's no terminal"):
+    with pytest.raises(providers.VaultLocked, match="locked and there's no terminal"):     # 14, not 35 (#437)
         get_secret("bw:Orion servers", "g")
     monkeypatch.setenv("BW_PASSWORD", "wrong")
     with pytest.raises(SecretError, match="unlock failed"):
@@ -370,7 +370,7 @@ def test_bw_session_file_that_isnt_a_session_key_is_ignored(isolated, fakes, cap
 
 def test_bw_expired_session_file_says_refresh(isolated, fakes):
     _session_file(isolated, "stale-key\n")
-    with pytest.raises(SecretError, match="has expired.*bw unlock --raw >"):
+    with pytest.raises(providers.VaultLocked, match="has expired.*bw unlock --raw >"):
         get_secret("bw:Network gear", "g")
 
 
