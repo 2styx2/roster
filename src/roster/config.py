@@ -91,8 +91,14 @@ def blank_shape(raw):
 
 def load_inventory(path):
     """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
+    given = str(path)
     path = Path(path).expanduser().resolve()
     if not path.exists():
+        if not re.search(r"[/\\.~]", given):
+            # no / and no . : not shaped like a path (#479): `roster -cTOKEN hosts` reads an op session token that
+            # starts with -c as `-c TOKEN`, and this error must not print it
+            die("no config file at that path (not repeated) - check -c PATH (or $ROSTER_CONFIG); make one: "
+                "roster -c PATH init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
         die(f"{path} not found - make one: roster -c {path} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
     return parse_inventory(path.read_text(), path)
 

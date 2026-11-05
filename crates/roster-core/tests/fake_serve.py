@@ -14,6 +14,8 @@ The first argument picks a behaviour:
                      `{"how": "repo"}` is refused with 172; `{"how": "repo", "source": "slow"}` waits for a
                      `$/cancel` of it, then answers 5 (#417 L5)
   unknown-command    exits 2 at once with argparse's "invalid choice: 'serve'" (a roster from before serve)
+  other-choice       exits 2 at once with an "invalid choice" that isn't the command `serve` (a roster that has serve
+                     refusing something else in a line that also says serve): not a roster too old (#479)
   reverse            holds two requests, then answers them in reverse order
   shuffle            as serve's workers do (API 20): holds four requests, then answers them 3rd, 1st, 4th, 2nd, with a
                      job.progress notification before each answer
@@ -44,6 +46,11 @@ mode = sys.argv[1] if len(sys.argv) > 1 else "ok"
 if mode == "unknown-command":
     print("usage: roster [-h] [--version] [-c CONFIG] {init,setup,hosts} ...", file=sys.stderr)
     print("roster: error: argument cmd: invalid choice: 'serve' (choose from init, setup, hosts)", file=sys.stderr)
+    sys.exit(2)
+if mode == "other-choice":
+    print("usage: roster serve [-h] [--log-level {info,debug}]", file=sys.stderr)
+    print("roster serve: error: argument --log-level: invalid choice: 'loud' (choose from info, debug)",
+          file=sys.stderr)
     sys.exit(2)
 
 HOSTS = [

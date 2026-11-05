@@ -217,6 +217,16 @@ def test_a_session_in_roster_s_place_says_where_a_session_goes(capsys):
     assert "vault bw and vault op take the vault session from their environment" in err
 
 
+@pytest.mark.parametrize("provider", ["bw", "op"])
+def test_a_session_hint_names_the_provider_typed(capsys, provider):
+    with pytest.raises(SystemExit):
+        main(["--session", OP_SESSION, "vault", provider, "--", "whoami"])
+    err = capsys.readouterr().err
+    assert OP_SESSION not in err
+    assert f"vault {provider} takes the vault session from its environment" in err
+    assert f"(`roster vault {provider} -- ARGS`)" in err
+
+
 def test_an_unknown_help_topic_names_the_command_that_has_help(capsys):
     with pytest.raises(SystemExit):
         main(["help", "vault", "nope"])
@@ -229,3 +239,22 @@ def test_an_unknown_init_inventory_names_the_forms(capsys):
     assert e.value.code == 2
     assert ("--inventory: not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]"
             in capsys.readouterr().err)
+
+
+# #479 item 2 (T235 review N2): an op token that starts with `-c`, typed as the first word, reads as `-c PATH`; the
+# not-found error must not print it. A value that looks like a path (a / or a .) is still shown: the user typed a path.
+def test_a_token_read_as_a_config_path_is_not_repeated(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        main([f"-c{OP_SESSION}", "hosts"])
+    out = str(e.value.code) + capsys.readouterr().err
+    assert OP_SESSION not in out and OP_SESSION[8:20] not in out
+    assert "no config file at that path (not repeated)" in out
+
+
+@pytest.mark.parametrize("typed", ["lab.yml", "inv/roster.yml"])
+def test_a_missing_config_path_is_shown_when_it_looks_like_one(capsys, tmp_path, monkeypatch, typed):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        main(["-c", typed, "hosts"])
+    assert f"{tmp_path / typed} not found" in str(e.value.code)

@@ -67,7 +67,8 @@ PREFIX=${PREFIX/#\~/$HOME}
 [[ -n $INFRA_REPO && -z $INVENTORY ]] && INVENTORY="repo:$INFRA_REPO"
 case "$INVENTORY" in
     ""|blank|file:?*|repo:[!-]*|ssh-config|ssh-config:?*) ;;
-    *) echo "--inventory $INVENTORY: use blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2 ;;
+    # the value isn't repeated: a git URL typed without repo: (or as repo:-...) can carry a token (#479)
+    *) echo "--inventory: not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2 ;;
 esac
 
 # ---- what install.sh and update.sh share: the look, the questions, find_map and friends (install-lib.sh, beside this

@@ -266,6 +266,20 @@ def test_install_inventory_flag_is_checked(tmp_path):
         assert r.returncode == 2 and "--inventory" in r.stderr, bad
 
 
+@posix_shell
+@pytest.mark.parametrize("flag", ["--inventory", "--inventory=", "--infra-repo"])
+def test_install_inventory_flag_never_repeats_a_bad_value(tmp_path, flag):
+    # a git URL typed without repo: (or with a leading -) can carry a token; the error must not print it
+    token = "Ex4mpleN0tR3alT0ken0000-installsh"
+    value = f"https://{token}@git.example.com/team/infra.git"
+    if flag == "--infra-repo":
+        value = f"-{value}"            # repo:-... is refused (a value that would read as an option)
+    args = (flag + value,) if flag.endswith("=") else (flag, value)
+    r = install_dry(tmp_path, *args)
+    assert r.returncode == 2 and "--inventory" in r.stderr, r.stderr
+    assert token not in r.stderr + r.stdout, r.stderr
+
+
 def install_answering(tmp_path, replies):
     """install.sh --dry-run in a made-up HOME, answering each question as it's asked: REPLIES maps words in a
     question to the answer typed; any other question gets Enter (its default). Returns everything it printed."""
