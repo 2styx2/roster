@@ -270,6 +270,37 @@ def test_install_inventory_flag_is_checked(tmp_path):
         assert r.returncode == 2 and "--inventory" in r.stderr, bad
 
 
+@posix_shell
+@pytest.mark.parametrize("name", ["install.sh", "update.sh"])
+@pytest.mark.parametrize(("args", "said"), [
+    pytest.param(["--inventroy=repo:{url}"], "unknown option: --inventroy (try --help)", id="mistyped-flag"),
+    pytest.param(["{url}"], "unexpected argument (not repeated) (try --help)", id="bare-url"),
+])
+def test_an_unknown_argument_is_never_repeated(tmp_path, name, args, said):
+    # #484 M2: a mistyped flag carrying a credential URL, or a URL with no flag, used to come back whole on stderr
+    token = "Ex4mpleN0tR3alT0ken0000-unknownarg"
+    url = f"https://you:{token}@git.example.com/team/infra.git"
+    env = {"HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / name), "--dry-run", *[a.format(url=url) for a in args]],
+                       env=env, capture_output=True, text=True, timeout=60, start_new_session=True)
+    assert r.returncode == 2 and said in r.stderr, r.stderr
+    assert token not in r.stderr + r.stdout and "git.example.com" not in r.stderr, r.stderr
+
+
+@posix_shell
+@pytest.mark.parametrize("flag", ["--inventory", "--inventory=", "--infra-repo"])
+def test_install_inventory_flag_never_repeats_a_bad_value(tmp_path, flag):
+    # a git URL typed without repo: (or with a leading -) can carry a token; the error must not print it
+    token = "Ex4mpleN0tR3alT0ken0000-installsh"
+    value = f"https://{token}@git.example.com/team/infra.git"
+    if flag == "--infra-repo":
+        value = f"-{value}"            # repo:-... is refused (a value that would read as an option)
+    args = (flag + value,) if flag.endswith("=") else (flag, value)
+    r = install_dry(tmp_path, *args)
+    assert r.returncode == 2 and "--inventory" in r.stderr, r.stderr
+    assert token not in r.stderr + r.stdout, r.stderr
+
+
 def install_answering(tmp_path, replies):
     """install.sh --dry-run in a made-up HOME, answering each question as it's asked: REPLIES maps words in a
     question to the answer typed; any other question gets Enter (its default). Returns everything it printed."""
