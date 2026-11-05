@@ -90,13 +90,6 @@ def name_new(path, name, use=False):
                       {"path": str(path)}, fix=f"`roster inv add NAME {path}` in a terminal") from None
 
 
-def create_named(path, how, value, name, use=False, interactive=True, stop=None):
-    """create(), then name_new(): serve's inventory.create in one call."""
-    made = create(path, how, value, interactive=interactive, stop=stop)
-    name_new(made.path, name, use)
-    return made
-
-
 def create(path, how, value=None, interactive=True, stop=None):
     """Make the Inventory at PATH (a roster.yml that isn't there yet) the HOW way. INTERACTIVE: a clone may ask for
     a passphrase on this terminal (serve's never does). Returns Made; raises Problem with nothing left half-made,

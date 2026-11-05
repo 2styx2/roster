@@ -17,8 +17,6 @@ from .context import FILES, Context
 from .named import (
     Inventories,
     Named,
-    canonical,
-    list_file,
     load,
     name_problem,
     refresh_index,
@@ -29,9 +27,6 @@ from .named import (
     unnamed_source,
 )
 from .sshconfig import SSH_UNSAFE
-
-# serve.py reads canonical, list_file, load, name_problem and same_name here too
-__all__ = ["Added", "Removed", "add", "canonical", "list_file", "load", "name_problem", "remove", "same_name", "use"]
 
 
 class Added(NamedTuple):

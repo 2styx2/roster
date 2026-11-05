@@ -22,12 +22,9 @@ from .sshops import (
     fingerprint,
     handshake,
     host_block,
-    in_ssh_config,
-    left_out,
-    not_reached,
+    not_in_ssh_config,
     recorded_host_keys,
     start_transport,
-    sync_fix,
 )
 
 STEPS = ("inventory", "ssh-config", "provider", "vault-item", "dns", "tcp", "host-key", "auth")
@@ -185,15 +182,9 @@ def step_ssh_config(ctx):
         raise Problem(errors.NOT_SET_UP, "no ssh client on this box's PATH",
                       fix="install OpenSSH (openssh-client)")
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
-    if not in_ssh_config(h["name"]):
-        why = left_out(h["name"])
-        if why:
-            raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
-                                                       "Inventory the active one (`roster inv use`)")
-        why = not_reached(h["name"])
-        if why:                         # another roster.yml's, or this Inventory isn't synced here
-            raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
-        raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
+    problem = not_in_ssh_config(h["name"], f"{h['name']} isn't in this box's ssh config yet", fix=sync)
+    if problem:
+        raise problem
     # mid-rotation, the block offers the old key too (T240)
     want = host_block(ctx["cfg"], h["name"], h, rotation.config_waiting(ctx["cfg"]))
     have = sshconfig.written_block(current().ssh_config, h["name"]) or []

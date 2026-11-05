@@ -13,6 +13,7 @@ from typing import Any
 from . import rotation, sshconfig
 from .common import WINDOWS, die, program_argv, replace_file, say, ssh_path
 from .context import Context, current, ssh_dir
+from .errors import NOT_SET_UP, Problem
 from .hosts import is_windows, password_login
 from .sshconfig import token_path
 
@@ -150,10 +151,21 @@ def sync_fix():
     return f"`roster -c {shlex.quote(str(here.path))} sync` writes it" if here.path is not None else "`roster sync` writes it"
 
 
-def in_ssh_config(name):
-    """Will a plain `ssh NAME` use the Host block roster wrote? (its file has it, and ~/.ssh/config includes it)"""
+def not_in_ssh_config(name, missing, fix=None):
+    """Why a plain `ssh NAME` won't use the Host block roster wrote for this run's Host NAME (its file lacks it, or
+    ~/.ssh/config doesn't include it), as a NOT_SET_UP Problem, or None when it will. MISSING (and FIX) is the
+    message when it's simply not there yet."""
     from . import named  # Pydantic: only once it's used, never at roster's start
-    return name in (named.reachable_hosts() or ())
+    if name in (named.reachable_hosts() or ()):
+        return None
+    why = left_out(name)
+    if why:
+        return Problem(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
+                                            "active one (`roster inv use`)")
+    why = not_reached(name)
+    if why:                             # another roster.yml's, or this Inventory isn't synced here
+        return Problem(NOT_SET_UP, why, fix=sync_fix())
+    return Problem(NOT_SET_UP, missing, fix=fix)
 
 
 def record_fingerprints(cfg, hosts):

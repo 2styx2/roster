@@ -19,19 +19,6 @@ from .errors import ROSTER_ERROR, Exit, Problem, die_message  # noqa: F401 (die_
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 
 
-# serve.py's names for this run's Inventory, until it reads context.current() itself
-def current_inventory() -> str | None:
-    return current().name
-
-
-def ssh_config_file() -> Path:
-    return current().ssh_config
-
-
-def known_hosts_label() -> str:
-    return current().known_hosts_label
-
-
 class NotPrivate(Exception):
     """read_private: the file is there, but it isn't only yours (the message says how)."""
 

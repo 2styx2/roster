@@ -1329,28 +1329,16 @@ grep -qE "$T" "$AK" 2>/dev/null && {{ echo "ERROR a roster-mesh line is still th
 
 def write_cut(cfg, name, sync=None):
     """`mesh: false` for Host NAME in roster.yml (edit.py: every other byte kept), so the cut survives: a Pending
-    change in a repo, saved straight to a plain file (store.py, T212), then SYNC() (store's write), this Box's sync;
-    None: the caller syncs (serve, under its own lock). {written, backup, kind, sync} or {written: False, note}
-    (already) or {written: False, error, fix}."""
+    change in a repo, saved straight to a plain file (store.py, T212), then this Box's sync, SYNC() (store's write;
+    default: from the file). {written, backup, kind, sync} or {written: False, note} (already) or {written: False,
+    error, fix}."""
     from . import edit, store
     if cfg["hosts"][name]["mesh"] is False:
         return {"written": False, "note": f"{name} already has mesh: false in roster.yml"}
     try:
         kept = store.at(cfg["path"])
         old, new, _ = edit.edited(kept.path, name, {"mesh": False})
-        if sync is None:
-            backup, synced = kept.save(old, new), None
-        else:
-            backup, synced = kept.write(old, new, sync=sync)
+        backup, synced = kept.write(old, new, sync=sync)
     except Problem as e:
         return {"written": False, "error": e.message, "fix": f"set mesh: false for {name} in roster.yml by hand"}
-    return {"written": True, "backup": str(backup), "kind": kept.kind, **({"sync": synced} if sync else {})}
-
-
-def cut_out(cfg, name, workers=16, progress=None, stopped=None, sync=None):
-    """`roster mesh cut HOST`: the cut (cut()), then `mesh: false` written for it and this Box synced (write_cut, with
-    SYNC; default: from the file). cut()'s result with `change`: write_cut's."""
-    from . import boxsync
-    result = cut(cfg, name, workers, progress, stopped)
-    result["change"] = write_cut(cfg, name, sync or (lambda: boxsync.sync_file(cfg["path"])))
-    return result
+    return {"written": True, "backup": str(backup), "kind": kept.kind, "sync": synced}
