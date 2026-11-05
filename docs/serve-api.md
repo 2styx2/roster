@@ -302,7 +302,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 |---|---|
 | `1` | The Inventory didn't load: no `roster.yml`, or it's invalid (including a Host with no user at all). Every method that needs it returns this, and `serve` keeps running. `data` has `path` (or `null`; `"(not repeated)"` for a missing file roster won't print, such as a token typed as `-c PATH`, Q207), `roster_version`, `api_version`, `fix`, and `line` for a YAML error. |
 | `2` | Unknown host (`host.get`, `session.prepare`) |
-| `3` | Any other refusal roster would print as `error: ...` on the command line |
+| `3` | Any other refusal roster would print as `error: ...` on the command line. One the command line prints with a code of its own (`error: [201] ...`) answers with that code instead, and the message without it |
 | `4` | A lock this request needs (`roster.yml`, the vault) was held by another request past this one's wait: `data.busy` says which, `data.method` by what. Nothing was done; try again once it has finished (API 20, [Locks](#ordering-locks-and-jobs)) |
 | `5` | `$/cancel` stopped the request before it did anything (it was queued, or waiting for a lock): "host.add was cancelled before it did anything". Nothing was done (API 21, [Cancelling](#ordering-locks-and-jobs)) |
 | `20` | `session.prepare`: the Host isn't reviewed (`reviewed: false`); same message as `roster run` |
