@@ -120,7 +120,7 @@ def test_dry_run_prints_the_lines_and_writes_nothing(capsys, yml):
 
 def test_without_setup_it_prints_the_next_two_commands(capsys, yml):
     out = run(capsys, "nas", "--ip", "10.0.0.50", "--yes")[1]
-    assert "roster setup --only nas" in out and "roster check nas" in out
+    assert "roster setup --host nas" in out and "roster check nas" in out
 
 
 def test_the_write_is_said_before_this_box_syncs(capsys, yml, isolated):
@@ -135,8 +135,8 @@ def test_setup_runs_setup_then_check_for_the_new_host(capsys, yml, monkeypatch, 
     monkeypatch.setenv("NAS_PW", "x")
     rc, out, _ = run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW",
                      "--no-enroll", "--setup", "--yes")                # port 1 here: nothing answers, nothing leaves
-    assert "setup        roster setup --only nas" in out and "check        roster check nas" in out
-    assert out.index("roster setup --only nas") < out.index("roster check nas")
+    assert "setup        roster setup --host nas" in out and "check        roster check nas" in out
+    assert out.index("roster setup --host nas") < out.index("roster check nas")
     assert "1 password-only hosts" in out and "setup        ok" in out
     assert rc == 1 and "check        FAILED (see above)" in out       # its check found nothing listening
 
@@ -278,11 +278,11 @@ def test_setup_sets_up_only_the_new_host_even_when_its_name_is_another_hosts_typ
     assert scanned == ["nas"]                                   # never esx-02 (type nas)
 
 
-def test_the_next_step_hint_says_when_only_would_select_more(capsys, write_config):
-    write_config(INV_TYPED)
+def test_the_next_step_is_setup_host_even_when_only_would_select_more(capsys, write_config):
+    write_config(INV_TYPED)                                      # #437 (1): --host is exact, so no note is needed
     out = run(capsys, "nas", "--ip", "10.0.0.50", "--yes")[1]
-    assert "roster check nas" in out
-    assert "--only nas also selects esx-02" in out and "roster add nas" not in out.split("next")[1].split("\n")[0]
+    assert "next         roster setup --host nas" in out and "roster check nas" in out
+    assert "also selects" not in out
 
 
 @pytest.mark.parametrize("address", ["nas_01", "my_db.lan"])
@@ -358,7 +358,14 @@ def test_yes_never_asks_for_the_master_password(capsys, yml, bw_items, monkeypat
     monkeypatch.delenv("BW_SESSION")
     monkeypatch.setattr(getpass, "getpass", lambda *a: pytest.fail("asked for the master password"))
     message = fails(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--yes")
-    assert "locked" in message
+    assert "locked" in message and "[14]" in message
+
+
+def test_a_locked_vault_with_no_terminal_is_14_not_35(capsys, yml, bw_items, monkeypatch):
+    monkeypatch.delenv("BW_SESSION")                        # #437 (6): it was LOOKUP_FAILED, 35
+    message = fails(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault")
+    assert "[14]" in message and "no terminal to unlock it" in message and "[35]" not in message
+    assert yml.read_text() == YML
 
 
 def test_dry_run_shows_the_line_it_replaces(capsys, write_config):

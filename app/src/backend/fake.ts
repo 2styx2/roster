@@ -50,6 +50,8 @@ import {
   type VaultStatusWord,
   VaultError,
   VAULT_CONFIG_API_VERSION,
+  ITEM_FIELDS_API_VERSION,
+  type VaultItemFields,
   type VaultSettings,
   type SaveTarget,
   type SaveTargets,
@@ -197,6 +199,9 @@ export interface FakeScenario {
   quickBoxes?: Record<string, { changesOnConnect?: boolean; unreachable?: boolean; hostname?: string }>;
   /** Vault item names already there ("Save to vault" refuses them: 60). */
   vaultItems?: string[];
+  /** #437 (API 29): what `vault.item_fields` says per item name (never a password), or the error it
+   * answers. An item not listed is 32. */
+  itemFields?: Record<string, Omit<VaultItemFields, "provider" | "item"> | { code: number; message: string }>;
   /** Ticket 11: per address, what `host.scan_key` answers (default: an unrecorded ed25519 key). */
   scanKeys?: Record<string, Partial<ScannedKey>>;
   /** Per new Host name: what `host.add`'s test login answers (default: ok when the typed password
@@ -498,6 +503,17 @@ export const fixtures: Record<string, FakeScenario> = {
   publish: { hosts: makeHosts(12), apiVersion: 7 },
   /** Ticket 11: a roster that can add Hosts (api 6). The new Host's password is FAKE_HOST_PASSWORD. */
   add: { hosts: makeHosts(12), apiVersion: 6 },
+  /** #437: today's add form (API 29): "Fill from this item" reads a vault item's address, port and
+   * user (`vault.item_fields`), and a Host at another Host's address and port is warned about. */
+  "add-vault": {
+    hosts: makeHosts(12),
+    apiVersion: 29,
+    itemFields: {
+      "nas-01 ssh": { address: "10.19.9.50", port: 2222, user: "root" },
+      "nas-01 web": { note: "its URI isn't a network address (androidapp:), so it gives no address" },
+      "printer ssh": { code: 186, message: "op can't give an item's address and user without roster reading its password" },
+    },
+  },
   /** Issue #78: today's roster (api 9), which can also un-review a Host. */
   review: { hosts: makeHosts(12), apiVersion: 9 },
   /** Two Pending changes already made on this Box. */
@@ -1841,6 +1857,23 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           from,
           problem: problem && { code: SaveToError.unknownTarget, message: problem.message, fix: "fix the setting the message names" },
         };
+      }),
+    vaultItemFields: (item, provider) =>
+      inOrder(async (): Promise<VaultItemFields> => {
+        await wait();
+        if ((scenario.apiVersion ?? 2) < ITEM_FIELDS_API_VERSION) {
+          throw new BackendCallError("unknown method 'vault.item_fields'", -32601);
+        }
+        if (vaultNow() !== "unlocked") throw new BackendCallError(VAULT_LOCKED, VaultError.locked);
+        const said = scenario.itemFields?.[item];
+        if (said === undefined) {
+          throw new BackendCallError(`no vault item matches '${item}'`, 32, {
+            near: [],
+            fix: "check the item's name in the vault, or use its id",
+          });
+        }
+        if ("code" in said) throw new BackendCallError(said.message, said.code);
+        return { provider: provider ?? vaultName, item, ...said };
       }),
     signOut: () =>
       inOrder(async (): Promise<SignedOut> => {

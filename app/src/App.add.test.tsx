@@ -371,3 +371,87 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
     expect((await backend.getHost(REVIEWED)).reviewed).toBe(true);
   });
 });
+
+describe("another Host at the same address and port (#437)", () => {
+  it("warns on the Address field, naming that Host, and still adds", async () => {
+    const { user, backend } = await ready();
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "printer-9", Address: "10.19.1.2", User: "admin" });   // linux-1-000's
+    const warning = within(panel).getByText(/linux-1-000 is at 10\.19\.1\.2:22 too/);
+    expect(warning).toHaveClass("edit-field-warn");
+    expect(within(panel).getByLabelText("Address")).toHaveAccessibleDescription(/linux-1-000 is at 10\.19\.1\.2:22 too/);
+    expect(within(panel).getByLabelText("Address")).not.toHaveAttribute("aria-invalid");
+    await user.click(within(panel).getByLabelText("No Login yet"));
+    await user.click(within(panel).getByRole("button", { name: "Add unreviewed" }));
+    expect(await screen.findByText(/Added printer-9 to subnet-1 unreviewed/)).toBeInTheDocument();
+    expect((await backend.getHost("printer-9")).ip).toBe("10.19.1.2");
+  });
+
+  it("says nothing on another port: a second sshd on one machine", async () => {
+    const { user } = await ready();
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "printer-9", Address: "10.19.1.2", Port: "2222" });
+    expect(within(panel).queryByText(/is at 10\.19\.1\.2/)).toBeNull();
+  });
+});
+
+describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
+  const vault = () => fixtures["add-vault"] as FakeScenario;
+
+  it("fills the address, port and user from the item the Login names, never its password", async () => {
+    const { user, calls } = await ready(vault());
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "nas-01" });
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
+    await within(panel).findByDisplayValue("10.19.9.50");
+    const said = within(panel).getAllByRole("status").find((s) => s.textContent?.startsWith("Filled"));
+    expect(said).toHaveTextContent("Filled the address, port and user from bw:nas-01 ssh.");
+    expect(within(panel).getByLabelText("Address")).toHaveValue("10.19.9.50");
+    expect(within(panel).getByLabelText("Port")).toHaveValue("2222");
+    expect(within(panel).getByLabelText("User")).toHaveValue("root");
+    expect(calls.filter((c) => c.method === "vaultItemFields").map((c) => c.args)).toEqual([["nas-01 ssh", "bw"]]);
+  });
+
+  it("says why an item gave no address, and keeps what was typed", async () => {
+    const { user } = await ready(vault());
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "nas-01", Address: "10.19.9.9" });
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    await fill(user, panel, { "Vault item": "bw:nas-01 web" });
+    await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
+    const said = () => within(panel).getAllByRole("status").find((s) => s.textContent?.startsWith("Nothing new"));
+    await expect.poll(() => said()?.textContent).toBe(
+      "Nothing new in bw:nas-01 web: its URI isn't a network address (androidapp:), so it gives no address.",
+    );
+    expect(within(panel).getByLabelText("Address")).toHaveValue("10.19.9.9");
+  });
+
+  it("shows roster's refusal under the item, and adds nothing", async () => {
+    const { user, calls } = await ready(vault());
+    const panel = await openForm(user);
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    await fill(user, panel, { "Vault item": "bw:nope" });
+    await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("no vault item matches 'nope'");
+    expect(within(panel).getByLabelText("Address")).toHaveValue("");
+    expect(calls.some((c) => c.method === "addHost" || c.method === "scanKey")).toBe(false);
+  });
+
+  it("isn't offered for a typed password, and waits for an item that's a reference", async () => {
+    const { user } = await ready(vault());
+    const panel = await openForm(user);
+    expect(within(panel).queryByRole("button", { name: "Fill from this item" })).toBeNull();     // Type its password
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    await fill(user, panel, { "Vault item": "nas ssh" });
+    expect(within(panel).getByRole("button", { name: "Fill from this item" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+  });
+
+  it("isn't there on a roster too old for vault.item_fields", async () => {
+    const { user } = await ready({ ...vault(), apiVersion: 28 });
+    const panel = await openForm(user);
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    expect(within(panel).queryByRole("button", { name: "Fill from this item" })).toBeNull();
+  });
+});

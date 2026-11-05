@@ -15,6 +15,12 @@
 // Enter adds. It lists again when `targetsVersion` changes (a `:source`), keeping a choice that's
 // still there.
 //
+// Another Host at the same address and SSH port (#437) is a warning under Address, never a refusal:
+// two Hosts at one address can be two Logins to one machine (decision Q190 (c); `roster add` refuses
+// it, 184). "Fill from this item" (#437, API 29) asks roster for the existing vault item's address,
+// SSH port and user (`vault.item_fields`, never its password) and fills the fields it has, saying
+// which changed. Neither animates: they're text that appears where the eye already is.
+//
 // Keyboard first: Name has focus, Tab moves, Enter adds, Esc closes. It opens from a key, so it
 // doesn't animate (emil-design-eng: never animate keyboard-initiated actions).
 import { useEffect, useId, useRef, useState } from "react";
@@ -45,8 +51,12 @@ import {
   defaultRef,
   emptyDraft,
   isNewGroup,
+  filled,
+  itemRef,
   itemSuggestions,
   problemsOf,
+  sameAddress,
+  type FilledField,
   type AddDraft,
   type AddField,
   type LoginWay,
@@ -79,6 +89,23 @@ export interface AddPanelProps {
   chooseTarget?: boolean;
   /** Changes when the vault settings may have (a `:source` of init.lua or roster.yml): list again. */
   targetsVersion?: number;
+  /** roster can read a vault item's address and user (`vault.item_fields`, API 29): "Fill from this item". */
+  fillFromItem?: boolean;
+}
+
+/** Where "Fill from this item" stands. */
+type ItemFill =
+  | { at: "idle" }
+  | { at: "reading" }
+  | { at: "done"; changed: FilledField[]; ref: string; note: string | null }
+  | { at: "failed"; message: string };
+
+const FIELD_WORDS: Record<FilledField, string> = { address: "address", port: "port", user: "user" };
+
+/** "the address, port and user". */
+function listed(fields: FilledField[]): string {
+  const words = fields.map((f) => FIELD_WORDS[f]);
+  return `the ${words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0]}`;
 }
 
 const LOGIN_WAYS: { way: LoginWay; label: string }[] = [
@@ -116,6 +143,7 @@ export function AddPanel({
   onClose,
   chooseTarget = false,
   targetsVersion = 0,
+  fillFromItem = false,
 }: AddPanelProps) {
   const [draft, setDraft] = useState<AddDraft>(() => emptyDraft(group));
   const [phase, setPhase] = useState<Phase>({ at: "ready" });
@@ -161,6 +189,25 @@ export function AddPanel({
   const name = draft.name.trim() || "the Host";
   const newGroup = isNewGroup(draft, hosts);
   const suggestions = itemSuggestions(draft, hosts);
+  const sharing = touched.has("address") || touched.has("port") || touched.has("*") ? sameAddress(draft, hosts) : [];
+  const [itemFill, setItemFill] = useState<ItemFill>({ at: "idle" });
+  const ref = itemRef(draft);
+  const refText = ref ? `${ref.provider}:${ref.item}` : "";
+
+  const fillFrom = async () => {
+    if (!ref) return;
+    setItemFill({ at: "reading" });
+    try {
+      const fields = await backend.vaultItemFields(ref.item, ref.provider);
+      if (!live.current) return;
+      const { draft: next, changed } = filled(draft, fields);
+      if (changed.length) set(Object.fromEntries(changed.map((f) => [f, next[f]])));
+      setItemFill({ at: "done", changed, ref: refText, note: fields.note ?? null });
+    } catch (e) {
+      if (!live.current) return;
+      setItemFill({ at: "failed", message: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   const problemOf = (f: AddField): string | null => {
     const mine = touched.has(f) || touched.has("*") ? addProblem(f, draft, hosts) : null;
@@ -318,6 +365,11 @@ export function AddPanel({
             const problem = problemOf(f.name);
             const id = fieldId(f.name);
             const note = f.name === "group" && newGroup ? "new group" : null;
+            const warn =
+              f.name === "address" && !problem && sharing.length
+                ? `${sharing.join(" and ")} ${sharing.length > 1 ? "are" : "is"} at ${draft.address.trim()}:${draft.port.trim()} too. Fine for a second Login to that machine; otherwise check the address.`
+                : null;
+            const describedBy = problem ? `${id}-problem` : warn ? `${id}-warn` : undefined;
             return (
               <div key={f.name} className="edit-field">
                 <label htmlFor={id}>
@@ -335,13 +387,20 @@ export function AddPanel({
                   inputMode={f.name === "port" ? "numeric" : undefined}
                   disabled={busy}
                   aria-invalid={problem ? true : undefined}
-                  aria-describedby={problem ? `${id}-problem` : undefined}
+                  aria-describedby={describedBy}
                   onBlur={() => touch(f.name)}
                   onChange={(e) => set({ [f.name]: e.target.value })}
                 />
                 {problem && (
                   <span id={`${id}-problem`} className="edit-field-problem">
                     {problem}
+                  </span>
+                )}
+                {f.name === "address" && (
+                  // Always there, so the warning is announced when it appears (a live region added
+                  // with its text is often missed); empty, it takes no room.
+                  <span id={`${id}-warn`} className="edit-field-warn" role="status">
+                    {warn}
                   </span>
                 )}
               </div>
@@ -365,6 +424,7 @@ export function AddPanel({
                     onChange={() => {
                       set({ login: way, item: "" });
                       setHasPassword(false);
+                      setItemFill({ at: "idle" });
                     }}
                   />
                   {label}
@@ -411,7 +471,10 @@ export function AddPanel({
                   aria-invalid={problemOf("item") ? true : undefined}
                   aria-describedby={`${fieldId("item")}-hint`}
                   onBlur={() => touch("item")}
-                  onChange={(e) => set({ item: e.target.value })}
+                  onChange={(e) => {
+                    set({ item: e.target.value });
+                    setItemFill({ at: "idle" });
+                  }}
                 />
                 <datalist id={`${ids}-items`} data-testid="item-suggestions">
                   {suggestions.map((s) => (
@@ -424,6 +487,32 @@ export function AddPanel({
                       ? "Saved to the vault only after the test login passes. Name it <host> <what it opens>."
                       : "Its password is looked up for the test login, never shown.")}
                 </span>
+                {login === "item" && fillFromItem && (
+                  <div className="add-fill">
+                    <button type="button" disabled={!ref || itemFill.at === "reading"} onClick={() => void fillFrom()}>
+                      Fill from this item
+                    </button>
+                    <span className="edit-hint" role="status">
+                      {itemFill.at === "reading" && (
+                        <>
+                          Reading <span className="mono add-ref">{refText}</span>…
+                        </>
+                      )}
+                      {itemFill.at === "done" && (
+                        <>
+                          {itemFill.changed.length ? `Filled ${listed(itemFill.changed)} from ` : "Nothing new in "}
+                          <span className="mono add-ref">{itemFill.ref}</span>
+                          {itemFill.note ? `: ${itemFill.note}.` : "."}
+                        </>
+                      )}
+                    </span>
+                    {itemFill.at === "failed" && (
+                      <span className="edit-field-problem" role="alert">
+                        {itemFill.message}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             {choosing && (

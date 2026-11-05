@@ -41,6 +41,7 @@ import {
   type PublishResult,
   type PullResult,
   type SaveTargets,
+  type VaultItemFields,
   type SignedOut,
   type ScannedKey,
   type ProviderStatus,
@@ -186,6 +187,8 @@ export function tauriBackend(): Backend {
     signOut: () => call<SignedOut>("vault_logout"),
     configureVault: (settings) => call<VaultConfigured>("vault_configure", { settings }),
     saveTargets: () => call<SaveTargets>("vault_targets"),
+    vaultItemFields: (item, provider) =>
+      call<VaultItemFields>("vault_item_fields", { params: { item, ...(provider ? { provider } : {}) } }),
     // Secrets in these params go once to serve's stdin, like vault_unlock's password.
     signIn: (start) => call<SignInStep>("vault_login", { params: { action: "start", ...start } }),
     signInAnswer: (login, answer) =>

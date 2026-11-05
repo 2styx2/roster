@@ -150,8 +150,13 @@ def name_taken(cfg):
 
 
 def cmd_setup(cfg, args):
-    names = getattr(args, "names", None)    # `roster add --setup`: exactly these Hosts, not what --only would match
-    hosts = [cfg["hosts"][n] for n in names] if names else selected(cfg, args.only)
+    # `--host NAME` (#437, Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
+    # (a group, type or product by that name)
+    host = getattr(args, "host", None)
+    if host is not None and host not in cfg["hosts"]:
+        die(f"unknown host {host!r} (see `roster hosts`)")
+    hosts = [cfg["hosts"][host]] if host is not None else selected(cfg, args.only)
+    narrowed = bool(args.only or host)      # part of roster.yml: no Mesh, no key-name record
     waiting = [h for h in hosts if not h["reviewed"]]
     hosts = [h for h in hosts if h["reviewed"]]
     if waiting:
@@ -240,14 +245,15 @@ def cmd_setup(cfg, args):
                     say(f"  FAIL  {h['name']}: {e}")
 
     # every key Host of this roster.yml now has the key under this name: a later rename is seen against it
-    if not args.only and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
+    if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
         if was != cfg["box"]:
             replace_file(key_name_file(), f"{cfg['box']}\n")
     write_claude_files(cfg)
     warn_overlaps(cfg)
     if mesh.graph(cfg)["links"]:
-        if args.only:
-            say("mesh         not applied with --only (it covers the whole Mesh): run `roster mesh`")
+        if narrowed:
+            say(f"mesh         not applied with {'--only' if args.only else '--host'} (it covers the whole Mesh): "
+                "run `roster mesh`")
         else:
             say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
             failed.update({n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()})
@@ -1562,7 +1568,10 @@ def build_parser():
                    "beside one you keep")
     s = sub.add_parser("setup", help="install this Box's key on the Hosts that aren't set up yet and record their host "
                        "keys, then sync; run it again after adding Hosts")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    which = s.add_mutually_exclusive_group()
+    values(which.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    values(which.add_argument("--host", metavar="NAME", help="only the Host by exactly this name, never a group, type "
+                              "or product by it (--only would take those too)"), HOSTS)
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
     s.add_argument("--force", action="store_true", help="on a renamed Box, go ahead on a Host where another Box's "
                    "key line has the new name (its line is then this Box's to replace or revoke)")

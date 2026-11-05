@@ -2,7 +2,7 @@
 // each field, the Vault item names to suggest, and `host.add`'s params. roster checks everything
 // again; this only saves a round trip. The typed password is never part of the draft: it lives in
 // its input until the call (as the lock screen's master password does).
-import type { AddHostParams, HostList, SaveTo } from "../backend/types";
+import type { AddHostParams, HostList, SaveTo, VaultItemFields } from "../backend/types";
 
 /** How the new Host logs in: a password typed now (saved to the vault after the test login), an
  * existing Vault item, or none yet (added unreviewed, as discover adds Hosts). */
@@ -118,4 +118,39 @@ export function addParams(draft: AddDraft, hosts: HostList, password?: string, s
   }
   if (draft.login === "item") return { ...params, auth: draft.item.trim() || defaultRef(name) };
   return params;
+}
+
+/** An address as roster add compares it (decision Q190 (c)): a name without case or a final dot. */
+const sameText = (a: string) => a.trim().toLowerCase().replace(/\.$/, "");
+
+/** The Hosts already at the draft's address and SSH port (#437). The form only warns: two Hosts at
+ * one address can be two Logins to one machine (Q190 (c)); `roster add` refuses it (184). */
+export function sameAddress(draft: AddDraft, hosts: HostList): string[] {
+  const address = sameText(draft.address);
+  const port = draft.port.trim();
+  if (address === "" || /\s/.test(address) || !/^\d+$/.test(port)) return [];
+  return hosts.hosts.filter((h) => sameText(h.ip) === address && h.ssh.port === Number(port)).map((h) => h.name);
+}
+
+/** The vault item the draft's Login names (or would, left empty), as `vault.item_fields` takes it;
+ * null unless it's an existing item's reference. */
+export function itemRef(draft: AddDraft): { provider: string; item: string } | null {
+  if (draft.login !== "item") return null;
+  const ref = draft.item.trim() || defaultRef(draft.name);
+  const [, provider, item] = /^([\w.-]+):(\S.*)$/.exec(ref) ?? [];
+  return provider && item ? { provider, item } : null;
+}
+
+export type FilledField = "address" | "port" | "user";
+
+/** The draft with what the vault item says filled in, and which fields that changed. A field the
+ * item doesn't have keeps what was typed. */
+export function filled(draft: AddDraft, fields: VaultItemFields): { draft: AddDraft; changed: FilledField[] } {
+  const from: Record<FilledField, string | undefined> = {
+    address: fields.address,
+    port: fields.port === undefined ? undefined : String(fields.port),
+    user: fields.user,
+  };
+  const changed = (Object.keys(from) as FilledField[]).filter((f) => from[f] !== undefined && from[f] !== draft[f]);
+  return { draft: { ...draft, ...Object.fromEntries(changed.map((f) => [f, from[f]])) }, changed };
 }

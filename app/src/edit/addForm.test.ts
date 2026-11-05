@@ -1,7 +1,7 @@
 // The add-Host form's checks and suggestions (ticket 11), apart from React.
 import { describe, expect, it } from "vitest";
 import { makeHosts } from "../backend/fake";
-import { addParams, addProblem, emptyDraft, isNewGroup, itemSuggestions, type AddDraft } from "./addForm";
+import { addParams, addProblem, emptyDraft, filled, isNewGroup, itemRef, itemSuggestions, sameAddress, type AddDraft } from "./addForm";
 
 const hosts = makeHosts(12);
 const draft = (over: Partial<AddDraft> = {}): AddDraft => ({
@@ -89,5 +89,49 @@ describe("host.add's params", () => {
 
   it("is null while a field is wrong", () => {
     expect(addParams(draft({ port: "x" }), hosts, "pw")).toBeNull();
+  });
+});
+
+describe("another Host at the same address and port (#437: a warning, never a refusal)", () => {
+  it("names the Hosts at that address and SSH port", () => {
+    expect(sameAddress(draft({ address: "10.19.1.2" }), hosts)).toEqual(["linux-1-000"]);
+    expect(sameAddress(draft({ address: "10.19.1.2", port: "2222" }), hosts)).toEqual([]);   // a second sshd
+    expect(sameAddress(draft(), hosts)).toEqual([]);
+  });
+
+  it("compares names without case or a final dot, as roster add does", () => {
+    const named = { ...hosts, hosts: [{ ...hosts.hosts[0]!, ip: "NAS-01.lan" }] };
+    expect(sameAddress(draft({ address: "nas-01.lan." }), named)).toEqual(["linux-1-000"]);
+  });
+
+  it("says nothing while the address or port isn't one yet", () => {
+    expect(sameAddress(draft({ address: "" }), hosts)).toEqual([]);
+    expect(sameAddress(draft({ address: "10.19.1.2", port: "x" }), hosts)).toEqual([]);
+  });
+
+  it("doesn't change host.add's params: roster takes it", () => {
+    expect(addParams(draft({ address: "10.19.1.2", login: "none" }), hosts)).toMatchObject({ address: "10.19.1.2" });
+  });
+});
+
+describe("fill from a vault item (#437, API 29)", () => {
+  it("reads the item the Login names, or the one it would name", () => {
+    expect(itemRef(draft({ login: "item", item: "bw:nas ssh" }))).toEqual({ provider: "bw", item: "nas ssh" });
+    expect(itemRef(draft({ login: "item", item: "" }))).toEqual({ provider: "bw", item: "nas-01 ssh" });
+    expect(itemRef(draft({ login: "item", item: "nas ssh" }))).toBeNull();
+    expect(itemRef(draft({ login: "password" }))).toBeNull();
+  });
+
+  it("fills the address, port and user the item has, and says which changed", () => {
+    const d = draft({ address: "", user: "admin", port: "22" });
+    const { draft: next, changed } = filled(d, { provider: "bw", item: "nas ssh", address: "10.0.0.5", port: 2222, user: "root" });
+    expect(next).toMatchObject({ address: "10.0.0.5", port: "2222", user: "root", name: "nas-01" });
+    expect(changed).toEqual(["address", "port", "user"]);
+  });
+
+  it("leaves a field the item doesn't have as typed", () => {
+    const { draft: next, changed } = filled(draft({ user: "admin" }), { provider: "bw", item: "x", user: "admin" });
+    expect(next.address).toBe("10.19.1.50");
+    expect(changed).toEqual([]);
   });
 });
