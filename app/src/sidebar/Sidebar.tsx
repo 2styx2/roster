@@ -563,6 +563,12 @@ const Section = memo(function Section({
       {emptyShown && (
         <p className="sb-empty" id={`${rowDomId(id)}-empty`}>
           <WithKeys text={section.empty ?? ""} leader={leader} />
+          {/* Slot 1 has its key like the slots under it (round 16). */}
+          {section.id === "sessions" && (
+            <span className="sb-slot-key key-hint" aria-hidden="true">
+              <Keys keys="1" />
+            </span>
+          )}
         </p>
       )}
       {!folded && (
@@ -580,7 +586,9 @@ const Section = memo(function Section({
             />
           ))}
           {/* Sessions' reserved room (Q205) as faint numbered slots, so it reads as "Sessions go
-              here", never as a gap (owner, after round 14). "None open" is the first when empty. */}
+              here", never as a gap (owner, after round 14). "None open" is the first when empty.
+              No node in a slot (round 16: a dashed node means "unreviewed"): a faint well and the
+              key ␣ N will go to. */}
           {section.id === "sessions" &&
             Array.from(
               {
@@ -598,7 +606,6 @@ const Section = memo(function Section({
                     aria-hidden="true"
                     role="none"
                   >
-                    <span className="sb-slot-node" />
                     <span className="sb-slot-key key-hint">
                       <Keys keys={String(n)} />
                     </span>

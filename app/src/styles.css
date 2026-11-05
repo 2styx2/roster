@@ -416,10 +416,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    Sessions opened never move the tree under the pointer; past three, the list grows (or, held
    while the pointer is on the tree, scrolls inside that room). */
 .sb-section[data-section="sessions"] > .sb-empty { margin: 0 8px 0 24px; height: var(--row-h); line-height: var(--row-h); }
-/* A reserved slot: a faint hollow node and the number ␣ N will go to, where the next Session lands. */
-.sb-slot { height: var(--row-h); display: flex; align-items: center; padding: 0 8px 0 12px; opacity: 0.45; }
-.sb-slot-node { width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; border: 1px dashed var(--muted); flex: none; }
-.sb-slot-key { margin-left: auto; display: flex; }
+/* A reserved slot (round 16): a faint well, inset like a row's hover, and the number ␣ N will go
+   to, where the next Session lands. No node: a hollow or dashed one already means a state. The key
+   keeps 3:1 against the Sidebar; the well is quieter than any row. */
+.sb-slot {
+  height: var(--row-h); display: flex; align-items: center; padding: 0 8px 0 12px;
+  background-clip: content-box; border-block: 2px solid transparent;
+  background-color: color-mix(in srgb, var(--line) 35%, transparent); border-radius: calc(var(--radius) + 2px);
+}
+.sb-slot-key { margin-left: auto; display: flex; opacity: 0.8; }
+.sb-section[data-section="sessions"] > .sb-empty { display: flex; align-items: center; margin-right: 8px; }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
