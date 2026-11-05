@@ -199,9 +199,9 @@ def _bw_list(ctx, *search):
 
 
 def _bw_summary(row):
-    """What may be shown about an item: its name and URIs (from the filter's row, Q191). Never a value. The filter
-    has no edit date, so `revised` is None."""
-    return {"name": row["name"], "revised": None, "uris": row["uris"]}
+    """What may be shown about an item: its name, when it was last edited (the filter's `revised`, the owner's ruling
+    in Q191) and its URIs, from the filter's row. Never a value."""
+    return {"name": row["name"], "revised": (row.get("revised") or "")[:10] or None, "uris": row["uris"]}
 
 
 def _bw_get(ctx, ref):

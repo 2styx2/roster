@@ -19,15 +19,17 @@ def snapshot_path(provider):
     return user_config_dir() / "vault-sync" / f"{provider}.json"
 
 
-def load(provider):
-    """{synced, items: {id: revision date}} from PROVIDER's snapshot, or None (none yet, or not roster's alone)."""
+def load(provider, quiet=False):
+    """{synced, items: {id: revision date}} from PROVIDER's snapshot, or None (none yet, or not roster's alone: said
+    unless QUIET, as `roster vault status` is, whose --json stdout is the document alone)."""
     f = snapshot_path(provider)
     try:
         data = json.loads(read_private(f))
     except FileNotFoundError:
         return None
     except NotPrivate as e:
-        say(f"warning      {e} - ignored")
+        if not quiet:
+            say(f"warning      {e} - ignored")
         return None
     except ValueError:
         return None
@@ -37,8 +39,9 @@ def load(provider):
 
 
 def last_synced(provider):
-    """When `roster vault sync` last synced PROVIDER (an ISO time), or None."""
-    data = load(provider)
+    """When `roster vault sync` last synced PROVIDER (an ISO time), or None. Never says anything: a snapshot that isn't
+    the user's alone counts as none, and the next `roster vault sync` says so and replaces it."""
+    data = load(provider, quiet=True)
     return data.get("synced") if data else None
 
 

@@ -242,7 +242,7 @@ def test_several_matches_some_not_logins_are_counted_as_bw_found_them(vault, cap
         get_secret("bw:db", "g")
     msg = errors.login_problem(e.value, {"name": "db-01"}).message
     assert msg == ("2 vault items match 'db' (ssh Login of db-01), some of them aren't logins: "
-                   "'db prod' (ssh://10.0.0.6)")
+                   "'db prod' (edited 2026-10-01, ssh://10.0.0.6)")        # the filter's revised (owner, #430)
     use(vault, note("ffff-6666", "db"), note("ffff-7777", "db old"))
     with pytest.raises(providers.SeveralItems) as e:
         get_secret("bw:db", "g")

@@ -141,5 +141,5 @@ def test_roster_md_lists_resources_without_values(isolated, lab):
     write_claude_files(load_config(isolated["work"] / "roster.yml"))
     md = (isolated["work"] / "ROSTER.md").read_text()
     assert "## Resources" in md and "| guest-wifi | wifi | lab | SSID Lab-Guest, security wpa2 |" in md
-    assert "Never run `roster vault reveal` yourself" in md or "reveal` yourself" in md
+    assert "Never run `roster vault reveal` (or its old name, `roster reveal`) yourself" in md
     assert SECRET not in md and "key-123" not in md

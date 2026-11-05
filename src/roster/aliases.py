@@ -28,7 +28,13 @@ ALIASES: list[Alias] = [
     Alias(("mesh", "--remove-leftovers"), ("mesh", "leftovers", "--remove"), "roster mesh leftovers --remove"),
 ]
 
-ROOT_VALUE = ("-c", "--config", "--inv")     # roster's own options that take a value, before the command
+ROOT_VALUE = ("--config", "--inv")     # roster's own options that take a value, before the command (and -c)
+
+
+def takes_value(word: str) -> bool:
+    """Is WORD roster's -c, or --config / --inv as argparse takes them: whole or any prefix of one (`--conf`), with
+    its value in the next word? (#447 review L2: else `roster --conf info hosts` would rewrite the path.)"""
+    return word == "-c" or (len(word) > 2 and "=" not in word and any(o.startswith(word) for o in ROOT_VALUE))
 
 
 def command_at(argv: list[str]) -> int | None:
@@ -38,7 +44,7 @@ def command_at(argv: list[str]) -> int | None:
         w = argv[i]
         if w == "--":
             return None
-        if w in ROOT_VALUE:
+        if takes_value(w):
             i += 2
             continue
         if not w.startswith("-"):

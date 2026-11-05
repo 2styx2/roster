@@ -285,6 +285,7 @@ elif step "install roster from $(home "$src") (uv tool install) into $(home "$bi
     done_stage
 else
     fail_stage
+    COMP_KEEP=1             # the old roster stays: stage 5 leaves its rc line as it is (#447 review M3)
 fi
 
 # 3. Team map: the one find_map finds (as install.sh looks for it)

@@ -52,9 +52,10 @@ def test_prepare_several_items_lists_names_and_uris(pw_serve):
     assert err["code"] == 33
     assert err["message"].startswith("2 vault items are named 'dup ssh' (ssh Login of dup)")
     assert err["data"]["matches"] == [
-        {"name": "dup ssh", "revised": None, "uris": ["ssh://10.0.0.7"]},        # no date: the filter's rows (T229)
-        {"name": "dup ssh", "revised": None, "uris": ["https://10.0.0.7"]}]
-    assert "'dup ssh' (ssh://10.0.0.7); 'dup ssh' (https://10.0.0.7)" in err["message"]
+        {"name": "dup ssh", "revised": "2026-09-01", "uris": ["ssh://10.0.0.7"]},  # the filter's revised (#430)
+        {"name": "dup ssh", "revised": "2026-10-20", "uris": ["https://10.0.0.7"]}]
+    assert ("'dup ssh' (edited 2026-09-01, ssh://10.0.0.7); 'dup ssh' (edited 2026-10-20, https://10.0.0.7)"
+            in err["message"])
 
 
 def test_prepare_item_without_a_password(pw_serve):

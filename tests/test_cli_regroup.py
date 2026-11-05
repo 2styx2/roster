@@ -24,6 +24,8 @@ from roster.cli import main
     (["mesh", "--remove-leftovers", "-y"], ["mesh", "leftovers", "--remove", "-y"]),
     (["-c", "x/roster.yml", "info", "db"], ["-c", "x/roster.yml", "hosts", "db"]),
     (["--inv=home", "providers"], ["--inv=home", "vault", "status"]),
+    (["--conf", "x.yml", "info", "web"], ["--conf", "x.yml", "hosts", "web"]),     # argparse's abbreviations (L2)
+    (["--in", "home", "providers"], ["--in", "home", "vault", "status"]),
 ])
 def test_an_old_name_becomes_its_new_form(old, new):
     argv, alias = aliases.rewrite(old)
@@ -32,7 +34,8 @@ def test_an_old_name_becomes_its_new_form(old, new):
 
 
 @pytest.mark.parametrize("argv", [["hosts", "info"], ["run", "web-01", "--", "man", "ls"], ["sync"], [],
-                                  ["-c", "info", "hosts"], ["mesh", "--", "--find-leftovers"]])
+                                  ["-c", "info", "hosts"], ["mesh", "--", "--find-leftovers"],
+                                  ["--conf", "info", "hosts"], ["--confi=info", "hosts"]])
 def test_a_new_form_or_an_old_word_elsewhere_is_left_alone(argv):
     assert aliases.rewrite(argv) == (argv, None)
 
@@ -326,3 +329,19 @@ def test_mesh_leftovers_with_a_flag_of_another_action_is_refused(capsys, config)
         main(["mesh", "status", "--remove"])
     assert e.value.code == 2
     assert "--remove goes with leftovers" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(WINDOWS, reason="a POSIX mode makes the snapshot shared")
+def test_a_snapshot_others_can_read_never_breaks_vault_status_json(capsys, bw):
+    run(capsys, "vault", "sync")
+    (f,) = snapshot_files()
+    f.chmod(0o644)
+    for argv in (["vault", "status", "--json"], ["providers", "--json"]):
+        rc, out, err = run(capsys, *argv)
+        assert json.loads(out)["last_sync"]["bw"] is None          # not used, and not said: stdout is the document
+        assert "warning" not in out + err
+    rc, out, _ = run(capsys, "vault", "status")
+    assert "warning" not in out and "never synced by roster" in out
+    rc, out, _ = run(capsys, "vault", "sync")                       # the one that says so, then replaces it
+    assert rc == 0 and "ignored" in out
+    assert f.stat().st_mode & 0o777 == 0o600

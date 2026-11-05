@@ -8,12 +8,12 @@ An old name stays for at least one minor Release after the one that deprecates i
 
 ### CLI
 
-The first CLI renames (T222, #430, decision Q194): roster's commands are 14 now, everything else an action or a flag of one of them. Each old name still works, hidden from `roster --help`, the man page and Tab completion, and prints one line on stderr naming its new form (nothing with `--json`, so stderr stays JSON). `roster completion` says nothing: the line `install.sh` wrote in your shell's startup file runs it at every shell start, and `./update.sh` rewrites that line to the new form. Scripts and cron jobs: change to the new form before the old one is removed.
+The first CLI renames (T222, #430, decision Q194): roster's commands are 14 now, everything else an action or a flag of one of them. Each old name still works, hidden from `roster --help`, the man page and Tab completion, and prints one line on stderr naming its new form (nothing with `--json`, so stderr stays JSON). `roster completion` says nothing: the line `install.sh` wrote in your shell's startup file runs it at every shell start, and `./update.sh` rewrites that line to the new form (which falls back to the old one for an older roster). Scripts and cron jobs: change to the new form before the old one is removed.
 
 | Old | New | Notes |
 |---|---|---|
 | `roster auth-check [--only LIST] [--json]` | `roster check --auth [--only LIST] [--json]` | All checking is under `check`. The same rows and JSON |
-| `roster info NAME` | `roster hosts NAME` | Everything about one Host or resource, fuzzy words included; the same JSON |
+| `roster info NAME` | `roster hosts NAME` | Everything about one Host or resource, fuzzy words included; the same JSON. `roster info` with no NAME, a usage error before, is now `roster hosts`: the list |
 | `roster resources [--only LIST] [--find TEXT]` | `roster hosts --resources [...]` | `roster hosts` lists Hosts and resources as before; `--resources` narrows it to resources, with `--only` taking resource names, types or groups |
 | `roster providers [--json]` | `roster vault status [--json]` | Also each vault's state (as `check --box`'s Vault section) and when `roster vault sync` last synced it; the JSON gains `vault` and `last_sync` |
 | `roster reveal NAME [--wifi]` | `roster vault reveal NAME [--wifi]` | For people, not Claude, as before |

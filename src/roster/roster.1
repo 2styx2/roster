@@ -534,7 +534,7 @@ Wrong arguments
 \fB130\fR
 Interrupted with Ctrl+C
 .PP
-With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster vault bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fB\-\-find\-leftovers\fR/\fB\-\-remove\-leftovers\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
+With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, and \fBroster vault bw\fR with \fBbw\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
 .SH EXAMPLES
 .PP
 .nf
