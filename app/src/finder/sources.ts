@@ -28,8 +28,11 @@ export interface FinderItem {
   note?: string;
   /** What in `note` is code (`roster sync`): Iosevka in a prose finder. */
   noteData?: readonly string[];
-  /** Right-aligned and faint (an address, a status); matched too. */
+  /** Right-aligned and faint (an address, a status); matched too. On a Host's row it's the address,
+   * which comes right after the name, as in the Picker. */
   detail?: string;
+  /** A Host's type ("switch"), after its group, as in the Picker. */
+  type?: string;
   dot?: Dot;
   /** A Session that's connected: the one on screen in the accent, others in the text colour
    * (see SidebarRow.lit). */
@@ -41,6 +44,9 @@ export interface FinderItem {
   mark?: "current" | "previous";
   /** The Host the row stands for (the tree's Host rows). */
   host?: string;
+  /** The group it's listed under, as a quiet heading over its first row (help's pages under the
+   * index's "Getting started", "Reference"…, round 21). Rows of one group are listed together. */
+  group?: string;
   /** What Enter or a click runs. */
   command: CommandLine;
   /** Listed, but Enter only says this (an unreviewed Host). */
@@ -154,6 +160,8 @@ export const hostsFinder: FinderSourceDef = {
       label: host.name,
       path: host.group,
       detail: host.ip,
+      ...(host.type ? { type: host.type } : {}),
+      host: host.name,
       dot: hostDot(host),
       command: `open ${host.name}`,
       ...(host.reviewed ? {} : { disabled: notReviewed(host.name) }),
@@ -173,6 +181,7 @@ function treeItems(ctx: FinderContext, sections: readonly SidebarSection[]): Fin
   // dot here): the rows come lit from buildSections; with nine or more Sessions only the
   // on-screen Host keeps its edge stub.
   const many = ctx.sessions.tabs.length >= 9;
+  const typeOf = (host: string | undefined) => (host ? ctx.hostByName.get(host)?.type : undefined);
   const out: FinderItem[] = [];
   const chosen = (s: SidebarSection) => s.rows.some((r) => !r.foldable);
   const named = sections.filter(chosen).length > 1;
@@ -194,6 +203,7 @@ function treeItems(ctx: FinderContext, sections: readonly SidebarSection[]): Fin
         ...(row.dot && row.lit ? { lit: row.lit } : {}),
         ...(row.dot && row.lit === "live" && many ? { stub: false as const } : {}),
         ...(row.host ? { host: row.host } : {}),
+        ...(typeOf(row.host) ? { type: typeOf(row.host) as string } : {}),
         command: row.command,
         ...(row.badge === "unreviewed" && row.host ? { disabled: notReviewed(row.host) } : {}),
       });

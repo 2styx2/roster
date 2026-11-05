@@ -1802,12 +1802,48 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder-note .data { font-family: var(--font-mono); }
 .finder.prose .finder-label > .finder-name:has(+ .finder-note) { flex-shrink: 0; max-width: 100%; }
 .finder-row.selected .finder-note { color: var(--muted); }
-/* A help tag is what you type after :help: never a stub (round 20: "host-k…"). Up to 16
-   characters it's whole; a longer one gives way first, cut in its middle down to its first 4
-   and last 10 characters (TagText; --tag-min from Finder.tsx), and only then is the page cut. */
-.finder.prose .finder-detail { display: flex; justify-content: flex-end; flex: 0 1e5 auto; min-width: var(--tag-min, 8ch); }
-.tag-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.tag-tail { flex: none; }
+/* A help tag is what you type after :help: whole or not drawn (round 21: a middle cut read as a
+   fragment, "the…-one-theme"). A row that can't hold its title, page and tag drops the tag
+   (dropCutTags), and under 560 px no row draws one: the footer names the selected row's. */
+.finder.prose .finder-detail { flex: none; min-width: auto; }
+/* A page's row (no middle column): the title and what it is take the room up to the tag. */
+.finder.prose .finder-row:not(:has(> .finder-path)) > .finder-label { max-width: none; min-width: 0; }
+.finder-row > .finder-detail[data-off] { display: none; }
+/* The selected row's `:help TAG` in the footer's free room, only when its row doesn't draw the tag:
+   Iosevka in the text colour, whole (two lines when it must), as the Picker names a cut Host. */
+.finder-foot-tag { display: none; flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 16px; }
+.finder-foot-tag code { font-family: var(--font-mono); color: var(--text); }
+.finder:has(.finder-row.selected > .finder-detail[data-off]) .finder-foot-tag { display: block; }
+.finder:has(.finder-foot-tag) .picker-footer { height: auto; min-height: 34px; padding-block: 6px; }
+@media (max-width: 560px) {
+  .finder.prose .finder-row > .finder-detail { display: none; }
+  .finder.prose .finder-foot-tag { display: block; }
+  /* No tag column: a title takes up to 60% of the row before it's cut (it was 42%, beside one). */
+  .finder.prose .finder-row:has(> .finder-path) > .finder-label { flex-basis: min(var(--finder-title-w, 60%), 60%); }
+}
+/* A group's heading over its rows (help's pages under the index's parts, round 21): the Sidebar's
+   section heading, 12 px uppercase Inter, tracked and muted, so the finder reads as roster's
+   index rather than a palette of 1,360 rows. Not a row: the cursor never stops on it. */
+.finder-group {
+  flex: none; padding: 12px 12px 4px; color: var(--muted); font: 600 max(11px, calc(var(--text-xs) - 1px)) var(--font-ui);
+  letter-spacing: 0.06em; text-transform: uppercase; list-style: none;
+}
+.finder-group:first-child { padding-top: 4px; }
+/* A Host's row in a data finder reads as the Picker's: name, address, group, type (round 21: the
+   tree put the group before the address). The address is a column as wide as the list's widest
+   (layOutNames), never cut; the group takes what's left, cut at its end; the type sits at the end.
+   Under 600 px, as in the Picker, only the node, name and address stay. */
+.finder-row.host-row > .finder-addr {
+  margin-left: 0; flex: none; min-width: var(--finder-addr-w, auto); text-align: left; font-variant-numeric: tabular-nums;
+}
+.finder-row.host-row > .finder-path { flex: 1 1 auto; }
+.finder-type { flex: none; margin-left: auto; font-size: var(--text-sm); color: var(--muted); }
+@media (max-width: 600px) {
+  .finder-row.host-row > :is(.finder-path, .finder-type) { display: none; }
+  /* The name takes the room; the address is the row's end column, as the Picker's is. */
+  .finder-row.host-row > .finder-label { flex-grow: 1; max-width: none; min-width: 0; }
+  .finder-row.host-row > .finder-addr { margin-left: auto; text-align: right; }
+}
 
 /* ---------- The Config's problems (ticket 21) ---------- */
 

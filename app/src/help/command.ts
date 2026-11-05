@@ -2,6 +2,7 @@
 // would (ADR 0006). HelpView is the help panel's state outside React (like ThemeChoice): which
 // page and entry it shows, and the way back. App hands it the live HelpContext each render.
 import { matching, type CommandDef } from "../commands/table";
+import { searchItems } from "../finder/search";
 import type { FinderItem, FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
@@ -9,7 +10,7 @@ import { optionRows, optionTag } from "../config/reference";
 import { plain } from "./doc";
 import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
-import { findTopic, headingTag, pageBody, pageTexts, topics, type HelpContext, type Topic } from "./pages";
+import { findTopic, headingTag, pageBody, pageGroups, pageTexts, topics, type HelpContext, type Topic } from "./pages";
 import { helpText, type HelpText } from "./text";
 
 /** Where the help panel is: a page, and the entry or heading on it. */
@@ -204,46 +205,69 @@ export function helpCommand(view: HelpView): CommandDef {
   };
 }
 
-/** The topic finder (`␣ ?`): every topic, fuzzy-matched; Enter runs `help TAG`. */
+/** Every topic as the topic finder lists it once you type: title (an entry's description after
+ * it), its page's short name, and its tag. */
+function topicItems(ctx: HelpContext): FinderItem[] {
+  // An alias is titled as what it goes to, so the two would be twin rows (round 20): one row
+  // per topic, tagged with its alias (the shorter name you'd type: `host-keys`), matched by it.
+  const all = topics(ctx);
+  const same = (a: (typeof all)[number], b: (typeof all)[number]) =>
+    a.page === b.page && a.anchor === b.anchor && a.label === b.label && a.path === b.path;
+  const aliasOf = new Map<string, string>();
+  const folded = new Set<string>();
+  for (const a of all) {
+    if (a.kind !== "alias") continue;
+    const target = all.find((t) => t.kind !== "alias" && same(t, a));
+    if (target && !aliasOf.has(target.tag)) {
+      aliasOf.set(target.tag, a.tag);
+      folded.add(a.tag);
+    }
+  }
+  const summary = new Map(ctx.pages.map((pg) => [pg.id, pg.summary]));
+  return all.filter((t) => !folded.has(t.tag)).map((t) => {
+    // A page's row says what the page is, after its title, as an entry's does (round 21).
+    const note = t.note ?? (t.kind === "page" ? summary.get(t.page) : undefined);
+    return {
+      id: t.tag,
+      label: t.label,
+      // An entry titled by its own tag (`E31`, `theme`): a name you'd type.
+      ...(t.anchor !== undefined && t.label === t.anchor ? { dataLabel: true } : {}),
+      ...(t.label !== (aliasOf.get(t.tag) ?? t.tag) ? { detail: aliasOf.get(t.tag) ?? t.tag } : {}),
+      ...(t.path ? { path: t.path } : {}),
+      ...(note ? { note } : {}),
+      ...(t.codes ? { noteData: t.codes } : {}),
+      command: `help ${t.tag}`,
+    };
+  });
+}
+
+/** The topic finder (`␣ ?`): before a query, help's pages under the index's groups ("Getting
+ * started", "Reference"…), each with what it is (round 21: the finder read as a stock palette of
+ * 1,360 rows); typing searches every topic, fuzzy-matched. Enter runs `help TAG`. */
 export function helpFinder(view: HelpView): FinderSourceDef {
   return {
     id: "help",
     source: BUILTIN,
     title: "Find a help topic",
     prompt: "Help",
-    noun: "topic",
+    noun: (items) => (items.every((i) => i.group !== undefined) ? "page" : "topic"),
     // Topic titles are prose (Inter); the tag at the right is data (round 10).
     prose: true,
     open: () => view.prefetch(),
     items: (): FinderItem[] => {
       const ctx = view.context();
       if (!ctx) return [];
-      // An alias is titled as what it goes to, so the two would be twin rows (round 20): one row
-      // per topic, tagged with its alias (the shorter name you'd type: `host-keys`), matched by it.
-      const all = topics(ctx);
-      const same = (a: (typeof all)[number], b: (typeof all)[number]) =>
-        a.page === b.page && a.anchor === b.anchor && a.label === b.label && a.path === b.path;
-      const aliasOf = new Map<string, string>();
-      const folded = new Set<string>();
-      for (const a of all) {
-        if (a.kind !== "alias") continue;
-        const target = all.find((t) => t.kind !== "alias" && same(t, a));
-        if (target && !aliasOf.has(target.tag)) {
-          aliasOf.set(target.tag, a.tag);
-          folded.add(a.tag);
-        }
-      }
-      return all.filter((t) => !folded.has(t.tag)).map((t) => ({
-        id: t.tag,
-        label: t.label,
-        // An entry titled by its own tag (`E31`, `theme`): a name you'd type.
-        ...(t.anchor !== undefined && t.label === t.anchor ? { dataLabel: true } : {}),
-        ...(t.label !== (aliasOf.get(t.tag) ?? t.tag) ? { detail: aliasOf.get(t.tag) ?? t.tag } : {}),
-        ...(t.path ? { path: t.path } : {}),
-        ...(t.note ? { note: t.note } : {}),
-        ...(t.codes ? { noteData: t.codes } : {}),
-        command: `help ${t.tag}`,
-      }));
+      const rows = new Map(topicItems(ctx).map((i) => [i.id, i]));
+      return pageGroups(ctx.pages).flatMap(([group, pages]) =>
+        pages.flatMap((pg) => {
+          const row = rows.get(pg.id);
+          return row ? [{ ...row, group }] : [];
+        }),
+      );
+    },
+    search: (_ctx, query) => {
+      const ctx = view.context();
+      return ctx ? searchItems(topicItems(ctx), query) : [];
     },
   };
 }
