@@ -31,7 +31,17 @@ from .common import (
     tcp_ok,
 )
 from .completion import COMMANDS, DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
-from .config import HIDDEN_PATH, access_label, find_config, is_windows, load_config, matches, selected, shown_path
+from .config import (
+    HIDDEN_PATH,
+    access_label,
+    find_config,
+    is_windows,
+    load_config,
+    matches,
+    selected,
+    shown_path,
+    token_shaped,
+)
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
@@ -63,6 +73,9 @@ def cmd_init(args):
     """`roster init`: the commented example (the default), or a new Inventory the --inventory way (T212). A file
     that's there already is kept; --name names the new one (`roster inv add`)."""
     from . import newinventory
+    if args.config and token_shaped(args.config):     # `roster -cTOKEN init` (#484 L2b): never a file named after it
+        die("that -c PATH looks like a token, not a file name (not repeated), so init made nothing - name the new "
+            "roster.yml: roster -c roster.yml init (or -c FOLDER/roster.yml)")
     path = Path(args.config or "roster.yml").expanduser()
     how, value = ("blank", None) if args.blank else (None, None)
     if args.inventory:
@@ -75,7 +88,7 @@ def cmd_init(args):
             if path.exists():
                 newinventory.create(path, "blank")           # raises the kept-as-it-is Problem
             path.write_text(EXAMPLE_CONFIG)
-            say(f"wrote {path} - edit it, then run: roster setup")
+            say(f"wrote {shown_path(path) or HIDDEN_PATH} - edit it, then run: roster setup")
         else:
             made = newinventory.create(path, how, value)
             say_made(made, value)
@@ -92,18 +105,19 @@ def cmd_init(args):
 def say_made(made, value):
     from . import newinventory, store
     path = made.path
+    shown = shown_path(path) or HIDDEN_PATH         # #484 L2b: init's messages name the path the way every other does
     if made.how == "blank":
-        say(f"wrote {path}, a blank Inventory - add Hosts under hosts: (or `roster discover CIDR --write`), then "
+        say(f"wrote {shown}, a blank Inventory - add Hosts under hosts: (or `roster discover CIDR --write`), then "
             "run: roster setup")
     elif made.how == "file":
-        say(f"copied {value} to {path} - then run: roster setup")
+        say(f"copied {value} to {shown} - then run: roster setup")
     elif made.how == "repo":
         say(f"cloned {newinventory.shown_url(value)} into {path.parent} - then run: roster setup")
     elif made.hosts:
-        say(f"wrote {path} with {plural(len(made.hosts), 'Host')} from {value or '~/.ssh/config'} (your ssh config "
+        say(f"wrote {shown} with {plural(len(made.hosts), 'Host')} from {value or '~/.ssh/config'} (your ssh config "
             "is unchanged) - check them, then run: roster setup")
     else:
-        say(f"no Host in {value or '~/.ssh/config'} to import (only wildcards or Match blocks), so {path} is a blank "
+        say(f"no Host in {value or '~/.ssh/config'} to import (only wildcards or Match blocks), so {shown} is a blank "
             "Inventory - add Hosts under hosts:, then run: roster setup")
     if made.skipped:
         say(f"skipped      {', '.join(made.skipped)} (patterns and Match blocks aren't single Hosts)")

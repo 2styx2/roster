@@ -275,6 +275,9 @@ def test_install_inventory_flag_is_checked(tmp_path):
 @pytest.mark.parametrize(("args", "said"), [
     pytest.param(["--inventroy=repo:{url}"], "unknown option: --inventroy (try --help)", id="mistyped-flag"),
     pytest.param(["{url}"], "unexpected argument (not repeated) (try --help)", id="bare-url"),
+    # #487 item 3 (#484 L4): no = in it: the name ends at the first character that isn't a letter, digit or -
+    pytest.param(["--inventory-repo:{url}"], "unknown option: --inventory-repo (try --help)", id="flag-colon-url"),
+    pytest.param(["-i{url}"], "unknown option: -ihttps (try --help)", id="short-flag-glued-url"),
 ])
 def test_an_unknown_argument_is_never_repeated(tmp_path, name, args, said):
     # #484 M2: a mistyped flag carrying a credential URL, or a URL with no flag, used to come back whole on stderr

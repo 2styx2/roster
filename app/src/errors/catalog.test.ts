@@ -169,4 +169,13 @@ describe("the error catalog", () => {
     const e = new BackendCallError("The backend exited (code 1).", null, null, true);
     expect(rowFor(rows, problemFromCallError("esx", e).code).row).toBe(21);
   });
+
+  it("offers to copy row 1's roster.yml path, but never the words roster prints for a hidden one (#487)", () => {
+    const copyOf = (path: string) => {
+      const action = rowFor(rows, 1).actions.find((a) => a.kind === "copy");
+      return action?.kind === "copy" ? action.text({ ...p(1), data: { path } }) : undefined;
+    };
+    expect(copyOf("/home/you/lab/roster.yml")).toBe("/home/you/lab/roster.yml");
+    expect(copyOf("(not repeated)")).toBeNull();
+  });
 });

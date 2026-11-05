@@ -90,18 +90,26 @@ def blank_shape(raw):
 
 
 HIDDEN_PATH = "that path (not repeated)"
-_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
+_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_.-]{24,}")
+_INVENTORY_SUFFIXES = (".yml", ".yaml", ".yml.example")
+
+
+def token_shaped(value: str | Path) -> bool:
+    """VALUE (a -c PATH, or an Inventory's name) looks like a token, not something a person names a file: its last
+    part is 24 or more of A-Z a-z 0-9 + / = _ . - (a bw key, an op session or service-account token, a JWT such as
+    an op Connect token: eyJ….….…), and doesn't end .yml, .yaml or .yml.example (#479, #484 L1/L3)."""
+    name = Path(str(value)).name
+    return bool(_TOKEN_SHAPED.fullmatch(name)) and not name.lower().endswith(_INVENTORY_SUFFIXES)
 
 
 def shown_path(path) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
-    when it mustn't be (#479, #484 M1/L1). A file that's there is shown. One that isn't is shown only when its folder
-    exists and the value isn't token-shaped (24 or more of A-Z a-z 0-9 + / = _ -, so no . or ~): `roster -cTOKEN
-    hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an op service-account token
-    can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
-    given = str(path)
+    when it mustn't be (#479, #484 M1/L1/L3). A file that's there is shown. One that isn't is shown only when its
+    folder exists and the value isn't token_shaped: `roster -cTOKEN hosts` reads an op session token that starts
+    with -c as `-c TOKEN`, and a bw key or an op token can be typed after -c by mistake. Every message, fix line and
+    JSON field naming the path goes through this."""
     full = Path(path).expanduser().resolve()
-    if full.exists() or (full.parent.is_dir() and not _TOKEN_SHAPED.fullmatch(given)):
+    if full.exists() or (full.parent.is_dir() and not token_shaped(path)):
         return str(full)
     return None
 

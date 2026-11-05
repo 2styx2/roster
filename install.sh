@@ -59,8 +59,9 @@ while (( $# )); do
         --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
         --finish) FINISH=1 ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2)
-        -*) echo "unknown option: ${1%%=*} (try --help)" >&2; exit 2 ;;
+        # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2);
+        # the name ends at its first character that is not a letter, digit or - (=, :, a glued -iURL: #484 L4)
+        -*) echo "unknown option: ${1%%[^A-Za-z0-9-]*} (try --help)" >&2; exit 2 ;;
         *) echo "unexpected argument (not repeated) (try --help)" >&2; exit 2 ;;
     esac
     shift
