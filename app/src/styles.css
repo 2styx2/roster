@@ -419,12 +419,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* A reserved slot (round 16): a faint well, inset like a row's hover, and the number ␣ N will go
    to, where the next Session lands. No node: a hollow or dashed one already means a state. The key
    keeps 3:1 against the Sidebar; the well is quieter than any row. */
-.sb-slot {
-  height: var(--row-h); display: flex; align-items: center; padding: 0 8px 0 12px;
-  background-clip: content-box; border-block: 2px solid transparent;
-  background-color: color-mix(in srgb, var(--line) 35%, transparent); border-radius: calc(var(--radius) + 2px);
-}
-.sb-slot-key { margin-left: auto; display: flex; opacity: 0.8; }
+.sb-slot { height: var(--row-h); display: flex; align-items: center; padding: 0 8px 0 12px; }
+/* Round 16's faint well read as a skeleton loader (dark) or a disabled input (light): the slot is
+   now only its key, in the hint colour (4.5:1), where that Session's number will be. */
+.sb-slot-key { margin-left: auto; display: flex; }
+/* No Hosts, nothing to open: no slots and no empty Folders (round 16). */
+.sb-scroll:not(:has([data-section="inventory"] .sb-row)) .sb-slot { display: none; }
+.sb-rest:not(:has([data-section="inventory"] .sb-row)) [data-section="folders"]:not(:has(.sb-row)) { display: none; }
 .sb-section[data-section="sessions"] > .sb-empty { display: flex; align-items: center; margin-right: 8px; }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
@@ -487,11 +488,15 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   background: var(--accent);
 }
 /* The App-mode cursor: raised, with the accent outline and no bar. */
-.sb-row.cursor, .sb-heading.cursor { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
+.sb-row.cursor, .sb-heading.cursor > .sb-heading-button { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
+/* On a heading the cursor is its button's, inset like a row's, so its actions (+) sit outside it
+   (round 16: the outline wrapped the whole heading, wider than the rows). */
+.sb-heading.cursor { color: var(--text); }
+.sidebar .sb-heading-button { margin-inline: 2px; }
 /* Forced colours drop fills and box-shadows: keep the bar and the cursor visible. */
 @media (forced-colors: active) {
   .sb-row.live::before { forced-color-adjust: none; background: Highlight; }
-  .sb-row.cursor, .sb-heading.cursor { outline: 1px solid Highlight; outline-offset: -1px; }
+  .sb-row.cursor, .sb-heading.cursor > .sb-heading-button { outline: 1px solid Highlight; outline-offset: -1px; }
 }
 .sidebar .sb-item {
   flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; color: inherit;
@@ -956,24 +961,18 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
 .picker-row > .badge { justify-self: end; overflow: visible; }
-/* A Host's details (ticket 18): shown on the selected row only (Ctrl+I is its key), never on
-   hover, as a Sidebar row's buttons (Q88). It floats over that row's right end on the row's own
-   colour, so no row keeps a 24 px column for it (round 16). */
-.picker-row > .picker-info { position: absolute; right: 6px; top: 50%; translate: 0 -50%; }
-.picker-row.selected > .picker-info { background: var(--raised); box-shadow: -8px 0 8px var(--raised); }
+/* A Host's details (ticket 18): a key in the footer for the selected Host, also a button
+   (round 16: floating over the selected row's end it covered its badge and address). */
+.picker-footer .picker-info-hint {
+  height: 24px; padding: 0 6px; background: transparent; border-color: transparent; color: inherit; font: inherit;
+}
 /* A narrow window keeps what you pick by: the node, the name and the address. */
 @media (max-width: 600px) {
   .picker-list, .picker-list.badged { grid-template-columns: 0 8px minmax(0, 1fr) fit-content(16ch) auto 0; }
   .picker-row > .host-group, .picker-row > .host-type { display: none; }
 }
-.picker-info {
-  width: 24px; height: 24px; padding: 0; display: grid; place-items: center; visibility: hidden;
-  background: transparent; border-color: transparent; color: var(--muted);
-}
-.picker-info svg { width: 14px; height: 14px; }
-.picker-row.selected .picker-info { visibility: visible; color: var(--text); }
 @media (hover: hover) and (pointer: fine) {
-  .picker-info:hover { color: var(--text); background: var(--hover); }
+  .picker-footer .picker-info-hint:hover { color: var(--text); background: var(--hover); }
 }
 /* Quick Connect (ticket 14): a box that isn't in the Inventory, offered first while the query reads
    as user@address[:port]. The address is data (Iosevka); the words around it are the app's. */
@@ -1025,6 +1024,13 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--warn);
 }
 .picker-footer [role="status"]:empty { flex: 0 0 0; }
+/* A message is never cut (round 16: "…isn't reviewed yet, so it can't be opened. …"): it takes
+   two lines, and the hints keep their keys and drop their words. */
+.picker-footer:has([role="status"]:not(:empty)) { height: auto; min-height: 34px; padding-block: 6px; }
+.picker-footer:has([role="status"]:not(:empty)) .picker-hint-word { display: none; }
+.picker-footer [role="status"]:not(:empty) {
+  white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 16px;
+}
 .picker-count { font-variant-numeric: tabular-nums; }
 .picker-hint { display: inline-flex; align-items: center; gap: 5px; }
 
@@ -1285,11 +1291,18 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   margin-inline: -20px; padding-inline: 20px; padding-bottom: 16px; margin-bottom: -16px;
 }
 /* Enter shows on Trust only while it has focus: the question opens on Cancel (Q203). */
-.btn-keys.key-on-focus { display: none; }
-button:focus-visible > .btn-keys.key-on-focus { display: inline-flex; }
+.btn-keys.key-on-focus { visibility: hidden; }
+button:focus-visible > .btn-keys.key-on-focus { visibility: visible; }
 /* Quick Connect's error room: says why Enter did nothing before the key was ticked. */
-.key-nudge { margin: 0; min-height: 0; font-size: var(--text-xs); color: var(--warn); }
-.key-nudge:empty { display: none; }
+.key-nudge { margin: 0 auto 0 0; flex: 1 1 auto; white-space: nowrap; align-self: center; font-size: var(--text-xs); color: var(--warn); text-align: left; }
+.key-nudge:empty { flex-basis: 0; }
+/* The Quick Connect form lays out in the card, so its buttons can stick to the card's foot (round
+   16: inside the form they couldn't leave it, and fell below a 480×320 window). */
+.connect-card.key-question form.quick-login { display: contents; }
+/* A field focused or scrolled to never lands under the sticky title or buttons. */
+.connect-card.key-question { scroll-padding-block: 64px 72px; }
+/* A long fingerprint breaks evenly, never leaving two characters alone. */
+.key-fingerprint { text-wrap: balance; }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
 /* The question stays in view when a short window scrolls the card (round 13). */
 .connect-card.key-question > .connect-title {
@@ -1528,9 +1541,19 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder.prose .finder-path { flex: 0 1 auto; margin-left: auto; text-align: right; }
 /* Prose rows (help) line up as three columns, title, section and tag, so the list scans down
    (round 11: each row placed its parts differently). The title never goes under 16ch. */
-.finder.prose .finder-row { display: grid; grid-template-columns: minmax(16ch, 56%) minmax(0, 1fr) auto; column-gap: 12px; }
-.finder.prose .finder-path { margin-left: 0; text-align: left; font-family: var(--font-ui); }
-.finder.prose .finder-detail { margin-left: 0; max-width: none; justify-self: end; }
+/* Round 16: one schema for every row. Title, section and tag keep their columns whether or not a
+   row has a section (the tag never slides into the section's place), every row is one line, the
+   selected one too (a tooltip holds the whole), and a tag gives way at 24 characters, so the
+   section between them keeps room to say something. */
+.finder.prose .finder-row { display: grid; grid-template-columns: minmax(16ch, 5fr) minmax(0, 4fr) min(24ch, 30%); column-gap: 12px; }
+.finder.prose .finder-label { grid-column: 1; }
+.finder.prose .finder-path { grid-column: 2; margin-left: 0; text-align: left; font-family: var(--font-ui); }
+.finder.prose .finder-detail { grid-column: 3; margin-left: 0; max-width: 24ch; justify-self: end; }
+.finder.prose .finder-row.selected :is(.finder-label, .finder-path) { white-space: nowrap; }
+.finder.prose .finder-row.selected :is(.finder-name, .finder-path) { overflow-wrap: normal; }
+.finder.prose .finder-row.selected .finder-path { min-width: 0; }
+/* No tag on the row: its section takes the tag's room too. */
+.finder.prose .finder-path:last-child { grid-column: 2 / 4; }
 /* The detail (a help tag, an option's name) gives way before the label: cut at its end, never wider
    than 40% of the row, so a long tag can't squeeze the title (round 10). Data, so Iosevka. */
 .finder-detail {

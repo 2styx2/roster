@@ -38,6 +38,9 @@ describe("Quick Connect", () => {
     expect(within(q).getByText(FAKE_FINGERPRINT)).toBeInTheDocument();
     const field = within(q).getByLabelText("Password for root");
     expect(field).toHaveAttribute("type", "password");
+    // It opens on "I've checked this key" (round 16), so the keys follow the task: tick, then the password.
+    expect(within(q).getByLabelText("I've checked this key")).toHaveFocus();
+    await user.tab();
     expect(field).toHaveFocus();
     // Enter connects only once the key is marked checked (round 14): an unread key is never trusted.
     await user.keyboard(`${FAKE_HOST_PASSWORD}{Enter}`);

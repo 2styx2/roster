@@ -168,12 +168,11 @@ describe("the Sidebar's row buttons (decision Q88)", () => {
   });
 });
 
-describe("the Picker's ⓘ (decision Q88, T72)", () => {
-  it("shows on the selected row only: no hover rule reveals it", () => {
+describe("the Picker's details (decision Q88, T72, round 16)", () => {
+  it("is one key in the footer for the selected Host, never a control on a row", () => {
     const all = rules(stylesCss);
-    const hover = all.filter(([sel]) => sel.includes(":hover") && /\.picker-row/.test(sel));
-    for (const [sel] of hover) expect(sel, sel).not.toMatch(/\.picker-info/);
-    expect(all.some(([sel, body]) => sel.includes(".picker-row.selected .picker-info") && /visibility:\s*visible/.test(body))).toBe(true);
+    for (const [sel] of all) expect(sel, sel).not.toMatch(/\.picker-row[^,]*\.picker-info/);
+    expect(all.some(([sel]) => sel.includes(".picker-footer .picker-info-hint"))).toBe(true);
   });
 });
 

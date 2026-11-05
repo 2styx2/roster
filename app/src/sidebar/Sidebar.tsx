@@ -1015,7 +1015,10 @@ export function Sidebar({
           close={closeMenu}
         />
       )}
-      {cursorRow && <Details row={cursorRow} />}
+      {/* A heading says nothing the tree doesn't (round 16: a bare "Inventory" strip). */}
+      {cursorRow && (cursorRow.dot || rowFacts(cursorRow).length > 0) && (
+        <Details row={cursorRow} />
+      )}
     </nav>
   );
 }

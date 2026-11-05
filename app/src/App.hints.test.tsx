@@ -95,7 +95,9 @@ describe("Hiding the key hints", () => {
     // No Session yet: the empty state offers Find, so the bar doesn't.
     expect(words()).toEqual(["help", "keys"]);
     await user.keyboard(LEADER);
-    expect(words()).toEqual(["move", "open", "menu", "terminal"]);
+    // "menu" only on a row that has one (round 16: a heading's hint led to "This row has no menu").
+    const onMenuRow = document.querySelector(".sb-row.cursor") !== null;
+    expect(words()).toEqual(onMenuRow ? ["move", "open", "menu", "terminal"] : ["move", "open", "terminal"]);
   });
 });
 

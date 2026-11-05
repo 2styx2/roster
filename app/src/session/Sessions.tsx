@@ -227,6 +227,9 @@ export function ConnectCard({
   // The typed password lives only in this input (never React state): read once on submit, sent,
   // and the field emptied at once (docs/app/security.md).
   const passwordField = useRef<HTMLInputElement>(null);
+  // Quick Connect's "I've checked this key": where its question opens (round 16), so the keys
+  // follow the task: read the key, Space to tick, Tab to the password, Enter.
+  const checkedBox = useRef<HTMLInputElement>(null);
   useForgetOnLock(() => {
     if (passwordField.current) passwordField.current.value = "";
   });
@@ -253,15 +256,21 @@ export function ConnectCard({
     if (asking && active)
       // Its ring shows even when the question came from a click (round 12): the focused Cancel
       // must read as the default.
-      (
-        passwordField.current ??
-        cancelButton.current ??
-        trustButton.current
-      )?.focus({
-        focusVisible: true,
-        // The card opens at its top, its question in view; focus doesn't scroll it (round 14).
-        preventScroll: true,
-      } as FocusOptions);
+      {
+        const target =
+          checkedBox.current ??
+          passwordField.current ??
+          cancelButton.current ??
+          trustButton.current;
+        target?.focus({
+          focusVisible: true,
+          // The card opens at its top, its question in view; focus doesn't scroll it (round 14)…
+          preventScroll: true,
+        } as FocusOptions);
+        // …unless a short window hides the focused control: then it scrolls just enough, clear
+        // of the sticky title and buttons (scroll-padding; round 16).
+        target?.scrollIntoView?.({ block: "nearest" });
+      }
     if (asking) asked.current = true;
     else if (asked.current) {
       asked.current = false;
@@ -523,6 +532,7 @@ export function ConnectCard({
           >
             <label className="add-check quick-checked">
               <input
+                ref={checkedBox}
                 type="checkbox"
                 checked={checkedKey}
                 onChange={(e) => {
@@ -557,12 +567,11 @@ export function ConnectCard({
                 Save to vault once it logs in
               </label>
             )}
-            <p className="key-nudge" role="alert">
-              {nudged && !checkedKey
-                ? "Tick “I've checked this key” to trust it and connect."
-                : ""}
-            </p>
             <div className="key-actions">
+              {/* In the footer, so it's in view wherever the card is scrolled (round 16). */}
+              <p className="key-nudge" role="alert">
+                {nudged && !checkedKey ? "Tick the box above first." : ""}
+              </p>
               <button
                 type="submit"
                 className={checkedKey ? "primary" : undefined}

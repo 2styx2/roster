@@ -3115,11 +3115,14 @@ function Workspace({
       ? [
           [moveKeys, "move"],
           [listKey("choose"), "open"],
-          // The menu key people know: Shift+F10 over the Menu key's name ("ContextMenu").
+          // The menu key people know: Shift+F10 over the Menu key's name ("ContextMenu"). Offered
+          // only on a row that has a menu (round 16: a heading's hint led to "no menu").
           [
-            Object.keys(keymap.list).find(
-              (k) => keymap.list[k]?.action === "menu" && k.includes("F10"),
-            ) ?? listKey("menu"),
+            cursorRow()?.menu || cursorRow()?.actions?.length
+              ? (Object.keys(keymap.list).find(
+                  (k) => keymap.list[k]?.action === "menu" && k.includes("F10"),
+                ) ?? listKey("menu"))
+              : null,
             "menu",
           ],
           [listKeyFor(keymap.leader, "terminal"), "terminal"],

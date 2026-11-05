@@ -450,25 +450,6 @@ export function Picker({
                   unreviewed
                 </span>
               )}
-              {onInfo && (
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="picker-info"
-                  aria-label={`Show ${host.name}'s details`}
-                  title={
-                    info
-                      ? `Show ${host.name}'s details (${info})`
-                      : `Show ${host.name}'s details`
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onInfo(host);
-                  }}
-                >
-                  <InfoGlyph />
-                </button>
-              )}
             </li>
           ))}
           <li
@@ -534,13 +515,30 @@ export function Picker({
                 ? "" /* the message (or the Quick Connect row) already says it */
                 : countOf(results.length, "Host")}
           </span>
+          {/* The selected Host's details: a key in the footer, also a button (round 16: a button
+              over the row's end covered its data). */}
+          {onInfo && selected && (
+            <button
+              type="button"
+              tabIndex={-1}
+              className="picker-hint key-hint picker-info-hint"
+              aria-label={`Show ${selected.name}'s details`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onInfo(selected)}
+            >
+              {info ? <Keys keys={info} /> : <InfoGlyph />}{" "}
+              <span className="picker-hint-word">details</span>
+            </button>
+          )}
           {hints.map(
             ([keys, what]) =>
               // Moving and opening need a row: with none, only the way out is offered.
               keys &&
               (rowCount > 0 || what === "close") &&
               // One row: nothing to move between.
-              !(what === "move" && rowCount <= 1) && (
+              !(what === "move" && rowCount <= 1) &&
+              // An unreviewed Host can't be opened: no "open" on it (round 16), its badge says why.
+              !(what === "open" && selected && !selected.reviewed) && (
                 <span key={what} className="picker-hint key-hint">
                   <Keys keys={keys} />{" "}
                   <span className="picker-hint-word">{what}</span>
