@@ -1,5 +1,6 @@
 """Password providers: registry, plugin loading, and the built-ins."""
 
+import contextlib
 import getpass
 import os
 import re
@@ -211,7 +212,7 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
 #             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box (T241,
-#                              bw-session): "none", "working", "expired", "ignored" (why: the reason); never in serve
+#                              bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -251,6 +252,52 @@ def split_field(spec, default="password"):
     return item.strip(), field.strip() or default
 
 
+class _Tty:
+    """The controlling terminal, open on FD: write() shows text on it, readline() reads what's typed there (a line in
+    the terminal's canonical mode; "" at end of input)."""
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    def write(self, text):
+        os.write(self.fd, text.encode("utf-8", "replace"))
+
+    def readline(self):
+        line = b""
+        while not line.endswith(b"\n") and (chunk := os.read(self.fd, 1024)):
+            line += chunk
+        return line.decode("utf-8", "replace")
+
+
+class _WinTty:
+    """Windows' console through stdin and stderr, used only when both are the console."""
+
+    def write(self, text):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+    def readline(self):
+        return sys.stdin.readline()
+
+
+@contextlib.contextmanager
+def open_tty():
+    """The terminal a question goes to, as getpass's: /dev/tty on Linux and macOS; on Windows the console, when stdin
+    and stderr are both it. None when there's none (no controlling terminal, or a Windows stream redirected)."""
+    if os.name == "nt":
+        yield _WinTty() if sys.stdin.isatty() and sys.stderr.isatty() else None
+        return
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | getattr(os, "O_NOCTTY", 0))
+    except OSError:
+        yield None
+        return
+    try:
+        yield _Tty(fd)
+    finally:
+        os.close(fd)
+
+
 class Ctx:
     """What a provider gets besides its SPEC."""
 
@@ -270,13 +317,16 @@ class Ctx:
         return getpass.getpass(f"  {prompt}")
 
     def confirm(self, prompt):
-        """A yes/no question on stderr, answered by a line on stdin: True only for y or yes (Enter is No). False
-        without a terminal or with --json, where nothing may be asked."""
+        """A yes/no question asked and answered on the controlling terminal (open_tty), as getpass asks the password,
+        so a redirected stderr never hides it (#480 review, LOW-1): True only for y or yes (Enter is No). False,
+        without asking, with no terminal (stdin or controlling) or with --json."""
         if not self.interactive or JSON_OUTPUT:
             return False
-        sys.stderr.write(f"  {prompt}")
-        sys.stderr.flush()
-        return sys.stdin.readline().strip().lower() in ("y", "yes")
+        with open_tty() as tty:
+            if tty is None:
+                return False
+            tty.write(f"  {prompt}")
+            return tty.readline().strip().lower() in ("y", "yes")
 
     def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1, discard=False):
         """Run a helper command, capturing output. A missing tool becomes a friendly error.

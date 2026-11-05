@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from ..common import NotPrivate, find_program, read_private_bytes, say, user_config_dir
+from ..common import WINDOWS, NotPrivate, find_program, read_private_bytes, say, user_config_dir
 from . import (
     PROVIDERS,
     ItemExists,
@@ -74,6 +74,44 @@ def session_file():
     return user_config_dir() / "bw-session"
 
 
+def check_session_dir():
+    """NotPrivate unless session_file()'s folder is yours alone to change (#480 review, LOW-3): a folder (or a link to
+    one that you own) owned by you that nobody else may write to, so no one else can swap, plant or remove the file
+    in it. Nothing there yet is fine (roster makes it 0700). Windows: not checked here: %APPDATA% is kept private by
+    its ACL, and the file's own owner and ACL are (common.read_private_bytes)."""
+    import stat
+    if WINDOWS:
+        return
+    d = session_file().parent
+    try:
+        st = os.lstat(d)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(st.st_mode):
+        if st.st_uid != os.getuid():
+            raise NotPrivate(f"{d} is a symlink someone else owns")
+        try:
+            st = os.stat(d)
+        except OSError as e:
+            raise NotPrivate(f"{d} can't be read ({e.strerror})") from None
+    if not stat.S_ISDIR(st.st_mode):
+        raise NotPrivate(f"{d} isn't a folder")
+    if st.st_uid != os.getuid():
+        raise NotPrivate(f"{d} isn't yours (another user owns it)")
+    if st.st_mode & 0o022:
+        raise NotPrivate(f"{d} is writable by others (chmod go-w {d})")
+
+
+def read_session_file():
+    """session_file()'s bytes, by read_private_bytes's rules, in a folder check_session_dir accepts. FileNotFoundError
+    if it isn't there; NotPrivate otherwise."""
+    f = session_file()
+    if not os.path.lexists(f):
+        raise FileNotFoundError(f)
+    check_session_dir()
+    return read_private_bytes(f)
+
+
 _BOMS = ((b"\xef\xbb\xbf", "utf-8"), (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"))
 
 
@@ -102,7 +140,7 @@ def load_session_file():
         return False
     f = session_file()
     try:
-        key = session_text(read_private_bytes(f))
+        key = session_text(read_session_file())
     except FileNotFoundError:
         return False
     except NotPrivate as e:
@@ -135,8 +173,10 @@ def note(text):
 
 def check_session_file():
     """SessionFileRefused if a session_file() is there that roster won't write over: one that isn't yours alone
-    (common.read_private_bytes: a link, another user's, not a plain file, others may read it)."""
+    (common.read_private_bytes: a link, another user's, not a plain file, others may read it), or one in a folder
+    that isn't yours alone (check_session_dir)."""
     try:
+        check_session_dir()
         read_private_bytes(session_file())
     except FileNotFoundError:
         pass
@@ -162,9 +202,14 @@ def save_session_file(key):
         f.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".bw-session.", suffix=".new", dir=f.parent)
         try:
+            if hasattr(os, "fchmod"):                  # the open file itself, never a name that could be swapped
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as out:
                 out.write(key.encode("ascii") + b"\n")
-            os.chmod(tmp, 0o600)
+                out.flush()
+                os.fsync(out.fileno())                 # on disk before it takes the name
+            if not hasattr(os, "fchmod"):              # Windows (before 3.13): the read-only bit only; its ACL counts
+                os.chmod(tmp, 0o600)
             if session_text(read_private_bytes(Path(tmp))) != key:
                 raise SessionFileFailed(f"the new {f} didn't read back as written, so nothing was saved")
             os.replace(tmp, f)
@@ -194,10 +239,11 @@ def remove_session_file():
 def saved_session(ctx):
     """The saved session's state, without unlocking anything here: ("none", None) no file (or an empty one),
     ("working", None) its key opens the vault, ("expired", None) it doesn't any more, ("ignored", why) roster won't
-    use it (load_session_file's rules). Its key goes only into one `bw status`'s env."""
+    use it (load_session_file's rules), ("unknown", why) `bw status` failed. Its key goes only into one `bw status`'s
+    env."""
     f = session_file()
     try:
-        key = session_text(read_private_bytes(f))
+        key = session_text(read_session_file())
     except FileNotFoundError:
         return "none", None
     except NotPrivate as e:
@@ -206,12 +252,23 @@ def saved_session(ctx):
         return "ignored", f"{f} isn't a Bitwarden session key (not plain ASCII text)"
     if not key:
         return "none", None
-    r = ctx.run(["bw", "status", "--nointeraction"], env={"BW_SESSION": key})
-    try:
-        status = json.loads(r.stdout or "{}").get("status")
-    except json.JSONDecodeError:
-        raise SecretError("couldn't read `bw status` output") from None
+    status = _key_status(ctx, key)
+    if status is None:
+        return "unknown", "bw status failed"
     return ("working" if status == "unlocked" else "expired"), None
+
+
+def _key_status(ctx, key):
+    """`bw status` with KEY as the session, KEY only in its env: "unlocked", "locked", ..., or None when bw failed or
+    didn't print a status object."""
+    r = ctx.run(["bw", "status", "--nointeraction"], env={"BW_SESSION": key})
+    if r.returncode != 0:
+        return None
+    try:
+        st = json.loads(r.stdout or "")
+    except json.JSONDecodeError:
+        return None
+    return st.get("status") if isinstance(st, dict) else None
 
 
 def _bw_saved_session(ctx):
@@ -225,6 +282,12 @@ def _offer_to_keep(ctx, key, expired):
         return
     _offered["done"] = True
     if ctx.confirm(OFFER):
+        status = _key_status(ctx, key)                 # #480 review, LOW-4: another run may have unlocked meanwhile
+        if status != "unlocked":
+            note("not saved: this unlock was replaced by another one meanwhile (bw keeps one unlock at a time), so its "
+                 "key no longer works" if status else "not saved: `bw status` failed, so roster couldn't check the "
+                 "key still works")
+            return
         try:
             save_session_file(key)
         except SecretError as e:

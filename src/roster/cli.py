@@ -1307,13 +1307,13 @@ NO_SESSION_WHY = {"kp": "KeePassXC keeps no session: each run opens the database
                         "own session (roster vault op --write -- signin)"}
 
 
-def vault_session_provider(args):
+def vault_session_provider(args, need_bw=True):
     from .errors import NO_SESSION
     name = args.provider or "bw"
     if name != "bw":
         die(f"[{NO_SESSION}] " + NO_SESSION_WHY.get(name, f"'{name}' has no session roster can keep: roster vault "
                                                             f"{args.vault_cmd} is for Bitwarden (bw)"))
-    if not find_program("bw"):
+    if need_bw and not find_program("bw"):
         die("bw (the Bitwarden CLI) isn't installed")
     return name
 
@@ -1343,36 +1343,51 @@ def cmd_vault_unlock(args):
         if bwp.saved_session(ctx)[0] == "working":
             say(f"already unlocked: the saved session in {bwp.session_file()} works until {bwp.UNTIL}")
             return 0
-        if bwp._bw_status(ctx) == "unauthenticated":
+        status = bwp._bw_status(ctx)                    # with your shell's BW_SESSION, if it has one
+        if status == "unauthenticated":
             raise NotLoggedIn(bwp.NOT_LOGGED_IN)
+        if status == "unlocked" and bwp.session_key():  # #480 review, LOW-2: a new unlock would lock it (and the app)
+            bwp.save_session_file(bwp.session_key())
+            say(f"saved your shell's working BW_SESSION in {bwp.session_file()} (no new unlock, so the roster app and "
+                f"other bw sessions stay unlocked): other roster runs on this Box use it until {bwp.UNTIL}. Any "
+                "program running as you can use it to read the vault until then")
+            return 0
         key = bwp._bw_ask_unlock(ctx)
         bwp.save_session_file(key)
     except SecretError as e:
         die(session_problem(e))
     say(f"unlocked until {bwp.UNTIL}: saved in {bwp.session_file()}, so other roster runs on this Box don't ask. "
-        "Any program running as you can use it to read the vault until then")
+        "Any program running as you can use it to read the vault until then. bw keeps one unlock at a time, so this "
+        "one locked the roster app and any other bw session on this Box")
     return 0
 
 
 def cmd_vault_lock(args):
     """`roster vault lock`: `bw lock` (every bw session on this Box, the app's too), then remove the bw-session file,
-    even if bw failed."""
-    from .providers import SecretError
+    whatever bw did (even with no bw installed). Each is reported on its own (#480 review)."""
+    from .providers import Ctx, SecretError
     from .providers import bitwarden as bwp
-    vault_session_provider(args)
-    from .providers import Ctx
-    try:
+    vault_session_provider(args, need_bw=False)
+    problem = None
+    if not find_program("bw"):
+        problem = "bw (the Bitwarden CLI) isn't installed, so nothing was locked"
+    else:
         try:
             r = Ctx("bw", None).run(["bw", "lock", "--nointeraction"], discard=True)
-        finally:
-            removed = bwp.remove_session_file()
+            if r.returncode != 0:
+                problem = f"`bw lock` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}"
+        except SecretError as e:
+            problem = f"`bw lock` failed: {e}"
+        if problem is None:
+            say("bw lock: locked; bw keeps one unlock at a time, so the roster app and any other bw session on this "
+                "Box are locked too")
+    try:
+        removed = bwp.remove_session_file()
     except SecretError as e:
-        die(session_problem(e))
-    if r.returncode != 0:
-        die(f"`bw lock` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}"
-            + (f"; {bwp.session_file()} was removed anyway" if removed else ""))
-    say(f"locked; removed {bwp.session_file()}" if removed else "locked (there was no saved session)")
-    say("bw keeps one unlock at a time, so the roster app and any other bw session on this Box are locked too")
+        die(session_problem(e) + (f"; {problem}" if problem else ""))
+    say(f"removed {bwp.session_file()}" if removed else "no saved session to remove")
+    if problem:
+        die(problem)
     return 0
 
 

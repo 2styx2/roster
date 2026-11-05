@@ -64,15 +64,34 @@ OFFER = "Keep the vault unlocked for other roster runs on this Box? [y/N] "
 
 
 class Terminal:
-    """A person at a terminal: the master password for each hidden prompt, ANSWER (a line) for the y/N question."""
+    """A person at a terminal: the master password for each hidden prompt, ANSWER (a line) for the y/N question,
+    which is asked on the controlling terminal (providers.open_tty), as getpass asks. SHOWN: what that terminal
+    showed. ON_ASK: run when the question is asked (another run doing something meanwhile)."""
 
-    def __init__(self, monkeypatch, answer="\n"):
+    def __init__(self, monkeypatch, answer="\n", on_ask=None, tty=True):
+        import contextlib
         import getpass
         import io
         self.passwords = 0
-        stdin = io.StringIO(answer)
+        self.shown = ""
+        stdin = io.StringIO("")
         stdin.isatty = lambda: True
         monkeypatch.setattr(sys, "stdin", stdin)
+        term = self
+
+        class Tty:
+            def write(self, text):
+                term.shown += text
+
+            def readline(self):
+                if on_ask:
+                    on_ask()
+                return answer
+
+        @contextlib.contextmanager
+        def open_tty():
+            yield Tty() if tty else None
+        monkeypatch.setattr(providers, "open_tty", open_tty)
 
         def ask(prompt=""):
             self.passwords += 1
@@ -97,7 +116,7 @@ def test_no_saved_session_prompts_offers_and_says_this_run_only_on_no(isolated, 
     assert get_secret("bw:Network gear", "g") == "pw-netops"
     err = capsys.readouterr().err
     assert term.passwords == 1
-    assert OFFER in err
+    assert OFFER in term.shown and OFFER not in err       # on the terminal, as the password prompt (LOW-1)
     assert ("note: this unlock lasts for this run only; to stay unlocked on this Box: roster vault unlock"
             in err)
     assert not session_path().exists()
@@ -115,7 +134,7 @@ def test_yes_saves_a_private_session_the_next_run_uses_without_asking(isolated, 
     next_run()
     assert get_secret("bw:Network gear", "g") == "pw-netops"
     assert term.passwords == 1
-    assert OFFER not in capsys.readouterr().err          # a working saved session: nothing asked
+    assert term.shown.count(OFFER) == 1                   # a working saved session: nothing asked
 
 
 def test_expired_saved_session_says_so_after_the_prompt(isolated, fakes, monkeypatch, capsys):
@@ -140,12 +159,21 @@ def test_yes_replaces_an_expired_saved_session(isolated, fakes, monkeypatch, cap
 
 
 def test_asked_once_a_run(isolated, fakes, monkeypatch, capsys):
-    term = Terminal(monkeypatch, "\n\n")
+    term = Terminal(monkeypatch, "\n")
     get_secret("bw:Network gear", "g")
     providers.lock("bw")                                 # locked again in the same run: asks the password again
     get_secret("bw:Orion servers", "g")
     assert term.passwords == 2
-    assert capsys.readouterr().err.count(OFFER) == 1
+    assert term.shown.count(OFFER) == 1
+
+
+def test_no_controlling_terminal_never_asks(isolated, fakes, monkeypatch, capsys):
+    """LOW-1: stdin is a terminal but there's no controlling one to ask on (open_tty: None): not asked, not saved;
+    the note still says why the next run asks."""
+    term = Terminal(monkeypatch, "y\n", tty=False)
+    assert get_secret("bw:Network gear", "g") == "pw-netops"
+    assert OFFER not in term.shown + capsys.readouterr().err
+    assert not session_path().exists()
 
 
 def test_no_terminal_never_asks(isolated, fakes, monkeypatch, capsys):
@@ -157,29 +185,29 @@ def test_no_terminal_never_asks(isolated, fakes, monkeypatch, capsys):
 
 
 def test_bw_password_in_a_terminal_never_asks(isolated, fakes, monkeypatch, capsys):
-    Terminal(monkeypatch, "y\n")
+    term = Terminal(monkeypatch, "y\n")
     monkeypatch.setenv("BW_PASSWORD", "hunter2")
     get_secret("bw:Network gear", "g")
     err = capsys.readouterr().err
-    assert OFFER not in err and "note:" not in err
+    assert OFFER not in term.shown and "note:" not in err
     assert not session_path().exists()
 
 
 def test_json_output_has_no_note_or_question(isolated, fakes, monkeypatch, capsys):
-    Terminal(monkeypatch, "y\n")
+    term = Terminal(monkeypatch, "y\n")
     monkeypatch.setattr(providers, "JSON_OUTPUT", True)
     get_secret("bw:Network gear", "g")
     err = capsys.readouterr().err
-    assert OFFER not in err and "note:" not in err
+    assert OFFER not in term.shown and "note:" not in err
     assert not session_path().exists()
 
 
 def test_serve_never_asks(isolated, fakes, monkeypatch, capsys):
-    Terminal(monkeypatch, "y\n")
+    term = Terminal(monkeypatch, "y\n")
     monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)
     providers.unlock("bw", "hunter2")
     get_secret("bw:Network gear", "g")
-    assert OFFER not in capsys.readouterr().err
+    assert OFFER not in term.shown
     assert not session_path().exists()
 
 
@@ -191,10 +219,10 @@ BW_YML = "groups:\n  lab: {user: ops, auth: 'bw:Network gear', hosts: {esx-02: 1
 
 def test_a_json_command_in_a_terminal_has_no_note_or_question(isolated, fakes, write_config, monkeypatch, capsys):
     write_config(BW_YML)
-    Terminal(monkeypatch, "y\n")
+    term = Terminal(monkeypatch, "y\n")
     assert main(["check", "--auth", "--json"]) == 0
     err = capsys.readouterr().err
-    assert OFFER not in err and "note:" not in err
+    assert OFFER not in term.shown and "note:" not in err
     assert not session_path().exists()
     assert providers.JSON_OUTPUT is False                # only for that command
 
@@ -381,3 +409,149 @@ def test_serve_never_reads_the_saved_session(isolated, fakes, write_config, monk
     c = next(c for c in health.vault(cfg) if c["message"].startswith("bw ("))
     assert "saved_session" not in c and "saved session" not in c["message"]
     assert all("BW_SESSION" not in json.loads(x) for x in (tmp_path / "env.log").read_text().splitlines())
+
+
+def test_vault_unlock_saves_a_working_shell_session_instead_of_unlocking_again(one_unlock, fakes, monkeypatch,
+                                                                               capsys):
+    """#480 review, LOW-2: a new `bw unlock` would lock the shell's BW_SESSION (and the app: bw keeps one unlock), so
+    a working one is saved as it is, with no password asked."""
+    _, key = bw_call("unlock", "--raw", "--passwordenv", "PW")
+    monkeypatch.setenv("BW_SESSION", key)
+    term = Terminal(monkeypatch)
+    assert main(["vault", "unlock"]) == 0
+    out = capsys.readouterr().out
+    assert term.passwords == 0
+    assert session_path().read_text() == key + "\n"
+    assert bw_status(key) == "unlocked"
+    assert "BW_SESSION" in out and key not in out
+
+
+def test_vault_unlock_with_a_stale_shell_session_unlocks(one_unlock, fakes, monkeypatch, capsys):
+    monkeypatch.setenv("BW_SESSION", "stale-key")
+    term = Terminal(monkeypatch)
+    assert main(["vault", "unlock"]) == 0
+    assert term.passwords == 1
+    assert session_path().read_text() == "fake-session-key-1\n"
+
+
+# ---- #480 review, LOW-3: the folder the session file is in is checked too (Linux and macOS: Windows has its ACL)
+
+posix_only = pytest.mark.skipif(WINDOWS, reason="modes and uids; Windows keeps %APPDATA% private with its ACL")
+
+
+@posix_only
+def test_vault_unlock_refuses_a_folder_others_may_write_to(isolated, fakes, monkeypatch, capsys):
+    session_path().parent.mkdir(parents=True, exist_ok=True)
+    session_path().parent.chmod(0o777)
+    term = Terminal(monkeypatch)
+    with pytest.raises(SystemExit, match=r"\[202\] .*writable by others"):
+        main(["vault", "unlock"])
+    assert term.passwords == 0 and not session_path().exists()
+
+
+@posix_only
+def test_vault_unlock_refuses_a_link_to_a_shared_folder(isolated, fakes, monkeypatch, capsys, tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    session_path().parent.parent.mkdir(parents=True, exist_ok=True)
+    session_path().parent.symlink_to(shared)
+    Terminal(monkeypatch)
+    with pytest.raises(SystemExit, match=r"\[202\] .*writable by others"):
+        main(["vault", "unlock"])
+    assert not (shared / "bw-session").exists()
+
+
+@posix_only
+def test_vault_unlock_refuses_a_folder_someone_else_owns(isolated, fakes, monkeypatch, capsys):
+    session_path().parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(session_path().parent).st_uid + 1)
+    Terminal(monkeypatch)
+    with pytest.raises(SystemExit, match=r"\[202\] .*isn't yours"):
+        main(["vault", "unlock"])
+
+
+@posix_only
+def test_a_session_file_in_a_folder_others_may_write_to_is_ignored(isolated, fakes, capsys):
+    session_path().parent.mkdir(parents=True, exist_ok=True)
+    session_path().write_text("fake-session-key\n")
+    session_path().chmod(0o600)
+    session_path().parent.chmod(0o777)
+    with pytest.raises(providers.SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert "writable by others" in capsys.readouterr().out
+    assert bitwarden.saved_session(providers.Ctx("bw", None))[0] == "ignored"
+
+
+@posix_only
+def test_a_link_you_own_to_your_own_folder_is_fine(isolated, fakes, monkeypatch, capsys, tmp_path):
+    mine = tmp_path / "mine"
+    mine.mkdir(mode=0o700)
+    session_path().parent.parent.mkdir(parents=True, exist_ok=True)
+    session_path().parent.symlink_to(mine)
+    Terminal(monkeypatch)
+    assert main(["vault", "unlock"]) == 0
+    assert (mine / "bw-session").read_text() == "fake-session-key\n"
+
+
+def test_the_offer_saves_nothing_when_another_unlock_replaced_this_one(one_unlock, fakes, monkeypatch, capsys):
+    """#480 review, LOW-4: another run unlocked while the question waited (bw keeps one unlock), so this run's key no
+    longer works: it isn't saved over the other run's, and the note says why."""
+    Terminal(monkeypatch, "y\n", on_ask=lambda: bw_call("unlock", "--raw", "--passwordenv", "PW"))
+    with pytest.raises(providers.SecretError, match="locked"):     # this run's key is dead too: bw's one unlock
+        get_secret("bw:Network gear", "g")
+    assert not session_path().exists()
+    assert "note: not saved: this unlock was replaced" in capsys.readouterr().err
+
+
+# ---- #480 review, NITs
+
+def _saved(text="fake-session-key\n"):
+    session_path().parent.mkdir(parents=True, exist_ok=True)
+    session_path().write_text(text)
+    session_path().chmod(0o600)
+
+
+@pytest.mark.parametrize("env", [{"FAKE_BW_STATUS_FAIL": "Something broke."}, {"FAKE_BW_STATUS_RAW": "[1, 2]"},
+                                 {"FAKE_BW_STATUS_RAW": "not json"}], ids=["fails", "not-an-object", "not-json"])
+def test_a_saved_session_bw_cant_report_on_is_unknown_not_expired(isolated, fakes, monkeypatch, env):
+    _saved()
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert bitwarden.saved_session(providers.Ctx("bw", None)) == ("unknown", "bw status failed")
+
+
+def test_status_shows_an_unknown_saved_session(isolated, fakes, write_config, monkeypatch, capsys):
+    from roster import health
+    _saved()
+    monkeypatch.setattr(bitwarden, "_key_status", lambda ctx, key: None)
+    c = health.session_check("bw", "1 Login", "", "locked", *bitwarden.saved_session(providers.Ctx("bw", None)))
+    assert c["saved_session"] == "unknown" and c["level"] == "warn"
+    assert "saved session: unknown (bw status failed)" in c["message"]
+
+
+def test_vault_lock_says_bw_locked_even_when_the_file_cant_be_removed(isolated, fakes, capsys):
+    session_path().mkdir(parents=True)                   # a folder where the file goes: unlink fails
+    with pytest.raises(SystemExit, match=r"\[204\] couldn't remove"):
+        main(["vault", "lock"])
+    assert "bw lock: locked" in capsys.readouterr().out
+
+
+def test_vault_lock_removes_the_file_when_bw_lock_fails(isolated, fakes, monkeypatch, capsys):
+    _saved()
+    monkeypatch.setenv("FAKE_BW_LOCK_FAIL", "Something broke.")
+    with pytest.raises(SystemExit, match="bw lock.*failed"):
+        main(["vault", "lock"])
+    assert not session_path().exists()
+    assert f"removed {session_path()}" in capsys.readouterr().out
+
+
+def test_vault_lock_removes_the_file_when_bw_isnt_installed(isolated, monkeypatch, capsys, tmp_path):
+    empty = tmp_path / "no-bw"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))               # no bw at all, the real one neither
+    _saved()
+    with pytest.raises(SystemExit, match="isn't installed"):
+        main(["vault", "lock"])
+    assert not session_path().exists()
+    assert f"removed {session_path()}" in capsys.readouterr().out

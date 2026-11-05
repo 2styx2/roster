@@ -264,7 +264,7 @@ def provider_check(name, n):
 
 
 SAVED = {"none": "none (every run asks)", "working": "saved, working", "expired": "saved, expired",
-         "ignored": "saved, ignored"}
+         "ignored": "saved, ignored", "unknown": "unknown"}
 
 
 def session_check(name, used, who, status, saved, why):
@@ -282,6 +282,9 @@ def session_check(name, used, who, status, saved, why):
         return check("vault", "warn", f"{head}{state}; saved session: saved, expired ({session_file()} was locked "
                                       "since it was saved, e.g. by the roster app's lock or a bw lock/unlock)",
                      "roster vault unlock saves a new one", saved_session=saved)
+    if saved == "unknown":
+        return check("vault", "warn", f"{head}{state}; saved session: unknown ({why})",
+                     "run `roster vault bw -- status` to see what bw says", saved_session=saved)
     return check("vault", "warn", f"{head}{state}; saved session: saved, ignored ({why})",
                  "remove it, then run roster vault unlock", saved_session=saved)
 

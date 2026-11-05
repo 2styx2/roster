@@ -30,6 +30,9 @@
 #   every unlock, NodeEnvSecureStorageService saves the user key under one "__PROTECTED__" name with it; lock.command.ts
 #   lockService.lock() clears it). So each `bw unlock` prints a new key and an earlier one stops working, and `bw lock`
 #   makes every key stop working (decision Q203). Without it, the one key is always fake-session-key.
+# FAKE_BW_STATUS_RAW=TEXT: `bw status` prints TEXT instead (malformed output); FAKE_BW_STATUS_FAIL=TEXT: it fails
+#   with TEXT on stderr.
+# FAKE_BW_LOCK_FAIL=TEXT: `bw lock` fails with TEXT on stderr.
 # FAKE_BW_ORGS=JSON: the organizations the account is in, each with its collections:
 #   [{"id", "name", "status": 2, "type": 2, "enabled": true, "collections": [{"id", "name", "readOnly": bool}]}]
 #   `bw list organizations` and `bw list collections [--organizationid ID]` print them as bw 2026.9.1 does: a
@@ -129,6 +132,8 @@ def logged_in(email):
     state.update(logged_in=True, email=email); save()
 
 
+if a[0] == "status" and os.environ.get("FAKE_BW_STATUS_FAIL"): fail(os.environ["FAKE_BW_STATUS_FAIL"])
+if a[0] == "status" and "FAKE_BW_STATUS_RAW" in os.environ: print(os.environ["FAKE_BW_STATUS_RAW"]); sys.exit()
 if a[0] == "status":
     print(json.dumps({"serverUrl": state.get("server"), "lastSync": last_sync,
                       "userEmail": None if logged_out else state.get("email"),
@@ -212,6 +217,7 @@ if a[0] == "unlock":
         json.dump(data, open(data_file, "w"))
     print(data["key"] if data_file else SESSION); sys.exit()
 if a[0] == "lock":
+    if os.environ.get("FAKE_BW_LOCK_FAIL"): fail(os.environ["FAKE_BW_LOCK_FAIL"])
     if data_file:
         data["key"] = None; json.dump(data, open(data_file, "w"))
     print("Your vault is locked."); sys.exit()

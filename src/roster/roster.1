@@ -350,7 +350,7 @@ Sync every vault \fBroster.yml\fR\&'s Logins use that keeps a local copy (Bitwar
 .PP
 \fBroster vault unlock [PROVIDER]\fR
 .PP
-Unlock Bitwarden and keep it unlocked for every roster run on this Box: asks the master password (it goes to \fBbw\fR in an environment variable, never on a command line), then saves the session key in \fB~/.config/roster/bw\-session\fR (a new file renamed into place, mode 0600; a file there that's a symlink or isn't yours is refused, 202). It lasts until \fBroster vault lock\fR, \fBbw lock\fR, or the roster app's lock. Already unlocked by a working saved session: says so, asks nothing. Bitwarden only for now (203 for \fBkp\fR, which keeps no session, and \fBop\fR). See Staying unlocked
+Unlock Bitwarden and keep it unlocked for every roster run on this Box: asks the master password (it goes to \fBbw\fR in an environment variable, never on a command line), then saves the session key in \fB~/.config/roster/bw\-session\fR (a new file renamed into place, mode 0600; a file there that's a symlink or isn't yours is refused, 202). It lasts until \fBroster vault lock\fR, \fBbw lock\fR, or the roster app's lock. Already unlocked by a working saved session: says so, asks nothing; a working \fBBW_SESSION\fR in your shell is saved as it is, with no new unlock (which would lock it and the app). Bitwarden only for now (203 for \fBkp\fR, which keeps no session, and \fBop\fR). See Staying unlocked
 .TP
 \fBPROVIDER\fR
 bw (the default and, for now, the only one: KeePassXC keeps no session, and 1Password's op signin keeps its own)
@@ -358,7 +358,7 @@ bw (the default and, for now, the only one: KeePassXC keeps no session, and 1Pas
 .PP
 \fBroster vault lock [PROVIDER]\fR
 .PP
-\fBbw lock\fR, then remove \fB~/.config/roster/bw\-session\fR (even if bw failed). bw keeps one unlock at a time, so every bw session on this Box is locked, the roster app's too. Bitwarden only for now (203)
+\fBbw lock\fR, then remove \fB~/.config/roster/bw\-session\fR (even if bw failed or isn't installed; each is reported on its own). bw keeps one unlock at a time, so every bw session on this Box is locked, the roster app's too. Bitwarden only for now (203)
 .TP
 \fBPROVIDER\fR
 bw (the default and, for now, the only one)
@@ -461,7 +461,7 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 \fB{version, host, ok, steps: [{step, status, message, code?, fix?, details?, data?}]}\fR, as \fBhost.check\fR: \fBstatus\fR is \fBok\fR, \fBfail\fR or \fBskipped\fR\&. An unknown Host is a failed \fBinventory\fR step (code 2), not an error. Exit 1 unless \fBok\fR
 .TP
 \fBcheck \-\-box \-\-json\fR
-\fB{version, checks: [{section, level, message, fix?, topic?, saved_session?}], ok}\fR, as \fBbox.check\fR: \fBlevel\fR is \fBok\fR, \fBwarn\fR or \fBerror\fR; \fBsaved_session\fR on a Bitwarden Vault check is \fBnone\fR, \fBworking\fR, \fBexpired\fR or \fBignored\fR (Staying unlocked; never in \fBbox.check\fR). Exit 1 if one is an \fBerror\fR
+\fB{version, checks: [{section, level, message, fix?, topic?, saved_session?}], ok}\fR, as \fBbox.check\fR: \fBlevel\fR is \fBok\fR, \fBwarn\fR or \fBerror\fR; \fBsaved_session\fR on a Bitwarden Vault check is \fBnone\fR, \fBworking\fR, \fBexpired\fR, \fBignored\fR or \fBunknown\fR (Staying unlocked; never in \fBbox.check\fR). Exit 1 if one is an \fBerror\fR
 .TP
 \fBdiscover CIDR... \-\-json\fR
 \fB{version, targets, addresses, ports, scanner, count, quiet, found: [Found], group}\fR: the preview, after the scan. \fBtargets\fR, \fBaddresses\fR (how many it visits), \fBports\fR (how many) and \fBscanner\fR (\fBnmap\fR or \fBbuilt\-in\fR) as \fBdiscover.plan\fR; \fBcount\fR, \fBquiet\fR and \fBfound\fR as \fBdiscover.status\fR (a Found is \fB{address, name, type, hostname, title, web, known, added, vendor, os, mac, ports}\fR: \fBname\fR the name \fB\-\-write\fR would give it, \fBnull\fR when \fBknown\fR names the Host already at that address; \fBadded\fR is always \fBnull\fR here). \fBgroup\fR is the group \fB\-\-write\fR would add the new ones to. Not with \fB\-\-write\fR (exit 2). Over 4,096 addresses without \fB\-\-force\fR: error \fB121\fR\&. A \fBroster.yml\fR that's there but doesn't load (named by \fB\-c\fR, \fBROSTER_CONFIG\fR or found in the usual places): error \fB1\fR with its fix; with none at all (or \fBROSTER_CONFIG\fR naming no file) it scans anyway
