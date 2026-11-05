@@ -86,7 +86,7 @@ fn declared(permissions: &[&str]) -> BTreeSet<String> {
     let serve = permissions.iter().any(|p| p.starts_with("serve:"));
     let network = permissions.iter().any(|p| p.starts_with("network:"));
     let mut out: BTreeSet<String> = api::VALUES.iter().map(|v| v.path.to_string()).collect();
-    for f in api::FUNCTIONS {
+    for f in api::functions() {
         let has = match f.needs {
             Needs::Nothing => true,
             Needs::Permission(p) => permissions.contains(&p),
