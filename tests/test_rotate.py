@@ -579,7 +579,8 @@ def test_a_crash_between_the_swaps_two_renames_is_finished_by_the_next_run(lab, 
     assert sorted(p.name for p in lab.key.parent.glob("roster_ed25519*")) == ["roster_ed25519", "roster_ed25519.pub"]
 
 
-@pytest.mark.parametrize("where", ["sync-after-swap", "prove-on-web-01", "cleanup-on-web-01", "make-new"])
+@pytest.mark.parametrize("where", ["sync-after-swap", "prove-on-web-01", "cleanup-on-web-01", "make-new",
+                                   "before-ssh-keygen"])
 def test_every_other_crash_point_recovers_on_a_rerun(lab, capsys, where, monkeypatch):
     from roster import rotation
     old_pub = pub_key(lab.key)
@@ -597,6 +598,8 @@ def test_every_other_crash_point_recovers_on_a_rerun(lab, capsys, where, monkeyp
             mp.setattr(rotation.Connect, "script", lambda self, m, keys, posix, mode, tag_re, pub="": boom()
                        if mode == "remove" and m.name == "web-01" else real_script(self, m, keys, posix, mode, tag_re,
                                                                                   pub))
+        elif where == "before-ssh-keygen":          # the record's first write done, no KEY.new yet (#482, P1)
+            mp.setattr(rotation, "make_new", lambda slot, cfg, say: boom())
         else:
             def make(slot, cfg, say):
                 real_make(slot, cfg, say)
@@ -670,18 +673,6 @@ def test_a_narrowed_rerun_never_swaps_while_a_host_that_refused_is_unproven(lab,
     assert old_pub in lab.keys("web-01")
 
 
-def test_a_lock_file_that_is_a_symlink_is_refused_and_its_target_untouched(lab, isolated, tmp_path):
-    """LOW-5."""
-    from roster.common import lock_file
-    victim = tmp_path / "victim"
-    victim.write_text("precious\n")
-    lock_file().unlink(missing_ok=True)
-    lock_file().symlink_to(victim)
-    with pytest.raises(SystemExit, match="isn't a plain file"):
-        main(["setup"])
-    assert victim.read_text() == "precious\n"
-
-
 def test_the_lock_holds_across_processes_and_a_dead_ones_is_free(isolated, tmp_path, monkeypatch):
     """LOW-6: the lock itself, on every OS (Windows' msvcrt.locking too): a second process's lock refuses this one
     (205), and once that process is killed (no release), the lock is free at once."""
@@ -720,3 +711,73 @@ def test_key_max_age_takes_ascii_digits_only():
     with pytest.raises(ValueError, match="isn't an age"):
         boxkeys.parse_age("\u0661\u0662d")                 # Arabic-Indic 12: never twelve days
     assert boxkeys.parse_age("12d") == 12
+
+
+def test_ssh_keygen_killed_before_the_pub_is_refused_then_a_fresh_key_is_made(lab, capsys):
+    """#482's second pass, P1b: KEY.new without its .pub is refused by name; once moved away, the re-run makes a new
+    key, never takes KEY (the old one) for it."""
+    from roster import rotation
+    real = rotation.make_new
+    old_pub = pub_key(lab.key)
+
+    def half(slot, cfg, say):
+        real(slot, cfg, say)
+        rotation.pub_of(rotation.new_of(slot.key)).unlink()
+        raise KeyboardInterrupt("mid ssh-keygen")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rotation, "make_new", half)
+        assert main(["setup", "--rotate"]) == 130
+    with pytest.raises(SystemExit, match=r"roster_ed25519\.new isn't the key the Box key rotation made"):
+        main(["setup", "--rotate"])
+    lab.key.with_name("roster_ed25519.new").rename(lab.key.parent.parent / "moved-away")
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    new_pub = pub_key(lab.key)
+    assert new_pub != old_pub and all(lab.keys(n) == [new_pub] for n in ("web-01", "web-02", "db-01"))
+
+
+def test_after_the_swap_the_line_added_is_the_keys_own_never_the_records(lab, capsys):
+    """#482's second pass, P2: an edited record's new key never goes on a Host: the line comes from KEY itself, and
+    a record that names another key stops the run."""
+    import json
+
+    from roster.common import rotation_file
+    lab.down("db-01")
+    assert main(["setup", "--rotate"]) == 1
+    rec = json.loads(rotation_file().read_text())
+    other = lab.hosts.parent / "intruder"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True)
+    intruder = pub_key(other)
+    rec["keys"][str(lab.key)]["new"] = f"ssh-ed25519 {intruder}"
+    rotation_file().write_text(json.dumps(rec))
+    lab.down("db-01", False)
+    with pytest.raises(SystemExit, match="isn't the key the Box key rotation's record names"):
+        main(["setup", "--rotate"])
+    assert intruder not in lab.keys("db-01")
+
+
+def test_a_lock_file_that_is_a_link_is_refused_on_every_os(isolated, tmp_path):
+    """The lock NITs: a symlink (where the OS lets this user make one) and a hard link are refused, their target
+    untouched; no lab, so Windows runs it too."""
+    import os
+
+    from roster import boxlock
+    from roster.common import lock_file
+    from roster.errors import Problem
+    victim = tmp_path / "victim"
+    victim.write_text("precious\n")
+    lock_file().parent.mkdir(parents=True, exist_ok=True)
+    os.link(victim, lock_file())                                # a hard link
+    with pytest.raises(Problem, match="isn't a plain file"):
+        with boxlock.held("setup"):
+            pass
+    assert victim.read_text() == "precious\n"
+    lock_file().unlink()
+    try:
+        lock_file().symlink_to(victim)
+    except OSError:                                             # Windows without the privilege to make one
+        return
+    with pytest.raises(Problem, match="isn't a plain file"):
+        with boxlock.held("setup"):
+            pass
+    assert victim.read_text() == "precious\n"

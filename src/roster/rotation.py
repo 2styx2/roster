@@ -59,17 +59,20 @@ def pub_of(key: Path) -> Path:
     return Path(str(key) + ".pub")
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
 class Slot:
     """One of this Box's key files (KEY), and where its new and old key are now: before the swap the new one is
-    KEY.new and the old one KEY itself; after it, the new one is KEY and the old one KEY.old (while it's kept)."""
+    KEY.new and the old one KEY itself; after it, the new one is KEY and the old one KEY.old (while it's kept).
+    DONE: whether the swap is done, as the rotation's record says (#482's second pass, P1: never guessed from KEY.new
+    being absent, which before ssh-keygen ran would make KEY, the old key, the new one); None outside a rotation."""
 
     type: boxkeys.KeyType
     key: Path
+    done: bool | None = None
 
     @property
     def swapped(self) -> bool:
-        return not new_of(self.key).exists()
+        return self.done if self.done is not None else not new_of(self.key).exists()
 
     @property
     def new(self) -> Path:
@@ -361,12 +364,24 @@ def group(cfg: dict[str, Any]) -> list[tuple[str | None, dict[str, Any]]]:
 
 
 def members(groups) -> list[Member]:
-    out = []
+    """Every key Host of GROUPS, those of one key file sharing its one Slot."""
+    out, slots = [], {}
     for inv, c in groups:
         for h in sorted(c["hosts"].values(), key=lambda h: h["name"]):
             if h["enroll"] and h["reviewed"]:
-                out.append(Member(inv, c, h, Slot(boxkeys.parse(h["key_type"]), Path(h["key_file"]))))
+                key = Path(h["key_file"])
+                slot = slots.setdefault(key, Slot(boxkeys.parse(h["key_type"]), key))
+                out.append(Member(inv, c, h, slot))
     return out
+
+
+def swap_done(key: Path, entry: dict[str, Any]) -> bool:
+    """Is the swap of KEY done? The record says so, or (a run stopped between the swap and the record's write) KEY
+    itself is the record's new key and KEY.new is gone."""
+    if entry.get("swapped"):
+        return True
+    new = str(entry.get("new") or "").split()[:2]
+    return bool(new) and not new_of(key).exists() and (boxkeys.derived(key) or [])[:2] == new
 
 
 def comment(slot: Slot, cfg: dict[str, Any]) -> str:
@@ -560,7 +575,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         elif not dry_run:   # no Host of roster.yml holds the old key now (the pending ones left it): it's done
             say("rotation     no Host the Box key rotation was pending on is in roster.yml now: finishing it")
             for slot in slots.values():
-                if not slot.swapped:    # never made the key: the new one (the record's own) goes, the key stays
+                if not swap_done(slot.key, entries[str(slot.key)]):    # never swapped: the new one goes, the key stays
                     for f in (new_of(slot.key), pub_of(new_of(slot.key))):
                         f.unlink(missing_ok=True)
                 delete_old(slot)
@@ -600,20 +615,39 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         for key, slot in slots.items():
             if key in fresh:     # a type its Hosts didn't use yet (key_type: changed): its first key is the new one
                 ensure_key(boxkeys.BoxKey(slot.type, key), cfg["tag"])
+                entries[str(key)]["swapped"] = True
             else:
                 make_new(slot, cfg, say)
+            slot.done = key in fresh
             entries[str(key)]["new"] = " ".join((words(pub_of(slot.new)) or [])[:2]) or None
         save_all()
-    for key, slot in slots.items():     # a run stopped right after making it: the record learns the new key now
-        if not entries[str(key)].get("new") and own_pair(slot.new, None):
-            entries[str(key)]["new"] = " ".join((words(pub_of(slot.new)) or [])[:2])
+    for key, slot in slots.items():
+        entry = entries[str(key)]
+        slot.done = swap_done(key, entry)
+        if not slot.done and not new_of(key).exists():
+            # P1: stopped before ssh-keygen wrote it (or it was moved away): make it again, never take KEY for it
+            if entry.get("new"):
+                say(f"rotation     the rotation's new key {new_of(key)} isn't there any more: making another (a "
+                    "line of the one gone may be left on a Host it reached; it can't log in, its private key is "
+                    "gone, and `roster revoke` takes it)")
+            make_new(slot, cfg, say)
+            entry["new"] = " ".join((words(pub_of(new_of(key))) or [])[:2]) or None
             save_all()
+        elif not slot.done and not entry.get("new") and own_pair(new_of(key), None):
+            entry["new"] = " ".join((words(pub_of(new_of(key))) or [])[:2])     # stopped right after making it
+            save_all()
+        # P2: the line that goes on the Hosts is the key's own (derived from its private key), and it must be the
+        # one the record names: a record edited since never puts another key on a Host
+        have = (boxkeys.derived(slot.new) or [])[:2]
+        if not have or have != str(entry.get("new") or "").split()[:2]:
+            die(f"{slot.new} isn't the key the Box key rotation's record names as its new key (the record, or the key "
+                f"file, changed since): nothing was changed. Restore whichever changed, then run roster setup --rotate")
 
     conn = Connect()
     failed: dict[Member, str] = {}
     proven: list[Member] = []
     try:
-        news = {key: str(entries[str(key)]["new"]).split() for key in slots}
+        news = {key: (boxkeys.derived(slot.new) or [])[:2] for key, slot in slots.items()}
         for m in now:                            # pass 1: the new line on, and proven, Host by Host
             new = m.slot.new
             if not starting and conn.logs_in(m, new)[0]:
@@ -666,7 +700,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         for key, slot in slots.items():
             if not slot.swapped:
                 swap(slot, entries[str(key)], keep_old=True)
-            entries[str(key)]["swapped"] = True
+            entries[str(key)]["swapped"] = slot.done = True
         save_all()
         sync(groups, say)
         done, notes = [], {}

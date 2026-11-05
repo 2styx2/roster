@@ -130,7 +130,8 @@ def _open(path: Path):
                      | getattr(os, "O_BINARY", 0), 0o600)
     except OSError:
         raise refuse from None
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:     # a hard link is another file's name too
         os.close(fd)
         raise refuse
     return os.fdopen(fd, "r+", encoding="utf-8", newline="\n")
