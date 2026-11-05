@@ -1411,7 +1411,7 @@ pub const FUNCTIONS: &[Function] = &[
             p("tutorial", "Tutorial", "Its text and lessons."),
         ],
         summary: "Adds a tutorial, or replaces it",
-        doc: "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list` and `host.get`, `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
+        doc: "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list`, `host.get` and `mesh.status` (a small, made-up Mesh), `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
         returns: ("", ""),
         errors: &[("roster.tutor.set: \"ID\" isn't a name like …", "a bad `id`")],
         refused: &[
