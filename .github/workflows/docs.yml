@@ -26,7 +26,7 @@ permissions:
 jobs:
   build:
     name: Build the website and the PDF
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -59,7 +59,7 @@ jobs:
     name: Deploy to GitHub Pages
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       pages: write      # only this job publishes, and only from main
       id-token: write
