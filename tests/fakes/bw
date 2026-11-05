@@ -34,6 +34,8 @@
 # FAKE_BW_STATUS_RAW=TEXT: `bw status` prints TEXT instead (malformed output); FAKE_BW_STATUS_FAIL=TEXT: it fails
 #   with TEXT on stderr.
 # FAKE_BW_LOCK_FAIL=TEXT: `bw lock` fails with TEXT on stderr.
+# FAKE_BW_RAW=JSON: {"get item": TEXT, "list organizations": TEXT, "list collections": TEXT, "create item": TEXT}:
+#   that command prints TEXT instead (malformed output; `bw create item` still saves the item first).
 # FAKE_BW_ORGS=JSON: the organizations the account is in, each with its collections:
 #   [{"id", "name", "status": 2, "type": 2, "enabled": true, "collections": [{"id", "name", "readOnly": bool}]}]
 #   `bw list organizations` and `bw list collections [--organizationid ID]` print them as bw 2026.9.1 does: a
@@ -226,6 +228,8 @@ if a[0] == "lock":
         data["key"] = None; json.dump(data, open(data_file, "w"))
     print("Your vault is locked."); sys.exit()
 if not unlocked: print("Vault is locked.", file=sys.stderr); sys.exit(1)
+raw = json.loads(os.environ.get("FAKE_BW_RAW") or "{}")
+if " ".join(a[:2]) in raw and a[:2] != ["create", "item"]: print(raw[" ".join(a[:2])]); sys.exit()
 if a[0] == "sync":
     if os.environ.get("FAKE_BW_SYNC_FAIL"): fail(os.environ["FAKE_BW_SYNC_FAIL"])
     now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
@@ -260,7 +264,7 @@ if a[:2] == ["create", "item"]:
     with open(os.environ["FAKE_BW_ITEMS"], "w") as f:
         json.dump(items + [item], f)
     if os.environ.get("FAKE_BW_CREATE_HANG"): time.sleep(float(os.environ["FAKE_BW_CREATE_HANG"]))
-    print(json.dumps(item)); sys.exit()                    # like bw: the new item, password and all
+    print(raw.get("create item", json.dumps(item))); sys.exit()      # like bw: the new item, password and all
 if a[:2] == ["delete", "item"]:
     if os.environ.get("FAKE_BW_WRITE_FAIL"): fail(os.environ["FAKE_BW_WRITE_FAIL"])
     if not any(i["id"] == a[2] for i in items): fail("Not found.")

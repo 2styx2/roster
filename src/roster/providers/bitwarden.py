@@ -163,6 +163,9 @@ def open_session_dir(create=False):
             os.close(fd)
             fd = nfd
             _check_folder(fd, "/" + "/".join(real), not todo, home)
+        # the folder the walk ended on, by the last folder's rule: a link to "." (or one that ends on a folder already
+        # passed) was only checked by the looser rule for folders on the way (#492, T250)
+        _check_folder(fd, "/" + "/".join(real), True, home)
     except BaseException:
         if fd >= 0:
             os.close(fd)
@@ -382,15 +385,34 @@ def _save_by_name(f, data, key):
 
 
 def remove_session_file():
-    """Remove session_file() (a link itself, never what it points to): True if one was there."""
+    """Remove session_file() (a link itself, never what it points to): True if one was there. On Linux and macOS
+    through the folder's open handle, as it was saved (open_session_dir; #492, T250); by its name when that folder is
+    refused or can't be opened, so a lock still removes the key."""
     f = session_file()
     try:
-        f.unlink()
+        _remove_in_its_folder(f)
     except FileNotFoundError:
         return False
     except OSError as e:
         raise SessionFileFailed(f"couldn't remove {f} ({e.strerror or type(e).__name__})") from None
     return True
+
+
+def _remove_in_its_folder(f):
+    if WINDOWS:
+        f.unlink()
+        return
+    try:
+        fd = open_session_dir()
+    except FileNotFoundError:
+        raise
+    except (NotPrivate, OSError):                      # a folder roster won't save in: the key still goes
+        f.unlink()
+        return
+    try:
+        os.unlink(f.name, dir_fd=fd)                   # unlink(2) removes a link itself, never what it points to
+    finally:
+        os.close(fd)
 
 
 def saved_session(ctx):
@@ -602,9 +624,22 @@ def _bw_get(ctx, ref):
     if r.returncode != 0:
         return None, errtext(r, stdout=False), r.stderr or ""
     try:
-        return json.loads(r.stdout), "", ""
+        item = json.loads(r.stdout)
     except json.JSONDecodeError:
-        raise SecretError("couldn't read `bw get item` output") from None
+        item = None
+    if not _an_item(item):                                 # valid JSON of another shape too (#492, T250)
+        raise SecretError("couldn't read `bw get item` output")
+    return item, "", ""
+
+
+def _an_item(item):
+    """Whether ITEM is shaped as an item the readers below may index: an object, its login an object (or none), its
+    fields a list of objects (or none)."""
+    if not isinstance(item, dict):
+        return False
+    fields = item.get("fields")
+    return isinstance(item.get("login") or {}, dict) and (
+        fields is None or isinstance(fields, list) and all(isinstance(f, dict) for f in fields))
 
 
 def _found_ids(stderr):
@@ -702,8 +737,10 @@ def _bw_listed(ctx, *what):
         listed = json.loads(r.stdout) if r.returncode == 0 else None
     except json.JSONDecodeError:
         listed = None
-    if not isinstance(listed, list):
+    if r.returncode != 0:
         raise SecretError(f"`bw list {what[0]}` failed: {errtext(r) or f'exit {r.returncode}'}")
+    if not isinstance(listed, list) or not all(isinstance(x, dict) for x in listed):   # #492, T250
+        raise SecretError(f"couldn't read `bw list {what[0]}` output")
     return listed
 
 
@@ -794,13 +831,20 @@ def _bw_create(item, ctx):
             made = json.loads(r.stdout)
         except json.JSONDecodeError:
             made = {}
-        made = made if isinstance(made, dict) else {}
+        made = made if _a_made_item(made) else {}          # another shape: unreadable, found by name (#492, T250)
     ours = r is not None and bool(made.get("id"))         # bw's own answer named it (not a row found by name)
     if r is not None and not ours:                         # bw's answer didn't parse: find it, so it can be undone
         made = _found_by_name(ctx, name)
     if collection and not _in_collection(ctx, made, collection):
         _refused_collection(ctx, made, target, ours)
     return {"id": made["id"], "name": made.get("name", name), "target": target}
+
+
+def _a_made_item(made):
+    """Whether bw's create answer MADE is shaped as one: an object with a string id and, if it has them,
+    collectionIds a list."""
+    return isinstance(made, dict) and isinstance(made.get("id"), str) and isinstance(made.get("collectionIds", []),
+                                                                                    list)
 
 
 def _found_by_name(ctx, name):
