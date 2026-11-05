@@ -273,9 +273,16 @@ def login_problem(e, h, what="ssh"):
                        fix=f"fix the name in {h['name']}'s auth: in roster.yml, or rename the item in the vault")
     if isinstance(e, providers.SeveralItems):
         how = "are named" if e.exact else "match"
-        listed = "; ".join(f"'{m['name']}' (edited {m['revised'] or '?'}"
-                           + (f", {', '.join(m['uris'])}" if m["uris"] else "") + ")" for m in e.matches)
-        return Problem(SEVERAL_ITEMS, f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}",
+        listed = "; ".join(f"'{m['name']}'" + (f" ({about})" if (about := ", ".join(
+            ([f"edited {m['revised']}"] if m.get("revised") else []) + list(m["uris"]))) else "")
+            for m in e.matches)
+        total = getattr(e, "total", None)
+        if total:                               # bw found more than its login rows show (Q191 (p))
+            head = f"{total} vault items match '{e.item}' ({where}), some of them aren't logins"
+            text = head + (f": {listed}" if listed else "")
+        else:
+            text = f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}"
+        return Problem(SEVERAL_ITEMS, text,
                        {"matches": e.matches},
                        fix="delete or rename the extra items in the vault, or use the item's id in auth:")
     if isinstance(e, providers.NoField):

@@ -292,7 +292,7 @@ def test_roster_check_host_shows_the_failure_and_its_fix(box, capsys, monkeypatc
     out = capsys.readouterr().out
     lines = out.splitlines()
     assert lines[3].startswith("FAIL vault-item") and "[33]" in lines[3]
-    assert "fix:" in out and "2026-10-20" in out
+    assert "fix:" in out and "https://10.0.0.7" in out
     assert [ln.split()[:2] for ln in lines if ln.startswith("skip")] == [["skip", s] for s in STEPS[4:]]
     assert not [x for x in ALL_SECRETS if x in out]
     assert box.sshd.accepts == 0 and box.ssh_runs() == []

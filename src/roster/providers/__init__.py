@@ -117,11 +117,12 @@ class ItemNotFound(SecretError):
 
 
 class SeveralItems(SecretError):
-    """More than one item matches. matches: [{name, revised, uris}]; exact: they all have that exact name."""
+    """More than one item matches. matches: [{name, revised, uris}]; exact: they all have that exact name. total:
+    how many items match when that's more than MATCHES shows (Bitwarden: some of them aren't logins), else None."""
 
-    def __init__(self, message, item, matches, exact):
+    def __init__(self, message, item, matches, exact, total=None):
         super().__init__(message)
-        self.item, self.matches, self.exact = item, matches, exact
+        self.item, self.matches, self.exact, self.total = item, matches, exact, total
 
 
 class NoField(SecretError):

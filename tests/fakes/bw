@@ -6,7 +6,9 @@
 # FAKE_BW_FIELD_FAIL=TEXT: `bw get uri` / `bw get username` fail with TEXT on stderr.
 # FAKE_BW_STDOUT_LOG=FILE: one line per `bw get item|uri|username`: the field and where its stdout went (devnull, pipe).
 # `bw list items` prints each item whole, password, TOTP seed and notes too, as bw does (roster pipes it into its filter,
-#   Q191). FAKE_BW_LIST_RAW=TEXT: `bw list items` prints TEXT instead (malformed output).
+#   Q191). `--search TEXT` and `--collectionid ID` narrow it as bw does. FAKE_BW_LIST_RAW=TEXT: `bw list items`
+#   prints TEXT instead (malformed output). Items of any type (a Secure Note is type 2); `bw get item` matches every
+#   type, and several matches print bw's "More than one result" with each one's id a line.
 # `bw status` says lastSync: FAKE_BW_LAST_SYNC (an ISO time), or the last `bw sync`'s time once one ran (kept in
 #   FAKE_BW_STATE when it's set, else in FAKE_BW_SYNC_FILE). FAKE_BW_SYNC_FAIL=TEXT: `bw sync` fails with TEXT.
 # FAKE_BW_ITEMS=FILE: a JSON list of items to use instead of the ones below (read on every call). `bw create item`
@@ -242,7 +244,9 @@ if a[:2] == ["delete", "item"]:
 if a[:2] == ["list", "items"]:
     if "FAKE_BW_LIST_RAW" in os.environ: sys.stdout.write(os.environ["FAKE_BW_LIST_RAW"]); sys.exit()
     search = a[a.index("--search") + 1].lower() if "--search" in a else ""
-    print(json.dumps([i for i in items if search in i["name"].lower()])); sys.exit()
+    coll = a[a.index("--collectionid") + 1] if "--collectionid" in a else None
+    print(json.dumps([i for i in items if search in i["name"].lower()
+                      and (coll is None or coll in (i.get("collectionIds") or []))])); sys.exit()
 q = a[2]
 def stdout_was(what):
     """FAKE_BW_STDOUT_LOG: where this call's stdout goes, "devnull" or "pipe" (roster must never read an item)."""
@@ -256,11 +260,18 @@ def stdout_was(what):
         open(os.environ["FAKE_BW_STDOUT_LOG"], "a").write(f"{what} {where}\n")
 
 
+def several(hits):
+    """bw 2026.9.1's Response.multipleResults: its words, then one matching item's id a line (any item type)."""
+    print("More than one result was found. Try getting a specific object by `id` instead. The following objects were "
+          "found:" + "".join("\n" + i["id"] for i in hits), file=sys.stderr)
+    sys.exit(1)
+
+
 if a[:2] == ["get", "item"]:
     stdout_was("item")
     hits = [i for i in items if i["id"] == q] or [i for i in items if q.lower() in i["name"].lower()]
     if not hits: print("Not found.", file=sys.stderr); sys.exit(1)
-    if len(hits) > 1: print("More than one result was found. Try getting a specific object by `id` instead.", file=sys.stderr); sys.exit(1)
+    if len(hits) > 1: several(hits)
     print(json.dumps(hits[0])); sys.exit()
 if a[:2] in (["get", "uri"], ["get", "username"]):        # just that field, as bw prints it: never the password
     stdout_was(a[1])
@@ -271,7 +282,7 @@ if a[:2] in (["get", "uri"], ["get", "username"]):        # just that field, as 
     if len(hits) > 1:                                      # like bw's getCipher(id, filter): several narrowed by the field
         hits = [i for i in hits if field(i)] or hits
     if not hits: print("Not found.", file=sys.stderr); sys.exit(1)
-    if len(hits) > 1: print("More than one result was found. Try getting a specific object by `id` instead.", file=sys.stderr); sys.exit(1)
+    if len(hits) > 1: several(hits)
     value = field(hits[0])
     if not value: print(f"No {a[1]} available for this login.", file=sys.stderr); sys.exit(1)
     print(value); sys.exit()
