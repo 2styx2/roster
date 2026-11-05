@@ -1411,7 +1411,7 @@ pub const FUNCTIONS: &[Function] = &[
             p("tutorial", "Tutorial", "Its text and lessons."),
         ],
         summary: "Adds a tutorial, or replaces it",
-        doc: "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list` and `host.get`, `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
+        doc: "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list`, `host.get` and `mesh.status` (a small, made-up Mesh), `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
         returns: ("", ""),
         errors: &[("roster.tutor.set: \"ID\" isn't a name like …", "a bad `id`")],
         refused: &[
@@ -4080,6 +4080,16 @@ pub const TYPES: &[Type] = &[
                 "os",
                 "string",
                 "`os:` as roster.yml sets it: `\"windows\"` (setup, revoke and check run PowerShell there) or `\"posix\"`; `nil` if nothing does, which is posix.",
+            ),
+            f(
+                "key_type",
+                "string",
+                "The SSH key type its key Login uses (`key_type:`, resolved): `\"ed25519\"` (the default), `\"ecdsa\"` (P-384), `\"ecdsa-256\"`, `\"ecdsa-521\"`, `\"rsa\"` (3072 bits) or `\"rsa-BITS\"`. Only an `enroll` Host uses it.",
+            ),
+            f(
+                "key_file",
+                "string",
+                "This Box's private key file for `key_type` (a path, never the key itself).",
             ),
             f("title", "string", "One line; `\"\"` if unset."),
             f("description", "string", "One line; `\"\"` if unset."),

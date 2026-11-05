@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import __version__, aliases, boxsync, clihelp, jsonout, mesh
+from . import __version__, aliases, boxkeys, boxsync, clihelp, jsonout, mesh
 from .addhost import cmd_add
 from .claude import write_claude_files
 from .common import (
@@ -40,6 +40,7 @@ from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import (
     NameTaken,
     box_key_re,
+    box_public_keys,
     enroll,
     ensure_key,
     key_ere,
@@ -68,7 +69,7 @@ def cmd_init(args):
         try:
             how, value = newinventory.parse_how(args.inventory)
         except ValueError as e:
-            build_parser().error(f"--inventory {e}")
+            build_parser().error(f"--inventory: {e}")
     try:
         if how is None:
             if path.exists():
@@ -165,9 +166,23 @@ def cmd_setup(cfg, args):
     if not hosts:
         return 0
     warn_os(hosts)
+    override = getattr(args, "key_type", None)
+    if override:
+        if host is None:            # #471's review MED-1: a Host at a time, never a group or the whole Inventory
+            die("--key-type goes with --host NAME (one Host, to try a key type there): for more Hosts, set "
+                "key_type: on them, their group or defaults in roster.yml and run roster setup")
+        cfg, hosts = key_type_for_run(cfg, hosts, override)
     say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
-    ensure_key(cfg)
-    pub = public_key_line(cfg)
+    # T239: one key per key type the Hosts use (this Box's own when none), each made on first need
+    keys = boxkeys.in_use(cfg, hosts) or [boxkeys.box_key(cfg)]
+    for key in keys:
+        ensure_key(key, cfg["tag"])
+    pubs = {key.type.name: public_key_line(key, cfg["tag"]) for key in keys}
+
+    def pub(h):
+        return pubs[h["key_type"]]
+    # every key of this Box (LOW-4): a line of any of them under the new name is this Box's own, never "taken"
+    own = "|".join(key_ere(*words[:2]) for words in box_public_keys(cfg))
     no_answer = record_fingerprints(cfg, hosts)
     write_ssh_config(cfg)
 
@@ -192,7 +207,8 @@ def cmd_setup(cfg, args):
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if args.dry_run:
         for h in todo:
-            say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']})")
+            say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']}, "
+                f"{h['key_type']} key)")
         for h in retag:
             say(f"  would re-tag key on {h['name']}")
         return 0
@@ -202,7 +218,7 @@ def cmd_setup(cfg, args):
     taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not getattr(args, "force", False) else None
     if retag:
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub, taken), retag), strict=True):
+            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub(h), taken, own), retag), strict=True):
                 if why is None:
                     say(f"  ok    {h['name']} (re-tagged)")
                 elif isinstance(why, NoLine):   # (agent) nothing roster can re-tag there: done, said once
@@ -228,7 +244,9 @@ def cmd_setup(cfg, args):
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            futs = {ex.submit(enroll, h, pub, box_key_re(cfg), taken): h for h in todo}
+            mine = box_key_re(cfg)
+            # --key-type (MED-1): this run's line goes in beside roster.yml's type's, which the next sync offers again
+            futs = {ex.submit(enroll, h, pub(h), mine, taken, own, bool(override)): h for h in todo}
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
@@ -254,6 +272,12 @@ def cmd_setup(cfg, args):
         if narrowed:
             say(f"mesh         not applied with {'--only' if args.only else '--host'} (it covers the whole Mesh): "
                 "run `roster mesh`")
+        elif dropped := mesh.key_type_dropped(cfg):
+            # #471's review MED-2: never take a member's Mesh entries off as a side effect of setup
+            say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
+                "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
+                "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
+                "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
         else:
             say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
             failed.update({n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()})
@@ -265,6 +289,25 @@ def cmd_setup(cfg, args):
         for name, why in sorted(failed.items()):
             say(f"  {name}: {why}")
     return 1 if failed else 0
+
+
+def key_type_for_run(cfg, hosts, value):
+    """`setup --key-type TYPE` (T239): CFG and HOSTS with TYPE for HOSTS' key Logins, this run only (their key file,
+    and so the IdentityFile this run's ssh config gives them); a note says roster.yml still says otherwise."""
+    try:
+        kt = boxkeys.parse(value)
+    except ValueError as e:
+        die(f"--key-type: {e}")
+    file = str(boxkeys.key_file(cfg["key"], cfg["key_type"], kt.name))
+    changed = {h["name"]: {**h, "key_type": kt.name, "key_file": file} for h in hosts
+               if h["enroll"] and h["key_type"] != kt.name}
+    if changed:
+        say(f"note: --key-type {kt.name} for {plural(len(changed), 'host')} whose roster.yml says otherwise "
+            f"({', '.join(sorted(changed))}): its line goes in beside this Box's line of roster.yml's type, which "
+            f"stays, and the next `roster sync` offers roster.yml's type again; set key_type: {kt.name} in "
+            "roster.yml to keep it (the other line stays there until roster revoke, which takes both)")
+    cfg = {**cfg, "hosts": {**cfg["hosts"], **changed}}
+    return cfg, [changed.get(h["name"], h) for h in hosts]
 
 
 def warn_overlaps(cfg):
@@ -520,7 +563,9 @@ def cmd_check(cfg, args):
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
     if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
-        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
+        # (and T239: a Host whose key_type isn't Ed25519)
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items()
+                   if is_windows(cfg["hosts"][n]) or mesh.key_type_out(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if skipped:
@@ -812,6 +857,7 @@ def cmd_info(cfg, args):
                "key: ssh " + h["name"] if h["enroll"] else f"password: roster run {h['name']} -- CMD"),
               ("mac", h["mac"]),
               ("ssh login", login_label(h["ssh"])),
+              ("key", f"{h['key_type']} {h['key_file']}" if h["enroll"] else ""),       # T239
               ("login", login_label(h["login"]) + " (default for services)" if any(h["login"].values()) else ""),
               ("web UI", h["web"])]
     for k, v in fields:
@@ -956,7 +1002,7 @@ class NoLine:
 TAKEN = "name taken"        # retag_on: another key's line is under the new name there (T226): nothing changed
 
 
-def retag_on(h, pub, taken=None):
+def retag_on(h, pub, taken=None, own=None):
     """Re-tag this Box's key lines on key Host H with PUB's tag (T217), in place, found by its public key under any
     roster-managed name, over `ssh NAME` with the key itself: None when done, a NoLine when there's none to re-tag,
     TAKEN when TAKEN (the new name's tag_re) matches another key's line there, else why not. A Windows Host's
@@ -966,7 +1012,7 @@ def retag_on(h, pub, taken=None):
     try:
         if is_windows(h):
             done = winhost.over_key(h, "retag", key_ere(kind, key), pub=pub, taken=taken or "",
-                                    own=key_ere(kind, key) if taken else "")
+                                    own=(own or key_ere(kind, key)) if taken else "")
             from .errors import KEY_FILE
             for w in done.warnings:
                 print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
@@ -974,7 +1020,7 @@ def retag_on(h, pub, taken=None):
                 return TAKEN
             return NoLine(done.files[0] if done.files else "its key file") if done.noline else None
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                         "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken))]),
+                                         "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken, own))]),
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
         return str(e)
@@ -1001,6 +1047,16 @@ def other_names(h, tag_re, names):
 def remove_script(tag_re, user):
     """The POSIX key-removal command for the Login's USER: sh with the script as its argument."""
     return "sh -c " + shlex.quote(remove_key_script(tag_re, user))
+
+
+def key_files(cfg):
+    """This Box's key files for CFG's Inventory, to delete once revoke is done: its own key's, and every other key
+    type's it has (T239)."""
+    out = [str(cfg["key"]), str(cfg["pub"])]
+    for key in boxkeys.all_keys(cfg):
+        if key.key != cfg["key"] and (key.key.exists() or key.pub.exists()):
+            out += [str(key.key), str(key.pub)]
+    return out
 
 
 def revoke_line(label, h, why):
@@ -1044,7 +1100,7 @@ def cmd_revoke(cfg, args):
             "roster.yml has lost the key (`roster revoke` without --only names them then).")
     else:
         from .inventories import unnamed_from_elsewhere
-        files = [str(cfg["key"]), str(cfg["pub"])]
+        files = key_files(cfg)
         # never another roster.yml's config.d/roster (#371): its Hosts still need it
         if unnamed_from_elsewhere() is None:
             files.append(str(ssh_config_file()))
@@ -1131,7 +1187,7 @@ def cmd_revoke_all(args):
             revoke_line(f"{label}: ", h, why)
     files = []
     for _, cfg, _ in plan:
-        files += [str(cfg["key"]), str(cfg["pub"])]
+        files += key_files(cfg)
     files += [str(ssh_config_file(name)) for _, name, _ in targets if ssh_config_file(name).is_file()]
     files += [str(key_name_file(name)) for _, name, _ in targets if key_name_file(name).is_file()]
     from .common import ssh_index_file
@@ -1610,6 +1666,7 @@ def main(argv=None):
         os._exit(0)
     finally:
         Parser.json_errors = False
+        Parser.typed, Parser.root = [], None
 
 
 class Parser(argparse.ArgumentParser):
@@ -1618,16 +1675,32 @@ class Parser(argparse.ArgumentParser):
     roster's own --help lists the commands in groups (clihelp.GROUPS) before its options."""
     json_errors = False
     commands_text = ""
+    typed: list[str] = []               # the words of this command line (_main): no usage error repeats one
+    root: "Parser | None" = None        # roster's own parser, for the names that may be repeated
 
     def error(self, message):
-        # a value typed onto a flag that takes none (`roster vault bw --write=VALUE`) may be a password: never repeat it
-        message = re.sub(r"ignored explicit argument '.*'", "ignored explicit argument (not repeated)", message)
-        message = clihelp.suggest(message, self.all_options())
+        # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
+        # password or a session token: no usage error repeats one (#402 N3, T235 #460)
+        root = Parser.root or self
+        message = clihelp.usage_error(message, Parser.typed, root.names(), self.all_options())
         if Parser.json_errors:
             jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")
             sys.exit(2)
         self.print_usage(sys.stderr)
         self.exit(2, f"{self.prog}: error: {message}\n(`{self.prog} --help` shows how)\n")
+
+    def names(self):
+        """Every name roster's parsers know (options, commands, choices): a typed one may be repeated."""
+        found = set()
+        for a in self._actions:
+            found.update(a.option_strings)
+            if isinstance(a, argparse._SubParsersAction):
+                found.update(a.choices)
+                for s in a.choices.values():
+                    found |= s.names()
+            elif a.choices:
+                found.update(str(c) for c in a.choices)
+        return found
 
     def all_options(self):
         """Every --option of this parser and its commands' (an unknown one is reported by roster's own parser)."""
@@ -1683,6 +1756,9 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
     s.add_argument("--force", action="store_true", help="on a renamed Box, go ahead on a Host where another Box's "
                    "key line has the new name (its line is then this Box's to replace or revoke)")
+    s.add_argument("--key-type", metavar="TYPE", help="with --host: try this SSH key type there, over roster.yml's "
+                   "key_type: (ed25519, ecdsa, ecdsa-256, ecdsa-521, rsa, rsa-BITS), for this run only; its line goes "
+                   "in beside the one of roster.yml's type, which stays. Set key_type: to keep it")
     sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
     s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
                        "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
@@ -1869,7 +1945,8 @@ def command_parser(parser, words):
     for i, w in enumerate(words):
         found = next((a.choices for a in parser._actions if isinstance(a, argparse._SubParsersAction)), {})
         if w not in found:
-            parser.error(f"no help for {' '.join(words[:i + 1])!r}: `roster help` lists the commands")
+            lists = f"`roster help {' '.join(words[:i])}` lists its commands" if i else "`roster help` lists the commands"
+            parser.error(f"no help for that {clihelp.HIDDEN}: {lists}")
         parser = found[w]
     return parser
 
@@ -1891,6 +1968,7 @@ def inventory(args):
 
 def _main(argv=None):
     parser = build_parser()
+    Parser.typed, Parser.root = list(argv or []), parser
     args, extra = parser.parse_known_args(argv)
     passthrough = args.cmd == "vault" and args.vault_cmd in ("bw", "op")
     if extra and passthrough:                  # options before the tool's command are its own: its allowlist judges them, unrepeated

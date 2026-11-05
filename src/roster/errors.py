@@ -197,6 +197,11 @@ OP_NEEDS_WRITE = 196        # an op command that changes the vault or the accoun
 OP_NOT_ALLOWED = 197        # an op command or option before it that roster vault op doesn't know, or --write among op's own
 OP_REFUSED = 198            # never run: `op run`/`op plugin run` (another program with the sign-in), --session, --config
 
+# The SSH key type (T239, #436, decision Q200; catalog rows 261-263)
+KEY_TYPE_FIPS = 199         # check HOST: the Host refused this Box's Ed25519 key and offers only NIST algorithms (FIPS)
+MESH_KEY_TYPE = 200         # a note, not an error: a Host whose key_type isn't ed25519 is left out of the Mesh
+KEY_TYPE_MISMATCH = 201     # setup: the file a key type's key goes in holds a key of another type; nothing was made
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

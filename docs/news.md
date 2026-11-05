@@ -4,6 +4,24 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### New
+
+**CLI**
+
+- **FIPS-mode Hosts log in by key: `key_type:` picks the SSH key type** (#436): a Host with FIPS mode on never takes an Ed25519 key, so `roster setup` used to install one it would refuse. Set `key_type: ecdsa` (P-384; or `ecdsa-256`, `ecdsa-521`, `rsa`, `rsa-4096`) at the top level, on `defaults`, a group or one Host. This Box keeps one key per type (`~/.ssh/roster_ecdsa` beside `~/.ssh/roster_ed25519`, the same tag), `roster sync` gives each Host its own type's `IdentityFile`, `setup` installs it (a changed type replaces the old key), and `revoke` takes every type off. `roster setup --host NAME --key-type TYPE` tries one on a Host for a run (beside the line that works); a type change drops the old key only once the new one logs in; `roster hosts NAME` shows a Host's key type and file. `roster check HOST` on a Host that refuses Ed25519 and offers only NIST algorithms says so (199) and suggests `key_type: ecdsa`. Without `key_type:` nothing changes. The Mesh stays Ed25519 for now and leaves such a key Host out (200); `roster setup` never takes a Mesh member's entries off for it (an explicit `roster mesh` does). See [FIPS Hosts](adding-hosts.md#fips-hosts).
+
+**App**
+
+- **`:tutor topology` teaches reach** (#233): the tutorial's demo Inventory has a small, made-up Mesh now, so the Topology tutor's third lesson, "Who reaches whom", lights up what a Host reaches on the map and reads its details: `demo-01` reaches 3 Hosts directly, and `demo-05` is Mesh pending because it didn't answer the last apply. Nothing on the demo connects anywhere. A Plugin's tutorial can use the same Mesh: on the demo, roster serve answers `mesh.status` too (plain, `grouped` and `brief`, as real serve does).
+
+### Security
+
+**CLI**
+
+- **A usage error never repeats what you typed** (#460): a vault session token typed in the wrong place (`roster --session TOKEN vault op -- whoami`) used to come back on stderr as `invalid choice: 'TOKEN'`, and so did a value in an unknown option (`--session=TOKEN`), an ambiguous one, a number roster couldn't read, a flag that takes none, an unknown `roster help` topic or an `init --inventory` value that isn't one of its forms (a clone URL with a token in it). Now no value you typed is repeated (only roster's own names), whatever argparse's wording around it: the error names the place (`argument COMMAND`, `argument --port`) and what it takes, or the nearest command (`roster hots`: did you mean `hosts`?), and says the value is "not repeated", in `--json` errors too. `--session` typed at roster says that vault bw and vault op take the session from their environment. It still exits 2.
+
 ## v0.6.0
 
 ### New

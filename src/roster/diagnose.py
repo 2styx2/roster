@@ -19,6 +19,7 @@ from .errors import Problem, login_problem, no_user, unknown_provider, vault_pro
 from .providers import PROVIDERS
 from .sshops import (
     fingerprint,
+    handshake,
     host_block,
     in_ssh_config,
     left_out,
@@ -287,7 +288,9 @@ def step_host_key(ctx):
                           f"`roster setup --host {h['name']}` to record it")
     sock, ctx["sock"] = ctx["sock"], None
     try:
-        key = offered_host_key(sock, list(recorded), timeout=CONNECT_TIMEOUT)
+        key, kex = handshake(sock, list(recorded), timeout=CONNECT_TIMEOUT)
+        # T239: no curve25519 kex and no Ed25519 host key (recorded or offered): what a FIPS-mode Host offers
+        ctx["nist_only"] = kex.startswith("ecdh-sha2-nistp") and "ssh-ed25519" not in {*recorded, key.get_name()}
     except (paramiko.SSHException, OSError, EOFError) as e:
         if not isinstance(e, paramiko.SSHException) or "Incompatible" not in str(e):
             raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
@@ -341,7 +344,7 @@ def step_auth(ctx):
             secret = None
         if secret:
             details = details.replace(secret, "****")
-    raise login_failure(h, password, details, ctx.get("limited"), ctx.get("resolved"))
+    raise login_failure(h, password, details, ctx.get("limited"), ctx.get("resolved"), ctx.get("nist_only", False))
 
 
 STOP_POLL = 0.1            # s: how soon a stopped check notices it while its ssh logs in
@@ -405,8 +408,9 @@ def end_process(proc):
     proc.wait()                             # SIGKILL can't be refused: this returns
 
 
-def login_failure(h, password, stderr, limited=(), resolved=None):
-    """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions)."""
+def login_failure(h, password, stderr, limited=(), resolved=None, nist_only=False):
+    """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions).
+    NIST_ONLY: the host-key step saw the Host offer only NIST key exchange and host keys (T239)."""
     name, user = h["name"], h["ssh"]["user"]
     for line in stderr.splitlines():
         if line.startswith("roster askpass: ["):
@@ -424,6 +428,12 @@ def login_failure(h, password, stderr, limited=(), resolved=None):
         if password:
             return Problem(errors.PASSWORD_REFUSED, f"{name} refused the password for user {user}",
                            fix="check the vault item: the password may have been changed on the Host, or the user is wrong",
+                           details=stderr)
+        if nist_only and h.get("key_type") == "ed25519":
+            return Problem(errors.KEY_TYPE_FIPS, f"{name} refused this Box's Ed25519 key and offers only NIST "
+                           "algorithms (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes "
+                           "Ed25519", fix=f"set key_type: ecdsa for {name} (or its group) in roster.yml, then run "
+                           f"`roster setup --host {name}`: re-running setup with an Ed25519 key changes nothing",
                            details=stderr)
         fix = f"run `roster setup --host {name}`, or set enroll: false"
         if is_windows(h):               # sshd ignores a key file with the wrong permissions or encoding, silently

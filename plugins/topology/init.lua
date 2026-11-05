@@ -390,15 +390,16 @@ roster.help.set("topology", {
 })
 
 -- `:tutor topology` (#233): the map, learned by using it on the tutorial's demo Inventory. Its
--- steps name the demo's Hosts and groups (demo-01 to demo-06, demo-lab and demo-office). The demo
--- answers no Mesh, so the tutorial teaches what the map shows without one and says so.
+-- steps name the demo's Hosts and groups (demo-01 to demo-06, demo-lab and demo-office), and its
+-- made-up Mesh (the demo's mesh.status, #233): demo-01 to demo-03 meshed, demo-01 reaching demo-05,
+-- which didn't answer the last apply.
 roster.tutor.set("topology", {
   title = "Topology tutor",
-  summary = "Learn the Topology view: open the map, show one group, go from a node to its Host",
+  summary = "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
   intro = table.concat({
     "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.",
     "",
-    "The demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+    "The map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
   }, "\n"),
   lessons = {
     {
@@ -423,12 +424,28 @@ roster.tutor.set("topology", {
         { id = "session", text = "Open the map again, find `demo-03` and press Enter: a Session to it opens.", on = { event = "session_open", host = "demo-03" } },
       },
     },
+    {
+      title = "Who reaches whom",
+      text = "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+      steps = {
+        {
+          id = "reach",
+          text = "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly.",
+          on = { event = "command", id = "info", arg = "demo-01" },
+        },
+        {
+          id = "pending",
+          text = "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why.",
+          on = { event = "command", id = "info", arg = "demo-05" },
+        },
+      },
+    },
   },
   outro = table.concat({
-    "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.",
+    "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.",
     "",
     "- `f` filters the map by group, kind or state, and `t` lists every node and edge.",
-    "- On your own Inventory, select a Host to light up what it can reach and what can reach it.",
+    "- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.",
     "- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
   }, "\n"),
 })
