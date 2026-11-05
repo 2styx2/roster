@@ -8,6 +8,7 @@ import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
 import { HOST_KEY_API_VERSION } from "./backend/types";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { memoryPlatform } from "./platform/memory";
 
 const hosts = makeHosts(12);
 const HOST = hosts.hosts.find((h) => h.reviewed && h.enroll)!;
@@ -169,6 +170,26 @@ describe("a Host whose host key roster hasn't seen", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: `Session ${HOST.name}` })).toBeNull());
     expect(sessions().queryByRole("treeitem", { name: new RegExp(`^${HOST.name}`) })).toBeNull();
     expect(trusted).toEqual([]);
+  });
+
+  it("lists a Host under Recent only once its Session reaches a shell, not when its question is cancelled (round 21)", async () => {
+    const { backend } = backendWith();
+    const user = userEvent.setup();
+    const platform = memoryPlatform({ state: { version: 1, recentHosts: [], folded: [] } });
+    render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
+    await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
+    await screen.findByRole("main", { name: /workspace/i });
+    await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
+    await question();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("group", { name: `Session ${HOST.name}` })).toBeNull());
+    // Never logged in: no history, so the idle pane still starts from the Inventory.
+    expect(screen.queryByRole("region", { name: "Recent" })).toBeNull();
+    await user.keyboard(`{Control>} {/Control}:connect ${OTHER.name}{Enter}`);
+    await within(pane(OTHER.name)).findByText(`Connected to ${OTHER.name}`, { exact: false });
+    await user.keyboard(`{Control>} {/Control}:close{Enter}`);
+    const recent = await screen.findByRole("region", { name: "Recent" });
+    expect(Array.from(recent.querySelectorAll(".recent-name")).map((n) => n.textContent)).toEqual([OTHER.name]);
   });
 
   it("refuses a key that changed between the question and the trust", async () => {
