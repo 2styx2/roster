@@ -119,7 +119,7 @@ def _ready(ctx):
     if manual_unlock():
         raise VaultLocked(f"{NAME} database is locked - unlock it first")
     if not ctx.interactive:
-        raise SecretError(f"{NAME} database is locked and there's no terminal to ask for its master password")
+        raise VaultLocked(f"{NAME} database is locked and there's no terminal to ask for its master password")
     _unlock(ctx.ask(f"{NAME} master password: "), ctx)
 
 

@@ -284,7 +284,7 @@ def step_host_key(ctx):
     if not recorded:
         raise Problem(errors.HOST_KEY_UNKNOWN, f"no recorded host key for {h['name']}",
                       fix=f"check the Host's fingerprint (console, or its owner), then run "
-                          f"`roster setup --only {h['name']}` to record it")
+                          f"`roster setup --host {h['name']}` to record it")
     sock, ctx["sock"] = ctx["sock"], None
     try:
         key = offered_host_key(sock, list(recorded), timeout=CONNECT_TIMEOUT)
@@ -309,7 +309,7 @@ def changed_key(h, recorded, key):
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
                        f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
-                       f"and run `roster setup --only {h['name']}`",
+                       f"and run `roster setup --host {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 
 
@@ -425,7 +425,7 @@ def login_failure(h, password, stderr, limited=(), resolved=None):
             return Problem(errors.PASSWORD_REFUSED, f"{name} refused the password for user {user}",
                            fix="check the vault item: the password may have been changed on the Host, or the user is wrong",
                            details=stderr)
-        fix = f"run `roster setup --only {name}`, or set enroll: false"
+        fix = f"run `roster setup --host {name}`, or set enroll: false"
         if is_windows(h):               # sshd ignores a key file with the wrong permissions or encoding, silently
             fix += (": on a Windows Host it also checks the key file (an administrator's is "
                     "%ProgramData%\\ssh\\administrators_authorized_keys) for permissions and an encoding sshd ignores")
@@ -571,7 +571,7 @@ def verify_host_key(ctx):
     if not recorded:
         raise Problem(errors.HOST_KEY_UNKNOWN, f"no recorded host key for {h['name']} at {h['ip']}",
                       fix=f"check the Host's fingerprint (console, or its owner) and record it with `roster setup "
-                          f"--only {h['name']}` after the change, or make this change by hand in roster.yml")
+                          f"--host {h['name']}` after the change, or make this change by hand in roster.yml")
     sock, ctx["sock"] = ctx["sock"], None
     try:
         t = start_transport(sock, list(recorded), timeout=CONNECT_TIMEOUT)
@@ -668,7 +668,7 @@ def verify_auth(ctx):
             raise Problem(errors.PASSWORD_REFUSED, f"{h['name']} refused the password for user {user}",
                           fix="check the user and the vault item: the password may have changed on the Host") from None
         raise Problem(errors.KEY_REFUSED, f"{h['name']} didn't accept this box's key for user {user}",
-                      fix=f"check the user, or run `roster setup --only {h['name']}` after the change") from None
+                      fix=f"check the user, or run `roster setup --host {h['name']}` after the change") from None
     except (paramiko.SSHException, OSError, EOFError) as e:
         raise Problem(errors.AUTH_FAILED, f"logging in to {h['name']} failed", fix="see the details",
                       details=f"{type(e).__name__}: {e}") from None
