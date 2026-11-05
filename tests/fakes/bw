@@ -20,6 +20,7 @@
 # FAKE_BW_ACCOUNT=JSON: the account to sign in to - email, password, methods (authenticator, email, yubikey,
 #   webauthn, duo), codes {method: code}, new_device + new_device_code, rate_limited, unreachable,
 #   client_id + client_secret, sso ("ok", "fail", "hang", "tde").
+# `bw --version`: 2026.9.1, as install.sh's `bw --version` reads it.
 # FAKE_ARGV_LOG=FILE: every call's full argv, one JSON list per line.
 # FAKE_BW_ENV_LOG=FILE: every call's environment variable names (never their values), one JSON list per line.
 # FAKE_BW_MAIL=FILE: one line per code bw "emailed" (two-step email, new-device OTP).
@@ -38,6 +39,9 @@ os.environ.get("FAKE_BW_ENV_LOG") and open(os.environ["FAKE_BW_ENV_LOG"], "a").w
 nointeraction = "--nointeraction" in argv
 a = [x for x in argv if x not in ("--nointeraction", "--raw")]
 SESSION = "fake-session-key"
+if a == ["--version"]:
+    print("2026.9.1")
+    sys.exit()
 items = [
  {"id": "11111111-aaaa", "name": "Orion servers", "login": {"username": "deploy", "password": "pw-deploy"},
   "fields": [{"name": "dbadmin", "value": "pw-dbadmin"}]},
