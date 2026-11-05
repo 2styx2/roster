@@ -93,6 +93,9 @@ scripts/            gen-serve-api.py: docs/serve-api.md's method tables from ser
                     (crates/roster-core/tests/fixtures/repaints.json, repaint-fuzz.json; Q151 (l))
                     stress.sh: one roster-core test binary many times at once beside busy loops, to find the
                     tests that fail only under load (docs/app/dev/testing.md)
+                    check-local.sh: the checks CI's pull request jobs run, here, for what you changed
+                    (--quick for a pre-push hook, --full for all; "Checking before you push");
+                    ci_changes.py: which CI jobs a pull request's files need ("What CI runs when")
 docs/               team guides: setting up a new box, adding hosts; docs/app/ for the app, docs/adr/ for decisions
 tests/              pytest suite + fake password-manager CLIs
 app/                the roster app (frontend + app/src-tauri); its Rust core is crates/roster-core (app/README.md)
@@ -110,17 +113,32 @@ A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) an
 
 | A pull request that touches | runs |
 |---|---|
-| `src/`, `tests/`, `pyproject.toml`, `uv.lock` (the CLI) | pytest on Linux and on Windows |
+| `src/`, `tests/` (the CLI) | pytest on Linux |
+| Windows-specific code: `src/roster/win*.py`, `conpty.py`, `askpass.py`, `common.py`, `changes.py`, `diagnose.py`, `providers/bw_login.py`, `tests/test_windows*.py`, `tests/conftest.py`, `tests/fakes/`, `tests/durations-windows.json`, `pyproject.toml`, `uv.lock`, `.python-version`, `install.ps1` | pytest on Linux and on Windows |
 | `app/` (the frontend) | the frontend, Rust and pytest on Linux (`tests/` checks `app/src` files) |
 | `crates/`, `Cargo.toml`, `Cargo.lock`, `app/src-tauri/`, `app/package*.json` | the frontend, Rust, pytest on Linux, and the Windows and Linux release builds |
 | `plugins/` | the frontend and Rust |
 | `docs/`, `examples/`, a `*.md` at the root | the frontend, Rust and pytest on Linux (each checks the docs) |
 | `tests/vectors/` | pytest on Linux and Windows, the frontend and Rust |
-| `install.sh`, `update.sh`, `uninstall.sh`, `install-lib.sh`, `scripts/test-install.sh` | pytest on Linux and Windows, and the install test (`scripts/test-install.sh` on Ubuntu and Fedora, in containers) |
+| `install.sh`, `update.sh`, `uninstall.sh`, `install-lib.sh`, `scripts/test-install.sh` | pytest on Linux, and the install test (`scripts/test-install.sh` on Ubuntu and Fedora, in containers) |
 | `.github/workflows/release.yml` | the release builds (and release.yml's own dry run, [releasing.md](releasing.md)) |
 | `.github/workflows/ci.yml`, `scripts/`, or anything else | everything |
 
+Windows' pytest (three shards, 6 to 8 minutes each) runs on a pull request only when it touches Windows-specific code (`WINDOWS_PATHS` in `scripts/ci_changes.py`, T237); every push to `dev` or `main`, a tag, the nightly run and a run by hand run it. So a Windows-only break in a pull request that touches other files shows on `dev`'s push after the merge, never in a release (a release is tagged from `main`, whose push runs it too): fix it on `dev` before the next release. A module that gains a Windows branch of its own (`if WINDOWS:`, `os.name == "nt"`) goes on that list in the same pull request.
+
 The install test needs the network (apt or dnf, astral.sh, Bitwarden), so off a pull request it runs only on Monday's nightly run and on a run by hand, not on every push or tag (decision Q199). `Checks` (ruff, pyright, one version, the lua-language-server checks and the wheel build) always runs: one job, since each takes seconds, so a run takes fewer of the free plan's 20 parallel jobs (T233). The release builds, `App Windows release build` and `App Linux release build`, run on a pull request only when it touches what they build; every push to `dev` runs them. A pull request's older run is cancelled when a newer push comes; a push to `main` or `dev` runs to the end. The Rust jobs restore the cache `dev`'s last run saved and don't save their own, so pull requests don't push `dev`'s cache out of the 10 GB GitHub keeps. The last job, `CI`, always reports: green when every job that ran passed, red when one failed or was cancelled, so branch protection can require that one name.
+
+### Checking before you push
+
+`scripts/check-local.sh` runs here what CI's pull request jobs run for your changes (the same `scripts/ci_changes.py`, over your commits since `origin/dev` and what isn't committed yet): ruff and pyright always, `pytest -n auto` when the CLI's area changed, `npm run check` in `app/` when the frontend's did, and `cargo fmt`, `clippy` and `cargo test` when the Rust's did. `--quick` keeps to ruff, pyright and pytest, for a pre-push hook; `--full` runs every check whatever changed; `--base REF` compares with another branch. It ends with a one-line summary and exits non-zero when a check fails. It says what only CI can run (the Windows shards, the install test, the release builds), and when `pwsh` isn't on PATH, that pytest skipped the PowerShell-script tests and how to install PowerShell. It runs in bash on Linux, WSL and macOS.
+
+To run it on every push, add this line at the end of your clone's `.git/hooks/pre-push` (create the file with a `#!/usr/bin/env bash` line first if you have none, and `chmod +x` it):
+
+```sh
+"$(git rev-parse --show-toplevel)/scripts/check-local.sh" --quick </dev/null || exit 1
+```
+
+`git push --no-verify` skips the hook once. roster never installs or changes a hook for you, and never sets `core.hooksPath`: your hook may hold checks of your own.
 
 ## Languages and types
 

@@ -32,13 +32,25 @@ def test_the_install_test_runs_weekly_by_hand_and_on_the_install_scripts():
     assert ci_changes.areas("push", [], weekday=1) == NOT_INSTALL
     assert ci_changes.areas("workflow_dispatch", [], weekday=3) == ALL
     for f in ("install.sh", "update.sh", "uninstall.sh", "install-lib.sh", "scripts/test-install.sh"):
-        assert run(f) == {"cli", "windows", "install"}, f
+        assert run(f) == {"cli", "install"}, f      # their tests skip on Windows (no bash there)
     assert "install" not in run("src/roster/cli.py", "app/src/App.tsx", "docs/news.md")
 
 
-def test_a_cli_only_pr_skips_the_app_and_the_release_builds():
-    assert run("src/roster/cli.py", "tests/test_cli.py") == {"cli", "windows"}
-    assert run("pyproject.toml", "uv.lock") == {"cli", "windows"}
+def test_a_cli_only_pr_runs_pytest_on_linux_alone():
+    # T237 (#464): the Windows shards run on dev's push; a PR runs them only when it touches Windows-specific code
+    assert run("src/roster/cli.py", "tests/test_cli.py") == {"cli"}
+    assert run("src/roster/serve.py", "src/roster/providers/bw.py", "tests/test_mesh.py") == {"cli"}
+
+
+def test_a_pr_touching_windows_specific_code_runs_the_windows_shards_too():
+    for f in ("src/roster/winfile.py", "src/roster/winhost.py", "src/roster/winpipe.py", "src/roster/winsomething.py",
+              "src/roster/conpty.py", "src/roster/askpass.py", "src/roster/common.py", "src/roster/changes.py",
+              "src/roster/diagnose.py", "src/roster/providers/bw_login.py",
+              "tests/test_windows.py", "tests/test_windows_hosts.py", "tests/conftest.py",
+              "tests/durations-windows.json", "tests/fakes/ssh", "tests/fakes/windows/acl.py",
+              "pyproject.toml", "uv.lock", ".python-version", "install.ps1"):
+        assert run(f) == {"cli", "windows"}, f
+    assert run("src/roster/cli.py", "src/roster/winpipe.py") == {"cli", "windows"}
 
 
 def test_an_app_only_pr_skips_windows_python_and_the_release_builds():
@@ -74,7 +86,8 @@ def test_shared_files_and_ci_itself_run_everything():
 
 
 def test_both_sides_run_the_union():
-    assert run("src/roster/serve.py", "app/src/App.tsx") == {"cli", "windows", "frontend", "rust"}
+    assert run("src/roster/serve.py", "app/src/App.tsx") == {"cli", "frontend", "rust"}
+    assert run("src/roster/winpipe.py", "app/src/App.tsx") == {"cli", "windows", "frontend", "rust"}
 
 
 def test_other_workflows_run_nothing_here():
@@ -83,7 +96,7 @@ def test_other_workflows_run_nothing_here():
 
 def test_main_writes_the_github_outputs(tmp_path):
     files = tmp_path / "files"
-    files.write_text("src/roster/cli.py\n\n")
+    files.write_text("src/roster/cli.py\nsrc/roster/winhost.py\n\n")
     out = tmp_path / "out"
     assert ci_changes.main(["--event", "pull_request", "--files", str(files), "--output", str(out)]) == 0
     lines = dict(line.split("=", 1) for line in out.read_text().splitlines())

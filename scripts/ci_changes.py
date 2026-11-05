@@ -8,7 +8,7 @@ FILE holds one changed path per line (a pull request's diff against its base). O
 pull request each changed path adds the areas that test it, and Python 3.12 alone runs:
 
     cli       pytest on Linux
-    windows   pytest on Windows
+    windows   pytest on Windows: only for Windows-specific code (WINDOWS_PATHS); every push to dev runs it
     frontend  tsc, ESLint, Vitest, e2e, the bundle budget
     rust      fmt, clippy, cargo test on Linux and roster-core's tests on Windows
     release   the Windows and Linux release builds
@@ -37,16 +37,29 @@ WEEKLY = 1                      # isoweekday: the nightly run that also runs the
 PYTHONS_PR = ["3.12"]
 PYTHONS_ALL = ["3.10", "3.12", "3.13"]
 
+# What a Windows-only break could hide in (T237, #464): the native-Windows modules (named pipes, ConPTY, ACLs, the
+# os: windows Host scripts), the modules with a Windows branch of their own (common.py's program lookup, kill_tree
+# and git; askpass's pipe; changes.py's and diagnose.py's process trees; bw_login's pseudoconsole), the stand-in
+# CLIs and their .cmd shims (tests/fakes, conftest.py), the Windows tests and shard times, and the environment.
+WINDOWS_PATHS = (
+    "src/roster/win*.py", "src/roster/conpty.py", "src/roster/askpass.py", "src/roster/common.py",
+    "src/roster/changes.py", "src/roster/diagnose.py", "src/roster/providers/bw_login.py",
+    "tests/test_windows*.py", "tests/conftest.py", "tests/durations-windows.json", "tests/fakes/*",
+    "pyproject.toml", "uv.lock", ".python-version", "install.ps1",   # no install.ps1 yet: when one comes
+)
+
 # First match wins.
 RULES: list[tuple[tuple[str, ...], frozenset[str]]] = [
-    # what test-install.sh runs (pytest's tests/test_install_scripts.py reads them too)
+    # what test-install.sh runs (pytest's tests/test_install_scripts.py reads them too, and skips on Windows)
     (("install.sh", "update.sh", "uninstall.sh", "install-lib.sh", "scripts/test-install.sh"),
-     frozenset({"cli", "windows", "install"})),
+     frozenset({"cli", "install"})),
     ((".github/workflows/ci.yml", "scripts/*"), EVERYTHING),
     ((".github/workflows/release.yml",), frozenset({"release"})),
     ((".github/*",), frozenset()),                                  # the other workflows run themselves
     (("tests/vectors/*",), frozenset({"cli", "windows", "frontend", "rust"})),
-    (("src/*", "tests/*", "pyproject.toml", "uv.lock", ".python-version"), frozenset({"cli", "windows"})),
+    # Windows-specific code (T237, #464): the Windows shards run on a PR only for these, and on every push to dev
+    (WINDOWS_PATHS, frozenset({"cli", "windows"})),
+    (("src/*", "tests/*"), frozenset({"cli"})),
     (("app/src-tauri/*",), frozenset({"cli", "rust", "release"})),
     (("app/package.json", "app/package-lock.json"), frozenset({"cli", "frontend", "rust", "release"})),
     (("app/*",), frozenset({"cli", "frontend", "rust"})),
