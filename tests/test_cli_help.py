@@ -361,6 +361,45 @@ def test_init_never_repeats_a_token_named_file_that_is_there(capsys, tmp_path, m
     assert (tmp_path / OP_SESSION).read_text() == "groups: {}\n"
 
 
+# #494 item 1 (#489 L3): folders that exist are skipped only in an absolute value. A token typed as a relative
+# folder is hidden even when an older roster's `-c TOKEN/roster.yml init` already made that folder.
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["inv", "which"]])
+def test_a_token_named_folder_that_exists_is_still_hidden(capsys, tmp_path, monkeypatch, command):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / OP_SESSION).mkdir()
+    out = _run(capsys, ["-c", f"{OP_SESSION}/roster.yml", *command])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert "(not repeated)" in out, out
+
+
+def test_init_refuses_a_token_named_folder_that_exists(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / OP_SESSION).mkdir()
+    out = _run(capsys, ["-c", f"{OP_SESSION}/roster.yml", "init", "--blank"])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert "looks like a token" in out, out
+    assert list((tmp_path / OP_SESSION).iterdir()) == []
+
+
+def test_a_long_real_folder_in_an_absolute_path_is_shown(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    real = tmp_path / "a-really-long-real-folder-name-for-lab-inventories"
+    real.mkdir()
+    assert f"{real / 'roster.yml'} not found" in _run(capsys, ["-c", str(real / "roster.yml"), "hosts"])
+    out = _run(capsys, ["-c", str(real / "roster.yml"), "init", "--blank"])
+    assert f"wrote {real / 'roster.yml'}, a blank Inventory" in out, out
+
+
+@pytest.mark.parametrize("command", [["hosts"], ["init", "--blank"]])
+def test_a_token_after_the_absolute_cwd_is_hidden(capsys, tmp_path, monkeypatch, command):
+    (tmp_path / "cwd").mkdir()
+    monkeypatch.chdir(tmp_path / "cwd")
+    out = _run(capsys, ["-c", str(tmp_path / "cwd" / OP_SESSION), *command])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert "(not repeated)" in out, out
+    assert list((tmp_path / "cwd").iterdir()) == []
+
+
 def test_init_says_the_path_it_wrote(capsys, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     out = _run(capsys, ["-c", "lab/roster.yml", "init", "--blank"])
