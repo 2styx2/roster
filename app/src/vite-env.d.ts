@@ -16,18 +16,22 @@ declare module "virtual:help-tags" {
  * the help chunk's. */
 declare module "*plugin-api.json?pick=api_version,commands,roster_only,tags" {
   export const api_version: number;
-  export const commands: { name: string; permission: string | null }[];
+  export const commands: { name: string; permission: string | null; doc: string; needs_text: string }[];
   export const roster_only: string[];
   export const tags: Record<string, string>;
 }
 
-/** What the help chunk reads of plugin-api.json: what the Lua stubs are written from (help/luaStubs.ts). */
-declare module "*plugin-api.json?pick=api_version,values,modules,functions,events,types" {
-  type Data = import("./help/luaStubs").StubsData;
+/** What the help chunk reads of plugin-api.json: what the Lua stubs (help/luaStubs.ts) and the reference
+ * (help/pluginApiDoc.ts) are written from, but the commands, which startup's pick has. */
+declare module "*plugin-api.json?pick=api_version,values,modules,functions,events,types,serve_results,lua_doc,errors_doc" {
+  type Data = import("./help/pluginApiDoc").DocData;
   export const api_version: Data["api_version"];
   export const values: Data["values"];
   export const modules: Data["modules"];
   export const functions: Data["functions"];
   export const events: Data["events"];
   export const types: Data["types"];
+  export const serve_results: Data["serve_results"];
+  export const lua_doc: Data["lua_doc"];
+  export const errors_doc: Data["errors_doc"];
 }

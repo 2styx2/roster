@@ -5579,9 +5579,11 @@ pub fn write_stubs(dir: &std::path::Path) -> Result<std::path::PathBuf, String> 
 }
 
 /// crates/roster-core/tests/fixtures/plugin-api.json: the API as data, and the help topics. It
-/// carries what [`stubs`] reads (each summary and doc, the types' order, the modules), so the app
-/// makes `:help plugin-types` from it (app/src/help/luaStubs.ts) rather than bundling roster.lua too
-/// (T213, decision Q189).
+/// carries what [`stubs`] and [`markdown`] read (each summary and doc, the types' order, the
+/// modules, examples, errors, the events' and commands' text, serve's results, the Lua and Errors
+/// sections), so the app makes `:help plugin-types` (app/src/help/luaStubs.ts, T213, decision Q189)
+/// and `:help plugin-api` (app/src/help/pluginApiDoc.ts, T228) from it rather than bundling
+/// roster.lua and plugin-api.md too.
 pub fn json() -> Json {
     let mut tags = serde_json::Map::new();
     for v in VALUES {
@@ -5620,6 +5622,10 @@ pub fn json() -> Json {
                 "needs_text": func.needs.text(),
                 "permission": match func.needs { Needs::Nothing => Json::Null, Needs::Permission(p) => json!(p), Needs::AnyServe => json!("serve:*"), Needs::AnyNetwork => json!("network:*"), Needs::Hears(_) => json!(func.needs.any_of()) },
                 "since": func.since,
+                "doc": func.doc,
+                "errors": func.errors.iter().map(|(message, when)| json!([message, when])).collect::<Vec<_>>(),
+                "refused": func.refused,
+                "example": func.example,
             })
         })
         .collect();
@@ -5628,21 +5634,24 @@ pub fn json() -> Json {
         .enumerate()
         .map(|(order, t)| {
             let value = if t.alias.is_empty() {
-                json!({ "fields": t.fields.iter().map(|fl| json!({ "name": fl.name, "type": fl.ty, "required": fl.required, "doc": fl.doc })).collect::<Vec<_>>(), "open": t.open, "summary": t.summary, "order": order })
+                json!({ "fields": t.fields.iter().map(|fl| json!({ "name": fl.name, "type": fl.ty, "required": fl.required, "doc": fl.doc })).collect::<Vec<_>>(), "open": t.open, "summary": t.summary, "doc": t.doc, "order": order })
             } else {
-                json!({ "alias": t.alias, "summary": t.summary, "order": order })
+                json!({ "alias": t.alias, "summary": t.summary, "doc": t.doc, "order": order })
             };
             (t.name.to_string(), value)
         })
         .collect();
     json!({
         "api_version": super::API_VERSION,
-        "values": VALUES.iter().map(|v| json!({ "path": v.path, "type": v.ty, "summary": v.summary })).collect::<Vec<_>>(),
+        "values": VALUES.iter().map(|v| json!({ "path": v.path, "type": v.ty, "summary": v.summary, "doc": v.doc, "since": v.since, "example": v.example })).collect::<Vec<_>>(),
         "modules": MODULES.iter().map(|m| json!({ "name": m.name, "summary": m.summary, "doc": m.doc })).collect::<Vec<_>>(),
         "functions": functions,
-        "events": EVENTS.iter().map(|e| json!({ "name": e.name, "needs": e.needs, "payload": e.payload })).collect::<Vec<_>>(),
-        "commands": COMMANDS.iter().map(|c| json!({ "name": c.name, "permission": match c.needs { Needs::Permission(p) => json!(p), _ => Json::Null } })).collect::<Vec<_>>(),
+        "events": EVENTS.iter().map(|e| json!({ "name": e.name, "needs": e.needs, "payload": e.payload, "when": e.when })).collect::<Vec<_>>(),
+        "commands": COMMANDS.iter().map(|c| json!({ "name": c.name, "permission": match c.needs { Needs::Permission(p) => json!(p), _ => Json::Null }, "doc": c.doc, "needs_text": c.needs.text() })).collect::<Vec<_>>(),
         "roster_only": ROSTER_ONLY,
+        "serve_results": SERVE_RESULTS.iter().map(|r| json!({ "method": r.method, "result": r.result, "link": r.link })).collect::<Vec<_>>(),
+        "lua_doc": LUA_DOC,
+        "errors_doc": ERRORS_DOC,
         "types": types,
         "tags": tags,
     })
