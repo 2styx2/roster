@@ -1,0 +1,31 @@
+{
+  "about": "`mesh.status` on :tutor's demo (#233, decision Q202), as real serve answers it (status and brief in src/roster/mesh.py): a made-up Mesh over demoHosts()'s six (app/src/tutor/demo.ts). The lab's demo-01 to demo-03 are meshed, reaching each other both ways; demo-01 reaches the office's demo-05 too, which didn't answer the last apply (pending); the lab's switch demo-04 is kept out (mesh: false), and the printer demo-06 isn't named. Nothing connects anywhere. roster-core's plugin/demo.rs answers from it, and so does the fake Backend's demo (app/src/backend/fake.ts).",
+  "plain": {
+    "links": [
+      { "from": "demo-01", "to": "demo-02", "kind": "key" },
+      { "from": "demo-01", "to": "demo-03", "kind": "key" },
+      { "from": "demo-02", "to": "demo-01", "kind": "key" },
+      { "from": "demo-02", "to": "demo-03", "kind": "key" },
+      { "from": "demo-03", "to": "demo-01", "kind": "key" },
+      { "from": "demo-03", "to": "demo-02", "kind": "key" },
+      { "from": "demo-01", "to": "demo-05", "kind": "key" }
+    ],
+    "excluded": { "demo-04": "mesh: false" },
+    "reach": { "demo-01": 3, "demo-02": 2, "demo-03": 2 },
+    "members": ["demo-01", "demo-02", "demo-03", "demo-05"],
+    "pending": { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
+    "cut_pending": {},
+    "out_of_date": false
+  },
+  "grouped": {
+    "links": [{ "from": "demo-01", "to": "demo-05", "kind": "key" }],
+    "meshed": { "demo-lab": ["demo-01", "demo-02", "demo-03"] }
+  },
+  "brief": {
+    "links": [],
+    "links_more": 0,
+    "link_count": 7,
+    "link_statuses": { "asked": 7 },
+    "reached": { "demo-01": 2, "demo-02": 2, "demo-03": 2, "demo-05": 1 }
+  }
+}

@@ -84,6 +84,7 @@ import type { KeymapOverrides } from "../keymap";
 import { fakeCommit, fakePackageHost, type FakePackages } from "./fakePackages";
 import { discoverPlugin, fakeDiscoverServe, hugeNet, smallNet, type FakeNet } from "./fakeDiscover";
 import { recentAlerts } from "./fakeRecentAlerts";
+import DEMO_MESH from "../../../crates/roster-core/tests/fixtures/demo-mesh.json";
 import { MESH_OTHERS, MESH_PERMISSIONS, meshLab, meshPlugin, meshServe, type MeshWorld } from "./fakeMesh";
 import { TOPOLOGY_PERMISSIONS, topologyPlugin, topologyServe, type TopologyWorld } from "./fakeTopology";
 import { described, fakePluginHost, type FakePlugin, type FakeServe } from "./fakePlugins";
@@ -791,13 +792,8 @@ function pluginServe(scenario: FakeScenario): FakeServe | undefined {
   };
 }
 
-/** The demo's Mesh, fixed and made up, as plugin/demo.rs has it (#233): the lab's demo-01 to
- * demo-03 meshed, demo-01 reaching demo-05 too, which didn't answer the last apply; the switch
- * demo-04 kept out. */
-const DEMO_MESHED = ["demo-01", "demo-02", "demo-03"];
-const DEMO_LINKS: [string, string][] = [["demo-01", "demo-05"]];
-
-/** `mesh.status` on the demo, in real serve's shape: plain, `grouped` (API 19) or `brief` (API 17). */
+/** `mesh.status` on the demo, in real serve's shape: plain, `grouped` (API 19) or `brief` (API 17),
+ * from the made-up Mesh the core's demo answers from too (#233). */
 function demoMeshStatus(params: Record<string, unknown>): Record<string, unknown> {
   const flag = (name: string) => {
     const v = params[name];
@@ -808,25 +804,7 @@ function demoMeshStatus(params: Record<string, unknown>): Record<string, unknown
   const grouped = flag("grouped");
   const brief = flag("brief");
   if (grouped && brief) throw new BackendCallError("params.grouped and params.brief don't go together", -32602);
-  const link = ([from, to]: [string, string]) => ({ from, to, kind: "key" });
-  const pairs = DEMO_MESHED.flatMap((a) => DEMO_MESHED.filter((b) => b !== a).map((b): [string, string] => [a, b]));
-  const links = [...pairs, ...DEMO_LINKS];
-  const count = (names: string[]) => names.reduce<Record<string, number>>((n, x) => ({ ...n, [x]: (n[x] ?? 0) + 1 }), {});
-  const out: Record<string, unknown> = {
-    links: links.map(link),
-    excluded: { "demo-04": "mesh: false" },
-    reach: count(links.map(([from]) => from)),
-    members: ["demo-01", "demo-02", "demo-03", "demo-05"],
-    pending: { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
-    cut_pending: {},
-    out_of_date: false,
-  };
-  if (grouped) Object.assign(out, { links: DEMO_LINKS.map(link), meshed: { "demo-lab": DEMO_MESHED } });
-  if (brief) {
-    // Untested Links all work (`asked`), with no hop: none is worth a look, so only counts.
-    Object.assign(out, { links: [], links_more: 0, link_count: links.length, link_statuses: { asked: links.length }, reached: count(links.map(([, to]) => to)) });
-  }
-  return out;
+  return structuredClone({ ...DEMO_MESH.plain, ...(grouped ? DEMO_MESH.grouped : {}), ...(brief ? DEMO_MESH.brief : {}) });
 }
 
 /** roster serve as `:tutor`'s demo has it (plugin/demo.rs in the core): its Hosts, a made-up Mesh
