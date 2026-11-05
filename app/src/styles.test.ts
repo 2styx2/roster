@@ -219,10 +219,12 @@ describe("the status bar's order of giving way (rounds 18, 19)", () => {
       .join(";");
     return Number(/(?:^|[;{\s])flex:\s*\S+\s+(\S+)/.exec(body)?.[1]);
   };
-  it("the path is cut first, then the Backend, this Box, and the Session on screen last (Q209 d)", () => {
-    // The hints aren't cut: FitBar removes them whole, then the path, before the Backend is cut.
+  it("the Backend is cut first, then this Box, and the Session on screen last (Q209 d)", () => {
+    // The hints and the path aren't cut by CSS: FitBar shortens the path by whole folders, removes
+    // the hints whole, then the path, before the Backend is cut (round 20).
     expect(shrink(".statusbar-right")).toBe(0);
-    const order = [".statusbar .path", ".statusbar .backend", ".statusbar .box", ".statusbar .session-seg"].map(shrink);
+    expect(stylesCss).toMatch(/\.statusbar \.path \{ flex: none; \}/);
+    const order = [".statusbar .backend", ".statusbar .box", ".statusbar .session-seg"].map(shrink);
     expect(order.every((n) => Number.isFinite(n) && n > 0)).toBe(true);
     for (let i = 1; i < order.length; i++) expect(order[i - 1]! / order[i]!).toBeGreaterThanOrEqual(1e4);
   });

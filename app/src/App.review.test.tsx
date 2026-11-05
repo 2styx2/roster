@@ -139,10 +139,12 @@ describe("S7: an empty Inventory says what to do", () => {
     // Nothing on screen offers what the line says can't be done (round 19).
     expect(document.querySelector('[data-control="add"]')).toBeNull();
     expect(within(screen.getByRole("group", { name: "Inventory" })).queryByRole("button", { name: "Add a Host" })).toBeNull();
-    // The path is cut in its middle, as the status bar's: its first folder and file name stay.
+    // The path, whole (jsdom has room for it), with the forms that drop whole folders for one "…/"
+    // ready but not shown (round 20), as the status bar's.
     const path = main.querySelector(".empty-path");
-    expect(path?.querySelector(".path-head")).toHaveTextContent(/^~\/$/);
-    expect(path?.querySelector(".path-base")).toHaveTextContent(/^roster\.yml$/);
+    const forms = [...(path?.querySelectorAll(".path-cut") ?? [])];
+    expect(forms.map((f) => f.textContent)).toEqual(["~/team-inventory/roster.yml", "~/…/roster.yml", "…/roster.yml"]);
+    expect(forms.map((f) => f.hasAttribute("data-off"))).toEqual([false, true, true]);
     expect(path).toHaveAttribute("title", "~/team-inventory/roster.yml");
     expect(within(main).getByText("roster.yml", { selector: "code" })).toBeInTheDocument();
   });

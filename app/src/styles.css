@@ -306,10 +306,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The digit that opens the row (Startify's numbers), as a key. */
 .recent-key { display: flex; justify-content: flex-end; font: var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .empty { min-width: 0; max-width: 100%; }
-/* Cut in its middle as the status bar's path is (round 19): the first folder and the file name
-   stay, the folders between give way from their start; the whole path is its tooltip. */
-.empty-path { display: flex; max-width: min(56ch, calc(100% - 32px)); min-width: 0; color: var(--muted); font-size: var(--text-sm); }
-.empty-path .path-text { display: flex; min-width: 0; white-space: nowrap; font-family: var(--font-mono); font-size: 0.95em; }
+/* Whole when the pane has room (round 20: it was cut at 56ch with ~700 px to spare); else whole
+   folders give way as in the status bar (PathText's fit); the whole path is its tooltip. */
+.empty-path { max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); }
+.empty-path .path-text { font-family: var(--font-mono); font-size: 0.95em; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
 
 .statusbar {
@@ -320,7 +320,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar > * { flex: none; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the path cut in its middle (down to "~/…/roster.yml"), the
+/* Long values give way in order: the path by whole folders (down to "…/roster.yml"), the
    hints (removed whole, last first, FitBar), the path (removed), then the Backend's label, then this Box's name, and the Session on
    screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
    count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
@@ -337,19 +337,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
 .statusbar .box .statusbar-cut { min-width: 0; }
-/* The path is cut in its middle down to its least: its first folder, "…/" and its file name
-   (--keep, from App.tsx). Past that it's removed whole (FitBar), never left as a blank box or a
-   stub ("/ho…"). It takes no more than its text: the free room is the bar's, not the path's. */
-.statusbar .path { flex: 0 1e10 auto; min-width: var(--keep, 8ch); overflow: hidden; display: flex; }
-.statusbar .path-text { flex: 1 1 auto; min-width: 0; display: flex; white-space: nowrap; }
-/* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
-   cut from their start ("~/…ventory/roster.yml"): an rtl box with ltr text. The empty Inventory's
-   pane draws it the same way (.empty-path, PathText). */
-.path-base { flex: none; }
-/* The folders between give way, down to "…/"; the first folder and the file name never. */
-.path-head { flex: none; }
-.path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
-.path-dir > span { direction: ltr; unicode-bidi: isolate; }
+/* The path takes its text's width: whole, or with whole folders given way for one "…/" (FitBar
+   picks the form; PathText). Past "…/roster.yml" it's removed (FitBar), never left as a blank box,
+   a stub ("/ho…") or a folder cut inside ("~/ …ventory/", round 19). */
+.statusbar .path { flex: none; }
+/* A path's forms (PathText): one is shown, the others aren't there. */
+.path-cut[data-off] { display: none; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
