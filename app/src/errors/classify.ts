@@ -40,7 +40,7 @@ export interface Problem {
   details: string;
   data?: ProblemData;
   /** A Quick Connect's (ticket 14): `host` is user@address, not a Host, so fixes that name a Host
-   * (`:check`, `roster setup --only`) don't apply. */
+   * (`:check`, `roster setup --host`) don't apply. */
   quick?: boolean;
 }
 
