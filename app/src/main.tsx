@@ -67,3 +67,4 @@ void Promise.all([createBackend(), createPlatform()]).then(async ([{ backend, ap
     </StrictMode>,
   );
 });
+// CI timing probe (T232): an app-only change.
