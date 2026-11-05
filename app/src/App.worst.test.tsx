@@ -124,7 +124,8 @@ describe("the worst case", () => {
     const user = await open("worst-case");
     await user.keyboard(`${LEADER}f`);
     const picker = screen.getByRole("dialog", { name: "Find a Host" });
-    expect(within(picker).getByText("200 of 1,284 Hosts")).toBeInTheDocument();
+    // Before a query, the count is the Inventory's, not "200 of": nothing is filtered yet.
+    expect(within(picker).getByText("1,284 Hosts")).toBeInTheDocument();
     // An unreviewed Host's long notice in the footer. Long names are pasted: each typed key
     // filters 1,284 Hosts again, and only where it ends up matters here (#62).
     await user.paste(LONG_NAME);

@@ -221,6 +221,9 @@ export function ConnectCard({
 }) {
   const card = useRef<HTMLDivElement>(null);
   const trustButton = useRef<HTMLButtonElement>(null);
+  // A host-key question opens on Cancel (owner, after round 11): a reflexive Enter must not trust a
+  // key nobody has read; trusting takes Tab then Enter, or a click.
+  const cancelButton = useRef<HTMLButtonElement>(null);
   // The typed password lives only in this input (never React state): read once on submit, sent,
   // and the field emptied at once (docs/app/security.md).
   const passwordField = useRef<HTMLInputElement>(null);
@@ -242,7 +245,11 @@ export function ConnectCard({
   const asked = useRef(false);
   useEffect(() => {
     if (asking && active)
-      (passwordField.current ?? trustButton.current)?.focus();
+      (
+        passwordField.current ??
+        cancelButton.current ??
+        trustButton.current
+      )?.focus();
     if (asking) asked.current = true;
     else if (asked.current) {
       asked.current = false;
@@ -346,26 +353,31 @@ export function ConnectCard({
         height="23"
         aria-hidden="true"
       >
+        {/* This Box's square about 10 px beside an 18 px Host ring (DESIGN.md), so the Host is
+            the focus (round 11: an 18 px square outweighed a 27 px hairline ring). */}
         <rect
           className="connect-box"
-          x="3.5"
-          y="3.25"
-          width="5.5"
-          height="5.5"
-          rx="1.1"
+          x="4.95"
+          y="4.45"
+          width="3.1"
+          height="3.1"
+          rx="0.6"
         />
-        <line className="connect-edge" x1="12" y1="6" x2="59" y2="6" />
+        <line className="connect-edge" x1="12" y1="6" x2="61.6" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
         {/* One arc, its gap (50°) centred at -45°, the logo's Host side. A dash pattern under
             non-scaling-stroke repeated in Chromium and drew two gaps (round 9). */}
         <path
           className="connect-host"
-          d="M68.994 4.546 A4.25 4.25 0 1 1 66.454 2.006"
+          d="M67.631 5.042 A2.8 2.8 0 1 1 65.958 3.369"
         />
-        <circle className="connect-host-closed" cx="65" cy="6" r="4.25" />
+        {/* The logo's Host in the gap (owner, after round 11): the ring reads as the Gap orbit,
+            the Host almost reached, not a loader. It fades as the ring closes. */}
+        <circle className="connect-host-dot" cx="66.98" cy="4.02" r="0.7" />
+        <circle className="connect-host-closed" cx="65" cy="6" r="2.8" />
         {fills && (
-          <circle className="connect-host-fill" cx="65" cy="6" r="4.25" />
+          <circle className="connect-host-fill" cx="65" cy="6" r="2.8" />
         )}
       </svg>
       <p className="connect-title">
@@ -525,12 +537,14 @@ export function ConnectCard({
               ref={trustButton}
               onClick={() => answers.trust()}
             >
+              {/* No Enter on it: the question opens on Cancel, so trusting is deliberate (Q60). */}
               Trust and connect
-              <span className="btn-keys" aria-hidden="true">
-                <Keys keys="Enter" />
-              </span>
             </button>
-            <button type="button" onClick={() => answers.cancel()}>
+            <button
+              type="button"
+              ref={cancelButton}
+              onClick={() => answers.cancel()}
+            >
               Cancel
               <span className="btn-keys" aria-hidden="true">
                 <Keys keys="Escape" />

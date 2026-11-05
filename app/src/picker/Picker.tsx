@@ -32,6 +32,12 @@ import {
 import { hostDot } from "../sidebar/sections";
 import { StateDot, type Light } from "../ui/StateDot";
 
+/** Fixes a list's minimum height at its height now (a DOM write, kept out of the component). */
+function holdHeight(list: HTMLElement | null) {
+  // On the Picker, so the list or, with no match, its message keeps that room (styles.css).
+  list?.parentElement?.style.setProperty("--list-h", `${list.offsetHeight}px`);
+}
+
 /** Marks the detail strip `data-cut` when a cell of the selected row is cut off, so the strip
  * shows the Host whole only when the row can't (a DOM write, kept out of the component). */
 function markCut(list: HTMLElement | null, strip: HTMLElement | null) {
@@ -45,7 +51,7 @@ function markCut(list: HTMLElement | null, strip: HTMLElement | null) {
 }
 
 /** An address column's most characters; a longer address (IPv6) drops groups from its middle. */
-const IP_CHARS = 22;
+const IP_CHARS = 17;
 /** A group column's most characters; a longer group is cut in its middle. */
 const GROUP_CHARS = 18;
 
@@ -175,6 +181,8 @@ export function Picker({
   const stripRef = useRef<HTMLSpanElement>(null);
   // The strip speaks only when something in the selected row is cut (markCut, below).
   useLayoutEffect(() => markCut(listRef.current, stripRef.current));
+  // The list keeps the height it opened at, so the panel never shrinks as a query narrows it.
+  useLayoutEffect(() => holdHeight(listRef.current), []);
 
   const results = useMemo(
     () => searchHosts(hosts, query, recent),
@@ -197,10 +205,9 @@ export function Picker({
         "",
       );
     return {
-      ip: addressCut(
-        longest((h) => h.ip),
-        IP_CHARS,
-      ),
+      ip: hosts.hosts
+        .map((h) => addressCut(h.ip, IP_CHARS))
+        .reduce((a, ip) => (ip.length > a.length ? ip : a), ""),
       group: longest((h) => h.group),
       type: longest((h) => h.type),
       badge: hosts.hosts.some((h) => !h.reviewed),
@@ -487,7 +494,7 @@ export function Picker({
               <span className="picker-empty-next">
                 {onQuick
                   ? "To reach a box that isn't in the Inventory, type user@address."
-                  : "Names, addresses, groups and types all match; Backspace widens the search."}
+                  : "Names, addresses, groups and types were searched; Backspace widens the search."}
               </span>
             )}
           </p>
@@ -520,7 +527,7 @@ export function Picker({
             }
           />
           <span className="picker-count" aria-hidden="true">
-            {results.length > shown.length
+            {results.length > shown.length && query.trim() !== ""
               ? `${formatCount(shown.length)} of ${countOf(results.length, "Host")}`
               : results.length === 0
                 ? "" /* the message (or the Quick Connect row) already says it */
@@ -532,7 +539,8 @@ export function Picker({
               keys &&
               (rowCount > 0 || what === "close") && (
                 <span key={what} className="picker-hint key-hint">
-                  <Keys keys={keys} /> {what}
+                  <Keys keys={keys} />{" "}
+                  <span className="picker-hint-word">{what}</span>
                 </span>
               ),
           )}

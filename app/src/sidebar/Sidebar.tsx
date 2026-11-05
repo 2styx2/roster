@@ -587,9 +587,8 @@ const Section = memo(function Section({
 
 /** The cursor row, whole (M6): a cut-off name, its state and address, readable from the keyboard.
  * It repeats what the tree item's name already tells assistive tech, so it's hidden from it. */
-/** Holds the Sessions section at its height while the pointer is on the tree under it (`on`), so
- * a Session opening or closing never moves the tree: the row under the pointer stays the row
- * you clicked, with nothing scrolled away (Q197). A new Session scrolls into view inside the
+/** Holds a full Sessions section (at its row cap) at its height while the pointer is on the tree
+ * under it (`on`), so a Session opening there never moves the tree (Q197, Q203). A new Session scrolls into view inside the
  * held list (never fewer than one row: an empty section keeps a row of room, Q199); the section
  * takes its new height when the pointer leaves. */
 function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
@@ -601,6 +600,12 @@ function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
     return;
   }
   if (section.classList.contains("held")) return;
+  // Below its cap the list grows when a Session opens: the new row appears at once and the tree
+  // moves one row, as the click's own effect (round 11: holding it hid the Sessions just opened).
+  // Only a list already at its cap is held, as it scrolls inside itself anyway.
+  const list = section.querySelector<HTMLElement>(":scope > .sb-rows");
+  const cap = list ? parseFloat(getComputedStyle(list).maxHeight) : NaN;
+  if (!list || !(list.scrollHeight >= cap - 1)) return;
   // The room under the heading (a row list, or the one-row "None open"), which the held list keeps.
   const heading = section.querySelector<HTMLElement>(":scope > .sb-heading");
   const room =

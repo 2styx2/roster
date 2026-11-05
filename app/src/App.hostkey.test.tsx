@@ -34,7 +34,7 @@ const pane = (host = HOST.name) => screen.getByRole("group", { name: `Session ${
 const question = () => within(pane()).findByRole("alertdialog", { name: `Trust ${HOST.name}'s host key?` });
 
 describe("a Host whose host key roster hasn't seen", () => {
-  it("asks first, with the key, and Enter trusts it and connects", async () => {
+  it("asks first, with the key, opens on Cancel, and Tab then Enter trusts it and connects", async () => {
     const { backend, trusted } = backendWith();
     const user = await ready(backend);
     await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
@@ -43,11 +43,14 @@ describe("a Host whose host key roster hasn't seen", () => {
     expect(within(q).getByText(`${HOST.ip}:22`)).toBeInTheDocument();
     expect(within(q).getByText("ssh-ed25519")).toBeInTheDocument();
     expect(within(q).getByText(FAKE_FINGERPRINT)).toBeInTheDocument();
-    expect(within(q).getByRole("button", { name: "Trust and connect" })).toHaveFocus();
+    // A reflexive Enter can't trust an unread key: the question opens on Cancel (Q60, round 11).
+    expect(within(q).getByRole("button", { name: /^Cancel/ })).toHaveFocus();
     expect(sessions().getByRole("treeitem", { current: true })).toHaveAccessibleName(
       new RegExp(`^${HOST.name}, new host key`),
     );
     expect(trusted).toEqual([]);
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(within(q).getByRole("button", { name: "Trust and connect" })).toHaveFocus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(within(pane()).queryByRole("alertdialog")).toBeNull());
     expect(trusted).toEqual([`${HOST.name} ${FAKE_FINGERPRINT}`]);

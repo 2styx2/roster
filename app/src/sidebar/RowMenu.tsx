@@ -37,14 +37,25 @@ export function placeMenu(
   view: { width: number; height: number },
 ): { left: number; top: number } {
   let left = point.x;
-  if (left + size.width > view.width - MARGIN) left = view.width - MARGIN - size.width;
+  if (left + size.width > view.width - MARGIN)
+    left = view.width - MARGIN - size.width;
   let top = point.y;
-  if (top + size.height > view.height - MARGIN) top = (point.flipY ?? point.y) - size.height;
-  if (top + size.height > view.height - MARGIN) top = view.height - MARGIN - size.height;
+  if (top + size.height > view.height - MARGIN)
+    top = (point.flipY ?? point.y) - size.height;
+  if (top + size.height > view.height - MARGIN)
+    top = view.height - MARGIN - size.height;
   return { left: Math.max(MARGIN, left), top: Math.max(MARGIN, top) };
 }
 
-export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowMenuProps) {
+export function RowMenu({
+  label,
+  entries,
+  at,
+  anchor,
+  leader,
+  run,
+  close,
+}: RowMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const keyboard = at === null;
   // Where focus was (the terminal, or the tree in App mode): it goes back there however it closes,
@@ -53,8 +64,12 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
   const giveBack = () => {
     const el = back.current;
     const focused = document.activeElement;
-    const ours = !focused || focused === document.body || (ref.current?.contains(focused) ?? false);
-    if (ours && el instanceof HTMLElement && el.isConnected) el.focus({ preventScroll: true });
+    const ours =
+      !focused ||
+      focused === document.body ||
+      (ref.current?.contains(focused) ?? false);
+    if (ours && el instanceof HTMLElement && el.isConnected)
+      el.focus({ preventScroll: true });
   };
   const dismissRef = useRef(() => {});
   useLayoutEffect(() => {
@@ -63,7 +78,10 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
       close();
     };
   });
-  const items = () => Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  const items = () =>
+    Array.from(
+      ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+    );
   // Where the row and what holds it were scrolled to when it opened. A scroll's event comes a frame
   // after the scroll: the App-mode cursor scrolls its row into view at once, so a menu key pressed
   // in that frame opened the menu and then the event closed it (T173). Only a scroll from here does.
@@ -74,10 +92,19 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
     const el = ref.current;
     if (!el) return;
     back.current = document.activeElement;
-    for (let e = anchor() ?? document.scrollingElement; e; e = e.parentElement) scrolledAt.current.set(e, [e.scrollTop, e.scrollLeft]);
+    for (let e = anchor() ?? document.scrollingElement; e; e = e.parentElement)
+      scrolledAt.current.set(e, [e.scrollTop, e.scrollLeft]);
     const rect = anchor()?.getBoundingClientRect();
-    const point = at ?? (rect ? { x: rect.left + 24, y: rect.bottom, flipY: rect.top } : { x: MARGIN, y: MARGIN });
-    const { left, top } = placeMenu(point, { width: el.offsetWidth, height: el.offsetHeight }, { width: window.innerWidth, height: window.innerHeight });
+    const point =
+      at ??
+      (rect
+        ? { x: rect.left + 24, y: rect.bottom, flipY: rect.top }
+        : { x: MARGIN, y: MARGIN });
+    const { left, top } = placeMenu(
+      point,
+      { width: el.offsetWidth, height: el.offsetHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
     // Scale from the corner nearest the point it opened at.
@@ -94,12 +121,20 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
   useEffect(() => {
     const dismiss = () => dismissRef.current();
     const outside = (e: Event) => {
-      if (!(e.target instanceof Node) || !ref.current?.contains(e.target)) dismiss();
+      if (!(e.target instanceof Node) || !ref.current?.contains(e.target))
+        dismiss();
     };
     const scrolled = (e: Event) => {
-      const el = e.target instanceof Document ? e.target.scrollingElement : e.target;
-      const was = el instanceof Element ? scrolledAt.current.get(el) : undefined;
-      if (el instanceof Element && was?.[0] === el.scrollTop && was[1] === el.scrollLeft) return;
+      const el =
+        e.target instanceof Document ? e.target.scrollingElement : e.target;
+      const was =
+        el instanceof Element ? scrolledAt.current.get(el) : undefined;
+      if (
+        el instanceof Element &&
+        was?.[0] === el.scrollTop &&
+        was[1] === el.scrollLeft
+      )
+        return;
       outside(e);
     };
     document.addEventListener("pointerdown", outside, true);
@@ -131,11 +166,18 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
     else if (k === "Home" || k === "PageUp") move(() => 0);
     else if (k === "End" || k === "PageDown") move((_, n) => n - 1);
     else if (k === "Escape" || k === "Tab") dismissRef.current();
-    else if (k.length === 1 && /\S/.test(k) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    else if (
+      k.length === 1 &&
+      /\S/.test(k) &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey
+    ) {
       // Typeahead: the next item whose label starts with the letter.
       const list = items();
       const i = list.indexOf(document.activeElement as HTMLElement);
-      const starts = (el: HTMLElement) => (el.dataset.label ?? "").toLowerCase().startsWith(k.toLowerCase());
+      const starts = (el: HTMLElement) =>
+        (el.dataset.label ?? "").toLowerCase().startsWith(k.toLowerCase());
       const next = [...list.slice(i + 1), ...list.slice(0, i + 1)].find(starts);
       next?.focus();
     } else handled = false;
@@ -167,7 +209,8 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
             data-label={entry.label}
             onPointerMove={(e) => {
               // The item under the pointer is the active one, as in a native menu.
-              if (document.activeElement !== e.currentTarget) e.currentTarget.focus({ preventScroll: true });
+              if (document.activeElement !== e.currentTarget)
+                e.currentTarget.focus({ preventScroll: true });
             }}
             onClick={() => {
               dismissRef.current();
@@ -180,12 +223,22 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
             </span>
             {entry.keys ? (
               <>
-                <span className="visually-hidden">,</span> <Keys keys={entry.keys} leader={leader} className="row-menu-keys" />
+                <span className="visually-hidden">,</span>{" "}
+                <Keys
+                  keys={entry.keys}
+                  leader={leader}
+                  className="row-menu-keys"
+                />
               </>
             ) : (
               // No key bound: its command line, so the item still says how to reach it from the
               // keyboard (taste.md: every action has a key, or at least a `:` form).
-              <span className="row-menu-cmd key-hint" aria-hidden="true">:{entry.command.split(" ")[0]}</span>
+              // A Plugin's own action has no `:` form worth showing (its first word is "plugins").
+              !entry.command.startsWith("plugins") && (
+                <span className="row-menu-cmd key-hint" aria-hidden="true">
+                  :{entry.command.split(" ")[0]}
+                </span>
+              )
             )}
           </button>
         ),

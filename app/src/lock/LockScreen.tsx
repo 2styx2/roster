@@ -318,8 +318,6 @@ function UnlockForm({
           type="password"
           autoComplete="off"
           spellCheck={false}
-          // An empty placeholder, so CSS can tell an empty field (:placeholder-shown).
-          placeholder=" "
           autoFocus
           readOnly={busy}
           aria-invalid={error ? true : undefined}
@@ -331,12 +329,23 @@ function UnlockForm({
         />
         {/* aria-disabled, not disabled: a disabled default button stops Enter submitting the form,
             and Enter during the check must queue the password. */}
+        {/* Inside the field, as its key (round 11: a grey button beside it read as disabled, an
+            apricot one as accent at rest): ↵ while it waits for you, the word while roster works. */}
         <button
           type="submit"
-          className="primary"
+          className="lock-submit"
           aria-disabled={busy || checking || undefined}
         >
-          {checking ? "Checking…" : busy ? "Unlocking…" : "Unlock"}
+          {checking ? (
+            "Checking…"
+          ) : busy ? (
+            "Unlocking…"
+          ) : (
+            <>
+              <span className="visually-hidden">Unlock</span>
+              <Keys keys="Enter" />
+            </>
+          )}
         </button>
       </div>
       {error ? (

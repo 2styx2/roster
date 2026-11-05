@@ -238,6 +238,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .workspace {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   outline: none; min-width: 0; min-height: 0; background: var(--bg);
+  /* The bottom line's room (below), kept always, so nothing resizes when it speaks. */
+  position: relative; padding-bottom: 22px;
 }
 .workspace:has(.panes) { align-items: stretch; justify-content: stretch; }
 
@@ -362,10 +364,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 
 /* One line, always reserved (round 9: it had pushed the pane 14 px when a message came): a long
    message is cut here and whole in its tooltip and in :messages. */
-/* The bottom line (Neovim's message row): one 22px line, always there, in the pane's own colour so
+/* The bottom line (Neovim's message row): one 22px line at the foot of the pane column (the Sidebar
+   runs down to the status bar beside it, round 11), always there, in the pane's own colour so
    it reads as margin while empty (round 10: a chrome band read as a second footer). Messages show
    in it, and the command line types in it, so neither ever resizes the pane or the terminal. */
-.bottom-line { flex: none; position: relative; height: 22px; background: var(--bg); }
+.bottom-line { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: var(--bg); z-index: 1; }
 .message-line {
   height: 100%; padding: 0 12px; line-height: 22px; font-size: var(--text-sm); color: var(--warn);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
@@ -900,10 +903,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* Zero-width edge tracks: with the 12px gap they're the row's side padding, so the node sits
      12px from the row's edge and 12px from the name, as in the Sidebar (a subgrid row's own
      padding would push its first cell into the gap). */
-  /* The name is the column you scan: it takes the room first (at least 20 characters; the footer shows it whole when cut); the
+  /* The name is the column you scan: it takes two parts of the spare room (at least 20 characters; the footer shows it whole when cut), the group one part (at least 10); the
      address up to 22, the group up to 18 and the type up to 10 take only what they need, and
      give way before it. */
-  grid-template-columns: 0 8px minmax(20ch, 1fr) fit-content(22ch) fit-content(16ch) fit-content(10ch) auto 24px 0;
+  grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) auto 24px 0;
 }
 .picker-row {
   grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
@@ -919,6 +922,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
+/* Never cut by the column: a long address is already cut by whole groups to 17 characters. */
 .picker-row .host-ip { font: var(--text-sm) var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: max-content; }
 .picker-row .host-group, .picker-row .host-type { font-size: var(--text-sm); color: var(--muted); }
 /* Each keeps a word's room: the name gives way first (its whole text is in the footer when cut). */
@@ -956,7 +960,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* Holds some of the list's room while a query matches nothing, so the panel doesn't collapse as you
    type (round 10). */
-.picker-empty { margin: 0; padding: 18px 16px; color: var(--muted); min-height: min(30vh, 240px); }
+.picker-empty { margin: 0; padding: 18px 16px; color: var(--muted); min-height: calc(var(--list-h, 12px) - 12px); box-sizing: border-box; }
+/* The list keeps the height it opened at (Picker.tsx holdHeight); with no match its message does. */
+.picker-list { min-height: var(--list-h, 0px); }
+.picker:has(.picker-empty) .picker-list { min-height: 0; }
 .picker-empty-next { display: block; margin-top: 4px; font-size: var(--text-sm); }
 /* The sizer: the Inventory's widest address, group and type, invisible and zero high, so the
    columns are sized by every Host and hold still as a query narrows the list. */
@@ -970,6 +977,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-detail > .host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .picker-detail .host-name { font-family: var(--font-mono); color: var(--text); }
 .picker-detail:not([data-cut]) > * { visibility: hidden; }
+/* A long name needs the room: the hints keep their keys and drop their words. */
+.picker-footer:has(.picker-detail[data-cut]) .picker-hint-word { display: none; }
 .picker-detail .host-ip { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .picker-footer {
   display: flex; align-items: center; gap: 14px; padding: 0 14px; height: 34px; flex: none;
@@ -1009,17 +1018,17 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .lock-form { display: flex; flex-direction: column; gap: 8px; }
 .lock-form > p:not(.lock-error) { color: var(--muted); margin-bottom: 6px; }
 .lock-form label { color: var(--muted); font-size: var(--text-xs); font-weight: 500; }
-.lock-row { display: flex; gap: 8px; }
+.lock-row { display: flex; }
 .lock-row input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; }
 .lock-row input[aria-invalid] { border-color: var(--error); }
-/* One width for Unlock, Checking… and Unlocking…, so the field never resizes under the typing.
-   While roster checks or unlocks, the button steps back to a plain one in the second tone (not a
-   faded apricot): it is waiting, not offered. aria-disabled keeps Enter queuing (LockScreen.tsx). */
-.lock-row button { height: 32px; min-width: 8.5em; }
-/* Nothing typed yet: Unlock waits as a plain button, so the lock screen has no apricot at rest
-   (round 10); it becomes the primary button with the first character. */
-.lock-row:has(input:placeholder-shown) button.primary,
-.lock-row button.primary[aria-disabled="true"] { background: var(--raised); color: var(--muted); border-color: var(--line-strong); }
+/* The field takes the row; its key (↵) sits inside its right end, and says "Checking…" or
+   "Unlocking…" there while roster works (round 11). */
+.lock-row { position: relative; }
+.lock-row input { padding-right: 96px; }
+.lock-row .lock-submit {
+  position: absolute; right: 4px; top: 4px; height: 24px; padding: 0 6px; display: inline-flex; align-items: center;
+  background: transparent; border-color: transparent; color: var(--muted); font-size: var(--text-xs); font-weight: 400;
+}
 .lock-error { color: var(--error); font-size: var(--text-sm); }
 .lock-error.lock-caps { color: var(--warn); }
 .lock-problem { color: var(--warn); }
@@ -1182,6 +1191,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-host-closed { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-card.leaving :is(.connect-host-closed, .connect-host-fill) { opacity: 1; }
+.connect-host-dot { fill: var(--accent); transition: opacity var(--dur-fade) var(--ease-out); }
+.connect-card.leaving .connect-host-dot { opacity: 0; }
 .connect-cmd { font-family: var(--font-mono); }
 /* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
 .connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -1449,6 +1460,11 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 /* Their path (the heading an entry sits under) stays at the right, apart from the label, so the
    outline's "Themes and colours" never reads as part of the option's name (ticket 54). */
 .finder.prose .finder-path { flex: 0 1 auto; margin-left: auto; text-align: right; }
+/* Prose rows (help) line up as three columns, title, section and tag, so the list scans down
+   (round 11: each row placed its parts differently). The title never goes under 16ch. */
+.finder.prose .finder-row { display: grid; grid-template-columns: minmax(16ch, 46%) minmax(0, 1fr) auto; column-gap: 12px; }
+.finder.prose .finder-path { margin-left: 0; text-align: left; font-family: var(--font-ui); }
+.finder.prose .finder-detail { margin-left: 0; max-width: none; justify-self: end; }
 /* The detail (a help tag, an option's name) gives way before the label: cut at its end, never wider
    than 40% of the row, so a long tag can't squeeze the title (round 10). Data, so Iosevka. */
 .finder-detail {
