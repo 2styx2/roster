@@ -473,6 +473,16 @@ The app, started on a Box with no `roster.yml`, offers the same first three in p
 | 269 | 207 (a warning) | `roster check --box` (and `box.check`): this Box's key is older than `key_max_age:` (365 days unless set), counted from when roster made or rotated it, or the key file's own time (T240) | Box | "[207] this Box's key is 400 days old, past key_max_age: 365d (…/roster_ed25519)" | Rotate it with `roster setup --rotate`, or set `key_max_age:` in `roster.yml` (`off` turns the warning off) |
 | 270 | 208 | `roster setup --rotate`: a Host it reached took the new key's line but then refused a login with the new key (sshd refusing that key or its type, file permissions). The run stopped there: no old key line was taken off any Host and the old key stays this Box's key (T240) | Host | "FAIL     web-02: [208] the new key's line went in, but the new key doesn't log in (…); the old key's line stays there" | Fix what that Host refuses (`roster check web-02` shows the login step), then run `roster setup --rotate` again: it goes on from there |
 
+## A saved Bitwarden session
+
+`roster vault unlock` and `roster vault lock` (T241, #474, decision Q203): an unlock saved in the `bw-session` file for every roster run on this Box.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 264 | 202 | `roster vault unlock`, or "yes" to "Keep the vault unlocked for other roster runs on this Box?": a `bw-session` file is already there that isn't yours alone (a symlink, another user's, not a plain file, or others may read it), or its folder `~/.config/roster` isn't (another user's, writable by others, or a link someone else owns; Linux and macOS), so roster won't write over it or through it; it's refused before the master password is asked, and nothing was written | Box | "[202] ~/.config/roster/bw-session is a symlink (roster never follows one here) - roster won't write over it; remove it yourself, then run `roster vault unlock` again" | Look at what's there, remove it, then `roster vault unlock` |
+| 265 | 203 | `roster vault unlock` or `vault lock` for a provider other than Bitwarden: KeePassXC keeps no session (each run opens the database with its password), and 1Password's `op signin` keeps its own, so these are Bitwarden only for now | Box | "[203] KeePassXC keeps no session: each run opens the database with its password, so there's nothing to keep unlocked" | Nothing to do for KeePassXC; for 1Password, `roster vault op --write -- signin` |
+| 266 | 204 | `roster vault unlock` or `vault lock`: the `bw-session` file couldn't be written (or removed): the folder isn't writable, the disk is full, or the new file wouldn't be yours alone; nothing was saved (a lock's `bw lock` still ran) | Box | "[204] couldn't write ~/.config/roster/bw-session (Permission denied)" | Fix the system's reason (the folder `~/.config/roster` should be yours), then run it again |
+
 ## See also
 
 [The error catalog](errors) · [`roster check HOST`](../cli-reference.md#roster-check-host) · [The roster serve API](../serve-api.md)

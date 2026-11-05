@@ -171,7 +171,8 @@ What the errors mean:
 | `no answer on SSH port` | SSH is off or filtered. ESXi often switches SSH off: enable it under Host → Actions → Services. |
 | `login refused (wrong user or password?)` | Wrong item, wrong user, or a different box from the one you think. Check the host key (step 3). |
 | `warning: HOST service 'NAME': ... - left out` | That service entry has a mistake roster can't work around, so the rest of the Host loads without it. The `fix:` line under it says what to change. |
-| bw "locked" / session expired | Run `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` again |
+| bw "locked" / session expired | Run `roster vault unlock` again (the roster app's lock, `bw lock` or another `bw unlock` expires the saved session: bw keeps one unlock at a time) |
+| The master password is asked on every run | A terminal unlock lasts for that run only: `roster vault unlock` keeps it for every run on this Box (or answer `y` when roster offers); `roster vault status` shows the saved session (`none`, `saved, working`, `saved, expired`) |
 | `KeePassXC database is locked and there's no terminal to ask` | Run roster in a terminal (it asks for the master password once per run), or unlock in the app |
 | `KeePassXC database … isn't there` | Fix `providers: kp: database:` in `roster.yml`, or create the database in KeePassXC |
 | `[155] HOST looks like a Windows Host` | Its shell said `'sh' is not recognized`: set `os: windows` for it (see [Windows Hosts](#windows-hosts)), `roster sync`, then run it again |
