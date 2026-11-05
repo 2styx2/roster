@@ -1141,8 +1141,8 @@ export interface Backend {
   onPluginReply(onReply: (reply: PluginReply) => void): () => void;
   /** `:tutor`'s demo (ticket 66, decision Q123): a Plugin host of its own, beside this one, over
    * the demo Inventory's `hosts`. Its Plugins run with the grants they have here, but roster serve
-   * answers only `hosts.list` and `host.get` from `hosts` (any other method is refused), no
-   * request reaches the network, and each Plugin's files are a throwaway folder, empty at the
+   * answers only `hosts.list` and `host.get` from `hosts`, and `mesh.status` with a made-up Mesh
+   * (any other method is refused), no request reaches the network, and each Plugin's files are a throwaway folder, empty at the
    * start. `close` stops them all and throws the folder away. Absent: the demo has only its own
    * built-in Plugins. */
   demoPlugins?(hosts: HostList): Promise<DemoPluginHost>;
@@ -1196,7 +1196,7 @@ export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "p
 /** The words a Plugin on the demo gets for a serve method the demo has no stand-in for (errors.md
  * row 135; the core's plugin/demo.rs says the same). */
 export function notOnDemo(method: string): string {
-  return `${method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get`;
+  return `${method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status`;
 }
 
 /** A newer commit, shown before it's applied. */
