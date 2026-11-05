@@ -389,7 +389,7 @@ impl Packages {
 
     fn write_lock(&self, lock: &Lock) -> Result<(), String> {
         let text = serde_json::to_string_pretty(lock).map_err(|e| e.to_string())? + "\n";
-        crate::config::write_atomic(&self.lock, &text).map_err(|e| format!("can't write {}: {e}", self.lock.display()))
+        crate::files::write_atomic(&self.lock, &text).map_err(|e| format!("can't write {}: {e}", self.lock.display()))
     }
 
     /// The folder of a Package `specs` names, and the settings init.lua hands it, for loading it
@@ -420,12 +420,12 @@ impl Packages {
                 url_of(&spec.source).unwrap_or_default()
             ));
         }
-        // The Plugin host's rule for every file of a Plugin (crate::plugin::folder::inside),
+        // The Plugin host's rule for every file of a Plugin (crate::files::inside),
         // and not into git's own folder either.
         let escape =
             || format!("dir = {sub:?} leads outside the Package's clone (through a symlink): roster won't load it");
         let top = clone.canonicalize().map_err(|e| format!("{}: {e}", clone.display()))?;
-        let inside = crate::plugin::folder::inside(clone, Path::new(&sub)).map_err(|_| escape())?;
+        let inside = crate::files::inside(clone, Path::new(&sub)).map_err(|_| escape())?;
         if inside.starts_with(top.join(".git")) {
             return Err(escape());
         }
@@ -614,7 +614,8 @@ impl Packages {
             Some(dir),
             &["fetch", "--quiet", "--tags", "--force", "--prune", "origin"],
         )?;
-        // The remote's default branch may have moved.
+        // The remote's default branch may have moved. Only a spec with no tag, branch or commit
+        // reads it (`origin/HEAD`), and if this fails `resolve` says that branch is missing.
         let _ = self.git.run(Some(dir), &["remote", "set-head", "origin", "--auto"]);
         let to = self.resolve(dir, spec)?;
         let from = self.head(dir).ok_or("its clone has no commit")?;
@@ -703,8 +704,10 @@ impl Packages {
         self.checkout(&dir, commit)?;
         // The new version's folder must still be one roster loads; else it stays where it was.
         if let Err(e) = self.plugin_dir(&dir, spec) {
-            if let Some(b) = before {
-                let _ = self.checkout(&dir, &b);
+            if let Some(b) = before
+                && let Err(back) = self.checkout(&dir, &b)
+            {
+                return Err(format!("{e}; and its clone couldn't go back to {}: {back}", short(&b)));
             }
             return Err(e);
         }

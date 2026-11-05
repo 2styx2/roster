@@ -4,7 +4,7 @@
 mod common;
 
 use roster_core::detect::{
-    Candidate, Choice, ErrorKind, Output, Platform, Runner, Target, detect, detect_choice, roster_command,
+    Candidate, Choice, ErrorKind, Os, Output, Runner, Target, detect, detect_choice, roster_command,
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -79,7 +79,7 @@ fn on_windows_the_first_distro_with_roster_and_an_inventory_wins() {
         probes: HashMap::from([("Ubuntu".into(), "".into()), ("FedoraLinux-44".into(), FOUND.into())]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    let c = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -112,7 +112,7 @@ fn the_probe_resolves_roster_through_a_login_shell_with_local_bin_on_path() {
         probes: HashMap::from([("FedoraLinux-44".into(), FOUND.into())]),
         ..Default::default()
     };
-    detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     let calls = r.calls.borrow();
     let probe = &calls[1];
     assert_eq!(
@@ -134,7 +134,7 @@ fn an_override_command_keeps_its_arguments_and_resolves_only_the_program() {
         ..Default::default()
     };
     let cmd = roster_command(Some("uv run --project /home/u/work/roster roster"));
-    let c = detect(&r, Platform::Windows, &cmd, None).unwrap();
+    let c = detect(&r, Os::Windows, &cmd, None).unwrap();
     // The probe gets the whole command: it resolves the program, and runs all of it to ask roster
     // which Inventory it uses (ticket 115).
     assert!(r.calls.borrow()[1].ends_with(&cmd), "{:?}", r.calls.borrow()[1]);
@@ -160,7 +160,7 @@ fn roster_without_an_inventory_is_still_chosen_so_serve_can_say_what_is_missing(
         probes: HashMap::from([("A".into(), "roster=/r\ninventory=\n".into()), ("B".into(), "".into())]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    let c = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     assert_eq!(c.target, Target::Wsl { distro: "A".into() });
     assert_eq!(&c.serve_argv[6..], &s(&["/r", "serve"])[..]);
 }
@@ -171,7 +171,7 @@ fn no_distro_with_roster_is_roster_missing_and_names_the_distros_searched() {
         distros: Some(list(&[("*", "A", "Running"), ("", "B", "Running")])),
         ..Default::default()
     };
-    let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
+    let e = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err();
     assert_eq!(e.kind, ErrorKind::RosterMissing);
     assert!(e.message.contains("A, B"), "{}", e.message);
 }
@@ -180,7 +180,7 @@ fn no_distro_with_roster_is_roster_missing_and_names_the_distros_searched() {
 fn no_wsl_at_all_is_its_own_error() {
     let r = Scripted::default();
     assert_eq!(
-        detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err().kind,
+        detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err().kind,
         ErrorKind::NoWsl
     );
     let r = Scripted {
@@ -188,7 +188,7 @@ fn no_wsl_at_all_is_its_own_error() {
         ..Default::default()
     };
     assert_eq!(
-        detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err().kind,
+        detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err().kind,
         ErrorKind::NoWsl
     );
 }
@@ -202,7 +202,7 @@ fn distro_names_survive_utf16_noise_and_skip_docker_desktop() {
         probes: HashMap::from([("Fedora".into(), FOUND.into())]),
         ..Default::default()
     };
-    let c: Candidate = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    let c: Candidate = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -223,7 +223,7 @@ fn on_linux_roster_runs_locally() {
         probes: HashMap::from([("".into(), FOUND.into())]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Linux, &s(&["roster"]), None).unwrap();
+    let c = detect(&r, Os::Linux, &s(&["roster"]), None).unwrap();
     assert_eq!(c.target, Target::Local);
     assert_eq!(
         c.serve_argv,
@@ -254,7 +254,7 @@ fn serve_gets_the_login_shells_path_so_it_finds_the_vault_cli() {
         probes: HashMap::from([("FedoraLinux-44".into(), found)]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    let c = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     assert_eq!(
         c.serve_argv,
         s(&[
@@ -281,7 +281,7 @@ fn the_probe_reports_the_login_path() {
         probes: HashMap::from([("FedoraLinux-44".into(), FOUND.into())]),
         ..Default::default()
     };
-    detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     let script = r.calls.borrow()[1][8].clone();
     assert!(script.contains(r#"echo "path=$PATH""#), "{script}");
 }
@@ -307,7 +307,7 @@ fn a_stopped_distro_that_is_not_the_default_is_never_probed() {
         distros: Some(LIST_V.into()),
         ..Default::default()
     };
-    let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
+    let e = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err();
     assert_eq!(probed(&r), s(&["FedoraLinux-44", "Ubuntu"]));
     assert_eq!(e.kind, ErrorKind::RosterMissing);
 }
@@ -319,7 +319,7 @@ fn the_default_distro_is_probed_first_and_may_be_started() {
         probes: HashMap::from([("Fedora".into(), FOUND.into()), ("Ubuntu".into(), FOUND.into())]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap();
+    let c = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -338,7 +338,7 @@ fn localized_states_and_a_utf16_listing_still_parse() {
         distros: Some(utf16ish),
         ..Default::default()
     };
-    detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
+    detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err();
     // only the default: an unknown state is never taken for Running
     assert_eq!(probed(&r), s(&["Fedora"]));
 }
@@ -349,7 +349,7 @@ fn when_nothing_matches_the_error_names_the_stopped_distros_and_how_to_pick_one(
         distros: Some(LIST_V.into()),
         ..Default::default()
     };
-    let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
+    let e = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err();
     assert!(e.message.contains("FedoraLinux-44, Ubuntu"), "{}", e.message);
     assert!(e.message.contains("OracleLinux_9"), "{}", e.message);
     assert!(e.hint.contains("ROSTER_APP_WSL_DISTRO=OracleLinux_9"), "{}", e.hint);
@@ -365,7 +365,7 @@ fn a_chosen_distro_is_the_only_one_probed_even_if_stopped() {
         ]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Windows, &s(&["roster"]), Some("OracleLinux_9")).unwrap();
+    let c = detect(&r, Os::Windows, &s(&["roster"]), Some("OracleLinux_9")).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -381,7 +381,7 @@ fn a_chosen_distro_without_roster_is_named_in_the_error() {
         distros: Some(LIST_V.into()),
         ..Default::default()
     };
-    let e = detect(&r, Platform::Windows, &s(&["roster"]), Some(" Ubuntu ")).unwrap_err();
+    let e = detect(&r, Os::Windows, &s(&["roster"]), Some(" Ubuntu ")).unwrap_err();
     assert_eq!(probed(&r), s(&["Ubuntu"]));
     assert_eq!(e.kind, ErrorKind::RosterMissing);
     assert!(e.message.contains("Ubuntu"), "{}", e.message);
@@ -395,7 +395,7 @@ fn a_blank_distro_choice_means_none() {
         probes: HashMap::from([("FedoraLinux-44".into(), FOUND.into())]),
         ..Default::default()
     };
-    let c = detect(&r, Platform::Windows, &s(&["roster"]), Some("  ")).unwrap();
+    let c = detect(&r, Os::Windows, &s(&["roster"]), Some("  ")).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -417,7 +417,7 @@ fn a_leading_tilde_in_the_override_means_the_targets_home() {
         ..Default::default()
     };
     let cmd = roster_command(Some("uv run --project ~/work/roster roster"));
-    let c = detect(&r, Platform::Windows, &cmd, None).unwrap();
+    let c = detect(&r, Os::Windows, &cmd, None).unwrap();
     assert_eq!(
         &c.serve_argv[6..10],
         &s(&["/usr/bin/uv", "run", "--project", "/home/u/work/roster"])[..]
@@ -430,7 +430,7 @@ fn the_roster_missing_hint_gives_an_absolute_override_example() {
         distros: Some(list(&[("*", "A", "Running")])),
         ..Default::default()
     };
-    let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
+    let e = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err();
     assert!(!e.hint.contains("~/"), "{}", e.hint);
     assert!(e.hint.contains("--project /home/"), "{}", e.hint);
 }
@@ -464,7 +464,7 @@ fn the_real_probe_expands_a_tilde_in_the_program_and_its_arguments() {
     std::fs::write(home.join("infra/roster.yml"), "hosts: []\n").unwrap();
 
     let cmd = roster_command(Some("~/bin/roster --dir ~/x"));
-    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None);
+    let c = detect(&WithHome(home.clone()), Os::Linux, &cmd, None);
     let h = home.to_str().unwrap().to_string();
     let c = c.unwrap();
     assert_eq!(
@@ -508,7 +508,7 @@ fn windows_pc(inventory: bool, wsl: Option<(&str, &str)>) -> Scripted {
 #[test]
 fn auto_on_windows_takes_roster_on_windows_with_an_inventory_and_never_runs_wsl() {
     let r = windows_pc(true, Some(("Ubuntu", FOUND)));
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
     assert_eq!(c.target, Target::Local);
     assert_eq!(
         c.serve_argv,
@@ -529,7 +529,7 @@ fn auto_on_windows_takes_roster_on_windows_with_an_inventory_and_never_runs_wsl(
 #[test]
 fn auto_on_windows_prefers_a_wsl_distro_with_an_inventory_over_windows_roster_without_one() {
     let r = windows_pc(false, Some(("Ubuntu", FOUND)));
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -538,7 +538,7 @@ fn auto_on_windows_prefers_a_wsl_distro_with_an_inventory_over_windows_roster_wi
     );
     // ... and with no WSL at all, Windows roster without an Inventory is the Backend (it says so).
     let r = windows_pc(false, None);
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
     assert_eq!((c.target, c.has_inventory), (Target::Local, false));
     assert_eq!(c.serve_argv, s(&[r"C:\Users\you\.local\bin\roster.exe", "serve"]));
 }
@@ -547,7 +547,7 @@ fn auto_on_windows_prefers_a_wsl_distro_with_an_inventory_over_windows_roster_wi
 fn local_on_windows_never_looks_in_wsl_and_says_what_to_install() {
     let mut r = windows_pc(false, Some(("Ubuntu", FOUND)));
     r.files.clear();
-    let e = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Local).unwrap_err();
+    let e = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Local).unwrap_err();
     assert_eq!(e.kind, ErrorKind::RosterMissing);
     assert!(
         e.message.contains("on Windows") && e.hint.contains("uv tool install"),
@@ -556,14 +556,14 @@ fn local_on_windows_never_looks_in_wsl_and_says_what_to_install() {
     assert!(r.calls.borrow().is_empty());
     // Without an Inventory it's still this Backend: roster then says the Inventory is missing.
     let r = windows_pc(false, Some(("Ubuntu", FOUND)));
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Local).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Local).unwrap();
     assert_eq!(c.target, Target::Local);
 }
 
 #[test]
 fn wsl_on_windows_never_takes_windows_roster() {
     let r = windows_pc(true, Some(("Ubuntu", FOUND)));
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Wsl(None)).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Wsl(None)).unwrap();
     assert_eq!(
         c.target,
         Target::Wsl {
@@ -581,13 +581,13 @@ fn windows_roster_is_found_on_path_with_pathext_and_roster_config_wins() {
         r"C:\Users\you\team\roster.yml".into(),
     ]);
     r.vars.insert("PATH".into(), r"C:\Windows\system32;D:\tools\".into());
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Local).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Local).unwrap();
     assert_eq!(
         c.serve_argv,
         s(&[r"D:\tools\roster.CMD", "-c", r"C:\Users\you\infra\roster.yml", "serve"])
     );
     r.vars.insert("ROSTER_CONFIG".into(), r"~\team\roster.yml".into());
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Local).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Local).unwrap();
     assert_eq!(c.serve_argv[2], r"C:\Users\you\team\roster.yml");
 }
 
@@ -597,7 +597,7 @@ fn an_override_on_windows_runs_natively_with_its_home_expanded() {
     r.files.insert(r"C:\Users\you\.cargo\bin\uv.exe".into());
     r.vars.insert("PATH".into(), r"C:\Users\you\.cargo\bin".into());
     let cmd = s(&["uv", "run", "--project", r"~\work\roster", "roster"]);
-    let c = detect_choice(&r, Platform::Windows, &cmd, &Choice::Local).unwrap();
+    let c = detect_choice(&r, Os::Windows, &cmd, &Choice::Local).unwrap();
     assert_eq!(
         c.serve_argv,
         s(&[
@@ -617,7 +617,7 @@ fn an_override_on_windows_runs_natively_with_its_home_expanded() {
 fn no_roster_anywhere_on_windows_names_both_places() {
     let mut r = windows_pc(false, None);
     r.files.clear();
-    let e = detect(&r, Platform::Windows, &s(&["roster"]), None).unwrap_err();
+    let e = detect(&r, Os::Windows, &s(&["roster"]), None).unwrap_err();
     assert_eq!(e.kind, ErrorKind::NoWsl);
     assert!(e.hint.contains("roster on Windows itself"), "{e}");
 }
@@ -650,7 +650,7 @@ fn the_real_probe_takes_the_inventory_roster_itself_says_it_uses() {
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let cmd = roster_command(Some("~/bin/roster --dir ~/x"));
-    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None).unwrap();
+    let c = detect(&WithHome(home.clone()), Os::Linux, &cmd, None).unwrap();
     let canonical = std::fs::canonicalize(&home).unwrap();
     let asked = format!("{}/work/roster.yml", canonical.to_str().unwrap());
     let used = &c.serve_argv[c.serve_argv.len() - 2];
@@ -663,7 +663,7 @@ fn the_real_probe_takes_the_inventory_roster_itself_says_it_uses() {
 
     // A roster too old to answer (`inv` isn't a command: exit 2) falls back to where the app looked.
     std::fs::write(&program, "#!/bin/sh\nexit 2\n").unwrap();
-    let c = detect(&WithHome(home.clone()), Platform::Linux, &cmd, None).unwrap();
+    let c = detect(&WithHome(home.clone()), Os::Linux, &cmd, None).unwrap();
     assert_eq!(c.serve_argv[c.serve_argv.len() - 2], format!("{h}/infra/roster.yml"));
 }
 
@@ -707,7 +707,7 @@ fn windows_roster_is_asked_which_inventory_it_uses_from_the_home_folder() {
         answer: r"C:\Users\you\home-net\roster.yml".into(),
         dirs: RefCell::default(),
     };
-    let c = detect_choice(&r, Platform::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
+    let c = detect_choice(&r, Os::Windows, &s(&["roster"]), &Choice::Auto).unwrap();
     assert_eq!(
         c.serve_argv,
         s(&[
@@ -758,7 +758,7 @@ fn the_real_probe_gives_up_on_a_roster_that_hangs() {
     let start = std::time::Instant::now();
     let c = detect(
         &Quick(home.clone()),
-        Platform::Linux,
+        Os::Linux,
         &roster_command(Some("~/bin/roster")),
         None,
     )
@@ -771,21 +771,24 @@ fn the_real_probe_gives_up_on_a_roster_that_hangs() {
     assert_eq!(c.serve_argv[c.serve_argv.len() - 2], format!("{h}/infra/roster.yml"));
 }
 
+/// The core's one runner (process.rs), which asking native roster goes through: held to its limit.
 #[cfg(unix)]
 #[test]
 fn asking_native_roster_is_held_to_a_timeout() {
+    use roster_core::process::run;
+    use std::process::Command;
+    use std::time::Duration;
     let start = std::time::Instant::now();
-    let e = roster_core::detect::run_with_timeout(
-        &s(&["sh", "-c", "sleep 30"]),
-        &[],
-        "/",
-        std::time::Duration::from_millis(500),
-    )
-    .unwrap_err();
+    let mut sleep = Command::new("sh");
+    sleep.args(["-c", "sleep 30"]);
+    let e = run(sleep, Some(Duration::from_millis(500))).unwrap_err();
     assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
-    assert!(start.elapsed() < std::time::Duration::from_secs(10));
-    let o =
-        roster_core::detect::run_with_timeout(&s(&["sh", "-c", "pwd"]), &[], "/", std::time::Duration::from_secs(10))
-            .unwrap();
-    assert_eq!((o.code, o.stdout.trim()), (Some(0), "/"));
+    assert!(start.elapsed() < Duration::from_secs(10));
+    let mut pwd = Command::new("sh");
+    pwd.args(["-c", "pwd"]).current_dir("/");
+    let o = run(pwd, Some(Duration::from_secs(10))).unwrap();
+    assert_eq!(
+        (o.status.code(), String::from_utf8_lossy(&o.stdout).trim()),
+        (Some(0), "/")
+    );
 }

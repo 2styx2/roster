@@ -29,11 +29,13 @@ pub const EXIT_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "CallErrorWire"))]
 pub enum CallError {
     /// The child answered with a JSON-RPC error object.
     Rpc {
         code: i64,
         message: String,
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
         data: Option<Value>,
     },
     /// The child exited (or closed stdout) before answering. `stderr` is the tail of what it printed.
@@ -94,7 +96,7 @@ impl RpcClient {
     /// As [`RpcClient::spawn`], handing every notification the child sends to `notify`.
     pub fn spawn_with(mut cmd: Command, notify: Option<Notify>) -> std::io::Result<Self> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        no_console_window(&mut cmd);
+        crate::process::no_console_window(&mut cmd);
         let mut child = cmd.spawn()?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().expect("piped stdout");
@@ -331,17 +333,6 @@ fn keep_tail(stderr: impl Read, tail: &Mutex<String>) {
         buf.clear();
     }
 }
-
-/// A GUI-subsystem exe on Windows would open a console window for every console child.
-#[cfg(windows)]
-pub fn no_console_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-pub fn no_console_window(_cmd: &mut Command) {}
 
 #[cfg(test)]
 mod tests {

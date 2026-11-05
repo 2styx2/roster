@@ -2,7 +2,11 @@
 // through this interface; tests and the plain-browser dev page use the fake (fake.ts), the app
 // uses the Tauri one (tauri.ts). Shapes follow roster's `roster serve` API, version 1 or newer
 // (2 adds `host.check` and the Login/askpass/network codes 30-48: `:check` needs it).
+import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
 import type { QuickTarget } from "../quick/target";
+
+// The core's own shapes, generated from its Rust types (config/core.gen.ts).
+export type { BackendProblem, BackendProblemKind, CheckStarted } from "../config/core.gen";
 
 /** A Host as `hosts.list` returns it (roster's own object; only the fields the UI reads). */
 export interface Host {
@@ -97,29 +101,9 @@ export interface InventoryStore {
   repo: string | null;
 }
 
-export interface BackendInfo {
-  /** "Local" or "WSL: <distro>". */
-  backend: string;
-  /** The command line that runs `roster serve`. */
-  command: string[];
+/** The core's BackendInfo, with serve's `inventory.info` answer in its shape. */
+export interface BackendInfo extends Omit<CoreBackendInfo, "inventory"> {
   inventory: InventoryInfo;
-}
-
-export type BackendProblemKind =
-  | "no-wsl"
-  | "roster-missing"
-  | "roster-too-old"
-  | "inventory-not-found"
-  /** A roster.yml was found (or named) but doesn't load: roster's words, never "make one" (#417 M1). */
-  | "inventory-invalid"
-  | "failed";
-
-/** Why the Backend couldn't start: shown as is on the error screen. */
-export interface BackendProblem {
-  kind: BackendProblemKind;
-  message: string;
-  hint: string;
-  detail: string | null;
 }
 
 /** Thrown by `connect()`. */
@@ -171,13 +155,6 @@ export interface CheckStep {
   /** Raw text: ssh's stderr, the resolver's error. */
   details?: string;
   data?: Record<string, unknown>;
-}
-
-/** A check under way as serve's job (API 21): its id, and whether it's the app's own to stop
- * (`stopCheck`, #221 item 1): the app started it, not another caller (a Plugin's `host.check`). */
-export interface CheckStarted {
-  job: string;
-  own: boolean;
 }
 
 /** `host.check {host}`: every step, stopping (the rest `skipped`) at the first failure. */

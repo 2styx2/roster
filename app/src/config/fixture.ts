@@ -4,7 +4,9 @@
 import defaults from "../../../crates/roster-core/tests/fixtures/config-defaults.json";
 import type { Config } from "./types";
 
-export const configFixture = defaults as unknown as {
+// A JSON import types each string as `string`, which a union option (`renderer`) doesn't take:
+// the cast narrows them, and the Rust test checks the values.
+export const configFixture = defaults as {
   config: Config;
   themeColors: string[];
   themeTerminal: string[];

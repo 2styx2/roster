@@ -47,7 +47,7 @@ use std::time::{Duration, Instant};
 
 /// The version of the `roster` Lua module (`roster.api_version`). init.lua's table shows it too;
 /// init.lua's own version is `roster.config_version` (decision Q165).
-pub const API_VERSION: u32 = crate::config::API_VERSION;
+pub use crate::API_VERSION;
 
 /// Where a Plugin's code comes from. A Package (ticket 24) is a [`Source::Dir`] too: its clone.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2202,32 +2202,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     Ok(roster)
 }
 
-/// JSON as a Lua value: objects and arrays become tables, null becomes nil.
-pub(crate) fn to_lua(lua: &Lua, v: &Json) -> mlua::Result<Value> {
-    Ok(match v {
-        Json::Null => Value::Nil,
-        Json::Bool(b) => Value::Boolean(*b),
-        Json::Number(n) => match n.as_i64() {
-            Some(i) => Value::Integer(i),
-            None => Value::Number(n.as_f64().unwrap_or(0.0)),
-        },
-        Json::String(s) => Value::String(lua.create_string(s)?),
-        Json::Array(items) => {
-            let t = lua.create_table_with_capacity(items.len(), 0)?;
-            for (i, item) in items.iter().enumerate() {
-                t.raw_set(i + 1, to_lua(lua, item)?)?;
-            }
-            Value::Table(t)
-        }
-        Json::Object(map) => {
-            let t = lua.create_table_with_capacity(0, map.len())?;
-            for (k, item) in map {
-                t.raw_set(k.as_str(), to_lua(lua, item)?)?;
-            }
-            Value::Table(t)
-        }
-    })
-}
+pub(crate) use crate::config::lua::to_lua;
 
 #[cfg(test)]
 mod tests {

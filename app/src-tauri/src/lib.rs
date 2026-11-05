@@ -1,10 +1,14 @@
-//! The Tauri shell: window setup and thin `#[tauri::command]` wrappers over roster-core (Backend
-//! calls, Sessions).
-//! All logic lives in roster-core so it can be tested without Tauri (docs/app/dev/testing.md).
+//! The Tauri shell: window setup and `#[tauri::command]` adapters over roster-core, which holds
+//! the logic so it can be tested without Tauri (docs/app/dev/testing.md). A serve method the
+//! frontend calls as it is goes through the one `serve_call` (roster-core serve_api.rs); the other
+//! commands are where the core adds something (Sessions, the check job, trusting a key, the first
+//! run), or reach the Config, Plugins, Packages and the State.
 
-use roster_core::backend::{Backend, BackendInfo, CheckStarted, CreateCancel, QuickTarget, fill_refusal, timeout_for};
+use roster_core::backend::{
+    Backend, BackendInfo, CheckStarted, CreateCancel, Open, OpenedSession, QuickTarget, Typed, timeout_for,
+};
 use roster_core::config::{self, Config, Loader, Report};
-use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
+use roster_core::detect::BackendError;
 use roster_core::package::{self, Packages};
 use roster_core::plugin::{self, Permission, PluginHost};
 use roster_core::rpc::{CallError, Notify};
@@ -27,7 +31,7 @@ impl BackendState {
     /// development env vars winning; a change takes effect at the next (re)start.
     fn connect(&self, restart: bool, config: &Config, notify: Notify) -> Result<BackendInfo, BackendError> {
         let backend = self.0.connect(restart, Backend::is_alive, || {
-            Backend::start_with(&candidate(config)?, Some(notify))
+            Backend::start(&roster_core::detect::for_config(config)?, Some(notify))
         })?;
         Ok(backend.info.clone())
     }
@@ -38,21 +42,6 @@ impl BackendState {
             message: "the backend isn't running".into(),
         })
     }
-}
-
-/// The roster the Config (and the development env vars) pick, found on this Box.
-fn candidate(config: &Config) -> Result<roster_core::detect::Candidate, BackendError> {
-    let env_cmd = roster_core::env::roster_override();
-    let env_distro = roster_core::env::wsl_distro();
-    let plan =
-        config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref()).map_err(|m| {
-            BackendError::new(
-                ErrorKind::Failed,
-                m,
-                "Fix it in init.lua (docs/app/config.md), then Retry.",
-            )
-        })?;
-    detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)
 }
 
 async fn blocking<T: Send + 'static, E: Send + 'static>(
@@ -79,6 +68,7 @@ async fn backend_connect(
     // frontend as one event.
     let notify: Notify = Arc::new(move |method: &str, params: Value| {
         use tauri::Emitter;
+        // Only fails once the window is gone, when nobody is left to hear it.
         let _ = app.emit("roster-notification", json!({ "method": method, "params": params }));
     });
     blocking(move || {
@@ -102,8 +92,8 @@ async fn inventory_create(
     let cancel = cancel.inner().clone();
     blocking(move || {
         let config = loader.map(|l| l.settled()).unwrap_or_default();
-        let c = candidate(&config).map_err(|e| CallError::Io { message: e.message })?;
-        Backend::create_inventory_with(&c, params, &cancel)
+        let c = roster_core::detect::for_config(&config).map_err(|e| CallError::Io { message: e.message })?;
+        Backend::create_inventory(&c, params, &cancel)
     })
     .await
 }
@@ -140,20 +130,14 @@ async fn open_url(url: String) -> Result<(), String> {
     blocking(move || roster_core::browser::open_url(&url)).await
 }
 
-/// What `:config` did: the file's path, and whether it was just made (ticket 32).
-#[derive(serde::Serialize)]
-struct ConfigOpened {
-    path: String,
-    created: bool,
-}
-
-/// `:config`: makes init.lua from the commented-out example if there's none (never overwriting
-/// one), then opens it with the Config's `editor`. `$EDITOR` runs in the Backend's WSL distro.
+/// `:config` (roster-core `config::edit`): makes init.lua from the commented-out example if
+/// there's none, then opens it with the Config's `editor`; `$EDITOR` runs in the Backend's WSL
+/// distro.
 #[tauri::command]
 async fn config_open(
     config: tauri::State<'_, ConfigState>,
     state: tauri::State<'_, Arc<BackendState>>,
-) -> Result<ConfigOpened, String> {
+) -> Result<config::Opened, String> {
     let Some(loader) = config.0.clone() else {
         return Err("there's no config folder: the environment names no home".into());
     };
@@ -161,22 +145,7 @@ async fn config_open(
         roster_core::detect::Target::Wsl { distro } => Some(distro.clone()),
         roster_core::detect::Target::Local => None,
     });
-    blocking(move || {
-        let ensured =
-            config::ensure_file(loader.dir()).map_err(|e| format!("can't create {}: {e}", loader.dir().display()))?;
-        let how = config::open_with(
-            loader.current().editor,
-            config::Os::current(),
-            &ensured.path,
-            distro.as_deref(),
-        )?;
-        config::open(&how).map_err(|e| format!("can't open {}: {e}", ensured.path.display()))?;
-        Ok(ConfigOpened {
-            path: ensured.path.display().to_string(),
-            created: ensured.created,
-        })
-    })
-    .await
+    blocking(move || config::edit(loader.dir(), loader.current().editor, distro.as_deref())).await
 }
 
 /// `:source` (and `:config reload`): reads init.lua again now, and tells every listener.
@@ -188,20 +157,6 @@ async fn config_reload(app: tauri::AppHandle, config: tauri::State<'_, ConfigSta
     let report = blocking(move || Ok::<_, ()>(loader.reload())).await?;
     config_changed(&app, &report);
     Ok(Some(report))
-}
-
-/// Windows Terminal's settings.json: its path and text (ticket 33). Windows only.
-fn wt_settings() -> Result<(String, String), String> {
-    if !cfg!(windows) {
-        return Err("import-terminal reads Windows Terminal's settings, so it works on Windows only".into());
-    }
-    let local = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA isn't set, so Windows Terminal can't be found")?;
-    for path in roster_core::wt::settings_paths(std::path::Path::new(&local)) {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            return Ok((path.display().to_string(), text));
-        }
-    }
-    Err("no Windows Terminal settings.json found (Store, Preview or unpackaged)".into())
 }
 
 fn config_dir(config: &ConfigState) -> Result<std::path::PathBuf, String> {
@@ -217,7 +172,7 @@ fn config_dir(config: &ConfigState) -> Result<std::path::PathBuf, String> {
 async fn config_import_preview(config: tauri::State<'_, ConfigState>) -> Result<roster_core::wt::Preview, String> {
     let dir = config_dir(&config)?;
     blocking(move || {
-        let (path, text) = wt_settings()?;
+        let (path, text) = roster_core::wt::read_settings()?;
         roster_core::wt::preview(&dir, &text, &path, &roster_core::wt::today())
     })
     .await
@@ -233,7 +188,7 @@ async fn config_import_apply(
 ) -> Result<(), String> {
     let dir = config_dir(&config)?;
     blocking(move || {
-        let (path, text) = wt_settings()?;
+        let (path, text) = roster_core::wt::read_settings()?;
         roster_core::wt::apply(&dir, &text, &path, &previewed)
     })
     .await
@@ -275,103 +230,26 @@ fn start_config(app: &tauri::App, loader: &Arc<Loader>) -> Option<config::Watche
     }
 }
 
-/// One call to serve, waiting as long as roster-core's `timeout_for` says for that method: longer
-/// than serve's own deadline for it, so a slow call is answered rather than abandoned.
-async fn call(state: &Arc<BackendState>, method: &'static str, params: Value) -> Result<Value, CallError> {
+/// A serve method the frontend calls as it is (roster-core serve_api.rs `PASS_THROUGH`; any other
+/// is refused), waiting as long as roster-core's `timeout_for` says for that method: longer than
+/// serve's own deadline for it, so a slow call is answered rather than abandoned. The params can
+/// hold a typed password or vault secret (`vault.unlock`, `vault.login`, `host.add`) on its way
+/// to serve's stdin: moved into the request and wiped with it, never logged, stored or put in an
+/// error.
+#[tauri::command]
+async fn serve_call(
+    state: tauri::State<'_, Arc<BackendState>>,
+    method: String,
+    params: Value,
+) -> Result<Value, CallError> {
     let backend = state.get()?;
-    blocking(move || backend.call(method, params)).await
-}
-
-#[tauri::command]
-async fn hosts_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "hosts.list", json!({})).await
-}
-
-/// `host.get`; `settled` (serve API 20) waits for a write to roster.yml under way, for the check
-/// after a timed-out `host.add`. Sent only when true, so an older serve gets what it always did.
-#[tauri::command]
-async fn host_get(
-    state: tauri::State<'_, Arc<BackendState>>,
-    name: String,
-    settled: Option<bool>,
-) -> Result<Value, CallError> {
-    let params = if settled == Some(true) {
-        json!({ "name": name, "settled": true })
-    } else {
-        json!({ "name": name })
-    };
-    call(&state, "host.get", params).await
-}
-
-#[tauri::command]
-async fn vault_status(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "vault.status", json!({})).await
-}
-
-/// The master password passes through here once, on its way to serve's stdin. It's moved into the
-/// request and dropped with it: never logged, stored or put in an error.
-#[tauri::command]
-async fn vault_unlock(state: tauri::State<'_, Arc<BackendState>>, password: String) -> Result<Value, CallError> {
-    let mut params = serde_json::Map::new();
-    params.insert("password".into(), Value::String(password));
-    call(&state, "vault.unlock", Value::Object(params)).await
-}
-
-/// One step of signing the vault CLI in (`vault.login`, ticket 31): start, answer or cancel.
-/// The params can hold a master password, a two-step code or an API secret on their way to
-/// serve's stdin. Like `vault_unlock`, they're moved into the request and dropped with it:
-/// never logged, stored or put in an error.
-#[tauri::command]
-async fn vault_login(
-    state: tauri::State<'_, Arc<BackendState>>,
-    params: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    call(&state, "vault.login", Value::Object(params)).await
-}
-
-#[tauri::command]
-async fn vault_lock(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "vault.lock", json!({})).await
-}
-
-/// Sign the vault CLI out (`vault.logout`, API 14, ticket 42): serve forgets every secret first,
-/// then runs `bw logout`. No params and nothing secret in the answer: the account's email and
-/// server, and the ways to sign in again.
-#[tauri::command]
-async fn vault_logout(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "vault.logout", json!({})).await
-}
-
-/// This Box's vault settings from init.lua (`vault.configure`, API 10; tickets 35 and 41): paths
-/// and choices only, never a secret. Sent at start and after every `:source`.
-#[tauri::command]
-async fn vault_configure(
-    state: tauri::State<'_, Arc<BackendState>>,
-    settings: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    call(&state, "vault.configure", Value::Object(settings)).await
-}
-
-/// Where "Save to vault" can put an item, and the default (`vault.targets`, API 10; ticket 35).
-#[tauri::command]
-async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "vault.targets", json!({})).await
-}
-
-/// A vault item's address, SSH port and user, never its password (`vault.item_fields`, API 29):
-/// the add-Host form's "Fill from this item" (#437). `params`: `{item, provider?}`.
-#[tauri::command]
-async fn vault_item_fields(
-    state: tauri::State<'_, Arc<BackendState>>,
-    params: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    call(&state, "vault.item_fields", Value::Object(params)).await
+    blocking(move || backend.pass(&method, params)).await
 }
 
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
-/// first failure. roster makes at most one connection and one login, so this is safe on a rate-limited network.
-/// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
-/// worker of serve waits for it. `started` hears the check's job once serve has it under way, and
+/// first failure. roster makes at most one connection and one login, so this is safe on a
+/// rate-limited network. From serve API 21 it's a job in serve, followed by the core
+/// (`Backend::check_host`), so no worker of serve waits for it. `started` hears the check's job once serve has it under way, and
 /// whether it's the app's own to stop (`host_check_stop`, #221 item 1); an older serve sends none.
 #[tauri::command]
 async fn host_check(
@@ -381,7 +259,8 @@ async fn host_check(
 ) -> Result<Value, CallError> {
     let backend = state.get()?;
     blocking(move || {
-        backend.check_host_with(&host, timeout_for("host.check"), |s| {
+        backend.check_host(&host, timeout_for("host.check"), |s| {
+            // Only fails once the window is gone.
             let _ = started.send(s.clone());
         })
     })
@@ -396,101 +275,6 @@ async fn host_check_stop(state: tauri::State<'_, Arc<BackendState>>, job: String
     blocking(move || backend.stop_check(&job)).await
 }
 
-/// This Box's health (`box.check`, api 16, ticket 49): roster.yml, ssh, the vault CLIs, askpass and the
-/// infra repo, each ok, warn or error with its fix. Every check is local: nothing connects to a Host.
-#[tauri::command]
-async fn box_check(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "box.check", json!({})).await
-}
-
-/// Each kind's latest job and each Host's latest check (`jobs.list`, API 20), in the shape of
-/// `job.progress`, which already reaches the frontend: `:check` asks once when it joins a check
-/// that's already running, so the step under way shows before the next one starts (issue #221).
-#[tauri::command]
-async fn jobs_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "jobs.list", json!({})).await
-}
-
-/// Fast-forward the infra repo before an edit (`inventory.pull`, api 4, ticket 10). A fetch can take
-/// a while on a slow link: serve holds it to its deadline, and the app waits longer (`timeout_for`).
-#[tauri::command]
-async fn inventory_pull(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "inventory.pull", json!({})).await
-}
-
-/// The named Inventories, the active one, and which one this serve runs on (`inventories.list`,
-/// serve API 27, ticket 115).
-#[tauri::command]
-async fn inventories_list(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "inventories.list", json!({})).await
-}
-
-/// Makes the named Inventory `name` the active one (`inventories.use`, serve API 27). The frontend
-/// locks the vault first and then restarts serve (`backend_connect` with `restart`), whose
-/// detection asks roster again which file to use: never the old serve's `-c PATH`.
-#[tauri::command]
-async fn inventories_use(state: tauri::State<'_, Arc<BackendState>>, name: String) -> Result<Value, CallError> {
-    call(&state, "inventories.use", json!({ "name": name })).await
-}
-
-/// One test login with a Host's new address, user or Login (`host.verify_login`, decision Q43):
-/// one connection, one attempt. The password stays in roster.
-#[tauri::command]
-async fn host_verify_login(
-    state: tauri::State<'_, Arc<BackendState>>,
-    host: String,
-    changes: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    call(&state, "host.verify_login", json!({ "host": host, "changes": changes })).await
-}
-
-/// The edit, written into roster.yml as a Pending change (`host.update`).
-#[tauri::command]
-async fn host_update(
-    state: tauri::State<'_, Arc<BackendState>>,
-    host: String,
-    changes: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    call(&state, "host.update", json!({ "host": host, "changes": changes })).await
-}
-
-/// The Pending changes: roster.yml's uncommitted diff (`changes.diff`).
-#[tauri::command]
-async fn changes_diff(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "changes.diff", json!({})).await
-}
-
-/// roster.yml back as the last commit has it (`changes.discard`).
-#[tauri::command]
-async fn changes_discard(state: tauri::State<'_, Arc<BackendState>>) -> Result<Value, CallError> {
-    call(&state, "changes.discard", json!({})).await
-}
-
-/// Commit and push the Pending changes, then `roster sync` (`changes.publish`, ticket 12): never
-/// forced. `message` is the commit message as the user left it.
-#[tauri::command]
-async fn changes_publish(state: tauri::State<'_, Arc<BackendState>>, message: String) -> Result<Value, CallError> {
-    call(&state, "changes.publish", json!({ "message": message })).await
-}
-
-/// The host key an address offers (`host.scan_key`, ticket 11): key exchange only, never a login.
-#[tauri::command]
-async fn host_scan_key(
-    state: tauri::State<'_, Arc<BackendState>>,
-    address: String,
-    port: u16,
-) -> Result<Value, CallError> {
-    call(&state, "host.scan_key", json!({ "address": address, "port": port })).await
-}
-
-/// The host key a Host offers, for the question a Session asks before its first connection to a
-/// Host roster has no key for (`host.scan_key {host}`, ticket 36). Nothing is recorded.
-#[tauri::command]
-async fn host_key_scan(state: tauri::State<'_, Arc<BackendState>>, host: String) -> Result<Value, CallError> {
-    let backend = state.get()?;
-    blocking(move || backend.scan_host_key(&host)).await
-}
-
 /// Record the host key the user trusted (`host.trust_key`, ticket 36): serve fetches it again and
 /// refuses if it changed since the question.
 #[tauri::command]
@@ -503,62 +287,6 @@ async fn host_key_trust(
     blocking(move || backend.trust_host_key(&host, &fingerprint)).await
 }
 
-/// Add a Host (`host.add`, decision Q43): test login, then the Vault item, then the Pending change.
-/// The params can hold a typed password on its way to serve's stdin. Like `vault_unlock`'s, it's
-/// moved into the request and dropped with it: never logged, stored or put in an error.
-#[tauri::command]
-async fn host_add(
-    state: tauri::State<'_, Arc<BackendState>>,
-    params: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    call(&state, "host.add", Value::Object(params)).await
-}
-
-/// The Live Inventory (ticket 28): removing, renaming and moving Hosts, groups, `:source` for
-/// roster.yml and the watch. Only these methods pass; each is a plain call to serve.
-const INVENTORY_METHODS: &[&str] = &[
-    "host.remove",
-    "host.rename",
-    "host.move",
-    "group.new",
-    "group.rename",
-    "group.delete",
-    "inventory.reload",
-    "inventory.watch",
-];
-
-#[tauri::command]
-async fn inventory_call(
-    state: tauri::State<'_, Arc<BackendState>>,
-    method: String,
-    params: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    let Some(&method) = INVENTORY_METHODS.iter().find(|m| **m == method) else {
-        return Err(CallError::Io {
-            message: format!("{method} isn't an Inventory method"),
-        });
-    };
-    call(&state, method, Value::Object(params)).await
-}
-
-/// "Save to vault" after a Session's own login (tickets 15, 16): saving the typed password serve
-/// holds, or forgetting it. They carry only ids and names, never the password (serve has it).
-const SAVE_METHODS: &[&str] = &["quick.save", "host.save_login", "vault.forget_typed"];
-
-#[tauri::command]
-async fn save_call(
-    state: tauri::State<'_, Arc<BackendState>>,
-    method: String,
-    params: serde_json::Map<String, Value>,
-) -> Result<Value, CallError> {
-    let Some(&method) = SAVE_METHODS.iter().find(|m| **m == method) else {
-        return Err(CallError::Io {
-            message: format!("{method} isn't a Save to vault method"),
-        });
-    };
-    call(&state, method, Value::Object(params)).await
-}
-
 /// `folders.yml`'s path and text (null: no file yet), next to init.lua (decision Q46): read at
 /// start, for the Folders Plugin to move its Folders in once (ticket 61). Never written now.
 #[tauri::command]
@@ -569,23 +297,6 @@ async fn folders_read(config: tauri::State<'_, ConfigState>) -> Result<Value, St
         Ok(json!({ "path": config::folders::path(&dir).display().to_string(), "text": text }))
     })
     .await
-}
-
-/// Mark a Host reviewed (`host.review`): only that flag changes, as a Pending change. With
-/// `reviewed: false` (API 9) it marks the Host unreviewed again; `reviewed` is sent only then, so a
-/// review reads exactly as it did for an older roster.
-#[tauri::command]
-async fn host_review(
-    state: tauri::State<'_, Arc<BackendState>>,
-    host: String,
-    reviewed: Option<bool>,
-) -> Result<Value, CallError> {
-    let params = if reviewed == Some(false) {
-        json!({ "host": host, "reviewed": false })
-    } else {
-        json!({ "host": host })
-    };
-    call(&state, "host.review", params).await
 }
 
 /// Plugins reach `roster serve` through the running Backend, for the methods their permissions
@@ -1019,35 +730,32 @@ fn session_error(e: SessionError) -> CallError {
     CallError::Io { message: e.to_string() }
 }
 
-/// A Session that's started: its id and how it logs in ("key" or "password").
-#[derive(serde::Serialize)]
-struct OpenedSession {
-    id: SessionId,
-    auth: String,
-    /// serve's id for a Quick Connect (ticket 14).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quick: Option<String>,
-    /// The id serve holds a typed password under for "Save to vault" (tickets 15, 16), when asked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    held: Option<String>,
-    /// Its PTY is Windows' ConPTY: the app offers only the fills the core makes there (decision
-    /// Q151 (i), ticket 162).
-    conpty: bool,
-    /// The ssh user the core fills sudo's prompt for (`session.prepare`'s login), so the app judges
-    /// sudo's prompt by the same user (the review of #308, #6). None for a Quick Connect.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    user: Option<String>,
+/// A Session's output as raw bytes on `events`, then one JSON message `{"exit": {code, closed}}`.
+fn session_sink(events: Channel<InvokeResponseBody>) -> impl Fn(SessionEvent) + Send + Sync + 'static {
+    move |event| {
+        let body = match event {
+            SessionEvent::Output(bytes) => InvokeResponseBody::Raw(bytes),
+            SessionEvent::Exit(exit) => InvokeResponseBody::Json(json!({ "exit": exit }).to_string()),
+        };
+        // Only fails once the window is gone; the Session is closed at exit anyway.
+        let _ = events.send(body);
+    }
 }
 
-/// Open a Session to `host`: `session.prepare`, then the command in a PTY of `cols`×`rows`.
-/// `events` gets the output as raw bytes, then one JSON message `{"exit": {code, closed}}`.
-/// Refusals keep roster's code (2 unknown, 20 not reviewed, 21 box not set up, 11/12/14 the
-/// password Host's vault). prepare runs right before the spawn: a password Session's askpass
-/// token lives 60 s, so every open (and every reconnect) gets a fresh one. For an `auth: prompt`
-/// Host (ticket 16) the app sends the `password` the user typed (moved into serve's request and
-/// dropped with it, as `vault_unlock`'s), and `save` asks serve to hold it for "Save to vault".
-/// `marks` is the token roster's shell hooks put on this attempt's marks (decision Q131 (a)); the
-/// core follows them for a nested ssh's fill (ticket 162).
+/// A password typed for a Session, if one was: moved into serve's request, which is wiped once sent.
+fn typed(password: Option<String>, save: Option<bool>) -> Option<Typed> {
+    password.map(|password| Typed {
+        password,
+        save: save.unwrap_or(false),
+    })
+}
+
+/// Open a Session to `host` in a PTY of `cols`×`rows` (roster-core `Backend::open_session`):
+/// `session.prepare` right before the spawn, so every open gets a fresh askpass token. Refusals
+/// keep roster's code (2 unknown, 20 not reviewed, 21 box not set up, 11/12/14 the password Host's
+/// vault, 44 no host key). For an `auth: prompt` Host (ticket 16) the app sends the `password` the
+/// user typed, and `save` asks serve to hold it for "Save to vault". `marks` is the token roster's
+/// shell hooks put on this attempt's marks (decision Q131 (a)).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri fills each argument from the call or its state
 async fn session_open(
@@ -1064,43 +772,20 @@ async fn session_open(
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
-        let (mut cmd, held) = match password {
-            Some(password) => {
-                let s = backend.typed_session_command(&host, password, save.unwrap_or(false))?;
-                (s.command, s.held)
-            }
-            None => (backend.session_command(&host)?, None),
+        let open = Open::Host {
+            host,
+            typed: typed(password, save),
+            marks,
         };
-        // The token on roster's own shell marks for this attempt (ticket 162): the core follows
-        // them, so a nested ssh's fill goes only while that ssh runs.
-        cmd.marks = marks;
-        let user = cmd.fill_as.as_ref().map(|t| t.login.user.clone());
-        let id = sessions
-            .open(&cmd, Size { cols, rows }, move |event| {
-                let body = match event {
-                    SessionEvent::Output(bytes) => InvokeResponseBody::Raw(bytes),
-                    SessionEvent::Exit(exit) => InvokeResponseBody::Json(json!({ "exit": exit }).to_string()),
-                };
-                let _ = events.send(body);
-            })
-            .map_err(session_error)?;
-        Ok(OpenedSession {
-            id,
-            auth: cmd.auth,
-            quick: None,
-            held,
-            conpty: sessions.conpty(),
-            user,
-        })
+        backend.open_session(&sessions, open, Size { cols, rows }, session_sink(events))
     })
     .await
 }
 
 /// Open a Quick Connect Session (ticket 14): `quick.prepare` for `to` (user@address:port and the
-/// fingerprint the user was shown), then the command in a PTY, like `session_open`. A typed
-/// `password` is moved into serve's request and dropped with it, as `vault_unlock`'s is: never
-/// logged, stored or put in an error. What comes back carries only an askpass token. With `save`
-/// ("Save to vault", ticket 15) serve holds the password for `quick.save`; only its id comes back.
+/// fingerprint the user was shown), then the command in a PTY, like `session_open`. With `save`
+/// ("Save to vault", ticket 15) serve holds the typed password for `quick.save`; only its id
+/// comes back.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri fills each argument from the call or its state
 async fn quick_session_open(
@@ -1116,24 +801,11 @@ async fn quick_session_open(
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
-        let q = backend.quick_session_command(&to, password, save.unwrap_or(false))?;
-        let id = sessions
-            .open(&q.command, Size { cols, rows }, move |event| {
-                let body = match event {
-                    SessionEvent::Output(bytes) => InvokeResponseBody::Raw(bytes),
-                    SessionEvent::Exit(exit) => InvokeResponseBody::Json(json!({ "exit": exit }).to_string()),
-                };
-                let _ = events.send(body);
-            })
-            .map_err(session_error)?;
-        Ok(OpenedSession {
-            id,
-            auth: q.command.auth,
-            quick: Some(q.quick),
-            held: q.held,
-            conpty: sessions.conpty(),
-            user: None,
-        })
+        let open = Open::Quick {
+            to,
+            typed: typed(password, save),
+        };
+        backend.open_session(&sessions, open, Size { cols, rows }, session_sink(events))
     })
     .await
 }
@@ -1148,27 +820,11 @@ fn session_write(
     sessions.write(id, data.as_bytes()).map_err(session_error)
 }
 
-/// How long a prompt fill waits for an echo of its probe before it types the secret (ticket 119,
-/// decision Q129). Longer than an ssh round trip to a far Host; a link slower than that could echo
-/// after it, which is why the docs say so. The probe goes in two steps with this wait after each
-/// (ticket 155, decision Q151 (h)), so a fill takes about twice this before it types.
-const FILL_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
-
-/// Fills the password prompt Session `id` shows, when the user pressed the fill key at one
-/// (ticket 119, decision Q129). The core asks serve (`session.fill`) for the password of the
-/// Host the Session was opened to (its own record, never a name from the frontend), with the
-/// prompt line the frontend read off the screen, then types it only if the Session's output ends
-/// with that prompt (ticket 137, decision Q136: before the vault is asked) and the prompt doesn't
-/// echo (`SessionManager::fill`). Only the Host's name comes back; the password never reaches the
-/// frontend, a log or an error.
-///
-/// `hop` is a nested ssh's Host, as the frontend resolved it from the Inventory (ticket 120,
-/// decision Q131), and which of the Session's own commands that ssh is (ticket 162): serve answers
-/// for that Host (still checking the Session's own), with the same printed-prompt check in the
-/// core, which also fills it only while the Session's own shell's marks show that ssh running.
-///
-/// A refusal at sudo's own prompt whose mask roster didn't take logs what the probe drew, on
-/// stderr with the app's other `roster:` lines (ticket 155: no text but `*` and space in it).
+/// Fills the password prompt Session `id` shows (ticket 119, decision Q129; roster-core
+/// `Backend::fill_session`): `prompt` is the line the frontend read off the screen, `hop` a nested
+/// ssh's Host as it resolved it (ticket 120). Only the Host's name comes back; the password never
+/// reaches the frontend, a log or an error. What sudo's prompt drew that the mask check didn't
+/// take (ticket 155) goes to stderr with the app's other `roster:` lines, never to the error.
 #[tauri::command]
 async fn session_fill(
     state: tauri::State<'_, Arc<BackendState>>,
@@ -1180,16 +836,8 @@ async fn session_fill(
     let backend = state.get()?;
     let sessions = Arc::clone(&sessions);
     blocking(move || {
-        let filled = sessions.fill(id, FILL_WAIT, &prompt, hop.as_ref(), |target| {
-            backend.fill_secret(target, &prompt, hop.as_ref().map(|h| &h.to))
-        });
-        filled.map(|host| json!({ "host": host })).map_err(|e| {
-            // What sudo's prompt drew that the mask check didn't take (ticket 155): the app's log
-            // only, never the error the message line shows.
-            if let Some(line) = e.log_line() {
-                eprintln!("roster: session {id}: {line}");
-            }
-            fill_refusal(e)
+        backend.fill_session(&sessions, id, &prompt, hop.as_ref(), |line| {
+            eprintln!("roster: session {id}: {line}")
         })
     })
     .await
@@ -1211,53 +859,18 @@ fn session_close(sessions: tauri::State<'_, Arc<SessionManager>>, id: SessionId)
     sessions.close(id).map_err(session_error)
 }
 
-/// The State file (GLOSSARY: State) in the OS local app-data dir: per Box, never roamed.
+/// The app's own data folder (roster-core `env::data_dir`): the OS's local app-data dir, unless
 /// `ROSTER_APP_STATE_DIR` moves it (a test or perf copy, app/scripts/perf.sh).
+fn data_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    roster_core::env::data_dir(|| app.path().app_local_data_dir().ok())
+}
+
+/// The State file (GLOSSARY: State) in the app's data folder: per Box, never roamed.
 fn state_file(app: &tauri::AppHandle) -> Result<StateFile, String> {
-    use tauri::Manager;
-    if let Some(dir) = roster_core::env::state_dir() {
-        return Ok(StateFile::in_dir(&dir));
-    }
-    let dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
-    Ok(StateFile::in_dir(&dir))
-}
-
-/// The one-time copy of roster-desk's State into this identifier's app-data dir (roster-core
-/// migrate.rs). Never stops the app: State is only a convenience.
-fn migrate_state(app: &tauri::AppHandle) {
-    use tauri::Manager;
-    if roster_core::env::state_dir().is_some() {
-        return;
-    }
-    let Ok(dir) = app.path().app_local_data_dir() else {
-        return;
-    };
-    let Some(old) = roster_core::migrate::legacy_state_dir(&dir) else {
-        return;
-    };
-    match roster_core::migrate::state(&old, &dir) {
-        Ok(true) => eprintln!("roster: copied the State from {}", old.display()),
-        Ok(false) => {}
-        Err(e) => eprintln!("roster: can't copy the State from {}: {e}", old.display()),
-    }
-}
-
-/// The one-time copy of roster-desk's Config dir into roster's (roster-core migrate.rs).
-fn migrate_config(dir: &std::path::Path) {
-    let Some(old) = config::legacy_dir() else {
-        return;
-    };
-    match roster_core::migrate::config(&old, dir) {
-        Ok(copied) if !copied.is_empty() => {
-            eprintln!(
-                "roster: copied {} file(s) of the Config from {}",
-                copied.len(),
-                old.display()
-            )
-        }
-        Ok(_) => {}
-        Err(e) => eprintln!("roster: can't copy the Config from {}: {e}", old.display()),
-    }
+    data_dir(app)
+        .map(|dir| StateFile::in_dir(&dir))
+        .ok_or_else(|| "there's no app data folder for the State".into())
 }
 
 /// What the app remembered last time (`{}` the first time).
@@ -1326,7 +939,9 @@ fn restore_and_show(app: &tauri::App, window: &tauri::WebviewWindow) {
 pub fn run() {
     let sessions = Arc::new(SessionManager::new());
     let loader = config::dir().map(|dir| {
-        migrate_config(&dir);
+        if let Some(line) = roster_core::migrate::config_at_start(&dir) {
+            eprintln!("roster: {line}");
+        }
         Arc::new(Loader::new(&dir))
     });
     let setup_loader = loader.clone();
@@ -1345,7 +960,15 @@ pub fn run() {
         .manage(ConfigState(loader))
         .manage(CreateCancel::default())
         .setup(move |app| {
-            migrate_state(app.handle());
+            let data = data_dir(app.handle());
+            // State is only a convenience: a copy that fails is said, and the app starts anyway.
+            if let Some(line) = tauri::Manager::path(app)
+                .app_local_data_dir()
+                .ok()
+                .and_then(|dir| roster_core::migrate::state_at_start(&dir))
+            {
+                eprintln!("roster: {line}");
+            }
             // What a Plugin did when one of its requests answered (`roster.http`, the
             // `network` permission, or `roster.serve.request`): nobody asked, so it goes to the
             // frontend as an event.
@@ -1354,10 +977,8 @@ pub fn run() {
                 use tauri::Emitter;
                 let _ = handle.emit("plugin-reply", reply);
             }));
-            // Packages' clones go in the app's own data dir (next to the State), the lock next
-            // to init.lua.
-            let data = roster_core::env::state_dir().or_else(|| tauri::Manager::path(app).app_local_data_dir().ok());
-            // Each Plugin's own data folder goes there too, as plugin-data/NAME (decision Q93).
+            // Packages' clones and each Plugin's own data folder (plugin-data/NAME, decision Q93)
+            // go in the app's own data dir, next to the State; roster.lock goes next to init.lua.
             if let Some(data) = &data {
                 setup_plugins.set_data(data);
             }
@@ -1382,28 +1003,11 @@ pub fn run() {
             inventory_create,
             inventory_create_cancel,
             open_url,
-            hosts_list,
-            host_get,
+            serve_call,
             host_check,
             host_check_stop,
-            box_check,
-            jobs_list,
-            inventory_pull,
-            inventories_list,
-            inventories_use,
-            host_verify_login,
-            host_update,
-            host_scan_key,
-            host_key_scan,
             host_key_trust,
-            host_add,
-            host_review,
-            inventory_call,
-            save_call,
             folders_read,
-            changes_diff,
-            changes_discard,
-            changes_publish,
             session_open,
             quick_session_open,
             session_write,
@@ -1413,14 +1017,6 @@ pub fn run() {
             state_load,
             state_save,
             platform_info,
-            vault_status,
-            vault_unlock,
-            vault_login,
-            vault_lock,
-            vault_logout,
-            vault_configure,
-            vault_targets,
-            vault_item_fields,
             config_load,
             config_open,
             config_reload,

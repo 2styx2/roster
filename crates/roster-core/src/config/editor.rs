@@ -47,6 +47,27 @@ pub struct Ensured {
     pub created: bool,
 }
 
+/// What `:config` did (ticket 32): init.lua's full path, and whether it was just made.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ConfigOpened"))]
+pub struct Opened {
+    pub path: String,
+    /// It was just made, from the example with every option commented out.
+    pub created: bool,
+}
+
+/// `:config`: makes `dir/init.lua` from [`starter`] if there's none (never overwriting one), then
+/// opens it with `editor` on this machine. `$EDITOR` runs in `distro`, the Backend's WSL distro.
+pub fn edit(dir: &Path, editor: super::Editor, distro: Option<&str>) -> Result<Opened, String> {
+    let ensured = ensure_file(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    let how = open_with(editor, Os::current(), &ensured.path, distro)?;
+    open(&how).map_err(|e| format!("can't open {}: {e}", ensured.path.display()))?;
+    Ok(Opened {
+        path: ensured.path.display().to_string(),
+        created: ensured.created,
+    })
+}
+
 /// Makes `dir/init.lua` from [`starter`] if there's no file there yet (and the dir with it).
 /// Never overwrites: the file is created only if it doesn't exist, in one step.
 pub fn ensure_file(dir: &Path) -> std::io::Result<Ensured> {

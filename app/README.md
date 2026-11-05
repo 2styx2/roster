@@ -56,15 +56,19 @@ Paths below are from the repo root.
 
 ```text
 Cargo.toml            workspace (repo root); default member is roster-core, so `cargo test` in WSL never builds Tauri
-crates/roster-core/   Tauri-free core: Backend detection (detect.rs), `roster serve` JSON-RPC client (rpc.rs: answers matched by id in any order, `$/cancel` when it stops waiting),
-                      start-up and API-version check (backend.rs), the one Backend slot (slot.rs), error kinds (error.rs), Sessions:
+crates/roster-core/   Tauri-free core: Backend detection and the plan from init.lua (detect.rs), `roster serve` JSON-RPC client (rpc.rs: answers matched by id in any order, `$/cancel` when it stops waiting),
+                      start-up and API-version check, the check job (woken by `job.progress`), opening and filling Sessions (backend.rs),
+                      the serve methods the frontend calls as they are, through the one `serve_call` (serve_api.rs), the one Backend slot (slot.rs), error kinds (error.rs), Sessions:
                       session.prepare → command (wsl --exec …, env via WSLENV) and the PTY manager (session.rs; its `fill` types a prompt's password after a no-echo probe, ticket 119),
-                      the State file (state.rs), where the window reopens (window.rs), the Windows build (platform.rs),
+                      the State file (state.rs), where the window reopens (window.rs), the OS and the Windows build (platform.rs),
+                      running a short command to its end (process.rs), atomic writes and paths kept inside a folder (files.rs),
+                      the Plugins' proxy address (proxy.rs), help anchors (anchor.rs),
                       Windows Terminal's settings.json → an init.lua block, previewed as a diff (wt.rs, ticket 33),
-                      the ROSTER_APP_* env vars with their old names (env.rs), the one-time copy from roster-desk (migrate.rs),
+                      the ROSTER_APP_* env vars with their old names and the app's data folder (env.rs), the one-time copy from roster-desk (migrate.rs),
                       opening a web service's URL in the default browser, http/https only, no user or password (browser.rs)
 app/src-tauri/        thin Tauri shell: the window, and the commands the frontend calls (every one is in
-                      `generate_handler!` in src-tauri/src/lib.rs), each a thin wrapper over roster-core
+                      `generate_handler!` in src-tauri/src/lib.rs), adapters over roster-core: one `serve_call` for the
+                      serve methods passed as they are, a command of its own where the core adds something
                       (+ `config-changed` events after each save of init.lua);
                       clipboard-manager plugin
 app/src/backend/      the one typed Backend client: types.ts (interface), tauri.ts (real), fake.ts (fixtures)
@@ -105,7 +109,9 @@ crates/roster-core/src/config/
                       for schema errors), watch.rs (live reload), folders.rs (folders.yml's text, read once to move its Folders in), editor.rs (`:config`: the commented-out
                       starter file, made once, and opening it in the `editor`), mod.rs (load, Loader
                       keeping the last good one)
-app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config import-terminal`'s diff): types.ts (the core's object), apply.ts (→ options, and keys,
+app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config import-terminal`'s diff): core.gen.ts (the TypeScript types of what the
+                      core sends: the Config, the import's preview, BackendInfo, errors, an opened Session; generated from the Rust types by
+                      crates/roster-core/tests/ts_types.rs, which fails while it's stale), types.ts (names them for the app), apply.ts (→ options, and keys,
                       Themes, Folders through the registries as "init.lua"), ConfigToast.tsx (errors, warnings)
 examples/init.lua     every option with its default, commented (a Rust test loads it)
 crates/roster-core/src/plugin/

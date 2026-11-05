@@ -5153,18 +5153,7 @@ pub fn signature(func: &Function) -> String {
     format!("{}({})", func.path, names.join(", "))
 }
 
-/// GitHub's anchor for a heading (and the help's: app/src/help/doc.ts `slug`).
-pub fn slug(title: &str) -> String {
-    title
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '_' || *c == '-')
-        .collect::<String>()
-        .trim()
-        .chars()
-        .map(|c| if c.is_whitespace() { '-' } else { c })
-        .collect()
-}
+pub use crate::anchor::slug;
 
 fn func_anchor(func: &Function) -> String {
     slug(&signature(func))

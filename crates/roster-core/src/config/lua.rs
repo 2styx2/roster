@@ -502,7 +502,7 @@ fn require(lua: &Lua, root: &Path, name: &str, place: &str) -> mlua::Result<Valu
         )));
     };
     // The one rule for a Plugin's files and the Config's (ticket 82): its real path is inside.
-    let real: PathBuf = crate::plugin::folder::inside(root, Path::new(&shown))
+    let real: PathBuf = crate::files::inside(root, Path::new(&shown))
         .map_err(|_| mlua::Error::runtime(format!("require {name:?}: {shown} leads outside {place}")))?;
     let source = std::fs::read_to_string(&real)
         .map_err(|e| mlua::Error::runtime(format!("require {name:?}: can't read {shown}: {e}")))?;
@@ -550,6 +550,33 @@ impl Default for Budget {
 
 const TOO_BIG: &str =
     "the Config is too big (more than 100000 values or 16 MB of text; a table shared many times over?)";
+
+/// JSON as a Lua value: objects and arrays become tables, null becomes nil.
+pub(crate) fn to_lua(lua: &Lua, v: &Json) -> mlua::Result<Value> {
+    Ok(match v {
+        Json::Null => Value::Nil,
+        Json::Bool(b) => Value::Boolean(*b),
+        Json::Number(n) => match n.as_i64() {
+            Some(i) => Value::Integer(i),
+            None => Value::Number(n.as_f64().unwrap_or(0.0)),
+        },
+        Json::String(s) => Value::String(lua.create_string(s)?),
+        Json::Array(items) => {
+            let t = lua.create_table_with_capacity(items.len(), 0)?;
+            for (i, item) in items.iter().enumerate() {
+                t.raw_set(i + 1, to_lua(lua, item)?)?;
+            }
+            Value::Table(t)
+        }
+        Json::Object(map) => {
+            let t = lua.create_table_with_capacity(0, map.len())?;
+            for (k, item) in map {
+                t.raw_set(k.as_str(), to_lua(lua, item)?)?;
+            }
+            Value::Table(t)
+        }
+    })
+}
 
 /// A Lua value as Config data. Tables become lists (keys 1..n) or objects (string keys); an
 /// empty table is an empty object (the schema takes it as an empty list where it wants one).
