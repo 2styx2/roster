@@ -2004,7 +2004,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         throw new BackendCallError(`roster hasn't seen ${host}'s host key before`, SessionRefusal.hostKeyUnknown, {
           address: h.ip,
           port: h.ssh.port,
-          fix: `compare its fingerprint with the Host's console or owner, then trust it when the app asks, or run \`roster setup --only ${host}\``,
+          // As serve says it: `--host` from API 29 (T227), `--only` before.
+          fix: `compare its fingerprint with the Host's console or owner, then trust it when the app asks, or run \`roster setup ${(scenario.apiVersion ?? 2) >= 29 ? "--host" : "--only"} ${host}\``,
         });
       }
       const failure = scenario.sshFailures?.[host];

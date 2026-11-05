@@ -17,6 +17,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`:tutor topology` teaches reach** (#233): the tutorial's demo Inventory has a small, made-up Mesh now, so the Topology tutor's third lesson, "Who reaches whom", lights up what a Host reaches on the map and reads its details: `demo-01` reaches 3 Hosts directly, and `demo-05` is Mesh pending because it didn't answer the last apply. Nothing on the demo connects anywhere. A Plugin's tutorial can use the same Mesh: on the demo, roster serve answers `mesh.status` too (plain, `grouped` and `brief`, as real serve does).
 
+### Changed
+
+**App**
+
+- **The app's fixes say `roster setup --host HOST`** (#461): the Fix for a refused key, an unknown host key or a changed one said `roster setup --only HOST`, which also sets up every Host whose group, type or product is called HOST. With a roster at API 29 or newer (v0.6.0 on) the Fix and its Copy button now say `--host HOST`, that Host alone; an older roster, which has no `--host`, still gets `--only`. The Mesh's details for a Link with no host key now point at the `roster setup` its Why names (serve says the flag its own roster takes).
+
 ### Security
 
 **CLI**
@@ -37,6 +43,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 **App**
 
 - **The Topology map takes the keys back, and `/` starts a new search** (#475): with a Session opened from the map beside it, `:topology` (or `:view topology`, or the map's key) hands the keys back to the map, so a `/` typed next searches the map instead of going to the shell; asking for any open view again does the same. `/` on a map opens its search empty, as the Picker does, so typing a new name no longer adds to the last one.
+- **A slow `:help` no longer opens over the terminal you clicked into** (#438): when a guide took a moment to load, clicking into a terminal (or anywhere outside help) meanwhile still let help open and take the keys once the text came. A click now drops the waiting `:help`, as running a command or opening a finder already did; run `:help` again to open it.
 
 ## v0.6.0
 

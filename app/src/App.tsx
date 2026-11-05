@@ -140,6 +140,7 @@ import { Logo } from "./chrome/Logo";
 import { countOf } from "./ui/format";
 import { afterSwitch, NONE_NAMED, switchPlan, type SwitchPlan } from "./inventory/switch";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
+import { RosterApi } from "./errors/rosterApi";
 import { PromptWatch } from "./session/prompt";
 import { XtermPromptScreen } from "./session/promptScreen";
 import { MESSAGES_VIEW, MessageLog, MessagesChoice, lineAfter, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
@@ -1215,6 +1216,16 @@ function Workspace({
   useEffect(() => {
     if (overlay !== null) helpView.cancelPending();
   }, [overlay, helpView]);
+  // Nor over where a click took you with no command or finder, a terminal say (T228, #438): the keys
+  // all go through commands, which cancel it in `run`, so a click is the one way left. A click in the
+  // help panel itself (its loading line) isn't moving on.
+  useEffect(() => {
+    const onPointer = (e: PointerEvent) => {
+      if (!(e.target instanceof Element && e.target.closest(".help-panel"))) helpView.cancelPending();
+    };
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => document.removeEventListener("pointerdown", onPointer, true);
+  }, [helpView]);
   // Where help went, for `:tutor`'s steps: a page opened, Ctrl+O back, Ctrl+I forward.
   useEffect(() => {
     const at = helpAt.at;
@@ -2142,20 +2153,22 @@ function Workspace({
   );
   const frame = (content: React.ReactNode) => (
     <HintsShown value={hintsShown}>
-      <div className="window">
-        {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
-        {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
-          <div className="toolbar-bar" data-tauri-drag-region>
-            {toolbar("start")}
-            <div className="titlebar-fill" />
-            {toolbar("end")}
-          </div>
-        )}
-        {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
-        <div className="window-body">{content}</div>
-        {toast}
-        <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
-      </div>
+      <RosterApi.Provider value={conn.state === "ready" ? conn.info.inventory.api_version : undefined}>
+        <div className="window">
+          {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
+          {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
+            <div className="toolbar-bar" data-tauri-drag-region>
+              {toolbar("start")}
+              <div className="titlebar-fill" />
+              {toolbar("end")}
+            </div>
+          )}
+          {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
+          <div className="window-body">{content}</div>
+          {toast}
+          <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
+        </div>
+      </RosterApi.Provider>
     </HintsShown>
   );
 
