@@ -364,7 +364,6 @@ struct Slot {
     disabled: Option<String>,
     /// Which load this is: an answer to a request made before a reload is dropped.
     generation: u64,
-    /// How long its thread has waited for roster serve.
     serving: Arc<ServeWait>,
     /// Its proxy setting, which its client reads at each request.
     proxy: Arc<network::ProxyCell>,
@@ -438,12 +437,12 @@ impl PluginHost {
         self
     }
 
-    /// The app's built-in commands (every `:` command roster itself registers), at the start and
-    /// whenever one registers later: none of them is a Plugin's own to run with `roster.cmd` or a
-    /// `run` line, whatever the Plugin named its commands (issue #184). Each replaces the last and
-    /// reaches the Plugins running at once. Until the app has said them once, no Plugin's own
-    /// command runs that way either (plugin/api's
-    /// [`api::ROSTER_ONLY`](crate::plugin::api::ROSTER_ONLY) are refused all the same).
+    /// The app's built-in commands (every `:` command roster itself registers; the app's shell
+    /// sets them from each load, call and event): none of them is a Plugin's own to run with
+    /// `roster.cmd` or a `run` line, whatever the Plugin named its commands (issue #184). Each
+    /// replaces the last and reaches the Plugins running at once, a request's answer included.
+    /// Until a host has been told them once, no Plugin's own command runs that way either
+    /// ([`api::ROSTER_ONLY`](crate::plugin::api::ROSTER_ONLY) are refused all the same).
     pub fn set_builtins(&self, names: impl IntoIterator<Item = String>) {
         *self.builtins.write().expect("builtin commands") = Some(names.into_iter().collect());
     }

@@ -260,9 +260,7 @@ const TABLE_KEYS = ["j", "k", "g", "G", "s", "S", "/", "?", "q"] as const;
 export const MAX_HELP = 200_000;
 /** Most buttons on a section's heading, and actions and links in a float. */
 export const MAX_HEAD_ACTIONS = 4;
-/** Most buttons on a notice. */
 export const MAX_NOTICE_ACTIONS = 2;
-/** Most cells an action's `when` may test. */
 const MAX_WHEN = 8;
 export const MAX_URL = 2000;
 export const MAX_COPY = CORE.limits.max_copy;

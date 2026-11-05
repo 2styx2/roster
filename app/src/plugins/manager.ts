@@ -4,10 +4,11 @@
 // - which Plugins are installed and what each was granted, kept in the State (`plugins`), and the
 //   install and update prompts (`install`, `answer`): nothing loads with a permission the user
 //   wasn't asked about;
-// - turning a Plugin's ops into registry entries with the Plugin's name as their source, so the
-//   core draws them in roster's style and unloading takes them all away (`unregisterSource`);
-// - running what a Plugin handed over (`plugins call NAME N`), and sending it events, among them
-//   the Sessions' output for the Plugins granted terminal.read;
+// - applying a Plugin's ops (opRegistry.ts): registry entries with the Plugin's name as their
+//   source, so the core draws them in roster's style and unloading takes them all away
+//   (`unregisterSource`), and what shown.ts keeps (notices, the float, the question, progress);
+// - running what a Plugin handed over (`plugins call NAME N`), with roster's own commands, and
+//   sending it events, among them the Sessions' output for terminal.read (outputFeed.ts);
 // - errors: a toast naming the Plugin, file and line, and its UI taken away once it's disabled.
 //
 // - Packages (ticket 24): Plugins from git repos that init.lua names. The core clones and pins them
@@ -226,7 +227,6 @@ const describeError = (e: PluginErrorInfo) =>
   `${e.plugin}: ${e.file ? `${e.file}${e.line === null ? "" : `:${e.line}`}: ` : ""}${e.message}`;
 
 export class PluginManager {
-  /** The Plugins running now. */
   private readonly loaded = new Map<string, Loaded>();
   /** Every Plugin loaded since the start, running or not: what `:plugins` lists. */
   private readonly known = new Map<string, Omit<Loaded, "disposers" | "listens">>();
