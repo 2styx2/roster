@@ -169,8 +169,9 @@ def cmd_add(cfg, args):
     from .common import die, say
     ask = sys.stdin.isatty() and not args.yes
     path = cfg["path"]
-    if args.name is None:                       # T221 (#428) lists the vault's items no Host uses here
-        needs("NAME", "roster add adds one Host by name")
+    if args.name is None:                       # --from-vault with no NAME: the vault's items no Host uses (T221)
+        from .fromvault import cmd_from_vault
+        return cmd_from_vault(cfg, args)
     got = {"ip": args.ip, "user": args.user, "port": args.port}
     if args.from_vault:
         if not args.auth:

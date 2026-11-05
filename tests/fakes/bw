@@ -5,6 +5,10 @@
 #   matches are narrowed to the ones that have the field first, as bw's getCipher(id, filter) does.
 # FAKE_BW_FIELD_FAIL=TEXT: `bw get uri` / `bw get username` fail with TEXT on stderr.
 # FAKE_BW_STDOUT_LOG=FILE: one line per `bw get item|uri|username`: the field and where its stdout went (devnull, pipe).
+# `bw list items` prints each item whole, password, TOTP seed and notes too, as bw does (roster pipes it into its filter,
+#   Q191). FAKE_BW_LIST_RAW=TEXT: `bw list items` prints TEXT instead (malformed output).
+# `bw status` says lastSync: FAKE_BW_LAST_SYNC (an ISO time), or the last `bw sync`'s time once one ran (kept in
+#   FAKE_BW_STATE when it's set, else in FAKE_BW_SYNC_FILE). FAKE_BW_SYNC_FAIL=TEXT: `bw sync` fails with TEXT.
 # FAKE_BW_ITEMS=FILE: a JSON list of items to use instead of the ones below (read on every call). `bw create item`
 #   (base64 JSON on stdin or as an argument, like bw) and `bw delete item ID` write it back.
 # FAKE_BW_WRITE_FAIL=TEXT: create and delete fail with TEXT on stderr (e.g. a server or policy refusal).
@@ -50,6 +54,11 @@ state = json.load(open(state_file)) if state_file and os.path.exists(state_file)
     {"logged_in": not os.environ.get("FAKE_BW_LOGGED_OUT"), "server": None}
 account = json.loads(os.environ.get("FAKE_BW_ACCOUNT") or "{}")
 logged_out = not state["logged_in"]
+
+
+sync_file = os.environ.get("FAKE_BW_SYNC_FILE")
+last_sync = state.get("last_sync") or (open(sync_file).read().strip() if sync_file and os.path.exists(sync_file)
+                                       else None) or os.environ.get("FAKE_BW_LAST_SYNC")
 
 
 def save():
@@ -112,7 +121,8 @@ def logged_in(email):
 
 
 if a[0] == "status":
-    print(json.dumps({"serverUrl": state.get("server"), "userEmail": None if logged_out else state.get("email"),
+    print(json.dumps({"serverUrl": state.get("server"), "lastSync": last_sync,
+                      "userEmail": None if logged_out else state.get("email"),
                       "status": "unauthenticated" if logged_out else "unlocked" if unlocked else "locked"})); sys.exit()
 if a[:2] == ["config", "server"]:
     if len(a) == 2: print(state.get("server") or "https://bitwarden.com"); sys.exit()
@@ -190,7 +200,14 @@ if a[0] == "unlock":
     print("Invalid master password.", file=sys.stderr); sys.exit(1)
 if a[0] == "lock": print("Your vault is locked."); sys.exit()
 if not unlocked: print("Vault is locked.", file=sys.stderr); sys.exit(1)
-if a[0] == "sync": print("Syncing complete."); sys.exit()
+if a[0] == "sync":
+    if os.environ.get("FAKE_BW_SYNC_FAIL"): fail(os.environ["FAKE_BW_SYNC_FAIL"])
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    if state_file:
+        state["last_sync"] = now; save()
+    elif sync_file:
+        open(sync_file, "w").write(now)
+    print("Syncing complete."); sys.exit()
 orgs = json.loads(os.environ.get("FAKE_BW_ORGS") or "[]")
 if a[:2] == ["list", "organizations"]:
     print(json.dumps([{"object": "organization", **{k: v for k, v in o.items() if k != "collections"}}
@@ -223,6 +240,7 @@ if a[:2] == ["delete", "item"]:
     if not any(i["id"] == a[2] for i in items): fail("Not found.")
     json.dump([i for i in items if i["id"] != a[2]], open(os.environ["FAKE_BW_ITEMS"], "w")); sys.exit()
 if a[:2] == ["list", "items"]:
+    if "FAKE_BW_LIST_RAW" in os.environ: sys.stdout.write(os.environ["FAKE_BW_LIST_RAW"]); sys.exit()
     search = a[a.index("--search") + 1].lower() if "--search" in a else ""
     print(json.dumps([i for i in items if search in i["name"].lower()])); sys.exit()
 q = a[2]

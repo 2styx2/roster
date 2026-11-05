@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from ..common import die, program_argv, run, say, time_left, user_config_dir
+from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
 
 # ---------------------------------------------------------------- password providers
 #
@@ -189,6 +189,12 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                        ReadOnlyTarget); field(part) names the setting for messages
 #             "login_fields": fn(spec, ctx) -> {"uri", "username"} (each None when the item has none): an
 #                             item's address and user, read without its password ever reaching roster (Q190)
+#             "items": fn(ctx, mapped) -> [{id, name, keys, uris, username}]: every login item, read without a
+#                      password, TOTP seed or note ever reaching roster (Q191); keys: what a Login may name it by
+#                      (its id, name, path). MAPPED(item) says it's in roster.yml: its uris and username may be left
+#                      out then (one more CLI call each, for op and kp)
+#             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
+#                     roster add --from-vault, and T222's `roster vault sync`
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -263,6 +269,21 @@ class Ctx:
         except subprocess.TimeoutExpired:
             raise TimedOut(f"`{tool}` timed out")
         except ValueError as e:                     # program_argv: a batch file and an argument cmd.exe acts on
+            raise SecretError(str(e))
+
+    def run_filtered(self, args, filt, env=None, timeout=120, floor=1):
+        """ARGS's stdout straight into FILT's stdin, never into roster (common.run_filtered, Q191): returns (ARGS's
+        exit code and stderr, FILT's stdout and stderr). FILT gets next to no environment (common.filter_env), so
+        not ENV's session key either. Errors as run()'s."""
+        tool = args[0]
+        try:
+            return run_filtered(program_argv(args), program_argv(filt), timeout=time_left(timeout, floor),
+                                env={**os.environ, **(env or {})}, filter_env=filter_env())
+        except FileNotFoundError:
+            raise CliMissing(not_installed(self.provider, tool))
+        except subprocess.TimeoutExpired:
+            raise TimedOut(f"`{tool}` timed out")
+        except ValueError as e:
             raise SecretError(str(e))
 
 
@@ -567,6 +588,49 @@ def login_fields(provider, spec, interactive=True):
     with _secret_lock:
         found = fn(name, ctx)
     return {"uri": found.get("uri") or None, "username": found.get("username") or None}
+
+
+def _listing_ctx(provider, interactive):
+    """A Ctx for listing or syncing: never asks unless INTERACTIVE, and its unlock doesn't sync by itself (the caller
+    syncs, or chose not to)."""
+    ctx = Ctx(provider, None)
+    ctx.interactive = ctx.interactive and interactive
+    ctx.settings = {**ctx.settings, "sync": False}
+    return ctx
+
+
+def can_list(provider):
+    """Can PROVIDER list its items without a password reaching roster (an "items" hook)?"""
+    return bool(_vault_op(provider, "items"))
+
+
+def vault_items(provider, mapped=None, interactive=False):
+    """Every login item in PROVIDER's vault as [{id, name, keys, uris, uri, username}] (uri: the first of uris, or
+    None), never a password, TOTP seed, note or custom field (Q191: Bitwarden's through roster's filter process).
+    MAPPED(item) -> True: a Login in roster.yml names it, so its uris and username may stay empty. INTERACTIVE=False
+    never asks, not even for the master password. Unsupported for a provider with no "items" hook."""
+    fn = _vault_op(provider, "items")
+    if not fn:
+        raise Unsupported(f"provider '{provider}' can't list its items without roster reading their passwords too, "
+                          "so roster doesn't ask it")
+    with _secret_lock:
+        found = fn(_listing_ctx(provider, interactive), mapped or (lambda item: False))
+    return [{"id": i["id"], "name": i["name"], "keys": sorted(set(i.get("keys") or (i["id"], i["name"]))),
+             "uris": list(i.get("uris") or []), "uri": (i.get("uris") or [None])[0],
+             "username": i.get("username") or None} for i in found]
+
+
+def sync_vault(provider, interactive=False):
+    """Fetch what changed in PROVIDER's vault on its server (`bw sync`): {provider, previous} (the sync before this
+    one, an ISO time, or None when it never synced or can't say), or None for a provider with nothing to sync (a
+    local file, a CLI that always asks the server). The one sync `roster add --from-vault` and T222's
+    `roster vault sync` use. Raises SecretError (e.g. the sync failed, or the vault is locked)."""
+    fn = _vault_op(provider, "sync")
+    if not fn:
+        return None
+    with _secret_lock:
+        done = fn(_listing_ctx(provider, interactive))
+    return {"provider": provider, "previous": done.get("previous")}
 
 
 # ---- extension points

@@ -1536,7 +1536,17 @@ def build_parser():
     s.add_argument("--type", metavar="TEXT", help="a free label (nas, switch, esxi, ...)")
     s.add_argument("--port", type=int, metavar="N", help="its SSH port (default: 22)")
     s.add_argument("--from-vault", action="store_true", help="fill --ip (and --port) from the --auth item's URI and "
-                   "--user from its username, never reading its password (bw); flags given win")
+                   "--user from its username, never reading its password (bw); flags given win. With no NAME: list "
+                   "the vault items no Login in roster.yml names (new ones since the last run), and in a terminal "
+                   "add each one [Y/n/edit/skip]")
+    s.add_argument("--json", action="store_true", help="with --from-vault and no NAME: print the list as JSON, add "
+                   "nothing")
+    s.add_argument("--all", action="store_true", help="with --from-vault and no NAME: every item roster.yml doesn't "
+                   "name, not only the new ones")
+    s.add_argument("--mark-seen", action="store_true", help="with --from-vault and no NAME: remember every item "
+                   "listed as seen, so it isn't new next time")
+    s.add_argument("--no-sync", action="store_true", help="with --from-vault and no NAME: don't sync the vault first "
+                   "(bw sync)")
     s.add_argument("--setup", action="store_true", help="then run setup for it alone (its host key, and this Box's "
                    "key on it when enrolled) and check it, and say how each went")
     s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
@@ -1678,6 +1688,12 @@ def _main(argv=None):
         build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
     if args.cmd == "add" and args.name is None and not args.from_vault:
         build_parser().error("roster add needs NAME, the new Host's name")
+    if args.cmd == "add" and args.name is not None:
+        listed = [f for f, on in (("--json", args.json), ("--all", args.all), ("--mark-seen", args.mark_seen),
+                                  ("--no-sync", args.no_sync)) if on]
+        if listed:
+            build_parser().error(f"{', '.join(listed)} go{'es' if len(listed) == 1 else ''} with --from-vault and no "
+                                 "NAME (the list of vault items): drop NAME or the flag")
     if args.cmd == "revoke" and args.all:
         if args.only or args.inv or args.config:
             build_parser().error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")

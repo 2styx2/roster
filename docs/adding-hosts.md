@@ -15,6 +15,17 @@ roster add nas-01 --auth "bw:nas-01 ssh" --from-vault --setup                   
 
 It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --only nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks.
 
+### After you put a login in the vault
+
+Saved a few logins in the vault (named `<host> ssh`, the address in the URI field, the user in the username)? Let roster find them:
+
+```bash
+roster add --from-vault            # sync, list the items roster.yml doesn't name yet, add each one [Y/n/edit/skip]
+roster add --from-vault --json     # just the list, for a script (or --all for the ones seen before too)
+```
+
+It syncs the vault first (`--no-sync` skips that), lists the login items no `auth:` in `roster.yml` names, new ones since the last run marked, and walks you through each: `nas-01 ssh` with URI `ssh://10.0.0.50` and username `admin` is offered as Host `nas-01` at `10.0.0.50`, user `admin`, `auth: "bw:nas-01 ssh"`. Enter adds it the `roster add` way (it asks the group), then offers setup for it; `edit` changes the name, address or user first; `n` hides it from now on; `skip` asks again next time. It works with Bitwarden, 1Password and KeePassXC (for KeePassXC entries it asks the address and user: roster reads only their paths there), and never reads a password. A locked vault is never unlocked here: it says how. Details: [Vault items not in roster.yml](cli-reference.md#vault-items-not-in-rosteryml-roster-add---from-vault).
+
 For a whole network you don't know yet, start here instead:
 
 ## 1. Scan the network
@@ -83,7 +94,7 @@ providers:
 
 A local database isn't shared: every box (or person) keeps its own, so `auth-check` passes only where those entries exist.
 
-To see what's in the vault without exposing passwords (Bitwarden):
+To see which items no Host uses yet: `roster add --from-vault --all --json` (never a password). To see what's in the vault with bw itself, without printing passwords (Bitwarden):
 
 ```bash
 bw sync
