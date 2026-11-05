@@ -7,7 +7,7 @@
 // Actions either run a command line (the same command table as keys and the command line) or
 // show a command to copy, when roster serve has no method for it (`roster sync`, `roster setup`).
 // There is never an action that accepts a host key.
-import { BackendCallError } from "../backend/types";
+import { BackendCallError, SETUP_HOST_API_VERSION } from "../backend/types";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { Problem, ProblemCode, ProblemData } from "./classify";
 
@@ -23,11 +23,17 @@ export type Where =
   | "the infra repo"
   | "init.lua";
 
+/** What a row's words may depend on beyond the Problem: the connected roster's `api_version`.
+ * Unknown (`:help`, no roster yet): the words of a roster that has everything. */
+export interface RowContext {
+  api?: number | undefined;
+}
+
 export type ErrorAction =
   /** Runs a command line: `reconnect`, `check HOST`, `lock` (the lock screen), `find`. */
   | { kind: "run"; label: string; line(p: Problem): string; hostOnly?: boolean }
   /** Shows a command to run in a terminal, with a Copy button. Null: nothing to show. */
-  | { kind: "copy"; label: string; text(p: Problem): string | null; hostOnly?: boolean };
+  | { kind: "copy"; label: string; text(p: Problem, ctx?: RowContext): string | null; hostOnly?: boolean };
 
 /** What a row shows beyond the message: 32's near names, 33's matching items, 43's fingerprints. */
 export type ErrorExtra = "near" | "matches" | "fingerprints";
@@ -38,7 +44,7 @@ export interface ErrorRow extends Entry {
   codes: readonly ProblemCode[];
   where: readonly Where[];
   /** The fix when roster didn't send one. */
-  fix(p: Problem): string;
+  fix(p: Problem, ctx?: RowContext): string;
   actions: readonly ErrorAction[];
   extras?: readonly ErrorExtra[];
   /** roster's message already says what to do: the lock screen leaves the Fix out. */
@@ -49,9 +55,13 @@ const retry: ErrorAction = { kind: "run", label: "Retry", line: () => "reconnect
 const reconnect: ErrorAction = { kind: "run", label: "Reconnect", line: () => "reconnect" };
 /** `hostOnly`: it names a Host in the Inventory, so a Quick Connect's Problem leaves it out. */
 const check: ErrorAction = { kind: "run", label: "Run :check", line: (p) => `check ${p.host}`, hostOnly: true };
-const copy = (text: (p: Problem) => string | null): ErrorAction => ({ kind: "copy", label: "Copy", text });
+const copy = (text: (p: Problem, ctx?: RowContext) => string | null): ErrorAction => ({ kind: "copy", label: "Copy", text });
 const sync = copy(() => "roster sync");
-const setupOnly: ErrorAction = { ...copy((p) => `roster setup --only ${p.host}`), hostOnly: true };
+/** `roster setup` for this one Host: `--host` (that Host alone) on a roster that has it (API 29),
+ * else `--only`, which also takes a group, type or product by that name (#461). */
+export const setupHost = (host: string, ctx: RowContext = {}): string =>
+  `roster setup ${ctx.api === undefined || ctx.api >= SETUP_HOST_API_VERSION ? "--host" : "--only"} ${host}`;
+const setupOne: ErrorAction = { ...copy((p, ctx) => setupHost(p.host, ctx)), hostOnly: true };
 /** The first `command` in roster's message (e.g. "run `bw login` once"). */
 const quoted = (p: Problem) => /`([^`]+)`/.exec(p.message)?.[1] ?? null;
 
@@ -152,15 +162,15 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     row: 12,
     codes: [46],
     where: ["this Box", "the Host"],
-    fix: (p) => `Run \`roster setup --only ${p.host}\` to install this Box's key, or set enroll: false.`,
-    actions: [setupOnly, check],
+    fix: (p, ctx) => `Run \`${setupHost(p.host, ctx)}\` to install this Box's key, or set enroll: false.`,
+    actions: [setupOne, check],
   }),
   row("host-key-changed", {
     row: 13,
     codes: [43],
     where: ["the Host", "the network"],
-    fix: (p) =>
-      `Don't accept it blindly: compare the new fingerprint with ${p.host}'s console or its owner. If the change is expected (a reinstall), delete its line in ~/.ssh/roster_known_hosts and run \`roster setup --only ${p.host}\`.`,
+    fix: (p, ctx) =>
+      `Don't accept it blindly: compare the new fingerprint with ${p.host}'s console or its owner. If the change is expected (a reinstall), delete its line in ~/.ssh/roster_known_hosts and run \`${setupHost(p.host, ctx)}\`.`,
     actions: [check],
     extras: ["fingerprints"],
   }),
@@ -168,9 +178,9 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     row: 14,
     codes: [44],
     where: ["this Box"],
-    fix: (p) =>
-      `Check ${p.host}'s fingerprint (its console, or its owner), then run \`roster setup --only ${p.host}\` to record it.`,
-    actions: [setupOnly, check],
+    fix: (p, ctx) =>
+      `Check ${p.host}'s fingerprint (its console, or its owner), then run \`${setupHost(p.host, ctx)}\` to record it.`,
+    actions: [setupOne, check],
     extras: ["fingerprints"],
   }),
   row("host-key-changed-while-asked", {
@@ -658,8 +668,8 @@ export function rowFor(rows: readonly ErrorRow[], code: ProblemCode): ErrorRow {
 }
 
 /** The fix to show: roster's (or the classifier's) when it gave one, else the row's. */
-export function fixFor(row: ErrorRow, p: Problem): string {
-  return sentence(p.fix ?? row.fix(p), p.host);
+export function fixFor(row: ErrorRow, p: Problem, ctx: RowContext = {}): string {
+  return sentence(p.fix ?? row.fix(p, ctx), p.host);
 }
 
 /** roster writes messages as CLI lines ("no vault item…"); the panel shows them as sentences,

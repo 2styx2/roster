@@ -57,6 +57,8 @@ struct World {
     /// The `roster sync` serve ran after a cut wrote `mesh: false` (T150): failed by default, so the
     /// transcript has the warning (T153).
     cut_sync: Value,
+    /// mesh.status also has a Link left out for a host key this Box hasn't recorded (#461).
+    no_host_key: bool,
 }
 
 impl Default for World {
@@ -68,6 +70,7 @@ impl Default for World {
             cut_pending: json!({}),
             ticks: 1,
             cut_sync: json!({ "ok": false, "error": "Permission denied: /home/you/.ssh/config.d/roster", "fix": "run `roster sync` on this box" }),
+            no_host_key: false,
         }
     }
 }
@@ -145,7 +148,7 @@ impl FakeMesh {
         members.push("db-9".into());
         members.sort();
         reach.insert("orion-3".into(), json!(n - 1));
-        json!({
+        let mut status = json!({
             "links": [{ "from": "orion-3", "to": "db-9", "kind": "key", "via": "jump-1", "status": "no-via",
                         "why": "orion-3 has no Link to jump-1, its hop to db-9 (add { from: orion-3, to: jump-1 })" }],
             "links_more": 0,
@@ -158,7 +161,14 @@ impl FakeMesh {
             "pending": {},
             "cut_pending": w.cut_pending,
             "out_of_date": w.out_of_date,
-        })
+        });
+        if w.no_host_key {
+            // serve's `why` names the setup its own roster takes (`--host` from API 29, `--only` before).
+            status["links"].as_array_mut().unwrap().push(json!({
+                "from": "orion-2", "to": "nas-1", "kind": "key", "status": "no-host-key",
+                "why": "no recorded host key for nas-1 on this Box (roster setup --only nas-1)" }));
+        }
+        status
     }
 
     fn result(&self, job: &Job) -> Value {
@@ -696,6 +706,29 @@ fn a_links_details_explain_no_via_and_what_to_do() {
             .iter()
             .any(|l| l.contains("Add a Link from the source to the jump Host"))
     );
+}
+
+#[test]
+fn a_links_details_for_no_host_key_point_at_the_setup_its_why_names() {
+    let mut run = started(World {
+        no_host_key: true,
+        ..World::default()
+    });
+    let ops = run.action("mesh-links", "Explain", "l2");
+    let f = of(&ops, "float")[0];
+    let lines: Vec<&str> = f["spec"]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l.as_str().unwrap())
+        .collect();
+    assert!(lines.contains(&"Why     no recorded host key for nas-1 on this Box (roster setup --only nas-1)"));
+    // The fix leaves the flag to serve's `why`: an older roster has no `setup --host` (#461).
+    assert!(
+        lines.iter().any(|l| l.contains("run the roster setup that Why names")),
+        "{lines:?}"
+    );
+    assert!(!lines.iter().any(|l| l.contains("--only PEER")), "{lines:?}");
 }
 
 #[test]

@@ -140,6 +140,7 @@ import { Logo } from "./chrome/Logo";
 import { countOf } from "./ui/format";
 import { afterSwitch, NONE_NAMED, switchPlan, type SwitchPlan } from "./inventory/switch";
 import { HintsChoice, HintsShown, registerHints } from "./ui/hints";
+import { RosterApi } from "./errors/rosterApi";
 import { PromptWatch } from "./session/prompt";
 import { XtermPromptScreen } from "./session/promptScreen";
 import { MESSAGES_VIEW, MessageLog, MessagesChoice, lineAfter, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./ui/messages";
@@ -2142,20 +2143,22 @@ function Workspace({
   );
   const frame = (content: React.ReactNode) => (
     <HintsShown value={hintsShown}>
-      <div className="window">
-        {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
-        {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
-          <div className="toolbar-bar" data-tauri-drag-region>
-            {toolbar("start")}
-            <div className="titlebar-fill" />
-            {toolbar("end")}
-          </div>
-        )}
-        {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
-        <div className="window-body">{content}</div>
-        {toast}
-        <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
-      </div>
+      <RosterApi.Provider value={conn.state === "ready" ? conn.info.inventory.api_version : undefined}>
+        <div className="window">
+          {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
+          {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
+            <div className="toolbar-bar" data-tauri-drag-region>
+              {toolbar("start")}
+              <div className="titlebar-fill" />
+              {toolbar("end")}
+            </div>
+          )}
+          {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
+          <div className="window-body">{content}</div>
+          {toast}
+          <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
+        </div>
+      </RosterApi.Provider>
     </HintsShown>
   );
 

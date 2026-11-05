@@ -105,6 +105,38 @@ describe("the Session's error panel", () => {
     expect(platform.clipboardText()).toBe("roster sync");
   });
 
+  // `roster setup --only NAME` also takes a group, type or product named NAME; `--host NAME` (API 29,
+  // #461) takes that Host alone. An older roster has only --only.
+  it.each([
+    [29, "--host"],
+    [28, "--only"],
+  ])("on API %i, says roster setup %s for this Host when the key is refused (46)", async (apiVersion, flag) => {
+    const { user, platform } = await ready({
+      apiVersion,
+      sessionRefusal: { code: 46, message: `${keyHost} didn't accept this Box's key` },
+    });
+    await command(user, `connect ${keyHost}`);
+    const panel = await problem();
+    expect(panel).toHaveTextContent(`Run roster setup ${flag} ${keyHost} to install this Box's key`);
+    await user.click(within(panel).getByRole("button", { name: "Copy" }));
+    expect(platform.clipboardText()).toBe(`roster setup ${flag} ${keyHost}`);
+  });
+
+  it.each([
+    [30, "--host"],
+    [2, "--only"],
+  ])("on API %i, says roster setup %s to record an unknown host key (44)", async (apiVersion, flag) => {
+    const { user, platform } = await ready({
+      apiVersion,
+      sessionRefusal: { code: 44, message: `no recorded host key for ${keyHost}` },
+    });
+    await command(user, `connect ${keyHost}`);
+    const panel = await problem();
+    expect(panel).toHaveTextContent(`then run roster setup ${flag} ${keyHost} to record it`);
+    await user.click(within(panel).getByRole("button", { name: "Copy" }));
+    expect(platform.clipboardText()).toBe(`roster setup ${flag} ${keyHost}`);
+  });
+
   it("offers Reconnect for a dropped Session", async () => {
     const { user } = await ready({ sshFailures: { [keyHost]: "client_loop: send disconnect: Connection reset by peer\r\n" } });
     await command(user, `connect ${keyHost}`);

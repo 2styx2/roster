@@ -29,6 +29,14 @@ describe("the error catalog", () => {
     expect(rowFor(rows, 5).fix(p(5))).toContain("Nothing was done");
   });
 
+  it("says roster setup --host for one Host from API 29, --only before, and --host when it can't know (:help)", () => {
+    // A changed host key (43) names the setup after a reinstall too (#461).
+    const row = rowFor(rows, 43);
+    expect(row.fix(p(43), { api: 29 })).toContain("run `roster setup --host esx`");
+    expect(row.fix(p(43), { api: 28 })).toContain("run `roster setup --only esx`");
+    expect(row.fix(p(43))).toContain("run `roster setup --host esx`");
+  });
+
   it("gives the host key question's own refusal its row (docs/app/errors.md row 62, ticket 36)", () => {
     const row = rowFor(rows, 23);
     expect(row.row).toBe(62);
