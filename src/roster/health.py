@@ -172,11 +172,13 @@ def ssh(cfg):
         what = "this Box's key" if key.type.name == boxkeys.DEFAULT else f"this Box's {key.type.name} key"
         if key.key.exists():
             out.append(check("ssh", "ok", f"{what}: {key.key}"))
+            out += key_age(cfg, key, what)
         else:
             kind = "" if key.type.name == boxkeys.DEFAULT else f"{key.type.name} "
             out.append(check("ssh", "warn", f"this Box has no {kind}key yet ({key.key}), so key Logins "
                                             f"{'' if not kind else 'with it '}can't work", "run `roster setup`",
                              "E12"))
+    out += rotation_pending(cfg)
     if not known_hosts_file().exists():
         out.append(check("ssh", "warn", f"roster's known hosts ({known_hosts_file()}) isn't there yet",
                          "run `roster setup`; until then each Session asks before it trusts a Host's key", "E14"))
@@ -190,6 +192,39 @@ def ssh(cfg):
         else:
             out.append(check("ssh", "ok", f"roster's known hosts has every Host's key: {known_hosts_file()}"))
     return out
+
+
+def key_age(cfg, key, what):
+    """T240: a warning once KEY (boxkeys.BoxKey) is older than key_max_age: (on by default, 365d; off: none). Only a
+    warning: roster never rotates by itself."""
+    from datetime import datetime, timezone
+
+    from . import boxkeys
+    from .errors import KEY_TOO_OLD
+    limit = cfg.get("key_max_age")
+    made = boxkeys.created(key.key)
+    if limit is None or made is None:
+        return []
+    days = (datetime.now(timezone.utc) - made).days
+    if days <= limit:
+        return []
+    return [check("ssh", "warn", f"[{KEY_TOO_OLD}] {what} is {days} days old, past key_max_age: {limit}d ({key.key})",
+                  "rotate it: `roster setup --rotate` puts a new key on every Host, proves it, then removes the old "
+                  "(or set key_max_age: in roster.yml; off turns this off)", "E269")]
+
+
+def rotation_pending(cfg):
+    """T240: the Box key rotation isn't finished: the old Box key is still on these Hosts (#471's LOW-5)."""
+    from .errors import ROTATION_PENDING
+    from .rotation import pending
+    waiting = pending(cfg)
+    from .rotation import problems  # #482's review LOW-1, LOW-2: an unreadable record, a kept old key
+    out = [check("ssh", "warn", message, fix, "E268") for message, fix in problems(cfg)]
+    if not waiting:
+        return out
+    return out + [check("ssh", "warn", f"[{ROTATION_PENDING}] Box key rotation pending on {count(len(waiting), 'Host')}: "
+                                 f"{names(waiting)} (the old Box key is still on them)",
+                  "run `roster setup --rotate` again once they answer: it finishes them", "E268")]
 
 
 # ---------------------------------------------------------------- Vault

@@ -207,6 +207,12 @@ SESSION_FILE_REFUSED = 202  # the bw-session file is a link, another user's or n
 NO_SESSION = 203            # vault unlock/lock for a provider with no session roster keeps (KeePassXC; 1Password for now)
 SESSION_FILE_FAILED = 204   # the bw-session file couldn't be written or removed (the system's reason)
 
+# Rotating the Box key (T240, #469, decision Q204; catalog rows 267-270)
+BOX_BUSY = 205              # another roster run (setup, revoke, a Mesh write) is changing this Inventory's Hosts: refused
+ROTATION_PENDING = 206      # a warning: the old Box key is still on some Hosts (setup --rotate finishes it)
+KEY_TOO_OLD = 207           # a warning (check --box, box.check): this Box's key is older than key_max_age
+NEW_KEY_REFUSED = 208       # setup --rotate: a Host it reached refused the new key, so no old key line went anywhere
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

@@ -55,6 +55,8 @@ box_name: ""                 # name tagged on this box's key; blank = this machi
 key_path: ~/.ssh/roster_ed25519
 # key_type: ecdsa           # the SSH key type (default ed25519); also per group or host, e.g.
 #                            # ecdsa for FIPS-mode hosts, which refuse ed25519
+# key_max_age: 365d         # check --box warns once this Box's key is older (default 365d; off);
+#                            # roster setup --rotate replaces it on every host
 workers: 32                  # how many hosts to work on in parallel
 claude_inline_limit: 60      # list hosts inside Claude's instructions up to this many
 # web_login_names:           # your team's own names for roster's login types: login: appliance

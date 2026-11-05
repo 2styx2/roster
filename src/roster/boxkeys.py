@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT = "ed25519"
+# key_max_age:'s default (T240, decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
+# private authentication key ("no more than one or two years", §5.3.6 item 4; Table 1: 1 to 2 years)
+MAX_AGE = "365d"
+MAX_AGE_LIMIT = 3650        # days: the most key_max_age: takes (10 years); `off` is how to turn the warning off
 RSA_MIN, RSA_MAX = 3072, 16384
 CURVES = (256, 384, 521)
 ALLOWED = (f"ed25519, ecdsa (P-384), ecdsa-256, ecdsa-384, ecdsa-521, rsa (3072 bits) or rsa-BITS with BITS "
@@ -188,4 +192,69 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
         # an empty or foreign file beside it, never widens what setup and revoke take
         if kt.file_name + ".pub" == pub.name and owned(pub.with_suffix("")) and matches(pub.with_suffix("")):
             keys.setdefault(kt.name, BoxKey(kt, key_file(cfg["key"], cfg["key_type"], kt.name)))
-    return list(keys.values())
+    out = list(keys.values())
+    # T240: mid-rotation, each key's new one (KEY.new) and kept old one (KEY.old) are this Box's too, so revoke takes
+    # (and names) both, and a renamed Box finds their lines. The same test as above: this user's, its .pub its own
+    for k in list(out):
+        for suffix in (".new", ".old"):
+            other = Path(str(k.key) + suffix)
+            if other.exists() and owned(other) and matches(other):
+                out.append(BoxKey(k.type, other))
+    return out
+
+
+# ---------------------------------------------------------------- the key's age (T240, key_max_age:)
+
+def stamp(key: Path) -> None:
+    """Record that roster made (or rotated) KEY now (common.key_created_file): its age is counted from this."""
+    from datetime import datetime, timezone
+
+    from .common import key_created_file, replace_file
+    rows = {p: t for t, p in _created_rows()}
+    rows[str(key)] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    replace_file(key_created_file(), "".join(f"{t}\t{p}\n" for p, t in sorted(rows.items())), 0o600)
+
+
+def _created_rows() -> list[tuple[str, str]]:
+    from .common import key_created_file
+    try:
+        text = key_created_file().read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return [(t, p) for t, _, p in (ln.partition("\t") for ln in text.splitlines()) if p]
+
+
+def created(key: Path):
+    """When KEY was made or last rotated (a UTC datetime): roster's record of it, else the file's own time (a key made
+    before T240, or by hand). None when there's no such file."""
+    from datetime import datetime, timezone
+    for t, p in _created_rows():
+        if p == str(key):
+            try:
+                return datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            except ValueError:
+                break
+    try:
+        return datetime.fromtimestamp(key.stat().st_mtime, timezone.utc)
+    except OSError:
+        return None
+
+
+def parse_age(value: Any) -> int | None:
+    """`key_max_age:` as days (None: off). VALUE: N or `Nd` days, `Nw` weeks, `Ny` years (365 days each), or `off`
+    (false). ValueError otherwise."""
+    if value is False or (isinstance(value, str) and value.strip().lower() == "off"):
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        days = value
+    else:
+        # ASCII digits only (#482's review: `\d` takes any script's digits)
+        m = re.fullmatch(r"([0-9]{1,6})\s*([dwy]?)", value.strip().lower(), re.ASCII) if isinstance(value, str) else None
+        if m is None:
+            raise ValueError(f"{value!r} isn't an age: write days as 365d (or 52w, 1y), or off")
+        days = int(m[1]) * {"": 1, "d": 1, "w": 7, "y": 365}[m[2]]
+    if days < 1:
+        raise ValueError(f"{value!r} isn't an age: at least 1d (or off)")
+    if days > MAX_AGE_LIMIT:    # a huge age would turn the warning off without saying so: that's `off`
+        raise ValueError(f"{value!r} is more than roster takes: at most 10y (3650d); write off to turn it off")
+    return days

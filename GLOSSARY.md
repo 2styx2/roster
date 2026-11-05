@@ -19,6 +19,10 @@ _Avoid_: session (SecureCRT's word for this), server, node
 A machine that runs roster and connects to Hosts from there, such as a laptop, a jump host or a Claude box.
 _Avoid_: client, workstation
 
+**Box key**:
+The SSH key `roster setup` makes on a Box and puts on its key Hosts, tagged `roster-managed:<box>` (one per key type). `roster setup --rotate` replaces it; a Mesh key is another key, on a source Host.
+_Avoid_: roster key, the key (when a Mesh key could be meant)
+
 **Session**:
 One live terminal connection from a Box to a Host. A Host can have several Sessions open at once.
 _Avoid_: connection profile, saved session

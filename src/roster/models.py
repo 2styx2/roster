@@ -172,6 +172,7 @@ class Inventory(Model, frozen=True):
     providers: dict[str, Any] = Field(repr=False)
     provider_dirs: list[str]
     rate_limited: list[str] = Field(default_factory=list)    # networks with an SSH rate limiter (T191, Q180)
+    key_max_age: int | None = 365   # days before check --box warns the Box key is due a rotation; None: off (T240)
 
     def as_config(self) -> dict[str, Any]:
         """The dict the older code reads (`cfg["hosts"][name]["ssh"]["user"]`), the same keys as before T112."""

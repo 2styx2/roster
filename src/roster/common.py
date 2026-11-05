@@ -87,6 +87,26 @@ def key_name_file(name: Any = _CURRENT) -> Path:
     return user_config_dir() / ("key-name" if name is None else f"key-name-{name}")
 
 
+def rotation_file(name: Any = _CURRENT) -> Path:
+    """The Box key rotation's pending record for the Inventory NAME (T240, #469): ~/.config/roster/key-rotation, or
+    key-rotation-NAME for a named Inventory, beside key-name and never in mesh.json: the Hosts not finished yet."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("key-rotation" if name is None else f"key-rotation-{name}")
+
+
+def lock_file(name: Any = _CURRENT) -> Path:
+    """The Box-wide lock for the Inventory NAME (T240): ~/.config/roster/run.lock, or run-NAME.lock, held by every run
+    that changes this Box's keys or Mesh entries on its Hosts (boxlock)."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("run.lock" if name is None else f"run-{name}.lock")
+
+
+def key_created_file() -> Path:
+    """When roster made or rotated each of this Box's keys (T240): ~/.config/roster/key-created, a line per key file
+    (`ISO-TIME<TAB>PATH`); one key file serves every Inventory that names it, so one record for the Box."""
+    return user_config_dir() / "key-created"
+
+
 def known_hosts_label():
     """known_hosts_file() as messages name it: ~/.ssh/roster_known_hosts (or -NAME)."""
     return f"~/.ssh/{known_hosts_file().name}"

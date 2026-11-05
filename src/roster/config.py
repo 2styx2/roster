@@ -74,7 +74,8 @@ def locate_config(arg: Any, inv: str | None = None) -> Path:
         "--inventory file:PATH|repo:URL|ssh-config`), or pass -c PATH / set ROSTER_CONFIG")
 
 
-TOP_KEYS = {"bitwarden", "box_name", "claude_inline_limit", "defaults", "groups", "key_path", "key_type", "links",
+TOP_KEYS = {"bitwarden", "box_name", "claude_inline_limit", "defaults", "groups", "key_max_age", "key_path",
+            "key_type", "links",
             "rate_limited",
             "provider_dirs", "providers", "resources", "web_login_names", "workers"}
 
@@ -261,6 +262,10 @@ def parse_inventory(text, path):
     # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
     # or spaces (T226, #435: sshd still reads it)
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}{KEY_TRAIL}"
+    try:                                    # T240: how old this Box's key may get before check --box warns
+        max_age = boxkeys.parse_age(raw.get("key_max_age", boxkeys.MAX_AGE))
+    except ValueError as e:
+        die(f"{path}: key_max_age: {e}")
     try:
         return Inventory.model_validate(
             {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key, "key_type": box_type,
@@ -269,7 +274,7 @@ def parse_inventory(text, path):
              "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
              "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
              "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or []),
-             "rate_limited": rate_limited(raw.get("rate_limited"))})
+             "rate_limited": rate_limited(raw.get("rate_limited")), "key_max_age": max_age})
     except ValidationError as e:
         die(f"{path}: {problem(e)}")
 

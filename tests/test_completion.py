@@ -80,6 +80,13 @@ def test_mesh_completes_its_actions_then_a_host(capsys, config):
     assert complete(capsys, "mesh", "--rotate", "d") == ["db-01"]
 
 
+def test_setup_rotate_completes_hosts_only_after_host(capsys, config):
+    """T240 (#469, 6): setup --rotate is a bare flag (the Box key); --host names what it covers."""
+    assert complete(capsys, "setup", "--rotate", "") == []
+    assert complete(capsys, "setup", "--rotate", "--host", "w") == ["web-01", "web-02"]
+    assert "--rotate" in complete(capsys, "setup", "--r")
+
+
 def test_options_complete_after_a_dash(capsys):
     assert complete(capsys, "hosts", "--l") == ["--long"]
     assert "--config" in complete(capsys, "--c")

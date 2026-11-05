@@ -237,6 +237,8 @@ groups:
 - **The Mesh is Ed25519 only for now.** A key Host whose `key_type:` isn't `ed25519` is left out of the Mesh (note 200), as a Windows Host is: a meshed group or a Link naming it isn't an error, and `roster mesh --dry-run`, `mesh status` and `check` list it under "left out". A password Host stays in. So a top-level or `defaults:` type other than `ed25519` takes every key Host out of the Mesh: `roster setup` then leaves the Mesh as it is and warns, and only an explicit `roster mesh` takes their Mesh entries off ([The Mesh](mesh.md#hosts-with-another-key-type)). Reach such a Host from the Box.
 - **ECDSA or RSA?** Both pass FIPS. ECDSA P-384 is short and fast, and every FIPS-mode OpenSSH takes it; pick `rsa` only for a Host that takes nothing else.
 
+**Changing a type for good, cleanly:** set `key_type:`, then run `roster setup --rotate`: the new type's key goes on and every other line of this Box's goes ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)).
+
 ## Limits to know about
 
 - **Generic form logins aren't supported by `roster web`.** Most appliance web UIs fall in this group, so use a browser for those. Supported: HTTP Basic, bearer tokens, `login: vsphere` (ESXi, vCenter), `login: openvpnas` (OpenVPN Access Server admin), `login: hub` (Hub web UI) and `login: unifi` (UniFi OS consoles: `services: { web: { url: "https://IP", verify: false, login: unifi } }`).

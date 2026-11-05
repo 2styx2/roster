@@ -2627,7 +2627,7 @@ def mesh_apply(state, params):
     Params: `{rotate?: [host], background?: bool}` (`background` since API 17)
     Result: a Mesh result with `applied: true`; `rotate` replaces those sources' keys everywhere. With
         `background: true`, `{job, action, total}` at once, and the result comes in `mesh.job`
-    Errors: 1, 110, 111
+    Errors: 1, 110, 111, 205
     Since: API 15
     """
     return mesh_run(state, params, apply=True)
@@ -2646,7 +2646,7 @@ def mesh_cut(state, params):
         it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened); a
         written one has `sync` (T150), the `roster sync` after it, as `host.add`'s.
         With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job`
-    Errors: 1, 2, 111
+    Errors: 1, 2, 111, 205
     Since: API 15
     """
     name = text_param(params, "host")

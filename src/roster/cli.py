@@ -7,15 +7,17 @@ import re
 import shlex
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import __version__, aliases, boxkeys, boxsync, clihelp, jsonout, mesh, providers
+from . import __version__, aliases, boxkeys, boxlock, boxsync, clihelp, jsonout, mesh, providers, rotation
 from .addhost import cmd_add
 from .claude import write_claude_files
 from .common import (
+    CURRENT,
     KEY_TAG,
     KEY_TRAIL,
     die,
@@ -164,7 +166,30 @@ def name_taken(cfg):
             "changed there. Give this Box another box_name:, or run roster setup --force to go ahead")
 
 
+@contextmanager
+def locked(what, inventories=(CURRENT,)):
+    """The Box-wide lock (boxlock, T240) while the body runs; a run that can't get it stops (205) before anything."""
+    held = boxlock.held(what, inventories)
+    try:
+        held.__enter__()
+    except Problem as e:
+        die(e.message)
+    try:
+        yield
+    finally:
+        held.__exit__(None, None, None)
+
+
 def cmd_setup(cfg, args):
+    if getattr(args, "rotate", False):
+        return cmd_rotate(cfg, args)
+    if args.dry_run:                        # read-only: no lock
+        return setup_run(cfg, args)
+    with locked("setup"):
+        return setup_run(cfg, args)
+
+
+def setup_run(cfg, args):
     # `--host NAME` (#437, Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
     # (a group, type or product by that name)
     host = getattr(args, "host", None)
@@ -187,6 +212,8 @@ def cmd_setup(cfg, args):
                 "key_type: on them, their group or defaults in roster.yml and run roster setup")
         cfg, hosts = key_type_for_run(cfg, hosts, override)
     say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
+    if not args.dry_run:                # a swap a rotation was stopped in the middle of, finished (#482's MED-2)
+        rotation.repair_all(cfg, say)
     # T239: one key per key type the Hosts use (this Box's own when none), each made on first need
     keys = boxkeys.in_use(cfg, hosts) or [boxkeys.box_key(cfg)]
     for key in keys:
@@ -282,19 +309,7 @@ def cmd_setup(cfg, args):
             replace_file(key_name_file(), f"{cfg['box']}\n")
     write_claude_files(cfg)
     warn_overlaps(cfg)
-    if mesh.graph(cfg)["links"]:
-        if narrowed:
-            say(f"mesh         not applied with {'--only' if args.only else '--host'} (it covers the whole Mesh): "
-                "run `roster mesh`")
-        elif dropped := mesh.key_type_dropped(cfg):
-            # #471's review MED-2: never take a member's Mesh entries off as a side effect of setup
-            say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
-                "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
-                "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
-                "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
-        else:
-            say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
-            failed.update({n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()})
+    failed.update(setup_mesh(cfg, "--only" if args.only else "--host" if narrowed else None))
     ready = len(key_hosts) - len(todo) + installed
     say()
     say(f"done         {ready} key hosts ready, {len(pw_hosts)} password-only hosts, {len(failed)} failed")
@@ -302,7 +317,97 @@ def cmd_setup(cfg, args):
         say("failed hosts (fix, then re-run setup - hosts that already work are skipped):")
         for name, why in sorted(failed.items()):
             say(f"  {name}: {why}")
+    # #471's review LOW-5 (T240): a Box key rotation not finished is never a clean setup, whatever logs in
+    if waiting := rotation.pending(cfg):
+        say(f"Box key rotation pending on {plural(len(waiting), 'Host')} ({', '.join(sorted(waiting))}): the old Box "
+            "key is still on them; `roster setup --rotate` finishes it")
+        return 1
+    if found := rotation.problems(cfg):
+        for message, fix in found:
+            say(f"warning: {message} ({fix})")
+        return 1
     return 1 if failed else 0
+
+
+def setup_mesh(cfg, narrowed_by):
+    """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
+    flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
+    if not mesh.graph(cfg)["links"]:
+        return {}
+    if narrowed_by:
+        say(f"mesh         not applied with {narrowed_by} (it covers the whole Mesh): run `roster mesh`")
+        return {}
+    if dropped := mesh.key_type_dropped(cfg):
+        # #471's review MED-2: never take a member's Mesh entries off as a side effect of setup
+        say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
+            "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
+            "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
+            "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
+        return {}
+    say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
+    return {n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()}
+
+
+def cmd_rotate(cfg, args):
+    """`roster setup --rotate` (T240, #469, decision Q204): replace the Box key on the Hosts (rotation.py), then
+    setup's own Mesh apply with the new key, never rotating a Mesh key (`roster mesh --rotate HOST` does those)."""
+    from .errors import ROTATION_PENDING
+    if args.only:
+        die("setup --rotate is narrowed with --host NAME (a Host or a group), not --only: the Hosts left out stay "
+            "pending until a run reaches them")
+    scope = None
+    if args.host is not None:
+        if args.host in cfg["hosts"]:
+            scope = {args.host}
+        elif args.host in cfg["groups"]:
+            scope = {n for n, h in cfg["hosts"].items() if h["group"] == args.host}
+        else:
+            die(f"unknown host or group {args.host!r} (see `roster hosts`): setup --rotate --host takes a Host or a "
+                "group")
+    if args.key_type:
+        try:
+            kt = boxkeys.parse(args.key_type).name
+        except ValueError as e:
+            die(f"--key-type: {e}")
+        other = sorted(n for n, h in cfg["hosts"].items() if h["enroll"] and h["reviewed"] and (scope is None or n in
+                       scope) and h["key_type"] != kt)
+        if other:
+            die(f"--key-type {kt} with --rotate: roster.yml gives {', '.join(other)} another key type. Set key_type: "
+                f"{kt} in roster.yml (on them, their group or defaults), then run roster setup --rotate: one pass "
+                "makes the new key of that type, proves it, and takes the old type's lines off (a type for this "
+                "run only would come back at the next sync and lock them out, Q200 (e))")
+    was = key_named(cfg)
+    if was not in (None, cfg["box"]):
+        die(f"this Box's key lines carry the name {was}, not {cfg['box']} (box_name:, or the hostname, changed): run "
+            "`roster setup` first (it re-tags them), then roster setup --rotate. A rotation never renames the Box")
+    if args.dry_run:
+        rotation.run(cfg, scope, dry_run=True, say=say)
+        return 0
+    groups = rotation.group(cfg)
+    with locked("setup --rotate", [inv for inv, _ in groups]):
+        r = rotation.run(cfg, scope, say=say)
+        failed = dict(r["failed"])
+        # setup's own Mesh apply (item 3): once the new key is proven on every Host, over it, never --rotate
+        if not failed and not r["pending"] and r["done"]:
+            failed.update(setup_mesh(cfg, "--host" if scope is not None else None))
+        elif r["pending"] and mesh.graph(cfg)["links"]:
+            say("mesh         not applied while the Box key rotation is pending (run `roster mesh` to apply it "
+                "now: the ssh config offers the pending Hosts both keys)")
+    say()
+    say(f"done         Box key rotated on {plural(len(r['done']), 'Host')}, {len(r['failed'])} failed, "
+        f"{len(r['pending'])} pending")
+    for label, note in sorted(r["notes"].items()):
+        say(f"  note: {label}: {note}")
+    if r["pending"]:
+        say(f"warning: [{ROTATION_PENDING}] Box key rotation pending on {plural(len(r['pending']), 'Host')}: the old "
+            "Box key stays on them, and in this Box's ssh config for them, until a run reaches them (`roster setup "
+            "--rotate` again finishes it):")
+        for label, why in r["pending"].items():
+            say(f"  {label}: {why}")
+    for label, why in sorted(failed.items()):
+        if label not in r["pending"]:
+            say(f"  {label}: {why}")
+    return 1 if failed or r["pending"] else 0
 
 
 def key_type_for_run(cfg, hosts, value):
@@ -555,9 +660,12 @@ def cmd_check(cfg, args):
         drift = mesh.drift(cfg) if not args.only else None
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
-        ok = all(r["ok"] for r in results) and not broken and not skipped
+        waiting = rotation_waiting(cfg, wanted)
+        found = [message for message, _ in rotation.problems(cfg)]
+        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found
         from . import jsondocs
-        jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "ok": ok}))
+        jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "rotation_pending": waiting,
+                                                       "rotation_problems": found, "ok": ok}))
         return 0 if ok else 1
     bad = 0
     width = max((len(h["name"]) for h in hosts), default=0)
@@ -582,9 +690,23 @@ def cmd_check(cfg, args):
                    if is_windows(cfg["hosts"][n]) or mesh.key_type_out(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
+    if waiting := rotation_waiting(cfg, wanted):
+        from .errors import ROTATION_PENDING
+        say(f"\nwarning: [{ROTATION_PENDING}] Box key rotation pending on {plural(len(waiting), 'Host')}: "
+            f"{', '.join(waiting)} (the old Box key is still on them; `roster setup --rotate` finishes it)")
+        bad += 1
+    for message, fix in rotation.problems(cfg):         # #482's review LOW-1, LOW-2, MED-1
+        say(f"warning: {message} ({fix})")
+        bad += 1
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
     return 1 if bad or skipped else 0
+
+
+def rotation_waiting(cfg, hosts):
+    """The Box key rotation's pending Hosts among HOSTS (T240): {name: why}."""
+    names = {h["name"] for h in hosts}
+    return {n: why for n, why in sorted(rotation.pending(cfg).items()) if n in names}
 
 
 def check_windows_key(cfg, h):
@@ -1088,6 +1210,11 @@ def check_ssh_takes(script):
 
 
 def cmd_revoke(cfg, args):
+    with locked("revoke"):
+        return revoke_run(cfg, args)
+
+
+def revoke_run(cfg, args):
     keyed = [h for h in selected(cfg, args.only) if h["enroll"]]
     hosts = skip_left_out(keyed)
     warn_os(hosts)
@@ -1099,10 +1226,15 @@ def cmd_revoke(cfg, args):
         if ans.strip().lower() != "y":
             return 1
     bad = 0
+    gone = []
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, mine), hosts), strict=True):
             bad += why is not None
             revoke_line("", h, why)
+            if why is None:
+                gone.append(h["name"])
+    # #482's review LOW-3: a Host without this Box's key holds no old key either; with every one done, no record
+    rotation.forget(gone, everything=not bad and len(hosts) == len(keyed) and not args.only)
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
     # T194 (#371): the files go only once every Host this file names has lost the key; with any skipped, failed or
     # left to --only, deleting the key would leave it on those for good
@@ -1195,10 +1327,13 @@ def cmd_revoke_all(args):
             return 1
     jobs = [(label, h, box_key_re(cfg)) for label, cfg, hosts in plan for h in hosts]
     bad = 0
-    with cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
+    with locked("revoke --all", [name for _, name, _ in targets]), \
+            cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
         for (label, h, _), why in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)
+            if why is None:                 # #482's review LOW-3, each Inventory's record
+                rotation.forget([h["name"]], next(n for lb, n, _ in targets if lb == label))
     files = []
     for _, cfg, _ in plan:
         files += key_files(cfg)
@@ -1759,7 +1894,7 @@ def main(argv=None):
         return _main(argv) or 0
     except Problem as e:                 # inventory() raises one with --json: the error as JSON on stderr
         if not Parser.json_errors:
-            raise
+            die(e.message)               # a clean error, as die's (the Box-wide lock's 205 from the Mesh, T240)
         jsonout.fail(e.code, e.message, e.fix)
         return 1
     except SystemExit as e:
@@ -1868,7 +2003,12 @@ def build_parser():
                    "key line has the new name (its line is then this Box's to replace or revoke)")
     s.add_argument("--key-type", metavar="TYPE", help="with --host: try this SSH key type there, over roster.yml's "
                    "key_type: (ed25519, ecdsa, ecdsa-256, ecdsa-521, rsa, rsa-BITS), for this run only; its line goes "
-                   "in beside the one of roster.yml's type, which stays. Set key_type: to keep it")
+                   "in beside the one of roster.yml's type, which stays. Set key_type: to keep it. With --rotate: "
+                   "the type roster.yml gives the Hosts, checked")
+    s.add_argument("--rotate", action="store_true", help="replace the Box key (this Box's own key, not a Mesh key: "
+                   "`roster mesh --rotate HOST` does those) on every Host: a new key, proven on each Host before the "
+                   "old key's line goes, then the old key deleted. --host NAME (a Host or a group) narrows it; a Host "
+                   "not reached stays pending until setup --rotate runs again")
     sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
     s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
                        "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
