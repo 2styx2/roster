@@ -332,6 +332,42 @@ def test_bw_session_file_that_isnt_a_plain_file_is_ignored_without_hanging(isola
     assert "ignored" in capsys.readouterr().out
 
 
+def _session_bytes(data):
+    f = user_config_dir() / "bw-session"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(data)
+    f.chmod(0o600)
+    return f
+
+
+def test_bw_session_file_powershell_wrote_as_utf16_unlocks(isolated, fakes):
+    """#433: Windows PowerShell 5.1's `bw unlock --raw > FILE` writes UTF-16 LE with a BOM and a CRLF."""
+    _session_bytes(b"\xff\xfe" + "fake-session-key\r\n".encode("utf-16-le"))
+    assert get_secret("bw:Network gear", "g") == "pw-netops"
+
+
+def test_bw_session_file_with_a_utf8_bom_unlocks(isolated, fakes):
+    """PowerShell 7's `Out-File -Encoding utf8BOM` and Notepad's "UTF-8 with BOM" put EF BB BF first."""
+    _session_bytes(b"\xef\xbb\xbffake-session-key\n")
+    assert get_secret("bw:Network gear", "g") == "pw-netops"
+
+
+@pytest.mark.parametrize("data", [
+    b"\xff\xfe" + "fake-session-key".encode("utf-16-le") + b"\x00",   # cut short: an odd byte count
+    "fake-session-key\r\n".encode("utf-16-le"),                        # UTF-16 with no BOM: NULs between letters
+    b"\x89PNG\r\n\x1a\n\x00\x00",                                       # not text at all
+    b"fake session key\n",                                              # a space: no session key has one
+    "fake-s\u00e9ssion-key\n".encode(),                                  # not ASCII
+], ids=["utf16-odd-bytes", "utf16-no-bom", "binary", "a-space", "not-ascii"])
+def test_bw_session_file_that_isnt_a_session_key_is_ignored(isolated, fakes, capsys, data):
+    """#433: what doesn't decode to printable ASCII never goes to bw (it once got NULs and failed with "embedded null
+    byte"); it's ignored with the same warning as a file that isn't yours."""
+    f = _session_bytes(data)
+    with pytest.raises(SecretError, match="locked"):
+        get_secret("bw:Network gear", "g")
+    assert f"warning      {f} isn't a Bitwarden session key" in capsys.readouterr().out
+
+
 def test_bw_expired_session_file_says_refresh(isolated, fakes):
     _session_file(isolated, "stale-key\n")
     with pytest.raises(SecretError, match="has expired.*bw unlock --raw >"):
