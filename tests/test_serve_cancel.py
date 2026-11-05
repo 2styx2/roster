@@ -499,9 +499,10 @@ groups:
 
 
 @pytest.fixture
-def stepped_check(write_config, monkeypatch):
-    """The real check_host over stand-in steps: each says whether the check held the vault while it ran, and dns
-    waits for `go` (or its stop)."""
+def stepped_check(write_config, monkeypatch, fakes):
+    """The real check_host over stand-in steps (and the stand-in bw, for vault.lock): each says whether the check held
+    the vault while it ran, and dns waits for `go`, with no time limit, so nothing but the test ends it (the test's
+    end sets it)."""
     from roster import diagnose
     st = rpc.State(str(write_config(PASSWORD_HOST)))
     held, in_dns, go = {}, threading.Event(), threading.Event()
@@ -511,13 +512,14 @@ def stepped_check(write_config, monkeypatch):
             held[name] = st.vault.readers
             if name == "dns":
                 in_dns.set()
-                go.wait(10)
+                go.wait()
             return "ok"
         return fn
     for name in diagnose.STEPS:
         if name != "inventory":
             monkeypatch.setitem(diagnose.STEP_FNS, name, step(name))
-    return type("Stepped", (), {"state": st, "held": held, "in_dns": in_dns, "go": go})
+    yield type("Stepped", (), {"state": st, "held": held, "in_dns": in_dns, "go": go})
+    go.set()
 
 
 def test_a_check_shares_the_vault_only_for_the_steps_that_fetch_a_secret(stepped_check):
@@ -540,15 +542,14 @@ def test_vault_lock_doesnt_wait_for_a_check_between_its_vault_steps(stepped_chec
     st = stepped_check.state
     started = rpc.respond(st, {"jsonrpc": "2.0", "id": 1, "method": "host.check",
                                "params": {"host": "esx-02", "background": True}})["result"]
-    stepped_check.in_dns.wait(5)
-    answer = []
-    t = threading.Thread(target=lambda: answer.append(rpc.respond(st, {"jsonrpc": "2.0", "id": 2,
-                                                                       "method": "vault.lock"})), daemon=True)
-    t.start()
-    t.join(5)                                                       # never go.set(): dns is still under way
-    assert answer and "result" in answer[0]
+    stepped_check.in_dns.wait()
+    # in this thread, with dns still waiting for `go`, which only this test sets, and only after vault.lock has
+    # answered: a lock that waited for the check would never answer (pytest-timeout ends it, with every thread's
+    # stack). No clock decides it: a slow `bw lock` under a busy `pytest -n auto` once took past a 5 s join (#477).
+    answer = rpc.respond(st, {"jsonrpc": "2.0", "id": 2, "method": "vault.lock"})
+    assert "result" in answer, answer
     stepped_check.go.set()
     job = st.jobs.get("check", started["job"])
-    assert job.wait(5) and job.view()["state"] == "stopped"
+    assert job.wait() and job.view()["state"] == "stopped"
     assert [s["status"] for s in job.result["steps"]][-3:] == ["skipped"] * 3
     assert "auth" not in stepped_check.held                         # no secret fetched after the lock
