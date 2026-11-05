@@ -36,8 +36,8 @@ def pytest_collection_modifyitems(config, items):
     """--shard K/N splits the tests so each shard's recorded time (--shard-durations, refreshed from the nightly run)
     comes out about the same: the longest first, each to the shard with the least so far, each test counting its
     time plus SHARD_PER_TEST. A test the file doesn't know counts as its average, so a new one needs no entry. A
-    shard runs its longest tests first, so xdist doesn't hand a worker a minute-long one at the end while the rest
-    sit idle. The same in every xdist worker: it depends only on the collected tests and the file."""
+    shard keeps collection order: longest first ran slower on the Windows runner (T233). The same in every xdist
+    worker: it depends only on the collected tests and the file."""
     shard = config.getoption("--shard")
     if not shard:
         return
@@ -58,7 +58,7 @@ def pytest_collection_modifyitems(config, items):
         loads[j] += recorded.get(item.nodeid, average) + SHARD_PER_TEST
         home[item.nodeid] = j
     config.hook.pytest_deselected(items=[i for i in items if home[i.nodeid] != k - 1])
-    items[:] = [i for i in longest_first if home[i.nodeid] == k - 1]
+    items[:] = [i for i in items if home[i.nodeid] == k - 1]
 
 
 _durations: dict[str, float] = {}
