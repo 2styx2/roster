@@ -62,6 +62,81 @@ export function placeMenu(
   return { left: Math.max(MARGIN, left), top: Math.max(MARGIN, top) };
 }
 
+/** The nearest ancestor of `el` that scrolls vertically. */
+function scrollerOf(el: Element | null): HTMLElement | null {
+  for (let e = el?.parentElement; e; e = e.parentElement) {
+    const y = getComputedStyle(e).overflowY;
+    if ((y === "auto" || y === "scroll") && e.scrollHeight > e.clientHeight)
+      return e;
+  }
+  return null;
+}
+
+/** How far a row's scroller should scroll (up to `room`, what's left below) so a menu `height`
+ * tall fits under the row in a window `view` tall, or 0 when it fits, can't be made to, or would
+ * push the row out of the scroller's top (`rowTop` - the scroll < `scrollerTop`). */
+export function scrollForMenu(
+  row: { top: number; bottom: number },
+  height: number,
+  view: number,
+  room: number,
+  scrollerTop: number,
+): number {
+  const need = Math.ceil(row.bottom + height + MARGIN - view);
+  if (need <= 0 || need > room || row.top - need < scrollerTop) return 0;
+  return need;
+}
+
+/** Scrolls `row`'s scroller so a menu `height` tall opens under it, where that can be done. */
+function roomBelow(row: Element | null, height: number) {
+  const scroller = scrollerOf(row);
+  if (!row || !scroller) return;
+  const by = scrollForMenu(
+    row.getBoundingClientRect(),
+    height,
+    window.innerHeight,
+    scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+    scroller.getBoundingClientRect().top,
+  );
+  if (by > 0) scroller.scrollTop += by;
+}
+
+/** Where a menu that opens upward goes so neither of its edges cuts a tree row (round 20: a flipped
+ * menu sliced the row above it mid-glyph): its bottom on the last row edge at or above `bottom`,
+ * its top on the nearest row edge that leaves it at least `height`, and the room that adds, to
+ * share out as padding. `edges` are the rows' tops and bottoms; with none near, it's as it was. */
+export function snapUp(
+  bottom: number,
+  height: number,
+  edges: readonly number[],
+): { top: number; bottom: number; extra: number } {
+  const below = edges.filter((e) => e <= bottom + 0.5);
+  const end = below.length ? Math.max(...below) : bottom;
+  // Only a top that lands on the rows needs moving: above them (a heading area) it cuts nothing.
+  const above = edges.filter((e) => e <= end - height + 0.5);
+  if (above.length === 0 || end - height < Math.min(...edges) - 0.5)
+    return { top: bottom - height, bottom, extra: 0 };
+  const top = Math.max(...above);
+  return { top, bottom: end, extra: Math.max(0, end - top - height) };
+}
+
+/** The tops and bottoms of the rows in `row`'s tree that are in view (a row its scroller has
+ * scrolled out of sight, under the details foot, has no edge to keep clear). */
+function rowEdges(row: Element | null): number[] {
+  const tree = row?.closest('[role="tree"]');
+  if (!tree) return [];
+  const scroller = scrollerOf(row);
+  const clip = scroller?.getBoundingClientRect();
+  const out: number[] = [];
+  for (const r of tree.querySelectorAll(".sb-row, .sb-heading, .sb-empty, .sb-slot")) {
+    const b = r.getBoundingClientRect();
+    if (b.height === 0) continue;
+    if (clip && scroller?.contains(r) && (b.bottom <= clip.top || b.top >= clip.bottom)) continue;
+    out.push(b.top, b.bottom);
+  }
+  return out;
+}
+
 export function RowMenu({
   label,
   what = "NAME",
@@ -108,6 +183,10 @@ export function RowMenu({
     const el = ref.current;
     if (!el) return;
     back.current = document.activeElement;
+    // From a key, a row too near the window's foot scrolls up just enough for the menu to open
+    // under it (round 20: flipped above, its edge sliced a row mid-glyph). Only from a key: under
+    // the pointer the tree never moves (Q216).
+    if (keyboard) roomBelow(anchor(), el.offsetHeight);
     for (let e = anchor() ?? document.scrollingElement; e; e = e.parentElement)
       scrolledAt.current.set(e, [e.scrollTop, e.scrollLeft]);
     const rect = anchor()?.getBoundingClientRect();
@@ -116,11 +195,36 @@ export function RowMenu({
       (rect
         ? { x: rect.left + 24, y: rect.bottom, flipY: rect.top }
         : { x: MARGIN, y: MARGIN });
-    const { left, top } = placeMenu(
+    const placed = placeMenu(
       point,
       { width: el.offsetWidth, height: el.offsetHeight },
       { width: window.innerWidth, height: window.innerHeight },
     );
+    const { left } = placed;
+    let { top } = placed;
+    // Moved up (flipped, or kept in the window): both its edges go to row edges, so no row shows
+    // sliced above or under it; the room that takes is shared as padding, top and bottom.
+    // Opened downward, its foot goes down to the next row edge, as long as that's in the window.
+    const height = el.offsetHeight;
+    const edges = rowEdges(anchor());
+    let extra = 0;
+    if (top < point.y) {
+      const snap = snapUp(top + height, height, edges);
+      if (snap.top >= MARGIN) {
+        top = snap.top;
+        extra = snap.extra;
+      }
+    } else {
+      const foot = edges.filter((e) => e >= top + height - 0.5);
+      const next = foot.length ? Math.min(...foot) : null;
+      if (next !== null && next <= window.innerHeight - MARGIN)
+        extra = next - top - height;
+    }
+    if (extra > 0.5) {
+      const pad = parseFloat(getComputedStyle(el).paddingTop) || 0;
+      el.style.paddingTop = `${pad + Math.floor(extra / 2)}px`;
+      el.style.paddingBottom = `${pad + Math.ceil(extra / 2)}px`;
+    }
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
     // Scale from the corner nearest the point it opened at.

@@ -724,10 +724,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 @media (hover: hover) and (pointer: fine) {
   .sidebar .row-menu-item:hover:not(:focus) { background: var(--hover); }
 }
-/* Where the menu's groups split: a rule you can see, 4px above and below, so the one larger gap
+/* Where the menu's groups split: a rule you can see, 6px above and below, so the one larger gap
    reads as a split and not as a slip (round 19: --line on the panel was 1.05:1 in Roster dark,
-   invisible). The menu's own border's tone. */
-.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-strong); }
+   invisible). The menu's own border's tone. Round 20: 4px put it right under the focused item's
+   accent outline, where it read as part of that ring in Roster dark; 6px clears a 2px ring with
+   room to spare. */
+.row-menu-sep { height: 1px; margin: 6px; background: var(--line-strong); }
 @media (forced-colors: active) {
   .row-menu { border-color: CanvasText; }
   .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
