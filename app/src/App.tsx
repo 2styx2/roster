@@ -20,7 +20,7 @@ import { useTabsConfig } from "./session/useTabsConfig";
 import { useWorkspaceTheme } from "./theme/useWorkspaceTheme";
 import { useMessages } from "./ui/useMessages";
 import { usePluginBridge, type PluginHandlers } from "./app/usePluginBridge";
-import { type Backend, type VaultAccount } from "./backend/types";
+import { type Backend } from "./backend/types";
 import { useConnection } from "./backend/useConnection";
 import { runLine, type CommandContext, type Commands } from "./commands/table";
 import { layoutWarnings } from "./config/apply";
@@ -42,10 +42,10 @@ import { HelpPanel } from "./help/HelpPanel";
 import { optionTopic } from "./help/lookup";
 import { topics } from "./help/pages";
 import { useHelp } from "./help/useHelp";
-import { ConfirmPanel } from "./inventory/ConfirmPanel";
 import { FirstRun } from "./inventory/FirstRun";
 import { inventoryActions, type Form } from "./inventory/actions";
 import { Forms } from "./inventory/Forms";
+import { SwitchPanel } from "./inventory/SwitchPanel";
 import { useInventories } from "./inventory/useInventories";
 import { useInventory } from "./inventory/useInventory";
 import { BindingsPanel } from "./keyboard/BindingsPanel";
@@ -55,7 +55,8 @@ import { useAppKeys } from "./keyboard/useAppKeys";
 import { defaultOptions, keyHint, keymapOf, type CommandLine as Line, type Options } from "./keymap";
 import { TypedPasswordsContext } from "./lock/forgetOnLock";
 import type { Clock } from "./lock/idle";
-import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
+import { LockGate } from "./lock/LockScreen";
+import { SignOutPanel } from "./lock/SignOutPanel";
 import { useWorkspaceVault } from "./lock/useWorkspaceVault";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
@@ -84,7 +85,7 @@ import { DemoBanner } from "./tutor/DemoBanner";
 import { resumeAt, tutorPage, type TutorEvent, type TutorialDef } from "./tutor/tutor";
 import { useDemo, type TutorLink } from "./tutor/useDemo";
 import { shownControls, type ToolbarContext } from "./chrome/toolbar";
-import { countOf, errorText } from "./ui/format";
+import { countOf } from "./ui/format";
 import { HintsShown } from "./ui/hints";
 import { Keys } from "./ui/Keys";
 import { MESSAGES_VIEW, shownText, spokenText } from "./ui/messages";
@@ -211,11 +212,8 @@ function Workspace({
   const { focus, mainRef, treeRef } = useFocusReturn();
   const { conn, info, caps, hosts, connect, reloadHosts } = useConnection(backend, tabs, say, config ? JSON.stringify([config.backend, config.rosterCommand]) : null);
   const ready = conn.state === "ready";
-  const { vault, configures, targetsVersion, bumpTargets, typed } = useWorkspaceVault(backend, tabs, info, caps, config, {
-    idleMs: options.idleLockMinutes * 60_000,
-    clock,
-    say,
-  });
+  const workspaceVault = useWorkspaceVault(backend, tabs, info, caps, config, { idleMs: options.idleLockMinutes * 60_000, clock, say, focus });
+  const { vault, configures, targetsVersion, bumpTargets, typed, signingOut } = workspaceVault;
   const hostByName = useMemo(() => new Map((hosts?.hosts ?? []).map((h) => [h.name, h])), [hosts]);
   const groupNames = useMemo(() => {
     const names = Object.keys(hosts?.groups ?? {});
@@ -377,7 +375,6 @@ function Workspace({
   const pluginsPanel = usePanelState<true>(focus);
   const packagesPanel = usePanelState<true>(focus);
   const removing = usePanelState<{ host: string; group: string }>(focus);
-  const signingOut = usePanelState<VaultAccount>(focus);
   const [details, setDetails] = useState<string | null>(null);
 
   const outputTap = useMemo(() => ({ output: plugins.output.bind(plugins) }), [plugins]);
@@ -513,22 +510,8 @@ function Workspace({
     toggleStatusBar: () => toggle(layout.bar),
     openCommandLine,
     toggleKeys: () => (keysPanel.value ? closeKeys() : keysPanel.open(true)),
-    lock: () => {
-      if (!vault.lock()) say("Nothing to lock: no Host Login uses a vault with a master password.");
-    },
-    vault: () => {
-      if (!caps.has("signOut")) return say(caps.needsNewer("signOut"));
-      // Ask roster who the CLI is signed in as now: a sign-in from the lock screen doesn't say.
-      backend.vaultStatus().then(
-        (s) => {
-          if (!s.provider) return say("Nothing to sign out of: no Host Login uses a vault with an account.");
-          if (!s.can_sign_out) return say(noAccountWords(s.provider));
-          if (!s.account) return say("The vault CLI isn't signed in on this Box, so there's no account to sign out of.");
-          signingOut.open(s.account);
-        },
-        (e: unknown) => say(`Couldn't ask the vault who's signed in: ${errorText(e)}`),
-      );
-    },
+    lock: workspaceVault.lock,
+    vault: workspaceVault.askSignOut,
     toTerminal: () => {
       setMode(terminalMode);
       ctx.closePanel();
@@ -902,37 +885,8 @@ function Workspace({
             say={say}
           />
         )}
-        {inventories.question.value && (
-          <ConfirmPanel
-            key={inventories.question.value.to}
-            title="Switch Inventory"
-            body={inventories.question.value.body}
-            more={inventories.question.value.more}
-            action={inventories.question.value.action}
-            keep={inventories.question.value.action === null ? "Close" : "Stay"}
-            danger={false}
-            onConfirm={inventories.confirm}
-            onClose={inventories.question.close}
-          />
-        )}
-        {signingOut.value && (
-          <ConfirmPanel
-            title={signOutQuestion(signingOut.value)}
-            body={
-              <>
-                {SIGN_OUT_WHAT} Server: <span className="mono">{serverName(signingOut.value.server)}</span>. The app locks and shows the sign-in form; open
-                Sessions keep running behind it.
-              </>
-            }
-            action="Sign out"
-            onConfirm={async () => {
-              const account = signingOut.value;
-              signingOut.set(null);
-              if (account) await vault.signOut(account);
-            }}
-            onClose={signingOut.close}
-          />
-        )}
+        <SwitchPanel inventories={inventories} />
+        <SignOutPanel asking={signingOut} signOut={vault.signOut} />
         <PluginLayers
           plugins={plugins}
           snapshot={pluginSnap}

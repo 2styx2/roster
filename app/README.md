@@ -106,7 +106,8 @@ app/src/edit/         editing a Host (ticket 10): form.ts (the draft, what chang
                       `:discard`, `:publish`: the message, the commit's hash); adding one (ticket 11): addForm.ts (the draft, checks, Vault item suggestions,
                       host.add's params), AddPanel.tsx (`:host add`: pull, the form, host key, test login, add), SaveTo.tsx (the "Save to" choice, shared)
 app/src/lock/         the Lock: useVault.ts (lock state, idle lock), idle.ts (idle timer, injectable Clock), LockScreen.tsx,
-                      useWorkspaceVault.ts (init.lua's vault settings, then the Lock), forgetOnLock.ts (each workspace's
+                      useWorkspaceVault.ts (init.lua's vault settings, then the Lock, `:lock`, `:vault signout`;
+                      SignOutPanel.tsx asks first), forgetOnLock.ts (each workspace's
                       typed passwords, emptied when it locks)
 crates/roster-core/src/config/
                       the Lua Config (ticket 21, docs/app/config.md): schema.rs (every option and default), lua.rs
@@ -199,7 +200,7 @@ app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|re
                       ConfirmPanel.tsx (removing a Host asks first), store.ts (a plain roster.yml or a team repo: "saved" or
                       "a Pending change", T212), FirstRun.tsx (Start your Inventory: a Box with none, through serve),
                       useInventory.ts (Pending changes, the pull, outside edits, each change through roster),
-                      useInventories.ts (named Inventories and `:inventory`'s switch), actions.ts (the Inventory commands,
+                      useInventories.ts (named Inventories and `:inventory`'s switch; SwitchPanel.tsx asks), actions.ts (the Inventory commands,
                       the one form slot), Forms.tsx (its panels), said.ts (what's said after each change)
 app/src/folders/      Folders (GLOSSARY), now the built-in Plugin's: folders.ts (the Folder model and the `folders` registry
                       init.lua's go into), file.ts (folders.yml parsed for the one-time move, the Plugin's settings);
