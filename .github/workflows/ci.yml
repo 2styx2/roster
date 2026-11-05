@@ -5,8 +5,8 @@
 #   the `CI` job at the end always reports, and fails if any job that ran failed.
 #   Install (install.sh, update.sh, uninstall.sh): scripts/test-install.sh on Ubuntu and Fedora in containers, on
 #        a pull request that touches them, on Monday's nightly run and by hand (it needs the network; decision Q199).
-#   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows,
-#        build the wheel.
+#   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows
+#        (in 3 shards balanced by time, tests/durations-windows.json), build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
 #   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
 #        headless Chromium (app/e2e); rustfmt, clippy and
@@ -71,9 +71,13 @@ jobs:
           python3 -I scripts/ci_changes.py --event "$GITHUB_EVENT_NAME" --files files.txt --output "$GITHUB_OUTPUT" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
-  cli-lint:
-    name: CLI lint (ruff)
+  # The quick checks, in one job so a run takes fewer of the plan's 20 parallel jobs (T233): each takes seconds.
+  checks:
+    name: Checks (ruff, pyright, Lua types, wheel)
     runs-on: ubuntu-latest
+    env:
+      LUALS_VERSION: "3.19.2"
+      LUALS_SHA256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -87,10 +91,49 @@ jobs:
       - run: uv sync --frozen --python python3.12
       - run: uv run --python python3.12 ruff check src tests scripts app/scripts
       # The type checker (decision Q113): basic over src/roster/, strict for the modules pyproject.toml lists.
-      # The job keeps its name "CLI lint (ruff)", which branch protection may require by name.
       - run: uv run --python python3.12 pyright
       # One version across pyproject.toml, package.json, tauri.conf.json, the Cargo.tomls and the lock files.
       - run: scripts/bump-version.sh --check
+      # The example Plugins, type-checked against the generated stubs (examples/plugins/types/roster.lua,
+      # ticket 70): a pinned release, checked against its digest.
+      - name: Install lua-language-server
+        run: |
+          mkdir -p "$RUNNER_TEMP/luals"
+          curl -fsSL -o "$RUNNER_TEMP/luals.tar.gz" \
+            "https://github.com/LuaLS/lua-language-server/releases/download/$LUALS_VERSION/lua-language-server-$LUALS_VERSION-linux-x64.tar.gz"
+          echo "$LUALS_SHA256  $RUNNER_TEMP/luals.tar.gz" | sha256sum --check
+          tar xzf "$RUNNER_TEMP/luals.tar.gz" -C "$RUNNER_TEMP/luals"
+      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/plugins --checklevel=Hint'
+      # The first-party Plugins (plugins/, decision Q94), against the same stubs (plugins/.luarc.json).
+      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
+      # Every example in init.lua's option reference (docs/app/options.md, decision Q132), against
+      # init.lua's generated stubs (examples/types/roster-config.lua): what :help shows type-checks.
+      # lua-language-server lets through a string outside a "a"|"b" type (cursor_style = "triangle"),
+      # so cargo test also loads every documented init.lua example through the real loader.
+      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/config-check --checklevel=Hint'
+      # The example Configs (examples/init.lua, examples/init-split), against the Config's generated
+      # types, set up the way docs/app/options.md's "Editor support" says: types/roster-config.lua
+      # and a .luarc.json next to init.lua.
+      - name: Check the example Configs against examples/types/roster-config.lua
+        run: |
+          check() {
+            dir="$RUNNER_TEMP/config-$1"; mkdir -p "$dir/types"; cp -R "$2"/. "$dir"/
+            cp examples/types/roster-config.lua "$dir/types/"
+            printf '%s\n' '{' '  "runtime.version": "Lua 5.4",' '  "runtime.path": ["lua/?.lua", "lua/?/init.lua"],' \
+              '  "workspace.library": ["types"],' '  "diagnostics.globals": ["roster"]' '}' > "$dir/.luarc.json"
+            "$RUNNER_TEMP/luals/bin/lua-language-server" --check "$dir" --checklevel=Hint
+          }
+          mkdir -p "$RUNNER_TEMP/one" && cp examples/init.lua "$RUNNER_TEMP/one/"
+          check one "$RUNNER_TEMP/one"
+          check split examples/init-split
+      # The CLI's wheel and sdist build (release.yml builds the ones a release ships).
+      - run: uv build --python python3.12
+      - run: ls -l dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 28
 
   cli-test:
     name: CLI tests (Python ${{ matrix.python }})
@@ -135,8 +178,9 @@ jobs:
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
   # The suite there takes 47-58 min of test time (each stand-in Host command starts Python and Git for Windows'
   # sh, whose every fork is slow: a Mesh test takes about 7 times as long as on Linux, #234), so it runs in 3 shards
-  # side by side (conftest.py's --shard: every 3rd test, so test_mesh.py spreads evenly), each on the runner's 4
-  # cores. --durations lists the slowest, to measure again.
+  # side by side, each on the runner's 4 cores. conftest.py's --shard balances them by the time each test took
+  # (tests/durations-windows.json, T233: a test it doesn't know counts as the average); each shard writes its tests'
+  # times (--store-durations), and the nightly run merges them into a new file (windows-durations, below).
   cli-test-windows:
     name: CLI tests (Windows, ${{ matrix.shard }}/3)
     runs-on: windows-latest
@@ -159,34 +203,41 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen
-      - run: uv run pytest --shard ${{ matrix.shard }}/3 -n 4 --durations=10 --junitxml=report.xml
+      - run: >-
+          uv run pytest --shard ${{ matrix.shard }}/3 -n 4 --durations=10 --junitxml=report.xml
+          --store-durations durations.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: pytest-report-windows-${{ matrix.shard }}
-          path: report.xml
+          path: |
+            report.xml
+            durations.json
           retention-days: 7
 
-  cli-build:
-    name: CLI build (wheel + sdist)
+  # The nightly run (and a run by hand) merges the three shards' times into a fresh tests/durations-windows.json, an
+  # artifact, and says in its summary how even the shards ran. Refresh the committed file from it when they drift
+  # apart (docs/development.md, "Tests"): `gh run download RUN -n windows-durations -D tests`.
+  windows-durations:
+    name: Windows shard times
     runs-on: ubuntu-latest
-    needs: [changes, cli-lint, cli-test, cli-test-windows]
-    # After the tests that ran; Windows' are skipped on a pull request that only touches the app or the docs.
-    if: ${{ !cancelled() && !failure() && needs.changes.outputs.cli == 'true' }}
+    timeout-minutes: 5
+    needs: cli-test-windows
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.cli-test-windows.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: ${{ env.UV_VERSION }}
-      - run: uv build --python python3.12
-      - run: ls -l dist/
+          pattern: pytest-report-windows-*
+          path: reports
+      - run: >-
+          python3 -I scripts/shard_durations.py durations-windows.json
+          reports/pytest-report-windows-{1,2,3}/durations.json --summary "$GITHUB_STEP_SUMMARY"
+      - run: git diff --no-index --stat tests/durations-windows.json durations-windows.json || true
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: windows-durations
+          path: durations-windows.json
           retention-days: 28
 
   app-frontend:
@@ -222,47 +273,6 @@ jobs:
       # The JS and CSS size budget (docs/app/performance.md, "Bundle size"): a build takes a second or two.
       - run: npx vite build
       - run: python3 ../scripts/check-bundle-size.py dist
-
-  plugin-types:
-    name: Plugin and Config types (lua-language-server)
-    runs-on: ubuntu-latest
-    env:
-      LUALS_VERSION: "3.19.2"
-      LUALS_SHA256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
-    steps:
-      - uses: actions/checkout@v4
-      # The example Plugins, type-checked against the generated stubs (examples/plugins/types/roster.lua,
-      # ticket 70): a pinned release, checked against its digest.
-      - name: Install lua-language-server
-        run: |
-          mkdir -p "$RUNNER_TEMP/luals"
-          curl -fsSL -o "$RUNNER_TEMP/luals.tar.gz" \
-            "https://github.com/LuaLS/lua-language-server/releases/download/$LUALS_VERSION/lua-language-server-$LUALS_VERSION-linux-x64.tar.gz"
-          echo "$LUALS_SHA256  $RUNNER_TEMP/luals.tar.gz" | sha256sum --check
-          tar xzf "$RUNNER_TEMP/luals.tar.gz" -C "$RUNNER_TEMP/luals"
-      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/plugins --checklevel=Hint'
-      # The first-party Plugins (plugins/, decision Q94), against the same stubs (plugins/.luarc.json).
-      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check plugins --checklevel=Hint'
-      # Every example in init.lua's option reference (docs/app/options.md, decision Q132), against
-      # init.lua's generated stubs (examples/types/roster-config.lua): what :help shows type-checks.
-      # lua-language-server lets through a string outside a "a"|"b" type (cursor_style = "triangle"),
-      # so cargo test also loads every documented init.lua example through the real loader.
-      - run: '"$RUNNER_TEMP/luals/bin/lua-language-server" --check examples/config-check --checklevel=Hint'
-      # The example Configs (examples/init.lua, examples/init-split), against the Config's generated
-      # types, set up the way docs/app/options.md's "Editor support" says: types/roster-config.lua
-      # and a .luarc.json next to init.lua.
-      - name: Check the example Configs against examples/types/roster-config.lua
-        run: |
-          check() {
-            dir="$RUNNER_TEMP/config-$1"; mkdir -p "$dir/types"; cp -R "$2"/. "$dir"/
-            cp examples/types/roster-config.lua "$dir/types/"
-            printf '%s\n' '{' '  "runtime.version": "Lua 5.4",' '  "runtime.path": ["lua/?.lua", "lua/?/init.lua"],' \
-              '  "workspace.library": ["types"],' '  "diagnostics.globals": ["roster"]' '}' > "$dir/.luarc.json"
-            "$RUNNER_TEMP/luals/bin/lua-language-server" --check "$dir" --checklevel=Hint
-          }
-          mkdir -p "$RUNNER_TEMP/one" && cp examples/init.lua "$RUNNER_TEMP/one/"
-          check one "$RUNNER_TEMP/one"
-          check split examples/init-split
 
   app-rust:
     name: App Rust (fmt, clippy, cargo test)
@@ -435,8 +445,8 @@ jobs:
     name: CI
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, cli-lint, cli-test, cli-test-windows, cli-build, app-frontend, plugin-types, app-rust,
-            core-test-windows, app-windows, app-linux, install-test]
+    needs: [changes, checks, cli-test, cli-test-windows, windows-durations, app-frontend, app-rust, core-test-windows,
+            app-windows, app-linux, install-test]
     if: always()
     steps:
       - name: Every job that ran passed
