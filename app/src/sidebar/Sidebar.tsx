@@ -461,7 +461,13 @@ const Row = memo(function Row({
                 : row.label}
             </span>
             {cut && <span className="sb-tail">{row.tail}</span>}
-            {row.note && <span className="sb-note"> {row.note}</span>}
+            {row.note && (
+              // Cut first in Sessions (round 16), so it carries itself whole.
+              <span className="sb-note" title={row.note}>
+                {" "}
+                {row.note}
+              </span>
+            )}
             {row.pending && (
               <span
                 className="sb-pending-dot"
