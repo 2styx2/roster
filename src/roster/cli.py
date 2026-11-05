@@ -1620,9 +1620,9 @@ class Parser(argparse.ArgumentParser):
     commands_text = ""
 
     def error(self, message):
-        # a value typed onto a flag that takes none (`roster vault bw --write=VALUE`) may be a password: never repeat it
-        message = re.sub(r"ignored explicit argument '.*'", "ignored explicit argument (not repeated)", message)
-        message = clihelp.suggest(message, self.all_options())
+        # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
+        # password or a session token: no usage error repeats one (#402 N3, T235 #460)
+        message = clihelp.hide_values(clihelp.suggest(message, self.all_options()))
         if Parser.json_errors:
             jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")
             sys.exit(2)

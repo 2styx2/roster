@@ -78,20 +78,20 @@ def test_a_mistyped_command_gets_the_nearest_one(capsys):
         main(["hots"])
     assert e.value.code == 2
     err = capsys.readouterr().err
-    assert "invalid choice: 'hots' - did you mean `hosts`?" in err
+    assert "argument COMMAND: invalid choice (not repeated) - did you mean `hosts`?" in err
     assert "choose from" not in err and "(`roster --help` shows how)" in err
 
 
 def test_a_word_far_from_any_command(capsys):
     with pytest.raises(SystemExit):
         main(["xyzzy"])
-    assert "invalid choice: 'xyzzy' - not a roster command" in capsys.readouterr().err
+    assert "invalid choice (not repeated) - not a roster command" in capsys.readouterr().err
 
 
 def test_a_mistyped_option_gets_the_nearest_one(capsys):
     with pytest.raises(SystemExit):
         main(["hosts", "--jsn"])
-    assert "unrecognized arguments: --jsn - did you mean `--json`?" in capsys.readouterr().err
+    assert "unrecognized arguments (not repeated) - did you mean `--json`?" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("argv", [["--json"], ["hosts", "--sudo"]])
@@ -116,10 +116,72 @@ def test_the_suggestion_reaches_json_errors(capsys):
         main(["hots", "--json"])
     assert e.value.code == 2
     err = capsys.readouterr().err
-    assert '"message": "roster: argument COMMAND: invalid choice: \'hots\' - did you mean `hosts`?"' in err
+    assert '"message": "roster: argument COMMAND: invalid choice (not repeated) - did you mean `hosts`?"' in err
 
 
-def test_invalid_choice_serve_stays_word_for_word():
-    """The app tells a roster from before `serve` by "invalid choice: 'serve'" on stderr (backend.rs)."""
-    msg = clihelp.suggest("argument cmd: invalid choice: 'serve' (choose from init, setup, hosts)")
-    assert "invalid choice: 'serve'" in msg
+def test_serve_is_a_command_so_the_app_never_takes_this_roster_for_an_old_one():
+    """The app tells a roster from before `serve` by argparse's "invalid choice: 'serve'" (backend.rs). That roster
+    still prints it; this one has serve, and its own invalid-choice errors no longer repeat the word (T235)."""
+    assert "serve" in COMMANDS
+
+
+# A usage error never repeats a value the user typed (T235, #460): a vault session token typed in the wrong place
+# (`roster --session TOKEN vault op -- whoami`) would be echoed to stderr, a terminal's scrollback or a CI log.
+# Made-up tokens: one shaped like `bw unlock --raw`'s base64 session key, one like op's base64url session token.
+BW_SESSION = "q2Xv0b9ZtM4n1KpYwLe7Rj3sUaGh5CdF8iNoTzBx6QEyWrVmJlPcSgIuHkDf0aZ9e+N/yA2qXw1oLmK7pRtUvB=="
+OP_SESSION = "Ex4mple-0nly_n0tAR3al-op_s3ss10nT0k3n-xyzW"
+WRONG_PLACES = [
+    pytest.param(lambda t: ["--session", t, "vault", "op", "--", "whoami"], id="before-the-command"),
+    pytest.param(lambda t: ["--session", t, "vault", "bw", "--", "list", "items"], id="before-the-command-bw"),
+    pytest.param(lambda t: ["--session", t, "bw", "--", "list", "items"], id="before-an-old-name"),
+    pytest.param(lambda t: [t], id="as-the-command"),
+    pytest.param(lambda t: ["vault", "--session", t, "op", "--", "whoami"], id="after-the-command"),
+    pytest.param(lambda t: ["mesh", t], id="as-a-command-action"),
+    pytest.param(lambda t: ["help", "--completion", t], id="as-an-option-choice"),
+    pytest.param(lambda t: ["add", "esx-02", "--port", t], id="as-a-number"),
+    pytest.param(lambda t: ["discover", f"--t={t}"], id="on-an-ambiguous-option"),
+    pytest.param(lambda t: ["hosts", f"--long={t}"], id="on-a-flag"),
+    pytest.param(lambda t: [f"--session={t}", "hosts"], id="extra-before-the-command"),
+    pytest.param(lambda t: ["vault", "status", "--session", t], id="extra-after-the-command"),
+    pytest.param(lambda t: ["--session", t, "hosts", "--json"], id="json-before-the-command"),
+    pytest.param(lambda t: ["hosts", "--json", f"--session={t}"], id="json-extra"),
+]
+
+
+@pytest.mark.parametrize("token", [BW_SESSION, OP_SESSION], ids=["bw", "op"])
+@pytest.mark.parametrize("argv", WRONG_PLACES)
+def test_a_usage_error_never_repeats_a_value(capsys, argv, token):
+    with pytest.raises(SystemExit) as e:
+        main(argv(token))
+    out = capsys.readouterr()
+    assert e.value.code == 2                                        # still a usage error
+    assert "error" in out.err
+    for shown in (out.out, out.err):
+        assert token not in shown and token[:12] not in shown
+
+
+@pytest.mark.parametrize("value", ["it's", 'say "hi"', "a (choose from b)", "x could match y"])
+def test_a_value_with_quotes_or_argparse_words_is_not_repeated_either(capsys, value):
+    for argv in (["mesh", value], ["hosts", f"--long={value}"], ["discover", f"--t={value}"], ["add", "x", "--port", value]):
+        with pytest.raises(SystemExit):
+            main(argv)
+        assert value not in capsys.readouterr().err
+
+
+def test_an_invalid_choice_names_the_position_and_the_choices(capsys):
+    with pytest.raises(SystemExit):
+        main(["vault", "--session", OP_SESSION, "op"])
+    err = capsys.readouterr().err
+    assert "argument ACTION: invalid choice (not repeated) - one of: status, sync, reveal, bw, op" in err
+
+
+def test_a_bad_value_names_its_option(capsys):
+    with pytest.raises(SystemExit):
+        main(["add", "esx-02", "--port", "twenty-two"])
+    assert "argument --port: invalid int value (not repeated)" in capsys.readouterr().err
+
+
+def test_an_ambiguous_option_names_its_matches(capsys):
+    with pytest.raises(SystemExit):
+        main(["discover", "--t=5"])
+    assert "ambiguous option (not repeated): could match --top-ports, --timeout" in capsys.readouterr().err

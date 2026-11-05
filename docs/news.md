@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### Security
+
+**CLI**
+
+- **A usage error never repeats what you typed** (#460): a vault session token typed in the wrong place (`roster --session TOKEN vault op -- whoami`) used to come back on stderr as `invalid choice: 'TOKEN'`, and so did a value in an unknown option (`--session=TOKEN`), an ambiguous one, a number roster couldn't read or a flag that takes none. Now the error names the place (`argument COMMAND`, `argument --port`) and what it takes, or the nearest command (`roster hots`: did you mean `hosts`?), and says the value is "not repeated", in `--json` errors too. It still exits 2.
+
 ## v0.6.0
 
 ### New

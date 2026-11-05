@@ -5,6 +5,7 @@ Every example here is parsed by tests/test_cli_help.py, so one that no longer pa
 made up (the repo is public)."""
 
 import argparse
+import ast
 import difflib
 import re
 import shutil
@@ -172,27 +173,62 @@ class Formatter(argparse.RawDescriptionHelpFormatter):
 
 
 def suggest(message: str, options: list[str] | None = None) -> str:
-    """argparse's "invalid choice: 'hots' (choose from …)" with the long list replaced by the nearest name. The
-    "invalid choice: 'X'" part stays word for word: the app tells a roster from before `serve` by it. With OPTIONS
-    (every --option roster has), "unrecognized arguments: --jsn" gets the nearest one too."""
+    """argparse's "invalid choice: 'hots' (choose from …)" as "invalid choice (not repeated)" and the nearest name
+    instead of the long list. With OPTIONS (every --option roster has), "unrecognized arguments: --jsn" gets the
+    nearest one too. Neither repeats the word typed (T235, #460): `roster --session TOKEN vault …` puts a vault session
+    token where the command goes. hide_values() takes the value out of argparse's other errors."""
     if message.startswith("unrecognized arguments: ") and options:
+        hidden = "unrecognized arguments (not repeated)"
         for word in message.removeprefix("unrecognized arguments: ").split():
             if word in options:                 # a real option, in the wrong place: `roster --json`, `hosts --sudo`
-                return f"{message} - {word} goes after a command that takes it (`roster COMMAND --help` lists them)"
+                return f"{hidden} - {word} goes after a command that takes it (`roster COMMAND --help` lists them)"
             near = difflib.get_close_matches(word, options, n=1, cutoff=0.7) if word.startswith("-") else []
             if near:
-                return f"{message} - did you mean `{near[0]}`?"
+                return f"{hidden} - did you mean `{near[0]}`?"
+        return hidden
+    head, sep, rest = message.partition("invalid choice: ")
+    if not sep or " (choose from " not in rest or not head.startswith("argument "):
         return message
-    m = re.match(r"(argument \S+: invalid choice: '([^']*)') \(choose from (.*)\)$", message)
-    if not m:
-        return message
-    head, word, listed = m.groups()
-    choices = [c.strip().strip("'\"") for c in listed.split(",")]
-    near = difflib.get_close_matches(word, choices, n=1, cutoff=0.6)
+    typed, _, listed = rest.rpartition(" (choose from ")       # the choices are roster's names: never the separator
+    choices = [c.strip().strip("'\"") for c in listed.removesuffix(")").split(",")]
+    near = difflib.get_close_matches(_unquote(typed), choices, n=1, cutoff=0.6)
     if near:
         hint = f"did you mean `{near[0]}`?"
     elif len(choices) <= 6:
         hint = f"one of: {', '.join(choices)}"
     else:
         hint = "not a roster command"
-    return f"{head} - {hint}"
+    return f"{head}invalid choice (not repeated) - {hint}"
+
+
+def _unquote(typed: str) -> str:
+    """The word argparse quoted with %r (its repr), back as typed ('' when it isn't one)."""
+    try:
+        word = ast.literal_eval(typed)
+    except (ValueError, SyntaxError):
+        return ""
+    return word if isinstance(word, str) else ""
+
+
+def hide_values(message: str) -> str:
+    """ARGPARSE's error MESSAGE without the value the user typed (T235, #460; #402 N3): a value may be a password or a
+    vault session token typed in the wrong place. The option or position, and what it takes, stay. Covers every
+    argparse error that quotes a value (Python 3.10 to 3.14); suggest() has already rewritten the two it improves."""
+    if message.startswith("unrecognized arguments: "):
+        return "unrecognized arguments (not repeated)"
+    head, sep, rest = message.partition("invalid choice: ")
+    if sep:                                 # one suggest() didn't take: argparse's own wording changed
+        listed = rest.rpartition(" (choose from ")[2] if " (choose from " in rest else ""
+        return f"{head}invalid choice (not repeated)" + (f" (choose from {listed}" if listed else "")
+    if message.startswith("ambiguous option: ") and " could match " in message:
+        return f"ambiguous option (not repeated): could match {message.rpartition(' could match ')[2]}"
+    m = re.match(r"(.*?: invalid \S+ value): ", message, re.S)          # argument --port: invalid int value: 'x'
+    if m:
+        return f"{m.group(1)} (not repeated)"
+    head, sep, _ = message.partition("ignored explicit argument ")   # `roster vault bw --write=VALUE`
+    if sep:
+        return f"{head}ignored explicit argument (not repeated)"
+    head, sep, rest = message.partition("unknown parser ")
+    if sep:
+        return f"{head}unknown parser (not repeated) (choices: {rest.rpartition(' (choices: ')[2]}"
+    return message

@@ -155,7 +155,7 @@ def test_bws_options_before_the_command_need_no_double_dash(bw):
 def test_another_command_still_gets_the_parsers_error(isolated, capfd):
     with pytest.raises(SystemExit):
         main(["hosts", "--jsn"])
-    assert "unrecognized arguments: --jsn" in capfd.readouterr().err
+    assert "unrecognized arguments (not repeated) - did you mean `--json`?" in capfd.readouterr().err
 
 
 def test_no_1password_variable_reaches_bw(bw, monkeypatch, tmp_path):
