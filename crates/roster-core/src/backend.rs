@@ -36,12 +36,20 @@ pub struct QuickTarget {
 }
 
 /// A password the user typed for a Session (ticket 16, a Quick Connect's ticket 14), on its way to
-/// serve's stdin: moved into the request and dropped with it, never logged, stored or put in an
-/// error. It comes back only as an askpass token. `save` ("Save to vault", ticket 15): serve holds
+/// serve's stdin: moved into the request, which is wiped once sent (rpc.rs), and wiped itself if
+/// it's dropped before; never logged, stored or put in an error. It comes back only as an askpass
+/// token. `save` ("Save to vault", ticket 15): serve holds
 /// it until the Session has logged in, and only its id comes back ([`Ready::held`]).
 pub struct Typed {
     pub password: String,
     pub save: bool,
+}
+
+impl Drop for Typed {
+    fn drop(&mut self) {
+        // SAFETY: zeros are valid UTF-8, so the String stays a valid String.
+        crate::wipe::wipe_bytes(unsafe { self.password.as_mut_vec() });
+    }
 }
 
 impl std::fmt::Debug for Typed {
@@ -506,9 +514,9 @@ impl Backend {
             }
         };
         let quick = method == "quick.prepare";
-        if let Some(Typed { password, save }) = typed {
-            params["password"] = Value::String(password);
-            if save {
+        if let Some(mut typed) = typed {
+            params["password"] = Value::String(std::mem::take(&mut typed.password));
+            if typed.save {
                 params["save"] = Value::Bool(true);
             }
         }

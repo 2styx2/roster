@@ -742,7 +742,7 @@ fn session_sink(events: Channel<InvokeResponseBody>) -> impl Fn(SessionEvent) + 
     }
 }
 
-/// A password typed for a Session, if one was: moved into serve's request and dropped with it.
+/// A password typed for a Session, if one was: moved into serve's request, which is wiped once sent.
 fn typed(password: Option<String>, save: Option<bool>) -> Option<Typed> {
     password.map(|password| Typed {
         password,
@@ -977,9 +977,8 @@ pub fn run() {
                 use tauri::Emitter;
                 let _ = handle.emit("plugin-reply", reply);
             }));
-            // Packages' clones go in the app's own data dir (next to the State), the lock next
-            // to init.lua.
-            // Each Plugin's own data folder goes there too, as plugin-data/NAME (decision Q93).
+            // Packages' clones and each Plugin's own data folder (plugin-data/NAME, decision Q93)
+            // go in the app's own data dir, next to the State; roster.lock goes next to init.lua.
             if let Some(data) = &data {
                 setup_plugins.set_data(data);
             }
