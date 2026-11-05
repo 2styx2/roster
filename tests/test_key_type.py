@@ -111,13 +111,14 @@ def test_ensure_key_refuses_a_key_of_another_type_at_its_path(write_config, isol
 
 
 def test_sync_writes_each_hosts_identityfile_for_its_own_key_type(write_config, isolated):
+    from roster.common import ssh_path
     from roster.sshops import write_ssh_config
     write_ssh_config(load_config(write_config(FIPS_YML)))
     text = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
     ssh = isolated["home"] / ".ssh"
     for name, file in (("web-01", "roster_ed25519"), ("fips-01", "roster_ecdsa"), ("fips-02", "roster_rsa")):
         block = text.split(f"Host {name}\n")[1].split("\n\n")[0]
-        assert f'    IdentityFile "{ssh / file}"\n    IdentitiesOnly yes' in block, name
+        assert f'    IdentityFile "{ssh_path(ssh / file)}"\n    IdentitiesOnly yes' in block, name   # / on Windows
         assert block.count("IdentityFile") == 1
 
 
