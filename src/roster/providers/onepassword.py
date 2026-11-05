@@ -77,9 +77,11 @@ def _onepassword(spec, ctx):
     try:
         data = json.loads(r.stdout)
     except json.JSONDecodeError:
-        raise SecretError("couldn't read `op item get` output")
+        data = None
     if isinstance(data, list):
         data = data[0] if data else {}
+    if not isinstance(data, dict):                          # valid JSON of another shape too (#492, T250)
+        raise SecretError("couldn't read `op item get` output")
     val = data.get("value")
     if not val:
         raise SecretError(f"1Password item '{item}' has no value in field '{field}'")
@@ -108,12 +110,12 @@ def _op_items(ctx, mapped):
         if not isinstance(i, dict) or not isinstance(i.get("id"), str):
             continue
         title = str(i.get("title") or "")
-        where = str((i.get("vault") or {}).get("name") or "")
+        vault = i.get("vault")
+        where = str(vault.get("name") or "") if isinstance(vault, dict) else ""
         item = {"id": i["id"], "name": title, "keys": [i["id"], title] + ([f"{where}/{title}"] if where else []),
                 "uris": [], "username": None}
         if not mapped(item):
-            item["uris"] = [no_userinfo(u["href"]) for u in i.get("urls") or []       # never a URL's user:password@
-                            if isinstance(u, dict) and isinstance(u.get("href"), str)]
+            item["uris"] = _op_urls(i, primary_first=False)
             item["username"] = _op_username(ctx, i["id"])
         out.append(item)
     return out
@@ -162,9 +164,12 @@ def _op_overviews(ctx, vault):
     return [i for i in listed if isinstance(i, dict) and isinstance(i.get("id"), str)]
 
 
-def _op_urls(item):
-    urls = [u for u in item.get("urls") or [] if isinstance(u, dict) and isinstance(u.get("href"), str)]
-    urls.sort(key=lambda u: u.get("primary") is not True)               # the primary one first
+def _op_urls(item, primary_first=True):
+    """An overview's URLs, never a URL's user:password@ (no_userinfo); none when its urls isn't a list (#492)."""
+    urls = item.get("urls")
+    urls = [u for u in urls if isinstance(u, dict) and isinstance(u.get("href"), str)] if isinstance(urls, list) else []
+    if primary_first:
+        urls.sort(key=lambda u: u.get("primary") is not True)
     return [no_userinfo(u["href"]) for u in urls]
 
 
