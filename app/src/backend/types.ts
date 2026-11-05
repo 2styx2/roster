@@ -480,6 +480,11 @@ export interface SaveTargets {
 /** The first `api_version` with `vault.item_fields` (T220): the add-Host form's "Fill from this item" (#437). */
 export const ITEM_FIELDS_API_VERSION = 29;
 
+/** The first `api_version` whose roster has `roster setup --host NAME`, that Host alone (#437, Q198).
+ * T227 added the flag with no API bump of its own, at API 29, and v0.6.0 is the first release with
+ * API 29, so every roster speaking 29 has it. An older one has only `--only NAME` (#461). */
+export const SETUP_HOST_API_VERSION = 29;
+
 /** `vault.item_fields`: what a vault item says about its Host, never its password. A field the item
  * doesn't have is left out; `note` says why its URI gave no address. */
 export interface VaultItemFields {

@@ -28,9 +28,9 @@ The # is a row's id, given in the order rows were added and cited by the code (`
 | 9 | Several vault items match | Duplicate names | Vault | "Two vault items are named 'esxi-02 ssh'" | List them (name, URI; last edited where the vault says, Bitwarden's listing doesn't, Q191 (p)); fix in the vault |
 | 10 | Item has no password / no such field | Item made without a password, or `#FIELD` typo | Vault | "Vault item 'esxi-02 ssh' has no password" | Edit the item in the vault |
 | 11 | Wrong password or user | Password rotated on the Host but not in the vault, or the reverse | Vault / Host | "esxi-02 refused the password for user root" | Check the item; save it again after a successful login |
-| 12 | Key refused | `enroll: true` but the key isn't installed (setup not run, key removed) | Box / Host | "esxi-02 didn't accept this Box's key" | Run `roster setup --only esxi-02`, or set `enroll: false` |
+| 12 | Key refused | `enroll: true` but the key isn't installed (setup not run, key removed) | Box / Host | "esxi-02 didn't accept this Box's key" | Run `roster setup --host esxi-02` (`--only esxi-02` with a roster before API 29, which has no `--host`; Q208), or set `enroll: false` |
 | 13 | Host key changed | Reinstalled box, or IP reused, or a MITM | Host / network | "esxi-02's host key changed. Not connecting." | Show old and new fingerprints and how to verify. **Never auto-accept.** |
-| 14 | Host key unknown | Fingerprints not recorded for this Host | Box | "No recorded host key for esxi-02" | Opening a Session asks first (rows 60-63, ticket 36); `:check` says to run `roster setup --only esxi-02` after verifying it |
+| 14 | Host key unknown | Fingerprints not recorded for this Host | Box | "No recorded host key for esxi-02" | Opening a Session asks first (rows 60-63, ticket 36); `:check` says to run `roster setup --host esxi-02` after verifying it (`--only` before API 29, as row 12) |
 | 15 | Name doesn't resolve | Typo in `ip:` or a DNS name | Inventory / network | "Can't resolve 'esxi02.lab'" | Edit the address |
 | 16 | Connection refused | Wrong port, or sshd not running | Inventory / Host | "esxi-02:2222 refused the connection" | Check the port in `roster.yml`; is sshd up? |
 | 17 | Timeout / unreachable | Host down, routing, firewall, **or a network's SSH rate limiter** (it stops answering for a few minutes after many connections) | Network | "esxi-02 didn't answer within 10 s" | Retry later. An address in one of `rate_limited:`'s networks (roster.yml) names it and says to wait a few minutes, not hammer (a name `ip:` by the address `roster check`'s dns step resolved); outside them, no rate-limiter hint; with the list empty (the default), and in a Session's panel (the app never reads roster.yml), "a rate limiter on the network can cause this". |
@@ -153,7 +153,7 @@ A Session to a Host whose host key isn't in roster's known hosts asks before any
 
 ## Quick Connect
 
-A Session to `user@address[:port]`, a box that isn't in the Inventory (decision Q67). The tab fetches the key (`host.scan_key {address, port}`) and asks for it to be confirmed, with the password, in the connect card; `quick.prepare` then fetches it again and returns the Session's command. Its Problems name the box as `user@address`, and leave out the fixes that only apply to a Host (`:check`, `roster setup --only`). Every failure below connects nothing and records nothing.
+A Session to `user@address[:port]`, a box that isn't in the Inventory (decision Q67). The tab fetches the key (`host.scan_key {address, port}`) and asks for it to be confirmed, with the password, in the connect card; `quick.prepare` then fetches it again and returns the Session's command. Its Problems name the box as `user@address`, and leave out the fixes that only apply to a Host (`:check`, `roster setup --host`). Every failure below connects nothing and records nothing.
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
