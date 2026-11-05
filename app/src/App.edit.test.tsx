@@ -129,7 +129,7 @@ describe("the edit form", () => {
   it("needs a roster that speaks API 5", async () => {
     const { user } = await ready({ ...(fixtures.edit as FakeScenario), apiVersion: 4 });
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
-    expect(await screen.findByText(onMessageLine(/:edit needs a newer roster \(API version 5; this one speaks 4\)/))).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:edit needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
   });
 });
 

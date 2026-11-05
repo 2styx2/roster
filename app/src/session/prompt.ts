@@ -308,7 +308,7 @@ export class PromptWatch {
     const { hop } = state;
     const refuse = (why: string): PasswordPrompt => ({ line, elsewhere: why, marked: true, kind: "ssh", hop: null });
     if (!hop.known) return refuse(`roster can't tell where this ssh went: ${hop.why}`);
-    if (!this.hops?.fill) return refuse(`filling ${hop.host}'s ssh prompt needs a newer roster (API 26)`);
+    if (!this.hops?.fill) return refuse(`filling ${hop.host}'s ssh prompt needs a newer roster; update roster on this Box`);
     if (hop.sshFill) return refuse(hop.sshFill);
     if (who !== hop.user || where.toLowerCase() !== hop.target) {
       return refuse(`the prompt asks for ${who}@${where}'s password, and this ssh logs in as ${hop.user}@${hop.target}`);
@@ -329,7 +329,7 @@ export class PromptWatch {
       return who === this.user ? refuse(`\`${this.outer.command}\` is running, not sudo itself, so this prompt may be another machine's`) : null;
     }
     if (who !== hop.user) return null;
-    if (!this.hops?.fill) return refuse(`filling ${hop.host}'s sudo prompt needs a newer roster (API 26)`);
+    if (!this.hops?.fill) return refuse(`filling ${hop.host}'s sudo prompt needs a newer roster; update roster on this Box`);
     if (hop.sudoFill) return refuse(hop.sudoFill);
     if (!state.innerMarked) return refuse(`the shell on ${hop.host} doesn't mark its commands, so roster can't tell what asks`);
     if (inner.shell) return refuse(`a shell started inside a command on ${hop.host}, so roster can't tell what runs now`);

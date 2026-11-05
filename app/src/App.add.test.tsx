@@ -374,7 +374,7 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
   it("says when roster is too old to un-review (API 9)", async () => {
     const { user, backend } = await ready({ ...current, apiVersion: 8 });
     await user.keyboard(`${LEADER}:host unreview ${REVIEWED}{Enter}`);
-    expect(await screen.findByText(onMessageLine(/:host unreview needs a newer roster \(API version 9; this one speaks 8\)/))).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:host unreview needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
     expect((await backend.getHost(REVIEWED)).reviewed).toBe(true);
   });
 });

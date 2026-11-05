@@ -186,7 +186,7 @@ describe("Quick Connect", () => {
     const user = await ready(backendAt(QUICK_CONNECT_API_VERSION - 1));
     expect(within(screen.getByRole("toolbar", { name: "Commands" })).queryByRole("button", { name: "Quick Connect" })).toBeNull();
     await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
-    expect(await screen.findByText(/Quick Connect needs a newer roster \(API version 12/)).toBeInTheDocument();
+    expect(await screen.findByText(/Quick Connect needs a newer roster\. Update roster on this Box\./)).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Session root@10.0.0.5" })).toBeNull();
   });
 

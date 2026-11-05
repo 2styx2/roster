@@ -157,7 +157,7 @@ describe("groups", () => {
     const { user } = await ready({ apiVersion: 7 });
     expect(within(inventory()).queryByRole("button", { name: "New group" })).toBeNull();
     await user.keyboard(`${LEADER}:group new x{Enter}`);
-    await said(/needs a newer roster \(API version 8; this one speaks 7\)/);
+    await said(/needs a newer roster\. Update roster on this Box\./);
   });
 });
 

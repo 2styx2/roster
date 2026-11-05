@@ -3,6 +3,7 @@
 // knows only which step is under way: the ones before it are done (ok, or skipped by design as a key
 // Login's vault steps are), the rest still to come. The answer then says how each came out.
 import { CHECK_JOBS_API_VERSION, CHECK_STEPS, type CheckStarted, type HostCheck, type JobProgress } from "../backend/types";
+import { tooOld, type Message } from "../ui/messages";
 
 export type CheckState =
   /** `at`: the step under way (null before the first, or on a serve before API 21, which sends
@@ -51,13 +52,13 @@ export function checkOwned(check: CheckState | null, host: string, started: Chec
 
 /** What `:check stop` and the panel's `x` (#361) do now: stop the app's own check (its job), as
  * Stop does, or say why there's nothing of the app's to stop. `api`: serve's API version. */
-export function stopTarget(check: CheckState | null, api: number): { job: string } | { message: string } {
+export function stopTarget(check: CheckState | null, api: number): { job: string } | { message: Message } {
   if (check?.state !== "running") return { message: "There's no check running to stop" };
   if (check.stopping) return { message: `The check of ${check.host} is already stopping` };
   if (check.job !== undefined) return { job: check.job };
   if (check.theirs) return { message: `The check of ${check.host} isn't the app's to stop: another caller started it` };
   if (api < CHECK_JOBS_API_VERSION) {
-    return { message: `Stopping a check needs a newer roster (API version ${CHECK_JOBS_API_VERSION}; this one speaks ${api})` };
+    return { message: tooOld("Stopping a check", CHECK_JOBS_API_VERSION, api) };
   }
   return { message: `The check of ${check.host} hasn't started yet: try again in a moment` };
 }
