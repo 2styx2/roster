@@ -19,6 +19,15 @@
 #                                                   deletes it to let them go: a signal, not a guess at how long)
 #                               FAKE_HOST_PATH=DIR goes first on every stand-in Host's PATH (a test's own tools)
 #                               Each run appends "start NAME" and "end NAME" to DIR/connections.
+#                                 DIR/NAME/fips     a FIPS-mode Host (T239): its sshd offers only NIST kex and host
+#                                                   keys (ssh -v says so) and takes a key login only with a key that
+#                                                   isn't Ed25519 and is in its authorized_keys; the key offered is
+#                                                   the IdentityFile roster's ssh config ($HOME/.ssh/config.d) gives
+#                                                   NAME. Else "Permission denied (publickey,password)", exit 255.
+#                                                   FAKE_SSH_AS_PASSWORD=1: a password login (a test's stand-in for
+#                                                   password_exec), which it takes
+#                                 DIR/NAME/keys     as fips, but any key type (and no NIST lines): a Host whose sshd
+#                                                   checks the offered key against its authorized_keys
 #                                 DIR/NAME/windows  it's Windows (T195): `powershell ... -EncodedCommand B64` runs that
 #                                                   PowerShell with pwsh (powershell.exe on Windows), stdin and all,
 #                                                   with USERPROFILE=DIR/NAME/home, ProgramData=DIR/NAME/programdata,
@@ -177,6 +186,41 @@ def windows_host(root, command):
     return 1
 
 
+def identity_file(dest):
+    """The IdentityFile roster's ssh config gives DEST (what ssh would offer with IdentitiesOnly yes), or None."""
+    d = os.path.join(os.environ.get("HOME", ""), ".ssh", "config.d")
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        block = None
+        for line in open(os.path.join(d, name)).read().splitlines():
+            if line.startswith("Host "):
+                block = line.split()[1]
+            elif block == dest and line.strip().startswith("IdentityFile "):
+                return line.strip().split(" ", 1)[1].strip('"').replace("%%", "%")
+    return None
+
+
+def key_taken(root, dest):
+    """Would the stand-in Host's sshd at ROOT let this key login in? A FIPS-mode one (ROOT/fips) also refuses
+    Ed25519, and ssh -v says it negotiated NIST algorithms."""
+    fips = os.path.exists(os.path.join(root, "fips"))
+    verbose = any(a.startswith("-v") for a in args)
+    if verbose and fips:
+        print("debug1: kex: algorithm: ecdh-sha2-nistp256\n"
+              "debug1: kex: host key algorithm: ecdsa-sha2-nistp256", file=sys.stderr)
+    if os.environ.get("FAKE_SSH_AS_PASSWORD") == "1":
+        return True
+    f = identity_file(dest)
+    pub = (open(f + ".pub").read().split() if f and os.path.exists(f + ".pub") else [])[:2]
+    ak = os.path.join(root, "home", ".ssh", "authorized_keys")
+    lines = [ln.split() for ln in open(ak).read().splitlines()] if os.path.exists(ak) else []
+    if verbose and pub:
+        print(f"debug1: Offering public key: {f} {pub[0].upper().removeprefix('SSH-')}", file=sys.stderr)
+    if len(pub) == 2 and not (fips and pub[0] == "ssh-ed25519") and any(ln[-3:-1] == pub or ln[:2] == pub for ln in lines):
+        return True
+    print(f"{dest}: Permission denied (publickey,password).", file=sys.stderr)
+    return False
+
+
 hosts = os.environ.get("FAKE_HOSTS")
 if hosts:
     dest, command = destination(args)
@@ -194,6 +238,9 @@ if hosts:
             print(f"ssh: connect to host {dest} port 22: Connection timed out", file=sys.stderr)
             sys.exit(255)
         open(log, "a").write(f"start {dest}\n")
+        if any(os.path.exists(os.path.join(root, m)) for m in ("fips", "keys")) and not key_taken(root, dest):
+            open(log, "a").write(f"end {dest}\n")
+            sys.exit(255)
         hold, held_until = os.path.join(root, "hold"), time.monotonic() + 120    # pytest-timeout's, at most
         while os.path.exists(hold) and time.monotonic() < held_until:
             time.sleep(0.02)

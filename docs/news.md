@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### New
+
+**CLI**
+
+- **FIPS-mode Hosts log in by key: `key_type:` picks the SSH key type** (#436): a Host with FIPS mode on never takes an Ed25519 key, so `roster setup` used to install one it would refuse. Set `key_type: ecdsa` (P-384; or `ecdsa-256`, `ecdsa-521`, `rsa`, `rsa-4096`) at the top level, on `defaults`, a group or one Host. This Box keeps one key per type (`~/.ssh/roster_ecdsa` beside `~/.ssh/roster_ed25519`, the same tag), `roster sync` gives each Host its own type's `IdentityFile`, `setup` installs it (a changed type replaces the old key), and `revoke` takes every type off. `roster setup --key-type TYPE` tries one for a run; `roster hosts NAME` shows a Host's key type and file. `roster check HOST` on a Host that refuses Ed25519 and offers only NIST algorithms says so (199) and suggests `key_type: ecdsa`. Without `key_type:` nothing changes. The Mesh stays Ed25519 for now and leaves such a Host out (200). See [FIPS Hosts](adding-hosts.md#fips-hosts).
+
 ## v0.6.0
 
 ### New

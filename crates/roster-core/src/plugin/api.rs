@@ -4081,6 +4081,16 @@ pub const TYPES: &[Type] = &[
                 "string",
                 "`os:` as roster.yml sets it: `\"windows\"` (setup, revoke and check run PowerShell there) or `\"posix\"`; `nil` if nothing does, which is posix.",
             ),
+            f(
+                "key_type",
+                "string",
+                "The SSH key type its key Login uses (`key_type:`, resolved): `\"ed25519\"` (the default), `\"ecdsa\"` (P-384), `\"ecdsa-256\"`, `\"ecdsa-521\"`, `\"rsa\"` (3072 bits) or `\"rsa-BITS\"`. Only an `enroll` Host uses it.",
+            ),
+            f(
+                "key_file",
+                "string",
+                "This Box's private key file for `key_type` (a path, never the key itself).",
+            ),
             f("title", "string", "One line; `\"\"` if unset."),
             f("description", "string", "One line; `\"\"` if unset."),
             f("type", "string", "What it is (`esxi`, `linux`); `\"\"` if unset."),

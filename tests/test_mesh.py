@@ -1059,8 +1059,8 @@ def test_setup_applies_the_mesh_for_meshed_groups(net, capsys, monkeypatch):
     from roster import cli
     monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
     monkeypatch.setattr(cli, "ssh_ok", lambda name: True)
-    monkeypatch.setattr(cli, "ensure_key", lambda cfg: None)
-    monkeypatch.setattr(cli, "public_key_line", lambda cfg: "ssh-ed25519 AAAAbox roster-managed:box")
+    monkeypatch.setattr(cli, "ensure_key", lambda key, tag: None)
+    monkeypatch.setattr(cli, "public_key_line", lambda key, tag: "ssh-ed25519 AAAAbox roster-managed:box")
     main(["setup"])
     assert "mesh" in capsys.readouterr().out
     assert net.mesh_lines("nas-1") == [key_line_of(net, "orion-2", "10.0.0.2")]

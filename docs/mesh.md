@@ -142,6 +142,16 @@ left out: dc-01 ([160] os: windows: the Mesh's scripts are sh, which a Windows H
 
 The Mesh never wrote anything on a Windows Host (sh isn't there), so nothing is left to take off one. `mesh.plan` and `mesh.status` give the same reason in `excluded`.
 
+## Hosts with another key type
+
+The Mesh's keys are Ed25519 for now, which a FIPS-mode Host refuses (and may not make). So a Host whose `key_type:` isn't `ed25519` ([FIPS Hosts](adding-hosts.md#fips-hosts)) is left out of the Mesh as a Windows Host is (note 200): never a source, a peer or a hop. A meshed group or a Link naming it isn't an error, and `roster mesh --dry-run`, `roster mesh status` and `roster check` list it under "left out":
+
+```text
+left out: fips-01 ([200] key_type: ecdsa: the Mesh's keys are Ed25519 only for now, which a FIPS-mode Host refuses, so it's left out (a Link or meshed group naming it isn't an error))
+```
+
+Reach it from the Box (`ssh fips-01`, with the key of its own type).
+
 ## ESXi
 
 ESXi works as a source and as a peer, with everything kept where it survives a reboot:

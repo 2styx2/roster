@@ -3972,6 +3972,18 @@
           "type": "string"
         },
         {
+          "doc": "The SSH key type its key Login uses (`key_type:`, resolved): `\"ed25519\"` (the default), `\"ecdsa\"` (P-384), `\"ecdsa-256\"`, `\"ecdsa-521\"`, `\"rsa\"` (3072 bits) or `\"rsa-BITS\"`. Only an `enroll` Host uses it.",
+          "name": "key_type",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "doc": "This Box's private key file for `key_type` (a path, never the key itself).",
+          "name": "key_file",
+          "required": true,
+          "type": "string"
+        },
+        {
           "doc": "One line; `\"\"` if unset.",
           "name": "title",
           "required": true,

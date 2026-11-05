@@ -34,6 +34,7 @@ src/roster/
   claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
   aliases.py        the CLI's old names (T222, Q194): one table, each old command line rewritten to its new form
                     before the parser sees it, with one stderr line naming it (none for `roster completion`)
+  boxkeys.py        this Box's SSH keys, one per key type (key_type:): a Host's key file, ssh-keygen args, type word
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
   addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
                     (checks, the write through store.py, this Box's sync), and a vault item's address and user

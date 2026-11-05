@@ -87,6 +87,12 @@ class Host(Model, frozen=True):
     os: Literal["windows", "posix"] | None = Field(description="`os:` as roster.yml sets it (defaults, group, Host): "
                                                    "`windows` (setup, revoke and check run PowerShell there) or "
                                                    "`posix`; `null` if nothing does, which is `posix`.")
+    key_type: str = Field(description="The SSH key type its key Login uses (T239): `key_type:` as roster.yml sets it "
+                          "(Host, group, `defaults`, top level), canonical: `ed25519` (unset), `ecdsa` (P-384), "
+                          "`ecdsa-256`, `ecdsa-521`, `rsa` (3072 bits) or `rsa-BITS`. Only an `enroll: true` Host "
+                          "uses it.")
+    key_file: str = Field(description="This Box's private key file for `key_type`, which roster's ssh config gives "
+                          "it as `IdentityFile` (a path on this Box; never the key itself).")
     ip: str = Field(description="Its address (an IP or a DNS name).")
     name: str = Field(description="Its name in the Inventory, unique.")
     group: str = Field(description="The group it's in.")
@@ -152,6 +158,7 @@ class Inventory(Model, frozen=True):
     tag: str
     tag_re: str
     key: Path
+    key_type: str = "ed25519"       # the top-level key_type: this Box's own key's (T239)
     pub: Path
     workers: int = Field(ge=1)
     inline_limit: int = Field(ge=1)

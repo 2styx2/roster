@@ -32,7 +32,7 @@ from .common import (
     time_left,
 )
 from .config import is_windows
-from .errors import MESH_WINDOWS
+from .errors import MESH_KEY_TYPE, MESH_WINDOWS
 from .sshops import hk_name, recorded_host_keys
 
 TAG = "roster-mesh"
@@ -41,6 +41,13 @@ CLAUDE_IMPORT = "@~/ROSTER.md"
 # T196 (#376, decision Q176): every Mesh script is sh, which a Windows Host (os: windows) can't run
 WINDOWS_LEFT_OUT = (f"[{MESH_WINDOWS}] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's "
                     "left out (a Link or meshed group naming it isn't an error)")
+# T239 (decision Q200): the Mesh's keys are Ed25519, which a FIPS-mode Host (the reason for key_type:) refuses and
+# may not even make, so a Host with another key_type stays out of it until the Mesh follows key_type too
+def key_type_left_out(h):
+    return (f"[{MESH_KEY_TYPE}] key_type: {h['key_type']}: the Mesh's keys are Ed25519 only for now, which a FIPS-mode "
+            "Host refuses, so it's left out (a Link or meshed group naming it isn't an error)")
+
+
 MARK = "# roster-mesh: the Mesh's ssh config (roster mesh adds and removes these two lines)"
 CONNECT_TIMEOUT = 10
 STEP_TIMEOUT = 120          # s: one Host's script, at most
@@ -70,6 +77,8 @@ def graph(cfg):
             excluded[h["name"]] = "mesh: false"
         elif is_windows(h):
             excluded[h["name"]] = WINDOWS_LEFT_OUT
+        elif h.get("key_type", "ed25519") != "ed25519":
+            excluded[h["name"]] = key_type_left_out(h)
         else:
             return True
         return False
@@ -94,6 +103,9 @@ def graph(cfg):
                 via = link.get("via")
                 if via and is_windows(hosts[via]):         # roster can't test a hop it can't run sh on
                     excluded[via] = WINDOWS_LEFT_OUT
+                    continue
+                if via and hosts[via].get("key_type", "ed25519") != "ed25519":    # a hop holds a Mesh key too
+                    excluded[via] = key_type_left_out(hosts[via])
                     continue
                 if a != b and eligible(hosts[a]) and eligible(hosts[b]):
                     for pair in ((a, b), (b, a)) if link["both"] else ((a, b),):

@@ -32,23 +32,35 @@ from .providers import NO_PASSWORD, get_secret
 
 # ---------------------------------------------------------------- keys & known hosts
 
-def ensure_key(cfg):
-    if cfg["key"].exists():
-        if not cfg["pub"].exists():
-            die(f"{cfg['key']} exists but {cfg['pub']} is missing")
-        say(f"key          {cfg['key']} (existing)")
+def ensure_key(key, tag):
+    """This Box's KEY (a boxkeys.BoxKey) on disk, made with ssh-keygen and tagged TAG when it isn't there yet. A
+    key that's there is kept; one of another type than KEY's (an ECDSA or RSA key's file holding another key) is
+    refused (201), as the Hosts that want this type would refuse it. An Ed25519 key's file is taken as it is (as
+    before T239: key_path may name a key of the user's own)."""
+    if key.key.exists():
+        if not key.pub.exists():
+            die(f"{key.key} exists but {key.pub} is missing")
+        if key.type.name != "ed25519":
+            have = (key.pub.read_text().split() or ["nothing"])[0]
+            if have != key.type.public_word:
+                from .errors import KEY_TYPE_MISMATCH
+                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is an {have} key, not {key.type.name} "
+                    f"({key.type.public_word}), which key_type: in roster.yml asks for: move it away (roster makes "
+                    "the new key there), or point key_path at another file")
+        say(f"key          {key.key} ({key.type.name}, existing)")
         return
-    cfg["key"].parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    subprocess.run(program_argv(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", cfg["tag"],
-                                 "-f", str(cfg["key"])]), check=True)
-    say(f"key          {cfg['key']} (created)")
+    key.key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(program_argv(["ssh-keygen", "-q", *key.type.keygen_args(), "-N", "", "-C", tag,
+                                 "-f", str(key.key)]), check=True)
+    say(f"key          {key.key} ({key.type.name}, created)")
 
 
-def public_key_line(cfg):
-    parts = cfg["pub"].read_text().split()
+def public_key_line(key, tag):
+    """KEY's (a boxkeys.BoxKey) public key line as it goes on a Host: its type and key, then TAG."""
+    parts = key.pub.read_text().split()
     if len(parts) < 2:
-        die(f"{cfg['pub']} doesn't look like a public key")
-    return f"{parts[0]} {parts[1]} {cfg['tag']}"   # tag lets revoke find exactly this box's key
+        die(f"{key.pub} doesn't look like a public key")
+    return f"{parts[0]} {parts[1]} {tag}"   # tag lets revoke find exactly this box's key
 
 
 def ere_literal(text):
@@ -72,28 +84,40 @@ def key_ere(kind, key):
 
 
 def box_key_re(cfg):
-    """What matches this Box's key line in authorized_keys: its tag (cfg's tag_re), or this Box's own public key with
-    a roster-managed tag of any Box name (T217, #412): a Box renamed since (box_name:, or the hostname) still finds
-    its line under the earlier name, and never another Box's, whose key differs. The tag alone without a public key."""
-    try:
-        parts = cfg["pub"].read_text().split()
-    except OSError:
-        return cfg["tag_re"]
-    if len(parts) < 2:
-        return cfg["tag_re"]
-    return f"{cfg['tag_re']}|{key_ere(parts[0], parts[1])}"
+    """What matches this Box's key lines in authorized_keys: its tag (cfg's tag_re), or one of this Box's own public
+    keys (one per key type, T239: boxkeys.all_keys) with a roster-managed tag of any Box name (T217, #412): a Box
+    renamed since (box_name:, or the hostname) still finds its lines under the earlier name, and never another Box's,
+    whose keys differ. The tag alone without a public key."""
+    alts = [cfg["tag_re"]]
+    for words in box_public_keys(cfg):
+        alts.append(key_ere(words[0], words[1]))
+    return "|".join(dict.fromkeys(alts))
+
+
+def box_public_keys(cfg):
+    """[[type, key, comment...]] of each of this Box's public keys that's there and reads as one."""
+    from . import boxkeys
+    out = []
+    for key in boxkeys.all_keys(cfg):
+        try:
+            parts = key.pub.read_text().split()
+        except OSError:
+            continue
+        if len(parts) >= 2:
+            out.append(parts)
+    return out
 
 
 def key_tag_name(cfg):
-    """The Box name in this Box's public key's comment (ssh-keygen -C, as ensure_key made it, or as setup re-tagged
-    it), or None when the comment isn't a roster-managed tag (a key of the user's own)."""
-    try:
-        parts = cfg["pub"].read_text().split()
-    except OSError:
-        return None
-    m = re.fullmatch(f"(?:{'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):([A-Za-z0-9_-]+)", parts[2]) \
-        if len(parts) == 3 else None
-    return m.group(1) if m else None
+    """The Box name in this Box's public keys' comment (ssh-keygen -C, as ensure_key made it, or as setup re-tagged
+    it): its own key's first, then the other key types' (T239). None when no comment is a roster-managed tag (a key
+    of the user's own)."""
+    for parts in box_public_keys(cfg):
+        m = re.fullmatch(f"(?:{'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):([A-Za-z0-9_-]+)", parts[2]) \
+            if len(parts) == 3 else None
+        if m:
+            return m.group(1)
+    return None
 
 
 def key_named(cfg):
@@ -153,20 +177,47 @@ def offered_host_key(sock, key_types, timeout=10):
     """Key exchange only, over an open socket: the host key the server offers, preferring KEY_TYPES (the
     recorded ones, so a Host with several keys shows the one we can compare). Never authenticates, never
     records anything. Raises paramiko.SSHException if the exchange fails."""
-    t = start_transport(sock, key_types, timeout)
+    return handshake(sock, key_types, timeout)[0]
+
+
+def handshake(sock, key_types, timeout=10):
+    """offered_host_key, and the key exchange the server agreed to (`ecdh-sha2-nistp256`, `curve25519-sha256`; ""
+    when paramiko doesn't name it). roster offers curve25519 first, so a NIST one means the server has no curve25519:
+    a FIPS-mode Host's sign (T239)."""
+    import logging
+    agreed = []
+
+    class Kex(logging.Handler):         # paramiko names the agreed kex only in its debug log ("Kex: NAME")
+        def emit(self, record):
+            msg = record.getMessage()
+            if msg.startswith("Kex: "):
+                agreed.append(msg[5:].strip())
+    channel = f"roster.handshake.{threading.get_ident()}.{id(agreed)}"
+    log = logging.getLogger(channel)
+    log.setLevel(logging.DEBUG)
+    log.propagate = False               # nothing of it reaches roster's or the user's logging
+    handler = Kex()
+    log.addHandler(handler)
     try:
-        return t.get_remote_server_key()
+        t = start_transport(sock, key_types, timeout, log_channel=channel)
+        try:
+            return t.get_remote_server_key(), (agreed or [""])[0]
+        finally:
+            t.close()
     finally:
-        t.close()
+        log.removeHandler(handler)
+        logging.Logger.manager.loggerDict.pop(channel, None)
 
 
-def start_transport(sock, key_types, timeout=10):
+def start_transport(sock, key_types, timeout=10, log_channel=None):
     """An SSH transport over SOCK with the key exchange done (preferring host keys of KEY_TYPES) and nobody
     logged in yet: the caller compares t.get_remote_server_key() before it tries a login, and closes it."""
     import paramiko
     wanted = [t for kt in key_types for t in
               (("rsa-sha2-512", "rsa-sha2-256", "ssh-rsa") if kt == "ssh-rsa" else (kt,))]
     t = paramiko.Transport(sock)
+    if log_channel:
+        t.set_log_channel(log_channel)
     try:
         options = t.get_security_options()
         usable = [k for k in wanted if k in options.key_types]
@@ -303,7 +354,7 @@ def host_block(cfg, name, h):
     # Offer only roster's key (key Hosts) or no key at all (password Hosts): an agent holding many keys
     # would otherwise use up the Host's MaxAuthTries before the password ("Too many authentication failures").
     if h["enroll"]:
-        out += [f"    IdentityFile {q(cfg['key'])}", "    IdentitiesOnly yes"]
+        out += [f"    IdentityFile {q(h['key_file'])}", "    IdentitiesOnly yes"]   # its own key type's (T239)
     elif h["ssh"]["auth"] not in (None, "", *NO_PASSWORD):
         out += ["    IdentitiesOnly yes", "    PubkeyAuthentication no"]
     return out
