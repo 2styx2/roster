@@ -118,6 +118,17 @@ def test_shards_balance_the_recorded_times_not_the_count(tmp_path):
     assert abs(len(a) - len(b)) <= 1
 
 
+def test_each_test_also_costs_a_second_of_its_own_so_quick_ones_spread_out_too(tmp_path):
+    # Each test costs about a second beyond its recorded time on the Windows runner:
+    # PR #455's first run gave one shard 1,376 quick tests, 693 s, against 369 slow ones, 409 s.
+    every = collected()
+    times = tmp_path / "durations.json"
+    times.write_text(json.dumps({t: 0.0 for t in every}))
+    shards = [collected("--shard", f"{k}/3", "--shard-durations", str(times)) for k in (1, 2, 3)]
+    assert sorted(sum(shards, [])) == sorted(every)
+    assert all(abs(len(s) - len(every) / 3) < 1 for s in shards)
+
+
 def test_a_test_with_no_recorded_time_counts_as_the_average(tmp_path):
     every = collected()
     times = tmp_path / "durations.json"

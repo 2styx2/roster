@@ -18,6 +18,9 @@ posix_shell = pytest.mark.skipif(WINDOWS, reason="runs a POSIX shell script; nat
 
 
 SHARD_DURATIONS = Path(__file__).parent / "durations-windows.json"
+# What a test costs on the Windows runner beyond its recorded setup, call and teardown, fitted to shard wall times
+# (T233, PR #455): a shard of 1,376 quick tests took 693 s against 409 s for 369 slow ones of more test time.
+SHARD_PER_TEST = 1.0
 
 
 def pytest_addoption(parser):
@@ -31,8 +34,8 @@ def pytest_addoption(parser):
 
 def pytest_collection_modifyitems(config, items):
     """--shard K/N splits the tests so each shard's recorded time (--shard-durations, refreshed from the nightly run)
-    comes out about the same: the longest first, each to the shard with the least so far. A test the file doesn't
-    know counts as its average, so a new one needs no entry. The same in every xdist worker: it depends only on the
+    comes out about the same: the longest first, each to the shard with the least so far, each test counting its
+    time plus SHARD_PER_TEST. A test the file doesn't know counts as its average, so a new one needs no entry. The same in every xdist worker: it depends only on the
     collected tests and the file; a shard keeps collection order."""
     shard = config.getoption("--shard")
     if not shard:
@@ -50,7 +53,7 @@ def pytest_collection_modifyitems(config, items):
     home: dict[str, int] = {}
     for item in sorted(items, key=lambda i: (-recorded.get(i.nodeid, average), i.nodeid)):
         j = loads.index(min(loads))
-        loads[j] += recorded.get(item.nodeid, average)
+        loads[j] += recorded.get(item.nodeid, average) + SHARD_PER_TEST
         home[item.nodeid] = j
     config.hook.pytest_deselected(items=[i for i in items if home[i.nodeid] != k - 1])
     items[:] = [i for i in items if home[i.nodeid] == k - 1]
