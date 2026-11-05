@@ -7,7 +7,7 @@ import { CommittedLines, lastLines, OUTPUT_MAX, type Run as OutputRun, type Scre
 /** How often the Sessions' output goes to the Plugins that read it. */
 const OUTPUT_EVERY_MS = 200;
 
-export interface FeedWants {
+interface FeedWants {
   /** Whether any running Plugin may read the Sessions' output (so it's worth decoding). */
   reads(): boolean;
   /** Whether any running Plugin hears `command_done` (#223, Q185): only then is a command's

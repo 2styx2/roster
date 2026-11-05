@@ -14,7 +14,7 @@ const VIEW = "discover";
 const SCANS = ["serve:discover.plan", "serve:discover.start", "serve:discover.status", "serve:discover.stop"];
 const ADDS = "serve:discover.add";
 
-export interface FoundPort {
+interface FoundPort {
   port: number;
   name: string;
   product: string;

@@ -159,7 +159,7 @@ const ago = (at: number, now: number) => {
 };
 
 /** What `:plugins` says under a granted site (decision Q116): counts and a time, never what went. */
-export function requestsLine(r: SiteRequests | undefined, now: number): string {
+function requestsLine(r: SiteRequests | undefined, now: number): string {
   if (!r || r.requests === 0) return "No requests since roster started";
   const n = (x: number) => x.toLocaleString("en-US");
   const failed = r.failed > 0 ? `, ${n(r.failed)} with no answer` : "";

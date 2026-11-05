@@ -755,6 +755,8 @@ export class PluginManager {
    * knows them; a Session event sent after it waits for it, so a listener's list agrees. */
   sessions(open: OpenSession[]): void {
     if (this.stopped) return;
+    // A list the core didn't take is replaced whole by the next, so a failed send needs no retry;
+    // what follows it (a Session event, a load) still waits for it, and doesn't fail with it.
     this.sessionsSent = this.sessionsSent.then(() => this.backend.pluginSessions(open)).catch(() => {});
   }
 
@@ -820,10 +822,21 @@ export class PluginManager {
   async reloadBuiltin(name: string): Promise<void> {
     if (!this.started || !this.loaded.has(name)) return;
     const path = `${BUILTIN_PREFIX}${name}`;
-    const settings = (await this.ui.builtinSettings?.(name).catch(() => null)) ?? null;
+    const settings = await this.builtinSettings(name);
     if (this.builtinConfig.get(name) === JSON.stringify(settings)) return;
     const entry = this.installed().find((e) => e.path === path);
     await this.loadPath(path, entry ? entry.granted : null, name);
+  }
+
+  /** The settings built-in Plugin `name` gets, or null: one the app can't read is said, and the
+   * Plugin loads without them rather than not at all. */
+  private async builtinSettings(name: string): Promise<Record<string, unknown> | null> {
+    try {
+      return (await this.ui.builtinSettings?.(name)) ?? null;
+    } catch (e) {
+      this.notify(name, "warn", `${name}: loads without its settings: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
   }
 
   /** What `:tutor`'s demo loads (ticket 66, decision Q123): the Plugins running now, each with what
@@ -881,7 +894,7 @@ export class PluginManager {
     try {
       // A built-in Plugin is granted everything it asks for until a permission is revoked.
       const builtin = builtinName(path);
-      const settings = builtin === null ? null : ((await this.ui.builtinSettings?.(builtin).catch(() => null)) ?? null);
+      const settings = builtin === null ? null : await this.builtinSettings(builtin);
       if (builtin !== null) this.builtinConfig.set(builtin, JSON.stringify(settings));
       // The list of open Sessions sent last is in the core first: the Plugin may read it at load.
       await this.sessionsSent;

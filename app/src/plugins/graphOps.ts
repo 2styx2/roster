@@ -17,7 +17,7 @@ const MAX_TEXT = 500;
 export const GRAPH_KEYS = ["h", "j", "k", "l", "H", "J", "K", "L", "g", "G", "n", "N", "o", "O", "t", "f", "m", "s", "S", "/", "?", "q", "+", "-", "=", "0"] as const;
 
 /** What a graph action's `when` may test: a node's own fields (T89). */
-export const NODE_FIELDS = ["id", "label", "kind", "shape", "state", "mark", "note", "cluster", "host", "detail"] as const;
+const NODE_FIELDS = ["id", "label", "kind", "shape", "state", "mark", "note", "cluster", "host", "detail"] as const;
 
 export const SHAPES: readonly NodeShape[] = ["dot", "ring", "dashed", "hollow", "square"];
 const STATES: readonly NodeState[] = ["live", "down"];

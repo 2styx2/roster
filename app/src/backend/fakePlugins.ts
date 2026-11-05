@@ -383,7 +383,7 @@ function storageName(name: string, fn: string): string {
 }
 
 /** The status bar's Host count, as crates/roster-core/plugins/hosts/init.lua writes it. */
-export const fakeHostsPlugin: FakePlugin = {
+const fakeHostsPlugin: FakePlugin = {
   manifest: { name: "hosts", version: "1.0.0", description: "The status bar's Host count", author: "roster", api: 2, permissions: ["inventory.read"] },
   load(roster) {
     const inventory = roster.inventory;

@@ -117,7 +117,7 @@ export interface PluginProgress {
 
 /** The icons a Plugin's toolbar control may have. */
 export const PLUGIN_TOOLBAR_ICONS = ["find", "add", "details", "help", "map"] as const;
-export type PluginToolbarIcon = (typeof PLUGIN_TOOLBAR_ICONS)[number];
+type PluginToolbarIcon = (typeof PLUGIN_TOOLBAR_ICONS)[number];
 
 /** A toolbar control (`roster.toolbar.set`, ticket 78). */
 export interface PluginToolbarControl {
@@ -193,7 +193,7 @@ export interface PluginViewUpdate {
   actions?: PluginTableAction[];
 }
 
-export interface PluginDetails extends PluginContent {
+interface PluginDetails extends PluginContent {
   title: string;
   order: number;
 }
@@ -240,7 +240,7 @@ export type PluginOp =
   | { op: "remove"; kind: RemovableKind; id: string };
 
 export const REMOVABLE = CORE.removable;
-export type RemovableKind = (typeof REMOVABLE)[number];
+type RemovableKind = (typeof REMOVABLE)[number];
 
 const ICONS: readonly RowAction["icon"][] = ["close", "edit", "add", "addGroup", "review", "unreview", "info", "copy", "plan", "apply", "cut", "map"];
 const HEALTH_LEVELS = ["ok", "warn", "error"] as const;
@@ -256,7 +256,7 @@ const MAX_ACTIONS = 8;
 const KINDS: readonly ColumnKind[] = ["text", "data", "number"];
 const TONES: readonly Tone[] = ["muted", "warn", "error"];
 /** Keys a table uses itself (moving, sorting, and kept for a filter and its help). */
-export const TABLE_KEYS = ["j", "k", "g", "G", "s", "S", "/", "?", "q"] as const;
+const TABLE_KEYS = ["j", "k", "g", "G", "s", "S", "/", "?", "q"] as const;
 export const MAX_HELP = 200_000;
 /** Most buttons on a section's heading, and actions and links in a float. */
 export const MAX_HEAD_ACTIONS = 4;

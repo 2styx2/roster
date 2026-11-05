@@ -136,7 +136,7 @@ export interface OpCall {
   copying: Promise<boolean> | null;
 }
 
-export type OpKind = (typeof CORE.ops)[number]["op"];
+type OpKind = (typeof CORE.ops)[number]["op"];
 type OpOf<K extends OpKind> = Extract<PluginOp, { op: K }>;
 
 interface Entry<K extends OpKind> {
