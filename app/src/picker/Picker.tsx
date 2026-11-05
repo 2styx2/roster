@@ -20,7 +20,7 @@ import {
   type PickerAction,
 } from "../keymap";
 import { Announce } from "../ui/Announce";
-import { addressCut, countOf, formatCount, middleCut } from "../ui/format";
+import { addressCut, countOf, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
 import { prefixFill } from "../ui/completion";
 import { searchHosts } from "./match";
@@ -52,8 +52,6 @@ function markCut(list: HTMLElement | null, strip: HTMLElement | null) {
 
 /** An address column's most characters; a longer address (IPv6) drops groups from its middle. */
 const IP_CHARS = 17;
-/** A group column's most characters; a longer group is cut in its middle. */
-const GROUP_CHARS = 18;
 
 /** An i in a ring: a Host's details (ticket 18). */
 export const InfoGlyph = () => (
@@ -377,7 +375,7 @@ export function Picker({
           />
         </div>
         <ul
-          className="picker-list"
+          className={`picker-list${rowCount <= 1 ? " few" : ""}`}
           role="listbox"
           id={listId}
           ref={listRef}
@@ -435,8 +433,8 @@ export function Picker({
                   : marked(host.ip, query)}
               </span>
               <span className="host-group" title={host.group}>
-                {/* Groups often share a start ("fieldwork-east-…"): cut in the middle, they stay apart. */}
-                {middleCut(host.group, GROUP_CHARS)}
+                {/* Cut once, at its end, by the column (round 12: a middle cut then an end cut read "fieldwork…-…"). */}
+                {host.group}
               </span>
               <span className="host-type" title={host.type}>
                 {host.type}
@@ -478,9 +476,7 @@ export function Picker({
             <span />
             <span />
             <span className="host-ip">{widest.ip}</span>
-            <span className="host-group">
-              {middleCut(widest.group, GROUP_CHARS)}
-            </span>
+            <span className="host-group">{widest.group}</span>
             <span className="host-type">{widest.type}</span>
             {widest.badge && <span className="badge">unreviewed</span>}
           </li>
@@ -537,7 +533,9 @@ export function Picker({
             ([keys, what]) =>
               // Moving and opening need a row: with none, only the way out is offered.
               keys &&
-              (rowCount > 0 || what === "close") && (
+              (rowCount > 0 || what === "close") &&
+              // One row: nothing to move between.
+              !(what === "move" && rowCount <= 1) && (
                 <span key={what} className="picker-hint key-hint">
                   <Keys keys={keys} />{" "}
                   <span className="picker-hint-word">{what}</span>

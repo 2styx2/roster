@@ -4358,7 +4358,7 @@ function RecentMap({
               <path
                 key={h.name}
                 className={hover === i ? "on" : undefined}
-                d={`M0 ${mid} C 24 ${mid}, 24 ${y}, 48 ${y}`}
+                d={`M0 ${mid} C 24 ${mid}, 24 ${y}, ${EDGE_END} ${y}`}
               />
             );
           })}
@@ -4429,6 +4429,10 @@ function dirPart(path: string): string {
 function basePart(path: string): string {
   return path.slice(dirPart(path).length);
 }
+
+/** Where the idle map's edges end: past the 48px edge column and the row's 10px padding, at the
+ * node's left edge, so each edge meets its node (round 12: they stopped ~14px short). */
+const EDGE_END = 48 + 10 + 0.75;
 
 /** Whether a media query matches now, following it as the window changes. */
 function useMediaMatch(query: string): boolean {

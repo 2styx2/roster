@@ -45,6 +45,9 @@ export interface FinderProps {
   onHelp?(item: FinderItem): void;
 }
 
+/** A label that is data, not prose (an option such as keys.picker, a tag): set in Iosevka. */
+const DATA_NAME = /^[\w.:#/-]+$/;
+
 export function Finder({
   source,
   ctx,
@@ -213,7 +216,7 @@ export function Finder({
             >
               {item.dot && <StateDot dot={item.dot} lit={item.lit} />}
               <span className="finder-label" title={item.label}>
-                <span className="finder-name" dir="auto">
+                <span className={`finder-name${source.prose && DATA_NAME.test(item.label) ? " data" : ""}`} dir="auto">
                   {item.label}
                 </span>
                 {item.mark && (

@@ -241,15 +241,20 @@ export function ConnectCard({
     phase === "password" && prompt !== null && answers?.connect !== undefined;
   const asking = question || asksPassword;
   // Keyboard first: the question takes focus (after the terminal, which the active pane focuses
-  // first), so Enter trusts and Esc cancels. Once answered, focus goes back to the terminal.
+  // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q203). Once answered,
+  // focus goes back to the terminal.
   const asked = useRef(false);
   useEffect(() => {
     if (asking && active)
+      // Its ring shows even when the question came from a click (round 12): the focused Cancel
+      // must read as the default.
       (
         passwordField.current ??
         cancelButton.current ??
         trustButton.current
-      )?.focus();
+      )?.focus({
+        focusVisible: true,
+      } as FocusOptions);
     if (asking) asked.current = true;
     else if (asked.current) {
       asked.current = false;
@@ -363,7 +368,7 @@ export function ConnectCard({
           height="3.1"
           rx="0.6"
         />
-        <line className="connect-edge" x1="12" y1="6" x2="61.6" y2="6" />
+        <line className="connect-edge" x1="9" y1="6" x2="61.9" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
         {/* One arc, its gap (50°) centred at -45°, the logo's Host side. A dash pattern under
@@ -372,9 +377,9 @@ export function ConnectCard({
           className="connect-host"
           d="M67.631 5.042 A2.8 2.8 0 1 1 65.958 3.369"
         />
-        {/* The logo's Host in the gap (owner, after round 11): the ring reads as the Gap orbit,
-            the Host almost reached, not a loader. It fades as the ring closes. */}
-        <circle className="connect-host-dot" cx="66.98" cy="4.02" r="0.7" />
+        {/* The logo's Host just past the gap (owner, after rounds 11 and 12: inside the gap it read as
+            a reload arrow), as the mark's Host sits off its orbit. It fades as the ring closes. */}
+        <circle className="connect-host-dot" cx="67.97" cy="3.03" r="0.7" />
         <circle className="connect-host-closed" cx="65" cy="6" r="2.8" />
         {fills && (
           <circle className="connect-host-fill" cx="65" cy="6" r="2.8" />
@@ -533,7 +538,7 @@ export function ConnectCard({
           <div className="key-actions">
             <button
               type="button"
-              className="primary"
+              className="key-trust"
               ref={trustButton}
               onClick={() => answers.trust()}
             >
