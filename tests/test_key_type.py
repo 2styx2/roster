@@ -83,7 +83,7 @@ def test_ensure_key_makes_each_type_once_with_the_boxs_tag(write_config, isolate
     import subprocess
 
     from roster import boxkeys
-    from roster.sshops import ensure_key, public_key_line
+    from roster.boxkeys import ensure_key, public_key_line
     cfg = load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {name}")))
     key = boxkeys.for_host(cfg["hosts"]["fips-02"])
     ensure_key(key, cfg["tag"])
@@ -100,7 +100,7 @@ def test_ensure_key_makes_each_type_once_with_the_boxs_tag(write_config, isolate
 
 def test_ensure_key_refuses_a_key_of_another_type_at_its_path(write_config, isolated):
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config(FIPS_YML))
     key = boxkeys.for_host(cfg["hosts"]["fips-01"])
     key.key.parent.mkdir(parents=True)
@@ -356,7 +356,7 @@ def keypair(path, kind="rsa", bits="3072"):
 def test_a_leftover_key_counts_only_when_its_private_key_gives_its_public_key(write_config, isolated):
     """#471's review LOW-3: a roster_<type>.pub beside key_path widens what setup and revoke take only when this Box
     holds its private key (ssh-keygen -y of it gives that key), never a stray .pub or an empty file beside it."""
-    from roster.sshops import box_key_re
+    from roster.authorized import box_key_re
     cfg = load_config(write_config(FIPS_YML))
     ssh = isolated["home"] / ".ssh"
     ssh.mkdir()
@@ -369,13 +369,13 @@ def test_a_leftover_key_counts_only_when_its_private_key_gives_its_public_key(wr
     assert "AAAAothersbox" not in box_key_re(cfg)
     mine = keypair(ssh / "roster_rsa-8192", bits="3072")        # name and size disagree, but it's this Box's
     (ssh / "roster_rsa-8192").chmod(0o600)
-    from roster.sshops import key_ere
+    from roster.keyline import key_ere
     assert key_ere(mine[0], mine[1]) in box_key_re(cfg)
 
 
 def test_ensure_key_refuses_a_public_key_that_isnt_its_private_keys(write_config, isolated):
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config(FIPS_YML))
     key = boxkeys.for_host(cfg["hosts"]["fips-01"])
     keypair(key.key, "ecdsa", "384")
@@ -389,7 +389,7 @@ def test_ensure_key_refuses_a_public_key_that_isnt_its_private_keys(write_config
 def test_ensure_key_refuses_an_rsa_key_with_fewer_bits_than_its_type(write_config, isolated, want, have_bits):
     """#471's review LOW-2: an existing RSA key's size is checked too, not only its type word."""
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {want}")))
     key = boxkeys.for_host(cfg["hosts"]["fips-02"])
     keypair(key.key, "rsa", have_bits)

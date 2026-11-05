@@ -15,25 +15,18 @@ drift() for `roster check`. Where things live on Linux and ESXi, and why, is in 
 import concurrent.futures as cf
 import hashlib
 import json
-import os
 import re
 import subprocess
 import threading
+from shlex import quote as q
 from typing import Any
 
-from .common import (
-    current_deadline,
-    current_inventory,
-    deadline_at,
-    kill_tree,
-    mesh_state_file,
-    past_deadline,
-    program_argv,
-    time_left,
-)
-from .config import is_windows
-from .errors import MESH_KEY_TYPE, MESH_WINDOWS
-from .sshops import hk_name, recorded_host_keys
+from . import boxkeys, boxlock, sshconfig
+from .common import current_deadline, deadline_at, kill_tree, past_deadline, program_argv, time_left, write_private
+from .context import current
+from .errors import MESH_KEY_TYPE, MESH_WINDOWS, NOT_A_SOURCE, Problem
+from .hosts import is_windows
+from .sshops import hk_name, not_reached, recorded_host_keys
 
 TAG = "roster-mesh"
 OPTIONS = 'from="{ip}",no-agent-forwarding,no-X11-forwarding'
@@ -46,7 +39,7 @@ WINDOWS_LEFT_OUT = (f"[{MESH_WINDOWS}] os: windows: the Mesh's scripts are sh, w
 def key_type_out(h):
     """Does H's key_type keep it out of the Mesh? Only a key Host's (#471's review MED-2): a password Host's key_type
     means nothing, so a box-wide one never takes it out."""
-    return bool(h["enroll"]) and h.get("key_type", "ed25519") != "ed25519"
+    return bool(h["enroll"]) and h.get("key_type", boxkeys.DEFAULT) != boxkeys.DEFAULT
 
 
 def key_type_dropped(cfg):
@@ -168,22 +161,37 @@ def digest(cfg, g=None):
 
 # ---------------------------------------------------------------- what the Box remembers (unfinished work)
 
-def state_file():
-    """This run's Inventory's Mesh state: mesh.json, or mesh-NAME.json for a named Inventory (common.mesh_state_file)."""
-    return mesh_state_file()
+def state_file(ctx=None):
+    """The Mesh state of the Inventory CTX (default: this run's): mesh.json, or mesh-NAME.json for a named one."""
+    return (ctx or current()).mesh_state
 
 
-def load_state():
+def read_state(ctx=None):
+    """The Mesh state file of the Inventory CTX as it is (a dict), or None when it isn't there or doesn't load."""
+    try:
+        data = json.loads(state_file(ctx).read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def named_hosts(st):
+    """The Host names a Mesh state ST names: its members, pending Hosts, cuts and their peers."""
+    hosts = {str(h) for h in st.get("members") or []} | {str(h) for h in st.get("pending") or {}}
+    for host, peers in (st.get("cut") or {}).items():
+        hosts |= {str(host), *(str(p) for p in peers)}
+    return hosts
+
+
+def load_state(ctx=None):
     """{members: [hosts roster wrote Mesh entries on], pending: {host: why}, cut: {host: [peers not confirmed]},
     applied: digest of the last complete apply, known: whether this Box has any Mesh record (this Inventory's or
-    another's)}. Only bookkeeping: the Mesh itself comes from roster.yml. known is False on a new Box, or one where
-    roster was removed and installed again without `roster mesh cut --all` first (T193): the Hosts may hold Mesh
-    entries this Box knows nothing of, and `roster mesh leftovers` looks for them."""
-    f = state_file()
-    try:
-        data = json.loads(f.read_text())
-    except (OSError, ValueError):
-        data = {}
+    another's)} of the Inventory CTX (default: this run's). Only bookkeeping: the Mesh itself comes from roster.yml.
+    known is False on a new Box, or one where roster was removed and installed again without `roster mesh cut --all`
+    first (T193): the Hosts may hold Mesh entries this Box knows nothing of, and `roster mesh leftovers` looks for
+    them."""
+    f = state_file(ctx)
+    data = read_state(ctx) or {}
     return {"members": list(data.get("members") or []), "pending": dict(data.get("pending") or {}),
             "cut": dict(data.get("cut") or {}), "applied": data.get("applied"),
             # whose tags this Box's Mesh entries carry (owner_of; T199): None from a roster before that (untagged)
@@ -194,19 +202,11 @@ def load_state():
 
 
 def save_state(st):
-    f = state_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".new")
     st = {k: v for k, v in st.items() if k not in ("known", "recorded") and (k != "owner" or v)}
-    tmp.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
-    os.replace(tmp, f)
+    write_private(state_file(), json.dumps(st, indent=2, sort_keys=True) + "\n")
 
 
 # ---------------------------------------------------------------- the scripts that run on a Host (POSIX sh)
-
-def q(s):
-    return "'" + str(s).replace("'", "'\"'\"'") + "'"
-
 
 def ere(name):
     return re.escape(name).replace("\\-", "-")
@@ -499,7 +499,7 @@ def owner_of(cfg):
     """Whose Mesh a run writes (T199, #379): this Box, as its key's tag names it (roster-managed:BOX), and BOX/NAME
     for a named Inventory. It goes in every authorized_keys line (roster-mesh:SOURCE@OWNER) and the Mesh files'
     headers, so one Box's (or Inventory's) apply, cut or mesh leftovers --remove never takes another's."""
-    inv = current_inventory()
+    inv = current().name
     return f"{cfg['box']}/{inv}" if inv else str(cfg["box"])
 
 
@@ -608,7 +608,6 @@ grep -qE "$T" "$AK" 2>/dev/null && echo "ERROR a roster-mesh line is still there
 def on_host(h, script, timeout=STEP_TIMEOUT):
     """Run SCRIPT on H over the Box's ssh (its key, roster's ssh config). Returns (report lines, None) or
     (None, why it didn't finish). The script goes as bytes: text mode on Windows would hand sh "\r\n" line ends."""
-    from .sshops import not_reached
     why = not_reached(h["name"])
     if why:                             # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
         return None, why
@@ -672,15 +671,15 @@ def ssh_config(cfg, src, peers, d, vias=None):
            "reaches. Don't edit by hand.",
            ""]
     for p in peers:
-        out += [f"Host {p['name']}", f"    HostName {p['ip']}", f"    User {p['ssh']['user']}",
-                f"    Port {p['ssh']['port']}"] + ([f"    ProxyJump {vias[p['name']]}"] if p["name"] in vias else [])
-        out += [f"    UserKnownHostsFile {d}/known_hosts",
-                "    StrictHostKeyChecking yes", f"    ConnectTimeout {CONNECT_TIMEOUT}"]
+        opts = [("HostName", p["ip"]), ("User", p["ssh"]["user"]), ("Port", p["ssh"]["port"])]
+        opts += [("ProxyJump", vias[p["name"]])] if p["name"] in vias else []
+        opts += [("UserKnownHostsFile", f"{d}/known_hosts"), ("StrictHostKeyChecking", "yes"),
+                 ("ConnectTimeout", CONNECT_TIMEOUT)]
         if p["enroll"]:
-            out += [f"    IdentityFile {d}/id_ed25519", "    IdentitiesOnly yes"]
+            opts += [("IdentityFile", f"{d}/id_ed25519"), ("IdentitiesOnly", "yes")]
         else:
-            out += ["    PubkeyAuthentication no", "    PreferredAuthentications password,keyboard-interactive"]
-        out.append("")
+            opts += [("PubkeyAuthentication", "no"), ("PreferredAuthentications", "password,keyboard-interactive")]
+        out += sshconfig.host_block(p["name"], opts) + [""]
     return "\n".join(out)
 
 
@@ -718,7 +717,6 @@ def check_rotate(g, rotate):
     """Problem 110 when ROTATE names a Host that isn't a Mesh source of graph G."""
     unknown = [r for r in rotate if r not in g["sources"]]
     if unknown:
-        from .errors import NOT_A_SOURCE, Problem
         raise Problem(NOT_A_SOURCE, f"{', '.join(unknown)} isn't a Mesh source, so it has no Mesh key to replace",
                       {"hosts": unknown}, fix="rotate a Host that reaches peers (roster mesh --dry-run lists them)")
 
@@ -747,16 +745,9 @@ def visits_of(cfg, hosts):
     return g, st, ex, links, hops, hop_only, visits
 
 
+
+@boxlock.locking("mesh", unless=lambda cfg, apply=False, *_, **__: not apply)     # a plan changes nothing
 def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visits=None):
-    """_run, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
-    if not apply:                    # a plan changes nothing: no lock
-        return _run(cfg, apply=apply, rotate=rotate, say=say, progress=progress, stopped=stopped, visits=visits)
-    from . import boxlock
-    with boxlock.held("mesh"):
-        return _run(cfg, apply=apply, rotate=rotate, say=say, progress=progress, stopped=stopped, visits=visits)
-
-
-def _run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visits=None):
     """The Mesh as roster.yml asks for it, against what the Hosts hold now, one connection at a time.
     Plan (apply=False) changes nothing anywhere; apply makes it so and remembers what it couldn't finish.
     ROTATE: sources whose key is replaced. PROGRESS(done, total, host) is told before each Host's step and once at
@@ -1106,14 +1097,9 @@ def cut_hosts(cfg, name):
     return [(n, False) for n in peers] + ([(name, True)] if visitable(h) else [])
 
 
+
+@boxlock.locking("mesh cut")
 def cut(cfg, name, workers=16, progress=None, stopped=None):
-    """_cut, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
-    from . import boxlock
-    with boxlock.held("mesh cut"):
-        return _cut(cfg, name, workers, progress, stopped)
-
-
-def _cut(cfg, name, workers=16, progress=None, stopped=None):
     """HOST out of the Mesh now, in parallel: its key off every peer, every peer's key off HOST, HOST's own Mesh
     files gone. The Box's own key (roster-managed) is never touched. Returns {host, confirmed, pending: {host: why},
     warnings}: WARNINGS name an earlier mesh_dir: HOST still holds, which roster never removes.
@@ -1163,14 +1149,9 @@ def _cut(cfg, name, workers=16, progress=None, stopped=None):
     return {"host": name, "confirmed": sorted(confirmed), "pending": pending, "warnings": out.get("warnings", [])}
 
 
+
+@boxlock.locking("mesh cut --all")
 def cut_all(cfg, workers=16, progress=None, stopped=None):
-    """_cut_all, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
-    from . import boxlock
-    with boxlock.held("mesh cut --all"):
-        return _cut_all(cfg, workers, progress, stopped)
-
-
-def _cut_all(cfg, workers=16, progress=None, stopped=None):
     """Every Mesh entry off every Host roster.yml has that roster can log in to, at once (T193: before removing roster
     from this Box): each Host's roster-mesh lines in authorized_keys and its own Mesh files, as a cut of that Host
     does on itself. roster.yml isn't changed, so the next `roster mesh` puts the Mesh back. Returns {confirmed,
@@ -1315,14 +1296,9 @@ def leftover_words(found):
     return words
 
 
+
+@boxlock.locking("mesh leftovers --remove")
 def remove_leftovers(cfg, found):
-    """_remove_leftovers, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
-    from . import boxlock
-    with boxlock.held("mesh leftovers --remove"):
-        return _remove_leftovers(cfg, found)
-
-
-def _remove_leftovers(cfg, found):
     """Remove exactly what find_leftovers FOUND, one Host at a time: the roster-mesh lines it named, and a former
     source's Mesh files and Include (as when a Host stops being a source): this Box's and an older roster's only.
     {removed: [hosts], pending: {host: why}}."""
@@ -1351,18 +1327,30 @@ grep -qE "$T" "$AK" 2>/dev/null && {{ echo "ERROR a roster-mesh line is still th
     return out
 
 
-def write_cut(cfg, name):
+def write_cut(cfg, name, sync=None):
     """`mesh: false` for Host NAME in roster.yml (edit.py: every other byte kept), so the cut survives: a Pending
-    change in a repo, saved straight to a plain file (store.py, T212). {written, backup, kind} or {written: False,
-    note} (already) or {written: False, error, fix}."""
+    change in a repo, saved straight to a plain file (store.py, T212), then SYNC() (store's write), this Box's sync;
+    None: the caller syncs (serve, under its own lock). {written, backup, kind, sync} or {written: False, note}
+    (already) or {written: False, error, fix}."""
     from . import edit, store
-    from .errors import Problem
     if cfg["hosts"][name]["mesh"] is False:
         return {"written": False, "note": f"{name} already has mesh: false in roster.yml"}
     try:
         kept = store.at(cfg["path"])
         old, new, _ = edit.edited(kept.path, name, {"mesh": False})
-        backup = kept.save(old, new)
+        if sync is None:
+            backup, synced = kept.save(old, new), None
+        else:
+            backup, synced = kept.write(old, new, sync=sync)
     except Problem as e:
         return {"written": False, "error": e.message, "fix": f"set mesh: false for {name} in roster.yml by hand"}
-    return {"written": True, "backup": str(backup), "kind": kept.kind}
+    return {"written": True, "backup": str(backup), "kind": kept.kind, **({"sync": synced} if sync else {})}
+
+
+def cut_out(cfg, name, workers=16, progress=None, stopped=None, sync=None):
+    """`roster mesh cut HOST`: the cut (cut()), then `mesh: false` written for it and this Box synced (write_cut, with
+    SYNC; default: from the file). cut()'s result with `change`: write_cut's."""
+    from . import boxsync
+    result = cut(cfg, name, workers, progress, stopped)
+    result["change"] = write_cut(cfg, name, sync or (lambda: boxsync.sync_file(cfg["path"])))
+    return result

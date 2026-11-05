@@ -123,5 +123,5 @@ def test_the_host_object_is_documented_from_its_model():
     from roster import models
     text = DOC.read_text(encoding="utf-8")
     assert "<!-- BEGIN generated:models Host SshLogin Login Service ServiceProblem Group InventoryError -->" in text
-    for name in models.Host.model_fields:
-        assert f"| `{name}` |" in text
+    for name, info in models.Host.model_fields.items():
+        assert (f"| `{name}` |" in text) != bool(info.exclude)     # an excluded field is never in the JSON

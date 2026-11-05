@@ -10,7 +10,7 @@ import pytest
 from conftest import ALL_SECRETS, SECRET
 from test_changes import app, box, git, infra, result, sshd  # noqa: F401 (fixtures)
 
-from roster import edit
+from roster import edit, store
 from roster import serve as rpc
 from roster.sshops import fingerprint
 
@@ -240,7 +240,7 @@ def test_an_os_error_writing_the_host_takes_the_new_item_back_out(box, sshd, vau
     if where == "backup":
         monkeypatch.setattr(changes.Repo, "backup", disk_full)
     else:
-        monkeypatch.setattr(edit, "replace_file", disk_full)
+        monkeypatch.setattr(store, "replace_file", disk_full)
     r = add_in_process(state, sshd)
     err = r["error"]
     assert "No space left on device" in err["message"] and "nas wasn't added" in err["message"], err

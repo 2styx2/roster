@@ -148,9 +148,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setitem(bitwarden._session, "key", None)           # bw's session key, held outside os.environ
     monkeypatch.setitem(bitwarden._offered, "done", False)         # T241: "keep it unlocked?" asked once a run
     monkeypatch.setattr(providers, "JSON_OUTPUT", False)           # a --json command sets it
-    from roster import common
-    monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
-    monkeypatch.setattr(common, "_config_path", None)              # and its roster.yml
+    from roster import context
+    monkeypatch.setattr(context, "_current", context.Context())   # the Inventory a run picked (ticket 115)
     if WINDOWS:                         # files the tests write read as on Linux: "\n", not CRLF
         write_text = Path.write_text
         monkeypatch.setattr(Path, "write_text", lambda self, data, encoding=None, errors=None, newline="\n":

@@ -12,7 +12,8 @@ import json
 from datetime import datetime, timezone
 
 from . import providers
-from .common import NotPrivate, read_private, replace_file, say, user_config_dir
+from .common import UTC_TIME, NotPrivate, plain, read_private, say, utc_now, write_private
+from .context import user_config_dir
 
 
 def snapshot_path(provider):
@@ -74,23 +75,18 @@ def sync(provider, interactive=False):
 def shown(item):
     """An item as a line names it: its name, or its id when the name holds a control or format character (a vault
     item can't rewrite the terminal it's shown on)."""
-    name = item["name"]
-    return name if name and name.isprintable() else item["id"]
+    return item["name"] if plain(item["name"]) else item["id"]
 
 
 def save(provider, items):
-    f = snapshot_path(provider)
-    if f.is_symlink():
-        say(f"warning      {f} is a symlink (roster never writes through one here) - not updated")
-        return
-    data = {"synced": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items}
-    replace_file(f, json.dumps(data, indent=1, sort_keys=True) + "\n", mode=0o600)
+    data = {"synced": utc_now(), "items": items}
+    write_private(snapshot_path(provider), json.dumps(data, indent=1, sort_keys=True) + "\n")
 
 
 def ago(when, now=None):
     """'just now', '5 min ago', '3 h ago', '2 days ago' for an ISO time."""
     try:
-        then = datetime.strptime(str(when)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        then = datetime.strptime(str(when)[:19] + "Z", UTC_TIME).replace(tzinfo=timezone.utc)
     except ValueError:
         return str(when)
     s = ((now or datetime.now(timezone.utc)) - then).total_seconds()

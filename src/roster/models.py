@@ -14,6 +14,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from . import boxkeys
+
 
 class Model(BaseModel, frozen=True):
     """A part of the Inventory, read-only: unknown keys refused, and the repr shows only declared fields that aren't
@@ -101,6 +103,13 @@ class Host(Model, frozen=True):
     login: Login = Field(description="The default Login for its services.")
     problems: list[ServiceProblem] = Field(description="Service entries roster left out because it can't use them; "
                                            "`[]` when there are none.")
+    # Not in its JSON (serve's Host and the Plugin API's are as they were): as_config lists them beside the Hosts.
+    mesh_dir: str | None = Field(default=None, exclude=True, description="Where it keeps its Mesh files as a source "
+                                 "(T58); `null`: roster's own pick.")
+    seen_as: list[str] = Field(default_factory=list, exclude=True, description="The other addresses it connects "
+                               "from (T83), which a peer's from= takes beside its ip:.")
+    sudo: str | None = Field(default=None, exclude=True, repr=False, description="The vault reference for its own "
+                             "sudo password (ticket 119), which only the prompt fill reads.")
 
 
 class Group(Model, frozen=True):
@@ -158,25 +167,27 @@ class Inventory(Model, frozen=True):
     tag: str
     tag_re: str
     key: Path
-    key_type: str = "ed25519"       # the top-level key_type: this Box's own key's (T239)
+    key_type: str = boxkeys.DEFAULT     # the top-level key_type: this Box's own key's (T239)
     pub: Path
     workers: int = Field(ge=1)
     inline_limit: int = Field(ge=1)
     hosts: dict[str, Host]
     groups: dict[str, Group]
-    mesh_dirs: dict[str, str]
-    seen_as: dict[str, list[str]]
-    sudo: dict[str, str] = Field(repr=False)
     resources: dict[str, Resource]
     links: list[Link]
     providers: dict[str, Any] = Field(repr=False)
     provider_dirs: list[str]
     rate_limited: list[str] = Field(default_factory=list)    # networks with an SSH rate limiter (T191, Q180)
-    key_max_age: int | None = 365   # days before check --box warns the Box key is due a rotation; None: off (T240)
+    # days before check --box warns the Box key is due a rotation; None: off (T240)
+    key_max_age: int | None = boxkeys.parse_age(boxkeys.MAX_AGE)
 
     def as_config(self) -> dict[str, Any]:
-        """The dict the older code reads (`cfg["hosts"][name]["ssh"]["user"]`), the same keys as before T112."""
-        return self.model_dump(by_alias=True)
+        """The dict the older code reads (`cfg["hosts"][name]["ssh"]["user"]`), the same keys as before T112: each
+        Host's mesh_dir, seen_as and sudo beside the Hosts, by name (only the Hosts that set one)."""
+        cfg = self.model_dump(by_alias=True)
+        for key, field in (("mesh_dirs", "mesh_dir"), ("seen_as", "seen_as"), ("sudo", "sudo")):
+            cfg[key] = {n: getattr(h, field) for n, h in self.hosts.items() if getattr(h, field)}
+        return cfg
 
 
 # roster.yml's own names for fields the Inventory keeps under another

@@ -4,15 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .common import CURRENT, current_inventory, roster_command, say
-from .config import access_label
-from .providers import NO_PASSWORD
+from .common import roster_command, say
+from .config import access_label, load_config
+from .context import Context, current
+from .hosts import vault_login
 from .resources import login, summary
 
 # ---------------------------------------------------------------- Claude files
-
-def stored_login(s):
-    return bool(s["auth"]) and s["auth"] not in ("prompt", *NO_PASSWORD)
 
 
 def written_by_the_mesh(md: Path) -> bool:
@@ -26,24 +24,57 @@ def written_by_the_mesh(md: Path) -> bool:
         return False
 
 
+def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_there: bool = False) -> bool:
+    """ROSTER.md next to the Inventory CFG's roster.yml (CTX: its context, default this run's), unless it's the Mesh's;
+    ONLY_IF_THERE: only a file that's there, and only when its text changes. True when it's this Inventory's (written,
+    or as it should be)."""
+    md = cfg["path"].parent / "ROSTER.md"
+    if (only_if_there and not md.is_file()) or written_by_the_mesh(md):
+        return False
+    text = roster_md(cfg, ctx)
+    if not (only_if_there and md.read_text() == text):
+        md.write_text(text)
+    return True
+
+
 def write_claude_files(cfg):
-    proj = cfg["path"].parent
-    md = proj / "ROSTER.md"
-    if written_by_the_mesh(md):
+    """This Inventory's ROSTER.md, its import in CLAUDE.md and Claude Code's settings beside roster.yml, then every
+    other Inventory's ROSTER.md that what it says changed for (refresh_roster_md)."""
+    from . import named  # Pydantic: only once it's used, never at roster's start
+    if not write_roster_md(cfg):
+        md = cfg["path"].parent / "ROSTER.md"
         say(f"warning      {md} is the Mesh's (another Box's `roster mesh` lists this Host's peers in it), so roster "
             "left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
-    else:
-        md.write_text(roster_md(cfg))
     write_claude_settings(cfg)
+    if named.list_file().exists():
+        refresh_roster_md(skip=current())
 
 
-def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
-    """ROSTER.md's text for the Inventory CFG, whose name among the named Inventories is NAME (None: unnamed; default:
-    this run's). A Host whose name reaches another Inventory's Host from this Box (left out of its ssh config, ticket
-    115) is marked so: Claude must not `ssh` to it by name."""
-    from .inventories import left_out_hosts
-    this = current_inventory() if name is CURRENT else name
-    left = left_out_hosts(this)
+def refresh_roster_md(inv: Any = None, skip: Context | None = None) -> None:
+    """Each Inventory's ROSTER.md (where one was written) again, when what it should say changed: which of its Hosts
+    are left out of this Box's ssh config depends on the active Inventory and the others' Hosts. That's every named
+    Inventory's and the unnamed one roster's ssh config was last written from (named.every_inventory). A file
+    whose text stays the same isn't touched. SKIP: the Inventory a sync writes it for already. Each is built for its
+    own Inventory: this process's (which serve's other threads read) is never switched. Never fails the command: one
+    that doesn't load is left as it is."""
+    from . import named  # Pydantic: only once it's used, never at roster's start
+    for name, path in named.every_inventory(inv):
+        if skip is not None and name == skip.name:
+            continue
+        try:
+            write_roster_md(load_config(path), Context(name, path), only_if_there=True)
+        except (SystemExit, OSError):
+            continue
+
+
+def roster_md(cfg: dict[str, Any], ctx: Context | None = None) -> str:
+    """ROSTER.md's text for the Inventory CFG (CTX: its context, default this run's). A Host whose name reaches another
+    Inventory's Host from this Box (left out of its ssh config, ticket 115) is marked so: Claude must not `ssh` to it
+    by name."""
+    from . import named  # Pydantic: only once it's used, never at roster's start
+    ctx = ctx or current()
+    this = ctx.name
+    left = named.left_out_hosts(ctx)
     run = roster_command()
     first = f"`{run} inv use {this}` first" if this else f"name this roster.yml (`{run} inv add`) and use it first"
 
@@ -112,7 +143,7 @@ def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
         md += ["## Hosts", "| name | title | type | product | address | access | web UI | services | description |",
                "|---|---|---|---|---|---|---|---|---|"]
         for h in hosts:
-            svc = ", ".join(f"{k}:{s['port']}" + (" (login)" if stored_login(s) else "")
+            svc = ", ".join(f"{k}:{s['port']}" + (" (login)" if vault_login(s["auth"]) else "")
                             for k, s in h["services"].items() if k != "web" or s["override"])
             md.append(f"| {h['name']} | {cell(h['title'])} | {cell(h['type'])} | {cell(h['product'])} | "
                       f"{h['user']}@{h['ip']}:{h['port']} | {access(h)} | "

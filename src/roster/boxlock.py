@@ -4,7 +4,7 @@ Inventory's Hosts. `roster setup` (and `setup --rotate`), `revoke` and every Mes
 write back), so two at once could each drop the other's new line. Read-only runs (`check`, `--dry-run`,
 `mesh status`) never take it.
 
-One lock file per Inventory (common.lock_file), locked with the OS's own file lock (flock; on Windows a byte range,
+One lock file per Inventory (context.FILES' lock), locked with the OS's own file lock (flock; on Windows a byte range,
 msvcrt.locking). The OS lets go of it when the process holding it ends, however it ends, so a lock whose run died
 (a dead pid in the file) is free at once and taken over. The file says who holds it (pid and what, for the message
 a second run gives), never a secret. A second run waits WAIT seconds, then refuses with code 205.
@@ -14,6 +14,7 @@ waits as another process would (serve's jobs)."""
 
 from __future__ import annotations
 
+import functools
 import os
 import threading
 import time
@@ -21,7 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .common import CURRENT, lock_file
+from .context import Context, current
 from .errors import BOX_BUSY, Problem
 
 WAIT = 5.0                  # seconds a second run waits before it refuses
@@ -74,10 +75,10 @@ def busy(path: Path) -> Problem:
 
 
 @contextmanager
-def held(what: str, inventories: Any = (CURRENT,), wait: float | None = None):
-    """Hold the lock of each of INVENTORIES (names; CURRENT: this run's) while WHAT (`setup --rotate`, `mesh`) runs,
-    in a fixed order. Waits WAIT seconds for each, then raises busy's Problem (205), holding none."""
-    paths = sorted({str(lock_file(n)) for n in inventories})
+def held(what: str, contexts: list[Context] | None = None, wait: float | None = None):
+    """Hold the lock of each of CONTEXTS' Inventories (default: this run's) while WHAT (`setup --rotate`, `mesh`)
+    runs, in a fixed order. Waits WAIT seconds for each, then raises busy's Problem (205), holding none."""
+    paths = sorted({str(c.lock) for c in (contexts or [current()])})
     got: list[str] = []
     try:
         for p in paths:
@@ -87,6 +88,20 @@ def held(what: str, inventories: Any = (CURRENT,), wait: float | None = None):
     finally:
         for p in reversed(got):
             _release(p)
+
+
+def locking(what: str, unless=None):
+    """A function decorated so it runs holding this run's Inventory's lock, as WHAT (`mesh cut`); UNLESS(*args,
+    **kwargs) true: without it (a Mesh plan changes nothing)."""
+    def wrap(f):
+        @functools.wraps(f)
+        def run(*args, **kwargs):
+            if unless is not None and unless(*args, **kwargs):
+                return f(*args, **kwargs)
+            with held(what):
+                return f(*args, **kwargs)
+        return run
+    return wrap
 
 
 def _take(path: Path, what: str, wait: float) -> None:

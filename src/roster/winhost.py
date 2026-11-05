@@ -27,7 +27,8 @@ import re
 import subprocess
 from typing import IO, cast
 
-from .common import KEY_TRAIL, WINDOWS, program_argv
+from . import keyline
+from .common import WINDOWS, program_argv
 from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_POWERSHELL, NOT_WINDOWS
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
@@ -342,7 +343,7 @@ function Main {
                 $body = $l.TrimEnd()
                 if ($body -cmatch $TagRe) {
                     $hit = $true
-                    $new = $body -creplace ' (roster-managed|fleet-managed):[A-Za-z0-9_-]+$', (' ' + $tag)
+                    $new = $body -creplace $TagEnd, (' ' + $tag)
                     if (-not $seen.ContainsKey($new)) { $seen[$new] = 1; $new + $l.Substring($body.Length) }
                 } else { $l }
             })
@@ -374,7 +375,7 @@ function Main {
             $old = Read-Keys $f
             if ($null -eq $old) { continue }
             foreach ($l in @($old -split '\n')) {     # each line it takes says its tag's name (revoke says another)
-                if ((Is-Mine $l) -and $l.TrimEnd() -cmatch ':([A-Za-z0-9_-]+)$') { Say "TAG $($Matches[1])" }
+                if ((Is-Mine $l) -and $l.TrimEnd() -cmatch $NameEnd) { Say "TAG $($Matches[1])" }
             }
             $new = New-Text $old $null
             if ($new -ceq $old) { continue }
@@ -427,9 +428,10 @@ def script(mode, tag_re, pub="", taken="", own=""):
     if mode not in MODES:
         raise ValueError(mode)
     # Is-Mine trims each line first, and .NET reads [[:space:]] as a set of its letters: the plain end of line
-    tag_re, taken, own = (x.replace(KEY_TRAIL, "$") for x in (tag_re, taken, own))
+    tag_re, taken, own = (keyline.powershell(x) for x in (tag_re, taken, own))
     header = (f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
-              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n")
+              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n"
+              f"$TagEnd = {ps_literal(keyline.PS_TAG_END)}\n$NameEnd = {ps_literal(keyline.PS_NAME_END)}\n")
     return header + SCRIPT
 
 
@@ -701,7 +703,7 @@ def outcome(name, rc, out, err):
             raise RuntimeError(ln[6:][:300])
         if ln == "NOT_WINDOWS":
             raise RuntimeError(not_windows(name))
-    if "ROSTER_OK" in lines:
+    if keyline.OK in lines:
         return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
                       "NOLINE" in lines, "TAKEN" in lines)
     said = (err or out).strip()
@@ -716,10 +718,14 @@ def not_windows(name):
             "changed. Fix os: for it in roster.yml")
 
 
+class SshFailed(RuntimeError):
+    """over_key: ssh itself failed (no login), so no script ran."""
+
+
 def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own="", ssh_opts=()):
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError. PUB: the key line retag writes; TAKEN, OWN: script's. SSH_OPTS: ssh's own options before the
-    Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
+    RuntimeError (SshFailed when ssh itself failed). PUB: the key line retag writes; TAKEN, OWN: script's. SSH_OPTS:
+    ssh's own options before the Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", *ssh_opts, h["name"],
                                          remote_command()]),
@@ -728,8 +734,8 @@ def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own="", ssh_opts=())
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None
     out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
-    if r.returncode == 255 and "ROSTER_OK" not in out:          # ssh's own failure: no login, no script
-        raise RuntimeError(f"ssh {h['name']} failed: " + (err.strip()[:200] or "no message"))
+    if r.returncode == 255 and keyline.OK not in out:          # ssh's own failure: no login, no script
+        raise SshFailed(f"ssh {h['name']} failed: " + (err.strip()[:200] or "no message"))
     return outcome(h["name"], r.returncode, out, err)
 
 

@@ -18,33 +18,50 @@ The `cmd:`/`env:` cut (decision Q92) is written twice, in `src/roster/jsonout.py
 
 ```text
 src/roster/
-  cli.py            commands and argument parsing
+  cli.py            the commands: what each one asks of the modules below, and what it prints
+  cliparser.py      every command and option (build_parser), each name-taking argument tagged for completion; the CLI,
+                    its man page and its completion read it
   jsonout.py        `--json` on the read commands: one document with a version, `cmd:`/`env:` references cut (Q92, Q110)
   jsondocs.py       each `--json` document as a Pydantic model (T176), imported only when one prints
-  common.py         small shared helpers: output, paths, text, starting programs
+  context.py        the Inventory a run uses (name, roster.yml) and the one table of files roster keeps per Inventory
+                    (ssh config, known_hosts, Mesh state, key-name, rotation record, lock); `inv remove` walks it
+  common.py         small shared helpers: output, the one atomic writer (replace_file, write_private), reading a
+                    private file, text, starting and ending programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login
   config.py         loading/validating roster.yml, search, --only; find_config: which roster.yml (-c, --inv, ...)
   models.py         roster.yml's Inventory as Pydantic models (Host, its Logins and services, group, Link, resource);
                     load_inventory returns them, load_config their dict view (Inventory.as_config)
-  inventories.py    named Inventories (`roster inv`, inventories.json, its Pydantic models): the active one, each one's
-                    own ssh config and known_hosts, the ssh config index, and the warnings for the same machine in two
+  hosts.py          what roster asks of a Host: Windows or not, a password Login or a vault one, discover's placeholder
+                    user, its address as an IP
+  named.py          the named Inventories' list (inventories.json, Pydantic) and the ssh config index over them; which
+                    of an Inventory's Hosts a plain `ssh NAME` reaches
+  inventories.py    naming, using and forgetting one (`roster inv add/use/remove`, serve's inventories.*)
   example.py        the `roster init` template
-  sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
+  sshops.py         ssh from this Box: known_hosts and host keys, whether `ssh NAME` reaches a Host, this Box's ssh
+                    config for an Inventory, a key login test, password logins (paramiko)
+  sshconfig.py      ssh config files: the one Host-block writer and reader (this Box's, the rotation's one-Host
+                    config, the Mesh's on a source), roster's header, safe values, ~/.ssh/config's Include lines
+  keyline.py        this Box's key line in authorized_keys: its tag, a Box name, how a line ends, how roster finds one
+                    (grep, awk, .NET), and the one parser of what the key scripts print
+  authorized.py     that line on a Host: setup's install, re-tag and revoke (the POSIX scripts; winhost's on Windows)
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
-  claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
+  claude.py         ROSTER.md (the one writer, every Inventory's), CLAUDE.md import, .claude/settings.json
   aliases.py        the CLI's old names (T222, Q194): one table, each old command line rewritten to its new form
                     before the parser sees it, with one stderr line naming it (none for `roster completion`)
   boxkeys.py        this Box's SSH keys, one per key type (key_type:): a Host's key file, ssh-keygen args, type word;
-                    when each was made (key-created) and key_max_age:
-  rotation.py       `roster setup --rotate` (T240, Q204): the Box key rotation, its pending record (key-rotation) and
-                    the ssh config's second IdentityFile while a Host is pending
+                    making one, when each was made (key-created) and key_max_age:
+  rotation.py       the Box key rotation's state (T240, Q204): its pending record (key-rotation), KEY.new and KEY.old,
+                    and the ssh config's second IdentityFile while a Host is pending
+  rotate.py         `roster setup --rotate`: the rotation itself, Host by Host over a one-key ssh config
   boxlock.py        the Box-wide lock (run.lock): one run at a time changes an Inventory's Hosts (setup, revoke, Mesh writes)
-  boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
+  boxsync.py        `roster sync` for this Box after roster changed roster.yml: run by store.py's write, serve's and the CLI's
   addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
                     (checks, the write through store.py, this Box's sync), and a vault item's address and user
                     without its password (`--from-vault`, vault.item_fields)
   fromvault.py      `roster add --from-vault` with no NAME (T221, Q191): the vault items no Login in roster.yml names,
-                    new ones since the last run (the seen file), and the walk adding each through addhost
+                    new ones since the last run (the seen file); the CLI's walk adds each as `roster add` does
+  vaultcli.py       what `roster vault bw` and `roster vault op` let through: a fail-closed allowlist of each CLI's
+                    commands (Q178, Q197), read-only unless --write
   vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced, and the items added, changed
                     or removed since the last sync, from a snapshot of ids and revision dates (vault-sync/, 0600)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
@@ -59,13 +76,14 @@ src/roster/
   edit.py           editing one Host in roster.yml as text, adding, removing, renaming or moving one, and groups (comments and other entries kept), checked before it's written
   changes.py        Pending changes: the infra repo's git (pull fast-forward only, roster.yml's diff, discard, the .bak, publish)
   store.py          how roster.yml is kept (T212, Q182): a team repo or a plain file, decided per file; every write saves
-                    through it (serve, add, discover --write, mesh cut), and pull/diff/discard/publish ask it
+                    through it (serve, add, discover --write, mesh cut) and its write() syncs this Box after;
+                    pull/diff/discard/publish ask it
   newinventory.py   a new Inventory (`roster init --inventory`): blank, a copy, a clone, Hosts from an ssh config
   clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
                     and the nearest name for a mistyped command or option
   completion.py     Tab completion: `roster help --completion SHELL`'s scripts and the hidden `roster __complete` helper that
                     walks the parser and reads names from the local roster.yml (decision Q183)
-  manpage.py        roster(1): generated from the parser (cli.build_parser) and docs/cli-reference.md into
+  manpage.py        roster(1): generated from the parser (cliparser.build_parser) and docs/cli-reference.md into
                     roster.1 (committed, shipped in the wheel); `roster help --man`. Regenerate: uv run python -m roster.manpage
   errors.py         the stable error codes and Problem (code, message, fix): what serve, askpass and check report
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
@@ -73,7 +91,7 @@ src/roster/
   diagnose.py       a Host's Login checked before ssh runs, `roster check HOST` / host.check's steps, host.verify_login, host.scan_key
   fill.py           a prompt fill (session.fill): which of a Host's Logins answers a sudo, su or ssh prompt, or why none may
   health.py         this Box's health: `roster check --box` / box.check's sections (roster.yml, ssh, vault CLIs, askpass,
-                    the infra repo), every check local
+                    the infra repo), every check local; the warnings for the same machine in two named Inventories
   askpass.py        the askpass channel: serve's socket (named pipe on Windows) + one-time tokens, the `roster askpass` helper and the logged-in report (stdlib only)
   web.py            roster web: HTTP requests logged in with a service's stored credentials
   winhost.py        Windows Hosts (os: windows): the PowerShell scripts setup, revoke and check send on stdin (the key file, its ACL)
@@ -119,7 +137,7 @@ A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) an
 | A pull request that touches | runs |
 |---|---|
 | `src/`, `tests/` (the CLI) | pytest on Linux |
-| Windows-specific code: `src/roster/win*.py`, `conpty.py`, `askpass.py`, `common.py`, `changes.py`, `diagnose.py`, `sshops.py`, `providers/__init__.py`, `providers/bw_login.py`, `tests/test_windows*.py`, `tests/conftest.py`, `tests/fakes/`, `tests/durations-windows.json`, `pyproject.toml`, `uv.lock`, `.python-version`, `install.ps1` | pytest on Linux and on Windows |
+| Windows-specific code: `src/roster/win*.py`, `conpty.py`, `askpass.py`, `context.py`, `common.py`, `changes.py`, `diagnose.py`, `sshops.py`, `providers/__init__.py`, `providers/bw_login.py`, `tests/test_windows*.py`, `tests/conftest.py`, `tests/fakes/`, `tests/durations-windows.json`, `pyproject.toml`, `uv.lock`, `.python-version`, `install.ps1` | pytest on Linux and on Windows |
 | `app/` (the frontend) | the frontend, Rust and pytest on Linux (`tests/` checks `app/src` files) |
 | `crates/`, `Cargo.toml`, `Cargo.lock`, `app/src-tauri/`, `app/package*.json` | the frontend, Rust, pytest on Linux, and the Windows and Linux release builds |
 | `plugins/` | the frontend and Rust |
