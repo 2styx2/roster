@@ -189,7 +189,7 @@ A neutral graphite palette with exactly one warm accent and one cool place-marke
 - **Faint Pewter** (`faint`): never text. Icons, chevrons, outlines and rules only (Q53).
 
 ### Status
-- **Signal Yellow** (`warn`): Pending changes, the unreviewed badge and message-line warnings. It's yellow so it's never mistaken for apricot.
+- **Signal Yellow** (`warn`): Pending changes, the unreviewed badge and message-line warnings (a slip in what you typed, such as an unknown command, is said in the text colour: it isn't a warning). It's yellow so it's never mistaken for apricot.
 - **Raspberry** (`error`) and **Danger Raspberry** (`danger`): real failures, and the close button under the pointer. Never used to get attention.
 
 ### Named Rules

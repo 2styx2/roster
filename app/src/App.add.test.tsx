@@ -12,6 +12,7 @@ import type { Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { chooseInMenu, inventoryRow, menuLabels } from "./test-menu";
+import { onMessageLine } from "./test-messageLine";
 
 const LEADER = "{Control>} {/Control}";
 const UNREVIEWED = "switch-4-003";
@@ -284,7 +285,7 @@ describe("marking a Host reviewed", () => {
     // The confirmation's whole text shows with every message on (ticket 111).
     await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:connect ${UNREVIEWED}{Enter}`);
-    expect(await screen.findByText(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`))).toBeInTheDocument();
     const before = await backend.getHost(UNREVIEWED);
     await user.keyboard(`${LEADER}:review ${UNREVIEWED}{Enter}`);
     expect(await screen.findByText(`Marked ${UNREVIEWED} reviewed, as a Pending change. It can be opened now.`)).toBeInTheDocument();
@@ -367,7 +368,7 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
   it("says when roster is too old to un-review (API 9)", async () => {
     const { user, backend } = await ready({ ...current, apiVersion: 8 });
     await user.keyboard(`${LEADER}:host unreview ${REVIEWED}{Enter}`);
-    expect(await screen.findByText(/:host unreview needs a newer roster \(API version 9; this one speaks 8\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:host unreview needs a newer roster \(API version 9; this one speaks 8\)/))).toBeInTheDocument();
     expect((await backend.getHost(REVIEWED)).reviewed).toBe(true);
   });
 });

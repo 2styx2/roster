@@ -253,6 +253,9 @@ describe("The command line", () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:conect x{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("Not a command: conect");
+    // A slip in the typing is said plainly, not as a warning, and the command it names is Iosevka.
+    expect(screen.getByRole("status")).toHaveClass("slip");
+    expect(screen.getByRole("status").querySelector("code.message-cmd")).toHaveTextContent(/^:help commands$/);
     await user.keyboard(`${LEADER}:connect nope{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("No Host named nope");
     const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;

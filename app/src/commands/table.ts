@@ -10,7 +10,7 @@ import { inventoryCommand } from "../inventory/switch";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { SidebarRow } from "../sidebar/Sidebar";
 import { VIEW_MODES, type ViewMode } from "../view/layout";
-import type { Message } from "../ui/messages";
+import { slip, type Message } from "../ui/messages";
 
 export type ListMove = "down" | "up" | "top" | "bottom" | "choose";
 
@@ -512,7 +512,8 @@ export function parseLine(commands: Commands, line: string): ParsedLine {
 /** Runs a command line; a bad one is said, not thrown. Returns the command that ran. */
 export function runLine(commands: Commands, ctx: CommandContext, line: string): CommandDef | undefined {
   const parsed = parseLine(commands, line);
-  if (parsed.kind === "error") ctx.say(parsed.message);
+  // A slip in the typing, not a failure: said plainly (round 18).
+  if (parsed.kind === "error") ctx.say(slip(parsed.message));
   if (parsed.kind !== "ok") return undefined;
   parsed.command.run(ctx, parsed.arg);
   return parsed.command;

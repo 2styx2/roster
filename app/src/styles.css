@@ -409,6 +409,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   height: 100%; padding: 0 12px; line-height: 22px; font-size: var(--text-sm); color: var(--warn);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
+/* A slip in the typing (an unknown command) isn't a warning: the text colour (round 18). */
+.message-line.slip { color: var(--text); }
+/* A command a message names is something you'd type: Iosevka (the paste rule), in the line's colour. */
+.message-cmd { font: 500 var(--text-sm) var(--font-mono); color: inherit; }
 
 /* ---------- The Sidebar ---------- */
 

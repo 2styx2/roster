@@ -168,6 +168,7 @@ import { ViewPanel } from "./view/ViewContent";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
 import { FitLine } from "./chrome/FitLine";
+import { MessageText } from "./ui/MessageText";
 import { headPart } from "./chrome/path";
 import { registerPanel } from "./panel/command";
 import { GraphMemory } from "./graph/memory";
@@ -3743,14 +3744,14 @@ function Workspace({
             {/* Its line is always there, as Neovim's message row is: a message coming or going never
             resizes the pane (or the terminal, which would tell the remote side). */}
             <div
-              className="message-line"
+              className={`message-line${typeof message !== "string" && message.kind === "slip" ? " slip" : ""}`}
               role="status"
               title={shownText(message, allMessages) || undefined}
             >
               {spokenMessage ? (
                 <span className="visually-hidden">{spokenMessage}</span>
               ) : (
-                shownText(message, allMessages)
+                <MessageText text={shownText(message, allMessages)} />
               )}
             </div>
           </div>
