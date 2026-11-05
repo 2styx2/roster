@@ -1,5 +1,5 @@
-# What install.sh and update.sh share (#414, #444): sourced by them from beside them, never run on its own. It ships
-# with them in the Release's roster-cli tarball. The caller sets YES, DRY, MARK (find_map), CHOICES (chose, choose),
+# What install.sh, update.sh and uninstall.sh share (#414, #444, #459): sourced by them from beside them, never run on
+# its own. It ships with them in the Release's roster-cli tarball. The caller sets YES, DRY, MARK (find_map), CHOICES (chose, choose),
 # COMP_MARK (turn_on_completion) and, before `stage` or `summary`, STAGES, TOTAL, DONE, SKIPPED and FAILED.
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # FULL, EMPTY, SPIN and the colours are read by the scripts that source this

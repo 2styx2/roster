@@ -15,7 +15,7 @@ ROOT = Path(__file__).parent.parent
 UNINSTALL_SH = ROOT / "uninstall.sh"
 UPDATE_SH = ROOT / "update.sh"
 INSTALL_SH = ROOT / "install.sh"
-INSTALL_LIB = "install-lib.sh"          # what install.sh and update.sh share
+INSTALL_LIB = "install-lib.sh"          # what install.sh, update.sh and uninstall.sh share
 
 FAKES = {
     "roster": '#!/bin/sh\necho "roster $*" >> "$HOME/calls"\n[ "$1" = --version ] && echo "roster 0.4.0"\nexit 0\n',
@@ -443,9 +443,9 @@ def test_install_and_update_turn_completion_on_with_one_shared_step():
 
 
 @posix_shell
-@pytest.mark.parametrize("name", ["install.sh", "update.sh"])
-def test_install_and_update_without_their_shared_steps_stop_before_changing_anything(tmp_path, name):
-    """#444 (3): install-lib.sh holds what both scripts share; without it beside them they say where to get it."""
+@pytest.mark.parametrize("name", ["install.sh", "update.sh", "uninstall.sh"])
+def test_the_scripts_without_their_shared_steps_stop_before_changing_anything(tmp_path, name):
+    """#444 (3), #459: install-lib.sh holds what the scripts share; without it beside them they say where to get it."""
     home, env = install_box(tmp_path)
     src = source_copy(tmp_path)
     (src / INSTALL_LIB).unlink()
@@ -455,17 +455,25 @@ def test_install_and_update_without_their_shared_steps_stop_before_changing_anyt
     assert calls(home) == "" and sorted(p.name for p in home.iterdir()) == []
 
 
-SHARED = ("find_map", "installed_roster", "chose", "choose", "git_net", "older", "version_in", "have", "ask",
-          "stage", "ok", "warn", "bad", "info", "skip", "listed", "summary")
+SHARED = ("find_map", "installed_roster", "chose", "choose", "git_net", "older", "version_in", "have", "home", "ask",
+          "stage", "ok", "warn", "bad", "info", "skip", "done_stage", "fail_stage", "listed", "summary")
+# what uninstall.sh uses of them (#459): the look, the questions, have and home
+UNINSTALL_SHARED = ("have", "home", "ask", "stage", "ok", "warn", "bad", "info", "skip", "done_stage", "fail_stage",
+                    "listed", "summary")
 
 
-def test_install_and_update_share_their_helpers_from_install_lib():
-    """#444 (3): one copy of each helper both scripts use (find_map and friends), in install-lib.sh."""
+def test_the_scripts_share_their_helpers_from_install_lib():
+    """#444 (3), #459: one copy of each helper the scripts use (find_map and friends), in install-lib.sh."""
     lib = (ROOT / INSTALL_LIB).read_text(encoding="utf-8")
     for fn in SHARED:
         assert f"\n{fn}() " in lib or lib.startswith(f"{fn}() "), fn
-        for script in (INSTALL_SH, UPDATE_SH):
+        for script in (INSTALL_SH, UPDATE_SH, UNINSTALL_SH):
             assert f"\n{fn}() " not in script.read_text(encoding="utf-8"), f"{script.name} has its own {fn}"
+    uninstall = UNINSTALL_SH.read_text(encoding="utf-8")
+    assert f'source "$here/{INSTALL_LIB}"' in uninstall
+    assert "\nif [[ -t 1 && -z" not in uninstall           # the colours too: no second copy of the look
+    for fn in UNINSTALL_SHARED:
+        assert fn in uninstall, f"uninstall.sh no longer uses {fn}: drop it from UNINSTALL_SHARED"
 
 
 @posix_shell

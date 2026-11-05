@@ -37,6 +37,8 @@ permissions:
   contents: read
 
 env:
+  # astral-sh/setup-uv publishes no moving major tag since v8 (only immutable full ones): its uses: lines name the
+  # full tag, bumped by hand with the other actions (#459)
   UV_VERSION: "0.12.23"
   UV_PYTHON_DOWNLOADS: "never"   # use the Python setup-python installed, never fetch another
   CARGO_TERM_COLOR: always
@@ -57,7 +59,7 @@ jobs:
       install: ${{ steps.areas.outputs.install }}
       python: ${{ steps.areas.outputs.python }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
       - id: areas
@@ -80,11 +82,11 @@ jobs:
       LUALS_VERSION: "3.19.2"
       LUALS_SHA256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
@@ -130,7 +132,7 @@ jobs:
       # The CLI's wheel and sdist build (release.yml builds the ones a release ships).
       - run: uv build --python python3.12
       - run: ls -l dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -149,11 +151,11 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python }}      # overrides .python-version for every uv command
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
@@ -167,7 +169,7 @@ jobs:
       - run: uv sync --frozen
       # On the runner's 4 cores (pytest-xdist); every test is safe beside others (docs/development.md, "Tests").
       - run: uv run pytest -n auto --durations=10 --junitxml=report.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pytest-report-${{ matrix.python }}
@@ -196,11 +198,11 @@ jobs:
     env:
       UV_PYTHON: "3.12"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
@@ -209,7 +211,7 @@ jobs:
       - run: >-
           uv run pytest --shard ${{ matrix.shard }}/3 -n 4 --durations=10 --junitxml=report.xml
           --store-durations durations.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pytest-report-windows-${{ matrix.shard }}
@@ -228,8 +230,8 @@ jobs:
     needs: cli-test-windows
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.cli-test-windows.result == 'success' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: pytest-report-windows-*
           path: reports
@@ -237,7 +239,7 @@ jobs:
           python3 -I scripts/shard_durations.py durations-windows.json
           reports/pytest-report-windows-{1,2,3}/durations.json --summary "$GITHUB_STEP_SUMMARY"
       - run: git diff --no-index --stat tests/durations-windows.json durations-windows.json || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-durations
           path: durations-windows.json
@@ -252,7 +254,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The shell-hook tests run each hook line and rc snippet in the real shell when it's installed, and
       # skip it when it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh;
       # add zsh, fish and tcsh (#242). fish and pwsh run under a pty (util-linux `script`, in the image).
@@ -261,7 +263,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends zsh fish tcsh
           zsh --version; fish --version; tcsh --version; pwsh --version; script --version
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -283,7 +285,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # What Tauri needs to build on Linux (app/src-tauri): WebKitGTK 4.1, GTK, D-Bus, appindicator, rsvg.
       - name: Install the Tauri system packages
         run: |
@@ -327,9 +329,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # tests/fake_serve.py stands in for roster serve; the tests run it as python3, which Windows lacks.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Add python3
@@ -368,8 +370,8 @@ jobs:
     # covers its own files (docs/releasing.md).
     if: needs.changes.outputs.release == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -382,7 +384,7 @@ jobs:
         working-directory: app
       - run: npm run tauri build -- --no-bundle
         working-directory: app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: roster-app-windows
           path: target/release/roster-app.exe
@@ -397,14 +399,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the Tauri system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libayatana-appindicator3-dev \
             librsvg2-dev libssl-dev libxdo-dev pkg-config build-essential
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -417,7 +419,7 @@ jobs:
         working-directory: app
       - run: npm run tauri build -- --no-bundle
         working-directory: app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: roster-app-linux
           path: target/release/roster-app
@@ -438,7 +440,7 @@ jobs:
       matrix:
         distro: [ubuntu, fedora]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: podman --version
       - run: scripts/test-install.sh ${{ matrix.distro }}
 
