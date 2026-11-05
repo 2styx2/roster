@@ -211,6 +211,7 @@ export function helpFinder(view: HelpView): FinderSourceDef {
     source: BUILTIN,
     title: "Find a help topic",
     prompt: "Help",
+    noun: "topic",
     // Topic titles are prose (Inter); the tag at the right is data (round 10).
     prose: true,
     open: () => view.prefetch(),

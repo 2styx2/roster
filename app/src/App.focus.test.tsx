@@ -152,7 +152,7 @@ describe("Finders in Focus", () => {
     expect(visibleSession()).toBe(`Session ${h2}`);
   });
 
-  it("␣ t opens the Sidebar's tree as a finder: Folders and the Inventory, with paths", async () => {
+  it("␣ t opens the Sidebar's tree as a finder: Folders and the Inventory, with paths (the section only when there are two)", async () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}m`);
     await user.keyboard(`${LEADER}t`);
@@ -160,7 +160,7 @@ describe("Finders in Focus", () => {
     await user.keyboard(h1);
     const first = within(finder()).getAllByRole("option")[0]!;
     expect(first).toHaveAttribute("data-label", h1);
-    expect(first).toHaveTextContent(/Inventory › subnet-/);
+    expect(first.querySelector(".finder-path")).toHaveTextContent(/^subnet-\d+$/);
     await user.keyboard("{Enter}");
     expect(await within(output()).findByText(new RegExp(`Connected to ${h1}`))).toBeInTheDocument();
     expect(view()).toBe("focus");

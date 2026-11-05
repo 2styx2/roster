@@ -49,6 +49,38 @@ export interface FinderProps {
 /** A label that is data, not prose (an option such as keys.picker, a tag): set in Iosevka. */
 const DATA_NAME = /^[\w-]*[.:#/_][\w.:#/-]*$/;
 
+/** The footer's count: before a query, how many there are ("1,360 topics"); once a query narrows
+ * them, how many it left ("200 of 1,322 results" when only the first 200 are listed). */
+export function footerCount(total: number, shown: number, query: string, noun?: string): string {
+  if (total === 0) return "";
+  if (query.trim() === "" && noun) return countOf(total, noun);
+  return total > shown ? `${formatCount(shown)} of ${countOf(total, "result")}` : countOf(total, "result");
+}
+
+/** Where each row's path starts (round 18): at the first tab stop past its name, the stops 8ch
+ * apart as a terminal's are, so names of a like length line up their paths at one x (the tree's
+ * Hosts all at one stop) and a short name ("E31") never leaves a wide empty column beside a cut
+ * description, as round 17's shared grid column did. Sets --finder-name-basis on each row; the
+ * name's box still gives that room back (CSS) before its path would be cut. */
+export function layOutNames(list: HTMLElement) {
+  const rows = [...list.querySelectorAll<HTMLElement>(".finder-row")];
+  const first = rows[0];
+  if (!first) return;
+  const style = getComputedStyle(first);
+  // Iosevka's advance is half an em, so 8ch is 4em of the row's font.
+  const stop = 4 * (parseFloat(style.fontSize) || 16);
+  const gap = parseFloat(style.columnGap) || 0;
+  const names = rows.map((row) => {
+    let name = 0;
+    for (const part of row.querySelector(".finder-label")?.children ?? []) name += (part as HTMLElement).scrollWidth;
+    return name;
+  });
+  rows.forEach((row, i) => {
+    const at = Math.ceil(((names[i] ?? 0) + gap) / stop) * stop;
+    row.style.setProperty("--finder-name-basis", `${at - gap}px`);
+  });
+}
+
 export function Finder({
   source,
   ctx,
@@ -93,6 +125,21 @@ export function Finder({
       ?.querySelector<HTMLElement>(`[data-index="${current}"]`)
       ?.scrollIntoView?.({ block: "nearest" });
   }, [current]);
+
+  // The tab stops (round 18, layOutNames), measured again once the fonts have loaded.
+  const [fontsReady, setFontsReady] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void document.fonts?.ready.then(() => live && setFontsReady((n) => n + 1));
+    return () => {
+      live = false;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (list) layOutNames(list);
+  }, [shown, fontsReady]);
+
 
   function choose(item: FinderItem | undefined) {
     if (!item) return;
@@ -243,7 +290,11 @@ export function Finder({
                 )}
               </span>
               {item.path && (
-                <span className="finder-path" title={item.path}>
+                <span
+                  className={`finder-path${source.prose && DATA_NAME.test(item.path) ? " data" : ""}`}
+                  title={item.path}
+                  dir="auto"
+                >
                   {item.path}
                 </span>
               )}
@@ -285,11 +336,7 @@ export function Finder({
             </span>
           )}
           <span className="picker-count" aria-hidden="true">
-            {results.items.length > shown.length
-              ? `${formatCount(shown.length)} of ${countOf(results.items.length, "result")}`
-              : results.items.length === 0
-                ? ""
-                : countOf(results.items.length, "result")}
+            {footerCount(results.items.length, shown.length, query, source.noun)}
           </span>
           {shown.length > 1 && (
             <span className="picker-hint key-hint">

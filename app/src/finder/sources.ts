@@ -49,6 +49,9 @@ export interface FinderSourceDef extends Entry {
   prompt: string;
   /** Its items are prose (help's outline, `:helpgrep`): they read in Inter, not Iosevka. */
   prose?: boolean;
+  /** What its items are, for the footer's count before a query ("topic": "1,360 topics"). Without
+   * it the count always says "results". */
+  noun?: string;
   /** What an empty list says before anything's typed (default "Nothing here yet."). */
   empty?: string;
   items(ctx: FinderContext): FinderItem[];
@@ -99,6 +102,7 @@ export const sessionsFinder: FinderSourceDef = {
   source: BUILTIN,
   title: "Find a Session",
   prompt: "Sessions",
+  noun: "Session",
   items: ({ sessions, hostByName }) =>
     sessions.tabs.map((tab, i) => {
       const host = hostByName.get(tab.host);
@@ -128,6 +132,7 @@ export const hostsFinder: FinderSourceDef = {
   source: BUILTIN,
   title: "Find a Host",
   prompt: "Hosts",
+  noun: "Host",
   items: (ctx) => hostsFinder.search?.(ctx, "") ?? [],
   search: ({ hosts, recent }, query) =>
     searchHosts(hosts, query, recent).map(({ host }) => ({
@@ -146,14 +151,18 @@ function unfolded(ctx: FinderContext): SidebarSection[] {
   return buildSections(ctx.sidebar, { ...ctx, folded: new Set() });
 }
 
-/** Every row of `sections` that's chosen rather than folded, with its path through the tree. */
+/** Every row of `sections` that's chosen rather than folded, with its path through the tree. The
+ * path names its section only when rows come from more than one ("Folders › Lab" beside
+ * "Inventory › subnet-42"); with one, "Inventory ›" on every row says nothing (round 18). */
 function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
   const out: FinderItem[] = [];
+  const chosen = (s: SidebarSection) => s.rows.some((r) => !r.foldable);
+  const named = sections.filter(chosen).length > 1;
   for (const section of sections) {
     const labels = new Map(section.rows.map((r) => [r.id, r.label]));
     for (const row of section.rows) {
       if (row.foldable) continue;
-      const path = [section.title];
+      const path = named ? [section.title] : [];
       const chain: string[] = [];
       for (let p = row.parent; p && labels.has(p); p = section.rows.find((r) => r.id === p)?.parent) {
         chain.unshift(labels.get(p) as string);
@@ -161,7 +170,7 @@ function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
       out.push({
         id: row.id,
         label: row.label,
-        path: [...path, ...chain].join(" › "),
+        ...(path.length + chain.length ? { path: [...path, ...chain].join(" › ") } : {}),
         ...(row.detail ? { detail: row.detail } : {}),
         ...(row.dot ? { dot: row.dot } : {}),
         command: row.command,
@@ -179,6 +188,7 @@ export function sectionFinder(sectionId: string, title: string, prompt: string, 
     source,
     title,
     prompt,
+    noun: "row",
     items: (ctx) => treeItems(unfolded(ctx).filter((s) => s.id === sectionId)),
   };
 }
@@ -191,6 +201,7 @@ export const treeFinder: FinderSourceDef = {
   source: BUILTIN,
   title: "Find in the tree",
   prompt: "Tree",
+  noun: "row",
   items: (ctx) => treeItems(unfolded(ctx).filter((s) => !OWN_FINDER.has(s.id))),
 };
 
