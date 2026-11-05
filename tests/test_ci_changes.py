@@ -53,6 +53,18 @@ def test_a_pr_touching_windows_specific_code_runs_the_windows_shards_too():
     assert run("src/roster/cli.py", "src/roster/winpipe.py") == {"cli", "windows"}
 
 
+def test_sshops_runs_the_windows_shards_for_its_no_controlmaster_branch():
+    # host_block's `elif not WINDOWS`: Windows' OpenSSH can't share a connection, so no ControlMaster there
+    assert run("src/roster/sshops.py") == {"cli", "windows"}
+
+
+def test_the_providers_package_runs_the_windows_shards_for_its_batch_file_refusal():
+    # Provider.run/run_filtered: program_argv's ValueError (a batch file and an argument cmd.exe acts on) and the
+    # vault filter process; a single provider module (bw.py, op.py, ...) stays Linux-only
+    assert run("src/roster/providers/__init__.py") == {"cli", "windows"}
+    assert run("src/roster/providers/bw.py") == {"cli"}
+
+
 def test_an_app_only_pr_skips_windows_python_and_the_release_builds():
     # The Linux suite still runs: tests/ cross-check app/src (guideText.ts, backend/types.ts, ...).
     assert run("app/src/App.tsx") == {"cli", "frontend", "rust"}

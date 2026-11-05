@@ -114,7 +114,7 @@ A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) an
 | A pull request that touches | runs |
 |---|---|
 | `src/`, `tests/` (the CLI) | pytest on Linux |
-| Windows-specific code: `src/roster/win*.py`, `conpty.py`, `askpass.py`, `common.py`, `changes.py`, `diagnose.py`, `providers/bw_login.py`, `tests/test_windows*.py`, `tests/conftest.py`, `tests/fakes/`, `tests/durations-windows.json`, `pyproject.toml`, `uv.lock`, `.python-version`, `install.ps1` | pytest on Linux and on Windows |
+| Windows-specific code: `src/roster/win*.py`, `conpty.py`, `askpass.py`, `common.py`, `changes.py`, `diagnose.py`, `sshops.py`, `providers/__init__.py`, `providers/bw_login.py`, `tests/test_windows*.py`, `tests/conftest.py`, `tests/fakes/`, `tests/durations-windows.json`, `pyproject.toml`, `uv.lock`, `.python-version`, `install.ps1` | pytest on Linux and on Windows |
 | `app/` (the frontend) | the frontend, Rust and pytest on Linux (`tests/` checks `app/src` files) |
 | `crates/`, `Cargo.toml`, `Cargo.lock`, `app/src-tauri/`, `app/package*.json` | the frontend, Rust, pytest on Linux, and the Windows and Linux release builds |
 | `plugins/` | the frontend and Rust |

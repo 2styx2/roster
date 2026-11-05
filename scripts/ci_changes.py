@@ -39,11 +39,14 @@ PYTHONS_ALL = ["3.10", "3.12", "3.13"]
 
 # What a Windows-only break could hide in (T237, #464): the native-Windows modules (named pipes, ConPTY, ACLs, the
 # os: windows Host scripts), the modules with a Windows branch of their own (common.py's program lookup, kill_tree
-# and git; askpass's pipe; changes.py's and diagnose.py's process trees; bw_login's pseudoconsole), the stand-in
+# and git; askpass's pipe; changes.py's and diagnose.py's process trees; bw_login's pseudoconsole; sshops.py's
+# no-ControlMaster branch; providers/__init__.py's batch-file refusal and vault filter process), the stand-in
 # CLIs and their .cmd shims (tests/fakes, conftest.py), the Windows tests and shard times, and the environment.
+# Modules that only call find_program/program_argv (cli.py, mesh.py, discover.py, ...) stay out: common.py is in.
 WINDOWS_PATHS = (
     "src/roster/win*.py", "src/roster/conpty.py", "src/roster/askpass.py", "src/roster/common.py",
-    "src/roster/changes.py", "src/roster/diagnose.py", "src/roster/providers/bw_login.py",
+    "src/roster/changes.py", "src/roster/diagnose.py", "src/roster/sshops.py", "src/roster/providers/__init__.py",
+    "src/roster/providers/bw_login.py",
     "tests/test_windows*.py", "tests/conftest.py", "tests/durations-windows.json", "tests/fakes/*",
     "pyproject.toml", "uv.lock", ".python-version", "install.ps1",   # no install.ps1 yet: when one comes
 )
