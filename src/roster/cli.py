@@ -40,7 +40,7 @@ from .config import (
     matches,
     selected,
     shown_path,
-    token_shaped,
+    typed_token,
 )
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
@@ -73,7 +73,7 @@ def cmd_init(args):
     """`roster init`: the commented example (the default), or a new Inventory the --inventory way (T212). A file
     that's there already is kept; --name names the new one (`roster inv add`)."""
     from . import newinventory
-    if args.config and token_shaped(args.config):     # `roster -cTOKEN init` (#484 L2b): never a file named after it
+    if args.config and typed_token(args.config):     # `roster -cTOKEN init` (#484 L2b): never a file named after it
         die("that -c PATH looks like a token, not a file name (not repeated), so init made nothing - name the new "
             "roster.yml: roster -c roster.yml init (or -c FOLDER/roster.yml)")
     path = Path(args.config or "roster.yml").expanduser()
@@ -122,7 +122,7 @@ def say_made(made, value):
     if made.skipped:
         say(f"skipped      {', '.join(made.skipped)} (patterns and Match blocks aren't single Hosts)")
     if store.at(path, for_show=True).kind == store.FILE and made.how != "repo":
-        say(f"optional     `git -C {path.parent} init` keeps its history; roster works the same without git")
+        say(f"optional     `git -C {shown_path(path.parent) or 'ITS-FOLDER'} init` keeps its history; roster works the same without git")
 
 
 LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "

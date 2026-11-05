@@ -278,16 +278,21 @@ def test_install_inventory_flag_is_checked(tmp_path):
     # #487 item 3 (#484 L4): no = in it: the name ends at the first character that isn't a letter, digit or -
     pytest.param(["--inventory-repo:{url}"], "unknown option: --inventory-repo (try --help)", id="flag-colon-url"),
     pytest.param(["-i{url}"], "unknown option: -ihttps (try --help)", id="short-flag-glued-url"),
+    # #489 L1: a glued token with nothing to cut it at (an op token without _) is too long to be a name
+    pytest.param(["-i{token}"], "unknown option (not repeated) (try --help)", id="short-flag-glued-token"),
 ])
 def test_an_unknown_argument_is_never_repeated(tmp_path, name, args, said):
     # #484 M2: a mistyped flag carrying a credential URL, or a URL with no flag, used to come back whole on stderr
     token = "Ex4mpleN0tR3alT0ken0000-unknownarg"
     url = f"https://you:{token}@git.example.com/team/infra.git"
     env = {"HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
-    r = subprocess.run(["bash", str(source_copy(tmp_path) / name), "--dry-run", *[a.format(url=url) for a in args]],
+    token_alnum = "Ex4mple-0nlyn0tAR3alops3ss10nT0k3nxyzW"
+    r = subprocess.run(["bash", str(source_copy(tmp_path) / name), "--dry-run",
+                        *[a.format(url=url, token=token_alnum) for a in args]],
                        env=env, capture_output=True, text=True, timeout=60, start_new_session=True)
     assert r.returncode == 2 and said in r.stderr, r.stderr
     assert token not in r.stderr + r.stdout and "git.example.com" not in r.stderr, r.stderr
+    assert "0nlyn0tAR3al" not in r.stderr + r.stdout, r.stderr
 
 
 @posix_shell
