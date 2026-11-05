@@ -287,7 +287,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .recent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-weight: 500; }
 .recent-ip { color: var(--muted); font: 500 var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; }
 /* The digit that opens the row (Startify's numbers), as a key. */
-.recent-key { display: flex; justify-content: flex-end; }
+.recent-key { display: flex; justify-content: flex-end; font: var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .empty { min-width: 0; max-width: 100%; }
 .empty-path { max-width: min(56ch, calc(100% - 32px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
 .empty-path code { direction: ltr; unicode-bidi: isolate; }
@@ -605,6 +605,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.on line.stub { stroke: var(--text); }
 .dot.lit line.stub { stroke: var(--accent); }
 .sidebar[data-many-sessions] .sb-rest .dot.on line.stub { display: none; }
+/* Every row in Sessions is a Session, so the stub says nothing there (owner, after round 16: it read
+   as a "-o" icon); the Inventory, Folders and the Picker keep it, where it tells live Hosts apart. */
+.sb-section[data-section="sessions"] .dot line.stub { display: none; }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
 /* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the

@@ -4384,8 +4384,10 @@ function RecentMap({
                 <span className="recent-name">{h.name}</span>
                 <span className="recent-ip">{h.ip}</span>
                 {i < 9 && (
+                  // A plain digit, not a keycap (owner, after round 16): the Sidebar's Session numbers
+                  // are keycaps for ␣ N, and the map's bare digit is another key.
                   <span className="recent-key key-hint" aria-hidden="true">
-                    <Keys keys={String(i + 1)} />
+                    {i + 1}
                   </span>
                 )}
               </button>
