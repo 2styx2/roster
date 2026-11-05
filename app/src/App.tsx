@@ -1216,6 +1216,16 @@ function Workspace({
   useEffect(() => {
     if (overlay !== null) helpView.cancelPending();
   }, [overlay, helpView]);
+  // Nor over where a click took you with no command or finder, a terminal say (T228, #438): the keys
+  // all go through commands, which cancel it in `run`, so a click is the one way left. A click in the
+  // help panel itself (its loading line) isn't moving on.
+  useEffect(() => {
+    const onPointer = (e: PointerEvent) => {
+      if (!(e.target instanceof Element && e.target.closest(".help-panel"))) helpView.cancelPending();
+    };
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => document.removeEventListener("pointerdown", onPointer, true);
+  }, [helpView]);
   // Where help went, for `:tutor`'s steps: a page opened, Ctrl+O back, Ctrl+I forward.
   useEffect(() => {
     const at = helpAt.at;
