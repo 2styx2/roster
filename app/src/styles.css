@@ -436,9 +436,14 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* More below: the scroller's last 24 px fade out, so a row the edge cuts reads as "more" rather
    than sliced (round 18: App mode's details foot halved the last row), and j/k keep the cursor
    row clear of the fade (scroll padding). A mask on the scroller's box, not a fill: it moves nothing. */
+/* More above: its first 24 px under the Sessions block fade the same way (round 21: a menu's
+   scroll left the FOLDERS heading sliced under that edge), and j/k keep clear of it too. The
+   hairline (the border, its first px) stays whole. */
 @media (min-height: 401px) {
-  .sb-rest { scroll-padding-bottom: 24px; }
-  .sb-rest:is([data-more="below"], [data-more="both"]) { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+  .sb-rest { scroll-padding-block: 24px; }
+  .sb-rest[data-more="below"] { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+  .sb-rest[data-more="above"] { mask-image: linear-gradient(to bottom, #000 1px, transparent 1px, #000 25px); }
+  .sb-rest[data-more="both"] { mask-image: linear-gradient(to bottom, #000 1px, transparent 1px, #000 25px, #000 calc(100% - 24px), transparent); }
 }
 /* A short window: the details foot gives way, so the tree keeps rows for the cursor (round 18: at
    480 × 320 the foot and Sessions' three rows left the tree 10 px and hid the cursor row). */
