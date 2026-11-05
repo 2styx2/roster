@@ -2,7 +2,18 @@
 //! the app was called roster-desk; those names are still read when the new one isn't set, so an
 //! old shell profile or script keeps working. A blank value counts as not set.
 
-use crate::error::{DISTRO_VAR, LEGACY_DISTRO_VAR, LEGACY_OVERRIDE_VAR, OVERRIDE_VAR};
+/// The env var that overrides the roster command line (wins over `roster_command` in init.lua).
+pub const OVERRIDE_VAR: &str = "ROSTER_APP_ROSTER";
+
+/// The env var that names the one WSL distro to use (and start, if it's stopped).
+pub const DISTRO_VAR: &str = "ROSTER_APP_WSL_DISTRO";
+
+/// [`OVERRIDE_VAR`]'s name from when the app was roster-desk, still read when the new one isn't
+/// set.
+pub const LEGACY_OVERRIDE_VAR: &str = "ROSTER_DESK_ROSTER";
+
+/// [`DISTRO_VAR`]'s name from when the app was roster-desk, still read as a fallback.
+pub const LEGACY_DISTRO_VAR: &str = "ROSTER_DESK_WSL_DISTRO";
 
 /// `name`'s value, else `legacy`'s, looked up with `var`. Blank values don't count.
 pub fn var_or_legacy(name: &str, legacy: &str, var: impl Fn(&str) -> Option<String>) -> Option<String> {

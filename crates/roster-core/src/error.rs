@@ -2,19 +2,6 @@
 
 use serde::Serialize;
 
-/// The env var that overrides the roster command line (wins over `roster_command` in init.lua).
-pub const OVERRIDE_VAR: &str = "ROSTER_APP_ROSTER";
-
-/// The env var that names the one WSL distro to use (and start, if it's stopped).
-pub const DISTRO_VAR: &str = "ROSTER_APP_WSL_DISTRO";
-
-/// [`OVERRIDE_VAR`]'s name from when the app was roster-desk, still read when the new one isn't
-/// set ([`crate::env`]).
-pub const LEGACY_OVERRIDE_VAR: &str = "ROSTER_DESK_ROSTER";
-
-/// [`DISTRO_VAR`]'s name from when the app was roster-desk, still read as a fallback.
-pub const LEGACY_DISTRO_VAR: &str = "ROSTER_DESK_WSL_DISTRO";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "BackendProblemKind"))]

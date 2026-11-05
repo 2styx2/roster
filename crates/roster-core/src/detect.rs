@@ -19,7 +19,8 @@
 //! the program or its arguments is expanded with it.
 
 use crate::config::{BackendChoice, Config};
-pub use crate::error::{BackendError, DISTRO_VAR, ErrorKind, OVERRIDE_VAR};
+pub use crate::env::{DISTRO_VAR, OVERRIDE_VAR};
+pub use crate::error::{BackendError, ErrorKind};
 pub use crate::platform::Os;
 use std::process::Command;
 
