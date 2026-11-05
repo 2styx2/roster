@@ -412,7 +412,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `174` | `roster init`: the folder for the new `roster.yml` can't be made or written in; nothing written. A CLI error so far |
 | `184` | `roster add`: another Host has that address and SSH port already; `data.host`, `data.group` (T220). A CLI error: the app's `host.add` allows it |
 | `185` | `roster add` without a terminal (or with `--yes`): a value it can't default is missing, and the message names its flag (T220). A CLI error |
-| `186` | `vault.item_fields` (and `roster add --from-vault`): the provider can't give an item's address and username without roster reading its password, so it isn't asked (T220, API 29) |
+| `186` | `vault.item_fields` (and `roster add --from-vault`): the provider (any but Bitwarden and 1Password) can't give an item's address and username without roster reading its password, so it isn't asked (T220, API 29) |
 | `187` | `roster add --from-vault` (no NAME): the vault couldn't list its items or sync (T221). A CLI error so far |
 | `188` | `roster add --from-vault` (no NAME): roster.yml uses no vault that can list its items without roster reading their passwords (T221). A CLI error so far |
 | `190` | `roster setup` on a renamed Box: a Host's key file has another key's line under the new name (another Box uses it), so that Host is left as it is; `setup --force` goes ahead (T226). A CLI error |
@@ -645,7 +645,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 | `vault.create_item` | `{name, password, username?, uri?, provider?, save_to?}` | `{provider, id, name, target}` | `14`, `60`-`62`, `64`, `65` | 4 |
 | `vault.undo_create` | `{id}` (from `vault.create_item`) | `{provider, id}` | `14`, `62`, `63` | 4 |
 | `vault.targets` | `{provider?}` | `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from, problem}` | `14` | 10 |
-| `vault.item_fields` | `{item, provider?}`: `item` the item's name or id (as after `bw:` in auth), `provider` the vault (default: the Inventory's, as vault.status's) | `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address (another scheme than ssh, sftp, http or https, or a host that isn't an address) | `13`, `14`, `11`, `12`, `31`, `32`, `33`, `35`, `186` | 29 |
+| `vault.item_fields` | `{item, provider?}`: `item` the item's name or id (as after `bw:` or `op:` in auth), `provider` the vault (default: the Inventory's, as vault.status's) | `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address (another scheme than ssh, sftp, http or https, or a host that isn't an address) | `13`, `14`, `11`, `12`, `31`, `32`, `33`, `35`, `186` | 29 |
 
 <!-- END generated:methods -->
 

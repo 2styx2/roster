@@ -142,7 +142,7 @@ def _op_ref_item(spec):
 
 # ---- one item's address and user, never its password (T223, #432, Q197). op has no field-only read of an item's URL
 # (`--fields` reads fields; a Login's website is in its overview's `urls`), so: every item's overview from
-# `op item list` (id, title, vault, URLs; no field values, as Q191's listing), the one ITEM names found there (by id, or
+# `op item list` (id, title, vault, URLs and a subtitle roster ignores; no concealed value, as Q191's listing), the one ITEM names found there (by id, or
 # by title in any case; several fail closed, as bw's do), its URL with no user:password@ (no_userinfo), and then its
 # username by that id, `op item get ID --fields label=username` without --reveal, so both come from the same item.
 

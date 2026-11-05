@@ -1451,7 +1451,14 @@ def op_command(argv, write):
             f"{', '.join(sorted(OP_FLAGS))}; put the others (--account, --format, --vault, ...) after it")
     words = []
     for a in argv[start:]:
-        if a.startswith("-") or " ".join([*words, a]) not in OP_COMMANDS | OP_GROUPS:
+        if a.startswith("-"):
+            break
+        if not re.fullmatch(r"[a-z-]+", a):            # "item get" as one argument: op would take it as one word
+            if " ".join(words) in OP_COMMANDS:          # past the command, an argument may hold anything
+                break
+            die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows, one word per argument "
+                "(a word here has a space or another character op's commands don't, and isn't repeated)")
+        if " ".join([*words, a]) not in OP_COMMANDS | OP_GROUPS:
             break
         words.append(a)
     cmd = " ".join(words) or None

@@ -135,3 +135,31 @@ def test_no_op_installed_says_so(isolated, monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
     with pytest.raises(SystemExit, match="1Password CLI"):
         main(["vault", "op", "--", "whoami"])
+
+
+# security review of #456
+
+@pytest.mark.parametrize("argv", [["item get", "esx-02"], ["item delete", "esx-02"], ["item", "delete x"],
+                                  ["item", "get\tx"], ["vault", "user grant"]])
+def test_a_command_word_with_a_space_or_other_character_is_refused(op, argv):
+    assert "[197]" in refused(*argv) and op() == []
+
+
+def test_an_argument_with_a_space_after_the_command_is_fine(op):
+    main(["vault", "op", "--", "item", "get", "esx-02 ssh", "--vault", "Infra"])
+    assert op() == [["item", "get", "esx-02 ssh", "--vault", "Infra"]]
+
+
+@pytest.mark.parametrize("argv", [["read", "op://Infra/esx-02/password", "-no", "/tmp/x"],
+                                  ["read", "op://Infra/esx-02/password", "-oPATH"],
+                                  ["document", "get", "notes", "--out-file=/tmp/x"],
+                                  ["inject", "-i", "tpl", "--out-file=out.env"],
+                                  ["item", "template", "get", "Login", "--out-file=login.json"]])
+def test_more_forms_of_writing_a_file_need_write(op, argv):
+    assert "[196]" in refused(*argv) and op() == []
+
+
+def test_help_before_a_write_command_still_needs_write_and_op_help_doesnt(op):
+    assert "[196]" in refused("--", "--help", "item", "delete") and op() == []
+    main(["vault", "op", "--", "-h", "help", "item", "delete"])
+    assert op() == [["-h", "help", "item", "delete"]]
