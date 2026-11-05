@@ -314,8 +314,10 @@ def login_problem(e, h, what="ssh"):
 def inventory_problem(message, path=None):
     """roster.yml didn't load (row 1). data: path (or None) and, for a YAML error, the line it's at."""
     m = re.search(r"line (\d+)", message)
-    data = {"path": str(path.resolve()) if path else None} | ({"line": int(m.group(1))} if m else {})
-    where = f"{path or 'roster.yml'}" + (f" at line {data['line']}" if m else "")
+    from .config import HIDDEN_PATH, shown_path
+    shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated (#484 M1)
+    data = {"path": (shown or "(not repeated)") if path else None} | ({"line": int(m.group(1))} if m else {})
+    where = (shown or f"the roster.yml at {HIDDEN_PATH}" if path else "roster.yml") + (f" at line {data['line']}" if m else "")
     return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
                                                                  "`roster init --blank` (`roster init --help`: the others)")
 
