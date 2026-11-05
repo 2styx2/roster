@@ -8,6 +8,7 @@ import type { CommandLine } from "../keymap";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import { HintsShown } from "../ui/hints";
 import { LEADER } from "../ui/Keys";
+import { keepFocus } from "../ui/keepFocus";
 
 /** What a control can show from: the app as it is now. */
 export interface ToolbarContext {
@@ -206,7 +207,6 @@ export function ToolbarIconSvg({ name }: { name: ToolbarIcon }) {
   );
 }
 
-const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 export interface ToolbarProps {
   controls: readonly ToolbarControlDef[];

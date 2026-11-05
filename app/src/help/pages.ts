@@ -15,7 +15,7 @@ import type { Config } from "../config/types";
 import type { ErrorRow } from "../errors/catalog";
 import type { Problem } from "../errors/classify";
 import { searchItems, type FinderSourceDef } from "../finder/sources";
-import type { Keymap, Options } from "../keymap";
+import { keyHint, keysFor, type Keymap, type Options } from "../keymap";
 import { BUILTIN, Registry, type Entry, type Source } from "../registry";
 import type { Theme } from "../theme/theme";
 import { healthSummary, type HealthReport, type HealthSection } from "../health/health";
@@ -223,18 +223,11 @@ function argOf(c: CommandDef): string {
   return c.optionalArg ? ` [${word}]` : ` ${word}`;
 }
 
-/** The keys bound to command `id` (any argument): after the Leader, and global ones. */
-function keysFor(keymap: Keymap, id: string): string[] {
-  const first = (action: string) => action.split(" ")[0];
-  return [
-    ...Object.entries(keymap.leader)
-      .filter(([k, b]) => first(b.action) === id && k !== "Escape")
-      .map(([k]) => `␣ ${k}`),
-    ...Object.entries(keymap.global)
-      .filter(([, b]) => first(b.action) === id)
-      .map(([k]) => k),
-  ];
-}
+/** The keys bound to `line` as keycaps, or the command to type when nothing is bound. */
+const keyOr = (keymap: Keymap, line: string, typed: string): Inline => {
+  const k = keyHint(keymap, line);
+  return k ? keys(k) : code(typed);
+};
 
 const sourceText = (s: Source): Inline => text(s === BUILTIN ? "builtin" : s);
 
@@ -247,7 +240,7 @@ function commandsPage(ctx: HelpContext): Block[] {
       "Every action is a command in one table: a key, a typed ",
       code(":"),
       " line and a button all run the same one. Press ",
-      keys("␣ :"),
+      keyOr(ctx.keymap, "cmdline", ":cmdline"),
       " for the command line; Tab completes. The Config and Plugins add commands here too, so this list is what's registered now.",
     ),
     ...[...byArea].flatMap(([area, list]): Block[] => [
@@ -257,7 +250,7 @@ function commandsPage(ctx: HelpContext): Block[] {
         items: list.map((c) => ({
           anchor: `:${c.id}`,
           term: [code(`:${c.id}${argOf(c)}`)],
-          meta: [...keysFor(ctx.keymap, c.id).map(keys), ...(c.source === BUILTIN ? [] : [sourceText(c.source)])],
+          meta: [...keysFor(ctx.keymap, c.id, { match: "command" }).map(keys), ...(c.source === BUILTIN ? [] : [sourceText(c.source)])],
           body: [text(c.label())],
           ...(c.doc ? { more: inline(withoutDevNotes(c.doc)) } : {}),
         })),
@@ -441,18 +434,11 @@ function findersPage(ctx: HelpContext): Block[] {
       items: ctx.finders.map((f) => ({
         anchor: `finders#${f.id}`,
         term: [code(`:finder ${f.id}`)],
-        meta: [...keysForLine(ctx.keymap, `finder ${f.id}`).map(keys), ...(f.source === BUILTIN ? [] : [sourceText(f.source)])],
+        meta: [...keysFor(ctx.keymap, `finder ${f.id}`, { global: false }).map(keys), ...(f.source === BUILTIN ? [] : [sourceText(f.source)])],
         body: [text(f.title)],
       })),
     },
   ];
-}
-
-/** The keys bound to exactly `line` after the Leader. */
-export function keysForLine(keymap: Keymap, line: string): string[] {
-  return Object.entries(keymap.leader)
-    .filter(([, b]) => b.action === line)
-    .map(([k]) => `␣ ${k}`);
 }
 
 function errorsPage(ctx: HelpContext): Block[] {
@@ -569,7 +555,7 @@ function indexPage(ctx: HelpContext): Block[] {
       ", ",
       link("E13", [code("E13")]),
       "); ",
-      keys("␣ ?"),
+      keyOr(ctx.keymap, "help", ":help"),
       " finds a topic and ",
       code(":helpgrep TEXT"),
       " searches every page. The pages that list commands, keys, options, Themes, finders and errors are made from what the app has now, so they always match it.",
@@ -624,19 +610,6 @@ const QUICKREF: readonly (readonly [string, readonly string[]])[] = [
   ["Help", ["help", "helpgrep"]],
 ];
 
-/** The keys bound to `line`, or to it with an argument (`session` → `␣ 1` … `␣ 9`). */
-function keysForCommandLine(keymap: Keymap, line: string): string[] {
-  const hit = (action: string) => action === line || action.startsWith(`${line} `);
-  return [
-    ...Object.entries(keymap.leader)
-      .filter(([k, b]) => hit(b.action) && k !== "Escape")
-      .map(([k]) => `␣ ${k}`),
-    ...Object.entries(keymap.global)
-      .filter(([, b]) => hit(b.action))
-      .map(([k]) => k),
-  ];
-}
-
 function quickrefPage(ctx: HelpContext): Block[] {
   return [
     h(1, "Quick reference", "quickref"),
@@ -656,7 +629,7 @@ function quickrefPage(ctx: HelpContext): Block[] {
         const id = line.split(" ")[0] as string;
         const c = ctx.commands.get(id);
         if (!c) return [];
-        const bound = keysForCommandLine(ctx.keymap, line);
+        const bound = keysFor(ctx.keymap, line, { match: "args" });
         const shown = bound.length > 3 ? [keys(bound[0] as string), text("…"), keys(bound[bound.length - 1] as string)] : bound.map(keys);
         const arg = line === id ? argOf(c) : "";
         const label = line === id ? c.label() : describeLine(ctx.commands, line).label;
@@ -745,7 +718,7 @@ const page = (id: string, order: number, part: string, title: string, summary: s
   ...(aliases ? { aliases } : {}),
 });
 
-export const builtinHelpPages: readonly HelpPage[] = [
+const builtinHelpPages: readonly HelpPage[] = [
   page("index", 0, "Getting started", "roster help", "Where to start", indexPage),
   page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { qr: "quickref", cheatsheet: "quickref" }),
   page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage),

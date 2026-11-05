@@ -706,7 +706,7 @@ describe("a Host whose host key roster hasn't seen (ticket 36, decision Q60)", (
 
   it("doesn't ask through a roster older than API 11: roster's 44 is then a refusal", async () => {
     const { tabs, trusted } = unknownKey();
-    tabs.setAsksAboutKeys(false);
+    tabs.configure({ asksAboutKeys: false });
     tabs.open(host);
     await vi.waitFor(() => expect(status(tabs)?.state).toBe("failed"));
     const s = status(tabs);
@@ -768,7 +768,7 @@ describe("Quick Connect (ticket 14)", () => {
   it("its output reaches the Plugins' tap with no Host: it isn't one in the Inventory", async () => {
     const { tabs } = quick();
     const hostsSeen = new Set<string | null>();
-    tabs.setOutputTap({ output: (_id, host) => void hostsSeen.add(host) });
+    tabs.configure({ outputTap: { output: (_id, host) => void hostsSeen.add(host) } });
     const id = tabs.openQuick(to);
     await asked(tabs);
     tabs.connectQuick(id, PASSWORD);
@@ -1011,7 +1011,7 @@ describe("filling a password prompt (ticket 119)", () => {
       return { id: 1, auth: "key", write: done, resize: done, close: done, fill: (p: string) => (asked.push(p), fill(p)) };
     };
     const tabs = new Tabs(backend);
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    tabs.configure({ fillPrompts: { userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) } });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
     (ev as SessionEvents | null)?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
@@ -1043,7 +1043,7 @@ describe("filling a password prompt (ticket 119)", () => {
       throw new BackendCallError("Bitwarden vault is locked - unlock it first", SessionRefusal.vaultLocked);
     });
     const locked = vi.fn();
-    tabs.setVaultLockedHandler(locked);
+    tabs.configure({ onVaultLocked: locked });
     await expect(tabs.fill(id)).rejects.toThrow(/Unlock it, then press the fill key again/);
     expect(locked).toHaveBeenCalledOnce();
   });
@@ -1054,7 +1054,7 @@ describe("filling a password prompt (ticket 119)", () => {
       if (locked) throw new BackendCallError("Bitwarden vault is locked - unlock it first", SessionRefusal.vaultLocked);
       return { host: "h" };
     });
-    tabs.setVaultLockedHandler(() => (locked = false));
+    tabs.configure({ onVaultLocked: () => (locked = false) });
     await expect(tabs.fill(id)).rejects.toThrow(/Unlock it/);
     expect(tabs.snapshot().tabs[0]?.prompt?.line).toBe("[sudo] password for admin:");
     await expect(tabs.fill(id)).resolves.toBe("h");
@@ -1080,7 +1080,7 @@ describe("filling a password prompt (ticket 119)", () => {
     });
     print = at.print;
     const seen: string[] = [];
-    at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    at.tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     await expect(at.tabs.fill(at.id)).resolves.toBe("h");
     await at.print("**");
     await at.print(`${"\b \b".repeat(11)}\r\n[sudo ok]\r\n$ `);
@@ -1094,7 +1094,7 @@ describe("filling a password prompt (ticket 119)", () => {
       throw new BackendCallError("the prompt printed what roster typed to check it, so roster didn't fill it");
     });
     const seen: string[] = [];
-    at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    at.tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     await expect(at.tabs.fill(at.id)).rejects.toThrow(/printed what roster typed/);
     await at.print("typed by hand");
     // The token mask may hold a trailing hex letter for up to 50 ms.
@@ -1122,8 +1122,8 @@ describe("filling a password prompt (ticket 119)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void writes.push(d), resize: done, close: done, fill };
     };
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(() => true, (size) => new XtermPromptScreen(size));
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    tabs.configure({ shellHooks: { on: () => true, screen: (size) => new XtermPromptScreen(size) } });
+    tabs.configure({ fillPrompts: { userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) } });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
     const print = async (s: string) => {
@@ -1175,10 +1175,12 @@ describe("a nested ssh (ticket 120)", () => {
     };
     const tabs = new Tabs(backend);
     // Not by itself: `:integrate` reads the prompt off the Session's screen.
-    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
-    tabs.setFillPrompts({
-      userOf: () => "admin",
-      watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
+    tabs.configure({ shellHooks: { on: () => false, screen: (size) => new XtermPromptScreen(size) } });
+    tabs.configure({
+      fillPrompts: {
+        userOf: () => "admin",
+        watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
+      },
     });
     const id = tabs.open(reviewed.find((n) => n !== to.name) ?? "");
     await settle();
@@ -1246,9 +1248,9 @@ describe("a nested ssh (ticket 120)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void (sent += d), resize: done, close: done };
     };
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
+    tabs.configure({ shellHooks: { on: () => false, screen: (size) => new XtermPromptScreen(size) } });
     const seen: string[] = [];
-    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
     const print = async (t: string) => {
@@ -1284,7 +1286,7 @@ describe("a nested ssh (ticket 120)", () => {
     };
     const tabs = new Tabs(backend);
     const seen: string[] = [];
-    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     const id = tabs.open(reviewed[0] ?? "");
     await vi.advanceTimersByTimeAsync(0);
     const print = (t: string) => (ev as SessionEvents | null)?.output(new TextEncoder().encode(t));
@@ -1303,7 +1305,7 @@ describe("a nested ssh (ticket 120)", () => {
   it("never hands Plugins the attempt's token", async () => {
     const { tabs, print, own, token } = await onHost();
     const seen: string[] = [];
-    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     await print(`ls\r\n${own("C")}a\r\n${own("D;0")}${own("A")}$ ${own("B")}`);
     expect(seen.join("")).toContain("a\r\n");
     expect(seen.join("")).not.toContain(token());
@@ -1319,7 +1321,7 @@ describe("shell hooks (ticket 121, #210)", () => {
     vi.useFakeTimers();
     const { backend, session, typed } = scriptedSessions();
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(on, (size) => new XtermPromptScreen(size));
+    tabs.configure({ shellHooks: { on: on, screen: (size) => new XtermPromptScreen(size) } });
     const seen: Uint8Array[] = [];
     const id = tabs.open(reviewed[0]!);
     tabs.attach(id, (d) => seen.push(d));
@@ -1401,7 +1403,7 @@ describe("Sessions from another named Inventory (ticket 115)", () => {
       return { id: events.length, auth: "key", write: done, resize: done, close: done, fill: async (p: string) => (asked.push(p), { host }) };
     };
     const tabs = new Tabs(backend);
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    tabs.configure({ fillPrompts: { userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) } });
     const prompt = async (i: number) => {
       events[i]?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
       await settle();

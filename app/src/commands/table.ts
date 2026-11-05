@@ -5,17 +5,16 @@
 // through runLine, so a view mode only changes how commands are presented, never which exist.
 // A command acts through CommandContext, which App provides.
 
-import { groupCommand, hostCommand, type InventoryOp } from "../inventory/commands";
+import { configCommand, type ConfigAction } from "../config/command";
+import { groupCommand, hostCommand, reviewCommand, unreviewCommand, type InventoryOp } from "../inventory/commands";
 import { inventoryCommand } from "../inventory/switch";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import type { SidebarRow } from "../sidebar/Sidebar";
+import type { FoldHow, SidebarRow } from "../sidebar/model";
 import { VIEW_MODES, type ViewMode } from "../view/layout";
 import type { Message } from "../ui/messages";
 
 export type ListMove = "down" | "up" | "top" | "bottom" | "choose";
 
-/** h folds (or goes to the parent), l unfolds (or goes to the first child), toggle flips. */
-export type FoldHow = "fold" | "unfold" | "toggle";
 
 /** What commands can ask of the app. */
 export interface CommandContext {
@@ -30,8 +29,14 @@ export interface CommandContext {
   open(host: string): void;
   /** Reconnects the current tab if its Session has ended or was refused. */
   reconnect(): void;
-  /** Runs roster's diagnostics (`host.check`) for the Host; with none, this Box's health (`:help health`). */
-  check(host: string | null): void;
+  /** Runs roster's diagnostics (`host.check`) for the Host. */
+  checkHost(host: string): void;
+  /** This Box's health (`:help health`). */
+  checkBox(): void;
+  /** Stops the app's own check, as the check panel's Stop does, or says why it can't. */
+  stopCheck(): void;
+  /** The Session on screen: its Host, and whether it's a Quick Connect (not on a Host); null with none. */
+  sessionOnScreen(): { host: string; quick: boolean } | null;
   /** The Session `delta` places after the current one, wrapping. */
   selectRelative(delta: number): void;
   /** The Nth Session, counting from 1. */
@@ -112,14 +117,8 @@ export interface CommandContext {
 }
 
 /** What `:vault` does: `:vault signout`. */
-export const VAULT_ACTIONS = ["signout"] as const;
+const VAULT_ACTIONS = ["signout"] as const;
 export type VaultAction = (typeof VAULT_ACTIONS)[number];
-
-/** What `:config` does: `:config`, `:config reload`, `:config path`, `:config types`. */
-export const CONFIG_ACTIONS = ["open", "reload", "path", "import-terminal", "types"] as const;
-export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
-/** The ones typed after `config` (open is `:config` alone). */
-const CONFIG_SUBCOMMANDS: readonly string[] = CONFIG_ACTIONS.filter((a) => a !== "open");
 
 export interface CommandDef extends Entry {
   /** id: the `:` name, and what the keymap binds keys to. */
@@ -192,7 +191,7 @@ const list = (move: ListMove, label: string): CommandDef => ({
   run: (ctx) => ctx.list(move),
 });
 
-export const builtinCommands: readonly CommandDef[] = [
+const builtinCommands: readonly CommandDef[] = [
   { id: "find", source: BUILTIN, area: "Hosts", label: () => "Find a Host", run: (ctx) => ctx.openPicker() },
   {
     id: "connect",
@@ -289,7 +288,19 @@ export const builtinCommands: readonly CommandDef[] = [
         : h
           ? `Check ${h}`
           : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail. stop stops the app's own check",
-    run: (ctx, h) => ctx.check(h ?? null),
+    run: (ctx, h) => {
+      if (h === undefined) return ctx.checkBox();
+      // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
+      if (h === "stop" && !ctx.hostNames().includes(h)) return ctx.stopCheck();
+      // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
+      const screen = ctx.sessionOnScreen();
+      if (h === "%" && (!screen || screen.quick)) {
+        return ctx.say(screen ? ":check % needs a Host's Session: a Quick Connect Session isn't on one" : ":check % needs a Session on screen");
+      }
+      const host = h === "%" ? (screen?.host ?? "") : h;
+      if (!ctx.hostNames().includes(host)) return ctx.say(`No Host named ${host}`);
+      ctx.checkHost(host);
+    },
     // `stop` (#361) after the Hosts: a Host named stop is still checked by `:check stop`.
     complete: (word, hostNames) => {
       const hosts = matching([...hostNames].sort(), word);
@@ -308,24 +319,8 @@ export const builtinCommands: readonly CommandDef[] = [
   hostCommand,
   groupCommand,
   inventoryCommand,
-  {
-    id: "review",
-    source: BUILTIN,
-    area: "Inventory",
-    arg: "host",
-    optionalArg: true,
-    label: (h) => (h ? `Mark ${h} reviewed` : "Mark a Host reviewed, so it can be opened"),
-    run: (ctx, h) => ctx.review(h ?? null),
-  },
-  {
-    id: "unreview",
-    source: BUILTIN,
-    area: "Inventory",
-    arg: "host",
-    optionalArg: true,
-    label: (h) => (h ? `Mark ${h} unreviewed` : "Mark a Host unreviewed again (a review made by mistake)"),
-    run: (ctx, h) => ctx.review(h ?? null, false),
-  },
+  reviewCommand,
+  unreviewCommand,
   { id: "changes", source: BUILTIN, area: "Inventory", label: () => "Show the Pending changes", run: (ctx) => ctx.showChanges() },
   {
     id: "discard",
@@ -424,34 +419,7 @@ export const builtinCommands: readonly CommandDef[] = [
   },
   { id: "terminal", source: BUILTIN, area: "App", label: () => "Back to the terminal", run: (ctx) => ctx.toTerminal() },
   { id: "hidepanel", source: BUILTIN, area: "App", label: () => "Close the side panel", run: (ctx) => ctx.closePanel() },
-  {
-    id: "config",
-    source: BUILTIN,
-    area: "App",
-    seldom: true,
-    arg: "text",
-    optionalArg: true,
-    label: (what) =>
-      what === "reload"
-        ? "Read init.lua again"
-        : what === "path"
-          ? "Say where init.lua is"
-          : what === "import-terminal"
-            ? "Copy Windows Terminal's font and colours into init.lua"
-            : what === "types"
-              ? "Write the option types for your editor (types/roster-config.lua)"
-              : "Open init.lua, the Config",
-    run: (ctx, what) => {
-      if (what === undefined) return ctx.config("open");
-      const action = CONFIG_SUBCOMMANDS.find((a) => a === what.toLowerCase()) as ConfigAction | undefined;
-      if (!action) {
-        const list = CONFIG_SUBCOMMANDS.slice(0, -1).join(", ") + " or " + CONFIG_SUBCOMMANDS.at(-1);
-        return ctx.say(`config takes nothing, ${list}`);
-      }
-      ctx.config(action);
-    },
-    complete: (what) => CONFIG_SUBCOMMANDS.filter((a) => a.startsWith(what.toLowerCase())),
-  },
+  configCommand,
   {
     // `:info` alone says what the app runs on; `:info HOST` shows Host details (ticket 18, Q71).
     id: "info",

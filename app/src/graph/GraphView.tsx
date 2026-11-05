@@ -22,12 +22,12 @@ import { DataTable } from "../ui/DataTable";
 import { countOf, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
 import type { TableRow } from "../ui/table";
-import type { GraphModel } from "../view/views";
 import { drawFrame, easeOut, nodeRadius, readPalette, STAND_IN_RADIUS, toScreen, toWorld, type Camera } from "./draw";
 import { edgeTable, nodeTable, SHAPE_WORDS, stateWords } from "./lists";
 import { FilterMenu } from "./FilterMenu";
 import { GraphPlaces, type GraphMemory } from "./memory";
-import { filterGraph, filtering, graphIndex, nodeActionApplies, type FilterState, type GraphFilter } from "./model";
+import { filterGraph, filtering, graphIndex, type FilterState, type GraphFilter, type GraphModel } from "./model";
+import { whenApplies } from "../ui/when";
 import { buildScene, foldsFor, highlightOf, matchesOf, stepFrom, type Direction, type Highlight, type Scene } from "./scene";
 
 export interface GraphViewProps {
@@ -526,7 +526,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
         return query ? () => setQuery("") : hiding ? () => setFilter({}) : null;
     }
     const action = model.actions.find((a) => a.key === k);
-    if (!action || !currentNode || !nodeActionApplies(action.when, currentNode)) return null;
+    if (!action || !currentNode || !whenApplies(action.when, currentNode)) return null;
     return e.repeat ? () => {} : () => action.run(currentNode);
   };
 
@@ -668,7 +668,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
   })();
   const searchSays = query.trim() ? (matches.length ? `${countOf(matches.length, "match", "matches")} for ${query.trim()}` : `Nothing matches ${query.trim()}`) : "";
   // An action with `when` is offered only on the nodes it names (T89).
-  const keyed = model.actions.filter((a) => a.key && currentNode !== undefined && nodeActionApplies(a.when, currentNode));
+  const keyed = model.actions.filter((a) => a.key && currentNode !== undefined && whenApplies(a.when, currentNode));
 
   // The filter's choices: the clusters, the kinds and the states the graph has.
   const kinds = useMemo(() => [...new Set(data.nodes.flatMap((n) => (n.kind ? [n.kind] : [])))].sort(), [data]);

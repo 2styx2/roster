@@ -14,3 +14,8 @@ export function formatCount(n: number): string {
 export function countOf(n: number, one: string, many = `${one}s`): string {
   return `${formatCount(n)} ${plurals.select(n) === "one" ? one : many}`;
 }
+
+/** What an error says: its message, or the thing itself as text. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}

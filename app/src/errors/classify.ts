@@ -57,7 +57,7 @@ export interface ExitInput {
 }
 
 /** `roster askpass: [CODE] REASON` (docs/serve-api.md). */
-export const ASKPASS_LINE = /^roster askpass: \[(\d+)\] (.*)$/;
+const ASKPASS_LINE = /^roster askpass: \[(\d+)\] (.*)$/;
 
 const ESC = "\x1b";
 /** OSC (titles, links) up to BEL or ST. */

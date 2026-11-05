@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Logo } from "../chrome/Logo";
 import logoCss from "../chrome/logo.css?raw";
 import { defaultConfig } from "../config/fixture";
-import { registerHelp, HelpView } from "../help/command";
+import { docsBuiltins, registerBuiltins } from "../commands/builtins";
 import { blockLinks, type Block } from "../help/doc";
 import helpDocCss from "../help/doc.css?raw";
 import { guides, PARTS } from "../help/guides";
@@ -68,7 +68,7 @@ export function siteContext(): HelpContext {
   // app's lazy chunk (T213).
   helpText.use(guideTexts);
   const r = builtinRegistries();
-  registerHelp(r, new HelpView());
+  registerBuiltins(r, docsBuiltins(r));
   return helpContext(r, {
     keymap: keymapOf(r.keymap.list()),
     options: defaultOptions,
@@ -81,7 +81,7 @@ export function siteContext(): HelpContext {
 }
 
 /** The pages in the index's order: the index, then each part's pages by their order. */
-export function indexOrder(ctx: HelpContext): HelpPage[] {
+function indexOrder(ctx: HelpContext): HelpPage[] {
   const parts: string[] = [...PARTS];
   const rank = (pg: HelpPage) => (pg.id === "index" ? -1 : parts.indexOf(pg.part ?? "") < 0 ? parts.length : parts.indexOf(pg.part ?? ""));
   return [...ctx.pages].sort((a, b) => rank(a) - rank(b) || a.order - b.order);

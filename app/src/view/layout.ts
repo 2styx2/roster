@@ -51,7 +51,7 @@ export interface ModePieces {
 export type Layouts = Record<ViewMode, ModeLayout>;
 
 /** The pieces of the two modes as prototyped, following the options that place pieces. */
-export function defaultModePieces(options: Pick<Options, "sidebar" | "statusBar" | "focus">): Record<ViewMode, ModePieces> {
+function defaultModePieces(options: Pick<Options, "sidebar" | "statusBar" | "focus">): Record<ViewMode, ModePieces> {
   const sessionbar = options.focus.sessionbar;
   return {
     standard: {
@@ -75,7 +75,7 @@ export function defaultModePieces(options: Pick<Options, "sidebar" | "statusBar"
 
 /** A mode's layout from its pieces. `␣ e` shows or hides the Sidebar in every mode (issue #78);
  * the tree finder (`␣ t`) reaches the same tree as an overlay. */
-export function modeLayout(mode: ViewMode, p: ModePieces): ModeLayout {
+function modeLayout(mode: ViewMode, p: ModePieces): ModeLayout {
   return {
     fullscreen: p.fullscreen,
     pieces: [

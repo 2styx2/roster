@@ -2,6 +2,9 @@
 // rows are on screen. Pure, so DataTable.tsx stays a drawing of it and Plugins' tables (views,
 // Host-details sections) and the app's own sort and update the same way.
 
+import type { ActionIcon } from "./icons";
+import { whenApplies, type When } from "./when";
+
 export type ColumnKind = "text" | "data" | "number";
 
 export interface TableColumn {
@@ -83,12 +86,8 @@ export function nextSort(columns: readonly TableColumn[], sort: Sort | null): So
 
 /** Whether an action with `when` applies to `row` (ticket 78): every cell it names holds one of
  * its values. A number and its text are the same value; a cell the row lacks matches nothing. */
-export function actionApplies(when: Readonly<Record<string, readonly (string | number)[]>> | undefined, row: TableRow): boolean {
-  if (!when) return true;
-  return Object.entries(when).every(([k, values]) => {
-    const v = row.cells[k];
-    return v !== undefined && values.some((x) => String(x) === String(v));
-  });
+export function actionApplies(when: When | undefined, row: TableRow): boolean {
+  return whenApplies(when, row.cells);
 }
 
 /** The rows that say every word of `query` somewhere in `columns`' cells, ignoring case (the
@@ -124,4 +123,25 @@ export function splitMiddle(text: string): [string, string] {
   if (chars.length <= 12) return [text, ""];
   const tail = Math.min(8, Math.ceil(chars.length / 3));
   return [chars.slice(0, -tail).join(""), chars.slice(-tail).join("")];
+}
+
+/** Something the selected row can do. */
+export interface TableActionDef {
+  label: string;
+  key?: string;
+  icon?: ActionIcon;
+  /** Only on rows whose cells match (whenApplies). */
+  when?: When;
+  run(row: TableRow): void;
+}
+
+export interface TableModel {
+  columns: readonly TableColumn[];
+  rows: readonly TableRow[];
+  /** The sort it starts with (the given order when null). */
+  sort: Sort | null;
+  empty?: string;
+  /** Enter or a double click on a row. */
+  open?(row: TableRow): void;
+  actions: readonly TableActionDef[];
 }
