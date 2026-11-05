@@ -255,7 +255,8 @@ describe("The command line", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Not a command: conect");
     // A slip in the typing is said plainly, not as a warning, and the command it names is Iosevka.
     expect(screen.getByRole("status")).toHaveClass("slip");
-    expect(screen.getByRole("status").querySelector("code.message-cmd")).toHaveTextContent(/^:help commands$/);
+    // What was typed is data too (round 19): Iosevka, no quote marks.
+    expect([...screen.getByRole("status").querySelectorAll("code.message-cmd")].map((c) => c.textContent)).toEqual(["conect", ":help commands"]);
     await user.keyboard(`${LEADER}:connect nope{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("No Host named nope");
     const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;

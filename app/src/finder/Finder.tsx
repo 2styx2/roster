@@ -354,9 +354,14 @@ export function Finder({
         />
         {shown.length === 0 && (
           <p className="picker-empty">
-            {query
-              ? `Nothing matches “${query}”.`
-              : (source.empty ?? "Nothing here yet.")}
+            {/* What was typed is data: Iosevka, no quote marks (round 19). */}
+            {query ? (
+              <>
+                Nothing matches <span className="data">{query.trim()}</span>.
+              </>
+            ) : (
+              (source.empty ?? "Nothing here yet.")
+            )}
           </p>
         )}
         <div className="picker-footer">

@@ -475,7 +475,7 @@ export function Picker({
           <p className="picker-empty">
             {query.trim() === "" && hosts.hosts.length === 0
               ? "The Inventory has no Hosts yet. Add them to roster.yml and they show up here."
-              : `No Hosts match “${query}”.`}
+              : <>No Hosts match <span className="data">{query.trim()}</span>.</>}
             {query.trim() !== "" && (
               <span className="picker-empty-next">
                 {onQuick

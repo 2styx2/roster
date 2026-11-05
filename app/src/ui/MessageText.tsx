@@ -8,11 +8,18 @@ import { Fragment } from "react";
  * sentence's. */
 const COMMAND = /(^|[\s(“"'])(:[a-z][a-z0-9-]*(?: [a-z0-9](?:[\w#.:/-]*[\w#/-])?)?)/g;
 
-/** `text` split into words and the commands it names, in order. */
+/** What was typed, quoted back by a slip ("Not a command: blah.", "No help for zzqxj."): data
+ * too (round 19), set in Iosevka with no quote marks. The word runs to the sentence's end. */
+const TYPED = /(^|[\s(])((?<=(?:Not a command:|No help for) )[^\s]+?)(?=[.,]?(?:\s|$))/g;
+
+/** `text` split into words and the commands it names, in order. `command` marks what's set in
+ * Iosevka: a command, or what was typed. */
 export function messageParts(text: string): { text: string; command: boolean }[] {
   const parts: { text: string; command: boolean }[] = [];
   let at = 0;
-  for (const m of text.matchAll(COMMAND)) {
+  const found = [...text.matchAll(COMMAND), ...text.matchAll(TYPED)].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  for (const m of found) {
+    if ((m.index ?? 0) + (m[1]?.length ?? 0) < at) continue;
     const start = (m.index ?? 0) + (m[1]?.length ?? 0);
     if (start > at) parts.push({ text: text.slice(at, start), command: false });
     parts.push({ text: m[2] ?? "", command: true });
