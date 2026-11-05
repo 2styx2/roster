@@ -1407,6 +1407,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* The advice takes the text column's full width, as the fingerprint does (round 19: the card's
    `text-wrap: balance` outranked this and broke it at half the card). */
 .connect-card .key-advice { font-size: var(--text-sm); text-wrap: pretty; }
+.key-advice .nowrap { white-space: nowrap; }
 .key-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 4px; }
 .key-actions > button { flex: none; }
 /* The question card: what it asks, the fingerprint and the form read left at one measure; the
@@ -1438,45 +1439,61 @@ button:focus-visible > .btn-keys.key-on-focus { opacity: 1; }
    come (round 19: from the footer, "Tick the box above first." pointed up ~220 px, in warn
    yellow). Calm guidance in the text colour (taste.md: yellow is for warnings); the box's row
    is what's marked. */
-.quick-checked-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+/* After a blocked Enter the row is marked as one: box and words inside one hairline frame, the
+   box's focus ring 5 px clear of it across and 4.5 px up and down, so the two never read as a
+   doubled outline (round 20: the box's own 1 px warn frame sat 1–2 px outside the 2 px ring, and
+   the words outside it). The row takes only what box and words need; its 8 px and 4 px of air
+   are given back by negative margins, so the box stays on the text's left axis and nothing moves
+   when the frame comes. The frame is in the muted text tone (3:1 or more on the panel), not
+   yellow: nothing went wrong, and the apricot ring stays the one colour on it. It comes with the focus a key moved, so it has
+   no motion, and stays until the box is ticked. */
+.quick-checked-row {
+  display: flex; align-items: center; gap: 12px; width: fit-content; max-width: calc(100% + 16px);
+  padding: 4px 8px; margin: -4px -8px; border-radius: 6px;
+}
+.quick-checked-row[data-nudged] { outline: 1px solid var(--muted); outline-offset: -1px; }
 .key-nudge {
-  margin: 0; flex: 1 1 0; min-width: 0; color: var(--text); font-size: var(--text-xs);
+  margin: 0; flex: 0 1 auto; min-width: 0; color: var(--text); font-size: var(--text-xs);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* The box's row is its own outline's box: padded 4 px so the box's focus ring sits inside the
-   mark, and pulled back 4 px so the box stays on the text's left axis. The mark stays until the
-   box is ticked; it comes with the focus a key moved, so it has no motion. */
-.connect-card .quick-checked { flex: none; padding-inline: 4px 6px; margin-inline-start: -4px; border-radius: 4px; }
-.connect-card .quick-checked[data-nudged] { outline: 1px solid var(--warn); outline-offset: 0; }
+.connect-card .quick-checked { flex: none; padding-inline: 0 2px; }
 /* The Quick Connect form lays out in the card, so its buttons can stick to the card's foot (round
    16: inside the form they couldn't leave it, and fell below a 480×320 window). */
 .connect-card.key-question form.quick-login { display: contents; }
-/* A field focused or scrolled to never lands under the sticky title or buttons. */
-.connect-card.key-question { scroll-padding-block: 80px 72px; }
+/* A field focused or scrolled to never lands under the sticky title or buttons, or their fades. */
+.connect-card.key-question { scroll-padding-block: 92px 84px; }
 /* A long fingerprint breaks evenly, never leaving two characters alone. */
 .key-fingerprint { text-wrap: balance; }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
 /* The question stays in view when a short window scrolls the card (round 13). */
+/* It pins at the card's very top (top: 0) and the card's top padding is the title's own (or the
+   map's, above it in a tall window), so once pinned it never moves: a pin at -16 px had let it
+   slide 12 px as the card began to scroll (round 20). */
+.connect-card.key-question { padding-top: 0; }
+.connect-card.key-question > .connect-map { margin-top: 16px; }
 .connect-card.key-question > .connect-title {
-  position: sticky; top: -16px; z-index: 1; padding-block: 4px; background: var(--panel);
+  position: sticky; top: 0; z-index: 1; padding-block: 4px; background: var(--panel);
   /* The card's full width, so nothing scrolls into view beside it (round 14). */
   align-self: stretch; margin-inline: -20px; padding-inline: 20px;
 }
 /* Once the card scrolls, a hairline closes the title, so a line half under it reads as scrolled
    under, not as a stray glyph (round 18); the footer's rule colour, so the two edges match. */
 .connect-card.key-question[data-scrolled] > .connect-title { box-shadow: 0 1px 0 var(--line-strong); }
-/* Text scrolling under the sticky title or above the sticky footer fades out over 12 px instead
-   of being sliced through a line (round 19). Drawn in the panel's colour on the sticky parts
-   themselves, not as a mask on the card: a mask would fade the card's own surface, border,
-   title and buttons too. The title's fade shows only once the card has scrolled; the footer's
-   lies over the gap above it at rest, so it shows only over text that scrolls into it. */
+/* Text scrolling under the sticky title or above the sticky footer fades out instead of being
+   sliced through a line (round 19), over a whole line box, 22 px, so no glyph fragment shows
+   under the title or above the buttons (round 20: 12 px left a 14 px line's sliver; Sessions.tsx
+   FADE_PX). Drawn in the panel's colour on the sticky parts themselves, not as a mask on the
+   card: a mask would fade the card's own surface, border, title and buttons too. Each shows only
+   while there's text to fade: the title's once the card has scrolled, the footer's while more
+   lies below it (`data-more`), so a card that fits fades nothing. */
 .connect-card.key-question > .connect-title::after,
 .connect-card.key-question .key-actions::before {
-  content: ""; position: absolute; left: 0; right: 0; height: 12px; pointer-events: none;
+  content: ""; position: absolute; left: 0; right: 0; height: 22px; pointer-events: none; visibility: hidden;
 }
-.connect-card.key-question > .connect-title::after { top: calc(100% + 1px); background: linear-gradient(var(--panel), transparent); visibility: hidden; }
+.connect-card.key-question > .connect-title::after { top: calc(100% + 1px); background: linear-gradient(var(--panel), transparent); }
 .connect-card.key-question[data-scrolled] > .connect-title::after { visibility: visible; }
 .connect-card.key-question .key-actions::before { bottom: calc(100% + 1px); background: linear-gradient(transparent, var(--panel)); }
+.connect-card.key-question[data-more] .key-actions::before { visibility: visible; }
 /* The way to check a key (`:help host-keys`): the advice's last words, a command in Iosevka you
    can click, quiet like the empty Inventory's help line (round 18). */
 .key-help-link {
@@ -1505,13 +1522,14 @@ button:focus-visible > .btn-keys.key-on-focus { opacity: 1; }
   .connect-card.key-question > .connect-map { display: none; }
   /* Tighter, so at 480×320 the card opens at its top with the advice's first line in view above
      the buttons, cut where it goes on, so the scroll reads (round 18). */
-  .connect-card.key-question { gap: 6px; padding-top: 12px; }
-  .connect-card.key-question > .connect-title { top: -12px; padding-block: 2px; font-size: var(--text-lg); }
+  .connect-card.key-question { gap: 6px; }
+  /* The map gives way, so the title is first and holds the card's 12 px top padding itself. */
+  .connect-card.key-question > .connect-title { padding-block: 14px 2px; font-size: var(--text-lg); }
   .connect-card.key-question .connect-address-line { margin-top: 0; }
   .connect-card.key-question .key-print { padding-block: 4px; }
   .connect-card.key-question .key-actions { padding-top: 8px; }
-  /* Clear of the sticky title (about 47 px) and footer (53 px) and their 12 px fades. */
-  .connect-card.key-question { scroll-padding-block: 60px 66px; }
+  /* Clear of the sticky title (about 59 px) and footer (53 px) and their 22 px fades. */
+  .connect-card.key-question { scroll-padding-block: 84px 78px; }
 }
 .btn-keys { display: inline-flex; margin-left: 8px; }
 .btn-keys .keycap { height: 16px; min-width: 16px; }

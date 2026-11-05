@@ -95,7 +95,8 @@ describe("Quick Connect", () => {
     await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
     const q = await question("root@10.0.0.5");
     const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
-    const row = box.closest("label");
+    // The marked row holds the box and the words together (round 20).
+    const row = box.closest(".quick-checked-row");
     const field = within(q).getByLabelText("Password for root");
     const trust = within(q).getByRole("button", { name: "Trust and connect" });
     // The words are beside the box, not in the footer, and don't say where the box is.
@@ -113,6 +114,7 @@ describe("Quick Connect", () => {
       await press();
       expect(box).toHaveFocus();
       expect(row).toHaveAttribute("data-nudged");
+      expect(row).toContainElement(within(q).getByRole("alert"));
       expect(within(q).getByRole("alert")).toHaveTextContent("Tick it to trust and connect.");
       expect(backend.quickConnects()).toEqual([]);
     }
