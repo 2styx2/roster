@@ -26,8 +26,8 @@ def test_a_read_only_command_runs_with_ops_sign_in_and_no_bitwarden_variable(op,
     monkeypatch.setenv("bw_clientsecret", "bw-secret-xyzzy")
     assert main(["vault", "op", "--", "whoami"]) == 0
     assert op() == [["whoami"]]
-    names = json.loads(env_log.read_text())
-    assert "OP_SESSION_test" in names and not any(n.upper().startswith("BW_") for n in names)
+    names = [n.upper() for n in json.loads(env_log.read_text())]          # Windows upper-cases env names
+    assert "OP_SESSION_TEST" in names and not any(n.startswith("BW_") for n in names)
 
 
 def refused(*argv):
