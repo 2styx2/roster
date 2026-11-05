@@ -1758,6 +1758,7 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    the name is (round 20: it had taken the middle column, which is the page on every other row). */
 .finder-note { flex: 0 1e3 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: var(--text-sm) var(--font-ui); white-space: pre; }
 .finder-note .data { font-family: var(--font-mono); }
+.finder.prose .finder-label > .finder-name:has(+ .finder-note) { flex-shrink: 0; max-width: 100%; }
 .finder-row.selected .finder-note { color: var(--muted); }
 /* A help tag is what you type after :help: never a stub (round 20: "host-k…"). Up to 16
    characters it's whole; a longer one gives way first, cut in its middle down to its first 4
