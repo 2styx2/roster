@@ -93,8 +93,8 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                      out then (one more CLI call each, for op and kp)
 #             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
-#             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box (T241,
-#                              bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
+#             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box
+#                              (bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -103,7 +103,7 @@ BOX_SETTINGS = {}         # name -> this Box's own settings, from the app's init
 PROVIDER_STATE = {}       # name -> per-run scratch space (e.g. "already unlocked")
 NO_PASSWORD = ("agent", "key", "none")
 MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no session file, no BW_PASSWORD, no prompt
-JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr (T241)
+JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr
 _secrets = {}
 _secret_lock = threading.Lock()
 
@@ -413,7 +413,7 @@ def lock(name, cli=True):
             fn(Ctx(name, None))
 
 
-# ---- this Box's own settings (ticket 41): from the app's init.lua, through `roster serve`'s vault.configure
+# ---- this Box's own settings: from the app's init.lua, through `roster serve`'s vault.configure
 
 def setting_name(ctx, key):
     """Where a person changes setting KEY of CTX's provider: `vault.kp.database in init.lua`, or roster.yml's."""
@@ -446,7 +446,7 @@ def configure_box(settings):
     return locked
 
 
-# ---- where a Vault item goes (ticket 35): `save_to`, the same shape in roster.yml, init.lua and a save's choice
+# ---- where a Vault item goes: `save_to`, the same shape in roster.yml, init.lua and a save's choice
 
 PERSONAL = "personal"
 SAVE_TO_SHAPES = '"personal", {organization, collection} (Bitwarden, by name or id) or {group} (KeePassXC)'
@@ -517,7 +517,7 @@ def default_target(name):
     return {"setting": setting, "from": source or "default"}
 
 
-# ---- writing Vault items (ticket 13)
+# ---- writing Vault items
 
 def can_write(name):
     """Can provider NAME create Vault items (and undo a create)?"""

@@ -435,7 +435,7 @@ def script(mode, tag_re, pub="", taken="", own=""):
     return header + SCRIPT
 
 
-# `roster run HOST -- CMD` on an os: windows Host (T196, #376, decision Q176): CMD runs under PowerShell, whatever
+# `roster run HOST -- CMD` on an os: windows Host (decision Q176): CMD runs under PowerShell, whatever
 # sshd's DefaultShell, through the same launch line and bootstrap as setup's. Two scripts:
 #
 # RUN_LAUNCHER is what the Host is sent (framed on stdin). It checks the Host is Windows and that CMD parses as
@@ -681,7 +681,7 @@ class Result:
     def __init__(self, files, warnings, admins=False, tags=(), noline=False, taken=False):
         self.files, self.warnings, self.admins = files, warnings, admins
         self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
-        self.taken = taken                                # add, retag: another key's line under the new name (T226)
+        self.taken = taken                                # add, retag: another key's line under the new name
 
 
 def admins_note(name):

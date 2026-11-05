@@ -120,7 +120,7 @@ def same_file(a: str | Path, b: str | Path) -> bool:
 def unknown(name: str, inv: Inventories | None = None) -> NoReturn:
     inv = inv or load()
     have = ", ".join(x.name for x in inv.inventories) or "none yet"
-    shown = "that (not repeated)" if token_shaped(name) else f"'{name}'"     # a token typed after --inv (#484 N1)
+    shown = "that (not repeated)" if token_shaped(name) else f"'{name}'"     # a token typed after --inv
     die(f"no Inventory named {shown} (named: {have}) - `roster inv list` lists them, `roster inv add NAME PATH` "
         "names one", code=UNKNOWN_INVENTORY, fix="`roster inv list` lists them", tag=False)
 

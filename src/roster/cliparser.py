@@ -42,7 +42,7 @@ class Parser(argparse.ArgumentParser):
 
     def error(self, message):
         # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
-        # password or a session token: no usage error repeats one (#402 N3, T235 #460)
+        # password or a session token: no usage error repeats one
         root = Parser.root or self
         message = clihelp.usage_error(message, Parser.typed, root.names(), self.all_options())
         if Parser.json_errors:

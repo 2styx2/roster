@@ -195,7 +195,7 @@ class NoField(SecretError):
         self.item, self.field = item, field
 
 
-# Writing Vault items (ticket 13: "Save to vault", Q43's verified adds).
+# Writing Vault items ("Save to vault", Q43's verified adds).
 class CantWrite(SecretError):
     """The provider can only read Logins: it can't create or delete Vault items."""
 
@@ -222,7 +222,7 @@ class WriteFailed(SecretError):
     fix = "see the message; check your rights to the vault or collection"
 
 
-# Where a Vault item goes (ticket 35): the personal vault, an organization's collection, a KeePassXC group.
+# Where a Vault item goes: the personal vault, an organization's collection, a KeePassXC group.
 class UnknownTarget(SecretError):
     """The place to save to isn't there (or isn't one this provider has); the message names the setting to fix."""
 

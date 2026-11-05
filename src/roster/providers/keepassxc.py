@@ -199,7 +199,7 @@ def _keepassxc(spec, ctx):
     return value
 
 
-# ---- writing: "Save to vault" (ticket 13). `add -p` reads the entry's password as the line after the master
+# ---- writing: "Save to vault". `add -p` reads the entry's password as the line after the master
 # password, so neither is ever an argument. An entry's id is its path (GROUP/TITLE): KeePassXC's CLI doesn't print
 # UUIDs, and the path is what `rm` takes.
 
@@ -210,7 +210,7 @@ def _scrub(text, *values):
     return text
 
 
-# ---- where it goes (ticket 35): the top level, or a group. The default is save_to (init.lua's, then roster.yml's),
+# ---- where it goes: the top level, or a group. The default is save_to (init.lua's, then roster.yml's),
 # else roster.yml's older `group:`.
 
 TOP = {"id": "personal", "kind": "personal", "label": "Top level", "save_to": "personal"}
@@ -289,7 +289,7 @@ def _delete(item_id, ctx):
 
 # ---- every entry, never its password (Q191): `ls -R -f`'s paths, and nothing more. Not `show -a UserName -a URL`:
 # keepassxc-cli resolves placeholders in what it prints for -a ({PASSWORD}, {REF:P@I:...}), so a URL or user name
-# written that way would print a password (review of #439, M2). The walk asks for the address and user. An entry whose
+# written that way would print a password. The walk asks for the address and user. An entry whose
 # path starts with '-' is left out, as a name like that is never handed to a vault CLI.
 
 def _items(ctx, mapped):

@@ -13,7 +13,7 @@ import textwrap
 
 USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 
-# Each command once, in the order a new user meets them: the 14 a person types (T222, decision Q194). The ones the
+# Each command once, in the order a new user meets them: the 14 a person types (decision Q194). The ones the
 # app or ssh runs are INTERNAL: they work, but the overview leaves them out. The old names (roster.aliases) are in
 # neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
@@ -258,7 +258,7 @@ def _hint(message: str, typed: list[str], options: list[str]) -> str:
     near = difflib.get_close_matches(_unquote(m[2]), choices, n=1, cutoff=0.6)
     if near:
         return f"did you mean `{near[0]}`?"
-    # an action's few choices are listed (vault has 7, T241); roster's many commands are not
+    # an action's few choices are listed (vault has 7); roster's many commands are not
     return f"one of: {', '.join(choices)}" if len(choices) <= 8 else "not a roster command"
 
 

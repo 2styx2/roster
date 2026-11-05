@@ -211,13 +211,13 @@ def host_block(cfg, name, h, waiting=(), ctx=None):
             ("UserKnownHostsFile", token_path((ctx or current()).known_hosts)), ("StrictHostKeyChecking", "accept-new"),
             ("ConnectTimeout", 10), ("ServerAliveInterval", 30)]
     if is_windows(h):                       # a Windows Host's sshd refuses a second session on a shared connection
-        opts += [("ControlMaster", "no")]   # ("No existing session"), so never share one with it (T195)
+        opts += [("ControlMaster", "no")]   # ("No existing session"), so never share one with it
     elif not WINDOWS:                       # Windows' OpenSSH can't share a connection (no Unix sockets)
         opts += [("ControlMaster", "auto"),     # reuse one connection for many commands
                  ("ControlPath", f"{token_path(ssh_dir())[:-1]}/cm-%C\""), ("ControlPersist", "10m")]
     # Offer only roster's key (key Hosts) or no key at all (password Hosts): an agent holding many keys
     # would otherwise use up the Host's MaxAuthTries before the password ("Too many authentication failures").
-    if h["enroll"]:                         # its own key type's (T239); then the old one, mid-rotation (T240)
+    if h["enroll"]:                         # its own key type's; then the old one, mid-rotation
         opts += [("IdentityFile", token_path(f)) for f in rotation.identity_files(h, waiting)]
         opts += [("IdentitiesOnly", "yes")]
     elif password_login(h["ssh"]["auth"]):
@@ -229,7 +229,7 @@ def ssh_config_lines(cfg, ctx=None):
     """roster's ssh config for the Inventory CFG (CTX: its context, default this run's), as lines. ValueError when a
     path can't be written safely."""
     ctx = ctx or current()
-    waiting = rotation.config_waiting(cfg, ctx)   # fail closed: every Host when roster can't tell (#482's LOW-1)
+    waiting = rotation.config_waiting(cfg, ctx)   # fail closed: every Host when roster can't tell
     out = [sshconfig.header(cfg["path"]), "# Don't edit by hand: change roster.yml and run `roster sync`.", ""]
     for name, h in sorted(cfg["hosts"].items()):
         tags = ", ".join(x for x in (h["type"], h["product"]) if x)

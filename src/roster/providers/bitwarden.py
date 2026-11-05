@@ -168,7 +168,7 @@ def open_session_dir(create=False):
             fd = nfd
             _check_folder(fd, "/" + "/".join(real), not todo, home)
         # the folder the walk ended on, by the last folder's rule: a link to "." (or one that ends on a folder already
-        # passed) was only checked by the looser rule for folders on the way (#492, T250)
+        # passed) was only checked by the looser rule for folders on the way
         _check_folder(fd, "/" + "/".join(real), True, home)
     except BaseException:
         if fd >= 0:
@@ -256,7 +256,7 @@ def load_session_file():
     return bool(key)
 
 
-# ---- a saved session (T241, #474, decision Q203): `roster vault unlock` and the offer after an interactive unlock
+# ---- a saved session (decision Q203): `roster vault unlock` and the offer after an interactive unlock
 # write the key to session_file(), so every roster run on this Box uses it until it's locked. Any program running as
 # you can read it, and with bw's data file it opens the vault: the trade-off security.md states. bw keeps ONE unlock
 # at a time (unlock.command.ts makes a new key each time; lock clears it), so a `bw lock`, another `bw unlock` and the
@@ -465,7 +465,7 @@ def _offer_to_keep(ctx, key, expired):
         return
     _offered["done"] = True
     if ctx.confirm(OFFER):
-        status = _key_status(ctx, key)                 # #480 review, LOW-4: another run may have unlocked meanwhile
+        status = _key_status(ctx, key)                 # another run may have unlocked meanwhile
         if status != "unlocked":
             note("not saved: this unlock was replaced by another one meanwhile (bw keeps one unlock at a time), so its "
                  "key no longer works" if status else "not saved: `bw status` failed, so roster couldn't check the "
@@ -649,7 +649,7 @@ def _bw_get(ctx, ref):
         item = json.loads(r.stdout)
     except json.JSONDecodeError:
         item = None
-    if not _an_item(item):                                 # valid JSON of another shape too (#492, T250)
+    if not _an_item(item):                                 # valid JSON of another shape too
         raise SecretError("couldn't read `bw get item` output")
     return item, "", ""
 
@@ -730,7 +730,7 @@ def _bitwarden(spec, ctx):
     return val
 
 
-# ---- writing: "Save to vault" (ticket 13). `bw create item` takes the item as base64 JSON, the way
+# ---- writing: "Save to vault". `bw create item` takes the item as base64 JSON, the way
 # `bw encode` makes it, on stdin when no argument is given (bw 2026.9.1's create.command.ts), so the
 # password never goes on a command line. bw prints the new item back, password and all: only its id is kept.
 
@@ -741,7 +741,7 @@ def _scrub(text, *values):
     return text
 
 
-# ---- where it goes (ticket 35): the personal vault, or a collection of an organization you're in. bw 2026.9.1's
+# ---- where it goes: the personal vault, or a collection of an organization you're in. bw 2026.9.1's
 # `bw create item` takes organizationId and collectionIds in the item and creates it there (its SDK create request
 # carries both), so no `bw move` is needed. Its `bw list collections` doesn't say which collections the account may
 # only read (the CLI's CollectionResponse has no readOnly), so roster checks the new item: one that isn't in the
@@ -760,7 +760,7 @@ def _bw_listed(ctx, *what):
         listed = None
     if r.returncode != 0:
         raise SecretError(f"`bw list {what[0]}` failed: {errtext(r) or f'exit {r.returncode}'}")
-    if not isinstance(listed, list) or not all(isinstance(x, dict) for x in listed):   # #492, T250
+    if not isinstance(listed, list) or not all(isinstance(x, dict) for x in listed):
         raise SecretError(f"couldn't read `bw list {what[0]}` output")
     return listed
 
@@ -823,7 +823,7 @@ def _bw_create(item, ctx):
     if _bw(ctx, "sync").returncode != 0:                   # see items made elsewhere since this run's first sync
         say("warning      `bw sync` failed - checking for a duplicate name in the vault as last synced")
     try:
-        listed = _bw_rows(ctx, "--search", name)          # through the filter (T229): names and URIs, never a value
+        listed = _bw_rows(ctx, "--search", name)          # through the filter: names and URIs, never a value
     except SecretError as e:
         raise WriteFailed(f"couldn't check the vault for an item named '{name}': {e}") from None
     same = [_bw_summary(i) for i in listed if i["name"] == name]
@@ -852,7 +852,7 @@ def _bw_create(item, ctx):
             made = json.loads(r.stdout)
         except json.JSONDecodeError:
             made = {}
-        made = made if _a_made_item(made) else {}          # another shape: unreadable, found by name (#492, T250)
+        made = made if _a_made_item(made) else {}          # another shape: unreadable, found by name
     ours = r is not None and bool(made.get("id"))         # bw's own answer named it (not a row found by name)
     if r is not None and not ours:                         # bw's answer didn't parse: find it, so it can be undone
         made = _found_by_name(ctx, name)

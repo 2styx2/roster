@@ -128,8 +128,8 @@ class CheckDoc(Part, frozen=True):
 
     hosts: list[HostCheck]
     mesh: MeshPlanDoc | None
-    rotation_pending: dict[str, str] = Field(default_factory=dict)    # T240: Box key rotation, host: why
-    rotation_problems: list[str] = Field(default_factory=list)        # T240: its record or key files, each said
+    rotation_pending: dict[str, str] = Field(default_factory=dict)    # the Box key rotation: host: why
+    rotation_problems: list[str] = Field(default_factory=list)        # the rotation's record or key files, each said
     ok: bool
 
 
@@ -161,7 +161,7 @@ class BoxCheck(Part, frozen=True):
     message: str = Field(repr=False)
     fix: str | None = None
     topic: str | None = None
-    saved_session: Literal["none", "working", "expired", "ignored", "unknown"] | None = None   # a vault's saved session (T241)
+    saved_session: Literal["none", "working", "expired", "ignored", "unknown"] | None = None   # a vault's saved session
 
 
 class BoxCheckDoc(Part, frozen=True):

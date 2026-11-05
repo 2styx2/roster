@@ -31,10 +31,10 @@ from .sshops import hk_name, not_reached, recorded_host_keys
 TAG = "roster-mesh"
 OPTIONS = 'from="{ip}",no-agent-forwarding,no-X11-forwarding'
 CLAUDE_IMPORT = "@~/ROSTER.md"
-# T196 (#376, decision Q176): every Mesh script is sh, which a Windows Host (os: windows) can't run
+# Decision Q176: every Mesh script is sh, which a Windows Host (os: windows) can't run
 WINDOWS_LEFT_OUT = (f"[{MESH_WINDOWS}] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's "
                     "left out (a Link or meshed group naming it isn't an error)")
-# T239 (decision Q200): the Mesh's keys are Ed25519, which a FIPS-mode Host (the reason for key_type:) refuses and
+# Decision Q200: the Mesh's keys are Ed25519, which a FIPS-mode Host (the reason for key_type:) refuses and
 # may not even make, so a Host with another key_type stays out of it until the Mesh follows key_type too
 def key_type_out(h):
     """Does H's key_type keep it out of the Mesh? Only a key Host's (#471's review MED-2): a password Host's key_type
@@ -194,7 +194,7 @@ def load_state(ctx=None):
     data = read_state(ctx) or {}
     return {"members": list(data.get("members") or []), "pending": dict(data.get("pending") or {}),
             "cut": dict(data.get("cut") or {}), "applied": data.get("applied"),
-            # whose tags this Box's Mesh entries carry (owner_of; T199): None from a roster before that (untagged)
+            # whose tags this Box's Mesh entries carry (owner_of): None from a roster before that (untagged)
             "owner": data.get("owner") if f.exists() else None, "recorded": f.exists(),
             # another Inventory's Mesh state here: a roster-mesh line roster.yml doesn't name could be that
             # Inventory's (Q172 (b)), so mesh leftovers --remove refuses (others_here)
@@ -216,7 +216,7 @@ def ere(name):
 # boot, so there they go on a datastore (kept), and authorized_keys is ESXi's own /etc/ssh/keys-USER/ (kept).
 # USER is the Login's user ($U), as sshd's %u: on a Host that names the login otherwise (`id -un`: another case, a
 # directory account's form) every Mesh script stops before it reads or writes anything there, said in its ERROR line
-# (that Host is pending), as setup/re-tag/revoke refuse it (#442's review L1, #445).
+# (that Host is pending), as setup/re-tag/revoke refuse it.
 # A Host's mesh_dir: ($MD) overrides where the files go, on either; roster then only touches them there if they're
 # its own (mine: a Mesh key's public half, or a config roster wrote).
 WHERE = r"""
@@ -400,7 +400,7 @@ fi
 """
 
 # A Host that's no longer a source: its Mesh files go, and its Include. The directory in use until now is the one
-# the Include after roster's mark names, which isn't $P when mesh_dir: changed in the same edit (T97): roster's own
+# the Include after roster's mark names, which isn't $P when mesh_dir: changed in the same edit: roster's own
 # pick goes, as $P would; a mesh_dir: is only warned about (STALE), as after a move.
 NOT_SOURCE = r"""
 clean() {  # clean DIR: roster's files in it; the public half goes last: until it does, mine knows the rest is roster's
@@ -755,7 +755,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
     visits_of(cfg, with_mesh_dirs(cfg)) said just before, so serve works out a big Mesh once for a job.
     Returns the result serve and the CLI show (docs/serve-api.md, mesh.plan)."""
     # The host-key lookups (recorded_host_keys) need paramiko: load it now, not after a stop. serve gives a stopped
-    # job CLOSE_WAIT (0.8 s) to record what it didn't do; the import alone took longer on a busy box (T161).
+    # job CLOSE_WAIT (0.8 s) to record what it didn't do; the import alone took longer on a busy box.
     import paramiko  # noqa: F401
     say = say or (lambda msg: None)
     progress = progress or (lambda done, total, host: None)
@@ -934,7 +934,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                 out.setdefault("warnings", []).append(
                     f"{name}: a roster-mesh:{src} line with no Box in its tag isn't the one this Box writes (another "
                     "Box's, or other options), so roster left it: roster mesh leftovers lists it")
-        if not apply:       # T217: the source's key changed since (another Box rotated or cut it): it still gets in
+        if not apply:       # the source's key changed since (another Box rotated or cut it): it still gets in
             for x in report(lines, "OLDLINE "):
                 src, key, frm = (x.split(" ", 2) + ["", ""])[:3]
                 now = ((out["probe"].get(src) or {}).get("pub") or "").split()[1:2]
@@ -1002,7 +1002,7 @@ def summary(cfg, g, links, out, apply, gone):
 def record(cfg, g, st, result, ex):
     done = {r["host"] for r in result["hosts"] if r["status"] != "pending"}
     if not result["pending"]:
-        st["owner"] = owner_of(cfg)             # every Host visited carries this owner's tags now (T199)
+        st["owner"] = owner_of(cfg)             # every Host visited carries this owner's tags now
     st["pending"] = result["pending"]
     st["members"] = sorted((set(g["visit"]) | set(result["pending"])) - (set(ex) & done))
     for host, peers in list(st["cut"].items()):
@@ -1193,9 +1193,9 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
     return {"confirmed": confirmed, "pending": pending, "warnings": out.get("warnings", [])}
 
 
-# ---------------------------------------------------------------- leftovers (T193, #372's review B1)
+# ---------------------------------------------------------------- leftovers
 
-# What the Mesh holds on a Host, and whose (T199): every roster-mesh line with its tag (find_leftovers keeps this
+# What the Mesh holds on a Host, and whose: every roster-mesh line with its tag (find_leftovers keeps this
 # Box's and an older roster's), and Mesh files, Include and ROSTER.md that are this Box's or an older roster's (OLD=1).
 LOOK = r"""
 T=' roster-mesh:[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9_/.-]+)?$'
@@ -1263,7 +1263,7 @@ def find_leftovers(cfg, say=None):
         for tag, frm in seen:
             src, _, by = tag.partition("@")
             # an older roster's line for a source asked for here, too, once this Box's own tagged line is beside it
-            # (one the one-time re-tag didn't take: not the line this Box writes, #384)
+            # (one the one-time re-tag didn't take: not the line this Box writes)
             if src not in wanted.get(name, set()) and by in ("", own) or not by and src in tagged:
                 found.setdefault("lines", []).append((src, frm, not by))
                 older = older or not by

@@ -65,7 +65,7 @@ def bw_command(argv, write):
 
 # ---------------------------------------------------------------- op
 
-# `roster vault op` (T223, #432, decision Q197): the 1Password CLI as `roster vault bw` runs bw (Q178). op's commands are
+# `roster vault op` (decision Q197): the 1Password CLI as `roster vault bw` runs bw (Q178). op's commands are
 # a tree (op item get, op vault user grant), checked against 1Password's CLI reference, as a fail-closed allowlist: a
 # command in none of these sets (one a newer op adds, an alias, a typo) is refused, never assumed safe. Read-only means
 # no change to the vault or the account and no file written on this Box.

@@ -220,7 +220,7 @@ class State:
         self.created = {}                   # item id -> provider, for the items vault.create_item made (undo)
         self.jobs = jobs.Jobs(log=log_line)  # background work: Mesh runs and scans (its notify is serve's)
         self.verified = {}                  # host.verify_login successes: login_key -> (time, host key to pin)
-        self.held = {}                      # typed passwords held for "Save to vault", by id: Held (T15, T16)
+        self.held = {}                      # typed passwords held for "Save to vault", by id: Held
         # state.held is also changed on the askpass channel's threads (a login report), so it has a lock of its own:
         # never a resource lock, which a long request holds for up to its deadline and would hold up askpass's answers.
         self.held_lock = threading.RLock()
@@ -369,7 +369,7 @@ def text_param(params, key):
     return v
 
 
-# ---------------------------------------------------------------- sessions (ticket 05; ADR 0002)
+# ---------------------------------------------------------------- sessions (ADR 0002)
 
 @method("session.prepare", locks=SHARES_VAULT)
 def session_prepare(state, params):
@@ -784,15 +784,15 @@ def inventory_create(state, params):
         raise Problem(INVALID_PARAMS, f"params.name: {named.name_problem(str(name))}")
     inv = named.load()
     taken = [x.name for x in inv.inventories if named.same_name(x.name, name)]
-    if taken:                                       # the field to change, for the app's form (#417 L4)
+    if taken:                                       # the field to change, for the app's form
         raise Problem(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
                        {"field": "name", "name": taken[0]},
                        fix="give it another name, or pick another folder (its name names the Inventory); "
                            f"`roster inv remove {taken[0]}` forgets the other one")
     target = folder / "roster.yml"
     stop = threading.Event()
-    on_cancel(stop.set)                             # the app's Cancel: a clone under way stops (#417 L5)
-    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve (#417 L3)
+    on_cancel(stop.set)                             # the app's Cancel: a clone under way stops
+    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve
         if state.path is not None:                  # another create got here first
             raise Problem(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
         made = newinventory.create(target, how, source, interactive=False, stop=stop)
@@ -847,7 +847,7 @@ def first_run_lock():
 
 
 
-# ---------------------------------------------------------------- editing: Pending changes (ticket 10)
+# ---------------------------------------------------------------- editing: Pending changes
 
 VERIFIED_FOR = 600          # s: how long a successful host.verify_login lets host.update make that change
 
@@ -926,7 +926,7 @@ def host_verify_login(state, params):
     # The vault only now, after the reload: roster.yml before the vault, always (the claims' order), or a write holding
     # roster.yml and waiting behind a vault.lock that waits for this request would never end.
     with claimed(state, SHARES_VAULT, "host.verify_login"):
-        # the Host's own key type's key (T239), as its ssh config gives it
+        # the Host's own key type's key, as its ssh config gives it
         result = diagnose.verify_login(new, Path(new["key_file"]), previous=h, limited=rate_limited(state))
     if result["ok"]:
         state.verified[login_key(new)] = (time.monotonic(), result.pop("host_key", None))
@@ -1057,7 +1057,7 @@ def resynced(state):
     return sync_box(state)
 
 
-# ---------------------------------------------------------------- adding a Host (ticket 11, decision Q43)
+# ---------------------------------------------------------------- adding a Host (decision Q43)
 
 ADD_PARAMS = {"address": "ip", "user": "user", "port": "port", "auth": "auth", "enroll": "enroll", "type": "type",
               "title": "title", "description": "description"}
@@ -1179,12 +1179,12 @@ def still_offered(asked, key, label, outcome, who, again):
     return offered
 
 
-# ---------------------------------------------------------------- Quick Connect (ticket 14)
+# ---------------------------------------------------------------- Quick Connect
 # A Session to user@address[:port], a box that isn't in the Inventory. The app shows the key host.scan_key
 # {address, port} fetched; quick.prepare fetches it again and goes on only if it's still exactly that one. The key
 # is trusted for this Session only: it goes into serve's own known-hosts file (in the askpass channel's private
 # directory, gone when serve exits) under an alias of its own, never into roster's known hosts, so a box nobody
-# added stays unknown to every Host-to-be at that address (T15's "Save to vault" records it, after the login).
+# added stays unknown to every Host-to-be at that address ("Save to vault" records it, after the login).
 # A typed password goes to ssh through the askpass channel, exactly like a vault password: once, within 60 s,
 # and forgotten by vault.lock. Nothing is written to roster.yml.
 
@@ -1260,7 +1260,7 @@ def quick_prepare(state, params):
     with os.fdopen(fd, "a") as f:
         f.write(f"{alias} {key.get_name()} {key.get_base64()}\n")
     quick = {"user": user, "address": address, "port": port, "key_type": key.get_name(), "fingerprint": offered,
-             "base64": key.get_base64()}        # what quick.save needs, kept only with a held password (T15)
+             "base64": key.get_base64()}        # what quick.save needs, kept only with a held password
     argv = [ssh, *STRICT, "-o", f"UserKnownHostsFile={ssh_value(ssh_path(known))}", "-o", "GlobalKnownHostsFile=/dev/null",
             "-o", f"HostKeyAlias={alias}", "-o", "UpdateHostKeys=no", "-o", "ControlPath=none",
             "-o", "ConnectTimeout=10"]
@@ -1283,7 +1283,7 @@ def quick_prepare(state, params):
             "port": port, "key_type": key.get_name(), "fingerprint": offered, **held}
 
 
-# ---------------------------------------------------------------- "Save to vault" after the Session's login (T15, T16)
+# ---------------------------------------------------------------- "Save to vault" after the Session's login
 # Q43 says a password enters the vault only after a login with exactly it succeeded. For a Session that's that
 # Session's own login: with save: true, serve keeps the typed password in memory, bound to an id (the Quick Connect's,
 # or the Host Session's), and ssh runs askpass's logged-in script as its LocalCommand, which ssh does only once it has
@@ -1435,7 +1435,7 @@ def save_held(state, repo, hid, password, item, change, what):
     return made, backup
 
 
-# Making or deleting a Vault item, one at a time per provider (ticket 108): bw keeps its local cache in one data.json
+# Making or deleting a Vault item, one at a time per provider: bw keeps its local cache in one data.json
 # and pass commits each insert to a git repo, so neither is known to take two writes at once, and two creations of one
 # name would both pass the "no item by that name" check. Inside the shared vault lock (after roster.yml and the vault in
 # Q112's order); it waits at most what's left of the request's deadline (LOCK_WAIT without one), then 4.
@@ -1723,9 +1723,9 @@ def host_review(state, params):
     return {"changed": True, "host": state.inventory()["hosts"][name], **written}
 
 
-# ---------------------------------------------------------------- the Live Inventory (ticket 28, decision Q45)
+# ---------------------------------------------------------------- the Live Inventory (decision Q45)
 # Removing, renaming and moving Hosts, and adding, renaming and deleting groups: each a text edit of roster.yml
-# (edit.py) written as a Pending change, like host.update (saved straight to a plain file: store.py, T212). Removing a
+# (edit.py) written as a Pending change, like host.update (saved straight to a plain file: store.py). Removing a
 # Host never touches the vault.
 
 def write_edit(state, old_text, new_text, repo=None, then=None):
@@ -1905,7 +1905,7 @@ class Watcher(threading.Thread):
         super().__init__(daemon=True, name="roster-watch")
         self.state, self.stop = state, threading.Event()
         # The first look is taken here, before inventory.watch answers: taken when the thread got to run, it could
-        # see an edit saved in between as how the file already was, and never apply it (T151).
+        # see an edit saved in between as how the file already was, and never apply it.
         self.first = self.look(state.path)
 
     @staticmethod
@@ -2025,7 +2025,7 @@ def vault_status(state, params):
     main = provider_status(lockable) if lockable else {"provider": None, "status": "unsupported",
                                                        "can_write": False, "can_sign_out": False}
     others = [main if n == main["provider"] else provider_status(n) for n in sorted(names)]
-    if main["can_write"]:                       # where "Save to vault" goes by default (ticket 35), as set
+    if main["can_write"]:                       # where "Save to vault" goes by default, as set
         main = {**main, "save_to": providers.default_target(lockable)}
     return {**main, "providers": others}
 
@@ -2179,7 +2179,7 @@ def sign_out_error(e):
 
 
 
-# ---------------------------------------------------------------- vault.configure: this Box's settings (ticket 41)
+# ---------------------------------------------------------------- vault.configure: this Box's settings
 # The app sends what its init.lua says about the vault at start and after every `:source`. They're this Box's own
 # (a local KeePassXC database is personal, not team Inventory) and win over roster.yml's. Paths and choices only:
 # a key that isn't one of these is refused, so nothing else (a secret above all) can ride along. A value roster can't
@@ -2254,7 +2254,7 @@ def vault_configure(state, params):
 
 
 
-# ---------------------------------------------------------------- vault.create_item: "Save to vault" (ticket 13)
+# ---------------------------------------------------------------- vault.create_item: "Save to vault"
 # Q43's order is verify, create the Vault item, add the Pending change; if the add fails, vault.undo_create takes
 # the item back out. It only deletes items this serve created, so it can't be pointed at anything else.
 
@@ -2359,7 +2359,7 @@ def vault_item_fields(state, params):
 
 
 
-# ---------------------------------------------------------------- vault.login: signing in (ticket 31)
+# ---------------------------------------------------------------- vault.login: signing in
 
 SIGN_IN_IDLE = 600          # s: a sign-in nobody answers for this long is ended (and forgets the password it held)
 SIGN_IN_METHODS = {"password": ("email", "password"), "apikey": ("client_id", "client_secret"), "sso": ()}
@@ -2508,8 +2508,8 @@ def closing(state, login):
 
 
 
-# ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
-# Host-to-Host access set up from this Box (mesh.py). The app's controls for it are a first-party Plugin (T50).
+# ---------------------------------------------------------------- the Mesh (decision Q63)
+# Host-to-Host access set up from this Box (mesh.py). The app's controls for it are a first-party Plugin.
 
 def rotate_param(params):
     v = params.get("rotate", [])
@@ -2723,7 +2723,7 @@ def mesh_status(state, params):
 
 
 
-# ---------------------------------------------------------------- Discover (ticket 44, decisions Q80 and Q100)
+# ---------------------------------------------------------------- Discover (decisions Q80 and Q100)
 # `roster discover` for the app: a scan that runs here, on a thread of its own (discover.Scan), never in the app or
 # a Plugin. discover.start answers at once; discover.status says how far it has got and what it found, discover.stop
 # ends it, and discover.add writes the Hosts the user picked as a Pending change, unreviewed, as `roster discover
@@ -2900,7 +2900,7 @@ def discover_add(state, params):
 
 
 
-# ---------------------------------------------------------------- jobs (ticket 101, decision Q112)
+# ---------------------------------------------------------------- jobs (decision Q112)
 
 @method("jobs.list", lane="quick")
 def jobs_list(state, params):
@@ -2934,7 +2934,7 @@ def jobs_stop(state, params):
 
 
 
-# ---------------------------------------------------------------- locks (ticket 101, decision Q112)
+# ---------------------------------------------------------------- locks (decision Q112)
 
 class Lock:
     """A resource's lock: held alone (a write), or shared by readers. Reentrant for the thread holding it alone, so a
@@ -3039,7 +3039,7 @@ class claimed:
             self.held.pop().release()
 
 
-# ---------------------------------------------------------------- cancelling a request (ticket 108, decision Q112 (p))
+# ---------------------------------------------------------------- cancelling a request (decision Q112 (p))
 # `$/cancel {id}` (the core sends it when it gives up waiting) stops a request that hasn't done anything yet: still
 # queued, or waiting for a lock or for an unlock asked before it. It's answered "cancelled" (5) and nothing was done.
 # Once a request runs, only a method with cancel="running" stops (the waiting forms of jobs: their job stops at its
@@ -3364,7 +3364,7 @@ class Server:
 
 
 def serve(config_arg, inv=None):
-    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd (#424)
+    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
     for stream in (sys.stdin, sys.stdout):

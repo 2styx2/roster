@@ -64,9 +64,8 @@ def key_named(cfg):
 
 # Which file sshd reads this account's keys from ($f, and $F as messages name it): ~/.ssh/authorized_keys, or on ESXi
 # (uname VMkernel) its own /etc/ssh/keys-USER/authorized_keys, which it keeps across a reboot (its home isn't kept),
-# as the Mesh's scripts do (T226, #435). USER is the Login's user ($U), as sshd's %u: one the Host names otherwise
-# (`id -un`: another case, a directory account's form) is refused, as the key would go where sshd doesn't look
-# (#442's review L1).
+# as the Mesh's scripts do. USER is the Login's user ($U), as sshd's %u: one the Host names otherwise
+# (`id -un`: another case, a directory account's form) is refused, as the key would go where sshd doesn't look.
 AK_FILE = ('if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then ESXI=1; f=/etc/ssh/keys-$U/authorized_keys; F=$f; '
            'L=$(id -un 2>/dev/null) || L=; '
            '[ "$L" = "$U" ] || { echo "this login is ${L:-unknown} on ESXi, not $U (its user: in roster.yml), and '
@@ -133,7 +132,7 @@ def retag_key_script(pub, user, taken=None, own=None):
     # the line with a space before it, so the key matches at its start too; awk's own trail (keyline.AWK_TRAIL_*)
     awk_re = " " + found.removeprefix("(^| )").removesuffix(keyline.TRAIL)
     return (key_script_head(user) + f"[ -f \"$f\" ] || {{ echo \"{keyline.NONE} $F\"; exit 0; }}; rc=0; NEW=; " +
-            # the new name first (#442's M1): a Host where no line of this key is tagged may still hold another
+            # the new name first: a Host where no line of this key is tagged may still hold another
             # Box's line under it, which this Box's revoke would take once the new name is recorded
             taken_guard(taken, own or found) +
             f"grep -q -E -- {shlex.quote(found)} \"$f\" || rc=$?; "
@@ -143,7 +142,7 @@ def retag_key_script(pub, user, taken=None, own=None):
             # ENVIRON, so awk keeps every \
             keyline.AWK_TRAIL_SH + f"RE={shlex.quote(awk_re)}\"[$W]*\\$\" TAG={shlex.quote(tag)} "
             "awk 'BEGIN { re = ENVIRON[\"RE\"]; t = ENVIRON[\"TAG\"] } "
-            # the tag is what changes; whatever follows it (a CR, a space: #423's S1) stays
+            # the tag is what changes; whatever follows it (a CR, a space) stays
             f"(\" \" $0) ~ re {{ s = $0; sub(/{keyline.AWK_TRAIL_LITERAL}/, \"\", s); w = substr($0, length(s) + 1); "
             f"sub(/ {keyline.ANY_TAG}$/, \" \" t, s); if (seen[s]++) next; $0 = s w }} {{ print }}' "
             "\"$f\" > \"$f.roster\"; " +
@@ -231,7 +230,7 @@ class NoLine:
     file: str
 
 
-TAKEN = "name taken"        # retag: another key's line is under the new name there (T226): nothing changed
+TAKEN = "name taken"        # retag: another key's line is under the new name there: nothing changed
 
 
 @dataclass
