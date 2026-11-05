@@ -182,7 +182,7 @@ A group's row (with the Live Inventory) and a heading with buttons have a menu t
 
 The first nine Session rows show their number at the right, the one `␣ 1`–`9` goes to (decision Q215); it's a key hint, so `ui.hints = false` hides it.
 
-Other rows' buttons (a group's +, ✎ and ×, a Folder's, a Session's ×) show on the selected row only: the row you last clicked, or in App mode the cursor row, so j/k move them. Hovering a row shows none of them, and its address stays in view. The Inventory heading's + (Add a Host) is always there.
+Other rows' buttons (a group's +, ✎ and ×, a Folder's, a Session's ×) show on the selected row only: the row you last clicked, or in App mode the cursor row, so j/k move them. When App mode ends, the cursor's row is drawn as any other row again; the next Leader starts App mode on it (Q235). Hovering a row shows none of them, and its address stays in view. The Inventory heading's + (Add a Host) is always there where this roster can add Hosts; on a roster too old to, neither it nor the title bar's + is offered, and `:host add` says so (Q235).
 
 ## The idle pane
 

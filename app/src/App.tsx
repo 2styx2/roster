@@ -686,14 +686,22 @@ function Workspace({
   const [keyState, setKeyState] = useState<KeyState>(terminalMode);
   const keyRef = useRef<KeyState>(terminalMode);
   const [cursor, setCursor] = useState<string | null>(null);
-  // The Sidebar's selected row (decision Q88): the one last clicked, or where j/k left the cursor.
-  // Its buttons show; in App mode the cursor row is the selected one.
-  const [selected, setSelected] = useState<string | null>(null);
+  // The Sidebar's selected row (decision Q88): the one last clicked. Its buttons show; in App mode
+  // the cursor row is the selected one. Where j/k left the cursor isn't drawn outside App mode
+  // (round 19: kept selected, its name in the text colour read as another live Session); App mode
+  // starts there again (`lastStop`, Q232 a).
+  const [selected, setSelectedNow] = useState<string | null>(null);
+  const [lastStop, setLastStop] = useState<string | null>(null);
+  const setSelected = useCallback((id: string | null) => {
+    setSelectedNow(id);
+    setLastStop(id);
+  }, []);
   // A Host row's open menu (T166, Q156).
   const [rowMenu, setRowMenu] = useState<OpenMenu | null>(null);
   const moveTo = (id: string | null) => {
     setCursor(id);
-    setSelected(id);
+    setSelectedNow(null);
+    setLastStop(id);
   };
   const [viewMode, setViewMode] = useState<ViewMode>(options.defaultMode);
   const [layouts, setLayouts] = useState<Layouts>(
@@ -2456,7 +2464,7 @@ function Workspace({
     list: (move) => {
       if (move !== "choose") return moveTo(moveCursor(rows, cursor, move));
       const row = rows.find((r) => r.id === cursor);
-      if (row) setSelected(row.id);
+      if (row) setLastStop(row.id);
       // Enter on a group, Folder or heading folds it and stays in the Sidebar.
       setMode(
         row && staysInAppMode(row.command)
@@ -2989,7 +2997,7 @@ function Workspace({
     e.preventDefault();
     e.stopPropagation();
     if (before.mode === "terminal" && r.state.mode === "app") {
-      setCursor(firstStop(rows, selected));
+      setCursor(firstStop(rows, lastStop));
     }
     setMode(r.state);
     if (r.action) run(r.action);
@@ -3515,7 +3523,7 @@ function Workspace({
               // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
               if (keyRef.current.mode !== "terminal") return;
               beforeTree.current = from;
-              setCursor(firstStop(rows, selected));
+              setCursor(firstStop(rows, lastStop));
               setMode({ mode: "app", pending: [] });
             }}
             onTreeBlur={(to) => {

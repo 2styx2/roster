@@ -259,3 +259,27 @@ describe("Folders", () => {
   });
 
 });
+
+describe("The cursor's row outside App mode (round 19)", () => {
+  it("isn't drawn after Esc, so it never reads as a live Session, and App mode starts there again", async () => {
+    Element.prototype.scrollIntoView = () => {};
+    const { user } = await ready();
+    await user.keyboard(LEADER);
+    await user.keyboard("jjjj");
+    const at = cursorRow()?.getAttribute("data-row");
+    expect(at).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(cursorRow()).toBeNull();
+    // Outside App mode the remembered row is drawn as any other row (no raised, text-coloured name).
+    expect(document.querySelector(".sidebar .sb-row.selected, .sidebar .sb-heading.selected")).toBeNull();
+    await user.keyboard(LEADER);
+    expect(cursorRow()?.getAttribute("data-row")).toBe(at);
+  });
+
+  it("keeps a clicked row selected: its buttons show for the pointer", async () => {
+    const { user } = await ready();
+    const group = within(inventory()).getByRole("treeitem", { name: /^subnet-2/ });
+    await user.click(group);
+    expect(rowOf(group)).toHaveClass("selected");
+  });
+});
