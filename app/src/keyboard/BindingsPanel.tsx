@@ -71,32 +71,39 @@ export function BindingsPanel({
         }}
       />
       <div className="keys-scroll">
-        <table>
+        <table role="table">
           {groups.map(([area, list]) => (
-            <tbody key={area}>
-              <tr className="group">
-                <th colSpan={2} scope="colgroup">
+            <tbody key={area} role="rowgroup">
+              <tr className="group" role="row">
+                <th colSpan={2} scope="colgroup" role="columnheader">
                   {area}
                 </th>
               </tr>
               {list.map((r) => (
                 <tr
                   key={`${r.label}\0${r.source}`}
+                  role="row"
                   className={named === r ? "named" : undefined}
                   onMouseEnter={() => setPointed(r)}
                   onMouseLeave={() => setPointed((p) => (p === r ? null : p))}
                 >
-                  <td>
+                  <td
+                    role="cell"
+                    title={
+                      r.source !== BUILTIN ? `${r.label} ${r.source}` : r.label
+                    }
+                  >
                     {r.label}
                     {/* Where it comes from, when it isn't built in, on the same line as its name
                         (a column of its own took the width every description needs). */}
+                    {r.source !== BUILTIN && " "}
                     {r.source !== BUILTIN && (
                       <span className="keys-source config" title={r.source}>
                         {r.source}
                       </span>
                     )}
                   </td>
-                  <td className="keys-keys">
+                  <td className="keys-keys" role="cell">
                     <span className="keys-list">
                       {r.keys.map((k, i) => (
                         <span key={k}>

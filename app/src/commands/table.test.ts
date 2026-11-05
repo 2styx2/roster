@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewMode } from "../view/layout";
 import { builtinCommandRegistry, complete as completeIn, describeLine as describeIn, parseLine as parseIn, runLine as runIn, type CommandContext } from "./table";
+import { textOf } from "../ui/messages";
 
 const registry = builtinCommandRegistry();
 const commands = registry.list();
@@ -36,7 +37,7 @@ function recorder(mode: ViewMode = "standard") {
     rowMenu: () => calls.push("rowMenu"),
     selectedHost: () => null,
     hostNames: () => hosts,
-    say: (m) => calls.push(`say ${m}`),
+    say: (m) => calls.push(`say ${textOf(m)}${typeof m !== "string" && m.kind === "slip" ? " (slip)" : ""}`),
     viewMode: () => mode,
     setViewMode: (m) => calls.push(`mode ${m ?? "other"}`),
     openFinder: (id) => calls.push(`finder ${id}`),
@@ -221,10 +222,11 @@ describe("runLine", () => {
     runLine(ctx, "session x");
     runLine(ctx, "  ");
     expect(calls).toEqual([
-      "say Not a command: conect. :help commands lists them.",
-      "say connect needs a Host name",
-      "say lock takes no argument",
-      "say session needs a number",
+      // A slip in the typing, said plainly (round 18), not as a warning.
+      "say Not a command: conect. :help commands lists them. (slip)",
+      "say connect needs a Host name (slip)",
+      "say lock takes no argument (slip)",
+      "say session needs a number (slip)",
     ]);
   });
 

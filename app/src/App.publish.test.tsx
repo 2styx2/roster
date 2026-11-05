@@ -11,6 +11,7 @@ import { PublishError } from "./backend/types";
 import { defaultOptions, type Options } from "./keymap";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { onMessageLine } from "./test-messageLine";
 
 const LEADER = "{Control>} {/Control}";
 const pendingScenario = fixtures["edit-pending"] as FakeScenario;
@@ -136,7 +137,7 @@ describe(":publish", () => {
     const { user } = await ready({ ...pendingScenario, apiVersion: 6 });
     await within(statusbar()).findByRole("button", { name: /2 Pending changes/ });
     await user.keyboard(`${LEADER}:publish{Enter}`);
-    expect(await screen.findByText(/:publish needs a newer roster \(API version 7; this one speaks 6\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:publish needs a newer roster \(API version 7; this one speaks 6\)/))).toBeInTheDocument();
     await user.click(within(statusbar()).getByRole("button", { name: /2 Pending changes/ }));
     expect(within(await panel()).queryByRole("button", { name: "Publish…" })).toBeNull();
   });

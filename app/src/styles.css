@@ -316,34 +316,52 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   color: var(--muted); font-size: var(--text-xs); white-space: nowrap; overflow: hidden;
 }
 .statusbar > * { flex: none; }
-.statusbar .backend { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the path first (it only gets the room left over), then the
-   hints, then the Box's name. The Backend, the Host count and the mode never do. Each cut value
-   has its whole text in a tooltip. */
+/* Long values give way in order: the hints (whole, last first), then the path (down to
+   "~/…/roster.yml", then not drawn), then the Backend's label, then this Box's name, and the Session on
+   screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
+   count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
+   way only once the one before it is at its least (factors 1e5 apart: a step's share of
+   the overflow stays under a layout unit). Each cut value has its whole text in a tooltip. */
 .statusbar-cut { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.statusbar .box { flex: 0 1 auto; min-width: 6ch; display: inline-flex; align-items: center; gap: 6px; }
+/* Each keeps 6 characters, or its whole text when shorter (--keep, set from its length in App.tsx,
+   so "Fake" gets no empty room after it), beside its 6 px mark and the 6 px gap. In Iosevka, so
+   ch is a character. */
+.statusbar :is(.backend, .box, .session-seg) { min-width: calc(var(--keep, 6ch) + 12px); font-family: var(--font-mono); }
+.statusbar .backend { flex: 0 1e5 auto; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.statusbar .box { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; }
 /* This Box (decision Q57): a small square in the second tone, the logo's Box at the foot of the R.
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
 .statusbar .box .statusbar-cut { min-width: 0; }
-/* The path takes only the room left over, and goes rather than showing a stub ("/ho…"): under
-   eight characters' room it isn't drawn (its whole text stays in the tooltip). */
-.statusbar .path { flex: 1 1 0; min-width: 0; container-type: inline-size; }
-.statusbar .path-text { display: flex; min-width: 0; white-space: nowrap; }
-.statusbar .path-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The path keeps room for its least (below) ahead of the hints, then gives way before the Backend;
+   it goes rather than showing a stub ("/ho…"). */
+.statusbar .path {
+  flex: 1 1e10 var(--keep, 8ch); min-width: 0; height: var(--statusbar-h); overflow: hidden;
+  display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start;
+}
+/* The path is whole down to its first folder, "…/" and its file name (--keep, from App.tsx), or
+   not drawn at all: below that it wraps to the line the box hides (the zero-width first item lets
+   it wrap even though it's alone), as the hints do. Its tooltip always has it whole. */
+.statusbar .path::before { content: ""; width: 0; height: var(--statusbar-h); }
+.statusbar .path-text { flex: 1 1 auto; min-width: calc(var(--keep, 8ch) - 1px); display: flex; white-space: nowrap; }
+/* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
+   cut from their start ("~/…ventory/roster.yml"), as .empty-path is: an rtl box with ltr text. */
 .statusbar .path-base { flex: none; }
-@container (max-width: 8ch) { .statusbar .path-text { visibility: hidden; } }
+/* The folders between give way, down to "…/"; the first folder and the file name never. */
+.statusbar .path-head { flex: none; }
+.statusbar .path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.statusbar .path-dir > span { direction: ltr; unicode-bidi: isolate; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
-.statusbar .session-seg { flex: 0 0.2 auto; min-width: 6ch; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
+.statusbar .session-seg { flex: 0 1e-5 auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
 /* What the status line names is data (taste.md's paste rule): the Backend, this Box, the Host
    count and the Inventory's path are in Iosevka, as in a tmux line. The words around them are Inter. */
 .statusbar .backend .statusbar-cut, .statusbar .box .statusbar-cut, .statusbar .count, .statusbar .path { font-family: var(--font-mono); }
 /* The hints and the mode, at the right end whatever the layout shows before them. */
-.statusbar-right { margin-left: auto; flex: 0 1000 auto; min-width: 0; display: flex; align-items: center; gap: 16px; }
+.statusbar-right { margin-left: auto; flex: 0 1e15 auto; min-width: 0; display: flex; align-items: center; gap: 16px; }
 .statusbar-hints {
   flex: 0 1000 auto; min-width: 0; height: var(--statusbar-h); overflow: hidden;
   display: flex; flex-wrap: wrap; align-content: flex-start; align-items: center;
@@ -352,6 +370,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    hidden second line whole, even the first one, instead of being cut after its keycaps (N3). */
 .statusbar-hints::before { content: ""; width: 0; height: var(--statusbar-h); }
 .statusbar .hint { flex: none; display: inline-flex; align-items: center; gap: 5px; height: var(--statusbar-h); }
+/* A hint that wrapped off the line (FitLine) isn't there at all: not drawn, not read. */
+.statusbar .hint[data-off] { visibility: hidden; }
 .statusbar .hint + .hint { margin-left: 16px; }
 /* A hint that names a command is also its button, for the mouse: the same words, quiet until the
    pointer is on it (taste.md: chrome recedes). */
@@ -391,6 +411,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   height: 100%; padding: 0 12px; line-height: 22px; font-size: var(--text-sm); color: var(--warn);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
+/* A slip in the typing (an unknown command) isn't a warning: the text colour (round 18). */
+.message-line.slip { color: var(--text); }
+/* A command a message names is something you'd type: Iosevka (the paste rule), in the line's colour. */
+.message-cmd { font: 500 var(--text-sm) var(--font-mono); color: inherit; }
 
 /* ---------- The Sidebar ---------- */
 
@@ -730,13 +754,20 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-scroll { flex: 1; overflow: auto; }
 .keys-panel table { width: 100%; border-collapse: collapse; }
 .keys-panel td { padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; line-height: 20px; }
-.keys-panel td:first-child { color: var(--muted); padding: 6px 8px 6px 14px; }
-/* The keys column takes what its keycaps need, the description the rest. */
-.keys-keys { text-align: right; width: 1%; padding-right: 14px !important; }
-.keys-keys .keys-list { max-width: 9em; }
-.keys-list { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 6px; }
+/* Every row is one line (Q220 e; round 18 still found three wrapping at 1280): each row lays out
+   on its own (a shared keys column took the widest row's three chords, 244 px, from every row);
+   its keys take what their caps need and the description the rest, cut at its end and whole in
+   its tooltip. The rows keep their table roles (BindingsPanel.tsx). */
+.keys-panel :is(table, tbody, tr.group, tr.group th) { display: block; }
+.keys-panel tbody tr:not(.group) { display: flex; }
+.keys-panel td:first-child {
+  flex: 1 1 auto; min-width: 0; color: var(--muted); padding: 6px 8px 6px 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.keys-keys { flex: none; text-align: right; padding-right: 14px !important; white-space: nowrap; }
+.keys-list { display: inline-flex; flex-wrap: nowrap; justify-content: flex-end; gap: 4px 6px; }
 /* Where the binding comes from (init.lua or a Plugin), beside its option name. */
-.keys-panel .keys-source { display: inline-block; max-width: 12em; margin-left: 8px; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); }
+.keys-panel .keys-source { display: inline-block; max-width: 12em; margin-left: 4px; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); }
 .keys-panel .keys-source.config { color: var(--accent-ink); }
 /* Its name in init.lua (ticket 32): data, so Iosevka, quiet under the source. */
 .keys-option { display: block; margin-top: 1px; font: var(--text-xs)/16px var(--font-mono); color: var(--muted); }
@@ -749,9 +780,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
 }
 .panel-foot code { font-family: var(--font-mono); color: var(--text); }
-/* A long chord (a Plugin's Ctrl+Shift+Alt+PageDown) wraps between its caps rather than widening
-   the table past the panel. */
-.keys-panel .keys, .keys-panel .chord { flex-wrap: wrap; justify-content: flex-end; }
+/* A chord's caps stay on the row's one line (a long Plugin chord cuts its description instead). */
+.keys-panel .keys, .keys-panel .chord { flex-wrap: nowrap; justify-content: flex-end; }
 .keys-panel tr.group th {
   text-align: left; padding: 14px 14px 5px; font-size: var(--text-xs); font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.05em;
@@ -928,10 +958,19 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   position: absolute; left: 0; right: 0; bottom: 100%;
   background: var(--panel); border-top: 1px solid var(--line-strong); box-shadow: 0 -8px 24px var(--shadow);
 }
-/* At most 760px wide, so a candidate's key stays near what it does in a wide window. */
-.cmdline-candidates ul { list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto; max-width: 760px; }
+/* The candidates are one grid, command | what it does and its keys, as wide as they need up to
+   760px: the keys end each row and every row ends at one x, so a key never floats far from what
+   it does (round 18: the keys sat at a 760px edge mid-band, ~400px past a short label). */
+.cmdline-candidates ul {
+  list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto;
+  display: grid; grid-template-columns: max-content minmax(0, max-content); column-gap: 12px;
+  width: fit-content; max-width: min(760px, 100%); box-sizing: border-box;
+}
 /* A fixed line height: a fallback font (Arabic, CJK) mustn't make its row taller than the rest. */
-.cmdline-candidates li { display: flex; align-items: center; gap: 12px; line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default; }
+.cmdline-candidates li {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center;
+  line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default;
+}
 .cmdline-candidates li.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 .cmdline-candidates .more { margin: 0; padding: 0 12px 4px; line-height: 20px; color: var(--muted); }
 /* A candidate: the command, what it does, its key (S8). */
@@ -941,7 +980,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cmdline-candidates li.selected .cmd-label { color: var(--text); }
+/* What it does, then its keys at the row's end; a command without keys gives its label that room. */
+.cmd-about { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .cmd-keys { margin-left: auto; flex: none; }
+/* An argument (a Host name) has no label or keys: its text takes the row. */
+.cmdline-candidates li > .cmd-id:only-child { grid-column: 1 / -1; }
 .cmdline-input { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 12px; color: var(--accent-ink); }
 .cmdline-input input { flex: 1; height: auto; padding: 0; border: 0; background: transparent; color: var(--text); }
 .cmdline-input input:focus-visible { box-shadow: none; }
@@ -1612,20 +1655,27 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    are one flex line each, stacked. (Round 2 made .picker-list a grid and laid every Finder row
    side by side; styles.test.ts pins this.) */
 .picker-list.finder-list { display: flex; flex-direction: column; }
-/* A selected row that wraps grows; rows never shrink into each other (round 15). */
 .picker-list.finder-list > .finder-row { flex-shrink: 0; }
+/* Round 18: every finder (Help, the tree, Hosts, Folders, Sessions) is one schema, name | path |
+   detail, one line per row, the selected one too (its tooltip has it whole). The path starts at
+   the first tab stop past the name, 8ch apart as a terminal's (layOutNames in Finder.tsx), so
+   names of a like length line up and a short one ("E31") leaves no wide empty column beside cut
+   text (round 17's shared grid column left 280 px). Room runs out in this order: the name's box
+   down to its text, the detail down to 8ch, then the path. */
 .finder-row {
   display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-radius: var(--radius);
-  font: var(--text-md) var(--font-mono); color: var(--muted);
+  font: var(--text-md) var(--font-mono); color: var(--muted); white-space: nowrap;
 }
 /* The cursor: the Picker's and the Sidebar's (raised, 1px accent outline). */
 .finder-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
-.finder-row.selected .finder-label, .finder-row.selected .finder-path { white-space: normal; }
-.finder-row.selected .finder-name, .finder-row.selected .finder-path { overflow-wrap: anywhere; }
-/* A long label wraps on the selected row; its path keeps room to wrap by words, not letters. */
-.finder-row.selected .finder-path { min-width: min(14ch, 35%); }
 .finder-row.unreviewed { cursor: not-allowed; color: var(--muted); }
-.finder-label { flex: 0 1 auto; min-width: 0; display: flex; white-space: nowrap; }
+/* The name's box reaches its tab stop (its basis); it gives that room back before anything is cut
+   (the huge shrink factor), but never below its own text (min-width: auto) or past 60% of the row. */
+.finder-label {
+  flex: 0 1e9 var(--finder-name-basis, auto); max-width: 60%; display: flex;
+}
+/* No path on the row: the name takes the room up to the detail's 8ch. */
+.finder-row:not(:has(> .finder-path)) > .finder-label { flex-grow: 1; max-width: calc(100% - 8ch - 12px); }
 .finder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
 /* The session bar's `*` and `-`: kept in view when the name is cut. */
 .finder-mark { flex: none; color: var(--accent-ink); }
@@ -1635,43 +1685,22 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder .picker-footer .picker-count { margin-left: auto; }
 /* A help topic is prose: the query reads in Inter too. */
 .finder.prose .finder-input { font-family: var(--font-ui); }
-.finder-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); color: var(--muted); }
-/* Sources whose items are prose (help's outline and :helpgrep) read in Inter, as prose does. */
-.finder.prose .finder-name { font-family: var(--font-ui); }
-/* Unless the label is an option's name or a tag: data (taste.md, the paste rule). */
-.finder.prose .finder-name.data { font-family: var(--font-mono); }
-/* Their path (the heading an entry sits under) stays at the right, apart from the label, so the
-   outline's "Themes and colours" never reads as part of the option's name (ticket 54). */
-.finder.prose .finder-path { flex: 0 1 auto; margin-left: auto; text-align: right; }
-/* Prose rows (help) line up as three columns, title, section and tag, so the list scans down
-   (round 11: each row placed its parts differently). The title never goes under 16ch. */
-/* Round 16: one schema for every row. Title, section and tag keep their columns whether or not a
-   row has a section (the tag never slides into the section's place), every row is one line, the
-   selected one too (a tooltip holds the whole), and a tag gives way at 24 characters, so the
-   section between them keeps room to say something. */
-/* The list is one grid and every row a subgrid of it (round 17: per-row tracks cut titles beside
-   empty room, and a fixed tag column inverted Q220 b). The title column is as wide as the widest
-   title up to half the row, the tag as its widest up to 30% and it gives way first, the section
-   takes what's left. */
-.finder.prose .picker-list.finder-list {
-  display: grid; align-content: start; grid-auto-rows: max-content; column-gap: 12px;
-  grid-template-columns: fit-content(50%) minmax(0, 1fr) fit-content(30%);
-}
-.finder.prose .finder-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: 12px; }
-.finder.prose .finder-label { grid-column: 1; }
-.finder.prose .finder-path { grid-column: 2; margin-left: 0; text-align: left; font-family: var(--font-ui); }
-.finder.prose .finder-detail { grid-column: 3; margin-left: 0; max-width: 24ch; justify-self: end; }
-.finder.prose .finder-row.selected :is(.finder-label, .finder-path) { white-space: nowrap; }
-.finder.prose .finder-row.selected :is(.finder-name, .finder-path) { overflow-wrap: normal; }
-.finder.prose .finder-row.selected .finder-path { min-width: 0; }
-/* No tag on the row: its section takes the tag's room too. */
-.finder.prose .finder-path:last-child { grid-column: 2 / 4; }
-/* The detail (a help tag, an option's name) gives way before the label: cut at its end, never wider
-   than 40% of the row, so a long tag can't squeeze the title (round 10). Data, so Iosevka. */
+/* Where it sits (a group, a section) or what it is (a help entry's first line): muted, cut last. */
+.finder-path { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--text-sm); color: var(--muted); }
+/* Sources whose items are prose (help's outline and :helpgrep) read in Inter, as prose does, */
+.finder.prose :is(.finder-name, .finder-path) { font-family: var(--font-ui); }
+/* unless it's an option's name or a tag, in either column: data (taste.md, the paste rule). */
+.finder.prose :is(.finder-name, .finder-path).data { font-family: var(--font-mono); }
+/* The detail (a help tag, an address, a status) sits at the row's end. It gives way before the
+   path (down to 8ch) but only once the name's spare room is used; no fixed cap (round 17's 40%
+   cut tags beside that spare room). Data, so Iosevka. */
 .finder-detail {
-  margin-left: auto; flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-left: auto; flex: 0 1e5 auto; min-width: 8ch; overflow: hidden; text-overflow: ellipsis; text-align: right;
   font: var(--text-sm) var(--font-mono); color: var(--muted);
 }
+/* In a data finder the detail is an address or a status, never cut mid-token (taste.md's data
+   cells; a long IPv6 address already drops whole groups): the path gives way instead. */
+.finder:not(.prose) .finder-detail { flex: none; min-width: 0; }
 .finder-legend { font-family: var(--font-mono); white-space: nowrap; }
 
 /* ---------- The Config's problems (ticket 21) ---------- */
@@ -2072,6 +2101,9 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
   width: clamp(var(--pane-min), var(--pane-w, var(--pane-default)), var(--pane-max));
 }
 .panel-frame[data-kind="help"] { --pane-default: clamp(var(--keys-width), 40vw, 600px); }
+/* Key bindings' rows are one line (round 18): a little more room from 1150 px up, so fewer
+   descriptions are cut (15 at 320 px, 11 at 360). */
+.panel-frame[data-kind="keys"] { --pane-default: clamp(var(--keys-width), 28vw, 360px); }
 .panel-frame[data-kind="view"] { --pane-default: clamp(var(--keys-width), 40vw, 640px); }
 .panel-frame[data-side="left"] { order: -1; }
 .screen .body > .panel-frame > :first-child {

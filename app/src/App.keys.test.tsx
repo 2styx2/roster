@@ -253,6 +253,9 @@ describe("The command line", () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:conect x{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("Not a command: conect");
+    // A slip in the typing is said plainly, not as a warning, and the command it names is Iosevka.
+    expect(screen.getByRole("status")).toHaveClass("slip");
+    expect(screen.getByRole("status").querySelector("code.message-cmd")).toHaveTextContent(/^:help commands$/);
     await user.keyboard(`${LEADER}:connect nope{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("No Host named nope");
     const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;
@@ -312,6 +315,14 @@ describe("The Key bindings panel", () => {
     await user.keyboard("close the s");
     const shown = within(panel()).getAllByRole("row").filter((r) => !r.classList.contains("group"));
     expect(shown.map((r) => r.textContent)).toEqual([expect.stringMatching(/Close the Session/)]);
+  });
+
+  it("keeps each description whole in its tooltip, since a row is one line (round 18)", async () => {
+    const user = await ready({ bindings: { leader: { t: "next" } } });
+    await user.keyboard(`${LEADER}K`);
+    const [builtin, config] = rowOf("Next Session").map((r) => r.querySelector("td"));
+    expect(builtin).toHaveAttribute("title", "Next Session");
+    expect(config).toHaveAttribute("title", "Next Session init.lua");
   });
 
   it("shows a changed Leader as coming from the Config", async () => {

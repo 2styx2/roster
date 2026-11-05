@@ -103,6 +103,15 @@ describe("the tree finder (␣ e in Focus)", () => {
     expect(items.some((i) => i.command.startsWith("session"))).toBe(false);
   });
 
+  it("leaves the section out of the path when every row comes from one section (round 18)", () => {
+    const items = finderResults(source("tree"), context(), "").items;
+    expect(items).toHaveLength(12);
+    expect(items[0]).toMatchObject({ label: hosts.hosts[0]!.name, path: "subnet-1" });
+    expect(items.some((i) => i.path?.startsWith("Inventory"))).toBe(false);
+    const inventory = finderResults(source("inventory"), context(undefined, folders), "").items;
+    expect(inventory[0]?.path).toBe("subnet-1");
+  });
+
   it("matches the path too: a Folder's name finds its Hosts", () => {
     const items = finderResults(source("tree"), context(undefined, folders), "lab esxi").items;
     expect(labels(items)).toEqual([b]);

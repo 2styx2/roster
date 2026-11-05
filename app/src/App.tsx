@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
@@ -167,6 +168,9 @@ import { PluginManager, type DemoPlugins } from "./plugins/manager";
 import { ViewPanel } from "./view/ViewContent";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
+import { FitLine } from "./chrome/FitLine";
+import { MessageText } from "./ui/MessageText";
+import { headPart } from "./chrome/path";
 import { registerPanel } from "./panel/command";
 import { GraphMemory } from "./graph/memory";
 import { registerViews, sectionsFor, ViewHost } from "./view/views";
@@ -3225,14 +3229,24 @@ function Workspace({
     switch (id) {
       case "backend":
         return (
-          <span key={id} className="backend" title={info.backend}>
+          <span
+            key={id}
+            className="backend"
+            title={info.backend}
+            style={keepChars(info.backend)}
+          >
             <span className="status-dot" aria-hidden="true" />
             <span className="statusbar-cut">{info.backend}</span>
           </span>
         );
       case "box":
         return (
-          <span key={id} className="box" title={info.inventory.box}>
+          <span
+            key={id}
+            className="box"
+            title={info.inventory.box}
+            style={keepChars(middleCut(info.inventory.box, 24))}
+          >
             <span className="box-mark" aria-hidden="true" />
             <span className="statusbar-cut" title={info.inventory.box}>
               {middleCut(info.inventory.box, 24)}
@@ -3253,7 +3267,12 @@ function Workspace({
             ? "connecting"
             : (tab.auth ?? (known ? hostDot(known) : "key"));
         return (
-          <span key={id} className="session-seg" title={`Session ${tab.label}`}>
+          <span
+            key={id}
+            className="session-seg"
+            title={`Session ${tab.label}`}
+            style={keepChars(middleCut(tab.label, 24))}
+          >
             <StateDot
               dot={dot}
               lit={ended || connectPhase(tab) ? undefined : "current"}
@@ -3273,6 +3292,7 @@ function Workspace({
               key={id}
               className="box"
               title={`Inventory ${inventories.name}: ${inventories.path ?? ""}`}
+              style={keepChars(`${inventories.name} Inventory`)}
             >
               <span className="statusbar-cut">
                 {inventories.name} Inventory
@@ -3286,10 +3306,20 @@ function Workspace({
             key={id}
             className="path"
             title={`${info.inventory.path}\n${info.command.join(" ")}`}
+            style={pathKeep(info.inventory.path)}
           >
-            {/* Cut before its file name, never through it (round 10: "…/infra-c..." lost roster.yml). */}
+            {/* Cut in its middle: its first folder and its file name stay ("~/…/roster.yml"), the
+                folders between give way from their start (round 10: "…/infra-c..." lost roster.yml;
+                round 18: the start went first). */}
             <span className="path-text">
-              <span className="path-dir">{dirPart(info.inventory.path)}</span>
+              <span className="path-head">{headPart(info.inventory.path)}</span>
+              <span className="path-dir">
+                <span>
+                  {dirPart(info.inventory.path).slice(
+                    headPart(info.inventory.path).length,
+                  )}
+                </span>
+              </span>
               <span className="path-base">{basePart(info.inventory.path)}</span>
             </span>
           </span>
@@ -3314,7 +3344,7 @@ function Workspace({
       case "hints":
         // They drop out whole, last first, when the bar runs out of room (never cut mid-key).
         return (
-          <span key={id} className="statusbar-hints">
+          <FitLine key={id} className="statusbar-hints">
             {stale.length > 0 && (
               <span
                 className="hint stale"
@@ -3358,7 +3388,7 @@ function Workspace({
                 </span>
               );
             })}
-          </span>
+          </FitLine>
         );
       case "mode":
         return (
@@ -3715,14 +3745,14 @@ function Workspace({
             {/* Its line is always there, as Neovim's message row is: a message coming or going never
             resizes the pane (or the terminal, which would tell the remote side). */}
             <div
-              className="message-line"
+              className={`message-line${typeof message !== "string" && message.kind === "slip" ? " slip" : ""}`}
               role="status"
               title={shownText(message, allMessages) || undefined}
             >
               {spokenMessage ? (
                 <span className="visually-hidden">{spokenMessage}</span>
               ) : (
-                shownText(message, allMessages)
+                <MessageText text={shownText(message, allMessages)} />
               )}
             </div>
           </div>
@@ -4488,6 +4518,17 @@ function mapKey(
 function dirPart(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return i < 0 ? "" : path.slice(0, i + 1);
+}
+/** How much of a status segment's text stays when the bar runs out of room: 6 characters, or all
+ * of a shorter one (the segment's --keep, round 18). */
+function keepChars(text: string): CSSProperties {
+  return { "--keep": `${Math.min(6, [...text].length)}ch` } as CSSProperties;
+}
+/** The least of the Inventory's path the status bar draws: its first folder, "…/" and its file
+ * name, in characters (Iosevka), or the whole path when that's shorter (round 18). */
+function pathKeep(path: string): CSSProperties {
+  const least = [...headPart(path)].length + 2 + [...basePart(path)].length;
+  return { "--keep": `${Math.min(least, [...path].length)}ch` } as CSSProperties;
 }
 function basePart(path: string): string {
   return path.slice(dirPart(path).length);

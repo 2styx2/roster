@@ -145,7 +145,7 @@ In every text field (the lock screen, the command line, the Picker and finders, 
 
 ## Completion in the command line
 
-The command line completes like bash or zsh, and like Neovim's wildmenu. The candidates for what's typed show in a list above the line: command names (with what each does and its key), then each command's arguments: Hosts (`connect`, `open`, `edit`, `check`, `review`), Folders (`folder add HOST `), Themes, finder sources, view modes, `:config`'s and `:vault`'s subcommands, `:source`'s files, the Sidebar's rows for `fold` (`group:subnet-42`, `folders:Lab`, `section:sessions`) and the open Sessions' numbers for `session` and `close`. They come from each command's `complete` hook and the registries, so a command from the Config or a Plugin completes the same way.
+The command line completes like bash or zsh, and like Neovim's wildmenu. The candidates for what's typed show in a list above the line: command names (with what each does and its key), then each command's arguments: Hosts (`connect`, `open`, `edit`, `check`, `review`), Folders (`folder add HOST `), Themes, finder sources, view modes, `:config`'s and `:vault`'s subcommands, `:source`'s files, the Sidebar's rows for `fold` (`group:subnet-42`, `folders:Lab`, `section:sessions`) and the open Sessions' numbers for `session` and `close`. They come from each command's `complete` hook and the registries, so a command from the Config or a Plugin completes the same way. The row the line holds is marked as the Picker marks its selection: the one Tab moved to, or the candidate the typed line already is (`help` typed marks `help`). Enter runs the line as typed, so nothing is marked while it's only a prefix (`he`).
 
 | Keys (`keys.cmdline`) | Action | What it does |
 |---|---|---|

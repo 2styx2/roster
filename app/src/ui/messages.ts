@@ -43,8 +43,21 @@ export interface Quiet {
   background?: true;
 }
 
-/** What goes on the message line: an error, a warning or an answer (always shown), or a quiet one. */
-export type Message = string | Quiet;
+/** A slip in what was typed (an unknown command, a missing argument): always shown, but in the
+ * text colour, not the warning's yellow, since nothing went wrong but the typing (taste.md:
+ * calm under failure; round 18). */
+export interface Slip {
+  kind: "slip";
+  text: string;
+}
+
+/** What goes on the message line: an error, a warning or an answer (always shown), a slip in
+ * what was typed (always shown, plain), or a quiet one. */
+export type Message = string | Quiet | Slip;
+
+export function slip(text: string): Slip {
+  return { kind: "slip", text };
+}
 
 export function quiet(said: string, text: string = said): Quiet {
   return { kind: "quiet", said, text };
@@ -60,7 +73,7 @@ export function backgroundQuiet(said: string, text: string = said): Quiet {
  * background that wouldn't show while the line shows something (an error, a warning, an answer),
  * which stays. Errors always show (Q115 (a)); `:messages` keeps `next` either way (decision Q162). */
 export function lineAfter(now: Message, next: Message, all: boolean): Message {
-  const unseen = typeof next !== "string" && next.background === true && !all;
+  const unseen = typeof next !== "string" && next.kind === "quiet" && next.background === true && !all;
   return unseen && shownText(now, all) !== "" ? now : next;
 }
 
@@ -72,13 +85,14 @@ export function textOf(message: Message): string {
 /** What the message line shows. */
 export function shownText(message: Message, all: boolean): string {
   if (typeof message === "string") return message;
+  if (message.kind === "slip") return message.text;
   return all ? message.text : "";
 }
 
 /** What the message line holds as visually hidden text: a quiet message's short form while quiet
  * (with every message on, the line says it all). */
 export function spokenText(message: Message, all: boolean): string {
-  return typeof message === "string" || all ? "" : message.said;
+  return typeof message === "string" || message.kind === "slip" || all ? "" : message.said;
 }
 
 export class MessagesChoice {
@@ -143,7 +157,7 @@ export class MessageLog {
   push(message: Message, at: Date = new Date()) {
     const text = textOf(message);
     if (!text) return;
-    this.set([...this.snap, { at, text, quiet: typeof message !== "string" }].slice(-KEPT));
+    this.set([...this.snap, { at, text, quiet: typeof message !== "string" && message.kind === "quiet" }].slice(-KEPT));
   }
 
   clear() {
