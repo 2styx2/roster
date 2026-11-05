@@ -273,8 +273,9 @@ def login_problem(e, h, what="ssh"):
                        fix=f"fix the name in {h['name']}'s auth: in roster.yml, or rename the item in the vault")
     if isinstance(e, providers.SeveralItems):
         how = "are named" if e.exact else "match"
-        listed = "; ".join(f"'{m['name']}' (edited {m['revised'] or '?'}"
-                           + (f", {', '.join(m['uris'])}" if m["uris"] else "") + ")" for m in e.matches)
+        listed = "; ".join(f"'{m['name']}'" + (f" ({about})" if (about := ", ".join(
+            ([f"edited {m['revised']}"] if m.get("revised") else []) + list(m["uris"]))) else "")
+            for m in e.matches)
         return Problem(SEVERAL_ITEMS, f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}",
                        {"matches": e.matches},
                        fix="delete or rename the extra items in the vault, or use the item's id in auth:")

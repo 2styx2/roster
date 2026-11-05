@@ -188,35 +188,55 @@ def _bw_logout(ctx):
 
 
 def _bw_list(ctx, *search):
-    r = _bw(ctx, "list", "items", *(("--search", search[0]) if search else ()))
+    """The filter's rows for `bw list items [--search SEARCH]` (Q191, T229), or [] when bw can't say (out of time is
+    still TimedOut): only for a message's suggestions, which go without."""
     try:
-        return json.loads(r.stdout or "[]") if r.returncode == 0 else []
-    except json.JSONDecodeError:
+        return _bw_rows(ctx, *(("--search", search[0]) if search else ()))
+    except TimedOut:
+        raise
+    except SecretError:
         return []
 
 
-def _bw_summary(item):
-    """What may be shown about an item: its name, when it was last edited, its URIs. Never a value."""
-    uris = [u.get("uri") for u in (item.get("login") or {}).get("uris") or [] if u.get("uri")]
-    return {"name": item.get("name", ""), "revised": str(item.get("revisionDate") or "")[:10] or None, "uris": uris}
+def _bw_summary(row):
+    """What may be shown about an item: its name and URIs (from the filter's row, Q191). Never a value. The filter
+    has no edit date, so `revised` is None."""
+    return {"name": row["name"], "revised": None, "uris": row["uris"]}
+
+
+def _bw_get(ctx, ref):
+    """`bw get item REF`: (the item, "") when REF names exactly one, else (None, bw's stderr). The one item is read
+    whole, its password, TOTP seed, notes and custom fields too: bw has no other way to give a custom field, and the
+    Login being resolved needs one of them (Q191 as amended by T229)."""
+    r = _bw(ctx, "get", "item", ref)
+    if r.returncode != 0:
+        return None, errtext(r, stdout=False)
+    try:
+        return json.loads(r.stdout), ""
+    except json.JSONDecodeError:
+        raise SecretError("couldn't read `bw get item` output") from None
 
 
 def _bw_item(ctx, ref):
+    """The one item REF names, by `bw get item` (its id or a name). Several or none are looked up in the filter's
+    rows (T229, #443): the one with exactly that name is then fetched by its id; near names are names only."""
     check_item_name(ref)
-    r = _bw(ctx, "get", "item", ref)
-    if r.returncode == 0:
-        return json.loads(r.stdout)
-    err = errtext(r)
+    item, err = _bw_get(ctx, ref)
+    if item is not None:
+        return item
     if "More than one" in err:
         listed = _bw_list(ctx, ref)
-        exact = [i for i in listed if i.get("name") == ref]
+        exact = [i for i in listed if i["name"] == ref]
         if len(exact) == 1:
-            return exact[0]
+            item, err = _bw_get(ctx, exact[0]["id"])
+            if item is not None:
+                return item
+            raise SecretError(f"`bw get item` failed: {err}")
         matches = [_bw_summary(i) for i in (exact or listed)]
         raise SeveralItems(f"several Bitwarden items match '{ref}' - use the item's id instead "
                            "(the Bitwarden app shows it)", ref, matches, exact=bool(exact))
     if "Not found" in err:
-        near = near_names(ref, [i.get("name", "") for i in _bw_list(ctx)])
+        near = near_names(ref, [i["name"] for i in _bw_list(ctx)])
         raise ItemNotFound(f"no Bitwarden item matches '{ref}'", ref, near)
     raise SecretError(f"`bw get item` failed: {err}")
 
@@ -337,14 +357,11 @@ def _bw_create(item, ctx):
     collection = target["save_to"]["collection"] if target["kind"] == "collection" else None
     if _bw(ctx, "sync").returncode != 0:                   # see items made elsewhere since this run's first sync
         say("warning      `bw sync` failed - checking for a duplicate name in the vault as last synced")
-    r = _bw(ctx, "list", "items", "--search", name)
     try:
-        listed = json.loads(r.stdout) if r.returncode == 0 else None
-    except json.JSONDecodeError:
-        listed = None
-    if listed is None:
-        raise WriteFailed(f"couldn't check the vault for an item named '{name}': {errtext(r)}")
-    same = [_bw_summary(i) for i in listed if i.get("name") == name]
+        listed = _bw_rows(ctx, "--search", name)          # through the filter (T229): names and URIs, never a value
+    except SecretError as e:
+        raise WriteFailed(f"couldn't check the vault for an item named '{name}': {e}") from None
+    same = [_bw_summary(i) for i in listed if i["name"] == name]
     if same:
         raise ItemExists(f"a Bitwarden item named '{name}' already exists - Logins look items up by exact name, "
                          "so roster won't make a second one", name, same)
@@ -366,17 +383,30 @@ def _bw_create(item, ctx):
             raise _read_only(target, f" (Bitwarden: {err})")
         raise WriteFailed(f"Bitwarden didn't create '{name}': {err or f'exit {r.returncode}'}")
     if r is not None:
-        try:
+        try:                                               # the new item as bw prints it: the password is roster's own
             made = json.loads(r.stdout)
         except json.JSONDecodeError:
             made = {}
+        made = made if isinstance(made, dict) else {}
     if not made.get("id"):                                 # bw's answer didn't parse: find it, so it can be undone
-        made = next((i for i in _bw_list(ctx, name) if i.get("name") == name), None)
+        made = next((i for i in _bw_list(ctx, name) if i["name"] == name), None)
         if made is None:
             raise WriteFailed(f"Bitwarden said it created '{name}' but it isn't in the vault - check it there")
-    if collection and collection not in (made.get("collectionIds") or []):
+    if collection and not _in_collection(ctx, made, collection):
         _refused_collection(ctx, made, target)
     return {"id": made["id"], "name": made.get("name", name), "target": target}
+
+
+def _in_collection(ctx, made, collection):
+    """Whether the new item MADE is in COLLECTION: bw's create answer says (collectionIds); a filter row (the answer
+    was lost, T229) doesn't, so the collection's items are listed through the filter, by id."""
+    if "collectionIds" in made:
+        return collection in (made.get("collectionIds") or [])
+    try:
+        return any(i["id"] == made["id"] for i in _bw_rows(ctx, "--collectionid", collection, floor=LOOKUP_FLOOR))
+    except SecretError as e:
+        raise WriteFailed(f"Bitwarden saved '{made.get('name', '')}', but roster couldn't check it went into the "
+                          f"collection ({e}) - check it in the vault") from None
 
 
 def _refused_collection(ctx, made, target):
@@ -395,16 +425,10 @@ LOOKUP_FLOOR = 7            # s for each of the sync and the list after a create
 
 
 def _bw_lookup(ctx, name):
-    """The items named exactly NAME, synced from the server first. Raises SecretError if bw can't say."""
+    """The filter's rows (Q191, T229) for the items named exactly NAME, synced from the server first. Raises
+    SecretError if bw can't say."""
     _bw(ctx, "sync", floor=LOOKUP_FLOOR)
-    r = _bw(ctx, "list", "items", "--search", name, floor=LOOKUP_FLOOR)
-    try:
-        listed = json.loads(r.stdout) if r.returncode == 0 else None
-    except json.JSONDecodeError:
-        listed = None
-    if listed is None:
-        raise SecretError(errtext(r) or f"`bw list items` failed (exit {r.returncode})")
-    return [i for i in listed if i.get("name") == name]
+    return [i for i in _bw_rows(ctx, "--search", name, floor=LOOKUP_FLOOR) if i["name"] == name]
 
 
 def _created_anyway(ctx, name):
@@ -486,11 +510,12 @@ def _filter_argv():
     return [sys.executable, "-I", "-S", FILTER, str(LIST_CAP)]
 
 
-def _bw_items(ctx, mapped):
-    _bw_ready(ctx)
+def _bw_rows(ctx, *search, floor=1):
+    """`bw list items` (`--search SEARCH`, `--collectionid ID`, ...) through the filter: {id, name, uris, username}
+    per login item, never a value (Q191). The vault must be ready. SecretError if bw or the filter can't say."""
     key = session_key()
-    bw, filt = ctx.run_filtered(["bw", "list", "items", "--nointeraction"], _filter_argv(),
-                                env={"BW_SESSION": key} if key else None)
+    bw, filt = ctx.run_filtered(["bw", "list", "items", *search, "--nointeraction"], _filter_argv(),
+                                env={"BW_SESSION": key} if key else None, floor=floor)
     if filt.returncode == 3:                    # first: bw itself then fails writing to a pipe no one reads
         raise SecretError(f"the vault has too many items for roster to list (over {LIST_CAP // (1024 * 1024)} MB "
                           "from `bw list items`)")
@@ -510,6 +535,11 @@ def _bw_items(ctx, mapped):
         raise SecretError("roster couldn't read the list of Bitwarden items (`bw list items` didn't print a list "
                           "of items)") from None
     return rows
+
+
+def _bw_items(ctx, mapped):
+    _bw_ready(ctx)
+    return _bw_rows(ctx)
 
 
 def _bw_sync(ctx):

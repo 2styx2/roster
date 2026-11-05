@@ -25,7 +25,7 @@ The # is a row's id, given in the order rows were added and cited by the code (`
 | 6 | Vault CLI missing / not logged in | New Box; for KeePassXC, no `providers: kp: database:` (or `vault.kp.database` in init.lua) or the `.kdbx` (or key file) isn't on this Box | Box | roster's wording, e.g. "Bitwarden CLI isn't logged in - run `bw login` once", "KeePassXC database /home/you/roster.kdbx isn't there - …" | Show the command |
 | 7 | Vault locked | Idle lock, or locked elsewhere | Vault | (lock screen) | Unlock; the Session opens afterwards (ticket 06) |
 | 8 | Vault item not found | Typo in `bw:NAME`, item renamed or deleted | Vault / Inventory | "No vault item named 'esxi-02 ssh' (Login of esxi-02)" | Show near-matching item names; edit the Login |
-| 9 | Several vault items match | Duplicate names | Vault | "Two vault items are named 'esxi-02 ssh'" | List them (name, last edited, URI); fix in the vault |
+| 9 | Several vault items match | Duplicate names | Vault | "Two vault items are named 'esxi-02 ssh'" | List them (name, URI; last edited where the vault says, Bitwarden's listing doesn't, Q191 (p)); fix in the vault |
 | 10 | Item has no password / no such field | Item made without a password, or `#FIELD` typo | Vault | "Vault item 'esxi-02 ssh' has no password" | Edit the item in the vault |
 | 11 | Wrong password or user | Password rotated on the Host but not in the vault, or the reverse | Vault / Host | "esxi-02 refused the password for user root" | Check the item; save it again after a successful login |
 | 12 | Key refused | `enroll: true` but the key isn't installed (setup not run, key removed) | Box / Host | "esxi-02 didn't accept this Box's key" | Run `roster setup --only esxi-02`, or set `enroll: false` |

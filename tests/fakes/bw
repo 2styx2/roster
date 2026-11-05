@@ -6,7 +6,8 @@
 # FAKE_BW_FIELD_FAIL=TEXT: `bw get uri` / `bw get username` fail with TEXT on stderr.
 # FAKE_BW_STDOUT_LOG=FILE: one line per `bw get item|uri|username`: the field and where its stdout went (devnull, pipe).
 # `bw list items` prints each item whole, password, TOTP seed and notes too, as bw does (roster pipes it into its filter,
-#   Q191). FAKE_BW_LIST_RAW=TEXT: `bw list items` prints TEXT instead (malformed output).
+#   Q191). `--search TEXT` and `--collectionid ID` narrow it as bw does. FAKE_BW_LIST_RAW=TEXT: `bw list items`
+#   prints TEXT instead (malformed output).
 # `bw status` says lastSync: FAKE_BW_LAST_SYNC (an ISO time), or the last `bw sync`'s time once one ran (kept in
 #   FAKE_BW_STATE when it's set, else in FAKE_BW_SYNC_FILE). FAKE_BW_SYNC_FAIL=TEXT: `bw sync` fails with TEXT.
 # FAKE_BW_ITEMS=FILE: a JSON list of items to use instead of the ones below (read on every call). `bw create item`
@@ -242,7 +243,9 @@ if a[:2] == ["delete", "item"]:
 if a[:2] == ["list", "items"]:
     if "FAKE_BW_LIST_RAW" in os.environ: sys.stdout.write(os.environ["FAKE_BW_LIST_RAW"]); sys.exit()
     search = a[a.index("--search") + 1].lower() if "--search" in a else ""
-    print(json.dumps([i for i in items if search in i["name"].lower()])); sys.exit()
+    coll = a[a.index("--collectionid") + 1] if "--collectionid" in a else None
+    print(json.dumps([i for i in items if search in i["name"].lower()
+                      and (coll is None or coll in (i.get("collectionIds") or []))])); sys.exit()
 q = a[2]
 def stdout_was(what):
     """FAKE_BW_STDOUT_LOG: where this call's stdout goes, "devnull" or "pipe" (roster must never read an item)."""
