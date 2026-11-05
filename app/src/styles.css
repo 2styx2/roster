@@ -1091,7 +1091,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* The mark and this Box centred over the form, as every other empty state is centred; the
    field's label stays left over its field (Q213). Optically a little above the middle, as the
    connect card sits. */
-.lock-panel { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.lock-panel { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; position: relative; }
+/* After a wrong password, what to do if it's forgotten: under the block and out of its flow, so
+   the centred lock doesn't move when it comes (round 18). Quiet: a hint, not a second error. */
+.lock-forgot { position: absolute; top: calc(100% + 12px); left: 0; right: 0; margin: 0; font-size: var(--text-xs); line-height: 1.5; }
+.lock-forgot code { color: var(--text); }
 .lock-mark { margin-bottom: 6px; align-self: center; }
 .lock-panel > .lock-box { align-self: center; }
 /* The error's line is there before any error, so nothing moves when one appears. */

@@ -78,6 +78,29 @@ describe("the Lock", () => {
     await screen.findByRole("main", { name: /workspace/i });
   });
 
+  it("after a wrong password says what to do if it's forgotten; Tab stays on the lock's controls (round 18)", async () => {
+    const { user } = await start();
+    await screen.findByLabelText(/master password/i);
+    expect(screen.queryByText(/forgot it\?/i)).toBeNull();
+    await unlock(user, "hunter2");
+    await screen.findByRole("alert");
+    expect(screen.getByText(/forgot it\?/i)).toHaveTextContent("roster never keeps it");
+    // field -> Unlock -> field, both ways: never an invisible stop on <body>.
+    expect(passwordField()).toHaveFocus();
+    const submit = screen.getByRole("button", { name: /^Unlock/ });
+    await user.tab();
+    expect(submit).toHaveFocus();
+    await user.tab();
+    expect(passwordField()).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(submit).toHaveFocus();
+    // Enter on Unlock with the field empty unlocks nothing; the right password still does.
+    await user.keyboard("{Enter}");
+    expect(lockScreen()).not.toBeNull();
+    await unlock(user);
+    await screen.findByRole("main", { name: /workspace/i });
+  });
+
   it("ignores the Leader while locked", async () => {
     const { user } = await start();
     await screen.findByLabelText(/master password/i);
