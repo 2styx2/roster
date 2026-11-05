@@ -34,8 +34,9 @@ describe("Quick Connect", () => {
     await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
     const q = await question("root@10.0.0.5");
     expect(q).toHaveTextContent("roster hasn't seen a key at this address before.");
-    // One template with the Inventory's question (round 18): the address on its own line.
-    expect(within(q).getByText("10.0.0.5:22")).toHaveClass("connect-address-line");
+    // One template with the Inventory's question (round 18): the address on its own line, as it
+    // was typed plus the port, so it doesn't repeat the title's address (round 19).
+    expect(within(q).getByText("root@10.0.0.5:22")).toHaveClass("connect-address-line");
     expect(within(q).getByText("ssh-ed25519")).toBeInTheDocument();
     expect(within(q).getByText(FAKE_FINGERPRINT)).toBeInTheDocument();
     const field = within(q).getByLabelText("Password for root");
@@ -73,7 +74,7 @@ describe("Quick Connect", () => {
     // The Enter key on Trust is there from the start, dim until the tick: ticking never resizes it.
     expect(trust.querySelector(".btn-keys.key-dim")).not.toBeNull();
     await user.click(trust);
-    expect(within(q).getByRole("alert")).toHaveTextContent("Tick the box above first.");
+    expect(within(q).getByRole("alert")).toHaveTextContent("Tick it to trust and connect.");
     box.focus();
     await user.keyboard("{Enter}");
     await user.type(within(q).getByLabelText("Password for root"), `${FAKE_HOST_PASSWORD}{Enter}`);
@@ -86,6 +87,67 @@ describe("Quick Connect", () => {
     await user.click(box);
     expect(trust.querySelector(".btn-keys.key-dim")).toBeNull();
     expect(within(q).getByRole("alert")).toHaveTextContent("");
+  });
+
+  it("a blocked Enter brings focus to the box and marks it until it's ticked: the button, Enter in the field, on the card (round 19)", async () => {
+    const backend = backendAt();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+    const q = await question("root@10.0.0.5");
+    const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
+    const row = box.closest("label");
+    const field = within(q).getByLabelText("Password for root");
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    // The words are beside the box, not in the footer, and don't say where the box is.
+    expect(within(q).getByRole("alert").closest(".key-actions")).toBeNull();
+    expect(row).not.toHaveAttribute("data-nudged");
+    for (const press of [
+      () => user.click(trust),
+      () => user.type(field, `${FAKE_HOST_PASSWORD}{Enter}`),
+      async () => {
+        q.focus();
+        await user.keyboard("{Enter}");
+      },
+    ]) {
+      await user.click(field);
+      await press();
+      expect(box).toHaveFocus();
+      expect(row).toHaveAttribute("data-nudged");
+      expect(within(q).getByRole("alert")).toHaveTextContent("Tick it to trust and connect.");
+      expect(backend.quickConnects()).toEqual([]);
+    }
+    await user.keyboard(" ");
+    expect(box).toBeChecked();
+    expect(row).not.toHaveAttribute("data-nudged");
+    expect(within(q).getByRole("alert")).toHaveTextContent("");
+    expect(backend.quickConnects()).toEqual([]);
+  });
+
+  it("in a short window the box sits right under the key it vouches for, before the advice (round 19)", async () => {
+    const real = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes("max-height: 460px"),
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const user = await ready();
+      await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+      const q = await question("root@10.0.0.5");
+      const print = q.querySelector(".key-print");
+      const row = q.querySelector(".quick-checked-row");
+      const advice = q.querySelector(".key-advice");
+      expect(print?.nextElementSibling?.contains(row ?? null) || print?.nextElementSibling === row).toBe(true);
+      // In the DOM too, so Tab goes box, help pointer, password, as it reads.
+      expect(row!.compareDocumentPosition(advice!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(within(q).getByLabelText("I've checked this key")).toHaveFocus();
+      await user.tab();
+      expect(within(q).getByRole("button", { name: /:help host-keys/ })).toHaveFocus();
+      await user.tab();
+      expect(within(q).getByLabelText("Password for root")).toHaveFocus();
+    } finally {
+      window.matchMedia = real;
+    }
   });
 
   it("opens from the Picker: typing user@address:port offers it first", async () => {

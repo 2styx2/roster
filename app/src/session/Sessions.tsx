@@ -12,6 +12,7 @@ import type {
   TerminalViewComponent,
 } from "../terminal/TerminalView";
 import { Keys } from "../ui/Keys";
+import { useMediaMatch } from "../ui/useMediaMatch";
 import {
   tabFacts,
   type PasswordPrompt,
@@ -244,6 +245,9 @@ export function ConnectCard({
   const [checkedKey, setCheckedKey] = useState(false);
   // Enter before the tick isn't silent: the error room says what's missing (round 16).
   const [nudged, setNudged] = useState(false);
+  // A short window (the size where the map gives way) puts the box right under the key it
+  // vouches for, so the two are on screen together at 480×320 (round 19).
+  const short = useMediaMatch("(max-height: 460px)");
   const question =
     (phase === "asking" || phase === "trusting") &&
     hostKey !== null &&
@@ -251,6 +255,33 @@ export function ConnectCard({
   const asksPassword =
     phase === "password" && prompt !== null && answers?.connect !== undefined;
   const asking = question || asksPassword;
+  // Scrolls Quick Connect's card just enough that the fingerprint's top and "I've checked this
+  // key" are in view together, clear of the sticky title, the footer and their 12 px fades
+  // (round 19: at 480×320 the box asked about a key scrolled out of sight).
+  const revealBox = () => {
+    const c = card.current;
+    const print = c?.querySelector(".key-print");
+    const row = checkedBox.current?.closest("label");
+    if (!c || !print || !row) return;
+    const fade = 12;
+    const top =
+      (c.querySelector(".connect-title")?.getBoundingClientRect().bottom ??
+        c.getBoundingClientRect().top) + fade;
+    const bottom =
+      (c.querySelector(".key-actions")?.getBoundingClientRect().top ??
+        c.getBoundingClientRect().bottom) - fade;
+    const from = print.getBoundingClientRect().top;
+    const to = row.getBoundingClientRect().bottom;
+    let next = c.scrollTop;
+    if (from < top) next -= top - from;
+    else if (to > bottom) next += Math.min(to - bottom, from - top);
+    // Once it scrolls at all, at least as far as the title takes to pin (the card's top padding),
+    // so the title doesn't creep a pixel when the card scrolls on; and in whole pixels, so the
+    // sticky footer never lands half a pixel off.
+    const pin = parseFloat(getComputedStyle(c).paddingTop) || 0;
+    if (next > 0 && next < pin) next = pin;
+    c.scrollTop = Math.round(next);
+  };
   // Keyboard first: the question takes focus (after the terminal, which the active pane focuses
   // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q222). Once answered,
   // focus goes back to the terminal.
@@ -274,7 +305,9 @@ export function ConnectCard({
         // of the sticky title and buttons (scroll-padding; round 16). A button in the sticky
         // footer is always in view, so the card stays at its top (round 18: Cancel's scroll had
         // opened it 53 px down at 480×320, its first lines under the title).
-        if (target && !target.closest(".key-actions"))
+        // Quick Connect's box is shown with the key it vouches for (round 19).
+        if (target && target === checkedBox.current) revealBox();
+        else if (target && !target.closest(".key-actions"))
           target.scrollIntoView?.({ block: "nearest" });
       }
     if (asking) asked.current = true;
@@ -323,7 +356,9 @@ export function ConnectCard({
   // The questions show it on its own line under the title (one template for both, round 18).
   const where = question
     ? quick
-      ? endpoint(quick)
+      ? // What was typed, plus the port (round 19): the title already names the address, so
+        // this line keeps the user it logs in as instead of repeating it.
+        `${quick.user}@${endpoint(quick)}`
       : `${hostKey.address}:${hostKey.port}`
     : quick
       ? null
@@ -331,6 +366,16 @@ export function ConnectCard({
         ? `${prompt.address}:${prompt.port}`
         : address;
   const asksQuick = question && quick !== null && answers.connect !== undefined;
+  // Enter (or Trust) before the tick: the box takes focus and is marked until it's ticked, and the
+  // card scrolls so the key and the box are in view together (round 19).
+  const blocked = () => {
+    setNudged(true);
+    checkedBox.current?.focus({
+      focusVisible: true,
+      preventScroll: true,
+    } as FocusOptions);
+    revealBox();
+  };
   const connectQuick = () => {
     const field = passwordField.current;
     const typed = field?.value ?? "";
@@ -371,7 +416,7 @@ export function ConnectCard({
                 if (asksPassword) connectQuick();
                 else if (asksQuick) {
                   if (checkedKey) connectQuick();
-                  else setNudged(true);
+                  else blocked();
                 }
               } else if (e.key === "Tab") {
                 // The question holds focus until it's answered (round 16): Tab cycles its own
@@ -537,27 +582,39 @@ export function ConnectCard({
             <span className="key-type">{hostKey.key_type}</span>{" "}
             <span className="key-fingerprint">{hostKey.fingerprint}</span>
           </p>
-          <KeyAdvice where="the machine's" help={help} />
+          {!short && <KeyAdvice where="the machine's" help={help} />}
           <form
             className="quick-login"
             onSubmit={(e) => {
               e.preventDefault();
               if (checkedKey) connectQuick();
-              else setNudged(true);
+              else blocked();
             }}
           >
-            <label className="add-check quick-checked">
-              <input
-                ref={checkedBox}
-                type="checkbox"
-                checked={checkedKey}
-                onChange={(e) => {
-                  setCheckedKey(e.target.checked);
-                  setNudged(false);
-                }}
-              />
-              I've checked this key
-            </label>
+            {/* The box and, after a blocked Enter, what it needs, on one row: the words sit
+                beside the box they're about, in the room the row already has, so nothing moves
+                (round 19: from the footer they had said "above" from ~220 px away). */}
+            <div className="quick-checked-row">
+              <label
+                className="add-check quick-checked"
+                data-nudged={(nudged && !checkedKey) || undefined}
+              >
+                <input
+                  ref={checkedBox}
+                  type="checkbox"
+                  checked={checkedKey}
+                  onChange={(e) => {
+                    setCheckedKey(e.target.checked);
+                    setNudged(false);
+                  }}
+                />
+                I've checked this key
+              </label>
+              <p className="key-nudge" role="alert">
+                {nudged && !checkedKey ? "Tick it to trust and connect." : ""}
+              </p>
+            </div>
+            {short && <KeyAdvice where="the machine's" help={help} />}
             <label className="quick-password">
               <span>
                 Password for <span className="connect-name">{quick.user}</span>
@@ -584,12 +641,6 @@ export function ConnectCard({
               </label>
             )}
             <div className="key-actions">
-              {/* In the footer, so it's in view wherever the card is scrolled (round 16), in the
-                  room left of the buttons, which it never takes from them: up to two lines,
-                  no taller than they are, so the card never moves (round 18). */}
-              <p className="key-nudge" role="alert">
-                {nudged && !checkedKey ? "Tick the box above first." : ""}
-              </p>
               <button
                 type="submit"
                 className={checkedKey ? "primary" : undefined}

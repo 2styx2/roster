@@ -141,6 +141,7 @@ import { Picker } from "./picker/Picker";
 import { builtinRegistries, type Registries } from "./registries";
 import { BUILTIN } from "./registry";
 import { connectPhase, SessionPanes, TabStrip } from "./session/Sessions";
+import { useMediaMatch } from "./ui/useMediaMatch";
 import { StateDot } from "./ui/StateDot";
 import { parseQuickTarget, type QuickTarget } from "./quick/target";
 import { SavePanel } from "./quick/SavePanel";
@@ -4537,24 +4538,6 @@ function basePart(path: string): string {
 /** Where the idle map's edges end: past the 48px edge column and the row's 10px padding, at the
  * node's left edge, so each edge meets its node (round 12: they stopped ~14px short). */
 const EDGE_END = 48 + 10 + 0.75;
-
-/** Whether a media query matches now, following it as the window changes. */
-function useMediaMatch(query: string): boolean {
-  return useSyncExternalStore(
-    (changed) => {
-      const mq =
-        typeof window !== "undefined" && window.matchMedia
-          ? window.matchMedia(query)
-          : null;
-      mq?.addEventListener("change", changed);
-      return () => mq?.removeEventListener("change", changed);
-    },
-    () =>
-      typeof window !== "undefined" && window.matchMedia
-        ? window.matchMedia(query).matches
-        : false,
-  );
-}
 
 /** The State's key for the Sidebar shown or hidden, per view mode (issue #78). */
 const SIDEBAR_KEY = "sidebar";
