@@ -248,13 +248,15 @@ def test_setup_rotate_takes_no_host_word_and_a_dry_run_changes_nothing(lab, caps
 # ---------------------------------------------------------------- must not collide with `roster mesh --rotate`
 
 HOLDER = """\
-import sys, time
+import os, sys, time
 from pathlib import Path
 from roster import boxlock
 with boxlock.held("setup --rotate"):
-    print("held", flush=True)
+    print("held", os.getpid(), flush=True)      # its own pid (on Windows a venv's python.exe is a launcher)
     while not Path(sys.argv[1]).exists():
         time.sleep(0.02)
+    if len(sys.argv) > 2:
+        os._exit(0)                             # dies holding it, never released: as a killed run
 """
 
 
@@ -268,7 +270,10 @@ def held_elsewhere(isolated, tmp_path, monkeypatch):
     go = tmp_path / "let-go"
     p = subprocess.Popen([sys.executable, "-c", HOLDER, str(go)], stdout=subprocess.PIPE, text=True,
                          env={**os.environ, "HOME": str(isolated["home"])})
-    assert p.stdout is not None and p.stdout.readline().strip() == "held"
+    assert p.stdout is not None
+    said = p.stdout.readline().split()
+    assert said[:1] == ["held"]
+    p.holder = int(said[1])                                  # pyright: ignore[reportAttributeAccessIssue]
     yield p
     go.touch()
     p.wait(timeout=10)
@@ -278,7 +283,7 @@ def test_one_mutating_run_at_a_time_and_read_only_ones_never_wait(lab, capsys, h
     """1: setup, setup --rotate, revoke and every Mesh write refuse while another run holds the lock, naming it; check,
     --dry-run and mesh status never take it."""
     before = {n: lab.lines(n) for n in ("web-01", "web-02", "db-01")}
-    busy = rf"\[205\] another roster run \(setup --rotate, pid {held_elsewhere.pid}\) is changing Hosts: wait for it"
+    busy = rf"\[205\] another roster run \(setup --rotate, pid {held_elsewhere.holder}\) is changing Hosts: wait for it"
     for argv in (["setup", "--rotate"], ["setup"], ["revoke", "-y"], ["mesh"], ["mesh", "cut", "web-01", "-y"],
                  ["mesh", "cut", "--all", "-y"]):
         with pytest.raises(SystemExit, match=busy):
@@ -685,23 +690,33 @@ def test_the_lock_holds_across_processes_and_a_dead_ones_is_free(isolated, tmp_p
     from roster import boxlock
     from roster.errors import Problem
     monkeypatch.setattr(boxlock, "WAIT", 0.3)
-    p = subprocess.Popen([sys.executable, "-c", HOLDER, str(tmp_path / "never")], stdout=subprocess.PIPE, text=True,
+    go = tmp_path / "die"
+    p = subprocess.Popen([sys.executable, "-c", HOLDER, str(go), "die"], stdout=subprocess.PIPE, text=True,
                          env=dict(os.environ))
     try:
-        assert p.stdout is not None and p.stdout.readline().strip() == "held"
-        with pytest.raises(Problem, match=rf"\[205\] another roster run \(setup --rotate, pid {p.pid}\)"):
+        assert p.stdout is not None
+        said = p.stdout.readline().split()
+        assert said[:1] == ["held"]
+        with pytest.raises(Problem, match=rf"\[205\] another roster run \(setup --rotate, pid {said[1]}\)"):
             with boxlock.held("setup"):
                 pass
     finally:
-        p.kill()
-        p.wait(timeout=10)
+        go.touch()                                  # it ends holding the lock: the OS lets go of it
+        p.wait(timeout=30)
     with boxlock.held("setup"):
         with boxlock.held("mesh"):                      # re-entrant in one thread
             pass
 
 
-@pytest.mark.parametrize("bad", ["11y", "3651d", "99999999999y", "١٢d"])
-def test_key_max_age_is_ascii_and_at_most_ten_years(write_config, bad):
+@pytest.mark.parametrize("bad", ["11y", "3651d", "99999999999y"])
+def test_key_max_age_is_at_most_ten_years(write_config, bad):
     from roster.config import load_config
     with pytest.raises(SystemExit, match="key_max_age: .*(isn't an age|at most 10y)"):
         load_config(write_config(f"key_max_age: {bad}\n" + LAB_YML))
+
+
+def test_key_max_age_takes_ascii_digits_only():
+    from roster import boxkeys
+    with pytest.raises(ValueError, match="isn't an age"):
+        boxkeys.parse_age("\u0661\u0662d")                 # Arabic-Indic 12: never twelve days
+    assert boxkeys.parse_age("12d") == 12
