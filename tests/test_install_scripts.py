@@ -897,7 +897,7 @@ def test_update_rewrites_roster_s_own_old_completion_line_to_the_new_form(stale)
     """T222: `roster completion SHELL` is `roster help --completion SHELL` now; update.sh rewrites only the marked line
     install.sh wrote (and fish's file roster wrote), leaving a user's own line naming it alone."""
     upstream, checkout, env, prefix = stale
-    env = {**env, "SHELL": "/bin/bash"}
+    env = {**env, "SHELL": "/bin/bash", "XDG_CONFIG_HOME": str(Path(env["HOME"]) / ".config")}   # CI sets its own
     installed(prefix, "0.5.0", env)
     home = Path(env["HOME"])
     old = 'command -v roster >/dev/null 2>&1 && eval "$(roster completion bash)"   # roster: completion'
