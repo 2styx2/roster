@@ -1098,7 +1098,7 @@ fn demo_inventory() -> Value {
 }
 
 #[test]
-fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_done_there() {
+fn its_tutorial_runs_on_the_demo_inventory_and_its_mesh_and_every_step_can_be_done_there() {
     let w = World::new("tutor");
     let scratch = temp("tutor-scratch");
     let demo = DemoHost::new(demo_inventory(), unhurried(), &scratch).unwrap();
@@ -1115,7 +1115,7 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
     assert_eq!(tutor["id"], "topology");
     assert_eq!(tutor["spec"]["title"], "Topology tutor");
     let lessons = tutor["spec"]["lessons"].as_array().unwrap();
-    assert!(lessons.len() >= 2, "{lessons:#?}");
+    assert_eq!(lessons.len(), 3, "{lessons:#?}");
     let steps: Vec<&Value> = lessons.iter().flat_map(|l| l["steps"].as_array().unwrap()).collect();
     let demo_hosts = ["demo-01", "demo-02", "demo-03", "demo-04", "demo-05", "demo-06"];
     for step in &steps {
@@ -1136,6 +1136,16 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
         json!({ "event": "command", "id": "topology", "arg": "demo-lab" })
     ));
     assert!(steps.iter().any(|s| s["on"]["event"] == "session_open"));
+    // Reach, on the demo's Mesh (#233 item 1): a Host that reaches others, and the one that didn't answer.
+    let reach = lessons[2]["steps"].as_array().unwrap();
+    let reach_ons: Vec<&Value> = reach.iter().map(|s| &s["on"]).collect();
+    assert_eq!(
+        reach_ons,
+        [
+            &json!({ "event": "command", "id": "info", "arg": "demo-01" }),
+            &json!({ "event": "command", "id": "info", "arg": "demo-05" }),
+        ]
+    );
     // No two steps wait for the same thing: one event never ticks two at once.
     let ons: Vec<String> = steps.iter().map(|s| s["on"].to_string()).collect();
     let mut unique = ons.clone();
@@ -1143,7 +1153,7 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
     unique.dedup();
     assert_eq!(unique.len(), ons.len(), "{ons:?}");
 
-    // On the demo: its first look draws the demo's six Hosts and says, honestly, that there's no Mesh.
+    // On the demo: its first look draws the demo's six Hosts and the demo's made-up Mesh.
     let first = reply
         .ops
         .iter()
@@ -1159,10 +1169,43 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
             ops.extend(r.ops);
         }
     }
+    // The reach lesson's two Hosts, in their details (`i` on the map runs `:info HOST`).
+    let started = Instant::now();
+    while find(&ops, "details").len() < 4 {
+        assert!(started.elapsed() < common::CEILING, "no details: {ops:#?}");
+        if let Ok(r) = rx.recv_timeout(Duration::from_millis(50)) {
+            ok(&r);
+            ops.extend(r.ops);
+        }
+    }
+    let facts = |host: &str| {
+        let d = find(&ops, "details")
+            .into_iter()
+            .find(|d| d["host"] == host)
+            .unwrap_or_else(|| panic!("no details for {host}"));
+        d["spec"]["facts"].clone()
+    };
+    assert_eq!(
+        facts("demo-01"),
+        json!([
+            { "label": "In the Mesh", "value": "yes" },
+            { "label": "Reaches", "value": "3 Hosts directly" },
+            { "label": "Reached by", "value": "2 Hosts directly" },
+        ])
+    );
+    assert_eq!(
+        facts("demo-05"),
+        json!([
+            { "label": "In the Mesh", "value": "yes" },
+            { "label": "Reaches", "value": "0 Hosts directly" },
+            { "label": "Reached by", "value": "1 Host directly" },
+            { "label": "Pending", "value": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
+        ])
+    );
     let text = view(&Reply {
         plugin: NAME.into(),
         result: Value::Null,
-        ops,
+        ops: ops.clone(),
         error: None,
         disabled: None,
         listens: None,
@@ -1171,18 +1214,21 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
         .unwrap()
         .to_string();
     assert!(text.starts_with("6 Hosts in 2 groups."), "{text}");
+    assert!(text.contains("The Mesh: 4 Hosts, 7 Links."), "{text}");
     assert!(
-        text.contains("The Mesh isn't shown: mesh.status isn't on the demo Inventory"),
+        text.contains("1 Host didn't answer the last apply (Mesh pending)."),
         "{text}"
     );
+    assert!(!text.contains("out of date"), "{text}");
 
-    // `:topology demo-lab`, as its step asks: the lab's cluster, not "There's no group".
+    // `:topology demo-lab`, as its step asks: the lab's clusters (its meshed Hosts, and the switch
+    // kept out of the Mesh), not "There's no group".
     let run = handler(&one(&reply.ops, "command")["run"]);
     let r = demo.call(NAME, run, json!({ "args": "demo-lab", "words": ["demo-lab"] }));
     ok(&r);
     assert_eq!(
         r.ops[0],
-        json!({ "op": "view_update", "id": "topology", "changes": { "filter": { "clusters": [":group:demo-lab"] } } })
+        json!({ "op": "view_update", "id": "topology", "changes": { "filter": { "clusters": [":group:demo-lab", ":group:demo-lab/out"] } } })
     );
 }
 

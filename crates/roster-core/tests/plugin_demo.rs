@@ -1,8 +1,8 @@
 //! The user's Plugins inside `:tutor`'s demo (ticket 66, #113, decision Q123). A demo host runs
 //! them with the grants they have, but against the demo Inventory the app hands it: roster serve
-//! is the demo's stand-in (the Hosts, and a refusal for everything else), the network is never
-//! reached, and each Plugin's data folder is a throwaway one, empty at the start and gone with the
-//! demo.
+//! is the demo's stand-in (the Hosts, a made-up `mesh.status`, and a refusal for everything
+//! else), the network is never reached, and each Plugin's data folder is a throwaway one, empty
+//! at the start and gone with the demo.
 
 mod common;
 
@@ -106,16 +106,16 @@ fn inventory_read_sees_the_demo_hosts_and_nothing_else() {
 
 #[test]
 fn a_serve_method_the_demo_has_no_stand_in_for_is_refused_and_says_why() {
-    let perms = ["serve:mesh.status", "serve:hosts.list"];
+    let perms = ["serve:mesh.job", "serve:hosts.list"];
     let dir = plugin_dir(
         "serve",
         &perms,
         r#"
         local roster = require("roster")
-        local ok, err = pcall(roster.serve.call, "mesh.status", {})
+        local ok, err = pcall(roster.serve.call, "mesh.job", {})
         roster.notify(tostring(ok) .. " " .. err)
         roster.notify(#roster.serve.call("hosts.list", {}).hosts .. " Hosts")
-        roster.serve.request("mesh.status", {}, function(r, why) roster.notify(tostring(r) .. " " .. why) end)
+        roster.serve.request("mesh.job", {}, function(r, why) roster.notify(tostring(r) .. " " .. why) end)
         "#,
     );
     let scratch = common::temp("plugin-demo-scratch");
@@ -124,15 +124,12 @@ fn a_serve_method_the_demo_has_no_stand_in_for_is_refused_and_says_why() {
     ok(&reply);
     let said = notices(&reply.ops);
     assert!(said[0].starts_with("false "), "{said:?}");
-    assert!(said[0].contains("mesh.status isn't on the demo Inventory"), "{said:?}");
+    assert!(said[0].contains("mesh.job isn't on the demo Inventory"), "{said:?}");
     assert_eq!(said[1], "2 Hosts");
     let later = later_notices(&rx, 1);
     assert_eq!(later.len(), 1, "{later:?}");
     assert!(later[0].starts_with("nil "), "{later:?}");
-    assert!(
-        later[0].contains("mesh.status isn't on the demo Inventory"),
-        "{later:?}"
-    );
+    assert!(later[0].contains("mesh.job isn't on the demo Inventory"), "{later:?}");
 }
 
 #[test]
@@ -367,4 +364,82 @@ fn a_plugin_in_the_demo_lists_the_demos_sessions() {
             .collect(),
     );
     assert_eq!(call(&host), ["1=demo-01 2=quick"]);
+}
+
+// ------------------------------------------------------------------- mesh.status (#233)
+
+/// The demo's `mesh.status`, as `tests/fixtures/demo-mesh-status.json` says it, worked out by hand
+/// from what real serve (`mesh.status` in src/roster/mesh.py) answers for that Mesh.
+fn demo_mesh() -> Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/demo-mesh-status.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// The keys `mesh.status`'s Result names in docs/serve-api.md (`{links, excluded, ...}`).
+fn documented_mesh_status_keys() -> Vec<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/serve-api.md");
+    let docs = std::fs::read_to_string(path).unwrap();
+    let row = docs
+        .lines()
+        .find(|l| l.starts_with("| `mesh.status` |"))
+        .expect("mesh.status's row");
+    let result = row.split(" | ").nth(2).unwrap();
+    let inner = &result[result.find("`{").unwrap() + 2..result.find("}`").unwrap()];
+    inner.split(", ").map(str::to_string).collect()
+}
+
+fn keys(v: &Value) -> Vec<String> {
+    let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+    k.sort();
+    k
+}
+
+#[test]
+fn the_demos_mesh_status_answers_in_real_serves_shape_with_one_host_not_answering() {
+    use roster_core::plugin::Serve;
+    use roster_core::plugin::demo::DemoServe;
+    let serve = DemoServe::new(demo_hosts());
+    let want = demo_mesh();
+
+    let plain = serve.call("mesh.status", json!({})).unwrap();
+    assert_eq!(plain, want["plain"]);
+    let mut documented = documented_mesh_status_keys();
+    documented.sort();
+    assert_eq!(keys(&plain), documented);
+    for link in plain["links"].as_array().unwrap() {
+        // mesh.status's Links are roster.yml's, untested: no `status`.
+        assert_eq!(keys(link), ["from", "kind", "to"]);
+    }
+
+    // `grouped: true` (API 19): each meshed group once, and the Links it doesn't cover.
+    let grouped = serve.call("mesh.status", json!({ "grouped": true })).unwrap();
+    assert_eq!(grouped, want["grouped"]);
+    // `brief: true` (API 17): the counts, and only the Links worth a look.
+    let brief = serve.call("mesh.status", json!({ "brief": true })).unwrap();
+    assert_eq!(brief, want["brief"]);
+    assert_eq!(serve.call("mesh.status", Value::Null).unwrap(), want["plain"]);
+
+    // As real serve refuses them.
+    for (params, words) in [
+        (
+            json!({ "grouped": "yes" }),
+            "params.grouped must be true or false (code -32602)",
+        ),
+        (
+            json!({ "brief": 1 }),
+            "params.brief must be true or false (code -32602)",
+        ),
+        (
+            json!({ "grouped": true, "brief": true }),
+            "params.grouped and params.brief don't go together (code -32602)",
+        ),
+    ] {
+        assert_eq!(serve.call("mesh.status", params).unwrap_err(), words);
+    }
+    // The rest of the Mesh is still not on the demo.
+    let refused = serve.call("mesh.apply", json!({})).unwrap_err();
+    assert_eq!(
+        refused,
+        "mesh.apply isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)"
+    );
 }

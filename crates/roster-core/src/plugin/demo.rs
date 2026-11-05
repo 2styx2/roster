@@ -4,8 +4,9 @@
 //! serve, the network or their real files:
 //!
 //! - **roster serve** is [`DemoServe`]: the demo Inventory's Hosts the app hands over answer
-//!   `hosts.list` and `host.get` (so `roster.inventory` reads the demo's Hosts); every other method
-//!   is refused, saying it isn't on the demo Inventory.
+//!   `hosts.list` and `host.get` (so `roster.inventory` reads the demo's Hosts), and `mesh.status`
+//!   answers a made-up Mesh over them (#233, decision Q202); every other method is refused,
+//!   saying it isn't on the demo Inventory.
 //! - **The network** is never reached ([`PluginHost::offline`]): a request is checked against the
 //!   grants as ever, then answers "not sent".
 //! - **Files** are a throwaway folder: each demo gets a fresh, empty data folder under `scratch`
@@ -13,14 +14,15 @@
 //!   the next demo's start. A Plugin's real `plugin-data` is never read or written.
 
 use super::{Limits, PluginHost, Serve};
-use serde_json::Value as Json;
+use serde_json::{Value as Json, json};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// roster serve, as the demo has it: the demo Inventory's Hosts, and nothing else.
+/// roster serve, as the demo has it: the demo Inventory's Hosts and a made-up Mesh over them, and
+/// nothing else.
 pub struct DemoServe {
     /// `{hosts: [...], groups: {...}}`, as `hosts.list` answers.
     hosts: Json,
@@ -44,11 +46,71 @@ impl Serve for DemoServe {
                     .cloned()
                     .ok_or_else(|| format!("No Host named '{name}' on the demo Inventory (code 2)"))
             }
+            "mesh.status" => mesh_status(&params),
             other => Err(format!(
-                "{other} isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get (code 3)"
+                "{other} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)"
             )),
         }
     }
+}
+
+/// The demo's Mesh, fixed and made up, for `demoHosts()`'s six (app/src/tutor/demo.ts): the lab's
+/// `demo-01` to `demo-03` meshed, reaching each other both ways; `demo-01` reaches the office's
+/// `demo-05` too, which didn't answer the last apply (pending); the lab's switch `demo-04` is
+/// kept out (`mesh: false`), and the printer `demo-06` isn't named. Nothing connects anywhere.
+const DEMO_MESHED: [&str; 3] = ["demo-01", "demo-02", "demo-03"];
+const DEMO_LINKS: [(&str, &str); 1] = [("demo-01", "demo-05")];
+
+/// `mesh.status` as real serve answers it (`status` and `brief` in src/roster/mesh.py), for
+/// the demo's Mesh: plain, `grouped: true` (API 19) or `brief: true` (API 17).
+fn mesh_status(params: &Json) -> Result<Json, String> {
+    let flag = |name: &str| match params.get(name) {
+        None | Some(Json::Null) => Ok(false),
+        Some(Json::Bool(b)) => Ok(*b),
+        Some(_) => Err(format!("params.{name} must be true or false (code -32602)")),
+    };
+    let (grouped, brief) = (flag("grouped")?, flag("brief")?);
+    if grouped && brief {
+        return Err("params.grouped and params.brief don't go together (code -32602)".into());
+    }
+    let link = |from: &str, to: &str| json!({ "from": from, "to": to, "kind": "key" });
+    let pairs = DEMO_MESHED
+        .iter()
+        .flat_map(|a| DEMO_MESHED.iter().filter(move |b| *b != a).map(move |b| (*a, *b)));
+    let links: Vec<(&str, &str)> = pairs.chain(DEMO_LINKS).collect();
+    let mut reach = serde_json::Map::new();
+    for (from, _) in &links {
+        let n = reach.get(*from).and_then(Json::as_u64).unwrap_or(0);
+        reach.insert((*from).into(), json!(n + 1));
+    }
+    let mut out = json!({
+        "links": links.iter().map(|(f, t)| link(f, t)).collect::<Vec<_>>(),
+        "excluded": { "demo-04": "mesh: false" },
+        "reach": reach,
+        "members": ["demo-01", "demo-02", "demo-03", "demo-05"],
+        "pending": { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
+        "cut_pending": {},
+        "out_of_date": false,
+    });
+    if grouped {
+        // The pairs `meshed` covers go; the rest stay.
+        out["links"] = DEMO_LINKS.iter().map(|(f, t)| link(f, t)).collect();
+        out["meshed"] = json!({ "demo-lab": DEMO_MESHED });
+    }
+    if brief {
+        // Untested Links all work (`asked`), with no hop: none is worth a look, so only counts.
+        let mut reached = serde_json::Map::new();
+        for (_, to) in &links {
+            let n = reached.get(*to).and_then(Json::as_u64).unwrap_or(0);
+            reached.insert((*to).into(), json!(n + 1));
+        }
+        out["links"] = json!([]);
+        out["links_more"] = json!(0);
+        out["link_count"] = json!(links.len());
+        out["link_statuses"] = json!({ "asked": links.len() });
+        out["reached"] = Json::Object(reached);
+    }
+    Ok(out)
 }
 
 /// A Plugin host for `:tutor`'s demo: [`DemoServe`], offline, and a throwaway data folder that
