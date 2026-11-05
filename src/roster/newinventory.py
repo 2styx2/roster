@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 from .common import NAME_RE, find_program, git_program, program_argv
-from .config import load_config_text
+from .config import HIDDEN_PATH, load_config_text, shown_path
 from .errors import CLONE_FAILED, FOLDER_NOT_WRITABLE, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
 
 HOWS = ("blank", "file", "repo", "ssh-config")
@@ -102,9 +102,11 @@ def create(path, how, value=None, interactive=True, stop=None):
 
 
 def there(path):
-    return Problem(INVENTORY_THERE, f"{path} already exists, so roster kept it as it is", {"path": str(path)},
-                   fix=f"use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
-                       f"{path.name} init --inventory ... --name NAME")
+    shown = shown_path(path)                        # #484 L2b, #489 L2: named the way every other message names it
+    return Problem(INVENTORY_THERE, f"{shown or HIDDEN_PATH} already exists, so roster kept it as it is",
+                   {"path": shown or "(not repeated)"},
+                   fix="use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
+                       f"{Path(shown).name if shown else 'roster.yml'} init --inventory ... --name NAME")
 
 
 def cant_write(folder, e):

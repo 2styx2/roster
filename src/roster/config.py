@@ -91,18 +91,45 @@ def blank_shape(raw):
 
 
 HIDDEN_PATH = "that path (not repeated)"
-_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
+_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")          # a whole value: a bw key, with its / and +
+_TOKEN_PART = re.compile(r"[A-Za-z0-9+=_.-]{24,}")            # one part of a path: an op token, a JWT (eyJ….….…)
+_INVENTORY_SUFFIXES = (".yml", ".yaml", ".yml.example")
+
+
+def token_shaped(value: str | Path) -> bool:
+    """VALUE (a -c PATH, or an Inventory's name) looks like a token, not something a person names a file
+    (#479, #484 L1/L3, #489 M1): the whole of it is 24 or more of A-Z a-z 0-9 + / = _ - (a bw key, whose parts
+    between its /s are often short), or any one part of it between / or \\ is 24 or more of A-Z a-z 0-9 + = _ . -
+    (an op session or service-account token, a JWT such as an op Connect token, also as a folder). A last part
+    ending .yml, .yaml or .yml.example is a file name, whatever its length."""
+    text = str(value)
+    parts = re.split(r"[\\/]", text)
+    if parts[-1].lower().endswith(_INVENTORY_SUFFIXES):
+        parts = parts[:-1]
+    elif _TOKEN_SHAPED.fullmatch(text):
+        return True
+    return any(_TOKEN_PART.fullmatch(p) for p in parts)
+
+
+def typed_token(path: str | Path) -> bool:
+    """PATH's part that isn't on disk yet is token_shaped (#489 M1): the folders at its start that exist are left
+    out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never counts, and a token typed as
+    a folder, a file or the whole value does."""
+    parts = re.split(r"[\\/]", str(path))
+    for k in range(len(parts) - 1, 0, -1):
+        if Path("/".join(parts[:k]) or "/").expanduser().is_dir():
+            return token_shaped("/".join(parts[k:]))
+    return token_shaped(str(path))
 
 
 def shown_path(path) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
-    when it mustn't be (#479, #484 M1/L1). A file that's there is shown. One that isn't is shown only when its folder
-    exists and the value isn't token-shaped (24 or more of A-Z a-z 0-9 + / = _ -, so no . or ~): `roster -cTOKEN
-    hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an op service-account token
-    can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
-    given = str(path)
+    when it mustn't be (#479, #484 M1/L1/L3, #489 M1). A file that's there is shown. One that isn't is shown only
+    when its folder exists and what was typed past the folders that exist isn't token_shaped: `roster -cTOKEN
+    hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an op token can be typed
+    after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
     full = Path(path).expanduser().resolve()
-    if full.exists() or (full.parent.is_dir() and not _TOKEN_SHAPED.fullmatch(given)):
+    if full.exists() or (full.parent.is_dir() and not typed_token(path)):
         return str(full)
     return None
 
