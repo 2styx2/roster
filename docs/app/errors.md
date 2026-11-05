@@ -333,7 +333,7 @@ What a Plugin running in `:tutor`'s demo gets instead of the real thing ([the tu
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 135 | none (a Lua error, or `done`'s reason) | On the demo, the Plugin asked roster serve for a method other than `hosts.list` and `host.get` (`roster.serve.call`, `roster.serve.request`, or `roster.inventory`'s writes) | The demo | "coach: init.lua:12: roster.serve.call mesh.status: mesh.status isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get (code 3)" | None needed: `:tutor quit` and use it on your own Inventory. A tutorial's author teaches what works on the demo's Hosts |
+| 135 | none (a Lua error, or `done`'s reason) | On the demo, the Plugin asked roster serve for a method other than `hosts.list`, `host.get` and `mesh.status` (`roster.serve.call`, `roster.serve.request`, or `roster.inventory`'s writes) | The demo | "coach: init.lua:12: roster.serve.call mesh.apply: mesh.apply isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)" | None needed: `:tutor quit` and use it on your own Inventory. A tutorial's author teaches what works on the demo's Hosts |
 | 136 | none (`done`'s reason) | On the demo, the Plugin made a `roster.http` request to a site it may reach (one it may not, or a bad header, body or timeout, is refused at once as on your Inventory: [A Plugin's network requests](#a-plugins-network-requests)) | The demo | "https://api.example.com/status wasn't sent: the tutorial's demo reaches no network (:tutor quit, then try it for real)" | None needed: `:tutor quit` and use it on your own Inventory |
 
 ## Filling a password prompt

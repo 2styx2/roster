@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### New
+
+**App**
+
+- **`:tutor topology` teaches reach** (#233): the tutorial's demo Inventory has a small, made-up Mesh now, so the Topology tutor's third lesson, "Who reaches whom", lights up what a Host reaches on the map and reads its details: `demo-01` reaches 3 Hosts directly, and `demo-05` is Mesh pending because it didn't answer the last apply. Nothing on the demo connects anywhere. A Plugin's tutorial can use the same Mesh: on the demo, roster serve answers `mesh.status` too (plain, `grouped` and `brief`, as real serve does).
+
 ## v0.6.0
 
 ### New

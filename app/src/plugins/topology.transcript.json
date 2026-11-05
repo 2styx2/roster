@@ -441,7 +441,7 @@
           "id": "topology",
           "op": "tutor",
           "spec": {
-            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
             "lessons": [
               {
                 "steps": [
@@ -489,10 +489,34 @@
                 ],
                 "text": "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
                 "title": "From a node to its Host"
+              },
+              {
+                "steps": [
+                  {
+                    "id": "reach",
+                    "on": {
+                      "arg": "demo-01",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly."
+                  },
+                  {
+                    "id": "pending",
+                    "on": {
+                      "arg": "demo-05",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why."
+                  }
+                ],
+                "text": "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+                "title": "Who reaches whom"
               }
             ],
-            "outro": "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, select a Host to light up what it can reach and what can reach it.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
-            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host",
+            "outro": "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
+            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
             "title": "Topology tutor"
           }
         },
@@ -1466,7 +1490,7 @@
           "id": "topology",
           "op": "tutor",
           "spec": {
-            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
             "lessons": [
               {
                 "steps": [
@@ -1514,10 +1538,34 @@
                 ],
                 "text": "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
                 "title": "From a node to its Host"
+              },
+              {
+                "steps": [
+                  {
+                    "id": "reach",
+                    "on": {
+                      "arg": "demo-01",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly."
+                  },
+                  {
+                    "id": "pending",
+                    "on": {
+                      "arg": "demo-05",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why."
+                  }
+                ],
+                "text": "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+                "title": "Who reaches whom"
               }
             ],
-            "outro": "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, select a Host to light up what it can reach and what can reach it.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
-            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host",
+            "outro": "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
+            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
             "title": "Topology tutor"
           }
         },
