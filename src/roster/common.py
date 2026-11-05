@@ -131,14 +131,16 @@ def read_private(path: Path) -> str:
     return read_private_bytes(path).decode("utf-8", "replace")
 
 
-def read_private_bytes(path: Path) -> bytes:
+def read_private_bytes(path: Path, dir_fd: int | None = None) -> bytes:
     """PATH's bytes, read only if it's yours alone (#411), as a secret's file must be: opened without following a link,
     then checked and read through that one open file, so it can't be swapped between the check and the read. On Linux
     and macOS: a plain file (not a link, FIFO or device), owned by you, with no group or other bits. On Windows
     (roster/winfile.py): a plain file (not a link or other reparse point), owned by you, that no one but you, SYSTEM
     and Administrators may open. Either way it has one name (no hard link elsewhere) and is at most PRIVATE_MAX bytes.
-    Only the file itself is checked, not the folders it's in. FileNotFoundError if there's nothing there; NotPrivate if
-    it isn't yours alone or can't be read (whatever went wrong: never a traceback)."""
+    Only the file itself is checked, not the folders it's in. DIR_FD (Linux and macOS): an open folder to find PATH's
+    name in, so the folder can't be swapped for another by name (T248); PATH is then only what messages show.
+    FileNotFoundError if there's nothing there; NotPrivate if it isn't yours alone or can't be read (whatever went
+    wrong: never a traceback)."""
     if WINDOWS:
         from . import winfile
         try:
@@ -149,12 +151,17 @@ def read_private_bytes(path: Path) -> bytes:
             raise NotPrivate(f"{path} can't be read ({e.strerror or type(e).__name__})") from None
     import stat
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOCTTY", 0)
+    name = path if dir_fd is None else Path(path).name
     try:
-        fd = os.open(path, flags)
+        fd = os.open(name, flags, dir_fd=dir_fd)
     except OSError as e:
         if isinstance(e, FileNotFoundError):
             raise
-        if os.path.islink(path):
+        try:
+            link = stat.S_ISLNK(os.lstat(name, dir_fd=dir_fd).st_mode)
+        except OSError:
+            link = False
+        if link:
             raise NotPrivate(f"{path} is a symlink (roster never follows one here)") from None
         raise NotPrivate(f"{path} can't be read ({e.strerror})") from None
     try:

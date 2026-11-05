@@ -318,15 +318,20 @@ class Ctx:
 
     def confirm(self, prompt):
         """A yes/no question asked and answered on the controlling terminal (open_tty), as getpass asks the password,
-        so a redirected stderr never hides it (#480 review, LOW-1): True only for y or yes (Enter is No). False,
-        without asking, with no terminal (stdin or controlling) or with --json."""
+        so a redirected stderr never hides it (#480 review, LOW-1): True only for y or yes (Enter is No; so is a
+        terminal error, such as EIO when it hangs up while asking: #486). False, without asking, with no terminal
+        (stdin or controlling) or with --json."""
         if not self.interactive or JSON_OUTPUT:
             return False
         with open_tty() as tty:
             if tty is None:
                 return False
-            tty.write(f"  {prompt}")
-            return tty.readline().strip().lower() in ("y", "yes")
+            try:
+                tty.write(f"  {prompt}")
+                answer = tty.readline()
+            except OSError:
+                return False
+            return answer.strip().lower() in ("y", "yes")
 
     def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1, discard=False):
         """Run a helper command, capturing output. A missing tool becomes a friendly error.
