@@ -43,7 +43,7 @@ function holdHeight(list: HTMLElement | null) {
 function markCut(list: HTMLElement | null, strip: HTMLElement | null) {
   if (!strip) return;
   const cells =
-    list?.querySelectorAll<HTMLElement>(".picker-row.selected > .host-name") ??
+    list?.querySelectorAll<HTMLElement>(".picker-row.selected .host-name") ??
     [];
   const cut = [...cells].some((c) => c.scrollWidth > c.clientWidth + 1);
   if (cut) strip.dataset.cut = "";
@@ -208,7 +208,6 @@ export function Picker({
         .reduce((a, ip) => (ip.length > a.length ? ip : a), ""),
       group: longest((h) => h.group),
       type: longest((h) => h.type),
-      badge: hosts.hosts.some((h) => !h.reviewed),
     };
   }, [hosts.hosts]);
   /** The Host at row `i` (none for the Quick Connect row). */
@@ -358,7 +357,8 @@ export function Picker({
               quickFirst
                 ? "Quick Connect: user@address[:port], or find a Host"
                 : onQuick
-                  ? "Find a Host, or user@address to Quick Connect"
+                  ? // What Quick Connect wants, said as an action (round 18); fits at 480 px.
+                    "Find a Host, or type user@address"
                   : "Find a Host by name, address, group…"
             }
             autoFocus
@@ -374,11 +374,7 @@ export function Picker({
           />
         </div>
         <ul
-          className={`picker-list${rowCount <= 1 ? " few" : ""}${
-            // The badge column takes room only while a shown row has one (round 16: sized from
-            // the whole Inventory, it kept ~90 px empty while names were cut).
-            shown.some(({ host }) => !host.reviewed) ? " badged" : ""
-          }`}
+          className={`picker-list${rowCount <= 1 ? " few" : ""}`}
           role="listbox"
           id={listId}
           ref={listRef}
@@ -395,6 +391,9 @@ export function Picker({
               onMouseMove={() => current !== 0 && setIndex(0)}
               onClick={() => onQuick?.(quick)}
             >
+              {/* A node like every row's: a ring, the password login a box that isn't in the
+                  Inventory starts with (its Session's row will show the same). */}
+              <StateDot dot="password" />
               <span className="quick-label">Quick Connect</span>
               <span className="host-name">{formatQuickTarget(quick)}</span>
               <span className="quick-note">not in the Inventory</span>
@@ -418,16 +417,28 @@ export function Picker({
               }}
             >
               <HostNode host={host} how={live?.get(host.name)} />
-              <span className="host-name" title={host.name}>
-                {marked(host.name, query)}
-                {host.reviewed && live?.has(host.name) && (
-                  <span className="visually-hidden">
-                    {live.get(host.name) === "connecting"
-                      ? ", connecting"
-                      : ", has a Session"}
+              {/* The name and, on an unreviewed Host, its badge beside it, as in the Sidebar (round
+                  18: a column of its own kept ~100 px empty on every other row while groups were cut). */}
+              <div className="host-cell">
+                <span className="host-name" title={host.name}>
+                  {marked(host.name, query)}
+                  {host.reviewed && live?.has(host.name) && (
+                    <span className="visually-hidden">
+                      {live.get(host.name) === "connecting"
+                        ? ", connecting"
+                        : ", has a Session"}
+                    </span>
+                  )}
+                </span>
+                {!host.reviewed && (
+                  <span
+                    className="badge"
+                    title="unreviewed: can't be opened until it's reviewed"
+                  >
+                    unreviewed
                   </span>
                 )}
-              </span>
+              </div>
               <span className="host-ip" title={host.ip || undefined}>
                 {/* A long address drops whole groups from its middle, never cut mid-token; the
                     strip below shows the selected Host's whole address. */}
@@ -442,14 +453,6 @@ export function Picker({
               <span className="host-type" title={host.type}>
                 {host.type}
               </span>
-              {!host.reviewed && (
-                <span
-                  className="badge"
-                  title="unreviewed: can't be opened until it's reviewed"
-                >
-                  unreviewed
-                </span>
-              )}
             </li>
           ))}
           <li
@@ -462,9 +465,6 @@ export function Picker({
             <span className="host-ip">{widest.ip}</span>
             <span className="host-group">{widest.group}</span>
             <span className="host-type">{widest.type}</span>
-            {widest.badge && shown.some(({ host }) => !host.reviewed) && (
-              <span className="badge">unreviewed</span>
-            )}
           </li>
         </ul>
         {rowCount === 0 && (

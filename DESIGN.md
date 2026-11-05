@@ -308,7 +308,7 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 
 ### Picker (signature)
 - **Container:** Panel Graphite, Strong Hairline border, 10px radius, Overlay shadow, over a dimmed backdrop.
-- **Rows:** one shared grid (subgrid) of node, name, IP, group, type, badge and info, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its widest value in the whole Inventory, so it holds still while you type; an IPv6 address drops whole groups from its middle. Under 600px only the node, name and IP stay.
+- **Rows:** one shared grid (subgrid) of node, name (an unreviewed Host's badge beside it, as in the Sidebar), IP, group and type, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its widest value in the whole Inventory, so it holds still while you type; an IPv6 address drops whole groups from its middle. Under 600px only the node, name and IP stay.
 - **Selected:** a raised fill with a 1px accent outline (the Sidebar cursor's), since it's the row Enter opens. It reveals the info button. Rows never wrap (Q214).
 - **Detail:** when the selected row cuts its Host's name, the footer's free room (left of the count) shows the name whole, in Iosevka; otherwise it says nothing. An address never shrinks below its text (an IPv6 one drops whole groups first); the name, then the group, give way (Q221).
 - **Matches:** what the query matched is underlined in the text colour (never the accent).

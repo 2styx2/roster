@@ -122,6 +122,26 @@ describe("Picker", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("puts an unreviewed Host's badge beside its name, with no column of its own (round 18)", () => {
+    setup();
+    const row = rows().find((r) => r.dataset.host === "scan-99")!;
+    const badge = within(row).getByText("unreviewed");
+    // In the name's cell, so rows without a badge give that room to the name and the group.
+    expect(badge.parentElement).toHaveClass("host-cell");
+    expect(badge.parentElement?.querySelector(".host-name")).toHaveTextContent("scan-99");
+    // The sizer row (the columns' widths) has no badge cell.
+    expect(document.querySelector(".picker-sizer .badge")).toBeNull();
+  });
+
+  it("gives the Quick Connect row a node, as every row has, and says what to type (round 18)", async () => {
+    const { user } = setup({ onQuick: vi.fn() });
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host, or type user@address");
+    await user.keyboard("root@10.0.0.9");
+    const quick = rows()[0]!;
+    expect(quick).toHaveTextContent(/Quick Connect/);
+    expect(quick.querySelector("svg.dot")).toHaveAttribute("data-shape", "ring");
+  });
+
   it("closes with Esc, even from the list", async () => {
     const { user, onClose } = setup();
     await user.keyboard("{ArrowDown}{Escape}");

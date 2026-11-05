@@ -985,8 +985,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
      give way before it. */
   grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) 0;
 }
-/* A badge column only while a shown row is unreviewed (round 16). */
-.picker-list.badged { grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) auto 0; }
+/* No badge column: an unreviewed Host's badge sits beside its name, as in the Sidebar (round 18:
+   its own column, empty on every other row, kept ~100 px from the group). */
 .picker-row {
   position: relative;
   grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
@@ -1002,6 +1002,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
 .picker-row .host-name { font-family: var(--font-mono); color: var(--text); unicode-bidi: isolate; }
+.picker-row > .host-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.picker-row > .host-cell > .host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Never cut by the column: a long address is already cut by whole groups to 17 characters. */
 .picker-row .host-ip { font: var(--text-sm) var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: max-content; }
 .picker-row .host-group, .picker-row .host-type { font-size: var(--text-sm); color: var(--muted); }
@@ -1010,7 +1012,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-row > .host-type { min-width: min(7ch, max-content); }
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
-.picker-row > .badge { justify-self: end; overflow: visible; }
+.picker-row .host-cell > .badge { flex: none; }
 /* A Host's details (ticket 18): a key in the footer for the selected Host, also a button
    (round 16: floating over the selected row's end it covered its badge and address). */
 .picker-footer .picker-info-hint {
@@ -1018,7 +1020,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* A narrow window keeps what you pick by: the node, the name and the address. */
 @media (max-width: 600px) {
-  .picker-list, .picker-list.badged { grid-template-columns: 0 8px minmax(0, 1fr) fit-content(16ch) auto 0; }
+  .picker-list { grid-template-columns: 0 8px minmax(0, 1fr) fit-content(16ch) 0; }
   .picker-row > .host-group, .picker-row > .host-type { display: none; }
 }
 @media (hover: hover) and (pointer: fine) {
@@ -1026,7 +1028,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* Quick Connect (ticket 14): a box that isn't in the Inventory, offered first while the query reads
    as user@address[:port]. The address is data (Iosevka); the words around it are the app's. */
-.picker-row.quick-row { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px; }
+.picker-row.quick-row { grid-template-columns: 8px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px; }
 .picker-row.quick-row > :first-child { grid-column-start: auto; }
 .picker-row .quick-label { font-size: var(--text-sm); }
 .picker-row .quick-note { font-size: var(--text-sm); color: var(--muted); }
@@ -1831,6 +1833,10 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 }
 /* Out of sight while the Picker is open (a modal search), back when it closes. */
 .window:has(.picker-backdrop) :is(.plugin-notices, .config-toast) { visibility: hidden; }
+/* The idle pane under the Picker: hidden, so its words are never sliced by the Picker's edge
+   (round 18: "No Sessions open" cut in half at 480 × 320). The Picker has the keys; nothing there
+   can be reached while it's open. */
+.window:has(.picker-backdrop) .workspace > .empty { visibility: hidden; }
 /* Above the status bar, never over it: it carries the live state. */
 .plugin-notices {
   position: fixed; right: 14px; bottom: calc(var(--statusbar-h) + 10px); z-index: 40; display: flex; flex-direction: column; gap: 8px;
