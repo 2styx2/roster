@@ -300,7 +300,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 
 | Code | Meaning |
 |---|---|
-| `1` | The Inventory didn't load: no `roster.yml`, or it's invalid (including a Host with no user at all). Every method that needs it returns this, and `serve` keeps running. `data` has `path` (or `null`; `"(not repeated)"` for a missing file roster won't print, such as a token typed as `-c PATH`, Q207), `roster_version`, `api_version`, `fix`, and `line` for a YAML error. |
+| `1` | The Inventory didn't load: no `roster.yml`, or it's invalid (including a Host with no user at all). Every method that needs it returns this, and `serve` keeps running. `data` has `path` (or `null`; `"(not repeated)"` for a path roster won't print, such as a token typed as `-c PATH` or a `roster.yml` in a folder named like one, Q207), `roster_version`, `api_version`, `fix`, and `line` for a YAML error. |
 | `2` | Unknown host (`host.get`, `session.prepare`) |
 | `3` | Any other refusal roster would print as `error: ...` on the command line |
 | `4` | A lock this request needs (`roster.yml`, the vault) was held by another request past this one's wait: `data.busy` says which, `data.method` by what. Nothing was done; try again once it has finished (API 20, [Locks](#ordering-locks-and-jobs)) |

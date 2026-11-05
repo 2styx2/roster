@@ -4,6 +4,7 @@ The app switches on the code; the message is roster's usual wording, ready to sh
 holds a secret. `fix` says what to do about it, in a sentence."""
 
 import re
+from pathlib import Path
 
 from . import providers
 
@@ -320,10 +321,12 @@ def login_problem(e, h, what="ssh"):
 def inventory_problem(message, path=None):
     """roster.yml didn't load (row 1). data: path (or None) and, for a YAML error, the line it's at."""
     m = re.search(r"line (\d+)", message)
-    from .config import HIDDEN_PATH, shown_path
+    from .config import HIDDEN_PATH, RENAME_HINT, shown_path
     shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated (#484 M1)
     data = {"path": (shown or "(not repeated)") if path else None} | ({"line": int(m.group(1))} if m else {})
     where = (shown or f"the roster.yml at {HIDDEN_PATH}" if path else "roster.yml") + (f" at line {data['line']}" if m else "")
+    if path and shown is None and Path(path).expanduser().is_file():    # in a token-named folder (#498)
+        return Problem(INVENTORY_ERROR, message, data, fix=f"{RENAME_HINT}; then fix {where}")
     return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
                                                                  "`roster init --blank` (`roster init --help`: the others)")
 
