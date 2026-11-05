@@ -202,6 +202,12 @@ KEY_TYPE_FIPS = 199         # check HOST: the Host refused this Box's Ed25519 ke
 MESH_KEY_TYPE = 200         # a note, not an error: a Host whose key_type isn't ed25519 is left out of the Mesh
 KEY_TYPE_MISMATCH = 201     # setup: the file a key type's key goes in holds a key of another type; nothing was made
 
+# Rotating the Box key (T240, #469, decision Q204; catalog rows 267-270)
+BOX_BUSY = 205              # another roster run (setup, revoke, a Mesh write) is changing this Inventory's Hosts: refused
+ROTATION_PENDING = 206      # a warning: the old Box key is still on some Hosts (setup --rotate finishes it)
+KEY_TOO_OLD = 207           # a warning (check --box, box.check): this Box's key is older than key_max_age
+NEW_KEY_REFUSED = 208       # setup --rotate: a Host it reached refused the new key, so no old key line went anywhere
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

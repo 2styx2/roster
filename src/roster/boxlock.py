@@ -1,0 +1,128 @@
+"""The Box-wide lock (T240, #469, decision Q204): one run at a time changes this Box's keys or Mesh entries on an
+Inventory's Hosts. `roster setup` (and `setup --rotate`), `revoke` and every Mesh path that writes (apply, cut,
+`cut --all`, `mesh leftovers --remove`) hold it; each rewrites `authorized_keys` on the same Hosts (read, change,
+write back), so two at once could each drop the other's new line. Read-only runs (`check`, `--dry-run`,
+`mesh status`) never take it.
+
+One lock file per Inventory (common.lock_file), locked with the OS's own file lock (flock; on Windows a byte range,
+msvcrt.locking). The OS lets go of it when the process holding it ends, however it ends, so a lock whose run died
+(a dead pid in the file) is free at once and taken over. The file says who holds it (pid and what, for the message
+a second run gives), never a secret. A second run waits WAIT seconds, then refuses with code 205.
+
+Re-entrant in one thread (setup holds it and its own Mesh apply takes it again); another thread of the same process
+waits as another process would (serve's jobs)."""
+
+from __future__ import annotations
+
+import os
+import threading
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+from .common import CURRENT, lock_file
+from .errors import BOX_BUSY, Problem
+
+WAIT = 5.0                  # seconds a second run waits before it refuses
+POLL = 0.1
+_REGION = 1 << 20           # Windows: the byte locked, past what the file says, so it can still be read
+_held: dict[str, tuple[int, int, Any]] = {}     # path -> (thread id, depth, open file)
+_table = threading.Lock()
+
+
+def _try_lock(f) -> bool:
+    if os.name == "nt":
+        import msvcrt
+        f.seek(_REGION)
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue]
+            return True
+        except OSError:
+            return False
+    import fcntl
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(f) -> None:
+    if os.name == "nt":
+        import msvcrt
+        f.seek(_REGION)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue]
+    else:
+        import fcntl
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def holder(path: Path) -> str:
+    """Who the lock file at PATH says holds it: `WHAT, pid N`, or `pid unknown`."""
+    try:
+        pid, _, what = path.read_text(encoding="utf-8").partition("\n")
+    except (OSError, UnicodeDecodeError):
+        return "pid unknown"
+    return f"{what.strip() or 'roster'}, pid {pid.strip() or 'unknown'}"
+
+
+def busy(path: Path) -> Problem:
+    return Problem(BOX_BUSY, f"[{BOX_BUSY}] another roster run ({holder(path)}) is changing Hosts: wait for it",
+                   fix="wait for that run to finish, then run this again (one run at a time changes this Box's "
+                       "keys and Mesh entries on the Hosts)")
+
+
+@contextmanager
+def held(what: str, inventories: Any = (CURRENT,), wait: float | None = None):
+    """Hold the lock of each of INVENTORIES (names; CURRENT: this run's) while WHAT (`setup --rotate`, `mesh`) runs,
+    in a fixed order. Waits WAIT seconds for each, then raises busy's Problem (205), holding none."""
+    paths = sorted({str(lock_file(n)) for n in inventories})
+    got: list[str] = []
+    try:
+        for p in paths:
+            _take(Path(p), what, WAIT if wait is None else wait)
+            got.append(p)
+        yield
+    finally:
+        for p in reversed(got):
+            _release(p)
+
+
+def _take(path: Path, what: str, wait: float) -> None:
+    me = threading.get_ident()
+    key = str(path)
+    deadline = time.monotonic() + wait
+    while True:
+        with _table:
+            mine = _held.get(key)
+            if mine and mine[0] == me:
+                _held[key] = (me, mine[1] + 1, mine[2])
+                return
+            if not mine:
+                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                f = open(path, "a+", encoding="utf-8")      # never truncated before it's ours: it names the holder
+                if _try_lock(f):
+                    f.seek(0)
+                    f.truncate()
+                    f.write(f"{os.getpid()}\n{what}\n")
+                    f.flush()
+                    _held[key] = (me, 1, f)
+                    return
+                f.close()
+        if time.monotonic() >= deadline:
+            raise busy(path)
+        time.sleep(POLL)
+
+
+def _release(key: str) -> None:
+    with _table:
+        me, depth, f = _held[key]
+        if depth > 1:
+            _held[key] = (me, depth - 1, f)
+            return
+        del _held[key]
+        try:
+            _unlock(f)
+        finally:
+            f.close()

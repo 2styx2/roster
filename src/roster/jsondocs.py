@@ -133,6 +133,7 @@ class CheckDoc(Part, frozen=True):
 
     hosts: list[HostCheck]
     mesh: MeshPlanDoc | None
+    rotation_pending: dict[str, str] = Field(default_factory=dict)    # T240: Box key rotation, host: why
     ok: bool
 
 

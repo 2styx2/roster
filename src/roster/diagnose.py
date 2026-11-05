@@ -197,7 +197,8 @@ def step_ssh_config(ctx):
         if why:                         # another roster.yml's, or this Inventory isn't synced here
             raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
-    want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
+    from .rotation import pending  # mid-rotation, the block offers the old key too (T240)
+    want, have = host_block(ctx["cfg"], h["name"], h, pending(ctx["cfg"])), written_host_block(h["name"]) or []
     if have != want:
         stale = f"{h['name']}'s entry in this box's ssh config is out of date"
         if "    IdentitiesOnly yes" in want and "    IdentitiesOnly yes" not in have:

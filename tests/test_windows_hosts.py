@@ -829,3 +829,20 @@ def test_renaming_onto_a_name_another_box_uses_on_a_windows_host_needs_force(win
     assert win.admin_file("dc-01").read_bytes() == OTHER + mine + mine + theirs
     assert main(["setup", "--only", "dc-01", "--force"]) == 0
     assert win.admin_file("dc-01").read_bytes() == OTHER + mine.replace(b":box", b":box2") + theirs
+
+
+@needs_powershell
+def test_setup_rotate_replaces_the_box_key_on_windows_hosts(win, capsys):
+    """T240 (#469): a Box key rotation on Windows Hosts goes through the same key script (add, then remove over the new
+    key), in the file sshd reads for each account; every other line is kept, byte for byte."""
+    win.admin_file("dc-01").write_bytes(OTHER)
+    assert main(["setup", "--only", "dcs"]) == 0, capsys.readouterr().out
+    before = key_line(win)
+    capsys.readouterr()
+    assert main(["setup", "--rotate", "--host", "dcs"]) == 1            # the lab group stays pending (not in --host)
+    out = capsys.readouterr().out
+    assert "dc-09: not in this run (--host)" in out
+    assert key_line(win) != before
+    assert win.admin_file("dc-01").read_bytes() == OTHER + key_line(win)
+    assert win.user_file("ws-01").read_bytes() == key_line(win)
+    assert all("hunter2" not in c + s for c, s in win.sent) and "hunter2" not in win.ssh_log()

@@ -748,6 +748,15 @@ def visits_of(cfg, hosts):
 
 
 def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visits=None):
+    """_run, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
+    if not apply:                    # a plan changes nothing: no lock
+        return _run(cfg, apply=apply, rotate=rotate, say=say, progress=progress, stopped=stopped, visits=visits)
+    from . import boxlock
+    with boxlock.held("mesh"):
+        return _run(cfg, apply=apply, rotate=rotate, say=say, progress=progress, stopped=stopped, visits=visits)
+
+
+def _run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visits=None):
     """The Mesh as roster.yml asks for it, against what the Hosts hold now, one connection at a time.
     Plan (apply=False) changes nothing anywhere; apply makes it so and remembers what it couldn't finish.
     ROTATE: sources whose key is replaced. PROGRESS(done, total, host) is told before each Host's step and once at
@@ -1098,6 +1107,13 @@ def cut_hosts(cfg, name):
 
 
 def cut(cfg, name, workers=16, progress=None, stopped=None):
+    """_cut, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
+    from . import boxlock
+    with boxlock.held("mesh cut"):
+        return _cut(cfg, name, workers, progress, stopped)
+
+
+def _cut(cfg, name, workers=16, progress=None, stopped=None):
     """HOST out of the Mesh now, in parallel: its key off every peer, every peer's key off HOST, HOST's own Mesh
     files gone. The Box's own key (roster-managed) is never touched. Returns {host, confirmed, pending: {host: why},
     warnings}: WARNINGS name an earlier mesh_dir: HOST still holds, which roster never removes.
@@ -1148,6 +1164,13 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
 
 
 def cut_all(cfg, workers=16, progress=None, stopped=None):
+    """_cut_all, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
+    from . import boxlock
+    with boxlock.held("mesh cut --all"):
+        return _cut_all(cfg, workers, progress, stopped)
+
+
+def _cut_all(cfg, workers=16, progress=None, stopped=None):
     """Every Mesh entry off every Host roster.yml has that roster can log in to, at once (T193: before removing roster
     from this Box): each Host's roster-mesh lines in authorized_keys and its own Mesh files, as a cut of that Host
     does on itself. roster.yml isn't changed, so the next `roster mesh` puts the Mesh back. Returns {confirmed,
@@ -1293,6 +1316,13 @@ def leftover_words(found):
 
 
 def remove_leftovers(cfg, found):
+    """_remove_leftovers, holding the Box-wide lock (boxlock, T240): one run at a time changes the Hosts' keys."""
+    from . import boxlock
+    with boxlock.held("mesh leftovers --remove"):
+        return _remove_leftovers(cfg, found)
+
+
+def _remove_leftovers(cfg, found):
     """Remove exactly what find_leftovers FOUND, one Host at a time: the roster-mesh lines it named, and a former
     source's Mesh files and Include (as when a Host stops being a source): this Box's and an older roster's only.
     {removed: [hosts], pending: {host: why}}."""

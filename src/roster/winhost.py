@@ -716,11 +716,12 @@ def not_windows(name):
             "changed. Fix os: for it in roster.yml")
 
 
-def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own=""):
+def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own="", ssh_opts=()):
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError. PUB: the key line retag writes; TAKEN, OWN: script's."""
+    RuntimeError. PUB: the key line retag writes; TAKEN, OWN: script's. SSH_OPTS: ssh's own options before the
+    Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
     try:
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", *ssh_opts, h["name"],
                                          remote_command()]),
                            input=framed(script(mode, tag_re, pub, taken, own)).encode(), capture_output=True,
                            timeout=timeout)
