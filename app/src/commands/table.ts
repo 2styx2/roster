@@ -3,50 +3,28 @@
 // and the Config and Plugins can add or shadow commands the same way. Keys (the keymap maps a key to a command line such as
 // "session 1"), the command line and buttons (the Sidebar, the tab strip) all run commands
 // through runLine, so a view mode only changes how commands are presented, never which exist.
-// A command acts through CommandContext, which App provides.
+// A command acts through CommandContext, which App provides: one part per feature.
 
-import { configCommand, type ConfigAction } from "../config/command";
-import { groupCommand, hostCommand, reviewCommand, unreviewCommand, type InventoryOp } from "../inventory/commands";
+import { configCommand, type ConfigContext } from "../config/command";
+import { checkCommand, type CheckContext } from "../errors/command";
+import { changesCommands, editCommand, groupCommand, hostCommand, reviewCommand, unreviewCommand, type InventoryContext } from "../inventory/commands";
 import { inventoryCommand } from "../inventory/switch";
+import { matching } from "./match";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import type { FoldHow, SidebarRow } from "../sidebar/model";
-import { VIEW_MODES, type ViewMode } from "../view/layout";
+import { sessionCommands as s, type SessionContext } from "../session/commands";
+import { sidebarCommands, type SidebarContext } from "../sidebar/commands";
 import type { Message } from "../ui/messages";
+import { viewCommands, type ViewContext } from "../view/commands";
 
-export type ListMove = "down" | "up" | "top" | "bottom" | "choose";
-
-
-/** What commands can ask of the app. */
-export interface CommandContext {
+/** What any command can ask of the app, whatever its feature. */
+export interface AppContext {
   openPicker(): void;
-  /** Opens a Session to the Host (the app checks it exists and is reviewed); `here`: in the
-   * current tab if its Session has ended, else a new one. */
-  connect(host: string, here?: boolean): void;
-  /** Quick Connect (ticket 14): a Session to `user@address[:port]`, a box that isn't in the
-   * Inventory; null opens the Picker to type one. */
-  quickConnect(target: string | null): void;
-  /** Goes to the Host's open Session if there is one, else opens one (as `connect`). */
-  open(host: string): void;
-  /** Reconnects the current tab if its Session has ended or was refused. */
-  reconnect(): void;
-  /** Runs roster's diagnostics (`host.check`) for the Host. */
-  checkHost(host: string): void;
-  /** This Box's health (`:help health`). */
-  checkBox(): void;
-  /** Stops the app's own check, as the check panel's Stop does, or says why it can't. */
-  stopCheck(): void;
-  /** The Session on screen: its Host, and whether it's a Quick Connect (not on a Host); null with none. */
-  sessionOnScreen(): { host: string; quick: boolean } | null;
-  /** The Session `delta` places after the current one, wrapping. */
-  selectRelative(delta: number): void;
-  /** The Nth Session, counting from 1. */
-  selectNth(n: number): void;
-  /** Closes the Nth Session, or the current one. */
-  close(n: number | null): void;
-  toggleSidebar(): void;
-  toggleStatusBar(): void;
   /** The command line, with `initial` typed in already (a prompt for the rest). */
   openCommandLine(initial?: string): void;
+  /** Opens the Finder over a finder source (`sessions`, `hosts`, `tree`…), with `query` typed in
+   * already when there's one (`:helpgrep TEXT`). */
+  openFinder(source: string, query?: string): void;
+  toggleStatusBar(): void;
   toggleKeys(): void;
   lock(): void;
   /** `:vault signout` (ticket 42): asks first, naming the account, then signs the vault CLI out
@@ -56,71 +34,29 @@ export interface CommandContext {
   toTerminal(): void;
   /** Closes the topmost side panel, if one is open. */
   closePanel(): void;
-  /** Moves the list cursor (the Sidebar in Standard), or chooses the row under it. */
-  list(move: ListMove): void;
-  /** Folds or unfolds the Sidebar row (or section heading) `id`, or the one under the cursor. */
-  fold(id: string | null, how: FoldHow): void;
-  /** The Sidebar row under the cursor, or null. */
-  cursorRow(): SidebarRow | null;
-  /** Opens the menu of the Host row under the Sidebar's cursor (T166, Q156). */
-  rowMenu(): void;
   /** The Host the user means: the one under the Sidebar's cursor, else the Session on screen's. */
   selectedHost(): string | null;
   /** Every Host's name, in roster.yml order (empty until the Inventory is loaded). */
   hostNames(): readonly string[];
   /** A one-line message for the user: an error, a warning or an answer, or a quiet one (ui/messages.ts). */
   say(message: Message): void;
-  /** The view mode now (decision Q36). */
-  viewMode(): ViewMode;
-  /** Switches to `mode`, or to the other one. */
-  setViewMode(mode: ViewMode | null): void;
-  /** Opens the Finder over a finder source (`sessions`, `hosts`, `tree`…), with `query` typed in
-   * already when there's one (`:helpgrep TEXT`). */
-  openFinder(source: string, query?: string): void;
   /** Says the Backend, the Box and the Inventory's path, whole (the status bar cuts them). */
   showInfo(): void;
   /** Host details (ticket 18): shows the Host's panel; null shows or hides it for the selected
    * Host. */
   details(host: string | null): void;
-  /** Opens the edit form for the Host, or the selected one (ticket 10). */
-  edit(host: string | null): void;
-  /** Opens the add-Host form (ticket 11), in `group` (else the selected Host's). */
-  addHost(group?: string): void;
-  /** Opens "Save to vault" for the current Session, once it logged in with a password typed for it
-   * (tickets 15, 16). */
-  saveSession(): void;
-  /** Fills the password prompt the current Session shows from the vault (ticket 119): only when
-   * one is detected; the password goes from serve to the Session's PTY through the core, never
-   * through the frontend. */
-  fillPrompt(): void;
-  /** `:integrate` (ticket 121): sends the current Session's shell the hook line now. */
-  integrate(): void;
-  /** Removes, renames or moves a Host, or makes, renames or deletes a group (ticket 28): asks
-   * first where it should (removing a Host; a group whose Hosts need somewhere to go). */
-  inventory(op: InventoryOp): void;
-  /** Every group's name, in roster.yml order. */
-  groupNames(): readonly string[];
-  /** Marks the Host, or the selected one, reviewed (ticket 11); `reviewed: false` un-reviews it
-   * (issue #78), for a review made by mistake. */
-  review(host: string | null, reviewed?: boolean): void;
-  /** Shows the Pending changes; `discard` asks to discard them straight away, `publish` opens
-   * the Publish step (the diff for a last look, and the commit message). */
-  showChanges(then?: "discard" | "publish"): void;
-  /** Pulls the infra repo (fast-forward only) and says what happened. */
-  pull(): void;
-  /** `:inventory NAME` (ticket 115): asks before switching roster to that named Inventory, or
-   * says why it can't; null starts the command line, or says there are none. */
-  switchInventory(name: string | null): void;
-  /** `:config` (ticket 32): opens init.lua (making it first if there's none), reads it again,
-   * or says where it is. */
-  config(what: ConfigAction): void;
 }
+
+/** What commands can ask of the app: each feature's part, which its own commands take (a
+ * feature's module declares it beside them), and App provides. */
+export type CommandContext = AppContext & SessionContext & InventoryContext & CheckContext & SidebarContext & ViewContext & ConfigContext;
 
 /** What `:vault` does: `:vault signout`. */
 const VAULT_ACTIONS = ["signout"] as const;
 export type VaultAction = (typeof VAULT_ACTIONS)[number];
 
-export interface CommandDef extends Entry {
+/** A command; `C` is the part of the app it acts through (a feature's commands take their own). */
+export interface CommandDef<C = CommandContext> extends Entry {
   /** id: the `:` name, and what the keymap binds keys to. */
   area: string;
   /** What it does, for the Key bindings panel and completion. */
@@ -138,7 +74,7 @@ export interface CommandDef extends Entry {
   /** Typed now and then (`config`): ranked after the everyday commands in completion, so `co`
    * still completes `connect` first. */
   seldom?: boolean;
-  run(ctx: CommandContext, arg: string | undefined): void;
+  run(ctx: C, arg: string | undefined): void;
   /** Completions for the argument typed so far (whole arguments), when `arg` is "text". A
    * command from the Config or a Plugin completes the same way (ticket 34). */
   complete?(arg: string, hostNames: readonly string[], ctx?: CompletionContext): string[];
@@ -161,241 +97,30 @@ export interface CompletionContext {
   inventoryNames?: readonly string[];
 }
 
-/** Names that start with `word` first, then the rest that contain it, without case. */
-export function matching(names: readonly string[], word: string): string[] {
-  const w = word.toLowerCase();
-  const lower = (n: string) => n.toLowerCase();
-  return [...names.filter((n) => lower(n).startsWith(w)), ...names.filter((n) => !lower(n).startsWith(w) && lower(n).includes(w))];
-}
-
-const fold = (id: string, how: FoldHow, label: string): CommandDef => ({
-  id,
-  source: BUILTIN,
-  area: "Sidebar",
-  arg: "text",
-  optionalArg: how !== "toggle",
-  label: (row) => (row ? `${label} ${row}` : label),
-  staysInAppMode: true,
-  motion: true,
-  run: (ctx, row) => ctx.fold(row ?? null, how),
-  complete: (row, _hosts, ctx) => matching(ctx?.foldIds ?? [], row),
-});
-
-const list = (move: ListMove, label: string): CommandDef => ({
-  id: move,
-  source: BUILTIN,
-  area: "Sidebar",
-  label: () => label,
-  staysInAppMode: move !== "choose",
-  motion: true,
-  run: (ctx) => ctx.list(move),
-});
-
 const builtinCommands: readonly CommandDef[] = [
   { id: "find", source: BUILTIN, area: "Hosts", label: () => "Find a Host", run: (ctx) => ctx.openPicker() },
-  {
-    id: "connect",
-    source: BUILTIN,
-    area: "Hosts",
-    arg: "host",
-    label: (h) => (h ? `Connect to ${h}` : "Open a Session to a Host, or to user@address (Quick Connect)"),
-    doc:
-      "Opens a new Session to the Host, in a tab of its own. A Host that isn't reviewed yet stays closed until you " +
-      "review it ([:review](:review)). Anything that isn't a Host's name but reads as `user@address` or " +
-      "`user@address:port` is a Quick Connect: the tab shows the box's host key for you to check, and asks for a " +
-      "password (left empty, this Box's own keys log in). [:here](:here) reuses a tab whose Session has ended; " +
-      "[Connection errors](errors-guide) says what to do when it doesn't connect.",
-    run: (ctx, h) => ctx.connect(h ?? ""),
-  },
-  {
-    // A Host (or its open Session), or a web service in the default browser (ticket 18, Q71):
-    // `open HOST`, `open SERVICE` (the current Host's), `open HOST SERVICE`. A Host's name wins.
-    id: "open",
-    source: BUILTIN,
-    area: "Hosts",
-    arg: "text",
-    label: (a) =>
-      a
-        ? a.includes(" ")
-          ? `Open ${a.replace(" ", "'s ")} in the browser`
-          : `Open ${a}: the Host or its Session, else the current Host's web service`
-        : "Open a Host or go to its Session, or open a web service in the browser",
-    run: (ctx, a) => ctx.open(a ?? ""),
-    complete: (word, hostNames, ctx) => {
-      const space = word.indexOf(" ");
-      if (space >= 0) {
-        const host = word.slice(0, space);
-        return matching(ctx?.webServices?.(host) ?? [], word.slice(space + 1).trimStart()).map((s) => `${host} ${s}`);
-      }
-      const names = [...new Set([...(ctx?.webServices?.(null) ?? []), ...[...hostNames].sort()])];
-      return matching(names, word);
-    },
-  },
-  {
-    id: "here",
-    source: BUILTIN,
-    area: "Hosts",
-    arg: "host",
-    label: (h) => (h ? `Connect to ${h} in this tab` : "Open a Host in this tab, if its Session has ended"),
-    run: (ctx, h) => ctx.connect(h ?? "", true),
-  },
-  {
-    id: "quick",
-    source: BUILTIN,
-    area: "Hosts",
-    arg: "text",
-    optionalArg: true,
-    label: (t) => (t ? `Quick Connect to ${t}` : "Quick Connect: a Session to user@address[:port], not in the Inventory"),
-    run: (ctx, t) => ctx.quickConnect(t ?? null),
-  },
-  {
-    id: "save",
-    source: BUILTIN,
-    area: "Sessions",
-    label: () => "Save to vault: the password typed for this Session, once it logged in",
-    run: (ctx) => ctx.saveSession(),
-  },
-  {
-    id: "fill",
-    source: BUILTIN,
-    area: "Sessions",
-    label: () => "Fill sudo's (or a nested ssh's) password prompt on screen from the Host's Login in the vault",
-    run: (ctx) => ctx.fillPrompt(),
-  },
-  {
-    id: "integrate",
-    source: BUILTIN,
-    area: "Sessions",
-    label: () => "Turn on shell integration in this Session's shell: one line that marks its prompts and says its folder",
-    run: (ctx) => ctx.integrate(),
-  },
-  {
-    id: "reconnect",
-    source: BUILTIN,
-    area: "Sessions",
-    label: () => "Reconnect an ended Session",
-    run: (ctx) => ctx.reconnect(),
-  },
-  {
-    id: "check",
-    source: BUILTIN,
-    area: "Hosts",
-    arg: "host",
-    optionalArg: true,
-    label: (h) =>
-      h === "stop"
-        ? "Stop the app's own check that's running, as the check panel's Stop (x) does"
-        : h
-          ? `Check ${h}`
-          : "Check this Box's health: roster.yml, ssh, the vault, askpass, init.lua, the font, Plugins' sections. With a Host (% for the one on screen): why a Session to it would fail. stop stops the app's own check",
-    run: (ctx, h) => {
-      if (h === undefined) return ctx.checkBox();
-      // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
-      if (h === "stop" && !ctx.hostNames().includes(h)) return ctx.stopCheck();
-      // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
-      const screen = ctx.sessionOnScreen();
-      if (h === "%" && (!screen || screen.quick)) {
-        return ctx.say(screen ? ":check % needs a Host's Session: a Quick Connect Session isn't on one" : ":check % needs a Session on screen");
-      }
-      const host = h === "%" ? (screen?.host ?? "") : h;
-      if (!ctx.hostNames().includes(host)) return ctx.say(`No Host named ${host}`);
-      ctx.checkHost(host);
-    },
-    // `stop` (#361) after the Hosts: a Host named stop is still checked by `:check stop`.
-    complete: (word, hostNames) => {
-      const hosts = matching([...hostNames].sort(), word);
-      return "stop".startsWith(word.toLowerCase()) && !hostNames.includes("stop") ? [...hosts, "stop"] : hosts;
-    },
-  },
-  {
-    id: "edit",
-    source: BUILTIN,
-    area: "Inventory",
-    arg: "host",
-    optionalArg: true,
-    label: (h) => (h ? `Edit ${h}` : "Edit a Host: title, description, type, address, user, Login"),
-    run: (ctx, h) => ctx.edit(h ?? null),
-  },
+  s.connect,
+  s.open,
+  s.here,
+  s.quick,
+  s.save,
+  s.fill,
+  s.integrate,
+  s.reconnect,
+  checkCommand,
+  editCommand,
   hostCommand,
   groupCommand,
   inventoryCommand,
   reviewCommand,
   unreviewCommand,
-  { id: "changes", source: BUILTIN, area: "Inventory", label: () => "Show the Pending changes", run: (ctx) => ctx.showChanges() },
-  {
-    id: "discard",
-    source: BUILTIN,
-    area: "Inventory",
-    label: () => "Discard the Pending changes (asks first)",
-    run: (ctx) => ctx.showChanges("discard"),
-  },
-  {
-    id: "publish",
-    source: BUILTIN,
-    area: "Inventory",
-    label: () => "Publish the Pending changes: commit and push roster.yml (a last look first)",
-    run: (ctx) => ctx.showChanges("publish"),
-  },
-  { id: "pull", source: BUILTIN, area: "Inventory", label: () => "Pull the infra repo (fast-forward only)", run: (ctx) => ctx.pull() },
-  { id: "next", source: BUILTIN, area: "Sessions", label: () => "Next Session", run: (ctx) => ctx.selectRelative(1) },
-  { id: "prev", source: BUILTIN, area: "Sessions", label: () => "Previous Session", run: (ctx) => ctx.selectRelative(-1) },
-  {
-    id: "session",
-    source: BUILTIN,
-    area: "Sessions",
-    arg: "number",
-    label: (n) => `Go to Session ${n ?? "N"}`,
-    run: (ctx, n) => ctx.selectNth(Number(n)),
-  },
-  {
-    id: "close",
-    source: BUILTIN,
-    area: "Sessions",
-    arg: "number",
-    optionalArg: true,
-    label: (n) => (n ? `Close Session ${n}` : "Close the Session"),
-    run: (ctx, n) => ctx.close(n === undefined ? null : Number(n)),
-  },
-  { id: "sidebar", source: BUILTIN, area: "Sidebar", label: () => "Show or hide the Sidebar", run: (ctx) => ctx.toggleSidebar() },
-  list("down", "Move down"),
-  list("up", "Move up"),
-  list("top", "Go to the top"),
-  list("bottom", "Go to the bottom"),
-  list("choose", "Switch to it"),
-  fold("fold", "fold", "Fold, or go to the parent"),
-  fold("unfold", "unfold", "Unfold, or go to the first child"),
-  fold("togglefold", "toggle", "Fold or unfold"),
-  {
-    // A Host row's menu (T166, Q156): what a right-click on it opens, from the keyboard.
-    id: "menu",
-    source: BUILTIN,
-    area: "Sidebar",
-    label: () => "The menu of the Host under the cursor: open, details, check, edit, rename, move, remove",
-    staysInAppMode: true,
-    run: (ctx) => ctx.rowMenu(),
-  },
-  {
-    id: "mode",
-    source: BUILTIN,
-    area: "View",
-    arg: "text",
-    optionalArg: true,
-    label: (m) => (m ? `Switch to ${m} mode` : "Switch the view mode"),
-    run: (ctx, m) => {
-      if (m === undefined) return ctx.setViewMode(null);
-      const mode = VIEW_MODES.find((v) => v === m.toLowerCase());
-      if (!mode) return ctx.say(`Not a view mode: ${m} (${VIEW_MODES.join(", ")})`);
-      ctx.setViewMode(mode);
-    },
-    complete: (m) => VIEW_MODES.filter((v) => v.startsWith(m.toLowerCase())),
-  },
-  {
-    id: "focus",
-    source: BUILTIN,
-    area: "View",
-    label: () => "Focus mode on or off",
-    run: (ctx) => ctx.setViewMode(ctx.viewMode() === "focus" ? "standard" : "focus"),
-  },
+  ...changesCommands,
+  s.next,
+  s.prev,
+  s.session,
+  s.close,
+  ...sidebarCommands,
+  ...viewCommands,
   { id: "cmdline", source: BUILTIN, area: "App", label: () => "Command line", run: (ctx) => ctx.openCommandLine() },
   { id: "keys", source: BUILTIN, area: "App", label: () => "Key bindings", run: (ctx) => ctx.toggleKeys() },
   { id: "statusbar", source: BUILTIN, area: "App", label: () => "Show or hide the status bar", run: (ctx) => ctx.toggleStatusBar() },

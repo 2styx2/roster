@@ -1,7 +1,8 @@
 // `:help [TOPIC]` and the `help` finder (ticket 37), registered through the registries as a Plugin
 // would (ADR 0006). HelpView is the help panel's state outside React (like ThemeChoice): which
 // page and entry it shows, and the way back. App hands it the live HelpContext each render.
-import { matching, type CommandDef } from "../commands/table";
+import type { CommandDef } from "../commands/table";
+import { matching } from "../commands/match";
 import type { FinderItem, FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";

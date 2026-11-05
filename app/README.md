@@ -91,7 +91,7 @@ app/src/state/        appState.ts: the State's shape (recent Hosts), parsed leni
 app/src/session/      Sessions: tabs.ts (store: open/close/select/reconnect/replay/resize, outside React; configure() with
                       what the app knows), attempt.ts (one Session start's own state: its output window, watch, hooks),
                       status.ts (what a Session's status means: live, connecting, its words), commands.ts (the Session
-                      commands), useTabsConfig.ts, integrate.ts (what `:integrate` says), SessionsMain.tsx (the
+                      commands and SessionContext, what they ask of the app), actions.ts (what they do), useTabsConfig.ts, integrate.ts (what `:integrate` says), SessionsMain.tsx (the
                       terminals or the empty workspace), Sessions.tsx
                       (terminal panes + the basic tab strip for `sessions = "tabs"`), prompt.ts (a password prompt at
                       the cursor, for the fill key's offer, ticket 119; and the Host a nested ssh is on, ticket 120),
@@ -106,7 +106,7 @@ app/src/terminal/     TerminalView.tsx (xterm.js, WebGL → DOM; copy/paste, fin
 app/src/errors/       clean connection errors (ticket 26, docs/app/errors.md): classify.ts (classifyExit: ssh's last lines +
                       exit code + askpass line → a Problem), catalog.ts (the rows as a Registry: where, fix, actions,
                       extras), ErrorPanel.tsx (the Session pane's error), CheckPanel.tsx (`:check HOST`; checkProgress.ts follows its steps as they run),
-                      useCheck.ts (`:check` in the workspace: a Host's, this Box's health, Stop)
+                      useCheck.ts (`:check` in the workspace: a Host's, this Box's health, Stop), command.ts (`:check`)
 app/src/edit/         editing a Host (ticket 10): form.ts (the draft, what changed, whether it needs a test login),
                       EditPanel.tsx (`:edit`: pull, the form, test login, save), ChangesPanel.tsx (`:changes`: the diff,
                       `:discard`, `:publish`: the message, the commit's hash); adding one (ticket 11): addForm.ts (the draft, checks, Vault item suggestions,
@@ -123,7 +123,8 @@ crates/roster-core/src/config/
                       keeping the last good one)
 app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config import-terminal`'s diff): core.gen.ts (the TypeScript types of what the
                       core sends: the Config, the import's preview, BackendInfo, errors, an opened Session; generated from the Rust types by
-                      crates/roster-core/tests/ts_types.rs, which fails while it's stale), types.ts (names them for the app), apply.ts (→ options, and keys,
+                      crates/roster-core/tests/ts_types.rs, which fails while it's stale), types.ts (names them for the app), defaults.ts (the core's defaults, until init.lua
+                      loads; fixture.ts is the same for tests), ranges.ts (each number option's bounds, from the core's shape table), apply.ts (→ options, and keys,
                       Themes, Folders through the registries as "init.lua"), ConfigToast.tsx (errors, warnings),
                       useConfigReport.ts (each save's Config, the newest wins; `:source`'s init.lua), command.ts (`:config`
                       and its subcommands), useConfigActions.ts (what each does, the import panel's write)
@@ -157,7 +158,7 @@ app/src/plugins/      Plugins in the frontend: manager.ts (installed + grants in
                       (a Session's committed lines, from a terminal of its own, for terminal_output; OSC 133 marks for command_done), command.ts (`:plugins`, `:packages`), PluginsPanel.tsx (the prompt, an update's diff,
                       `:plugins`, `:packages`, a float, notices); backend/fakePackages.ts is the fake Backend's
 app/src/view/status.ts  the status segment and Host-badge registries Plugins add to; StatusBar.tsx draws the bar
-app/src/view/useLayout.ts  the view mode, its layout, the Sidebar's kept choice and the one toggle; ModeHint.tsx
+app/src/view/useLayout.ts  the view mode, its layout, the Sidebar's kept choice and the one toggle (`:mode`, `:focus`: commands.ts); ModeHint.tsx
 app/src/view/views.ts   views and Host-details sections as registries (ticket 76): `:view`, the `views` finder, the open
                       view (ViewHost); ViewContent.tsx draws a view or section (text, facts, a table) and the view panel
 app/src/panel/          every panel and view docked, at any width, or full window (ticket 95, Q106): layout.ts (the
@@ -179,7 +180,9 @@ examples/plugins/recent-alerts the worked example in docs/plugins.md, a third-pa
                       installs it from a git repo and records app/src/plugins/recent-alerts.transcript.json, which
                       plugins/recentAlerts.test.ts replays against its stand-in, backend/fakeRecentAlerts.ts
 app/src/registry.ts   Registry: entries by id with a source (builtin/init.lua/Plugin), ADR 0006; registries.ts = the app's set
-app/src/commands/     table.ts: the ONE command table (`:` names; keys, the command line and buttons all run these);
+app/src/commands/     table.ts: the ONE command table (`:` names; keys, the command line and buttons all run these),
+                      CommandContext (each feature's part, declared beside its commands: session/, inventory/, sidebar/,
+                      view/, errors/command.ts, config/command.ts) and AppContext (what any command may ask); match.ts (completion's ranking);
                       builtins.ts (registerBuiltins: the commands on the app's own objects, for the app, the docs site and the lint)
 app/src/keymap.ts     keys → command lines, as a registry of bindings, and keysFor/keyHint (which keys run a line);
                       Options (Leader, vim, layout, idle lock)
@@ -208,6 +211,7 @@ app/src/news/         news.ts: what's new after an upgrade, said once in the sta
 app/src/ui/Announce.tsx
                       a live region that speaks a count once it settles (finders, the Picker, help's search; ticket 54)
 app/src/sidebar/      model.ts (rows, sections, what a row says, the cursor's moves, folding), Sidebar.tsx (draws them),
+                      commands.ts (its commands: show, move, fold, a row's menu),
                       RowMenu.tsx and hostMenu.ts (a Host row's menu, Q156), sections.ts (section registry, Sessions),
                       useSidebarModel.ts (the workspace's sections, cursor and selection)
 app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|remove|rename|move`, `:group new|rename|delete`),
@@ -215,7 +219,7 @@ app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|re
                       "a Pending change", T212), FirstRun.tsx (Start your Inventory: a Box with none, through serve),
                       useInventory.ts (Pending changes, the pull, outside edits, each change through roster),
                       useInventories.ts (named Inventories and `:inventory`'s switch; SwitchPanel.tsx asks), actions.ts (the Inventory commands,
-                      the one form slot), Forms.tsx (its panels), said.ts (what's said after each change)
+                      the one form slot; commands.ts declares InventoryContext), Forms.tsx (its panels), said.ts (what's said after each change)
 app/src/folders/      Folders (GLOSSARY), now the built-in Plugin's: folders.ts (the Folder model and the `folders` registry
                       init.lua's go into), file.ts (folders.yml parsed for the one-time move, the Plugin's settings);
                       backend/fakeFolders.ts is the same Plugin for the fake Backend

@@ -1,7 +1,7 @@
 // `:config` (ticket 32): opens init.lua (making it first if there's none), reads it again, says
 // where it is, copies Windows Terminal's profile in (ticket 33) or writes the option types.
 import { BUILTIN } from "../registry";
-import type { CommandDef } from "../commands/table";
+import type { AppContext, CommandDef } from "../commands/table";
 
 /** Each thing `:config` does, and its label; `open` is `:config` alone. */
 const ACTIONS = {
@@ -14,10 +14,17 @@ const ACTIONS = {
 
 export type ConfigAction = keyof typeof ACTIONS;
 
+/** What `:config` asks of the app. */
+export interface ConfigContext {
+  /** `:config` (ticket 32): opens init.lua (making it first if there's none), reads it again,
+   * or says where it is. */
+  config(what: ConfigAction): void;
+}
+
 /** What's typed after `config`. */
 const SUBCOMMANDS = (Object.keys(ACTIONS) as ConfigAction[]).filter((a) => a !== "open");
 
-export const configCommand: CommandDef = {
+export const configCommand: CommandDef<ConfigContext & AppContext> = {
   id: "config",
   source: BUILTIN,
   area: "App",

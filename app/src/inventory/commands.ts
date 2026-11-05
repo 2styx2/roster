@@ -4,10 +4,11 @@
 // they work the same in Standard and Focus. What's left out comes from the Sidebar's cursor (or the
 // Session on screen), and a line that still needs a name opens the command line with the rest
 // typed in. Each change is a Pending change in roster.yml, made by `roster serve`.
-import type { CommandContext, CommandDef } from "../commands/table";
+import type { AppContext, CommandDef } from "../commands/table";
 import { BUILTIN } from "../registry";
+import type { SidebarContext } from "../sidebar/commands";
 
-/** What the app does for these commands (App's CommandContext). */
+/** A change to the Live Inventory's Hosts or groups. */
 export type InventoryOp =
   | { op: "remove"; host: string }
   | { op: "rename"; host: string; to: string }
@@ -19,12 +20,39 @@ export type InventoryOp =
 export const HOST_SUBCOMMANDS = ["add", "remove", "rename", "move", "review", "unreview"] as const;
 export const GROUP_SUBCOMMANDS = ["new", "rename", "delete"] as const;
 
+/** What the Inventory commands ask of the app (inventory/actions.ts does most of it). */
+export interface InventoryContext {
+  /** Opens the edit form for the Host, or the selected one (ticket 10). */
+  edit(host: string | null): void;
+  /** Opens the add-Host form (ticket 11), in `group` (else the selected Host's). */
+  addHost(group?: string): void;
+  /** Removes, renames or moves a Host, or makes, renames or deletes a group (ticket 28): asks
+   * first where it should (removing a Host; a group whose Hosts need somewhere to go). */
+  inventory(op: InventoryOp): void;
+  /** Every group's name, in roster.yml order. */
+  groupNames(): readonly string[];
+  /** Marks the Host, or the selected one, reviewed (ticket 11); `reviewed: false` un-reviews it
+   * (issue #78), for a review made by mistake. */
+  review(host: string | null, reviewed?: boolean): void;
+  /** Shows the Pending changes; `discard` asks to discard them straight away, `publish` opens
+   * the Publish step (the diff for a last look, and the commit message). */
+  showChanges(then?: "discard" | "publish"): void;
+  /** Pulls the infra repo (fast-forward only) and says what happened. */
+  pull(): void;
+  /** `:inventory NAME` (ticket 115): asks before switching roster to that named Inventory, or
+   * says why it can't; null starts the command line, or says there are none. */
+  switchInventory(name: string | null): void;
+}
+
+type InventoryCommandContext = InventoryContext & Pick<SidebarContext, "cursorRow"> & AppContext;
+export type InventoryCommand = CommandDef<InventoryCommandContext>;
+
 const words = (text: string | undefined) => (text ?? "").trim().split(/\s+/).filter(Boolean);
 
 /** The group under the Sidebar's cursor: a group heading, or a Host row in a group. */
-const cursorGroup = (ctx: CommandContext) => ctx.cursorRow()?.data?.group ?? null;
+const cursorGroup = (ctx: InventoryCommandContext) => ctx.cursorRow()?.data?.group ?? null;
 
-function runHost(ctx: CommandContext, arg: string | undefined) {
+function runHost(ctx: InventoryCommandContext, arg: string | undefined) {
   const [sub, a, b, ...rest] = words(arg);
   const what = sub?.toLowerCase();
   if (what === "add") return ctx.addHost(a ?? cursorGroup(ctx) ?? undefined);
@@ -45,7 +73,7 @@ function runHost(ctx: CommandContext, arg: string | undefined) {
   ctx.inventory({ op: "move", host, group: b });
 }
 
-function runGroup(ctx: CommandContext, arg: string | undefined) {
+function runGroup(ctx: InventoryCommandContext, arg: string | undefined) {
   const [sub, a, b, ...rest] = words(arg);
   const what = sub?.toLowerCase();
   if (what !== "new" && what !== "rename" && what !== "delete") {
@@ -87,7 +115,7 @@ function completeGroup(arg: string, groupNames: readonly string[]): string[] {
   return [];
 }
 
-export const hostCommand: CommandDef = {
+export const hostCommand: InventoryCommand = {
   id: "host",
   source: BUILTIN,
   area: "Inventory",
@@ -106,7 +134,7 @@ export const hostCommand: CommandDef = {
   complete: (arg, hosts, ctx) => completeHost(arg, hosts, ctx?.groupNames ?? []),
 };
 
-export const groupCommand: CommandDef = {
+export const groupCommand: InventoryCommand = {
   id: "group",
   source: BUILTIN,
   area: "Inventory",
@@ -123,7 +151,7 @@ export const groupCommand: CommandDef = {
 };
 
 /** `:review` and `:unreview`: `:host review` and `:host unreview`, for short. */
-const review = (reviewed: boolean): CommandDef => ({
+const review = (reviewed: boolean): InventoryCommand => ({
   id: reviewed ? "review" : "unreview",
   source: BUILTIN,
   area: "Inventory",
@@ -138,3 +166,33 @@ const review = (reviewed: boolean): CommandDef => ({
 
 export const reviewCommand = review(true);
 export const unreviewCommand = review(false);
+
+export const editCommand: InventoryCommand = {
+  id: "edit",
+  source: BUILTIN,
+  area: "Inventory",
+  arg: "host",
+  optionalArg: true,
+  label: (h) => (h ? `Edit ${h}` : "Edit a Host: title, description, type, address, user, Login"),
+  run: (ctx, h) => ctx.edit(h ?? null),
+};
+
+/** `:changes`, `:discard`, `:publish` and `:pull`. */
+export const changesCommands: readonly InventoryCommand[] = [
+  { id: "changes", source: BUILTIN, area: "Inventory", label: () => "Show the Pending changes", run: (ctx) => ctx.showChanges() },
+  {
+    id: "discard",
+    source: BUILTIN,
+    area: "Inventory",
+    label: () => "Discard the Pending changes (asks first)",
+    run: (ctx) => ctx.showChanges("discard"),
+  },
+  {
+    id: "publish",
+    source: BUILTIN,
+    area: "Inventory",
+    label: () => "Publish the Pending changes: commit and push roster.yml (a last look first)",
+    run: (ctx) => ctx.showChanges("publish"),
+  },
+  { id: "pull", source: BUILTIN, area: "Inventory", label: () => "Pull the infra repo (fast-forward only)", run: (ctx) => ctx.pull() },
+];
