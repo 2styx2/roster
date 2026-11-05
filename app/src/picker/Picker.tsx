@@ -170,9 +170,8 @@ function HostNode({
 /** How wide the group column is, and its font, as laid out now (null until measured, and in
  * a test's DOM, which lays nothing out: the cell's own end ellipsis is then the fallback). */
 interface GroupFit {
-  /** The group column's width; `wide`, a type-less row's group cell (group and type columns). */
+  /** The group column's width. */
   width: number;
-  wide: number;
   measure: (s: string) => number;
 }
 
@@ -199,13 +198,10 @@ function textMeasure(font: string): ((s: string) => number) | null {
 /** Reads the group column off the hidden sizer row (a DOM read, kept out of the component). */
 function readGroupFit(list: HTMLElement | null): Omit<GroupFit, "measure"> & { font: string } | null {
   const cell = list?.querySelector<HTMLElement>(".picker-sizer .host-group");
-  const type = list?.querySelector<HTMLElement>(".picker-sizer .host-type");
-  if (!list || !cell || !type || cell.clientWidth === 0) return null;
+  if (!list || !cell || cell.clientWidth === 0) return null;
   const cs = getComputedStyle(cell);
-  const gap = parseFloat(getComputedStyle(list).columnGap) || 0;
   return {
     width: cell.getBoundingClientRect().width,
-    wide: cell.getBoundingClientRect().width + gap + type.getBoundingClientRect().width,
     font: `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`,
   };
 }
@@ -214,8 +210,8 @@ function readGroupFit(list: HTMLElement | null): Omit<GroupFit, "measure"> & { f
  * its last whole parts, so "fieldwork-east-ridge-building-4-s1" and "…-s2" don't both read
  * "fieldwork-east-ridge-b…". One cut, measured, never the column's end cut on top. The cell's
  * tooltip has it whole, and so does a screen reader. */
-function GroupText({ group, fit, wide }: { group: string; fit: GroupFit | null; wide: boolean }) {
-  const shown = fit ? fitMiddle(group, (wide ? fit.wide : fit.width) - 0.5, fit.measure) : group;
+function GroupText({ group, fit }: { group: string; fit: GroupFit | null }) {
+  const shown = fit ? fitMiddle(group, fit.width - 0.5, fit.measure) : group;
   if (shown === group) return <>{group}</>;
   return (
     <>
@@ -266,10 +262,10 @@ export function Picker({
       const now = readGroupFit(list);
       if (!now) return;
       setGroupFit((was) => {
-        if (was && was.width === now.width && was.wide === now.wide && now.font === font) return was;
+        if (was && was.width === now.width && now.font === font) return was;
         const measure = textMeasure(now.font);
         font = now.font;
-        return measure ? { width: now.width, wide: now.wide, measure } : null;
+        return measure ? { width: now.width, measure } : null;
       });
     };
     read();
@@ -551,14 +547,11 @@ export function Picker({
                   ? addressCut(host.ip, IP_CHARS)
                   : marked(host.ip, query)}
               </span>
-              {/* With no type, the group takes the type's cell too (round 19: cut beside an empty
-                  cell); it still starts at the group column, so the columns stay shared. An empty
-                  address keeps its cell: the group can't start left of its column. */}
-              <span
-                className={`host-group${host.type ? "" : " wide"}`}
-                title={host.group}
-              >
-                <GroupText group={host.group} fit={groupFit} wide={!host.type} />
+              {/* The group stays in its column on every row, cut the same way (round 21: a
+                  type-less row's group, widened over the type's cell in round 19, showed a second
+                  cut length in the column). An empty address keeps its cell too. */}
+              <span className="host-group" title={host.group}>
+                <GroupText group={host.group} fit={groupFit} />
               </span>
               {host.type && (
                 <span className="host-type" title={host.type}>

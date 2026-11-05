@@ -1089,8 +1089,6 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* Each keeps a word's room: the name gives way first (its whole text is in the footer when cut). */
 .picker-row > .host-group { min-width: min(12ch, max-content); }
 .picker-row > .host-type { min-width: min(7ch, max-content); }
-/* A Host with no type: its group takes the empty type cell too, from its own column's start. */
-.picker-row > .host-group.wide { grid-column: span 2; contain: inline-size; } /* sizes nothing: it only fills */
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
 .picker-row .host-cell > .badge { flex: none; }
