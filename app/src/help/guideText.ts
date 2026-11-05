@@ -17,13 +17,15 @@ import news from "../../../docs/news.md?raw";
 import meshGuide from "../../../docs/mesh.md?raw";
 import newBox from "../../../docs/new-box.md?raw";
 import plugins from "../../../docs/plugins.md?raw";
-import pluginApi from "../../../docs/plugin-api.md?raw";
 import serveApi from "../../../docs/serve-api.md?raw";
-// The Plugin API is bundled once (Q189): the reference above, and the data the stubs are written from.
-import * as pluginApiData from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,values,modules,functions,events,types";
+// The Plugin API is bundled once, as data (Q189, T228): the reference (docs/plugin-api.md) and the
+// stubs (roster.lua) are both written from it here. The commands' part is startup's own pick, shared.
+import * as pluginApiData from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,values,modules,functions,events,types,serve_results,lua_doc,errors_doc";
+import { commands } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import notices from "virtual:third-party-notices";
 import { version as APP_VERSION } from "../../package.json";
 import { luaStubs } from "./luaStubs";
+import { pluginApiDoc } from "./pluginApiDoc";
 
 const pluginTypes = `# roster.lua: the Plugin API's types
 
@@ -74,7 +76,7 @@ export const guideTexts: Readonly<Record<string, string>> = {
   "serve-api": serveApi,
   extending,
   plugins,
-  "plugin-api": pluginApi,
+  "plugin-api": pluginApiDoc({ ...pluginApiData, commands }),
   "plugin-types": pluginTypes,
   version,
   news,

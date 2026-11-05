@@ -159,7 +159,8 @@ app/src/help/         `:help` (ticket 37, docs/app/help.md): pages.ts (the help 
                       build time as the help chunk, T213), text.ts (HelpText: loads that chunk on the first :help), tagTable.ts
                       and guideBlocks.ts (the guides' topics, made at build time by scripts/help-plugin.mjs as
                       `virtual:help-tags`, so startup knows them before the text loads), luaStubs.ts (plugin-types' Lua
-                      stubs, written from plugin-api.json), markdown.ts (that Markdown
+                      stubs, written from plugin-api.json), pluginApiDoc.ts (plugin-api's reference, written from
+                      plugin-api.json too, T228), markdown.ts (that Markdown
                       → blocks, doc.ts), options.ts (config.md's option tables + each value and where it came from),
                       command.ts (`:help`, the `help` finder, HelpView, `:lookup`), lookup.ts (which topic the lookup
                       keys open: the command typed, the selected result or row, a binding's option, ticket 52), HelpPanel.tsx

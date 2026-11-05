@@ -142,7 +142,12 @@ describe("the docs website", () => {
     const gzip = new Response(new Response(js).body?.pipeThrough(new CompressionStream("gzip")));
     // 330 -> 450 KB on 2026-11-04 (T197, #377, decision Q181, owner's call): budgets follow the docs. It loads
     // lazily, as Ghostty's 174 KB does; WezTerm's 382 KB and Zed's 875 KB load on every page. performance.md has the history.
-    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(450_000);
+    const size = (await gzip.arrayBuffer()).byteLength;
+    expect(size).toBeLessThan(450_000);
+    // Shard it before it gets there, not trim the docs (T228, #438; docs-budget research item 4): `topics`
+    // and `places` as one small file the search box loads first, the texts in shards loaded as matches need
+    // them. 344.6 KB on 2026-11-05 (77 %); this fails at 80 %, so the next docs PR past it does the sharding.
+    expect(size, "the search index is past 80 % of its 450 KB budget: shard it (#438 item 2)").toBeLessThan(360_000);
   });
 
   it("puts the search box on every page, and loads the index only when it's used", () => {

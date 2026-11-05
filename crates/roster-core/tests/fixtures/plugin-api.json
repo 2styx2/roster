@@ -2,64 +2,91 @@
   "api_version": 6,
   "commands": [
     {
+      "doc": "Opens a finder: `finder alerts`.",
       "name": "finder",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Opens a view: `view discover`.",
       "name": "view",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Opens a help page: `help recent-alerts`.",
       "name": "help",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Opens the Picker.",
       "name": "find",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Shows a Host's details: `info esx-02`.",
       "name": "info",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Shows the Pending changes (Publishing them stays the user's).",
       "name": "changes",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Goes to the Nth Session (`roster.sessions.show` goes by id).",
       "name": "session",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Goes to the next Session.",
       "name": "next",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Goes to the previous Session.",
       "name": "prev",
+      "needs_text": "none",
       "permission": null
     },
     {
+      "doc": "Runs roster's diagnostics for a Host and shows them, as `:check HOST` does: `check esx-02`. It connects to the Host, as `host.check` does.",
       "name": "check",
+      "needs_text": "`serve:host.check`",
       "permission": "serve:host.check"
     },
     {
+      "doc": "Opens a Host: its Session, or a new one.",
       "name": "open",
+      "needs_text": "`sessions.open`",
       "permission": "sessions.open"
     },
     {
+      "doc": "Opens a Session on a Host.",
       "name": "connect",
+      "needs_text": "`sessions.open`",
       "permission": "sessions.open"
     }
   ],
+  "errors_doc": "A function that fails raises a Lua error: `pcall` catches it, with the message as a string. The message starts with the function (`roster.inventory.host: unknown host 'web-9' (code 2)`); a roster serve error ends with its code, from [serve-api.md's tables](serve-api.md). An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.\n\nAny function can also raise:\n\n- Lua's own `bad argument` error, for an argument of the wrong kind (a number where a table goes);\n- `roster.sidebar.set: PATH: a table that mixes a list with named keys (or has gaps): use one or the other`, `roster.float.open: PATH: a thread can't be a Plugin value` and the like, for data that can't be handed over (the function, then `PATH`, where in your table: `rows.3.label`). A function's return value that can't be is `the value it returned: PATH: …`;\n- `more than 1000 UI changes in one go`, when one call sets more than that;\n- `more than 10000 functions handed to roster at once`.\n\n**Refused by the app** isn't an error: the app shows a warning notice naming the Plugin (`pinned: :pin is taken (builtin)`) and leaves that one change out. The call itself goes on.\n\n**What the Plugin added** (api 5): each collection (`roster.commands`, `roster.keymap`, `roster.themes`, `roster.sidebar`, `roster.views`, `roster.badges` by Host, …) has `get`, `has` and `list`, which give only the Plugin's own, as it set them; `get` gives a copy, so changing it changes nothing until you set it again. Taking away what the Plugin never added (or already took away) is an error at your line, as in `init.lua` (`roster.status.remove: the Plugin has no status segment \"alerts\" (roster.status.list() names its own)`), and so is a key context that isn't one. A Plugin whose manifest says `api = 4` or older keeps what it was written against: such a removal does nothing.",
   "events": [
     {
       "name": "lock",
       "needs": [],
-      "payload": "EmptyEvent"
+      "payload": "EmptyEvent",
+      "when": "The vault locked (the lock screen came up)."
     },
     {
       "name": "unlock",
       "needs": [],
-      "payload": "EmptyEvent"
+      "payload": "EmptyEvent",
+      "when": "The vault unlocked."
     },
     {
       "name": "host_selected",
@@ -67,7 +94,8 @@
         "inventory.read",
         "terminal.read"
       ],
-      "payload": "HostSelectedEvent"
+      "payload": "HostSelectedEvent",
+      "when": "The Session on screen changed to a Host's."
     },
     {
       "name": "session_open",
@@ -75,7 +103,8 @@
         "inventory.read",
         "terminal.read"
       ],
-      "payload": "SessionOpenEvent"
+      "payload": "SessionOpenEvent",
+      "when": "A Session started (or started again)."
     },
     {
       "name": "session_exit",
@@ -83,28 +112,32 @@
         "inventory.read",
         "terminal.read"
       ],
-      "payload": "SessionExitEvent"
+      "payload": "SessionExitEvent",
+      "when": "A Session ended, failed, or its tab was closed while it ran."
     },
     {
       "name": "inventory_changed",
       "needs": [
         "inventory.read"
       ],
-      "payload": "EmptyEvent"
+      "payload": "EmptyEvent",
+      "when": "The app got a new Host list (an edit, a pull, a Publish, an outside edit of `roster.yml`)."
     },
     {
       "name": "terminal_output",
       "needs": [
         "terminal.read"
       ],
-      "payload": "TerminalOutputEvent"
+      "payload": "TerminalOutputEvent",
+      "when": "A Session printed something: a few times a second, in batches."
     },
     {
       "name": "command_done",
       "needs": [
         "terminal.read"
       ],
-      "payload": "CommandDoneEvent"
+      "payload": "CommandDoneEvent",
+      "when": "A command ended in a Session whose shell writes OSC 133 marks (since api 4): after the `terminal_output` with its last lines. A shell without them sends none; [Shell integration](plugins.md#shell-integration) says how to set one up."
     },
     {
       "name": "job_progress",
@@ -113,11 +146,28 @@
         "serve:discover.status",
         "serve:host.check_job"
       ],
-      "payload": "JobProgressEvent"
+      "payload": "JobProgressEvent",
+      "when": "One of roster serve's jobs (a Mesh run, a Discover scan, a Host's check) started, moved on (at most five times a second) or ended (serve API 20; an older serve sends none, so keep a poll until the first one comes; a check is a job from serve API 21). A Plugin hears a Mesh job only with `serve:mesh.job`, a scan only with `serve:discover.status` and a check only with `serve:host.check_job`: what it could ask anyway (`serve:host.check` alone isn't enough: a listener may never call it). The result isn't in it: ask `mesh.job`, `discover.status` or `host.check_job` once it ends. Its text is cut as roster serve's answers are: a `cmd:` or `env:` Login reference in it (a failed check's `error.message`) reaches you as `cmd:` or `env:`."
     }
   ],
   "functions": [
     {
+      "doc": "Warnings and errors always show. An info notice is quiet by default, as roster's own routine messages are (`ui.messages`, like Neovim's): unless `ui.messages = \"all\"`, it isn't drawn, a screen reader still hears it and `:messages` keeps it. An info notice with buttons shows, and `quiet` decides either way: mark `quiet = false` on what the user asked for: the result of something they started (\"Scan done: 12 Hosts answered, 3 new\"), an answer (\"No alerts\") or a refusal (\"Keep a Host first\"), and leave it out for a routine confirmation (\"Copied the line\"). A quiet notice from a timer, an event or a request's answer, which the user didn't ask for, leaves a message line that shows something (an error, an answer) as it is. Every notice, shown or quiet, is in `:messages`.\n\nA notice's button runs a command line when the user clicks it, as [`roster.cmd`](#rostercmdline) would: the click is the user's call, so `view ID` opens your view when a job that ran in the background has finished (a Plugin can't open one on its own, from a timer or an answer). It takes a command line, not a function, so a notice never holds on to one.",
+      "errors": [
+        [
+          "roster.notify: the level is \"info\", \"warn\" or \"error\"",
+          "`level` is something else"
+        ],
+        [
+          "roster.notify: actions… (a notice's action runs a command line, not a function)",
+          "a function in `opts`"
+        ],
+        [
+          "roster.notify: quiet is true or false",
+          "`opts.quiet` is something else"
+        ]
+      ],
+      "example": "roster.notify(\"Copied esx-02's address\") -- quiet unless ui.messages = \"all\"\nroster.notify(\"leader: not a key sequence, using w w\", \"warn\")\nroster.notify(\"Plan ready: 4 Hosts change\", \"info\", { actions = { { label = \"Show the plan\", run = \"view mesh-plan\" } } })\nroster.notify(\"Scan done: 12 Hosts found\", \"info\", { quiet = false })",
       "needs_text": "none",
       "params": [
         {
@@ -141,12 +191,27 @@
       ],
       "path": "roster.notify",
       "permission": null,
+      "refused": [
+        "more than 2 actions, or one whose `run` isn't a command line"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Shows a notice, naming the Plugin"
     },
     {
+      "doc": "Several listeners for one event run in the order they were added. There's no way to stop listening short of `:plugins reload`. Ask [`roster.has`](#rosterhaspermission) first for an event that needs a permission.",
+      "errors": [
+        [
+          "roster.on: there's no event \"NAME\" (there's lock, unlock, …)",
+          "`event` isn't one of them"
+        ],
+        [
+          "roster.on: the EVENT event needs the P permission",
+          "the Plugin may not hear it (\"needs the inventory.read or terminal.read permission\")"
+        ]
+      ],
+      "example": "roster.on(\"session_open\", function(e)\n  if e.host then roster.badges.set(e.host, \"open\") end\nend)",
       "needs_text": "none",
       "params": [
         {
@@ -164,12 +229,25 @@
       ],
       "path": "roster.on",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Runs a function on an event"
     },
     {
+      "doc": "The app draws the question in its own style, with your Plugin's name on it, and only the user answers it: `run` is called when they confirm, `cancel` (if any) when they don't (`Esc` or Cancel, or another Plugin's question taking its place, which isn't a call the user started). Nothing a Plugin does can answer it or draw one of its own. Only while the user runs one of your actions, commands or finder items, so a question never comes up on its own. With `danger`, it's the stronger form for what can't be undone easily (a Mesh Cut): the confirming button is the danger colour and the keys start on Cancel, so a stray `Enter` only declines; with `typed` too, the user types that word (a Host's name) before the button works. Asking again replaces the question: the earlier one's `cancel` isn't called (your Plugin asked the new one, so it knows), and its functions are dropped.",
+      "errors": [
+        [
+          "roster.confirm: only while the user runs one of your actions, commands or finder items",
+          "at load or in an event listener"
+        ],
+        [
+          "roster.confirm: `run` must be a function: what happens when the user confirms",
+          "`run` is missing or a command line"
+        ]
+      ],
+      "example": "actions = { { label = \"Cut\", key = \"x\", run = function(e)\n  roster.confirm({\n    title = \"Cut \" .. e.host .. \" from the Mesh?\",\n    text = \"Its key is taken off every Host it can reach.\",\n    action = \"Cut\",\n    danger = true,\n    typed = e.host,\n    run = function() roster.serve.call(\"mesh.cut\", { host = e.host }) end,\n  })\nend } }",
       "needs_text": "none",
       "params": [
         {
@@ -181,12 +259,39 @@
       ],
       "path": "roster.confirm",
       "permission": null,
+      "refused": [
+        "a field of the wrong kind (`roster.confirm: action must be text`): nothing is asked"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Asks the user to confirm, then runs a function"
     },
     {
+      "doc": "It runs after the call returns, as if the user typed it. Only while the user runs one of your actions, commands or finder items, and only your own commands and the few of roster's in [Command lines a Plugin may run](#command-lines-a-plugin-may-run), each with the permission it needs there: never `:plugins`, `:packages`, `:publish` or anything else that changes what's installed, granted or written. One of your commands it runs is the user's call carried one hop, as a [`roster.serve.request`](#rosterserverequestmethod-params-done)'s answer is: it may copy, ask or answer on the message line, but a `roster.cmd` or a request made in it (or in such an answer) doesn't carry the call further, so the command that line names runs as the app's call and can't.",
+      "errors": [
+        [
+          "roster.cmd: only while the user runs one of your actions, commands or finder items",
+          "at load or in an event listener"
+        ],
+        [
+          "roster.cmd: which command? …",
+          "an empty line"
+        ],
+        [
+          "roster.cmd: :NAME isn't one a Plugin may run (its own commands, and …)",
+          "a command not in the list, another Plugin's, or one of yours named after one of roster's"
+        ],
+        [
+          "roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands",
+          "one of your commands, when the app couldn't tell roster which commands are its own (a call the user makes waits up to 5 s for that first)"
+        ],
+        [
+          "roster.cmd: :NAME needs the P permission",
+          "`:open` or `:connect` without `sessions.open`"
+        ]
+      ],
+      "example": "roster.commands.add(\"alerts\", { run = function(a)\n  if a.words[1] == nil then roster.cmd(\"finder alerts\") end\nend })",
       "needs_text": "none",
       "params": [
         {
@@ -198,12 +303,25 @@
       ],
       "path": "roster.cmd",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Runs a command line"
     },
     {
+      "doc": "For what a command did or found: the line at the bottom of the window that roster's own commands answer on, not a notice to close. Only while the user runs one of your actions, commands or finder items, so it always answers something they did. Use [`roster.notify`](#rosternotifytext-level-opts) for anything else.\n\nIt follows `ui.messages` as roster's own messages do (like Neovim's): what went wrong (\"No Host named nope-01\") and the answer to what was asked (\"3 alerts\") always show, so a plain `roster.echo` shows. Mark a routine confirmation, when nothing went wrong (\"Added esx-02 to Lab\"), with `{ quiet = true }`: unless `ui.messages = \"all\"`, it isn't drawn, a screen reader still hears it and `:messages` keeps it.",
+      "errors": [
+        [
+          "roster.echo: only while the user runs one of your actions, commands or finder items",
+          "at load, in an event listener or a timer"
+        ],
+        [
+          "roster.echo: quiet is true or false",
+          "`opts.quiet` is something else"
+        ]
+      ],
+      "example": "roster.commands.add(\"alerts\", { run = function(a)\n  if a.words[1] == \"clear\" then alerts = {} roster.echo(\"Cleared the alerts\", { quiet = true })\n  elseif a.words[1] == nil then roster.echo(#alerts .. \" alerts\")\n  else roster.echo(\"alerts takes clear\") end\nend })",
       "needs_text": "none",
       "params": [
         {
@@ -221,12 +339,29 @@
       ],
       "path": "roster.echo",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Answers on the message line, as roster's own commands do"
     },
     {
+      "doc": "For a command that needs one more word from the user: it opens the command line with `text` in it and the cursor at its end, and Tab completes the rest with your command's `complete`. Nothing runs until the user presses Enter. Only your own commands, and only while the user runs one of your actions, commands or finder items.",
+      "errors": [
+        [
+          "roster.cmdline: only while the user runs one of your actions, commands or finder items",
+          "at load, in an event listener or a timer"
+        ],
+        [
+          "roster.cmdline: \"WORD\" isn't one of your commands …",
+          "the line starts with anything but one of the Plugin's commands"
+        ],
+        [
+          "roster.cmdline: :NAME can't run yet: the app hasn't told roster its own commands",
+          "as `roster.cmd`'s"
+        ]
+      ],
+      "example": "roster.commands.add(\"note\", { run = function(a)\n  if a.args == \"\" then return roster.cmdline(\"note \") end\n  roster.storage.write(\"note.txt\", a.args)\nend })",
       "needs_text": "none",
       "params": [
         {
@@ -238,12 +373,21 @@
       ],
       "path": "roster.cmdline",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Opens the command line with text typed in"
     },
     {
+      "doc": "Ask before you use what a permission gives: listening for an event the Plugin may not hear is an error, and a module it wasn't granted is `nil`. `roster.has(\"network:api.example.com\")` asks about that one site, and a bare `roster.has(\"network\")` whether any site was granted (whether `roster.http` is there). One that can't be granted here (a serve method roster doesn't allow, a site that isn't one) is `false`, so you can ask about what a newer roster has.",
+      "errors": [
+        [
+          "roster.has: \"NAME\" isn't a permission (there's …)",
+          "a name that's no permission at all (a typo)"
+        ]
+      ],
+      "example": "if roster.has(\"terminal.read\") then\n  roster.on(\"terminal_output\", function(e) end)\nelse\n  roster.notify(\"allow terminal.read in :plugins to see alerts\", \"warn\")\nend",
       "needs_text": "none",
       "params": [
         {
@@ -255,12 +399,25 @@
       ],
       "path": "roster.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` when it's granted (and not revoked in `:plugins`).",
       "since": 3,
       "summary": "Whether the Plugin was granted a permission"
     },
     {
+      "doc": "The app keeps the clock and runs `fn` on the Plugin's own thread when it's time, as it runs an action, except that it isn't something the user started (so `roster.clipboard.copy` refuses). An error in it counts toward stopping the Plugin. Timers end with the Plugin: unloading, reloading or disabling it cancels every one. At most 100 timers wait at once.",
+      "errors": [
+        [
+          "roster.defer: ms must be a number of milliseconds from 0 to …",
+          "a negative, infinite or huge `ms`"
+        ],
+        [
+          "roster.defer: more than 100 timers waiting at once …",
+          "too many timers"
+        ]
+      ],
+      "example": "roster.defer(5000, function()\n  roster.status.remove(\"saved\")\nend)",
       "needs_text": "none",
       "params": [
         {
@@ -278,12 +435,29 @@
       ],
       "path": "roster.defer",
       "permission": null,
+      "refused": [],
       "returns": "Timer",
       "returns_doc": "Its id, for `roster.cancel`.",
       "since": 3,
       "summary": "Runs a function once, later"
     },
     {
+      "doc": "The first run is `ms` from now. The next wait starts when a run has finished, so a slow run never piles up behind itself. Everything else is as `roster.defer`: on the Plugin's own thread, cancelled with the Plugin.",
+      "errors": [
+        [
+          "roster.every: at least 1000 ms between runs …",
+          "a shorter `ms`"
+        ],
+        [
+          "roster.every: ms must be a number of milliseconds from 0 to …",
+          "a negative, infinite or huge `ms`"
+        ],
+        [
+          "roster.every: more than 100 timers waiting at once …",
+          "too many timers"
+        ]
+      ],
+      "example": "-- \"2 min ago\" stays true.\nroster.every(30000, show)",
       "needs_text": "none",
       "params": [
         {
@@ -301,12 +475,21 @@
       ],
       "path": "roster.every",
       "permission": null,
+      "refused": [],
       "returns": "Timer",
       "returns_doc": "Its id, for `roster.cancel`.",
       "since": 3,
       "summary": "Runs a function again and again, until it's cancelled"
     },
     {
+      "doc": "A timer that already ran (a deferred one) or was cancelled is nothing to cancel: that's not an error. A repeating timer may cancel itself from its own function.",
+      "errors": [
+        [
+          "roster.cancel: a timer, as roster.defer or roster.every returned it",
+          "something else"
+        ]
+      ],
+      "example": "local t = roster.every(60000, refresh)\nroster.commands.add(\"stop\", { run = function() roster.cancel(t) end })",
       "needs_text": "none",
       "params": [
         {
@@ -318,12 +501,25 @@
       ],
       "path": "roster.cancel",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Cancels a timer"
     },
     {
+      "doc": "Adding it again replaces it (and the function it ran).",
+      "errors": [
+        [
+          "roster.commands.add: \"NAME\" isn't a name like \"recent-alerts\" (…)",
+          "a bad `name`"
+        ],
+        [
+          "roster.commands.add: `run` must be a function or a command line",
+          "`spec.run` is missing or something else"
+        ]
+      ],
+      "example": "roster.commands.add(\"alerts\", {\n  desc = \"Recent alerts\",\n  run = function(a)\n    if a.words[1] == \"clear\" then clear() end\n  end,\n})\nroster.commands.add(\"pins\", { desc = \"Pinned Hosts\", run = \"finder pinned\" })",
       "needs_text": "none",
       "params": [
         {
@@ -341,12 +537,27 @@
       ],
       "path": "roster.commands.add",
       "permission": null,
+      "refused": [
+        "`:NAME` is taken by roster, `init.lua` or another Plugin (`pinned: :pin is taken (other)`), or it's `:plugins`"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a `:` command"
     },
     {
+      "doc": "Since api 5, removing one it doesn't have is an error; written for an older api, it does nothing.",
+      "errors": [
+        [
+          "roster.commands.remove: \"NAME\" isn't a name like …",
+          "a bad `name` (since api 3)"
+        ],
+        [
+          "roster.commands.remove: the Plugin has no command \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.commands.remove(\"alerts\")",
       "needs_text": "none",
       "params": [
         {
@@ -358,12 +569,21 @@
       ],
       "path": "roster.commands.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes one of the Plugin's commands"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.commands.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.commands.get(\"alerts\")\nif s then\n  s.desc = \"Recent alerts, newest first\"\n  roster.commands.add(\"alerts\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -375,12 +595,21 @@
       ],
       "path": "roster.commands.get",
       "permission": null,
+      "refused": [],
       "returns": "CommandSpec?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's commands, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.commands.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.commands.has(\"alerts\") then roster.commands.remove(\"alerts\") end",
       "needs_text": "none",
       "params": [
         {
@@ -392,22 +621,43 @@
       ],
       "path": "roster.commands.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that command"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.commands.list()) do roster.commands.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.commands.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's commands"
     },
     {
+      "doc": "Never in the terminal. A function isn't an action: add a command and bind its name. The key runs its line as `:plugins run NAME LINE` (which `:keys` shows), checked each time as a button's line is: never `:plugins`, `:packages`, `:source` or another Plugin's command, and a command that needs a permission only while it's granted.",
+      "errors": [
+        [
+          "roster.keymap.set: the action is a command line such as \"alerts\" (add a command for a function)",
+          "`action` isn't a string or `false`"
+        ],
+        [
+          "roster.keymap.set: \"CONTEXT\" isn't a key context …",
+          "not `leader`, `list` or `list_vim` (since api 5; for a Plugin written for an older api the app refuses it with a notice)"
+        ],
+        [
+          "roster.keymap.set: the Plugin binds no \"KEYS\" in CONTEXT …",
+          "`action` is `false` and the Plugin has no such binding (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.keymap.set(\"leader\", roster.plugin.config.leader or \"w w\", \"finder alerts\")",
       "needs_text": "none",
       "params": [
         {
@@ -431,12 +681,30 @@
       ],
       "path": "roster.keymap.set",
       "permission": null,
+      "refused": [
+        "a `context` other than the three (`keys go after the Leader or in the Sidebar …`), for a Plugin written for api 4 or older",
+        "keys bound already, by roster, `init.lua` or another Plugin (`a` is Folders', `f` the Picker's; `:keys` lists them): the notice names what has them and up to three free ones like them (`␣ f is taken (by builtin: find). Free after the Leader: a, g, h`)",
+        "keys that would hide a binding, or be hidden by one (`\"a z\"` when `a` is bound)",
+        "when pressed, a line `roster.cmd` couldn't run (`:plugins grant …`, another Plugin's command): a notice says why"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Binds keys to a command line"
     },
     {
+      "doc": "Keys it didn't bind stay as they are: a Plugin can't unbind roster's, `init.lua`'s or another Plugin's. Since api 5, taking off one it didn't bind is an error, as `init.lua`'s `roster.keymap.del` is; written for an older api, it does nothing.",
+      "errors": [
+        [
+          "roster.keymap.del: \"CONTEXT\" isn't a key context …",
+          "not `leader`, `list` or `list_vim` (since api 5)"
+        ],
+        [
+          "roster.keymap.del: the Plugin binds no \"KEYS\" in CONTEXT …",
+          "it has no such binding (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.keymap.del(\"leader\", \"w w\")",
       "needs_text": "none",
       "params": [
         {
@@ -454,12 +722,21 @@
       ],
       "path": "roster.keymap.del",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Takes one of the Plugin's key bindings off"
     },
     {
+      "doc": "Only the Plugin's own bindings, as it set them.",
+      "errors": [
+        [
+          "roster.keymap.get: \"CONTEXT\" isn't a key context …",
+          "not `leader`, `list` or `list_vim`"
+        ]
+      ],
+      "example": "roster.echo(roster.keymap.get(\"leader\", \"w w\") or \"not bound\") -- \"finder alerts\"",
       "needs_text": "none",
       "params": [
         {
@@ -477,12 +754,21 @@
       ],
       "path": "roster.keymap.get",
       "permission": null,
+      "refused": [],
       "returns": "string?",
       "returns_doc": "`nil` if it binds no such keys there.",
       "since": 5,
       "summary": "The command line one of the Plugin's key bindings runs"
     },
     {
+      "doc": "Only the Plugin's own bindings.",
+      "errors": [
+        [
+          "roster.keymap.has: \"CONTEXT\" isn't a key context …",
+          "not `leader`, `list` or `list_vim`"
+        ]
+      ],
+      "example": "if roster.keymap.has(\"leader\", \"w w\") then roster.keymap.del(\"leader\", \"w w\") end",
       "needs_text": "none",
       "params": [
         {
@@ -500,12 +786,21 @@
       ],
       "path": "roster.keymap.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin binds those keys there"
     },
     {
+      "doc": "Only the Plugin's own, as `init.lua`'s `roster.keymap.list` gives the Config's. A copy: changing it binds nothing.",
+      "errors": [
+        [
+          "roster.keymap.list: \"CONTEXT\" isn't a key context …",
+          "not `leader`, `list` or `list_vim`"
+        ]
+      ],
+      "example": "for keys, line in pairs(roster.keymap.list(\"leader\")) do roster.echo(keys .. \": \" .. line) end",
       "needs_text": "none",
       "params": [
         {
@@ -517,12 +812,25 @@
       ],
       "path": "roster.keymap.list",
       "permission": null,
+      "refused": [],
       "returns": "table<string, string>",
       "returns_doc": "Keys to command line.",
       "since": 5,
       "summary": "The Plugin's key bindings in a context"
     },
     {
+      "doc": "Checked as `init.lua`'s `themes` are.",
+      "errors": [
+        [
+          "roster.themes.define: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.themes.define \"ID\": …",
+          "the Theme isn't one `init.lua` would take: an unknown field or token, a colour that isn't one"
+        ]
+      ],
+      "example": "roster.themes.define(\"dusk\", { base = \"nord\", colors = { accent = \"#e0a060\" } })",
       "needs_text": "none",
       "params": [
         {
@@ -540,12 +848,27 @@
       ],
       "path": "roster.themes.define",
       "permission": null,
+      "refused": [
+        "a Theme with that id exists already"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a Theme"
     },
     {
+      "doc": "If it was the Theme in use, the app goes back to `init.lua`'s. Since api 5, removing one it doesn't have is an error, as `init.lua`'s `roster.themes.remove` is; written for an older api, it does nothing.",
+      "errors": [
+        [
+          "roster.themes.remove: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.themes.remove: the Plugin has no Theme \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.themes.remove(\"dusk\")",
       "needs_text": "none",
       "params": [
         {
@@ -557,12 +880,21 @@
       ],
       "path": "roster.themes.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Removes one of the Plugin's Themes"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.themes.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.themes.get(\"dusk\")\nif s then\n  s.appearance = \"light\"\n  roster.themes.define(\"dusk\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -574,12 +906,21 @@
       ],
       "path": "roster.themes.get",
       "permission": null,
+      "refused": [],
       "returns": "Theme?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's Themes, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.themes.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.themes.has(\"dusk\") then roster.themes.remove(\"dusk\") end",
       "needs_text": "none",
       "params": [
         {
@@ -591,22 +932,35 @@
       ],
       "path": "roster.themes.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that Theme"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.themes.list()) do roster.themes.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.themes.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's Themes"
     },
     {
+      "doc": "Setting it again replaces the whole section, and drops the functions its old rows held.",
+      "errors": [
+        [
+          "roster.sidebar.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.sidebar.set(\"pinned\", {\n  title = \"Pinned\",\n  order = 150,\n  empty = \"Nothing pinned. :pin HOST\",\n  rows = { { id = \"esx-02\", label = \"esx-02\", host = \"esx-02\", detail = \"10.0.0.5\" } },\n})",
       "needs_text": "none",
       "params": [
         {
@@ -624,12 +978,28 @@
       ],
       "path": "roster.sidebar.set",
       "permission": null,
+      "refused": [
+        "a section with that id from elsewhere",
+        "a field of the wrong kind (`roster.sidebar.set pinned row 2: label must be text`): the whole section is dropped"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a Sidebar section, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.sidebar.remove: \"ID\" isn't a name like …",
+          "a bad `id` (since api 3)"
+        ],
+        [
+          "roster.sidebar.remove: the Plugin has no Sidebar section \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.sidebar.remove(\"pinned\")",
       "needs_text": "none",
       "params": [
         {
@@ -641,12 +1011,21 @@
       ],
       "path": "roster.sidebar.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes a Sidebar section"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.sidebar.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.sidebar.get(\"pinned\")\nif s then\n  s.title = \"Pinned Hosts\"\n  roster.sidebar.set(\"pinned\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -658,12 +1037,21 @@
       ],
       "path": "roster.sidebar.get",
       "permission": null,
+      "refused": [],
       "returns": "Section?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's Sidebar sections, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.sidebar.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.sidebar.has(\"pinned\") then roster.sidebar.remove(\"pinned\") end",
       "needs_text": "none",
       "params": [
         {
@@ -675,22 +1063,35 @@
       ],
       "path": "roster.sidebar.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that Sidebar section"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.sidebar.list()) do roster.sidebar.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.sidebar.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's Sidebar sections"
     },
     {
+      "doc": "It comes after the app's own segments; a layout can place it (`modes.standard.statusbar`).",
+      "errors": [
+        [
+          "roster.status.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.status.set(\"alerts\", { text = \"⚠ \" .. #alerts, title = \"Recent alerts\", run = \"finder alerts\" })",
       "needs_text": "none",
       "params": [
         {
@@ -708,12 +1109,28 @@
       ],
       "path": "roster.status.set",
       "permission": null,
+      "refused": [
+        "a segment with that id from elsewhere",
+        "no `text`"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a status bar segment, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.status.remove: \"ID\" isn't a name like …",
+          "a bad `id` (since api 3)"
+        ],
+        [
+          "roster.status.remove: the Plugin has no status segment \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.status.remove(\"alerts\")",
       "needs_text": "none",
       "params": [
         {
@@ -725,12 +1142,21 @@
       ],
       "path": "roster.status.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes a status bar segment"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.status.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.status.get(\"alerts\")\nif s then\n  s.text = \"4 alerts\"\n  roster.status.set(\"alerts\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -742,12 +1168,21 @@
       ],
       "path": "roster.status.get",
       "permission": null,
+      "refused": [],
       "returns": "StatusSegment?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's status segments, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.status.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.status.has(\"alerts\") then roster.status.remove(\"alerts\") end",
       "needs_text": "none",
       "params": [
         {
@@ -759,22 +1194,35 @@
       ],
       "path": "roster.status.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that status segment"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.status.list()) do roster.status.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.status.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's status segments"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.finders.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.finders.set(\"pinned\", {\n  title = \"Pinned Hosts\",\n  items = { { label = \"esx-02\", detail = \"10.0.0.5\", run = \"open esx-02\" } },\n})",
       "needs_text": "none",
       "params": [
         {
@@ -792,12 +1240,28 @@
       ],
       "path": "roster.finders.set",
       "permission": null,
+      "refused": [
+        "a finder with that id from elsewhere",
+        "an item without a `label` or a `run`: the whole finder is dropped"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a finder, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.finders.remove: \"ID\" isn't a name like …",
+          "a bad `id` (since api 3)"
+        ],
+        [
+          "roster.finders.remove: the Plugin has no finder \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.finders.remove(\"pinned\")",
       "needs_text": "none",
       "params": [
         {
@@ -809,12 +1273,21 @@
       ],
       "path": "roster.finders.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes a finder"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.finders.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.finders.get(\"pinned\")\nif s then\n  s.title = \"Pinned Hosts\"\n  roster.finders.set(\"pinned\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -826,12 +1299,21 @@
       ],
       "path": "roster.finders.get",
       "permission": null,
+      "refused": [],
       "returns": "Finder?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's finders, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.finders.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.finders.has(\"pinned\") then roster.finders.remove(\"pinned\") end",
       "needs_text": "none",
       "params": [
         {
@@ -843,22 +1325,35 @@
       ],
       "path": "roster.finders.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that finder"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.finders.list()) do roster.finders.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.finders.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's finders"
     },
     {
+      "doc": "It's listed in the help index under the Plugin's name.",
+      "errors": [
+        [
+          "roster.help.set: \"TOPIC\" isn't a name like …",
+          "a bad `topic`"
+        ]
+      ],
+      "example": "roster.help.set(\"pinned\", {\n  title = \"Pinned Hosts\",\n  summary = \"A Sidebar section of the Hosts you pin\",\n  markdown = \"# Pinned Hosts\\n\\n`:pin HOST` adds a Host.\",\n})",
       "needs_text": "none",
       "params": [
         {
@@ -876,12 +1371,28 @@
       ],
       "path": "roster.help.set",
       "permission": null,
+      "refused": [
+        "a page with that topic from elsewhere",
+        "no `markdown`"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a help page, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.help.remove: \"TOPIC\" isn't a name like …",
+          "a bad `topic` (since api 3)"
+        ],
+        [
+          "roster.help.remove: the Plugin has no help page \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.help.remove(\"pinned\")",
       "needs_text": "none",
       "params": [
         {
@@ -893,12 +1404,21 @@
       ],
       "path": "roster.help.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes a help page"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.help.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.help.get(\"pinned\")\nif s then\n  s.title = \"Pinned Hosts\"\n  roster.help.set(\"pinned\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -910,12 +1430,21 @@
       ],
       "path": "roster.help.get",
       "permission": null,
+      "refused": [],
       "returns": "HelpPage?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's help pages, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.help.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.help.has(\"pinned\") then roster.help.remove(\"pinned\") end",
       "needs_text": "none",
       "params": [
         {
@@ -927,22 +1456,35 @@
       ],
       "path": "roster.help.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that help page"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.help.list()) do roster.help.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.help.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's help pages"
     },
     {
+      "doc": "Like Neovim's `vim.health`: with `check`, each `:check` calls it and shows the lines it returns, under the Plugin's name on `:help health`. It runs with the Plugin's permissions and the time budget of any call (a quarter of a second), but it isn't a call the user started (no clipboard, questions, command lines or flagged serve methods in it); one that fails or doesn't answer in time is an `ERROR` line of its section, and `:check` goes on without it. With `checks` and no `check`, `:check` shows them as the Plugin last set them.",
+      "errors": [
+        [
+          "roster.health.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.health.set(\"recent-alerts\", {\n  title = \"Recent alerts\",\n  check = function()\n    if not granted(\"terminal.read\") then\n      return { { level = \"warn\", message = \"terminal.read isn't granted\", fix = \"Allow it in :plugins\" } }\n    end\n    return { { level = \"ok\", message = #alerts .. \" alerts so far\" } }\n  end,\n})",
       "needs_text": "none",
       "params": [
         {
@@ -960,12 +1502,24 @@
       ],
       "path": "roster.health.set",
       "permission": null,
+      "refused": [
+        "a section with that id from elsewhere",
+        "a check whose `level` isn't `ok`, `warn` or `error`, or without a `message`"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a section to `:check` (this Box's health), or replaces it"
     },
     {
+      "doc": "A `check` that needs roster serve returns `\"later\"` at once and answers with this from the request's `done`, so it never waits for serve on the Plugin's thread. The app shows the section once it answers, or an `ERROR` line if it hasn't within 30 seconds; an answer for a run that's over (answered, or timed out) is dropped. Any run of the Plugin may answer, not only a call the user started.",
+      "errors": [
+        [
+          "roster.health.answer: lines: …",
+          "lines that aren't plain data"
+        ]
+      ],
+      "example": "check = function(e)\n  roster.serve.request(\"discover.plan\", { targets = { \"10.0.0.0/30\" } }, function(plan, err)\n    roster.health.answer(e.check, plan and { { level = \"ok\", message = \"scans with \" .. plan.scanner } }\n      or { { level = \"error\", message = err } })\n  end)\n  return \"later\"\nend",
       "needs_text": "none",
       "params": [
         {
@@ -983,12 +1537,27 @@
       ],
       "path": "roster.health.answer",
       "permission": null,
+      "refused": [
+        "lines whose `level` isn't `ok`, `warn` or `error`, or without a `message`"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Answers a `:check` section's check that returned `\"later\"`"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.health.remove: \"ID\" isn't a name like …",
+          "a bad `id` (since api 3)"
+        ],
+        [
+          "roster.health.remove: the Plugin has no `:check` section \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.health.remove(\"recent-alerts\")",
       "needs_text": "none",
       "params": [
         {
@@ -1000,12 +1569,21 @@
       ],
       "path": "roster.health.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes a `:check` section"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.health.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.health.get(\"recent-alerts\")\nif s then\n  s.title = \"Recent alerts\"\n  roster.health.set(\"recent-alerts\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -1017,12 +1595,21 @@
       ],
       "path": "roster.health.get",
       "permission": null,
+      "refused": [],
       "returns": "HealthSection?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's `:check` sections, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.health.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.health.has(\"recent-alerts\") then roster.health.remove(\"recent-alerts\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1034,22 +1621,35 @@
       ],
       "path": "roster.health.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that `:check` section"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.health.list()) do roster.health.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.health.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's `:check` sections"
     },
     {
+      "doc": "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list`, `host.get` and `mesh.status` (a small, made-up Mesh), `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
+      "errors": [
+        [
+          "roster.tutor.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.tutor.set(\"pinned\", {\n  title = \"Pinned Hosts\",\n  lessons = {\n    { title = \"Find them\", text = \"Your pinned Hosts have their own finder.\",\n      steps = { { id = \"open\", text = \"Open it with `:finder pinned`\",\n                  on = { event = \"command\", id = \"finder\", arg = \"pinned\" } } } },\n  },\n})",
       "needs_text": "none",
       "params": [
         {
@@ -1067,12 +1667,28 @@
       ],
       "path": "roster.tutor.set",
       "permission": null,
+      "refused": [
+        "a tutorial with that id, or a help page `tutor-ID`, from elsewhere",
+        "no lessons, a lesson without a `title`, a step without an `id` or `text`, an `id` used twice, or an `on` that names no tutor event"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Adds a tutorial, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.tutor.remove: \"ID\" isn't a name like …",
+          "a bad `id` (since api 3)"
+        ],
+        [
+          "roster.tutor.remove: the Plugin has no tutorial \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.tutor.remove(\"pinned\")",
       "needs_text": "none",
       "params": [
         {
@@ -1084,12 +1700,21 @@
       ],
       "path": "roster.tutor.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Removes a tutorial"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.tutor.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.tutor.get(\"pinned\")\nif s then\n  s.title = \"Pinning Hosts\"\n  roster.tutor.set(\"pinned\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -1101,12 +1726,21 @@
       ],
       "path": "roster.tutor.get",
       "permission": null,
+      "refused": [],
       "returns": "Tutorial?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's tutorials, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.tutor.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.tutor.has(\"pinned\") then roster.tutor.remove(\"pinned\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1118,22 +1752,35 @@
       ],
       "path": "roster.tutor.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that tutorial"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.tutor.list()) do roster.tutor.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.tutor.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's tutorials"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.toolbar.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.toolbar.set(\"scan\", { label = \"Scan a network\", text = \"Scan\", icon = \"map\", run = \"discover\" })",
       "needs_text": "none",
       "params": [
         {
@@ -1151,12 +1798,24 @@
       ],
       "path": "roster.toolbar.set",
       "permission": null,
+      "refused": [
+        "a control with that id from elsewhere (roster's own: `find`, `add`, …)",
+        "a field of the wrong kind"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Adds a control to the toolbar, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.toolbar.remove: the Plugin has no toolbar control \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.toolbar.remove(\"scan\")",
       "needs_text": "none",
       "params": [
         {
@@ -1168,12 +1827,21 @@
       ],
       "path": "roster.toolbar.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Removes a toolbar control"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.toolbar.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.toolbar.get(\"scan\")\nif s then\n  s.label = \"Scan again\"\n  roster.toolbar.set(\"scan\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -1185,12 +1853,21 @@
       ],
       "path": "roster.toolbar.get",
       "permission": null,
+      "refused": [],
       "returns": "ToolbarControl?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's toolbar controls, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.toolbar.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.toolbar.has(\"scan\") then roster.toolbar.remove(\"scan\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1202,22 +1879,35 @@
       ],
       "path": "roster.toolbar.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that toolbar control"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.toolbar.list()) do roster.toolbar.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.toolbar.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's toolbar controls"
     },
     {
+      "doc": "With `done` and `total` it shows how far it has got; without, only that it's going. Set it again as it moves on, and `roster.progress.remove` it when it's over. With `cancel`, the user can stop it: the app calls the function once and shows \"Stopping…\" until you set or remove it again.",
+      "errors": [
+        [
+          "roster.progress.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.progress.set(\"scan\", {\n  title = \"Scanning 10.0.0.0/24\",\n  done = 40, total = 256,\n  cancel = function() roster.serve.call(\"discover.stop\") end,\n})",
       "needs_text": "none",
       "params": [
         {
@@ -1235,12 +1925,24 @@
       ],
       "path": "roster.progress.set",
       "permission": null,
+      "refused": [
+        "a progress with that id from another Plugin",
+        "a field of the wrong kind"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Shows or updates the progress of something long"
     },
     {
+      "doc": "Say how it ended with `roster.notify` or in your view.",
+      "errors": [
+        [
+          "roster.progress.remove: the Plugin has no progress \"ID\" …",
+          "it has none by that id (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.progress.remove(\"scan\")\nroster.notify(\"Scan done: 12 Hosts found\")",
       "needs_text": "none",
       "params": [
         {
@@ -1252,12 +1954,21 @@
       ],
       "path": "roster.progress.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Takes a progress away: it's over"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.progress.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local s = roster.progress.get(\"scan\")\nif s then\n  s.text = \"Scanning 10.0.0.0/24\"\n  roster.progress.set(\"scan\", s)\nend",
       "needs_text": "none",
       "params": [
         {
@@ -1269,12 +1980,21 @@
       ],
       "path": "roster.progress.get",
       "permission": null,
+      "refused": [],
       "returns": "Progress?",
       "returns_doc": "`nil` if it has none by that id.",
       "since": 5,
       "summary": "One of the Plugin's progresses, as it set it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.progress.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.progress.has(\"scan\") then roster.progress.remove(\"scan\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1286,22 +2006,35 @@
       ],
       "path": "roster.progress.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that progress"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.progress.list()) do roster.progress.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.progress.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's progresses"
     },
     {
+      "doc": "One badge per Host per Plugin; setting it again replaces it. A name that isn't a Host shows nowhere. The app draws it as a small chip right after the Host's name, in the text colour (never the accent, which means live), and cuts it after 12 characters; its tooltip and the row's accessible name have it whole, after your Plugin's name (`recent-alerts: 2`). So say the count, not what's counted: your Plugin's name says that. `nil` is [`roster.badges.remove`](#rosterbadgesremovehost)'s old spelling, checked as it is.",
+      "errors": [
+        [
+          "roster.badges.set: the Plugin has no badge on \"HOST\" …",
+          "`text` is `nil` and it has no badge on that Host (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.badges.set(\"esx-02\", tostring(2))",
       "needs_text": "none",
       "params": [
         {
@@ -1319,12 +2052,21 @@
       ],
       "path": "roster.badges.set",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Puts a badge on a Host's Inventory row, or takes it off"
     },
     {
+      "doc": "Only its own: another Plugin's badge on the same Host stays.",
+      "errors": [
+        [
+          "roster.badges.remove: the Plugin has no badge on \"HOST\" …",
+          "it has no badge on that Host (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "if roster.badges.has(\"esx-02\") then roster.badges.remove(\"esx-02\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1336,12 +2078,16 @@
       ],
       "path": "roster.badges.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 5,
       "summary": "Takes the Plugin's badge off a Host's row"
     },
     {
+      "doc": "As the Plugin set it, before the app cuts it to fit.",
+      "errors": [],
+      "example": "local n = tonumber(roster.badges.get(\"esx-02\") or \"0\") or 0\nroster.badges.set(\"esx-02\", tostring(n + 1))",
       "needs_text": "none",
       "params": [
         {
@@ -1353,12 +2099,16 @@
       ],
       "path": "roster.badges.get",
       "permission": null,
+      "refused": [],
       "returns": "string?",
       "returns_doc": "`nil` if it has none on that Host.",
       "since": 5,
       "summary": "The text of the Plugin's badge on a Host"
     },
     {
+      "doc": "",
+      "errors": [],
+      "example": "if roster.badges.has(\"esx-02\") then roster.badges.remove(\"esx-02\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1370,22 +2120,30 @@
       ],
       "path": "roster.badges.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has a badge on a Host"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, host in ipairs(roster.badges.list()) do roster.badges.remove(host) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.badges.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The Hosts the Plugin has a badge on"
     },
     {
+      "doc": "It lies over the terminal, on the side away from the Sidebar, so it never resizes a Session. `Esc` closes it. Its actions are buttons at its foot (with a key each, once it has focus), and its links open in the browser, the address shown with them.",
+      "errors": [],
+      "example": "roster.float.open({ title = \"esx-02\", lines = { \"ERROR disk full\", \"at 10:42\" } })",
       "needs_text": "none",
       "params": [
         {
@@ -1397,22 +2155,35 @@
       ],
       "path": "roster.float.open",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Opens a floating window over the terminal, or replaces the Plugin's"
     },
     {
+      "doc": "Another Plugin's stays.",
+      "errors": [],
+      "example": "roster.float.close()",
       "needs_text": "none",
       "params": [],
       "path": "roster.float.close",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Closes the Plugin's floating window"
     },
     {
+      "doc": "Setting it again replaces the whole view and drops the functions its old table held; an open view stays open and keeps its selected row. It doesn't open the view: `:view ID`, a key bound to `view ID`, the `views` finder or `roster.views.open` in one of your actions does.",
+      "errors": [
+        [
+          "roster.views.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.views.set(\"discover\", {\n  title = \"Discover\",\n  place = \"panel\",\n  text = \"Scanning 10.0.0.0/24\",\n  table = {\n    columns = {\n      { id = \"address\", label = \"Address\", kind = \"data\" },\n      { id = \"ports\", label = \"Ports\", kind = \"number\" },\n    },\n    rows = {},\n    sort = \"address\",\n    empty = \"Nothing found yet.\",\n    actions = {\n      { label = \"Keep\", key = \"a\", icon = \"add\", run = function(e) keep(e.row) end },\n    },\n  },\n})",
       "needs_text": "none",
       "params": [
         {
@@ -1430,12 +2201,34 @@
       ],
       "path": "roster.views.set",
       "permission": null,
+      "refused": [
+        "a view with that id from elsewhere",
+        "a field of the wrong kind (`roster.views.set discover table row 2: id must be text`): the whole view is dropped",
+        "an action key the table uses itself (`j`, `k`, `g`, `G`, `s`, `S`, `/`, `?`, `q`) or one used twice",
+        "a graph's action key the graph uses itself (`h` `j` `k` `l` `H` `J` `K` `L` `g` `G` `n` `N` `o` `O` `t` `f` `m` `s` `S` `/` `?` `q` `+` `-` `=` `0`), a graph action's `when` naming what a node doesn't have (`when.colour: a node has no colour`), a node or cluster id used twice, an edge id used twice, or a table and a graph in one view"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Adds a view, or replaces it"
     },
     {
+      "doc": "A row whose `id` is in the table already is replaced where it stands; a new one goes at the end (the table's sort still applies). The rest stay as they are, and so does the selection, so a scan can add what it finds as it finds it. Plain data only: the table's functions stay those `roster.views.set` gave. A graph's nodes, edges and clusters work the same way, by `id`: a node that turns live, or an edge that appears, changes where it stands, and every placed node keeps its place.",
+      "errors": [
+        [
+          "roster.views.update: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.views.update \"ID\": … (an update is plain data: functions go in roster.views.set)",
+          "a function in `changes`"
+        ],
+        [
+          "roster.views.update: the Plugin has no view \"ID\" …",
+          "it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.views.update(\"discover\", {\n  text = \"Scanning 10.0.0.0/24: 40%\",\n  rows = { { id = \"10.0.0.7\", cells = { address = \"10.0.0.7\", ports = 2 } } },\n  remove = { \"10.0.0.9\" },\n})",
       "needs_text": "none",
       "params": [
         {
@@ -1453,12 +2246,43 @@
       ],
       "path": "roster.views.update",
       "permission": null,
+      "refused": [
+        "a view the Plugin hasn't set",
+        "rows for a view without a table",
+        "more than 10,000 rows in the table after the update",
+        "nodes, edges or clusters for a view without a graph",
+        "more than 5,000 nodes, 10,000 edges or 500 clusters in the graph after the update"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Changes some of a view's rows or nodes in place, or its text or facts"
     },
     {
+      "doc": "Only while the user runs one of the Plugin's actions, commands or finder items, so a Plugin never takes the screen on its own. One view is open at a time: this replaces the one that is.\n\nWith `select`, it opens at that node or row: a graph opens the node's cluster if it's collapsed and centres the node, a table scrolls to the row. Asked again while the view is open, it starts afresh at the new one. An id the view doesn't have opens it as without `select`. A Host-details section's action can so open a graph at its Host's node.",
+      "errors": [
+        [
+          "roster.views.open: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.views.open: opts is a table, as { select = ID }",
+          "`opts` isn't a table"
+        ],
+        [
+          "roster.views.open: select is the id of a node or row (a string)",
+          "`select` isn't a string"
+        ],
+        [
+          "roster.views.open: only while the user runs one of your actions, commands or finder items",
+          "at load or in an event listener"
+        ],
+        [
+          "roster.views.open: the Plugin has no view \"ID\" …",
+          "it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.commands.add(\"discover\", { desc = \"Scan a network\", run = function()\n  roster.views.open(\"discover\")\nend })\n-- A Host-details section's button: the map, at that Host.\nroster.details.set(\"reach\", \"esx-02\", { title = \"Reach\", facts = {}, actions = {\n  { label = \"Show on the map\", icon = \"map\", run = function(e) roster.views.open(\"topology\", { select = e.host }) end },\n} })",
       "needs_text": "none",
       "params": [
         {
@@ -1476,12 +2300,27 @@
       ],
       "path": "roster.views.open",
       "permission": null,
+      "refused": [
+        "a view the Plugin hasn't set"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Opens a view"
     },
     {
+      "doc": "Focus goes back where it was, as with `Esc`. Another view, or one of its own that isn't open, stays as it is.",
+      "errors": [
+        [
+          "roster.views.close: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.views.close: the Plugin has no view \"ID\" …",
+          "it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.views.close(\"discover\")",
       "needs_text": "none",
       "params": [
         {
@@ -1493,12 +2332,25 @@
       ],
       "path": "roster.views.close",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Closes a view, if it's open"
     },
     {
+      "doc": "It closes if it's open, and its functions are dropped.",
+      "errors": [
+        [
+          "roster.views.remove: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.views.remove: the Plugin has no view \"ID\" …",
+          "it never set one by that id, or removed it (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.views.remove(\"discover\")",
       "needs_text": "none",
       "params": [
         {
@@ -1510,12 +2362,21 @@
       ],
       "path": "roster.views.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Removes a view"
     },
     {
+      "doc": "Set and not removed, open or not.",
+      "errors": [
+        [
+          "roster.views.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if not roster.views.has(\"discover\") then roster.views.set(\"discover\", { title = \"Discover\" }) end",
       "needs_text": "none",
       "params": [
         {
@@ -1527,22 +2388,35 @@
       ],
       "path": "roster.views.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that view"
     },
     {
+      "doc": "Sorted.",
+      "errors": [],
+      "example": "for _, id in ipairs(roster.views.list()) do roster.views.remove(id) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.views.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's views"
     },
     {
+      "doc": "One section per id per Host; setting it again for the Host replaces it and drops the functions its old table held (other Hosts' stay). A name that isn't a Host shows nowhere. A table's action gets the Host too (`e.host`).",
+      "errors": [
+        [
+          "roster.details.set: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "roster.details.set(\"mesh\", \"esx-02\", {\n  title = \"Mesh\",\n  facts = { { label = \"reach\", value = \"can reach 7 Hosts\" } },\n})",
       "needs_text": "none",
       "params": [
         {
@@ -1566,12 +2440,28 @@
       ],
       "path": "roster.details.set",
       "permission": null,
+      "refused": [
+        "a section with that id from another Plugin",
+        "a field of the wrong kind: that Host's section is dropped"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Adds a section to a Host's details, or replaces it"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.details.remove: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ],
+        [
+          "roster.details.remove: the Plugin has no Host-details section \"ID\" …",
+          "it has that section on no Host (since api 5; for a Plugin written for an older api it does nothing)"
+        ]
+      ],
+      "example": "roster.details.remove(\"mesh\")",
       "needs_text": "none",
       "params": [
         {
@@ -1583,12 +2473,21 @@
       ],
       "path": "roster.details.remove",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Removes a section from every Host's details"
     },
     {
+      "doc": "A copy (see [Errors](#errors)).",
+      "errors": [
+        [
+          "roster.details.get: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "local reach = roster.details.get(\"reach\", \"esx-02\")",
       "needs_text": "none",
       "params": [
         {
@@ -1606,12 +2505,21 @@
       ],
       "path": "roster.details.get",
       "permission": null,
+      "refused": [],
       "returns": "DetailsSection?",
       "returns_doc": "`nil` if it has none by that id on that Host.",
       "since": 5,
       "summary": "One of the Plugin's Host-details sections, as it set it for a Host"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.details.has: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "if roster.details.has(\"reach\") then roster.details.remove(\"reach\") end",
       "needs_text": "none",
       "params": [
         {
@@ -1629,12 +2537,21 @@
       ],
       "path": "roster.details.has",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it has.",
       "since": 5,
       "summary": "Whether the Plugin has that section, on a Host or on any"
     },
     {
+      "doc": "Without `id`, the sections it has on at least one Host; with it, the Hosts that section is on. Sorted.",
+      "errors": [
+        [
+          "roster.details.list: \"ID\" isn't a name like …",
+          "a bad `id`"
+        ]
+      ],
+      "example": "for _, host in ipairs(roster.details.list(\"reach\")) do roster.details.set(\"reach\", host, nil) end",
       "needs_text": "none",
       "params": [
         {
@@ -1646,12 +2563,25 @@
       ],
       "path": "roster.details.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "A new list each call.",
       "since": 5,
       "summary": "The ids of the Plugin's Host-details sections, or the Hosts one is on"
     },
     {
+      "doc": "Only while the user runs one of the Plugin's actions, commands or finder items, so a Plugin can't change what you copied behind your back. If the clipboard can't be written, the app says so, and the notices the call gave after the copy aren't shown.",
+      "errors": [
+        [
+          "roster.clipboard.copy: only while the user runs one of your actions, commands or finder items",
+          "at load or in an event listener"
+        ],
+        [
+          "roster.clipboard.copy: the text is over 65536 bytes",
+          "the text is longer"
+        ]
+      ],
+      "example": "actions = { { label = \"Copy\", icon = \"copy\", run = function() roster.clipboard.copy(line) end } }",
       "needs_text": "none",
       "params": [
         {
@@ -1663,12 +2593,33 @@
       ],
       "path": "roster.clipboard.copy",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Puts text on the clipboard"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.storage.FN: \"NAME\" isn't a file name: letters, digits, - _ and . only, …",
+          "a path (`a/b`, `../x`, `C:\\x`), a name starting with `.`, or other characters"
+        ],
+        [
+          "roster.storage.FN: NAME is a link: roster won't follow it",
+          "the file was made a link (a symlink, a junction): it's never followed"
+        ],
+        [
+          "roster.storage.FN: the Plugin's data folder is a link …",
+          "its folder was made a link: it's never followed"
+        ],
+        [
+          "roster.storage.FN: there's no data folder for Plugins here",
+          "the app has no data folder (a test, say)"
+        ]
+      ],
+      "example": "local seen = roster.storage.read(\"seen.txt\") or \"\"",
       "needs_text": "none",
       "params": [
         {
@@ -1680,12 +2631,37 @@
       ],
       "path": "roster.storage.read",
       "permission": null,
+      "refused": [],
       "returns": "string?",
       "returns_doc": "What the file holds, or `nil` when there's no such file.",
       "since": 3,
       "summary": "Reads one of the Plugin's files"
     },
     {
+      "doc": "Makes the file, or replaces what it held, all at once: a crash leaves the old content or the new, never half.",
+      "errors": [
+        [
+          "roster.storage.write: NAME would be N bytes: a file holds at most 1 MB (1048576 bytes)",
+          "the text is longer"
+        ],
+        [
+          "roster.storage.write: the Plugin's data folder holds at most 10 MB …",
+          "the folder would hold more (a file replaced counts only its new size)"
+        ],
+        [
+          "roster.storage.write: the Plugin's data folder holds at most 1000 files",
+          "a new file past the thousandth"
+        ],
+        [
+          "roster.storage.write: \"NAME\" isn't a file name: …",
+          "as `roster.storage.read`"
+        ],
+        [
+          "roster.storage.write: NAME is a link: roster won't follow it",
+          "as `roster.storage.read`"
+        ]
+      ],
+      "example": "roster.storage.write(\"seen.txt\", table.concat(lines, \"\\n\"))",
       "needs_text": "none",
       "params": [
         {
@@ -1703,22 +2679,52 @@
       ],
       "path": "roster.storage.write",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Writes one of the Plugin's files, whole"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.storage.list: the Plugin's data folder is a link …",
+          "its folder was made a link: it's never followed"
+        ]
+      ],
+      "example": "for _, name in ipairs(roster.storage.list()) do roster.notify(name) end",
       "needs_text": "none",
       "params": [],
       "path": "roster.storage.list",
       "permission": null,
+      "refused": [],
       "returns": "string[]",
       "returns_doc": "In name order; `{}` before the first write.",
       "since": 3,
       "summary": "The names of the Plugin's files"
     },
     {
+      "doc": "",
+      "errors": [
+        [
+          "roster.storage.FN: \"NAME\" isn't a file name: letters, digits, - _ and . only, …",
+          "a path (`a/b`, `../x`, `C:\\x`), a name starting with `.`, or other characters"
+        ],
+        [
+          "roster.storage.FN: NAME is a link: roster won't follow it",
+          "the file was made a link (a symlink, a junction): it's never followed"
+        ],
+        [
+          "roster.storage.FN: the Plugin's data folder is a link …",
+          "its folder was made a link: it's never followed"
+        ],
+        [
+          "roster.storage.FN: there's no data folder for Plugins here",
+          "the app has no data folder (a test, say)"
+        ]
+      ],
+      "example": "roster.storage.remove(\"cache.json\")",
       "needs_text": "none",
       "params": [
         {
@@ -1730,12 +2736,25 @@
       ],
       "path": "roster.storage.remove",
       "permission": null,
+      "refused": [],
       "returns": "boolean",
       "returns_doc": "`true` if it was there.",
       "since": 3,
       "summary": "Removes one of the Plugin's files"
     },
     {
+      "doc": "Objects and arrays become tables, `null` becomes `nil`.",
+      "errors": [
+        [
+          "roster.storage.read_json: NAME isn't JSON (…)",
+          "the file holds something else"
+        ],
+        [
+          "roster.storage.read_json: …",
+          "as `roster.storage.read`"
+        ]
+      ],
+      "example": "local state = roster.storage.read_json(\"state.json\") or { hosts = {} }",
       "needs_text": "none",
       "params": [
         {
@@ -1747,12 +2766,25 @@
       ],
       "path": "roster.storage.read_json",
       "permission": null,
+      "refused": [],
       "returns": "any",
       "returns_doc": "The value, or `nil` when there's no such file.",
       "since": 3,
       "summary": "Reads one of the Plugin's files as JSON"
     },
     {
+      "doc": "As `roster.storage.write`, with the value as indented JSON. An empty table is written as `{}` (Lua can't tell an empty list from an empty table).",
+      "errors": [
+        [
+          "roster.storage.write_json: a Lua function can't go to roster serve",
+          "the value holds a function (or another value that isn't data)"
+        ],
+        [
+          "roster.storage.write_json: …",
+          "as `roster.storage.write`"
+        ]
+      ],
+      "example": "roster.storage.write_json(\"state.json\", { hosts = { \"esx-02\" } })",
       "needs_text": "none",
       "params": [
         {
@@ -1770,22 +2802,40 @@
       ],
       "path": "roster.storage.write_json",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Writes one of the Plugin's files as JSON, whole"
     },
     {
+      "doc": "From serve's [`hosts.list`](serve-api.md): while `roster.yml` doesn't load (an outside edit), the last good Hosts. The groups are [`roster.inventory.groups()`](#rosterinventorygroups), from the same answer when it's called in the same call (since api 4). [`roster.inventory.request`](#rosterinventoryrequestdone) asks without waiting.",
+      "errors": [
+        [
+          "roster.inventory.hosts: MESSAGE (code N)",
+          "roster serve failed (see [Errors](#errors))"
+        ]
+      ],
+      "example": "for _, h in ipairs(roster.inventory.hosts()) do\n  if not h.reviewed then roster.badges.set(h.name, \"review\") end\nend",
       "needs_text": "`inventory.read`",
       "params": [],
       "path": "roster.inventory.hosts",
       "permission": "inventory.read",
+      "refused": [],
       "returns": "Host[]",
       "returns_doc": "The Hosts, each with its Login references (a vault item's name, never a password; a `cmd:` or `env:` one cut to its kind).",
       "since": 2,
       "summary": "Every Host, in `roster.yml` order"
     },
     {
+      "doc": "From serve's [`host.get`](serve-api.md). An unknown name is `nil` (since api 3; it was an error in api 2).",
+      "errors": [
+        [
+          "roster.inventory.host: MESSAGE (code N)",
+          "roster serve failed otherwise"
+        ]
+      ],
+      "example": "local h = roster.inventory.host(name)\nif h then roster.notify(name .. \" is \" .. h.ip) end",
       "needs_text": "`inventory.read`",
       "params": [
         {
@@ -1797,22 +2847,40 @@
       ],
       "path": "roster.inventory.host",
       "permission": "inventory.read",
+      "refused": [],
       "returns": "Host?",
       "returns_doc": "The Host, or `nil` when no Host has that name.",
       "since": 2,
       "summary": "One Host, by its exact name"
     },
     {
+      "doc": "From serve's [`hosts.list`](serve-api.md), as `roster.inventory.hosts()` is: called in the same call as `hosts()`, it uses that answer rather than read the Inventory again (since api 4; a call into serve that can change something in between, a write or `mesh.cut`, reads it again). A Host's `group` names one of them.",
+      "errors": [
+        [
+          "roster.inventory.groups: MESSAGE (code N)",
+          "roster serve failed (see [Errors](#errors))"
+        ]
+      ],
+      "example": "local groups = roster.inventory.groups()\nfor _, h in ipairs(roster.inventory.hosts()) do\n  local g = groups[h.group]\n  roster.notify(h.name .. \" is in \" .. (g and g.title ~= \"\" and g.title or h.group))\nend",
       "needs_text": "`inventory.read`",
       "params": [],
       "path": "roster.inventory.groups",
       "permission": "inventory.read",
+      "refused": [],
       "returns": "table<string, Group>",
       "returns_doc": "The groups, by name.",
       "since": 3,
       "summary": "Every group, by name"
     },
     {
+      "doc": "Serve's [`hosts.list`](serve-api.md), asked as [`roster.serve.request`](#rosterserverequestmethod-params-done) asks: it returns at once and `done` runs later on the Plugin's thread, as a call of its own, so the Plugin keeps answering the user while roster serve is busy (a Publish holds `roster.yml` for a minute or two). Its answer carries the user's call as a `roster.serve.request`'s does. It counts toward the 8 requests a Plugin may have waiting, and needs no `serve:` permission. A `cmd:` or `env:` Login reference is cut to its kind, as in every read.",
+      "errors": [
+        [
+          "roster.inventory.request: 8 requests are waiting for roster serve already: wait for one to answer",
+          "8 `roster.serve.request` and `roster.inventory.request` calls haven't answered yet"
+        ]
+      ],
+      "example": "roster.inventory.request(function(list, err)\n  if not list then return roster.notify(err, \"warn\") end\n  roster.status.set(\"hosts\", { text = #list.hosts .. \" Hosts\" })\nend)",
       "needs_text": "`inventory.read`",
       "params": [
         {
@@ -1824,12 +2892,37 @@
       ],
       "path": "roster.inventory.request",
       "permission": "inventory.read",
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 4,
       "summary": "Reads every Host and group without waiting: `done` gets them"
     },
     {
+      "doc": "serve's [`host.update`](serve-api.md#editing-pending-changes): `roster.yml` is edited as text (comments and every other entry stay) and the change waits for you to review and Publish it. A change to `ip`, `user`, `port` or `auth` needs a test login of exactly those values first (`host.verify_login`), which a Plugin can't make: from a Plugin those fail with code 75. Only `title`, `description` and `type` go through. Only while the user runs one of your actions, commands or finder items (decision Q100).",
+      "errors": [
+        [
+          "roster.inventory.update: only while the user runs one of your actions, commands or finder items",
+          "at load, in an event listener, a timer, a finder's `items` or a `:check`: it changes the Inventory"
+        ],
+        [
+          "roster.inventory.update: params.changes: … (code -32602)",
+          "a field that can't be edited here, or a value of the wrong kind"
+        ],
+        [
+          "roster.inventory.update: unknown host 'NAME' (code 2)",
+          "no Host has that name"
+        ],
+        [
+          "roster.inventory.update: … (code 75)",
+          "a change to `ip`, `user`, `port` or `auth`"
+        ],
+        [
+          "roster.inventory.update: … (code 70 or 74)",
+          "no git repo for Pending changes, or the edit wouldn't load as asked (nothing written)"
+        ]
+      ],
+      "example": "roster.inventory.update(\"esx-02\", { description = \"lab box, rack 3\" })",
       "needs_text": "`inventory.write`",
       "params": [
         {
@@ -1847,12 +2940,33 @@
       ],
       "path": "roster.inventory.update",
       "permission": "inventory.write",
+      "refused": [],
       "returns": "UpdateResult",
       "returns_doc": "What was written.",
       "since": 2,
       "summary": "Changes a Host's fields, as a Pending change"
     },
     {
+      "doc": "serve's [`host.rename`](serve-api.md#the-live-inventory-hosts-and-groups-and-outside-edits): only its key in `roster.yml` and its name in `links:` change. Its vault item keeps its name. Only while the user runs one of your actions, commands or finder items (decision Q100).",
+      "errors": [
+        [
+          "roster.inventory.rename: only while the user runs one of your actions, commands or finder items",
+          "at load, in an event listener, a timer, a finder's `items` or a `:check`: it changes the Inventory"
+        ],
+        [
+          "roster.inventory.rename: … (code 2)",
+          "no Host has that name"
+        ],
+        [
+          "roster.inventory.rename: … (code 80 or 100)",
+          "`to` isn't a valid name, or a Host or group has it"
+        ],
+        [
+          "roster.inventory.rename: … (code 1, 70 or 74)",
+          "`roster.yml` doesn't load now, no git repo, or the edit wouldn't load as asked"
+        ]
+      ],
+      "example": "roster.inventory.rename(\"esx-02\", \"esx-02-old\")",
       "needs_text": "`inventory.write`",
       "params": [
         {
@@ -1870,12 +2984,37 @@
       ],
       "path": "roster.inventory.rename",
       "permission": "inventory.write",
+      "refused": [],
       "returns": "RenameResult",
       "returns_doc": "What was written.",
       "since": 2,
       "summary": "Renames a Host, as a Pending change"
     },
     {
+      "doc": "serve's [`host.move`](serve-api.md#the-live-inventory-hosts-and-groups-and-outside-edits): what it inherited from its old group and wouldn't from the new one is written on the Host, so it stays the same Host. Only while the user runs one of your actions, commands or finder items (decision Q100).",
+      "errors": [
+        [
+          "roster.inventory.move: only while the user runs one of your actions, commands or finder items",
+          "at load, in an event listener, a timer, a finder's `items` or a `:check`: it changes the Inventory"
+        ],
+        [
+          "roster.inventory.move: … (code 2)",
+          "no Host has that name"
+        ],
+        [
+          "roster.inventory.move: … (code 101)",
+          "no such group"
+        ],
+        [
+          "roster.inventory.move: … (code 103)",
+          "it would still come out different in the new group"
+        ],
+        [
+          "roster.inventory.move: … (code 1, 70 or 74)",
+          "`roster.yml` doesn't load now, no git repo, or the edit wouldn't load as asked"
+        ]
+      ],
+      "example": "local r = roster.inventory.move(\"esx-02\", \"lab\")\nif #r.pinned > 0 then roster.notify(\"kept \" .. table.concat(r.pinned, \", \")) end",
       "needs_text": "`inventory.write`",
       "params": [
         {
@@ -1893,12 +3032,33 @@
       ],
       "path": "roster.inventory.move",
       "permission": "inventory.write",
+      "refused": [],
       "returns": "MoveResult",
       "returns_doc": "What was written, and which fields were pinned on the Host.",
       "since": 2,
       "summary": "Moves a Host to another group, as a Pending change"
     },
     {
+      "doc": "serve's [`host.review`](serve-api.md#adding-a-host-hostadd). Only while the user runs one of your actions, commands or finder items (decision Q100).",
+      "errors": [
+        [
+          "roster.inventory.review: only while the user runs one of your actions, commands or finder items",
+          "at load, in an event listener, a timer, a finder's `items` or a `:check`: it changes the Inventory"
+        ],
+        [
+          "roster.inventory.review: … (code 2)",
+          "no Host has that name"
+        ],
+        [
+          "roster.inventory.review: params.reviewed must be true or false (code -32602)",
+          "`reviewed` isn't a boolean"
+        ],
+        [
+          "roster.inventory.review: … (code 70 or 74)",
+          "no git repo, or the edit wouldn't load as asked"
+        ]
+      ],
+      "example": "roster.inventory.review(\"esx-02\")",
       "needs_text": "`inventory.write`",
       "params": [
         {
@@ -1916,12 +3076,21 @@
       ],
       "path": "roster.inventory.review",
       "permission": "inventory.write",
+      "refused": [],
       "returns": "ReviewResult",
       "returns_doc": "What was written.",
       "since": 2,
       "summary": "Marks a Host reviewed (or not), as a Pending change"
     },
     {
+      "doc": "It happens after the call returns, as if the user picked the Session: with two Sessions to one Host, this is the one the id names. With `line`, the terminal's search opens on it, so `Enter` and `Shift+Enter` go on up and down from there and `Esc` closes it; a line no longer in the scrollback shows \"no matches\" there. A Session that has ended is said in a notice. Only while the user runs one of your actions, commands or finder items.",
+      "errors": [
+        [
+          "roster.sessions.show: only while the user runs one of your actions, commands or finder items",
+          "at load or in an event listener"
+        ]
+      ],
+      "example": "-- An alert's row goes to the line in the Session that printed it.\nopen = function(e) roster.sessions.show(alerts[e.row].session, alerts[e.row].text) end",
       "needs_text": "none",
       "params": [
         {
@@ -1939,12 +3108,16 @@
       ],
       "path": "roster.sessions.show",
       "permission": null,
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Goes to a Session, and to a line in its scrollback"
     },
     {
+      "doc": "Every Session that is open, the ones that opened before the Plugin loaded too: the events only tell a Plugin what happens after it loads, so read this at load and follow `session_open` and `session_exit` from there. A Session is open from its `session_open` to its `session_exit`; one that ended but whose tab is still there isn't listed. The app keeps the list in the order it saw each Session open, and a Session that connects again (the same id) opens again, so it goes last. In a listener for either event the list already has (or no longer has) that Session. It reads what the app last said, never roster serve, so it never waits.",
+      "errors": [],
+      "example": "local live = {}\nfor _, s in ipairs(roster.sessions.list()) do\n  if s.host then live[s.host] = true end\nend\nroster.on(\"session_open\", function(e) if e.host then live[e.host] = true end end)",
       "needs_text": "`inventory.read` or `terminal.read`",
       "params": [],
       "path": "roster.sessions.list",
@@ -1952,12 +3125,16 @@
         "inventory.read",
         "terminal.read"
       ],
+      "refused": [],
       "returns": "Session[]",
       "returns_doc": "Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.",
       "since": 4,
       "summary": "The Sessions open now, in the order they opened"
     },
     {
+      "doc": "It happens after the call returns, as if the user ran `:connect HOST`: the app's own errors (an unknown or unreviewed Host, a locked vault) show as they would then.",
+      "errors": [],
+      "example": "roster.sessions.open(\"esx-02\")",
       "needs_text": "`sessions.open`",
       "params": [
         {
@@ -1969,12 +3146,16 @@
       ],
       "path": "roster.sessions.open",
       "permission": "sessions.open",
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Opens a Session on a Host, as `:connect HOST`"
     },
     {
+      "doc": "A Session that has ended, or an id that's no Session's, takes nothing.",
+      "errors": [],
+      "example": "roster.on(\"session_open\", function(e) roster.terminal.send(e.session, \"uptime\\n\") end)",
       "needs_text": "`terminal.write`",
       "params": [
         {
@@ -1992,12 +3173,35 @@
       ],
       "path": "roster.terminal.send",
       "permission": "terminal.write",
+      "refused": [
+        "`text` over 64 KB is cut"
+      ],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Types into an open Session"
     },
     {
+      "doc": "Waits for the answer, however long roster serve takes (a call behind the app's Publish waits for it); that time doesn't count against the Plugin's budget, nor toward it being given up on, but the Plugin does nothing else meanwhile. [`roster.serve.request`](#rosterserverequestmethod-params-done) asks without waiting. A Plugin may be granted `inventory.info`, `hosts.list`, `host.get`, `host.check`, `host.check_job`, `changes.diff` and the `mesh.*` and `discover.*` methods; never one that reaches a secret. Every method the install prompt flags, the ones that act on the network or the Inventory (all but `inventory.info`, `hosts.list`, `host.get`, `host.check_job`, `changes.diff`, `mesh.status`, `mesh.plan`, `mesh.job`, `mesh.stop`, `discover.plan`, `discover.status` and `discover.stop`; `mesh.apply`, `mesh.cut`, `host.check`, `discover.start` and `discover.add` among them), only while the user runs one of your actions, commands or finder items, or answers your question: never at load, on an event, from a timer, or in a finder's `items` or a `:check` section's `check`. One call may ask roster serve this way (and through `roster.inventory`) at most 100 times, waiting 300 s in all. What each returns is under [roster serve's results](#roster-serves-results); in it, as in `roster.inventory`'s, a `cmd:` or `env:` Login reference is cut to its kind ([`LoginRef`](#loginref)), in any text of it: a diff's line or a step's message too.",
+      "errors": [
+        [
+          "roster.serve.call: not granted (serve:METHOD)",
+          "the Plugin wasn't granted that method"
+        ],
+        [
+          "roster.serve.call METHOD: only while the user runs one of your actions, commands or finder items",
+          "a flagged method (`mesh.apply`, `host.check`, `discover.start`, …) at load, in an event listener, a timer, a finder's `items` or a `:check`"
+        ],
+        [
+          "roster.serve.call METHOD: more than 100 calls into roster serve in one go (roster.serve.request doesn't wait)",
+          "the call asked roster serve 100 times already (or waited 300 s in all: `waited 300 s or more for roster serve in one go`)"
+        ],
+        [
+          "roster.serve.call METHOD: MESSAGE (code N)",
+          "the method failed (its codes are in [serve-api.md](serve-api.md))"
+        ]
+      ],
+      "example": "local info = roster.serve.call(\"inventory.info\")\nroster.status.set(\"box\", { text = info.box .. \": \" .. info.host_count .. \" Hosts\" })",
       "needs_text": "`serve:<method>` (that method)",
       "params": [
         {
@@ -2015,12 +3219,29 @@
       ],
       "path": "roster.serve.call",
       "permission": "serve:*",
+      "refused": [],
       "returns": "any",
       "returns_doc": "The method's result, as Lua tables (JSON `null` is `nil`).",
       "since": 2,
       "summary": "Calls a roster serve method the Plugin was granted"
     },
     {
+      "doc": "Returns at once; `done` runs later on the Plugin's thread, as a call of its own, so the Plugin keeps answering the user while roster serve is busy (a Publish holds `roster.yml` for a minute or two). The same rules as [`roster.serve.call`](#rosterservecallmethod-params): the method must be granted, a flagged one (`mesh.apply`, `discover.start`, …) only in a call the user started, and a `cmd:` or `env:` Login reference in the result is cut to its kind. **The answer to a request made in a call the user started is part of that call:** `done` may open a view, ask a question, copy or run a command line, as the call could, and may ask for a flagged method. A request made in that `done` doesn't carry it further, and one made at load, on an event or from a timer never has it. An answer for a Plugin unloaded or reloaded since is dropped. At most 8 wait at once.",
+      "errors": [
+        [
+          "roster.serve.request: not granted (serve:METHOD)",
+          "the Plugin wasn't granted that method"
+        ],
+        [
+          "roster.serve.request METHOD: only while the user runs one of your actions, commands or finder items",
+          "a flagged method (`mesh.apply`, `host.check`, `discover.start`, …) at load, in an event listener, a timer, a finder's `items` or a `:check`"
+        ],
+        [
+          "roster.serve.request METHOD: 8 requests are waiting for roster serve already: wait for one to answer",
+          "8 haven't answered yet"
+        ]
+      ],
+      "example": "roster.commands.add(\"count\", { run = function()\n  roster.serve.request(\"hosts.list\", {}, function(r, err)\n    if not r then return roster.notify(err, \"warn\") end\n    roster.echo(#r.hosts .. \" Hosts\")\n  end)\nend })",
       "needs_text": "`serve:<method>` (that method)",
       "params": [
         {
@@ -2044,12 +3265,49 @@
       ],
       "path": "roster.serve.request",
       "permission": "serve:*",
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 3,
       "summary": "Asks roster serve without waiting: `done` gets the answer"
     },
     {
+      "doc": "Returns at once; `done` runs later. Each request is checked before anything is sent: its site must be one of the Plugin's `network:<site>` grants (https, unless the site was listed with `http://`; the port the site names, or the scheme's own). The same check stops a redirect to anywhere else.",
+      "errors": [
+        [
+          "roster.http.request: https://elsewhere.example isn't a site this Plugin may reach (it may reach SITES)",
+          "the URL's scheme, host or port isn't granted"
+        ],
+        [
+          "roster.http.request: \"URL\" isn't a URL: …",
+          "`url` doesn't parse"
+        ],
+        [
+          "roster.http.request: a URL with a user or password in it isn't sent",
+          "the URL has `user:password@`"
+        ],
+        [
+          "roster.http.request: the NAME header is roster's to set",
+          "a header that steers the connection: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`, `Expect`, `Proxy-…`"
+        ],
+        [
+          "roster.http.request: \"METHOD\" isn't a method (there's GET, HEAD, POST, PUT, PATCH, DELETE)",
+          "another method"
+        ],
+        [
+          "roster.http.request: the body is over 262144 bytes",
+          "a longer body"
+        ],
+        [
+          "roster.http.request: 4 requests are going already: wait for one to answer",
+          "4 haven't answered yet"
+        ],
+        [
+          "roster.http.request: \"KEY\" isn't a key of a request (there's url, method, headers, body, timeout)",
+          "another key in `request`"
+        ]
+      ],
+      "example": "roster.http.request({\n  url = \"https://hooks.example.com/alerts\",\n  method = \"POST\",\n  headers = { [\"Content-Type\"] = \"application/json\", Authorization = \"Bearer \" .. roster.plugin.config.token },\n  body = '{\"text\": \"esx-02 is down\"}',\n}, function(res, err)\n  if not res then return roster.notify(\"webhook: \" .. err, \"warn\") end\n  if res.status >= 300 then roster.notify(\"webhook said \" .. res.status, \"warn\") end\nend)",
       "needs_text": "`network:<site>` (that site)",
       "params": [
         {
@@ -2067,12 +3325,21 @@
       ],
       "path": "roster.http.request",
       "permission": "network:*",
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Sends an HTTP request to a site the Plugin was granted"
     },
     {
+      "doc": "`roster.http.request({ url = url }, done)`.",
+      "errors": [
+        [
+          "roster.http.get: …",
+          "as [`roster.http.request`](#rosterhttprequestrequest-done)'s"
+        ]
+      ],
+      "example": "roster.http.get(\"https://status.example.com/api/v2/status.json\", function(res, err)\n  roster.status.set(\"upstream\", { text = res and res.status == 200 and \"upstream ok\" or \"upstream ?\" })\nend)",
       "needs_text": "`network:<site>` (that site)",
       "params": [
         {
@@ -2090,12 +3357,14 @@
       ],
       "path": "roster.http.get",
       "permission": "network:*",
+      "refused": [],
       "returns": "",
       "returns_doc": "",
       "since": 2,
       "summary": "Fetches a URL from a site the Plugin was granted"
     }
   ],
+  "lua_doc": "roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT as Neovim does; [why](adr/0006-lua-plugins-and-packages.md#why-lua-54-not-luajit). Coming from Neovim:\n\n- Integers are real 64-bit integers (`3 // 2` is `1`, `math.type(1)` is `\"integer\"`), and the bitwise operators are native (`a & b`, `a | b`, `~a`, `a << 2`): there's no `bit` library.\n- `goto`, `<const>` and `<close>` locals work; there's no `jit` and no FFI.\n- The API is `roster.*`, never `vim.*`: there's no `vim.api`, `vim.fn`, `vim.loop` or `vim.schedule`.\n- It runs in the [sandbox](app/config.md#the-sandbox): the base functions, `string`, `table`, `math`, `utf8` and an `os` with only `time`, `clock`, `date` and `difftime`. `coroutine` too (since api 3: a coroutine runs within the same time budget and memory limit). No `io`, no `os.execute`, no `debug`, no `package` and no C modules; `load` takes text only, and `require` loads only from the Plugin's own folder (`name.lua`, `name/init.lua`, or the same under `lua/`).\n- `pairs` visits a table's keys in order: numbers, then text, then the rest. So the same state always makes the same changes in the same order, on every machine; `next` is Lua's own.\n- An empty table is `{}` to the app, whether you meant a list or a table of fields: the app takes `{}` as an empty list wherever it wants one (`rows = {}`, `items = {}`).\n- It runs on a thread of its own with a memory limit and a time budget per call: see [Limits](plugins.md#limits).",
   "modules": [
     {
       "doc": "`require(\"roster\")`, also the global `roster`. Each Plugin has its own, built from what it was granted: a function a permission gives isn't there without it.",
@@ -2220,6 +3489,93 @@
     "source",
     "config",
     "vault"
+  ],
+  "serve_results": [
+    {
+      "link": "serve-api.md",
+      "method": "inventory.info",
+      "result": "InventoryInfo"
+    },
+    {
+      "link": "serve-api.md",
+      "method": "hosts.list",
+      "result": "HostList"
+    },
+    {
+      "link": "serve-api.md",
+      "method": "host.get",
+      "result": "Host"
+    },
+    {
+      "link": "serve-api.md#diagnostics-hostcheck",
+      "method": "host.check",
+      "result": "HostCheck"
+    },
+    {
+      "link": "serve-api.md#diagnostics-hostcheck",
+      "method": "host.check_job",
+      "result": "CheckJob"
+    },
+    {
+      "link": "serve-api.md#editing-pending-changes",
+      "method": "changes.diff",
+      "result": "ChangesDiff"
+    },
+    {
+      "link": "serve-api.md#the-mesh-meshplan-meshapply-meshcut-meshstatus",
+      "method": "mesh.plan",
+      "result": "MeshResult|MeshStarted"
+    },
+    {
+      "link": "serve-api.md#the-mesh-meshplan-meshapply-meshcut-meshstatus",
+      "method": "mesh.apply",
+      "result": "MeshResult|MeshStarted"
+    },
+    {
+      "link": "serve-api.md#the-mesh-meshplan-meshapply-meshcut-meshstatus",
+      "method": "mesh.cut",
+      "result": "MeshCut|MeshStarted"
+    },
+    {
+      "link": "serve-api.md#the-mesh-meshplan-meshapply-meshcut-meshstatus",
+      "method": "mesh.status",
+      "result": "MeshStatus"
+    },
+    {
+      "link": "serve-api.md#the-mesh-meshplan-meshapply-meshcut-meshstatus",
+      "method": "mesh.job",
+      "result": "MeshJob?"
+    },
+    {
+      "link": "serve-api.md#the-mesh-meshplan-meshapply-meshcut-meshstatus",
+      "method": "mesh.stop",
+      "result": "MeshStop"
+    },
+    {
+      "link": "serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd",
+      "method": "discover.plan",
+      "result": "DiscoverPlan"
+    },
+    {
+      "link": "serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd",
+      "method": "discover.start",
+      "result": "DiscoverStatus"
+    },
+    {
+      "link": "serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd",
+      "method": "discover.status",
+      "result": "DiscoverStatus"
+    },
+    {
+      "link": "serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd",
+      "method": "discover.stop",
+      "result": "DiscoverStop"
+    },
+    {
+      "link": "serve-api.md#discover-discoverplan-discoverstart-discoverstatus-discoverstop-discoveradd",
+      "method": "discover.add",
+      "result": "DiscoverAdd"
+    }
   ],
   "tags": {
     "roster-Change": "plugin-api#change",
@@ -2478,6 +3834,7 @@
   },
   "types": {
     "Change": {
+      "doc": "At least one. Text is one line (spaces collapse, as roster.yml's loader reads it).",
       "fields": [
         {
           "doc": "One line.",
@@ -2527,6 +3884,7 @@
       "summary": "`roster.inventory.update`'s changes: the fields to change"
     },
     "ChangesDiff": {
+      "doc": "",
       "fields": [
         {
           "doc": "`roster.yml`'s path.",
@@ -2588,6 +3946,7 @@
       "summary": "`changes.diff`'s result: the Pending changes"
     },
     "CheckJob": {
+      "doc": "Since serve API 21 a check is a job: the `job_progress` event (with `serve:host.check_job`) says when one starts, moves on and ends, the app's `:check` and Check from anywhere alike, and its `job` is what to ask for here once its `state` is `done` or `stopped`. serve keeps a check findable after it ends (the last 32 a newer check replaced too); one it no longer has is code 49.",
       "fields": [
         {
           "doc": "Always `\"check\"`.",
@@ -2655,6 +4014,7 @@
       "summary": "`host.check_job`'s result: a Host's check, and how it came out"
     },
     "CheckStep": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its name.",
@@ -2704,6 +4064,7 @@
       "summary": "One step of a `host.check`"
     },
     "Column": {
+      "doc": "",
       "fields": [
         {
           "doc": "The key of its value in each row's `cells`.",
@@ -2736,10 +4097,12 @@
     },
     "ColumnKind": {
       "alias": "\"text\"|\"data\"|\"number\"",
+      "doc": "`\"text\"` is words, in the app's font. `\"data\"` is something you could paste into a shell (an address, a name), in the data font, sorted with the numbers in it as numbers (`10.0.0.9` before `10.0.0.10`). `\"number\"` is right-aligned with even digits, sorted as numbers.",
       "order": 47,
       "summary": "How a column's values read and sort"
     },
     "CommandArgs": {
+      "doc": "",
       "fields": [
         {
           "doc": "Everything after the command's name, trimmed (`\"\"` for none).",
@@ -2789,6 +4152,7 @@
       "summary": "What a command's function is called with"
     },
     "CommandDoneEvent": {
+      "doc": "Read from the OSC 133 marks the Session's own shell prints (its rc file turns them on, or roster's opt-in shell hooks do). The command line is read off the screen once the shell runs it, so a line given up (Ctrl-C) or erased is never one, and what the screen doesn't show (a password at a prompt that doesn't echo it) can't be. The marks come from the Host, so this is its word: a hint. A command a nested shell with marks took over (`ssh` to a Host with integration) has none, since its end can't be told from the nested shell's; nor does `exit` or `logout`, since a shell that exits sends no end mark for it.",
       "fields": [
         {
           "doc": "The Session's id.",
@@ -2832,6 +4196,7 @@
       "summary": "`command_done`'s payload"
     },
     "CommandSpec": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its description, for `:help commands` and completion. The name if left out.",
@@ -2857,6 +4222,7 @@
       "summary": "`roster.commands.add`'s second argument"
     },
     "Confirm": {
+      "doc": "The app draws it with your Plugin's name on it. Text is cut to 500 characters, except `text` (4,000).",
       "fields": [
         {
           "doc": "The question (`\"Cut esx-02 from the Mesh?\"`).",
@@ -2912,6 +4278,7 @@
       "summary": "A question the user answers (`roster.confirm`)"
     },
     "DetailsSection": {
+      "doc": "Drawn after roster's own sections, with your Plugin's name under its heading: the text, the facts, then the table.",
       "fields": [
         {
           "doc": "Its heading; the id if left out.",
@@ -2955,6 +4322,7 @@
       "summary": "A section of a Host's details (`roster.details.set`)"
     },
     "DiscoverAdd": {
+      "doc": "",
       "fields": [
         {
           "doc": "The new group they went in.",
@@ -2980,6 +4348,7 @@
       "summary": "`discover.add`'s result"
     },
     "DiscoverAdded": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its address.",
@@ -2999,6 +4368,7 @@
       "summary": "A Host `discover.add` added"
     },
     "DiscoverFound": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its address.",
@@ -3078,6 +4448,7 @@
       "summary": "Something a scan found at an address"
     },
     "DiscoverPlan": {
+      "doc": "",
       "fields": [
         {
           "doc": "The targets as written back, without one another covers.",
@@ -3121,6 +4492,7 @@
       "summary": "`discover.plan`'s result: what a scan would visit"
     },
     "DiscoverPort": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its number.",
@@ -3152,6 +4524,7 @@
       "summary": "An open port a scan found"
     },
     "DiscoverStatus": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its id (`\"scan-N\"`).",
@@ -3219,6 +4592,7 @@
       "summary": "`discover.status`'s and `discover.start`'s result: how far a scan has got"
     },
     "DiscoverStop": {
+      "doc": "",
       "fields": [
         {
           "doc": "The scan.",
@@ -3238,6 +4612,7 @@
       "summary": "`discover.stop`'s result"
     },
     "EchoOptions": {
+      "doc": "",
       "fields": [
         {
           "doc": "A routine confirmation (`true`): shown only with `ui.messages = \"all\"`, heard by a screen reader and kept by `:messages` either way. Left out or `false`, it shows.",
@@ -3252,20 +4627,24 @@
     },
     "EdgeDir": {
       "alias": "\"one\"|\"both\"",
+      "doc": "",
       "order": 61,
       "summary": "Which way an edge goes"
     },
     "EdgeStyle": {
       "alias": "\"solid\"|\"dashed\"|\"dotted\"",
+      "doc": "",
       "order": 62,
       "summary": "An edge's line"
     },
     "EdgeTone": {
       "alias": "\"live\"|\"muted\"|\"warn\"|\"error\"",
+      "doc": "`\"live\"` is the accent: keep it for a connection that's open now. An edge that turns live is drawn in from its start, as a Session's edge is on connect (not under reduced motion).",
       "order": 63,
       "summary": "How an edge is marked"
     },
     "EmptyEvent": {
+      "doc": "",
       "fields": [],
       "open": false,
       "order": 112,
@@ -3273,10 +4652,12 @@
     },
     "EventName": {
       "alias": "\"lock\"|\"unlock\"|\"host_selected\"|\"session_open\"|\"session_exit\"|\"inventory_changed\"|\"terminal_output\"|\"command_done\"|\"job_progress\"",
+      "doc": "",
       "order": 111,
       "summary": "An event a Plugin can listen for"
     },
     "Fact": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it is (`reach`).",
@@ -3303,10 +4684,12 @@
     },
     "FilterState": {
       "alias": "\"live\"|\"down\"|\"warn\"|\"error\"",
+      "doc": "A node's `state` (`\"live\"`, `\"down\"`) or `mark` (`\"warn\"`, `\"error\"`).",
       "order": 67,
       "summary": "A state a graph's filter keeps"
     },
     "Finder": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its title (the `:finder` command's label and the dialog's name); the id if left out.",
@@ -3338,6 +4721,7 @@
       "summary": "A finder (`roster.finders.set`)"
     },
     "FinderItem": {
+      "doc": "",
       "fields": [
         {
           "doc": "Unique in the finder; its place in the list if left out.",
@@ -3375,6 +4759,7 @@
       "summary": "One thing a finder lists"
     },
     "Float": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its title.",
@@ -3406,6 +4791,7 @@
       "summary": "A floating window (`roster.float.open`)"
     },
     "FloatAction": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it does (`\"Go to the line\"`).",
@@ -3431,6 +4817,7 @@
       "summary": "A button in a floating window"
     },
     "Graph": {
+      "doc": "The app lays it out (each cluster's nodes on a spiral, the clusters in rows, loose nodes first), keeps every position in the State so it opens the same way each time, and draws only what's on screen, so 2,000 nodes stay smooth. Clusters collapse to one node with their count: the user's `o`, or by themselves when the graph has more than 300 nodes and the cluster doesn't say. Keys, once it has focus: `h` `j` `k` `l` or the arrows go to the nearest node that way, `/` searches (name, id, kind, note, detail, cluster; it opens empty each time) and `n`/`N` go through the matches, `Enter` runs `open` (or opens a collapsed cluster), `o` collapses or opens the selected node's cluster and `O` all of them, `+` `-` zoom and `0` shows it all, `H` `J` `K` `L` pan, `t` switches to a table of every node, then of every edge, `f` goes to the filter (the clusters, kinds and states to show, as many of each as the user ticks, hiding the rest; `Esc` clears a search, then the filter, then closes the view), `m` moves the selected node with `h` `j` `k` `l` or the arrows (`Shift` for a bigger step) until `Enter` keeps its place or `Esc` puts it back (on a collapsed cluster it says to open it first), and an action's `key` runs it on the selected node (only where its `when` matches). Selecting a node lights up what it can reach and what can reach it, with the counts: however many hops away, or only one with `reach = \"direct\"`. Hiding nodes doesn't change what they reach: the counts are the whole graph's. A click selects, a double click opens, a drag moves a node (kept) or pans, the wheel zooms. An edge whose end names nothing is left out until it does.",
       "fields": [
         {
           "doc": "Its nodes, in order: a cluster's first node is at its centre (at most 5,000).",
@@ -3480,6 +4867,7 @@
       "summary": "A graph: nodes, edges and clusters as plain data, and what a node can do"
     },
     "GraphCluster": {
+      "doc": "Drawn as a circle around its nodes with its title above, or collapsed to one node with its count.",
       "fields": [
         {
           "doc": "Unique among the graph's nodes and clusters: nodes name it as their `cluster`.",
@@ -3511,6 +4899,7 @@
       "summary": "A cluster of a graph's nodes"
     },
     "GraphEdge": {
+      "doc": "An end is a node or a cluster: an edge to a cluster reaches every node in it, and one from a cluster is every node's in it, so one edge can stand for a group's Links. Edges to the same collapsed cluster are drawn as one, with their count.",
       "fields": [
         {
           "doc": "Unique among its edges; `\"FROM>TO\"` if left out.",
@@ -3566,6 +4955,7 @@
       "summary": "An edge of a graph: plain data"
     },
     "GraphFilter": {
+      "doc": "A node shows when it's in one of the `clusters`, of one of the `kinds` and in one of the `states`, for each that's given; leave one out (or empty) for all. Edges with a hidden end and clusters with no node left are hidden too. The user picks one cluster, kind or state at a time in the graph's filter (`f`); a filter that names several shows as \"N clusters\" there.",
       "fields": [
         {
           "doc": "Cluster ids: only their nodes show (at most 500).",
@@ -3591,6 +4981,7 @@
       "summary": "What a graph shows: the rest is hidden"
     },
     "GraphNode": {
+      "doc": "Its shape says what it is and its state what it's doing, never colour alone: the list says both in words.",
       "fields": [
         {
           "doc": "Unique among the graph's nodes and clusters (at most 100 characters): edges, updates and the selection follow it.",
@@ -3659,10 +5050,12 @@
     },
     "GraphReach": {
       "alias": "\"all\"|\"direct\"",
+      "doc": "`\"all\"`: however many hops away, as a key on a Host reaches what that Host's own keys reach. `\"direct\"`: one hop, a node's own edges, its cluster's and its cluster's mesh.",
       "order": 65,
       "summary": "How far a graph's reach goes"
     },
     "Group": {
+      "doc": "",
       "fields": [
         {
           "doc": "One line; `\"\"` if unset.",
@@ -3682,6 +5075,7 @@
       "summary": "A group of Hosts, as `hosts.list` gives it"
     },
     "GroupChange": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its name.",
@@ -3701,6 +5095,7 @@
       "summary": "A group in `changes.diff`"
     },
     "HandlerContext": {
+      "doc": "Since api 3 (api 2 called them with an empty table). Only the fields for what ran it are there: a row button has `section`, `row` and `action`; a finder item `finder` and `item`. A command's function gets [`CommandArgs`](#commandargs), which has `session` and `session_host` too.",
       "fields": [
         {
           "doc": "The Sidebar section's id, for a row or a row's button.",
@@ -3792,6 +5187,7 @@
       "summary": "What a row's, a button's, a finder item's, a status segment's, a toolbar control's, a question's, a progress's or a `:check` section's function is called with"
     },
     "HeadAction": {
+      "doc": "A [`RowAction`](#rowaction) with a key of its own (since api 4, #176): pressed anywhere in its view, or in its section, it runs the button, unless the table or graph there took the key first or a text field (a table's filter) has focus. Its tooltip shows the key.",
       "fields": [
         {
           "doc": "What it does, for its tooltip and screen readers (`\"Plan\"`).",
@@ -3823,6 +5219,7 @@
       "summary": "A button on a view's or a Host-details section's heading"
     },
     "HealthCheck": {
+      "doc": "",
       "fields": [
         {
           "doc": "How it went.",
@@ -3848,6 +5245,7 @@
       "summary": "One line of a `:check` section"
     },
     "HealthSection": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its heading; the id if left out.",
@@ -3873,6 +5271,7 @@
       "summary": "A section of `:check` (`roster.health.set`)"
     },
     "HelpPage": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its title; the topic if left out.",
@@ -3898,6 +5297,7 @@
       "summary": "A help page (`roster.help.set`)"
     },
     "Host": {
+      "doc": "Every value is resolved: what the Host doesn't set comes from its group, then `defaults:`. JSON `null` is `nil` in Lua, so an unset optional field is `nil`. A Host also carries any other key `roster.yml` gives it, its group or `defaults:` (as roster.yml has it): read only the fields below. No field ever holds a password: `auth` is a [LoginRef](#loginref).",
       "fields": [
         {
           "doc": "Its name in the Inventory, unique.",
@@ -4043,6 +5443,7 @@
       "summary": "A Host, as roster serve's `hosts.list` and `host.get` give it"
     },
     "HostChange": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its name.",
@@ -4068,6 +5469,7 @@
       "summary": "A Host in `changes.diff`"
     },
     "HostCheck": {
+      "doc": "",
       "fields": [
         {
           "doc": "The Host.",
@@ -4093,6 +5495,7 @@
       "summary": "`host.check`'s result: the steps of `roster check HOST`"
     },
     "HostList": {
+      "doc": "",
       "fields": [
         {
           "doc": "Every Host, in `roster.yml` order.",
@@ -4118,6 +5521,7 @@
       "summary": "`hosts.list`'s result"
     },
     "HostSelectedEvent": {
+      "doc": "",
       "fields": [
         {
           "doc": "The Host whose Session is on screen now.",
@@ -4131,6 +5535,7 @@
       "summary": "`host_selected`'s payload"
     },
     "HttpRequest": {
+      "doc": "Any other key is an error.",
       "fields": [
         {
           "doc": "Where: on a site the Plugin was granted (`https://api.example.com/v1/alerts`).",
@@ -4168,6 +5573,7 @@
       "summary": "What `roster.http.request` sends"
     },
     "HttpResponse": {
+      "doc": "",
       "fields": [
         {
           "doc": "The status code (`200`, `404`).",
@@ -4199,6 +5605,7 @@
       "summary": "What a site answered"
     },
     "InventoryError": {
+      "doc": "",
       "fields": [
         {
           "doc": "What's wrong.",
@@ -4230,6 +5637,7 @@
       "summary": "Why `roster.yml` doesn't load right now"
     },
     "InventoryInfo": {
+      "doc": "",
       "fields": [
         {
           "doc": "`roster.yml`'s full path.",
@@ -4279,6 +5687,7 @@
       "summary": "`inventory.info`'s result"
     },
     "InventoryStore": {
+      "doc": "Decided per file, each time: `repo` when `roster.yml` is committed in a git repo with a remote (edits are Pending changes until Publish), `file` otherwise (every edit is saved straight to it, and there's nothing to publish).",
       "fields": [
         {
           "doc": "A team repo, or a plain file.",
@@ -4304,6 +5713,7 @@
       "summary": "How `roster.yml` is kept: a plain file or a team repo (serve API 28)"
     },
     "JobProgressEvent": {
+      "doc": "",
       "fields": [
         {
           "doc": "`\"mesh\"`, `\"discover\"` or `\"check\"`.",
@@ -4366,10 +5776,12 @@
     },
     "KeyContext": {
       "alias": "\"leader\"|\"list\"|\"list_vim\"",
+      "doc": "",
       "order": 10,
       "summary": "Where a Plugin's key binding works"
     },
     "LastCommit": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its hash.",
@@ -4401,6 +5813,7 @@
       "summary": "The infra repo's last commit"
     },
     "Lesson": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its heading (at most 100 characters).",
@@ -4427,10 +5840,12 @@
     },
     "Level": {
       "alias": "\"info\"|\"warn\"|\"error\"",
+      "doc": "",
       "order": 5,
       "summary": "A notice's level"
     },
     "Link": {
+      "doc": "The app shows the address's host next to the label, so the user sees where it goes before they click.",
       "fields": [
         {
           "doc": "Its text (`\"Runbook\"`).",
@@ -4450,6 +5865,7 @@
       "summary": "A web page a floating window links to"
     },
     "Login": {
+      "doc": "",
       "fields": [
         {
           "doc": "The user; `nil` if unset.",
@@ -4470,10 +5886,12 @@
     },
     "LoginRef": {
       "alias": "string",
+      "doc": "`PROVIDER:ITEM`, a vault item's name (`bw:esx-02 ssh`, `op:Lab/esx-02#password`, `kp:esx-02 ssh`), or `prompt` (asked for), `agent` (an ssh key), `key`, `none`. `env:VAR` and `cmd:COMMAND` are references too, but they say how a secret is fetched (and a secret pasted into a `cmd:` line would show), so a Plugin gets them cut to their kind: `env:` and `cmd:` (since api 3; decision Q92), in raw text such as a diff or a check's message too. The providers are in [Password providers](cli-reference.md#password-providers).",
       "order": 72,
       "summary": "A Login reference: where a password is, never the password"
     },
     "Manifest": {
+      "doc": "The file returns this table. It's read before any of the Plugin's code runs, for the install prompt, in the sandbox with no `roster` module and no `require`. Any other key is an error (`foo: not a manifest field`).",
       "fields": [
         {
           "doc": "How it's known everywhere: lower case letters, digits and `-`, starting with a letter, at most 40. Not `builtin`, `init`, `roster` or a built-in Plugin's name.",
@@ -4517,6 +5935,7 @@
       "summary": "`roster-plugin.lua`: who the Plugin is and what it asks for"
     },
     "MeshCut": {
+      "doc": "",
       "fields": [
         {
           "doc": "The Host cut from the Mesh.",
@@ -4554,6 +5973,7 @@
       "summary": "`mesh.cut`'s result"
     },
     "MeshCutChange": {
+      "doc": "",
       "fields": [
         {
           "doc": "Whether it was written now (`false` when it already was, or couldn't be).",
@@ -4597,6 +6017,7 @@
       "summary": "The `mesh: false` a `mesh.cut` writes into `roster.yml`"
     },
     "MeshHost": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its name.",
@@ -4634,6 +6055,7 @@
       "summary": "A Host a Mesh run visited"
     },
     "MeshJob": {
+      "doc": "`nil` when there's no job, or `job` isn't the latest.",
       "fields": [
         {
           "doc": "Its number.",
@@ -4701,6 +6123,7 @@
       "summary": "`mesh.job`'s result: how far a Mesh run has got"
     },
     "MeshLink": {
+      "doc": "",
       "fields": [
         {
           "doc": "The source Host.",
@@ -4750,6 +6173,7 @@
       "summary": "A Link of the Mesh: a source reaching a peer"
     },
     "MeshResult": {
+      "doc": "With `brief = true` (on `mesh.job`), `links` keeps only those worth a look and `link_count`, `link_statuses`, `reached` and `links_more` count the rest.",
       "fields": [
         {
           "doc": "`false` for a plan (nothing changed), `true` for an apply.",
@@ -4835,6 +6259,7 @@
       "summary": "`mesh.plan`'s and `mesh.apply`'s result"
     },
     "MeshStarted": {
+      "doc": "Its result comes in `mesh.job`, and `job_progress` events follow it.",
       "fields": [
         {
           "doc": "The job's number, for `mesh.job` and `mesh.stop`.",
@@ -4866,6 +6291,7 @@
       "summary": "A Mesh run started with `background = true`"
     },
     "MeshStatus": {
+      "doc": "It never connects. `brief = true` keeps it small as in a brief [`MeshResult`](#meshresult); `grouped = true` says each meshed group once (`meshed`) and leaves the pairs it covers out of `links`.",
       "fields": [
         {
           "doc": "The Links, without a `status`.",
@@ -4945,6 +6371,7 @@
       "summary": "`mesh.status`'s result: the Mesh as `roster.yml` asks for it"
     },
     "MeshStop": {
+      "doc": "",
       "fields": [
         {
           "doc": "The job.",
@@ -4964,6 +6391,7 @@
       "summary": "`mesh.stop`'s result"
     },
     "MoveResult": {
+      "doc": "",
       "fields": [
         {
           "doc": "`false` when it's in that group already.",
@@ -4995,6 +6423,7 @@
       "summary": "What `roster.inventory.move` wrote"
     },
     "NodeAction": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it does (`\"Check\"`), in the key hints.",
@@ -5032,6 +6461,7 @@
       "summary": "Something a graph's selected node can do"
     },
     "NodeEvent": {
+      "doc": "",
       "fields": [
         {
           "doc": "The node's `id`.",
@@ -5070,25 +6500,30 @@
     },
     "NodeMark": {
       "alias": "\"warn\"|\"error\"",
+      "doc": "",
       "order": 59,
       "summary": "A node's mark"
     },
     "NodeRun": {
       "alias": "string|fun(e: NodeEvent): any",
+      "doc": "A function gets a [NodeEvent](#nodeevent): which node, its Host, and the Session on screen. A command line runs as typed after `:`, as the Plugin's (`:plugins run`).",
       "order": 69,
       "summary": "What a graph's node or action runs"
     },
     "NodeShape": {
       "alias": "\"dot\"|\"ring\"|\"dashed\"|\"hollow\"|\"square\"",
+      "doc": "As roster draws its own (taste.md): `\"dot\"` filled (a key login), `\"ring\"` (a password login), `\"dashed\"` a dashed ring in the second tone (unreviewed), `\"hollow\"` a thin grey ring (ended), `\"square\"` in the second tone (this Box).",
       "order": 57,
       "summary": "How a node is drawn"
     },
     "NodeState": {
       "alias": "\"live\"|\"down\"",
+      "doc": "`\"live\"` is drawn in the accent, which means connected now; keep it for that. `\"down\"` is drawn quieter and crossed out.",
       "order": 58,
       "summary": "What a node is doing"
     },
     "NoticeAction": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it says (`\"Show the plan\"`).",
@@ -5108,6 +6543,7 @@
       "summary": "A button on a notice"
     },
     "NoticeOptions": {
+      "doc": "",
       "fields": [
         {
           "doc": "Buttons under its text, at most 2.",
@@ -5128,15 +6564,18 @@
     },
     "Os": {
       "alias": "\"windows\"|\"linux\"|\"macos\"",
+      "doc": "",
       "order": 3,
       "summary": "`roster.os`"
     },
     "Permission": {
       "alias": "\"inventory.read\"|\"inventory.write\"|\"sessions.open\"|\"terminal.read\"|\"terminal.write\"|string",
+      "doc": "What each gives is in [Permissions](plugins.md#permissions). `serve:<method>` names one method and `network:<site>` one site (`network:api.example.com`, `network:*.example.com`, `network:http://10.0.0.5:8080`); a bare `network`, or a serve method that reaches a secret, can't be asked for.",
       "order": 1,
       "summary": "A permission's name, as a manifest writes it"
     },
     "Plugin": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its name, from the manifest.",
@@ -5168,6 +6607,7 @@
       "summary": "`roster.plugin`: the Plugin itself"
     },
     "Progress": {
+      "doc": "",
       "fields": [
         {
           "doc": "What's going on (`\"Scanning 10.0.0.0/24\"`), at most 80 characters.",
@@ -5205,6 +6645,7 @@
       "summary": "How far something long has got (`roster.progress.set`)"
     },
     "RenameResult": {
+      "doc": "",
       "fields": [
         {
           "doc": "`false` when `to` is its name already.",
@@ -5230,6 +6671,7 @@
       "summary": "What `roster.inventory.rename` wrote"
     },
     "ReviewResult": {
+      "doc": "",
       "fields": [
         {
           "doc": "`false` when it already was.",
@@ -5255,6 +6697,7 @@
       "summary": "What `roster.inventory.review` wrote"
     },
     "Row": {
+      "doc": "Text is cut to 500 characters.",
       "fields": [
         {
           "doc": "Unique in the section (at most 100 characters); its place in the list if left out. Keeps the selection on it across `set`s.",
@@ -5358,6 +6801,7 @@
       "summary": "A row of a Sidebar section"
     },
     "RowAction": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it does, for its tooltip and screen readers (`\"Unpin esx-02\"`).",
@@ -5384,25 +6828,30 @@
     },
     "RowGlyph": {
       "alias": "\"folder\"|\"group\"",
+      "doc": "",
       "order": 21,
       "summary": "A Sidebar row's glyph (since api 3)"
     },
     "RowIcon": {
       "alias": "\"close\"|\"edit\"|\"add\"|\"addGroup\"|\"review\"|\"unreview\"|\"info\"|\"copy\"|\"plan\"|\"apply\"|\"cut\"|\"map\"",
+      "doc": "`plan`, `apply` and `cut` since api 3 (ticket 91): a dashed arrow, an arrow into a bar, and an edge broken by a cross, as a cut edge is drawn in a graph. `map` since api 4: three nodes joined, for showing something on a graph.",
       "order": 20,
       "summary": "A row action's icon"
     },
     "RowTone": {
       "alias": "\"muted\"|\"warn\"|\"error\"",
+      "doc": "",
       "order": 49,
       "summary": "How a table row is marked"
     },
     "Run": {
       "alias": "string|fun(ctx: HandlerContext): any",
+      "doc": "What choosing it runs: a function, called with a [`HandlerContext`](#handlercontext) that says which row, item or segment it was and the Session on screen (its return value is ignored), or a command line (`\"open esx-02\"`).",
       "order": 6,
       "summary": "What choosing a row, an action, a finder item or a status segment runs"
     },
     "Section": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its heading; the id if left out.",
@@ -5452,6 +6901,7 @@
       "summary": "A Sidebar section (`roster.sidebar.set`)"
     },
     "ServeError": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its code, in serve-api.md's tables.",
@@ -5477,6 +6927,7 @@
       "summary": "An error roster serve answered with"
     },
     "Service": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its port.",
@@ -5532,6 +6983,7 @@
       "summary": "One of a Host's services, resolved"
     },
     "ServiceProblem": {
+      "doc": "",
       "fields": [
         {
           "doc": "The service's name.",
@@ -5557,6 +7009,7 @@
       "summary": "A service entry roster left out of a Host"
     },
     "Session": {
+      "doc": "",
       "fields": [
         {
           "doc": "The Session's id, as its events name it: `roster.terminal.send` and `roster.sessions.show` take it.",
@@ -5582,6 +7035,7 @@
       "summary": "An open Session, as `roster.sessions.list` gives it"
     },
     "SessionExitEvent": {
+      "doc": "",
       "fields": [
         {
           "doc": "The Session's id.",
@@ -5607,6 +7061,7 @@
       "summary": "`session_exit`'s payload"
     },
     "SessionOpenEvent": {
+      "doc": "",
       "fields": [
         {
           "doc": "The Session's id: `roster.terminal.send` takes it.",
@@ -5626,6 +7081,7 @@
       "summary": "`session_open`'s payload"
     },
     "SshLogin": {
+      "doc": "",
       "fields": [
         {
           "doc": "The user.",
@@ -5651,6 +7107,7 @@
       "summary": "A Host's ssh login"
     },
     "StatusSegment": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its text, at most 80 characters.",
@@ -5676,6 +7133,7 @@
       "summary": "A status bar segment (`roster.status.set`)"
     },
     "Step": {
+      "doc": "",
       "fields": [
         {
           "doc": "Unique in the tutorial: what the State keeps once it's done.",
@@ -5701,6 +7159,7 @@
       "summary": "A step of a lesson: done when the app sends a matching event"
     },
     "StepMatch": {
+      "doc": "These are the app's own events, sent only to the tutorial running, on the demo Inventory; the Plugin's code never sees them.\n\n| `event` | Its fields |\n|---|---|\n| `command` | `id` (the command, `theme`), `arg` (what followed it, `nord`): every command run, from a key, a button or the command line |\n| `session_open`, `session_exit`, `host_selected` | `host` |\n| `help_open`, `help_back`, `help_forward` | `page`, `anchor` |\n| `help_search` | `page`, `query` |",
       "fields": [
         {
           "doc": "The event's name.",
@@ -5720,6 +7179,7 @@
       "summary": "An event a step waits for"
     },
     "Table": {
+      "doc": "The app sorts it, keeps the selected row across changes and draws only the rows on screen, so it stays smooth at thousands of rows. Keys, once it has focus: `j`/`k` or the arrows move, `g g`/`G` go to the first and last row, `Ctrl+D`/`Ctrl+U` half a page, `s` sorts by the next column and `S` reverses it, `/` filters the rows by what they say (`Esc` clears it), `Enter` runs `open`, an action's `key` runs it. A click selects a row, a double click opens it, and a click on a heading sorts by it. The selected row shows its actions as buttons.",
       "fields": [
         {
           "doc": "Its columns, left to right (1 to 20).",
@@ -5769,6 +7229,7 @@
       "summary": "A table: columns, rows as plain data, and what a row can do"
     },
     "TableAction": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it does (`\"Keep\"`), on its button and in the key hints.",
@@ -5806,6 +7267,7 @@
       "summary": "Something a table's selected row can do"
     },
     "TableEvent": {
+      "doc": "",
       "fields": [
         {
           "doc": "The row's `id`.",
@@ -5837,6 +7299,7 @@
       "summary": "What a table's function gets"
     },
     "TableRow": {
+      "doc": "",
       "fields": [
         {
           "doc": "Unique in the table (at most 100 characters): updates and the selection follow it.",
@@ -5869,10 +7332,12 @@
     },
     "TableRun": {
       "alias": "string|fun(e: TableEvent): any",
+      "doc": "A function gets a [TableEvent](#tableevent): which row, in which view or section, and its Host. A command line runs as typed after `:`.",
       "order": 51,
       "summary": "What a table's row or action runs"
     },
     "TerminalOutputEvent": {
+      "doc": "What you type into a Session is never an event, but the shell echoes it back, so it's here like anything else the Session prints (a shell with OSC 133 marks labels that line `kind = \"input\"`).",
       "fields": [
         {
           "doc": "The Session's id.",
@@ -5904,6 +7369,7 @@
       "summary": "`terminal_output`'s payload"
     },
     "Theme": {
+      "doc": "The tokens and how a Theme starts from its `base` are in [Themes and colours](app/config.md#themes-and-colours).",
       "fields": [
         {
           "doc": "Shown in the app; the id if left out.",
@@ -5948,10 +7414,12 @@
     },
     "Timer": {
       "alias": "integer",
+      "doc": "",
       "order": 4,
       "summary": "A timer's id, from `roster.defer` or `roster.every`"
     },
     "ToolbarControl": {
+      "doc": "",
       "fields": [
         {
           "doc": "What it does, for its tooltip and screen readers (`\"Scan a network\"`), at most 80 characters.",
@@ -5984,15 +7452,18 @@
     },
     "ToolbarIcon": {
       "alias": "\"find\"|\"add\"|\"details\"|\"help\"|\"map\"",
+      "doc": "`map` is three nodes joined: a network, Topology.",
       "order": 39,
       "summary": "A toolbar control's icon"
     },
     "TutorEvent": {
       "alias": "\"command\"|\"session_open\"|\"session_exit\"|\"host_selected\"|\"help_open\"|\"help_back\"|\"help_forward\"|\"help_search\"",
+      "doc": "",
       "order": 32,
       "summary": "The events a tutorial's step can wait for"
     },
     "Tutorial": {
+      "doc": "",
       "fields": [
         {
           "doc": "Its title; the id if left out.",
@@ -6030,6 +7501,7 @@
       "summary": "A tutorial (`roster.tutor.set`)"
     },
     "UpdateResult": {
+      "doc": "",
       "fields": [
         {
           "doc": "`false` when the Host already had those values (nothing written).",
@@ -6061,6 +7533,7 @@
       "summary": "What `roster.inventory.update` wrote"
     },
     "View": {
+      "doc": "Drawn top to bottom: the text, the facts, then the table or the graph (one or the other, not both). Text is cut to 500 characters, except `text` (4,000).",
       "fields": [
         {
           "doc": "Its heading; the id if left out.",
@@ -6110,6 +7583,7 @@
       "summary": "A side panel or a full view (`roster.views.set`)"
     },
     "ViewOpenOptions": {
+      "doc": "",
       "fields": [
         {
           "doc": "The id of the node (a graph) or row (a table) to open at.",
@@ -6124,10 +7598,12 @@
     },
     "ViewPlace": {
       "alias": "\"panel\"|\"full\"",
+      "doc": "",
       "order": 41,
       "summary": "Where a view goes"
     },
     "ViewUpdate": {
+      "doc": "Plain data, but for `actions`. A field left out stays as it is.",
       "fields": [
         {
           "doc": "A new heading.",
@@ -6227,17 +7703,26 @@
   },
   "values": [
     {
+      "doc": "A manifest's `api` above it doesn't install (\"update the app\"). One number for `init.lua`'s module and Plugins'.",
+      "example": "if roster.api_version < 3 then\n  roster.notify(\"this needs a newer roster for one feature\", \"warn\")\nend",
       "path": "roster.api_version",
+      "since": 2,
       "summary": "The version of the `roster` module this app has",
       "type": "integer"
     },
     {
+      "doc": "",
+      "example": "local copy_key = roster.os == \"macos\" and \"Cmd+C\" or \"Ctrl+Shift+C\"",
       "path": "roster.os",
+      "since": 2,
       "summary": "The OS the app runs on",
       "type": "Os"
     },
     {
+      "doc": "",
+      "example": "roster.notify(roster.plugin.name .. \" \" .. roster.plugin.version)\nlocal leader = roster.plugin.config.leader or \"w w\"",
       "path": "roster.plugin",
+      "since": 2,
       "summary": "The Plugin itself: its name, version, what it was granted and its settings",
       "type": "Plugin"
     }
