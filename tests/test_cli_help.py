@@ -194,7 +194,7 @@ def test_an_invalid_choice_names_the_position_and_the_choices(capsys):
     with pytest.raises(SystemExit):
         main(["vault", OP_SESSION, "op"])
     err = capsys.readouterr().err
-    assert "argument ACTION: invalid choice (not repeated) - one of: status, sync, reveal, bw, op" in err
+    assert "argument ACTION: invalid choice (not repeated) - one of: status, sync, unlock, lock, reveal, bw, op" in err
 
 
 def test_a_bad_value_names_its_option(capsys):
@@ -217,6 +217,16 @@ def test_a_session_in_roster_s_place_says_where_a_session_goes(capsys):
     assert "vault bw and vault op take the vault session from their environment" in err
 
 
+@pytest.mark.parametrize("provider", ["bw", "op"])
+def test_a_session_hint_names_the_provider_typed(capsys, provider):
+    with pytest.raises(SystemExit):
+        main(["--session", OP_SESSION, "vault", provider, "--", "whoami"])
+    err = capsys.readouterr().err
+    assert OP_SESSION not in err
+    assert f"vault {provider} takes the vault session from its environment" in err
+    assert f"(`roster vault {provider} -- ARGS`)" in err
+
+
 def test_an_unknown_help_topic_names_the_command_that_has_help(capsys):
     with pytest.raises(SystemExit):
         main(["help", "vault", "nope"])
@@ -229,3 +239,47 @@ def test_an_unknown_init_inventory_names_the_forms(capsys):
     assert e.value.code == 2
     assert ("--inventory: not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]"
             in capsys.readouterr().err)
+
+
+# #479 item 2 (T235 review N2, #484 M1/L1): an op token that starts with `-c`, typed as the first word, reads as
+# `-c PATH`, and a bw key or an op service-account token can be typed after -c by mistake: no error, fix line or
+# JSON prints one. A path whose folder exists and that isn't token-shaped is still shown: the user typed a path.
+BW_KEY = "q2Xv0b9ZtM4n1KpYwLe7Rj3s/N+yA2qXw1oLmK7pRtUvB=="                 # base64, with a / and a +
+OPS_TOKEN = "ops_Ex4mpleN0tR3alServiceAcc0untT0k3nZZZZZZZZ"                   # made up, op service-account shaped
+HIDDEN_CONFIGS = [pytest.param([f"-c{OP_SESSION}"], OP_SESSION, id="op-token-as-first-word"),
+                  pytest.param(["-c", BW_KEY], BW_KEY, id="bw-key"),
+                  pytest.param(["--config", OPS_TOKEN], OPS_TOKEN, id="ops-token")]
+
+
+def _slices(token):
+    return [token[i:i + 10] for i in range(0, len(token) - 10, 5)]
+
+
+def _run(capsys, argv):
+    try:
+        code = main(argv)
+    except SystemExit as e:
+        code = e.code
+    out = capsys.readouterr()
+    return str(code) + out.out + out.err
+
+
+@pytest.mark.parametrize(("first", "token"), HIDDEN_CONFIGS)
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["mesh", "status", "--json"], ["check", "--box"],
+                                     ["inv", "which"], ["inv", "which", "--json"]])
+def test_a_token_read_as_a_config_path_is_not_repeated(capsys, tmp_path, monkeypatch, first, token, command):
+    monkeypatch.chdir(tmp_path)
+    out = _run(capsys, [*first, *command])
+    assert not [x for x in _slices(token) if x in out], out
+    assert "(not repeated)" in out, out
+
+
+@pytest.mark.parametrize("typed", ["lab.yml", "inv/roster.yml", "~/x.yml"])
+def test_a_missing_config_path_is_shown_when_it_looks_like_one(capsys, tmp_path, monkeypatch, typed):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "inv").mkdir()
+    want = tmp_path / typed.removeprefix("~/")
+    assert f"{want} not found" in _run(capsys, ["-c", typed, "hosts"])
+    assert str(want) in _run(capsys, ["-c", typed, "hosts", "--json"])
+    assert str(want) in _run(capsys, ["-c", typed, "inv", "which"])

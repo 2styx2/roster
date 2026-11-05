@@ -4,6 +4,8 @@
 #   set: Python 3.12 only, and only the jobs its changed files need (the `changes` job, scripts/ci_changes.py),
 #   with Windows' pytest only for Windows-specific code (T237); the `CI` job at the end always reports, and fails if
 #   any job that ran failed. scripts/check-local.sh runs the PR's checks on your own machine.
+#   Runners (Q196, T244): every workflow names its image (ubuntu-26.04, windows-2025, macos-26; the Linux app builds
+#   on ubuntu-22.04 for its glibc), never a -latest label, so an image moves in a pull request that runs on it.
 #   Install (install.sh, update.sh, uninstall.sh): scripts/test-install.sh on Ubuntu and Fedora in containers, on
 #        a pull request that touches them, on Monday's nightly run and by hand (it needs the network; decision Q199).
 #   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows
@@ -38,7 +40,7 @@ permissions:
 
 env:
   # astral-sh/setup-uv publishes no moving major tag since v8 (only immutable full ones): its uses: lines name the
-  # full tag, bumped by hand with the other actions (#459)
+  # full tag; Dependabot bumps it with the other actions, weekly (.github/dependabot.yml, decision Q196)
   UV_VERSION: "0.12.23"
   UV_PYTHON_DOWNLOADS: "never"   # use the Python setup-python installed, never fetch another
   CARGO_TERM_COLOR: always
@@ -48,7 +50,7 @@ jobs:
   # tests/test_ci_changes.py). The checkout is the PR's merge commit, so HEAD^1 is the base it merges into.
   changes:
     name: Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       cli: ${{ steps.areas.outputs.cli }}
@@ -77,7 +79,7 @@ jobs:
   # The quick checks, in one job so a run takes fewer of the plan's 20 parallel jobs (T233): each takes seconds.
   checks:
     name: Checks (ruff, pyright, Lua types, wheel)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       LUALS_VERSION: "3.19.2"
       LUALS_SHA256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
@@ -140,7 +142,7 @@ jobs:
 
   cli-test:
     name: CLI tests (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.cli == 'true'
     strategy:
@@ -188,7 +190,7 @@ jobs:
   # times (--store-durations), and the nightly run merges them into a new file (windows-durations, below).
   cli-test-windows:
     name: CLI tests (Windows, ${{ matrix.shard }}/3)
-    runs-on: windows-latest
+    runs-on: windows-2025
     needs: changes
     if: needs.changes.outputs.windows == 'true'
     strategy:
@@ -225,7 +227,7 @@ jobs:
   # apart (docs/development.md, "Tests"): `gh run download RUN -n windows-durations -D tests`.
   windows-durations:
     name: Windows shard times
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     needs: cli-test-windows
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.cli-test-windows.result == 'success' }}
@@ -247,7 +249,7 @@ jobs:
 
   app-frontend:
     name: App frontend (tsc, ESLint, Vitest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     defaults:
@@ -281,7 +283,7 @@ jobs:
 
   app-rust:
     name: App Rust (fmt, clippy, cargo test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     steps:
@@ -325,7 +327,7 @@ jobs:
   # release build below, and its own cache keeps this job to the core's tests.
   core-test-windows:
     name: Core tests (Windows)
-    runs-on: windows-latest
+    runs-on: windows-2025
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     steps:
@@ -364,7 +366,7 @@ jobs:
 
   app-windows:
     name: App Windows release build
-    runs-on: windows-latest
+    runs-on: windows-2025
     needs: changes
     # On a pull request only when it touches what the build builds (ci_changes.py "release"); release.yml's dry run
     # covers its own files (docs/releasing.md).
@@ -431,7 +433,7 @@ jobs:
   # (ci_changes.py "install"). The runner has podman.
   install-test:
     name: Install test (${{ matrix.distro }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.install == 'true'
@@ -448,7 +450,7 @@ jobs:
   # need is skipped, and that's fine), red when one failed or was cancelled. Branch protection can require "CI".
   ci:
     name: CI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     needs: [changes, checks, cli-test, cli-test-windows, windows-durations, app-frontend, app-rust, core-test-windows,
             app-windows, app-linux, install-test]

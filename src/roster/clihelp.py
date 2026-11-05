@@ -68,12 +68,15 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
                ("roster revoke --all", "off every Inventory's hosts (before removing roster)")],
     "vault": [("roster vault status", "which vaults work here, their state and last sync"),
               ("roster vault sync", "pull the vaults, then what was added, changed or removed"),
+              ("roster vault unlock", "unlock Bitwarden for every run on this box, until roster vault lock"),
               ("roster vault reveal lab-guest", "a resource's secret, for you to type in"),
               ("roster vault bw -- list items --search web-01", "the Bitwarden CLI itself, read-only"),
               ("roster vault op -- item list --vault Infra", "the 1Password CLI itself, read-only")],
     "vault status": [("roster vault status", "providers, tools, each vault's state and last sync"),
                      ("roster vault status --json", "for a script")],
     "vault sync": [("roster vault sync", "bw sync, then the items added, changed or removed since the last one")],
+    "vault unlock": [("roster vault unlock", "ask the master password once; runs on this box stop asking until locked")],
+    "vault lock": [("roster vault lock", "bw lock, and remove the saved session")],
     "vault reveal": [("roster vault reveal lab-guest", "print its secret, for you to type in"),
                      ("roster vault reveal lab-guest --wifi", "a WIFI:... string for a QR code")],
     "vault bw": [("roster vault bw -- list items --search web-01", "bw with this box's saved session (read-only)"),
@@ -234,8 +237,12 @@ def _hint(message: str, typed: list[str], options: list[str]) -> str:
     if unrecognized or re.match(rf"^{_ARG}invalid choice: ", message):
         before = typed[:typed.index("--")] if "--" in typed else typed
         for word in before:                 # `roster --session TOKEN vault …`: where a session goes, not --version
-            if word.partition("=")[0] in NOT_ROSTERS:
-                return NOT_ROSTERS[word.partition("=")[0]]
+            option = word.partition("=")[0]
+            if option == "--session" and (provider := _vault_typed(before)):
+                return (f"vault {provider} takes the vault session from its environment, never the command line "
+                        f"(`roster vault {provider} -- ARGS`)")
+            if option in NOT_ROSTERS:
+                return NOT_ROSTERS[option]
     if unrecognized:
         for word in message.removeprefix("unrecognized arguments: ").split():
             if word in options:                 # a real option, in the wrong place: `roster --json`, `hosts --sudo`
@@ -251,7 +258,18 @@ def _hint(message: str, typed: list[str], options: list[str]) -> str:
     near = difflib.get_close_matches(_unquote(m[2]), choices, n=1, cutoff=0.6)
     if near:
         return f"did you mean `{near[0]}`?"
-    return f"one of: {', '.join(choices)}" if len(choices) <= 6 else "not a roster command"
+    # an action's few choices are listed (vault has 7, T241); roster's many commands are not
+    return f"one of: {', '.join(choices)}" if len(choices) <= 8 else "not a roster command"
+
+
+def _vault_typed(words: list[str]) -> str:
+    """The vault provider named after `vault` on the command line (`bw` or `op`), or '' (never a typed value: only
+    one of those two names is returned)."""
+    if "vault" in words:
+        for word in words[words.index("vault") + 1:]:
+            if word in ("bw", "op"):
+                return word
+    return ""
 
 
 def _unquote(typed: str) -> str:

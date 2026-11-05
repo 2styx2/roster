@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -145,6 +146,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)         # an in-process serve test sets it
     from roster.providers import bitwarden
     monkeypatch.setitem(bitwarden._session, "key", None)           # bw's session key, held outside os.environ
+    monkeypatch.setitem(bitwarden._offered, "done", False)         # T241: "keep it unlocked?" asked once a run
+    monkeypatch.setattr(providers, "JSON_OUTPUT", False)           # a --json command sets it
     from roster import common
     monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
     monkeypatch.setattr(common, "_config_path", None)              # and its roster.yml
@@ -162,6 +165,37 @@ def isolated(tmp_path, monkeypatch):
     os.environ.clear()
     os.environ.update(saved_env)
     shutil.rmtree(temp, ignore_errors=True)
+
+
+VAULT_CLIS = ("bw", "op", "keepassxc-cli")
+
+
+@pytest.fixture(autouse=True)
+def no_real_vault_cli(request, tmp_path, monkeypatch):
+    """A test never runs the developer's real bw, op or keepassxc-cli (T247: a flaky test was running the real 140 MB
+    bw twice). Each name, first on PATH, is a tripwire that runs nothing: it says which test ran it, on stderr, and
+    the test fails when it ends, even when it swallowed the tool's failure. The `fakes` fixture puts the stand-ins
+    before it; a test's own stand-ins (or a PATH of its own) go before it too. Windows finds a tool by PATHEXT, so
+    there each one also gets a NAME.cmd (an extensionless one is for Git for Windows' sh)."""
+    guard = tmp_path / "no-real-vault-cli"
+    guard.mkdir()
+    ran = guard / "ran"
+    for tool in VAULT_CLIS:
+        why = f"{request.node.nodeid} ran a real {tool} from PATH: use the stand-in in tests/fakes (the `fakes` fixture)"
+        script = guard / tool
+        script.write_text(f'#!/bin/sh\nprintf "%s\\n" {shlex.quote(why)} >&2\n'
+                          f'printf "%s\\n" "{tool} $*" >> {shlex.quote(str(ran))}\nexit 1\n')
+        script.chmod(0o755)
+        if WINDOWS:
+            plain = "".join("?" if c in '&|<>^%"' else c for c in why)
+            (guard / f"{tool}.cmd").write_text(f'@echo {plain} 1>&2\r\n@echo {tool} %*>>"{ran}"\r\n@exit /b 1\r\n',
+                                               newline="")
+    monkeypatch.setenv("PATH", f"{guard}{os.pathsep}{os.environ.get('PATH', '')}")
+    yield
+    if ran.exists():
+        calls = ran.read_text(errors="replace").split("\n")
+        pytest.fail("\n".join(f"{request.node.nodeid} ran a real {c.split(' ')[0]} from PATH ({c.strip()}): use the "
+                              "stand-in in tests/fakes (the `fakes` fixture)" for c in calls if c.strip()), pytrace=False)
 
 
 @pytest.fixture
