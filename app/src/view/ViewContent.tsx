@@ -1,7 +1,7 @@
 // What a view and a Host-details section hold (ticket 76), drawn the app's way: text in the app's
 // voice (Inter), facts as Host details shows its own, then a table. Nothing here is markup from a
 // Plugin: it's text, set where the app puts it.
-import { useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton, usePanel } from "../panel/PanelFrame";
 import { DataTable } from "../ui/DataTable";
@@ -91,7 +91,22 @@ export function ViewContent({
  * is where it opens first, and the user can move it (its PanelFrame, ticket 95). It opens from a
  * key as often as a click, so, like every side panel, it doesn't animate. Esc closes it; focus goes
  * back where it was. */
-export function ViewPanel({ view, leader, onClose, graphs, select }: { view: ViewDef; leader: string; onClose(): void; graphs?: GraphMemory; select?: { id: string; n: number } | undefined }) {
+export function ViewPanel({
+  view,
+  leader,
+  onClose,
+  graphs,
+  select,
+  asked,
+}: {
+  view: ViewDef;
+  leader: string;
+  onClose(): void;
+  graphs?: GraphMemory;
+  select?: { id: string; n: number } | undefined;
+  /** Counts each time it's asked to open again while open (ViewHost): each takes the focus back. */
+  asked?: number | undefined;
+}) {
   const panel = useRef<HTMLElement>(null);
   const frame = usePanel();
   const full = (frame?.place ?? view.place) === "full";
@@ -111,6 +126,14 @@ export function ViewPanel({ view, leader, onClose, graphs, select }: { view: Vie
     };
     // Once per view: setting it again keeps focus where it is.
   }, [view.id]);
+  // Asked to open again while it's open (`:topology` with a Session beside it holding the keys):
+  // the keys come back here, so a `/` typed next searches the view, not the shell (#475). Where
+  // focus goes back on close stays where it was when the view first opened.
+  useEffect(() => {
+    if (asked === undefined) return;
+    const node = panel.current;
+    if (!node?.contains(document.activeElement)) node?.focus();
+  }, [asked]);
   // Focus that lands on the view itself (its table came after it opened, a question or a float
   // handed focus back to it) goes on into its table or graph, where the keys are (ticket 91).
   const onFocus = (e: FocusEvent<HTMLElement>) => {
