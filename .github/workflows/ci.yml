@@ -130,7 +130,7 @@ jobs:
   # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
   # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
-  # The suite there takes about 47 min of test time (each stand-in Host command starts Python and Git for Windows'
+  # The suite there takes 47-58 min of test time (each stand-in Host command starts Python and Git for Windows'
   # sh, whose every fork is slow: a Mesh test takes about 7 times as long as on Linux, #234), so it runs in 3 shards
   # side by side (conftest.py's --shard: every 3rd test, so test_mesh.py spreads evenly), each on the runner's 4
   # cores. --durations lists the slowest, to measure again.
