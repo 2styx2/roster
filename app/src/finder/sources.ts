@@ -182,13 +182,13 @@ function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
 }
 
 /** A finder over one Sidebar section's rows (a Plugin's section gets one the same way). */
-export function sectionFinder(sectionId: string, title: string, prompt: string, source = BUILTIN): FinderSourceDef {
+export function sectionFinder(sectionId: string, title: string, prompt: string, source = BUILTIN, noun = "row"): FinderSourceDef {
   return {
     id: sectionId,
     source,
     title,
     prompt,
-    noun: "row",
+    noun,
     items: (ctx) => treeItems(unfolded(ctx).filter((s) => s.id === sectionId)),
   };
 }
@@ -207,7 +207,7 @@ export const treeFinder: FinderSourceDef = {
 
 export function builtinFinderRegistry(): FinderRegistry {
   const registry = new Registry<FinderSourceDef>();
-  for (const s of [sessionsFinder, hostsFinder, treeFinder, sectionFinder("inventory", "Find in the Inventory", "Inventory")]) {
+  for (const s of [sessionsFinder, hostsFinder, treeFinder, sectionFinder("inventory", "Find in the Inventory", "Inventory", BUILTIN, "Host")]) {
     registry.register(s);
   }
   return registry;
