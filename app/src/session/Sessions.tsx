@@ -194,6 +194,7 @@ export function ConnectCard({
   closeKeys = null,
   leader = "",
   fills = true,
+  help,
 }: {
   host: string;
   address: string | null;
@@ -218,6 +219,8 @@ export function ConnectCard({
   /** It logs in with a key: the Host's node fills when the shell answers (a password one stays a
    * ring), as in the Sidebar. */
   fills?: boolean;
+  /** Opens a help topic (`:help host-keys` from the key question). */
+  help?: (topic: string) => void;
 }) {
   const card = useRef<HTMLDivElement>(null);
   const trustButton = useRef<HTMLButtonElement>(null);
@@ -268,8 +271,11 @@ export function ConnectCard({
           preventScroll: true,
         } as FocusOptions);
         // …unless a short window hides the focused control: then it scrolls just enough, clear
-        // of the sticky title and buttons (scroll-padding; round 16).
-        target?.scrollIntoView?.({ block: "nearest" });
+        // of the sticky title and buttons (scroll-padding; round 16). A button in the sticky
+        // footer is always in view, so the card stays at its top (round 18: Cancel's scroll had
+        // opened it 53 px down at 480×320, its first lines under the title).
+        if (target && !target.closest(".key-actions"))
+          target.scrollIntoView?.({ block: "nearest" });
       }
     if (asking) asked.current = true;
     else if (asked.current) {
@@ -314,10 +320,13 @@ export function ConnectCard({
   if (words === null) return null;
   const title = `${again ? "Reconnecting" : "Connecting"} to ${host}`;
   // A Quick Connect's name already holds its address (user@address), so the title doesn't repeat it.
-  const where = quick
-    ? null
-    : question
-      ? `${hostKey.address}:${hostKey.port}`
+  // The questions show it on its own line under the title (one template for both, round 18).
+  const where = question
+    ? quick
+      ? endpoint(quick)
+      : `${hostKey.address}:${hostKey.port}`
+    : quick
+      ? null
       : asksPassword
         ? `${prompt.address}:${prompt.port}`
         : address;
@@ -388,6 +397,16 @@ export function ConnectCard({
           : undefined
       }
       tabIndex={asking ? -1 : undefined}
+      onScroll={
+        asking
+          ? (e) =>
+              // The pinned title draws its rule only while something is under it (round 18).
+              e.currentTarget.toggleAttribute(
+                "data-scrolled",
+                e.currentTarget.scrollTop > 0,
+              )
+          : undefined
+      }
     >
       {/* The map: this Box, the edge, the Host. The edge says how far the connection has got
           (`data-phase`): part-way while ssh starts, to the Host's ring while it logs in, and the
@@ -507,21 +526,18 @@ export function ConnectCard({
         </>
       ) : asksQuick ? (
         <>
+          {/* The Inventory question's template (round 18): the address is on the title's second
+              line, so the sentence reads as the Host one does. */}
           <p className="key-says">
             {hostKey.recorded === "match"
-              ? "This is the key roster recorded for "
-              : "roster hasn't seen a key at "}
-            <span className="connect-address">{endpoint(quick)}</span>
-            {hostKey.recorded === "match" ? "." : " before."}
+              ? "This is the key roster recorded for this address."
+              : "roster hasn't seen a key at this address before."}
           </p>
           <p className="key-print">
             <span className="key-type">{hostKey.key_type}</span>{" "}
             <span className="key-fingerprint">{hostKey.fingerprint}</span>
           </p>
-          <p className="muted key-advice">
-            Compare it with the machine's console or its owner before you trust
-            it.
-          </p>
+          <KeyAdvice where="the machine's" help={help} />
           <form
             className="quick-login"
             onSubmit={(e) => {
@@ -568,7 +584,9 @@ export function ConnectCard({
               </label>
             )}
             <div className="key-actions">
-              {/* In the footer, so it's in view wherever the card is scrolled (round 16). */}
+              {/* In the footer, so it's in view wherever the card is scrolled (round 16), in the
+                  room left of the buttons, which it never takes from them: up to two lines,
+                  no taller than they are, so the card never moves (round 18). */}
               <p className="key-nudge" role="alert">
                 {nudged && !checkedKey ? "Tick the box above first." : ""}
               </p>
@@ -579,11 +597,13 @@ export function ConnectCard({
                 ref={trustButton}
               >
                 Trust and connect
-                {checkedKey && (
-                  <span className="btn-keys" aria-hidden="true">
-                    <Keys keys="Enter" />
-                  </span>
-                )}
+                {/* Always there, dim until the tick arms it, so ticking never resizes it (round 18). */}
+                <span
+                  className={`btn-keys${checkedKey ? "" : " key-dim"}`}
+                  aria-hidden="true"
+                >
+                  <Keys keys="Enter" />
+                </span>
               </button>
               <button type="button" onClick={() => answers.cancel()}>
                 Cancel
@@ -601,9 +621,7 @@ export function ConnectCard({
             <span className="key-type">{hostKey.key_type}</span>{" "}
             <span className="key-fingerprint">{hostKey.fingerprint}</span>
           </p>
-          <p className="muted key-advice">
-            Compare it with the Host's console or its owner before you trust it.
-          </p>
+          <KeyAdvice where="the Host's" help={help} />
           <div className="key-actions">
             <button
               type="button"
@@ -611,10 +629,10 @@ export function ConnectCard({
               ref={trustButton}
               onClick={() => answers.trust()}
             >
-              {/* The question opens on Cancel, so trusting is deliberate (Q222): Enter shows on
-                  Trust only once Tab has brought focus to it (round 16). */}
+              {/* The question opens on Cancel, so trusting is deliberate (Q222): Enter is dim on
+                  Trust until Tab brings focus to it, and keeps its room (round 18). */}
               Trust and connect
-              <span className="btn-keys key-on-focus" aria-hidden="true">
+              <span className="btn-keys key-dim key-on-focus" aria-hidden="true">
                 <Keys keys="Enter" />
               </span>
             </button>
@@ -777,6 +795,36 @@ function FillOffer({
   );
 }
 
+/** The key question's advice, and where to find how (round 18): `:help host-keys` says where a
+ * fingerprint is read on the machine. */
+function KeyAdvice({
+  where,
+  help,
+}: {
+  where: string;
+  help?: ((topic: string) => void) | undefined;
+}) {
+  return (
+    <p className="muted key-advice">
+      Compare it with {where} console or its owner before you trust it.
+      {help && (
+        <>
+          {" "}
+          <button
+            type="button"
+            className="key-help-link"
+            aria-label="How to check a host key: :help host-keys"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => help("host-keys")}
+          >
+            :help host-keys
+          </button>
+        </>
+      )}
+    </p>
+  );
+}
+
 /** address:port as ssh would write it ([address]:port for IPv6). */
 function endpoint({ address, port }: QuickTarget): string {
   return `${address.includes(":") ? `[${address}]` : address}:${port}`;
@@ -906,6 +954,7 @@ export function SessionPanes({
                 closeKeys={closeKeys}
                 leader={leader}
                 fills={tab.auth !== "password"}
+                help={(topic) => run(`help ${topic}`)}
               />
             )}
             {tab.save?.loggedIn &&

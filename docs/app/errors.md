@@ -151,6 +151,16 @@ A Session to a Host whose host key isn't in roster's known hosts asks before any
 | 62 | 23 | The key changed between the question and Trust | Host / network | "esxi-02's host key changed while roster was asking - nothing was recorded" | Don't trust it blindly: compare the new fingerprint with the Host's console or owner, then open the Session again to see it |
 | 63 | 43 | A different key got recorded for the address meanwhile (another Session's question, `roster setup`) | Host / network | "esxi-02's host key changed - not connecting" | Row 13's: compare the fingerprints; never accepted automatically |
 
+### Checking a host key
+
+The question shows the key's type and its SHA256 fingerprint. Before you trust it, read the same fingerprint on the machine itself, from its console (or ask whoever runs it), never over the network you're checking:
+
+```sh
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+It prints the key's size, `SHA256:` and the fingerprint, then the key's comment and type (`(ED25519)`). Use the file of the type the question names: `ssh_host_rsa_key.pub` for `ssh-rsa`, `ssh_host_ecdsa_key.pub` for `ecdsa-sha2-nistp256`. On Windows (OpenSSH Server) the files are in `C:\ProgramData\ssh\`. A switch, an appliance or ESXi may show it on its own console or web page instead. Every character must match; if one doesn't, press Cancel and find out why (a reinstalled machine, a reused address, or someone in between). The app's question links here (`:help host-keys`). Trust records the key in `~/.ssh/roster_known_hosts`, and from then on a different key is refused, never asked about (row 13).
+
 ## Quick Connect
 
 A Session to `user@address[:port]`, a box that isn't in the Inventory (decision Q67). The tab fetches the key (`host.scan_key {address, port}`) and asks for it to be confirmed, with the password, in the connect card; `quick.prepare` then fetches it again and returns the Session's command. Its Problems name the box as `user@address`, and leave out the fixes that only apply to a Host (`:check`, `roster setup --only`). Every failure below connects nothing and records nothing.

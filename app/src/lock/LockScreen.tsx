@@ -14,7 +14,7 @@ import { Logo } from "../chrome/Logo";
 import type { ErrorRow } from "../errors/catalog";
 import { CopyCommand } from "../errors/ErrorPanel";
 import { SignIn } from "./SignIn";
-import type { Vault, VaultView } from "./useVault";
+import { WRONG_PASSWORD, type Vault, type VaultView } from "./useVault";
 import { withCode } from "./withCode";
 import { Keys } from "../ui/Keys";
 
@@ -114,6 +114,19 @@ const commandIn = (message: string) =>
   message.split("`").find((part, i) => i % 2 === 1 && part.includes(" ")) ??
   null;
 
+/** What a wrong master password can't be helped by here (round 18): roster never keeps it, so
+ * it can't reset it, and which vault it is comes from this Box (the account line, when there is
+ * one, names it and offers another). */
+function forgotWords(provider: string, account: boolean): string {
+  if (provider === "bw")
+    return account
+      ? "Forgot it? Only Bitwarden can help: roster never keeps it."
+      : "Forgot it? Only Bitwarden can help: roster never keeps it. The account is the one `bw login` signed in to on this Box.";
+  if (provider === "kp")
+    return "Forgot it? roster never keeps it, so it can't reset it. The database is `vault.kp.database` in init.lua.";
+  return `Forgot it? roster never keeps ${providerName(provider)}'s master password, so it can't reset it.`;
+}
+
 function LockScreen({
   vault,
   hint,
@@ -128,6 +141,28 @@ function LockScreen({
       role="dialog"
       aria-modal="true"
       aria-labelledby="lock-title"
+      onKeyDown={(e) => {
+        // Tab stays on the lock's own controls (round 18: after Unlock it fell to <body>, an
+        // invisible stop, before coming back to the field).
+        if (e.key !== "Tab") return;
+        const all = Array.from(
+          e.currentTarget.querySelectorAll<HTMLElement>(
+            "button, input, select, textarea, [href], [tabindex]:not([tabindex='-1'])",
+          ),
+        ).filter((el) => !el.hasAttribute("disabled") && !el.closest("[hidden]"));
+        const head = all[0];
+        const tail = all[all.length - 1];
+        if (!head || !tail) return;
+        const at = document.activeElement;
+        const inside = at instanceof Node && e.currentTarget.contains(at);
+        if (e.shiftKey && (at === head || !inside)) {
+          e.preventDefault();
+          tail.focus();
+        } else if (!e.shiftKey && (at === tail || !inside)) {
+          e.preventDefault();
+          head.focus();
+        }
+      }}
     >
       <section className="lock-panel">
         <Logo size={48} className="lock-mark" />
@@ -218,6 +253,12 @@ function Body({
           />
           {view.account && (
             <AccountLine account={view.account} onSwitch={vault.askSignOut} />
+          )}
+          {/* Under the block, out of its flow, so the centred lock never moves (round 18). */}
+          {view.error === WRONG_PASSWORD && (
+            <p className="lock-forgot muted">
+              {withCode(forgotWords(view.provider, view.account !== undefined))}
+            </p>
           )}
         </>
       );

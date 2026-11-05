@@ -15,6 +15,9 @@ import {
 } from "../backend/types";
 import { idleTimer, realClock, type Clock } from "./idle";
 
+/** The lock's error for a wrong master password (the lock screen adds what to do if it's forgotten). */
+export const WRONG_PASSWORD = "Wrong master password. Try again.";
+
 export type VaultView =
   /** Asking `vault.status` (the lock screen is up meanwhile). */
   | { state: "checking" }
@@ -148,7 +151,7 @@ export function useVault(
       } catch (e) {
         const code = e instanceof BackendCallError ? e.code : null;
         if (code === VaultError.wrongPassword) {
-          setView({ ...v, error: "Wrong master password. Try again." });
+          setView({ ...v, error: WRONG_PASSWORD });
         } else if (code === VaultError.notLoggedIn || code === VaultError.cliMissing) {
           const status = code === VaultError.notLoggedIn ? "not-logged-in" : "missing-cli";
           setView({ state: "unavailable", provider: v.provider, message: messageOf(e), status });

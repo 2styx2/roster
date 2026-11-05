@@ -105,6 +105,7 @@ export const guides: readonly Guide[] = [
     summary: "Every connection error: what happened, the cause, where it lives, the fix",
     part: "Reference",
     order: 61,
+    aliases: { "host-keys": "errors-guide#checking-a-host-key" },
   },
   {
     id: "cli",
