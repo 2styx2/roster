@@ -279,7 +279,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 @media (max-height: 460px) { .empty .empty-mark { display: none; } .empty { padding-block: 8px; } }
 .empty { max-height: 100%; overflow-y: auto; }
 .recent-title {
-  grid-column: 3; margin: 0 0 8px; padding-left: 10px; color: var(--muted);
+  /* Over the names it titles (round 18: at the row's edge it sat ~30 px left of them): the row's
+     10 px padding, the 8 px node and the 12 px gap. */
+  grid-column: 3; margin: 0 0 8px; padding-left: 30px; color: var(--muted);
   font-size: max(11px, calc(var(--text-xs) - 1px)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
 }
 .recent-map { display: grid; grid-template-columns: auto 48px minmax(0, 300px); align-items: center; max-width: 100%; }

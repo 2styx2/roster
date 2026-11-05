@@ -3527,7 +3527,9 @@ function Workspace({
               <p className="empty-title">No Hosts in the Inventory yet.</p>
               {/* The next step is the app's own (taste.md: an empty state carries it); the file is
                   the other way, on its own line as data (Iosevka), cut in the middle if it must be. */}
-              {addHost.keys && !addHost.tooOld ? (
+              {/* Offered whenever this roster can add Hosts (round 18: it hung on the key hint, so a
+                  keymap without one hid the button the title bar and the Sidebar still showed). */}
+              {!addHost.tooOld ? (
                 <>
                   <button
                     type="button"
@@ -3538,14 +3540,22 @@ function Workspace({
                     Add a Host
                   </button>
                   <p className="empty-hint key-hint">
-                    or press{" "}
-                    <Keys keys={addHost.keys} leader={options.leader} />, or
-                    edit the file:
+                    {addHost.keys ? (
+                      <>
+                        or press{" "}
+                        <Keys keys={addHost.keys} leader={options.leader} />, or
+                        edit the file:
+                      </>
+                    ) : (
+                      "or edit the file:"
+                    )}
                   </p>
                 </>
               ) : (
-                <p className="empty-hint">
-                  Add Hosts to this file and they show up here.
+                // Why there's no button, in one plain line, and the way that works.
+                <p className="empty-hint" title={addHost.tooOld}>
+                  This roster is too old to add Hosts here. Add them to{" "}
+                  <code>roster.yml</code>:
                 </p>
               )}
               <p className="empty-path" title={info.inventory.path}>

@@ -289,7 +289,14 @@ export const inventorySection: SidebarSectionDef = {
     title: "Inventory",
     count: hosts.hosts.length,
     // Where Hosts come from (S7): the key to add one, or the file.
-    empty: live ? "No Hosts yet. Press `␣ n` to add one." : "No Hosts yet. Add them in roster.yml.",
+    // One line in the Sidebar's width (round 18), and the pane's offer: the app's own way when this
+    // roster can add Hosts, else the file.
+    empty:
+      addHost && !addHost.tooOld
+        ? addHost.keys
+          ? `None yet: \`${addHost.keys}\` adds one.`
+          : "None yet: + adds one."
+        : "None yet: add them in roster.yml.",
     // "Add a Host" is always shown, last so hover's "New group" never moves it (iteration 3
     // feedback: `␣ +` alone was too hard to find). On a roster too old for it, it stays and says why.
     ...(live || addHost
