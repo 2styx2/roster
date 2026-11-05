@@ -11,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -115,6 +116,30 @@ export function withData(text: string, codes: readonly string[] | undefined): Re
   }
   if (at < text.length) out.push(text.slice(at));
   return out;
+}
+
+/** How much of a long tag's end always shows: what tells two tags on one page apart. */
+const TAG_TAIL = 10;
+
+/** A help tag, what you'd type after `:help`: never cut to a stub ("host-k…", round 20). Up to
+ * 16 characters it's whole; a longer one is cut in its middle, its last characters kept
+ * ("errors-gu…ew-host-key"), and the middle column gives way before it does (CSS). */
+/** The least room a tag takes: its whole width up to 16 characters, else its first 4, the "…" and
+ * its last 10 (Iosevka: a character is 1ch). */
+export function tagMin(tag: string): CSSProperties {
+  const n = [...tag].length;
+  return { "--tag-min": `${n <= 16 ? n : 4 + 1 + TAG_TAIL}ch` } as CSSProperties;
+}
+
+export function TagText({ tag }: { tag: string }) {
+  const chars = [...tag];
+  if (chars.length <= 16) return <span className="tag-tail">{tag}</span>;
+  return (
+    <>
+      <span className="tag-head">{chars.slice(0, -TAG_TAIL).join("")}</span>
+      <span className="tag-tail">{chars.slice(-TAG_TAIL).join("")}</span>
+    </>
+  );
 }
 
 export function Finder({
@@ -311,11 +336,18 @@ export function Finder({
               onMouseMove={() => i !== current && setMoved(i)}
               onClick={() => choose(item)}
             >
-              {item.dot && <StateDot dot={item.dot} lit={item.lit} />}
-              <span className="finder-label" title={item.label}>
+              {item.dot && <StateDot dot={item.dot} lit={item.lit} {...(item.stub === false ? { stub: false } : {})} />}
+              <span className="finder-label" title={item.note ? `${item.label} · ${item.note}` : item.label}>
                 <span className={`finder-name${source.prose && (item.dataLabel || DATA_NAME.test(item.label)) ? " data" : ""}`} dir="auto">
                   {marked(item.label, query, source.prose)}
                 </span>
+                {item.note && (
+                  // What the entry is, after its name (round 20): the middle column stays its page.
+                  <span className="finder-note" dir="auto">
+                    {" · "}
+                    {source.prose ? withData(item.note, item.noteData) : item.note}
+                  </span>
+                )}
                 {item.mark && (
                   <>
                     <span className="finder-mark" aria-hidden="true">
@@ -331,12 +363,16 @@ export function Finder({
                   title={item.path}
                   dir="auto"
                 >
-                  {source.prose ? withData(item.path, item.pathData) : item.path}
+                  {item.path}
                 </span>
               )}
               {item.detail && (
-                <span className="finder-detail" title={item.detail}>
-                  {item.detail}
+                <span
+                  className="finder-detail"
+                  title={item.detail}
+                  style={source.prose ? tagMin(item.detail) : undefined}
+                >
+                  {source.prose ? <TagText tag={item.detail} /> : item.detail}
                 </span>
               )}
             </li>

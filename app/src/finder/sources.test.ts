@@ -143,3 +143,50 @@ describe("searchItems", () => {
     expect(searchItems(items, "zzz")).toEqual([]);
   });
 });
+
+describe("the tree finder's Host nodes (round 20)", () => {
+  it("draws live state as the Sidebar and the Picker do: the on-screen Host lit, with its stub", () => {
+    const sessions: TabsSnapshot = { tabs: [tab(1, a), tab(2, b)], active: 1, previous: 2 };
+    const items = source("tree").items(context(sessions)).filter((i) => i.host);
+    const of = (h: string) => items.find((i) => i.host === h)!;
+    expect(of(a).lit).toBe("current");
+    expect(of(b).lit).toBe("live");
+    expect(of(c).lit).toBeUndefined();
+    expect(items.some((i) => i.stub === false)).toBe(false);
+  });
+
+  it("with nine or more Sessions keeps the stub only on the on-screen Host", () => {
+    const tabs = [tab(1, a), tab(2, b), ...Array.from({ length: 7 }, (_, i) => tab(3 + i, b))];
+    const items = source("tree").items(context({ tabs, active: 1, previous: 2 })).filter((i) => i.host);
+    expect(items.find((i) => i.host === a)?.stub).toBeUndefined();
+    expect(items.find((i) => i.host === b)?.stub).toBe(false);
+  });
+});
+
+describe("searchItems with two words or more (round 20)", () => {
+  const item = (label: string, path?: string, detail?: string): FinderItem => ({ id: label, label, ...(path ? { path } : {}), ...(detail ? { detail } : {}), command: "" });
+  const items = [
+    item("Hosts", "Key bindings", "keys#hosts"),
+    item("Bind a key to a Host you open all day", "Recipes"),
+    item("Trusting a new host key", "Connection errors"),
+    item("Checking a host key", "Connection errors", "host-keys"),
+  ];
+
+  it("ranks a title holding the words as one phrase first, then one holding them all, then the rest", () => {
+    expect(labels(searchItems(items, "host key"))).toEqual([
+      "Trusting a new host key",
+      "Checking a host key",
+      "Bind a key to a Host you open all day",
+      "Hosts",
+    ]);
+  });
+
+  it("counts a help entry's note as its title", () => {
+    const withNote: FinderItem = { id: "E12", label: "E12", note: "Run this to trust the host key again", path: "Connection errors", command: "" };
+    expect(searchItems([items[0]!, withNote], "host key")[0]).toBe(withNote);
+  });
+
+  it("leaves one word's ranking as it was", () => {
+    expect(labels(searchItems(items, "hosts"))[0]).toBe("Hosts");
+  });
+});

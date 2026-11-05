@@ -240,7 +240,8 @@ export function helpFinder(view: HelpView): FinderSourceDef {
         ...(t.anchor !== undefined && t.label === t.anchor ? { dataLabel: true } : {}),
         ...(t.label !== (aliasOf.get(t.tag) ?? t.tag) ? { detail: aliasOf.get(t.tag) ?? t.tag } : {}),
         ...(t.path ? { path: t.path } : {}),
-        ...(t.codes ? { pathData: t.codes } : {}),
+        ...(t.note ? { note: t.note } : {}),
+        ...(t.codes ? { noteData: t.codes } : {}),
         command: `help ${t.tag}`,
       }));
     },

@@ -76,7 +76,7 @@ describe("topics", () => {
     expect(findTopic(ctx, "zzqxj")).toBeUndefined();
   });
 
-  it("an entry's path is its doc cut to 80 characters, with an ellipsis when it was cut", () => {
+  it("an entry's note is its doc cut to 80 characters, with an ellipsis when it was cut; its path is its page", () => {
     const ctx = ctxOf();
     const docs = new Map(ctx.pages.flatMap((pg) => defs(pageBody(ctx, pg.id)).map((d) => [d.anchor, plain(d.body)] as const)));
     const entries = topicIndex(ctx).topics.filter((t) => t.kind === "entry" && docs.get(t.tag));
@@ -85,11 +85,14 @@ describe("topics", () => {
     expect(long.length).toBeGreaterThan(0);
     expect(short.length).toBeGreaterThan(0);
     for (const t of long) {
-      expect(t.path!.length).toBeLessThanOrEqual(80);
-      expect(t.path).toMatch(/\S…$/);
-      expect(docs.get(t.tag)!.startsWith(t.path!.slice(0, -1))).toBe(true);
+      expect(t.note!.length).toBeLessThanOrEqual(80);
+      expect(t.note).toMatch(/\S…$/);
+      expect(docs.get(t.tag)!.startsWith(t.note!.slice(0, -1))).toBe(true);
     }
-    for (const t of short) expect(t.path).toBe(docs.get(t.tag));
+    for (const t of short) expect(t.note).toBe(docs.get(t.tag));
+    // The finder's middle column means one thing on every row: the page (round 20).
+    const titles = new Set(ctx.pages.map((pg) => pg.title));
+    for (const t of entries) expect(titles.has(t.path!), `${t.tag}: ${t.path}`).toBe(true);
   });
 });
 

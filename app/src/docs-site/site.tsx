@@ -209,7 +209,7 @@ function searchIndexOf(ctx: HelpContext, topics: readonly Topic[], urlOf: (tag: 
     }
     texts.push([place, hit.text]);
   }
-  return { topics: topics.map((t) => [t.tag, t.label, t.path ?? "", urlOf(t.tag)]), places, texts };
+  return { topics: topics.map((t) => [t.tag, t.label, t.note ?? t.path ?? "", urlOf(t.tag)]), places, texts };
 }
 
 /** The build's own check of what it wrote: every `x.html#id` link goes to a page that has that

@@ -1754,6 +1754,17 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
   flex: 0 0 min(var(--finder-title-w, 42%), 42%); max-width: none; min-width: 0;
 }
 .finder.prose .finder-label > .finder-name { flex: 0 1 auto; }
+/* What a help entry is, after its name ("E31 · Pick Bitwarden cloud…"), muted; it's cut before
+   the name is (round 20: it had taken the middle column, which is the page on every other row). */
+.finder-note { flex: 0 1e3 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: var(--text-sm) var(--font-ui); white-space: pre; }
+.finder-note .data { font-family: var(--font-mono); }
+.finder-row.selected .finder-note { color: var(--muted); }
+/* A help tag is what you type after :help: never a stub (round 20: "host-k…"). Up to 16
+   characters it's whole; a longer one gives way first, cut in its middle down to its first 4
+   and last 10 characters (TagText; --tag-min from Finder.tsx), and only then is the page cut. */
+.finder.prose .finder-detail { display: flex; justify-content: flex-end; flex: 0 1e5 auto; min-width: var(--tag-min, 8ch); }
+.tag-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tag-tail { flex: none; }
 
 /* ---------- The Config's problems (ticket 21) ---------- */
 

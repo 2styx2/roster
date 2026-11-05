@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { footerCount, layOutNames, layOutTitles, withData } from "./Finder";
+import { footerCount, layOutNames, layOutTitles, TagText, tagMin, withData } from "./Finder";
 
 describe("the finder footer's count", () => {
   it("says how many there are before a query, and how many matched after (round 18)", () => {
@@ -70,5 +70,19 @@ describe("a prose finder's one middle column (round 19)", () => {
   it("sets what's code in a description in Iosevka", () => {
     const html = renderToStaticMarkup(createElement(Fragment, null, withData("Run roster sync: the config offers one key.", ["roster sync"])));
     expect(html).toBe('Run <span class="data">roster sync</span>: the config offers one key.');
+  });
+});
+
+describe("a help tag is never a stub (round 20)", () => {
+  const html = (tag: string) => renderToStaticMarkup(createElement(TagText, { tag }));
+  it("keeps a tag of 16 characters or fewer whole", () => {
+    expect(html("host-keys")).toBe('<span class="tag-tail">host-keys</span>');
+    expect(tagMin("host-keys")).toEqual({ "--tag-min": "9ch" });
+  });
+  it("cuts a longer one in its middle, its end kept, never below its first 4 and last 10", () => {
+    expect(html("errors-guide#trusting-a-new-host-key")).toBe(
+      '<span class="tag-head">errors-guide#trusting-a-ne</span><span class="tag-tail">w-host-key</span>',
+    );
+    expect(tagMin("errors-guide#trusting-a-new-host-key")).toEqual({ "--tag-min": "15ch" });
   });
 });

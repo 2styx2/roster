@@ -144,7 +144,7 @@ export function findTopic(ctx: HelpContext, query: string): Topic | undefined {
   const exact = (tag: string) => all.find((t) => t.tag.toLowerCase() === tag.toLowerCase());
   const found = exact(q) ?? exact(`:${q.replace(/^:/, "")}`);
   if (found) return found;
-  const items = all.map((t) => ({ id: t.tag, label: t.label, detail: t.tag, ...(t.path ? { path: t.path } : {}), command: "" }));
+  const items = all.map((t) => ({ id: t.tag, label: t.label, detail: t.tag, ...(t.path ? { path: t.path } : {}), ...(t.note ? { note: t.note } : {}), command: "" }));
   const best = searchItems(items, q)[0];
   return best ? all.find((t) => t.tag === best.id) : undefined;
 }
@@ -707,7 +707,7 @@ function allPage(ctx: HelpContext): Block[] {
               head: [[text("Topic")], [text("What")]],
               rows: sorted(list).map((t) => [
                 [link(t.tag, [code(t.tag)])],
-                [text(t.anchor && t.kind !== "alias" ? (t.path && t.path !== pageTitle(t.page) ? t.path : pageTitle(t.page)) : t.label)],
+                [text(t.anchor && t.kind !== "alias" ? (t.note ?? pageTitle(t.page)) : t.label)],
               ]),
             },
           ]

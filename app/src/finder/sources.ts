@@ -21,16 +21,22 @@ export interface FinderItem {
   /** The label is a name you'd type (a help tag such as `E31` or `theme`): Iosevka even in a
    * prose finder (taste.md's paste rule). */
   dataLabel?: boolean;
-  /** Where it sits ("Inventory › subnet-42"): faint, and matched like the label. */
+  /** Where it sits ("Inventory › subnet-42", a help topic's page): faint, and matched like the label. */
   path?: string;
-  /** What in `path` is code (`roster sync`): Iosevka in a prose finder. */
-  pathData?: readonly string[];
+  /** What it is, after its title and muted ("E31 · Pick Bitwarden cloud…"): a help entry's first
+   * line (round 20: it had taken the middle column, which is the page on every other row). */
+  note?: string;
+  /** What in `note` is code (`roster sync`): Iosevka in a prose finder. */
+  noteData?: readonly string[];
   /** Right-aligned and faint (an address, a status); matched too. */
   detail?: string;
   dot?: Dot;
   /** A Session that's connected: the one on screen in the accent, others in the text colour
    * (see SidebarRow.lit). */
   lit?: Light;
+  /** `false`: a lit node without its edge stub (nine or more Sessions: only the on-screen Host
+   * keeps it, the Sidebar's and the Picker's rule, Q219 a, Q235). */
+  stub?: false;
   /** The Session on screen, or the one before it (the session bar's `*` and `-`). */
   mark?: "current" | "previous";
   /** The Host the row stands for (the tree's Host rows). */
@@ -162,7 +168,11 @@ function unfolded(ctx: FinderContext): SidebarSection[] {
 /** Every row of `sections` that's chosen rather than folded, with its path through the tree. The
  * path names its section only when rows come from more than one ("Folders › Lab" beside
  * "Inventory › subnet-42"); with one, "Inventory ›" on every row says nothing (round 18). */
-function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
+function treeItems(ctx: FinderContext, sections: readonly SidebarSection[]): FinderItem[] {
+  // A Host's node as the Sidebar and the Picker draw it (round 20: the on-screen Host was a muted
+  // dot here): the rows come lit from buildSections; with nine or more Sessions only the
+  // on-screen Host keeps its edge stub.
+  const many = ctx.sessions.tabs.length >= 9;
   const out: FinderItem[] = [];
   const chosen = (s: SidebarSection) => s.rows.some((r) => !r.foldable);
   const named = sections.filter(chosen).length > 1;
@@ -181,6 +191,8 @@ function treeItems(sections: readonly SidebarSection[]): FinderItem[] {
         ...(path.length + chain.length ? { path: [...path, ...chain].join(" › ") } : {}),
         ...(row.detail ? { detail: row.detail } : {}),
         ...(row.dot ? { dot: row.dot } : {}),
+        ...(row.dot && row.lit ? { lit: row.lit } : {}),
+        ...(row.dot && row.lit === "live" && many ? { stub: false as const } : {}),
         ...(row.host ? { host: row.host } : {}),
         command: row.command,
         ...(row.badge === "unreviewed" && row.host ? { disabled: notReviewed(row.host) } : {}),
@@ -202,7 +214,7 @@ export function sectionFinder(sectionId: string, title: string, prompt: string, 
     title,
     prompt,
     noun,
-    items: (ctx) => treeItems(unfolded(ctx).filter((s) => s.id === sectionId)),
+    items: (ctx) => treeItems(ctx, unfolded(ctx).filter((s) => s.id === sectionId)),
   };
 }
 
@@ -215,7 +227,7 @@ export const treeFinder: FinderSourceDef = {
   title: "Find in the tree",
   prompt: "Tree",
   noun: rowNoun,
-  items: (ctx) => treeItems(unfolded(ctx).filter((s) => !OWN_FINDER.has(s.id))),
+  items: (ctx) => treeItems(ctx, unfolded(ctx).filter((s) => !OWN_FINDER.has(s.id))),
 };
 
 export function builtinFinderRegistry(): FinderRegistry {
