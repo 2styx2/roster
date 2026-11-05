@@ -421,6 +421,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-rest:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
 /* A click focuses the scroller (tabIndex -1); the tree's cursor row shows focus, not a browser box. */
 .sb-rest:focus { outline: none; }
+/* More below: the scroller's last 24 px fade out, so a row the edge cuts reads as "more" rather
+   than sliced (round 18: App mode's details foot halved the last row), and j/k keep the cursor
+   row clear of the fade (scroll padding). A mask on the scroller's box, not a fill: it moves nothing. */
+@media (min-height: 401px) {
+  .sb-rest { scroll-padding-bottom: 24px; }
+  .sb-rest:is([data-more="below"], [data-more="both"]) { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+}
+/* A short window: the details foot gives way, so the tree keeps rows for the cursor (round 18: at
+   480 × 320 the foot and Sessions' three rows left the tree 10 px and hid the cursor row). */
+@media (max-height: 400px) { .sb-details { display: none; } }
 /* Held while the pointer is on the tree (Sidebar.tsx holdSessions, Q216): the section keeps its
    height and its list scrolls inside it, so the tree under the pointer never moves. */
 .sb-section[data-section="sessions"].held { height: var(--held-h); overflow: hidden; }
@@ -504,6 +514,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 /* The App-mode cursor: raised, with the accent outline and no bar. */
 .sb-row.cursor, .sb-heading.cursor > .sb-heading-button { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
+/* While a row menu is open its focused item wears the accent outline: the row keeps the raised
+   style without it, so one thing at a time is the cursor (round 18). */
+.sidebar[data-menu] .sb-row.cursor, .sidebar[data-menu] .sb-heading.cursor > .sb-heading-button { box-shadow: inset 0 0 0 1px var(--raised-line); }
 /* On a heading the cursor is its button's, inset like a row's, so its actions (+) sit outside it
    (round 16: the outline wrapped the whole heading, wider than the rows). */
 .sb-heading.cursor { color: var(--text); }

@@ -1,7 +1,7 @@
 // Where a Host row's menu goes (T166, Q156): at the pointer, kept inside the window, flipped above
 // the row when there's no room under it. jsdom lays nothing out, so the arithmetic is checked here.
 import { describe, expect, it } from "vitest";
-import { placeMenu } from "./RowMenu";
+import { commandHint, placeMenu } from "./RowMenu";
 import { hostMenu, type HostMenuOptions } from "./hostMenu";
 import type { SidebarRow } from "./Sidebar";
 
@@ -58,5 +58,21 @@ describe("hostMenu", () => {
   it("a Host not in the Inventory (a Folder's entry) has only the row's own actions", () => {
     const own = { ...row, actions: [{ label: "Remove esx-02 from Lab", icon: "close" as const, command: "folder remove esx-02 Lab" }] };
     expect(labels(own, { ...all, reviewed: null })).toEqual(["Remove esx-02 from Lab"]);
+  });
+});
+
+describe("commandHint (round 18)", () => {
+  it("shows a command's words up to the row's own name, which … stands for", () => {
+    expect(commandHint("group rename lab", "lab")).toBe(":group rename …");
+    expect(commandHint("group delete lab", "lab")).toBe(":group delete …");
+    expect(commandHint("folder add esx-02", "esx-02")).toBe(":folder add …");
+    expect(commandHint("folder remove esx-02 Lab", "esx-02")).toBe(":folder remove …");
+    expect(commandHint("check esx-02", "esx-02")).toBe(":check …");
+  });
+
+  it("shows the whole command when the name isn't in it, and never matches part of a word", () => {
+    expect(commandHint("host add", "Inventory")).toBe(":host add");
+    expect(commandHint("group new", "")).toBe(":group new");
+    expect(commandHint("check esx-02b", "esx-02")).toBe(":check esx-02b");
   });
 });

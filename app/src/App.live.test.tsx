@@ -66,8 +66,8 @@ describe("removing a Host", () => {
     await chooseInMenu(user, item("esxi-2-001") as HTMLElement, /^Remove from the Inventory/);
     await user.click(within(await screen.findByRole("alertdialog", { name: "Remove esxi-2-001?" })).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(item("esxi-2-001")).toBeNull());
-    // the cursor on a Host row, then ␣ D
-    await user.keyboard(`${LEADER}:host remove{Enter}`);
+    // App mode starts on the first Host (round 18): up to a heading, where no Host is selected.
+    await user.keyboard(`${LEADER}kkkkkkkk:host remove{Enter}`);
     await said(/No Host selected/);
   });
 });

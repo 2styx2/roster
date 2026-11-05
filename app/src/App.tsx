@@ -150,6 +150,7 @@ import { SessionList } from "./plugins/sessionList";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import {
   allRows,
+  firstStop,
   moveCursor,
   Sidebar,
   type OpenMenu,
@@ -2978,14 +2979,7 @@ function Workspace({
     e.preventDefault();
     e.stopPropagation();
     if (before.mode === "terminal" && r.state.mode === "app") {
-      setCursor(
-        (selected !== null && rows.some((row) => row.id === selected)
-          ? selected
-          : null) ??
-          rows.find((row) => row.raised)?.id ??
-          rows[0]?.id ??
-          null,
-      );
+      setCursor(firstStop(rows, selected));
     }
     setMode(r.state);
     if (r.action) run(r.action);
@@ -3178,7 +3172,11 @@ function Workspace({
               : null,
             "menu",
           ],
-          [listKeyFor(keymap.leader, "terminal"), "terminal"],
+          // With no Session there's no terminal to go back to: Esc only leaves App mode (round 18).
+          [
+            listKeyFor(keymap.leader, "terminal"),
+            sessions.tabs.length > 0 ? "terminal" : "leave",
+          ],
         ]
       : [
           ...(sessions.tabs.length > 0
@@ -3490,14 +3488,7 @@ function Workspace({
               // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
               if (keyRef.current.mode !== "terminal") return;
               beforeTree.current = from;
-              setCursor(
-                (selected !== null && rows.some((row) => row.id === selected)
-                  ? selected
-                  : null) ??
-                  rows.find((row) => row.raised)?.id ??
-                  rows[0]?.id ??
-                  null,
-              );
+              setCursor(firstStop(rows, selected));
               setMode({ mode: "app", pending: [] });
             }}
             onTreeBlur={(to) => {

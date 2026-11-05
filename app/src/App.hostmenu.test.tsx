@@ -133,10 +133,35 @@ describe("a Host row's menu (T166, Q156)", () => {
   it("says so on a row with no menu (a section heading)", async () => {
     const { user } = await ready();
     await user.keyboard(LEADER);
-    // The cursor starts on the first row: the Sessions heading or the Inventory's.
+    // Up to the top: the Sessions heading, which has no actions.
+    await user.keyboard("kkkkkkkk");
     await user.keyboard("{ContextMenu}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(await screen.findByText(/This row has no menu/)).toBeInTheDocument();
+  });
+
+  it("opens a heading's menu of its buttons' actions from Shift+F10 (round 18)", async () => {
+    const { user } = await ready();
+    await user.keyboard(LEADER);
+    // From the first Host up to the Inventory heading, whose + is Add a Host.
+    await user.keyboard("kk");
+    expect(screen.getByRole("treeitem", { name: "Inventory" }).closest(".sb-heading")).toHaveClass("cursor");
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(menu()).toHaveAccessibleName("Inventory");
+    expect(items()).toEqual(["New group", "Add a Host"]);
+  });
+
+  it("opens a group's menu from Shift+F10, each item hinting its whole command (round 18)", async () => {
+    const { user } = await ready();
+    await user.keyboard(LEADER);
+    // The first Host's group is the row above it.
+    await user.keyboard("k");
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(menu()).toHaveAccessibleName("subnet-1");
+    const hints = within(menu()).getAllByRole("menuitem").map((m) => m.querySelector(".row-menu-cmd")?.textContent);
+    expect(hints).toEqual([":host add …", ":group rename …", ":group delete …"]);
+    // The row under the menu drops its accent outline: the focused item is the cursor now.
+    expect(document.querySelector(".sidebar")).toHaveAttribute("data-menu");
   });
 
   it("opens a group's menu with its own actions", async () => {
