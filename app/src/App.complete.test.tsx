@@ -49,6 +49,20 @@ const selected = () => within(completions()).queryByRole("option", { selected: t
 const output = () => screen.getByLabelText("terminal output", { selector: ":not([hidden]) > pre" });
 
 describe("The command line completes like a shell", () => {
+  it("marks the candidate the typed line already is, the one Enter runs (round 18)", async () => {
+    const user = await ready();
+    await user.keyboard(`${LEADER}:he`);
+    // Enter would run "he", not the first candidate: nothing is marked.
+    expect(selected()).toBeNull();
+    await user.keyboard("lp");
+    expect(selected()?.querySelector(".cmd-id")).toHaveTextContent(/^help$/);
+    expect(cmdline()).toHaveAttribute("aria-activedescendant", selected()?.id);
+    // The keys sit inside the row with what it does, at its end.
+    expect(selected()?.querySelector(".cmd-about .cmd-keys")).not.toBeNull();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: /find a help topic/i })).toBeInTheDocument();
+  });
+
   it("fills the longest common prefix first, then Tab and Shift+Tab cycle through the list", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:connect es{Tab}`);

@@ -943,10 +943,19 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   position: absolute; left: 0; right: 0; bottom: 100%;
   background: var(--panel); border-top: 1px solid var(--line-strong); box-shadow: 0 -8px 24px var(--shadow);
 }
-/* At most 760px wide, so a candidate's key stays near what it does in a wide window. */
-.cmdline-candidates ul { list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto; max-width: 760px; }
+/* The candidates are one grid, command | what it does and its keys, as wide as they need up to
+   760px: the keys end each row and every row ends at one x, so a key never floats far from what
+   it does (round 18: the keys sat at a 760px edge mid-band, ~400px past a short label). */
+.cmdline-candidates ul {
+  list-style: none; margin: 0; padding: 4px; max-height: 40vh; overflow: auto;
+  display: grid; grid-template-columns: max-content minmax(0, max-content); column-gap: 12px;
+  width: fit-content; max-width: min(760px, 100%); box-sizing: border-box;
+}
 /* A fixed line height: a fallback font (Arabic, CJK) mustn't make its row taller than the rest. */
-.cmdline-candidates li { display: flex; align-items: center; gap: 12px; line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default; }
+.cmdline-candidates li {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center;
+  line-height: 20px; padding: 1px 8px; color: var(--muted); border-radius: var(--radius-sm); cursor: default;
+}
 .cmdline-candidates li.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 .cmdline-candidates .more { margin: 0; padding: 0 12px 4px; line-height: 20px; color: var(--muted); }
 /* A candidate: the command, what it does, its key (S8). */
@@ -956,7 +965,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cmdline-candidates li.selected .cmd-label { color: var(--text); }
+/* What it does, then its keys at the row's end; a command without keys gives its label that room. */
+.cmd-about { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .cmd-keys { margin-left: auto; flex: none; }
+/* An argument (a Host name) has no label or keys: its text takes the row. */
+.cmdline-candidates li > .cmd-id:only-child { grid-column: 1 / -1; }
 .cmdline-input { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 12px; color: var(--accent-ink); }
 .cmdline-input input { flex: 1; height: auto; padding: 0; border: 0; background: transparent; color: var(--text); }
 .cmdline-input input:focus-visible { box-shadow: none; }
