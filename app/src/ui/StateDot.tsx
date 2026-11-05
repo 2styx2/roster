@@ -4,7 +4,7 @@
 // = ended, dashed ring in the second tone = unreviewed (can't be opened; decision Q57), and an
 // accent ring = connecting (issue #78). The colours are Theme tokens (styles.css): a node is
 // muted at rest and takes the accent only when `lit`, its Host having a live or connecting Session
-// (taste.md: the accent means live, decision Q185).
+// (taste.md: the accent means live, decision Q204).
 
 /** A row's state: key or password login, a Session that has ended, or a Host that can't be
  * opened (unreviewed). */
@@ -21,7 +21,7 @@ export const DOT_WORDS: Record<Dot, string> = {
   connecting: "connecting",
 };
 
-/** How a node is lit (taste.md: the accent means live, decision Q185): `current` is the Session on
+/** How a node is lit (taste.md: the accent means live, decision Q204): `current` is the Session on
  * screen (or its Host), in the accent; `live` is another Session that's connected, in the text
  * colour; unlit nodes are muted. */
 export type Light = "current" | "live";
@@ -31,7 +31,7 @@ export function StateDot({ dot, lit }: { dot: Dot; lit?: Light | false | undefin
     <svg className={`dot ${dot}${lit === "current" ? " lit" : lit === "live" ? " on" : ""}`} data-shape={SHAPES[dot]} viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
       <circle cx="4" cy="4" r="3.25" />
       {/* Has a Session: a short edge leaving the node toward this Box, the map's own way of
-          saying "connected" (Q194), so it's a shape as well as a colour. */}
+          saying "connected" (Q213), so it's a shape as well as a colour. */}
       {lit && <line className="stub" x1="-3.5" y1="4" x2="0.4" y2="4" />}
     </svg>
   );

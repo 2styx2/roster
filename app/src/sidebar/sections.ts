@@ -122,7 +122,7 @@ function foldSection(section: SidebarSection, folded: ReadonlySet<string>): Side
 const isLive = (tab: Tab) => tab.status.state !== "ended" && tab.status.state !== "failed";
 
 /** Rows whose Host has a live or connecting Session: their node takes the accent (`lit`); every
- * other node stays muted (taste.md: the accent means live, decision Q185). An ended or unreviewed
+ * other node stays muted (taste.md: the accent means live, decision Q204). An ended or unreviewed
  * node keeps its own colour. Only the rows that change are new objects, so the memoized rows of a
  * big Inventory don't re-render (#62). */
 function markLit(sections: SidebarSection[], sessions: TabsSnapshot): SidebarSection[] {
@@ -153,7 +153,7 @@ function markLit(sections: SidebarSection[], sessions: TabsSnapshot): SidebarSec
 
 /** How each Host with a Session stands, for its node wherever it's listed: `connecting` while any
  * of its Sessions is, else `current` when the Session on screen is one of its, else `live`. Ended
- * and refused Sessions don't count (decisions Q184, Q185). */
+ * and refused Sessions don't count (decisions Q203, Q204). */
 export function hostLights(sessions: TabsSnapshot): Map<string, Light | "connecting"> {
   const out = new Map<string, Light | "connecting">();
   for (const t of sessions.tabs) {
@@ -214,7 +214,7 @@ export const sessionsSection: SidebarSectionDef = {
           title: "Sessions",
           count: sessions.tabs.length,
           // One quiet row when empty: the section keeps a row of room, so the first Session takes
-          // that slot and nothing under it moves (Q199).
+          // that slot and nothing under it moves (Q218).
           empty: "None open",
           rows: sessions.tabs.map((tab, i) => {
             const facts = tabFacts(tab);

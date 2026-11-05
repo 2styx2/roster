@@ -486,7 +486,7 @@ export function Picker({
             {notice}
           </span>
           {/* The selected Host whole, in the footer's free room: shown only when its row is cut
-              (Q195, round 10: a strip of its own sat empty most of the time). Rows never wrap,
+              (Q214, round 10: a strip of its own sat empty most of the time). Rows never wrap,
               so the list never jumps; the option carries the name for screen readers. */}
           {!notice && (
             <span

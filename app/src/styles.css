@@ -249,7 +249,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    not a dimmed apricot that reads brown). */
 .empty-mark { margin-bottom: 6px; --text: var(--faint); --accent: var(--faint); }
 .empty-title { font-weight: 500; color: var(--muted); }
-/* The idle pane's Recent Hosts as a map (Q188, Q191): this Box's square, edges to each Host's
+/* The idle pane's Recent Hosts as a map (Q207, Q210): this Box's square, edges to each Host's
    node, and the Hosts as rows (the Sidebar's row language). Three columns: the Box, the edges
    (stretched to the list's height), the list. Rows raise under the pointer; no motion. */
 .recent { margin: 10px 0 6px; text-align: left; }
@@ -300,7 +300,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 }
 .statusbar > * { flex: none; }
 .statusbar .backend { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-/* The link to roster serve: muted while it's fine (the accent means a live Session, Q185). */
+/* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
 /* Long values give way in order: the path first (it only gets the room left over), then the
    hints, then the Box's name. The Backend, the Host count and the mode never do. Each cut value
@@ -406,12 +406,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-rest:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
 /* A click focuses the scroller (tabIndex -1); the tree's cursor row shows focus, not a browser box. */
 .sb-rest:focus { outline: none; }
-/* Held while the pointer is on the tree (Sidebar.tsx holdSessions, Q197): the section keeps its
+/* Held while the pointer is on the tree (Sidebar.tsx holdSessions, Q216): the section keeps its
    height and its list scrolls inside it, so the tree under the pointer never moves. */
 .sb-section[data-section="sessions"].held { height: var(--held-h); overflow: hidden; }
 .sb-section[data-section="sessions"].held > .sb-rows { max-height: var(--held-rows); }
 /* No Sessions: one quiet row of room, as high as a Session row and its list's edges, so the
-   first Session takes its place and nothing under it moves (Q199). */
+   first Session takes its place and nothing under it moves (Q218). */
 /* Sessions keep three rows of room from the start (owner, after round 13), so the first three
    Sessions opened never move the tree under the pointer; past three, the list grows (or, held
    while the pointer is on the tree, scrolls inside that room). */
@@ -439,9 +439,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
-/* Sessions' count sits by its title: the right-hand column there holds the rows' numbers (Q196). */
+/* Sessions' count sits by its title: the right-hand column there holds the rows' numbers (Q215). */
 .sb-section[data-section="sessions"] .sb-count { margin-left: 4px; }
-/* A Session's number for ␣ 1–9, as a key (Q196, owner after round 10). */
+/* A Session's number for ␣ 1–9, as a key (Q215, owner after round 10). */
 .sb-index { margin-left: auto; padding-left: 8px; flex: none; display: flex; }
 .sb-section[data-section="sessions"] .sb-count[data-above]::after { content: " · " attr(data-above) " above"; font-weight: 400; text-transform: none; letter-spacing: 0; }
 /* With no Hosts there's nothing to drag into a Folder, so its hint waits. */
@@ -543,7 +543,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   margin-left: auto; padding-left: 8px; flex: none;
   color: var(--muted); font: var(--text-xs) var(--font-mono); font-variant-numeric: tabular-nums;
 }
-/* A Session's number for ␣ 1–9 (Q196), like tmux's window numbers: in the address's muted
+/* A Session's number for ␣ 1–9 (Q215), like tmux's window numbers: in the address's muted
    Iosevka (sb-num), so it reads as a key, never as data. */
 .sb-badge {
   display: none; margin-left: auto; flex: none; font-size: var(--text-xs); line-height: 15px; color: var(--warn);
@@ -586,7 +586,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sidebar .sb-action.pinned { display: grid; }
 .sb-row.has-actions.selected .sb-detail, .sb-row.has-actions.selected .sb-num, .sb-row.has-actions.selected .sb-index, .sb-row.has-actions.selected .sb-badge { display: none; }
 
-/* State nodes (ui/StateDot.tsx, decisions Q53, Q57, Q184 and Q185): the shape carries the state,
+/* State nodes (ui/StateDot.tsx, decisions Q53, Q57, Q203 and Q204): the shape carries the state,
    colour only adds to it. Filled = key login, ring = password login, grey ring = ended, dashed ring
    in the second tone = unreviewed, and an open ring = connecting: the Gap orbit's ring, broken on
    the side the Host connects from. At rest every node is `muted`. The accent means live
@@ -601,7 +601,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .dot.on.password circle { fill: none; stroke: var(--text); }
 .dot.lit circle { fill: var(--accent); }
 .dot.lit.password circle { fill: none; stroke: var(--accent); }
-/* A Host with a Session gets a short edge stub leaving its node (Q194), so "has a Session" is a
+/* A Host with a Session gets a short edge stub leaving its node (Q213), so "has a Session" is a
    shape, not only a lighter colour (WCAG 1.4.1), in the map's grammar: a connection is an edge. */
 .dot line.stub { stroke-width: 1px; stroke-linecap: butt; }
 /* In Sessions the live row's 2px bar sits at the row's edge: its node steps in, so the stub
@@ -615,7 +615,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-section[data-section="sessions"] .dot line.stub { display: none; }
 /* Four dashes round the 3.25 px circle (2πr ≈ 20.4). */
 .dot.off circle { stroke: var(--tone); stroke-dasharray: 2.55 2.55; }
-/* Connecting (issue #78, Q186): an accent ring with a short gap at its upper right, where the
+/* Connecting (issue #78, Q205): an accent ring with a short gap at its upper right, where the
    logo's Host sits in the Gap orbit (50° open, 2.83 of the 20.4 circumference, centred at -45°,
    owner after round 10: a quarter read as a frozen spinner); it
    closes and fills (key) or closes into a ring (password) once the shell answers. A small gap up
@@ -955,7 +955,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* The selection is a cursor, drawn as the Sidebar's App-mode cursor: raised, with a 1px accent
    outline, so the row Enter opens reads at a glance (3:1 against the panel). */
 .picker-row.selected { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
-/* Rows stay one line (Q195): the selected Host's whole name, address, group and type are in the
+/* Rows stay one line (Q214): the selected Host's whole name, address, group and type are in the
    strip under the list, so two long Hosts that differ at the end can still be told apart. */
 /* What matched the query: underlined in the text colour, never the accent (that means live). */
 .picker-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
@@ -1060,7 +1060,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   display: flex; align-items: center; justify-content: center; padding: 24px 24px 12vh;
 }
 /* The mark and this Box centred over the form, as every other empty state is centred; the
-   field's label stays left over its field (Q194). Optically a little above the middle, as the
+   field's label stays left over its field (Q213). Optically a little above the middle, as the
    connect card sits. */
 .lock-panel { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; }
 .lock-mark { margin-bottom: 6px; align-self: center; }
@@ -1307,7 +1307,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   position: sticky; bottom: -16px; z-index: 1; background: var(--panel);
   margin-inline: -20px; padding-inline: 20px; padding-bottom: 16px; margin-bottom: -16px;
 }
-/* Enter shows on Trust only while it has focus: the question opens on Cancel (Q203). */
+/* Enter shows on Trust only while it has focus: the question opens on Cancel (Q222). */
 .btn-keys.key-on-focus { visibility: hidden; }
 button:focus-visible > .btn-keys.key-on-focus { visibility: visible; }
 /* Quick Connect's error room: says why Enter did nothing before the key was ticked. */
@@ -1563,7 +1563,7 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    selected one too (a tooltip holds the whole), and a tag gives way at 24 characters, so the
    section between them keeps room to say something. */
 /* The list is one grid and every row a subgrid of it (round 17: per-row tracks cut titles beside
-   empty room, and a fixed tag column inverted Q201 b). The title column is as wide as the widest
+   empty room, and a fixed tag column inverted Q220 b). The title column is as wide as the widest
    title up to half the row, the tag as its widest up to 30% and it gives way first, the section
    takes what's left. */
 .finder.prose .picker-list.finder-list {

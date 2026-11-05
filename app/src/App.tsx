@@ -784,12 +784,12 @@ function Workspace({
   const [tabs] = useState(() => new Tabs(backend));
   const sessions = useSyncExternalStore(tabs.subscribe, tabs.snapshot);
   /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
-   * lit wherever a Host is listed (taste.md: the accent means live, Q185). */
+   * lit wherever a Host is listed (taste.md: the accent means live, Q204). */
   const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
   /** The idle pane's Recent list: the last Hosts opened that are still in the Inventory and
    * reviewed, at most six. */
   // With no history yet (a first launch), the map starts from the Inventory's first reviewed Hosts,
-  // so the first screen shows the network too (Q193).
+  // so the first screen shows the network too (Q212).
   const { recentShown, recentTitle } = useMemo(() => {
     const all = conn.state === "ready" ? conn.hosts.hosts : [];
     const byName = new Map(all.map((h) => [h.name, h]));
@@ -3134,7 +3134,7 @@ function Workspace({
             : []),
           [hintFor(keymap, "help"), "help", "help"],
           [hintFor(keymap, "keys"), "keys", "keys"],
-          // Hiding the bar is in ␣ K and :help, not a hint every day (Q193).
+          // Hiding the bar is in ␣ K and :help, not a hint every day (Q212).
         ];
   const hints = offered.filter(
     (h): h is Hint => h[0] !== null && h[0] !== undefined && h[0].length > 0,
@@ -3523,7 +3523,7 @@ function Workspace({
             <div className="empty">
               <Logo size={48} className="empty-mark" />
               <p className="empty-title">No Sessions open</p>
-              {/* Your network, not just a button (Q188, Q191, Q193): the Hosts you opened last (or,
+              {/* Your network, not just a button (Q207, Q210, Q212): the Hosts you opened last (or,
                   the first time, the Inventory's first ones), each one click away. */}
               {recentShown.length > 0 && (
                 <RecentMap
@@ -3533,7 +3533,7 @@ function Workspace({
                   open={(name) => run(`open ${name}`)}
                 />
               )}
-              {/* A quiet line while the Sidebar's Find field or the map is there (Q193; one form at every
+              {/* A quiet line while the Sidebar's Find field or the map is there (Q212; one form at every
                   window size, round 9); the filled button only when the pane offers nothing else. */}
               {(sidebarShown && !sidebarTucked) || recentShown.length > 0 ? (
                 <button
@@ -4321,7 +4321,7 @@ export function inventoryBroken(e: InventoryFileError): string {
   return `${at} has an error (${e.message}): the last good Inventory is still in use`;
 }
 
-/** The idle pane's Recent Hosts as a map (Q188, Q191): this Box's square, an edge to each Host's
+/** The idle pane's Recent Hosts as a map (Q207, Q210): this Box's square, an edge to each Host's
  * node, and the Host as a button (its name in Iosevka, its address). The edges stretch with the
  * list, so they meet each row whatever the UI size; the one to the row under the pointer is drawn
  * in the text colour. Nothing animates: this screen comes back often. */

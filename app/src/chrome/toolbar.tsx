@@ -67,13 +67,13 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     pressed: (c) => c.sidebarShown,
   }),
   // Find is the Sidebar's own field while the Sidebar shows; the title bar offers it only when it
-  // doesn't (Q190).
+  // doesn't (Q209).
   control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true, when: (c) => !c.sidebarShown }),
   // Quick Connect (ticket 14): the Picker, ready for user@address[:port].
   control({
     id: "quick",
     label: () => "Quick Connect",
-    // An icon, as Add Host is (Q190, Q194): its name is in the tooltip with its keys.
+    // An icon, as Add Host is (Q209, Q213): its name is in the tooltip with its keys.
     icon: "quick",
     command: "quick",
     byDefault: true,
@@ -87,7 +87,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     icon: "changes",
     command: "changes",
     byDefault: true,
-    // Only while there's something to review: an empty "Changes" is noise (Q190).
+    // Only while there's something to review: an empty "Changes" is noise (Q209).
     when: (c) => c.pendingCount > 0,
     count: (c) => (c.pendingCount > 0 ? c.pendingCount : null),
   }),

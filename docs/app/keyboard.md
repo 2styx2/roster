@@ -180,13 +180,13 @@ With the mouse: click a Host to open it (or go to its Session), drag it onto a F
 
 The keycaps beside the items are the keys that act on the Host under the cursor. In the menu, ↑ and ↓ move (they wrap), Home and End jump, a letter goes to the next item starting with it, Enter or Space runs the item, and Esc closes it and puts focus back where it was (the terminal, or the tree in App mode). Tab, a click outside it, a scroll or resizing the window closes it too. It opens at the pointer, or under the row from the keyboard, and moves to stay inside the window. A right-click also selects the row.
 
-The first nine Session rows show their number at the right, the one `␣ 1`–`9` goes to (decision Q196); it's a key hint, so `ui.hints = false` hides it.
+The first nine Session rows show their number at the right, the one `␣ 1`–`9` goes to (decision Q215); it's a key hint, so `ui.hints = false` hides it.
 
 Other rows' buttons (a group's +, ✎ and ×, a Folder's, a Session's ×) show on the selected row only: the row you last clicked, or in App mode the cursor row, so j/k move them. Hovering a row shows none of them, and its address stays in view. The Inventory heading's + (Add a Host) is always there.
 
 ## The idle pane
 
-With no Session open, the pane shows a map of your recent Hosts (on a first launch, the Inventory's first ones; decisions Q188, Q193). Tab reaches its rows; then `j`/`k` or ↓/↑ move, Home and End jump, Enter opens the row, and a digit `1`–`9` opens the row with that number (shown at each row's end; decision Q196).
+With no Session open, the pane shows a map of your recent Hosts (on a first launch, the Inventory's first ones; decisions Q207, Q212). Tab reaches its rows; then `j`/`k` or ↓/↑ move, Home and End jump, Enter opens the row, and a digit `1`–`9` opens the row with that number (shown at each row's end; decision Q215).
 
 ## View modes
 

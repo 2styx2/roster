@@ -75,7 +75,7 @@ export interface SidebarRow {
   host?: string;
   dot?: Dot;
   /** Its Host has a Session that's connected or connecting: the node takes the accent. At rest a
-   * node is muted, whatever its shape (taste.md: the accent means live, decision Q185). */
+   * node is muted, whatever its shape (taste.md: the accent means live, decision Q204). */
   lit?: Light;
   /** A short status after the label ("connecting…", "ended (code 0)"). */
   note?: string;
@@ -87,7 +87,7 @@ export interface SidebarRow {
   hop?: Breadcrumb;
   /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
   count?: number;
-  /** A Session's number, the one `␣ 1`–`9` jumps to: right-aligned and faint, a key hint (Q196). */
+  /** A Session's number, the one `␣ 1`–`9` jumps to: right-aligned and faint, a key hint (Q215). */
   index?: number;
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
    * cursor, and always in the tooltip. */
@@ -591,7 +591,7 @@ const Section = memo(function Section({
               openMenu={openMenu}
             />
           ))}
-          {/* Sessions' reserved room (Q205) as faint numbered slots, so it reads as "Sessions go
+          {/* Sessions' reserved room (Q224) as faint numbered slots, so it reads as "Sessions go
               here", never as a gap (owner, after round 14). "None open" is the first when empty.
               No node in a slot (round 16: a dashed node means "unreviewed"): a faint well and the
               key ␣ N will go to. */}
@@ -627,12 +627,12 @@ const Section = memo(function Section({
 
 /** The cursor row, whole (M6): a cut-off name, its state and address, readable from the keyboard.
  * It repeats what the tree item's name already tells assistive tech, so it's hidden from it. */
-/** How many rows of room the Sessions section keeps from the start (Q205). */
+/** How many rows of room the Sessions section keeps from the start (Q224). */
 const SESSION_ROOM = 3;
 
 /** Holds a full Sessions section (at its row cap) at its height while the pointer is on the tree
- * under it (`on`), so a Session opening there never moves the tree (Q197, Q203). A new Session scrolls into view inside the
- * held list (never fewer than one row: an empty section keeps a row of room, Q199); the section
+ * under it (`on`), so a Session opening there never moves the tree (Q216, Q222). A new Session scrolls into view inside the
+ * held list (never fewer than one row: an empty section keeps a row of room, Q218); the section
  * takes its new height when the pointer leaves. */
 function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
   if (!section) return;
@@ -786,7 +786,7 @@ export function Sidebar({
 
   const restRef = useRef<HTMLDivElement | null>(null);
 
-  // The capped Sessions list says when more are out of sight: a hairline on that edge (Q194).
+  // The capped Sessions list says when more are out of sight: a hairline on that edge (Q213).
   // The tree under them does the same at its top edge, so a scrolled tree reads as scrolled.
   useLayoutEffect(() => {
     const lists = [
@@ -807,7 +807,7 @@ export function Sidebar({
       marks.forEach(([list, mark]) => list.removeEventListener("scroll", mark));
   });
 
-  // While the pointer is on the tree, the Sessions above it keep their height (Q197).
+  // While the pointer is on the tree, the Sessions above it keep their height (Q216).
   const sessionsSection = () =>
     scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
   // Whether the pointer is on the tree: a Session opened from it is held as soon as the reserved

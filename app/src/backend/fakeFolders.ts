@@ -68,7 +68,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         if (save()) {
           moved = { from, n: folders.length };
           if (folders.length > 0) {
-            // From the State there's nothing to do, so it's quiet (Q190); from folders.yml it needs attention.
+            // From the State there's nothing to do, so it's quiet (Q209); from folders.yml it needs attention.
             roster.notify(from === "folders.yml" ? `Moved ${count(folders.length, "Folder")} from folders.yml to roster's data folder: folders.yml isn't read any more (:check)` : `Moved ${count(folders.length, "Folder")} to roster's data folder. Nothing to do.`, "info", {
               quiet: from !== "folders.yml",
             });

@@ -1,4 +1,4 @@
-// The idle pane's Recent Hosts (decision Q188): with no Session open, the pane lists the Hosts you
+// The idle pane's Recent Hosts (decision Q207): with no Session open, the pane lists the Hosts you
 // opened last (still in the Inventory and reviewed), each one click away; with no history it's the
 // plain empty state.
 import { describe, expect, it } from "vitest";

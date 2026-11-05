@@ -249,7 +249,7 @@ export function ConnectCard({
     phase === "password" && prompt !== null && answers?.connect !== undefined;
   const asking = question || asksPassword;
   // Keyboard first: the question takes focus (after the terminal, which the active pane focuses
-  // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q203). Once answered,
+  // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q222). Once answered,
   // focus goes back to the terminal.
   const asked = useRef(false);
   useEffect(() => {
@@ -355,8 +355,8 @@ export function ConnectCard({
                 answers?.cancel();
               } else if (e.key === "Enter" && e.target === e.currentTarget) {
                 // Enter on the card itself (focus lands there when its text is clicked) never
-                // trusts a key: a host-key question needs Trust and connect itself (Q203), and
-                // Quick Connect's needs "I've checked this key" ticked (Q206). A password
+                // trusts a key: a host-key question needs Trust and connect itself (Q222), and
+                // Quick Connect's needs "I've checked this key" ticked (Q225). A password
                 // prompt (no key in question) still connects.
                 e.preventDefault();
                 if (asksPassword) connectQuick();
@@ -416,7 +416,7 @@ export function ConnectCard({
             (round 13). */}
         <line className="connect-route" x1="8.4" y1="6" x2="61" y2="6" />
         <line className="connect-edge" x1="8.4" y1="6" x2="61" y2="6" />
-        {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
+        {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q205); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
         {/* One arc, its 50° gap facing the edge (on the card; the Sidebar's node keeps the logo's
             upper-right gap). A dash pattern under non-scaling-stroke drew two gaps (round 9). */}
@@ -611,7 +611,7 @@ export function ConnectCard({
               ref={trustButton}
               onClick={() => answers.trust()}
             >
-              {/* The question opens on Cancel, so trusting is deliberate (Q203): Enter shows on
+              {/* The question opens on Cancel, so trusting is deliberate (Q222): Enter shows on
                   Trust only once Tab has brought focus to it (round 16). */}
               Trust and connect
               <span className="btn-keys key-on-focus" aria-hidden="true">
