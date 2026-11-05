@@ -32,7 +32,7 @@ permissions:
 
 env:
   # astral-sh/setup-uv publishes no moving major tag since v8 (only immutable full ones): its uses: lines name the
-  # full tag, bumped by hand with the other actions (#459)
+  # full tag; Dependabot bumps it with the other actions, weekly (.github/dependabot.yml, decision Q196)
   UV_VERSION: "0.12.23"
   UV_PYTHON_DOWNLOADS: "never"
   CARGO_TERM_COLOR: always
@@ -40,7 +40,7 @@ env:
 jobs:
   version:
     name: Version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -63,7 +63,7 @@ jobs:
   cli:
     name: CLI (wheel, sdist, source tarball)
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -108,7 +108,7 @@ jobs:
       matrix:
         include:
           - name: windows-x64
-            os: windows-latest
+            os: windows-2025
             args: ""
             target_dir: target/release
           - name: linux-x64
@@ -118,7 +118,7 @@ jobs:
           # Both Mac architectures in one app. Ad-hoc signed (app/src-tauri/tauri.macos.conf.json), not
           # notarized: see docs/releasing.md.
           - name: macos-universal
-            os: macos-latest
+            os: macos-26
             args: "--target universal-apple-darwin"
             target_dir: target/universal-apple-darwin/release
     env:
@@ -236,7 +236,7 @@ jobs:
   docs:
     name: Docs PDF
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -262,7 +262,7 @@ jobs:
   checksums:
     name: SHA256SUMS
     needs: [version, cli, app, docs]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -286,7 +286,7 @@ jobs:
     name: Draft Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [version, checksums]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write   # only this job writes: it creates the draft Release and uploads its files
     env:
