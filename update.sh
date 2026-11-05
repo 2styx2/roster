@@ -33,9 +33,11 @@ while (( $# )); do
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2);
         # the name ends at its first character that is not a letter, digit or - (=, :, a glued -iURL: #484 L4);
-        # longer than any real option (20), it's a glued token, not a name (#489 L1)
+        # longer than any real option (20), it's a glued token, not a name (#489 L1); and it's printed only when it
+        # looks like one (--[a-z][a-z-]* or -[a-zA-Z]), so a glued token's start never is (#489 N5)
         -*) opt=${1%%[^A-Za-z0-9-]*}
-            if [ ${#opt} -le 20 ]; then echo "unknown option: $opt (try --help)" >&2
+            if [ ${#opt} -le 20 ] && [[ $opt =~ ^(--[a-z][a-z-]*|-[a-zA-Z])$ ]]; then
+                echo "unknown option: $opt (try --help)" >&2
             else echo "unknown option (not repeated) (try --help)" >&2; fi
             exit 2 ;;
         *) echo "unexpected argument (not repeated) (try --help)" >&2; exit 2 ;;

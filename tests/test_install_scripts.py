@@ -277,9 +277,13 @@ def test_install_inventory_flag_is_checked(tmp_path):
     pytest.param(["{url}"], "unexpected argument (not repeated) (try --help)", id="bare-url"),
     # #487 item 3 (#484 L4): no = in it: the name ends at the first character that isn't a letter, digit or -
     pytest.param(["--inventory-repo:{url}"], "unknown option: --inventory-repo (try --help)", id="flag-colon-url"),
-    pytest.param(["-i{url}"], "unknown option: -ihttps (try --help)", id="short-flag-glued-url"),
+    # #494 item 2 (#489 N5): a name is printed only when it looks like a real option (--[a-z][a-z-]* or -[a-zA-Z])
+    pytest.param(["-i{url}"], "unknown option (not repeated) (try --help)", id="short-flag-glued-url"),
     # #489 L1: a glued token with nothing to cut it at (an op token without _) is too long to be a name
     pytest.param(["-i{token}"], "unknown option (not repeated) (try --help)", id="short-flag-glued-token"),
+    pytest.param(["-i{key}"], "unknown option (not repeated) (try --help)", id="short-flag-glued-bw-key"),
+    pytest.param(["-x"], "unknown option: -x (try --help)", id="short-flag"),
+    pytest.param(["--Inventory"], "unknown option (not repeated) (try --help)", id="flag-with-a-capital"),
 ])
 def test_an_unknown_argument_is_never_repeated(tmp_path, name, args, said):
     # #484 M2: a mistyped flag carrying a credential URL, or a URL with no flag, used to come back whole on stderr
@@ -287,12 +291,13 @@ def test_an_unknown_argument_is_never_repeated(tmp_path, name, args, said):
     url = f"https://you:{token}@git.example.com/team/infra.git"
     env = {"HOME": str(tmp_path / "home"), "NO_COLOR": "1", "PATH": no_roster_path()}
     token_alnum = "Ex4mple-0nlyn0tAR3alops3ss10nT0k3nxyzW"
+    key = "q2Xv0b9ZtM4n+N/yA2qXw1oL=="                             # made up: base64 with an early + and /
     r = subprocess.run(["bash", str(source_copy(tmp_path) / name), "--dry-run",
-                        *[a.format(url=url, token=token_alnum) for a in args]],
+                        *[a.format(url=url, token=token_alnum, key=key) for a in args]],
                        env=env, capture_output=True, text=True, timeout=60, start_new_session=True)
     assert r.returncode == 2 and said in r.stderr, r.stderr
     assert token not in r.stderr + r.stdout and "git.example.com" not in r.stderr, r.stderr
-    assert "0nlyn0tAR3al" not in r.stderr + r.stdout, r.stderr
+    assert "0nlyn0tAR3al" not in r.stderr + r.stdout and "q2Xv0b9" not in r.stderr + r.stdout, r.stderr
 
 
 @posix_shell

@@ -111,22 +111,25 @@ def token_shaped(value: str | Path) -> bool:
 
 
 def typed_token(path: str | Path) -> bool:
-    """PATH's part that isn't on disk yet is token_shaped (#489 M1): the folders at its start that exist are left
-    out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never counts, and a token typed as
-    a folder, a file or the whole value does."""
-    parts = re.split(r"[\\/]", str(path))
+    """PATH as typed is token_shaped (#489 M1, #494 L3). In an absolute value (after ~ is expanded) the folders at
+    its start that exist are left out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never
+    counts. A relative value is tested whole, every part but . and .., whether it exists or not: a token typed as
+    a folder is caught even when an older roster already made that folder."""
+    text = os.path.expanduser(str(path))
+    if not Path(text).is_absolute():
+        return token_shaped(str(path))
+    parts = re.split(r"[\\/]", text)
     for k in range(len(parts) - 1, 0, -1):
-        if Path("/".join(parts[:k]) or "/").expanduser().is_dir():
+        if Path("/".join(parts[:k]) or "/").is_dir():
             return token_shaped("/".join(parts[k:]))
-    return token_shaped(str(path))
+    return token_shaped(text)
 
 
 def shown_path(path) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
     when it mustn't be (#479, #484 M1/L1/L3, #489 M1). A file that's there is shown. One that isn't is shown only
-    when its folder exists and what was typed past the folders that exist isn't token_shaped: `roster -cTOKEN
-    hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an op token can be typed
-    after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
+    when its folder exists and it isn't typed_token (#494): `roster -cTOKEN hosts` reads an op session token that
+    starts with -c as `-c TOKEN`, and a bw key or an op token can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
     full = Path(path).expanduser().resolve()
     if full.exists() or (full.parent.is_dir() and not typed_token(path)):
         return str(full)
