@@ -241,20 +241,45 @@ def test_an_unknown_init_inventory_names_the_forms(capsys):
             in capsys.readouterr().err)
 
 
-# #479 item 2 (T235 review N2): an op token that starts with `-c`, typed as the first word, reads as `-c PATH`; the
-# not-found error must not print it. A value that looks like a path (a / or a .) is still shown: the user typed a path.
-def test_a_token_read_as_a_config_path_is_not_repeated(capsys, tmp_path, monkeypatch):
+# #479 item 2 (T235 review N2, #484 M1/L1): an op token that starts with `-c`, typed as the first word, reads as
+# `-c PATH`, and a bw key or an op service-account token can be typed after -c by mistake: no error, fix line or
+# JSON prints one. A path whose folder exists and that isn't token-shaped is still shown: the user typed a path.
+BW_KEY = "q2Xv0b9ZtM4n1KpYwLe7Rj3s/N+yA2qXw1oLmK7pRtUvB=="                 # base64, with a / and a +
+OPS_TOKEN = "ops_Ex4mpleN0tR3alServiceAcc0untT0k3nZZZZZZZZ"                   # made up, op service-account shaped
+HIDDEN_CONFIGS = [pytest.param([f"-c{OP_SESSION}"], OP_SESSION, id="op-token-as-first-word"),
+                  pytest.param(["-c", BW_KEY], BW_KEY, id="bw-key"),
+                  pytest.param(["--config", OPS_TOKEN], OPS_TOKEN, id="ops-token")]
+
+
+def _slices(token):
+    return [token[i:i + 10] for i in range(0, len(token) - 10, 5)]
+
+
+def _run(capsys, argv):
+    try:
+        code = main(argv)
+    except SystemExit as e:
+        code = e.code
+    out = capsys.readouterr()
+    return str(code) + out.out + out.err
+
+
+@pytest.mark.parametrize(("first", "token"), HIDDEN_CONFIGS)
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["mesh", "status", "--json"], ["check", "--box"],
+                                     ["inv", "which"], ["inv", "which", "--json"]])
+def test_a_token_read_as_a_config_path_is_not_repeated(capsys, tmp_path, monkeypatch, first, token, command):
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit) as e:
-        main([f"-c{OP_SESSION}", "hosts"])
-    out = str(e.value.code) + capsys.readouterr().err
-    assert OP_SESSION not in out and OP_SESSION[8:20] not in out
-    assert "no config file at that path (not repeated)" in out
+    out = _run(capsys, [*first, *command])
+    assert not [x for x in _slices(token) if x in out], out
+    assert "(not repeated)" in out, out
 
 
-@pytest.mark.parametrize("typed", ["lab.yml", "inv/roster.yml"])
+@pytest.mark.parametrize("typed", ["lab.yml", "inv/roster.yml", "~/x.yml"])
 def test_a_missing_config_path_is_shown_when_it_looks_like_one(capsys, tmp_path, monkeypatch, typed):
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit) as e:
-        main(["-c", typed, "hosts"])
-    assert f"{tmp_path / typed} not found" in str(e.value.code)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "inv").mkdir()
+    want = tmp_path / typed.removeprefix("~/")
+    assert f"{want} not found" in _run(capsys, ["-c", typed, "hosts"])
+    assert str(want) in _run(capsys, ["-c", typed, "hosts", "--json"])
+    assert str(want) in _run(capsys, ["-c", typed, "inv", "which"])

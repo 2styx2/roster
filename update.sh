@@ -31,7 +31,9 @@ while (( $# )); do
         --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
         --no-completion) COMPLETION=0 ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
+        # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2)
+        -*) echo "unknown option: ${1%%=*} (try --help)" >&2; exit 2 ;;
+        *) echo "unexpected argument (not repeated) (try --help)" >&2; exit 2 ;;
     esac
     shift
 done
