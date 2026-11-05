@@ -1491,15 +1491,6 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 }
 
 /* The Finder: the Picker's frame, one line per item. */
-.finder-query {
-  flex: none; display: flex; align-items: center; gap: 10px; height: 50px; padding: 0 16px; border-bottom: 1px solid var(--line);
-  font: var(--text-lg) var(--font-mono);
-}
-.finder-query input { flex: 1; min-width: 0; height: auto; padding: 0; font: inherit; border: 0; background: transparent; }
-.finder-query input:focus-visible { box-shadow: none; }
-/* The finder's name before its query: muted, as a breadcrumb (the accent is for what's live). */
-.finder-prompt { color: var(--muted); font-size: var(--text-md); }
-.finder-count { color: var(--muted); font: var(--text-xs) var(--font-ui); font-variant-numeric: tabular-nums; }
 /* The Finder borrows the Picker's list box (padding, scrolling) but not its column grid: its rows
    are one flex line each, stacked. (Round 2 made .picker-list a grid and laid every Finder row
    side by side; styles.test.ts pins this.) */
@@ -1507,7 +1498,7 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 /* A selected row that wraps grows; rows never shrink into each other (round 15). */
 .picker-list.finder-list > .finder-row { flex-shrink: 0; }
 .finder-row {
-  display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 7px 10px; border-radius: var(--radius);
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-radius: var(--radius);
   font: var(--text-md) var(--font-mono); color: var(--muted);
 }
 /* The cursor: the Picker's and the Sidebar's (raised, 1px accent outline). */
@@ -1521,6 +1512,12 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
 /* The session bar's `*` and `-`: kept in view when the name is cut. */
 .finder-mark { flex: none; color: var(--accent-ink); }
+/* What matched the query: the Picker's underline, in the text colour (round 16). */
+.finder-row mark { background: none; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; }
+/* The count and keys sit right, as in the Picker's footer. */
+.finder .picker-footer .picker-count { margin-left: auto; }
+/* A help topic is prose: the query reads in Inter too. */
+.finder.prose .finder-input { font-family: var(--font-ui); }
 .finder-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); color: var(--muted); }
 /* Sources whose items are prose (help's outline and :helpgrep) read in Inter, as prose does. */
 .finder.prose .finder-name { font-family: var(--font-ui); }

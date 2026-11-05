@@ -24,6 +24,7 @@ import { prefixFill } from "../ui/completion";
 import { Announce } from "../ui/Announce";
 import { countOf, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
+import { marked } from "../picker/Picker";
 import { StateDot } from "../ui/StateDot";
 
 /** Rows actually rendered; the rest are counted. */
@@ -167,9 +168,24 @@ export function Finder({
         role="dialog"
         aria-label={source.title}
       >
-        <div className="finder-query">
-          <span className="finder-prompt">{source.prompt} ›</span>
+        {/* The Picker's sibling (round 16): its search line, placeholder, row and footer. */}
+        <div className="picker-search">
+          <svg
+            className="picker-search-icon"
+            viewBox="0 0 16 16"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            aria-hidden="true"
+          >
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+          </svg>
           <input
+            className="picker-query finder-input"
+            placeholder={source.title}
             role="combobox"
             aria-label={source.title}
             aria-expanded="true"
@@ -187,11 +203,6 @@ export function Finder({
             }}
             onKeyDown={onKeyDown}
           />
-          <span className="finder-count" aria-hidden="true">
-            {results.items.length > shown.length
-              ? `${formatCount(shown.length)} of ${formatCount(results.items.length)}`
-              : formatCount(results.items.length)}
-          </span>
         </div>
         <ul
           className="picker-list finder-list"
@@ -217,7 +228,7 @@ export function Finder({
               {item.dot && <StateDot dot={item.dot} lit={item.lit} />}
               <span className="finder-label" title={item.label}>
                 <span className={`finder-name${source.prose && DATA_NAME.test(item.label) ? " data" : ""}`} dir="auto">
-                  {item.label}
+                  {marked(item.label, query)}
                 </span>
                 {item.mark && (
                   <>
@@ -270,11 +281,28 @@ export function Finder({
               * current · - previous
             </span>
           )}
-          <span className="picker-hint key-hint">
-            <Keys keys="Enter" /> choose
+          <span className="picker-count" aria-hidden="true">
+            {results.items.length > shown.length
+              ? `${formatCount(shown.length)} of ${countOf(results.items.length, "result")}`
+              : results.items.length === 0
+                ? ""
+                : countOf(results.items.length, "result")}
           </span>
+          {shown.length > 1 && (
+            <span className="picker-hint key-hint">
+              <Keys keys="ArrowUp ArrowDown" />{" "}
+              <span className="picker-hint-word">move</span>
+            </span>
+          )}
+          {shown.length > 0 && (
+            <span className="picker-hint key-hint">
+              <Keys keys="Enter" />{" "}
+              <span className="picker-hint-word">choose</span>
+            </span>
+          )}
           <span className="picker-hint key-hint">
-            <Keys keys="Escape" /> close
+            <Keys keys="Escape" />{" "}
+            <span className="picker-hint-word">close</span>
           </span>
         </div>
       </div>

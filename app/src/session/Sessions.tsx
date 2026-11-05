@@ -328,7 +328,7 @@ export function ConnectCard({
       role={asking ? "alertdialog" : "status"}
       aria-label={
         asksQuick
-          ? `Trust ${quick.address}'s host key?`
+          ? `Quick Connect to ${host}`
           : asksPassword
             ? `Password for ${host}`
             : question
