@@ -71,7 +71,7 @@ app/src/backend/      the one typed Backend client: types.ts (interface), tauri.
                       fakePlugins.ts (the fake Plugin host), redact.ts (the core's cmd:/env: cut on what its Plugins get, Q92)
 app/src/picker/       the Picker: match.ts (fuzzy ranking), Picker.tsx (a user@address query offers Quick Connect first;
                       a row's ⓘ or Ctrl+I shows its Host details), timing.ts (its open time, for `:info`, Q86)
-app/src/details/      Host details (ticket 18, decision Q71): details.ts (roster info's fields and services as rows, which
+app/src/details/      Host details (ticket 18, decision Q71): details.ts (roster hosts HOST's fields and services as rows, which
                       URLs may open, what `:open ARG` means), HostDetails.tsx (the side panel opposite the Sidebar)
 app/src/quick/        Quick Connect (ticket 14): target.ts (user@address[:port], parsed as roster's quick.prepare checks it);
                       "Save to vault" (ticket 15): hostname.ts (the box's name from its shell's title or prompt),

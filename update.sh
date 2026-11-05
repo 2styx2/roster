@@ -277,7 +277,7 @@ elif step "install roster from $(home "$src") (uv tool install) into $(home "$bi
         env "UV_TOOL_BIN_DIR=$bindir" uv tool install --force --reinstall --quiet "$src"; then
     page="$(dirname "$bindir")/share/man/man1/roster.1"
     step "update the man page" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ "$page" "$src/src/roster/roster.1" \
-        || warn "no man page; roster man shows it"
+        || warn "no man page; roster help --man shows it"
     after=$(version)
     if (( DRY )); then :
     elif [[ $after == "$before" ]]; then ok "roster $after (same version, reinstalled)"
@@ -285,6 +285,7 @@ elif step "install roster from $(home "$src") (uv tool install) into $(home "$bi
     done_stage
 else
     fail_stage
+    COMP_KEEP=1             # the old roster stays: stage 5 leaves its rc line as it is (#447 review M3)
 fi
 
 # 3. Team map: the one find_map finds (as install.sh looks for it)
@@ -328,7 +329,7 @@ else
     if [[ -f $src/install-lib.sh ]] && source "$src/install-lib.sh"; then turn_on_completion
     else
         warn "no install-lib.sh beside update.sh: Tab completion left as it is"
-        info "to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc (roster completion zsh, fish or powershell for those)"
+        info "to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc (roster help --completion zsh, fish or powershell for those)"
     fi
     done_stage
 fi

@@ -1,8 +1,8 @@
 """roster(1): the man page, generated from the argument parser and docs/cli-reference.md.
 
 The page ships inside the package (src/roster/roster.1), so a wheel or `uv tool install` has it, and
-`roster man` shows it or installs it where `man roster` finds it. To regenerate it after changing the
-parser or cli-reference.md, from a clone:
+`roster help --man` (was `roster man`) shows it or installs it where `man roster` finds it. To regenerate it after
+changing the parser or cli-reference.md, from a clone:
 
     uv run python -m roster.manpage            # rewrites src/roster/roster.1
     uv run python -m roster.manpage --check    # exits 1 if the committed page is out of date
@@ -43,7 +43,7 @@ def cmd_man(args):
         except PermissionError:
             print(f"roster: can't write to {dest.parent}: permission denied.\n"
                   "  Install it where you can write, next to a bin directory on your PATH:"
-                  "  roster man --install --prefix ~/.local\n"
+                  "  roster help --man --install --prefix ~/.local\n"
                   "  or run it with sudo to install it there.", file=sys.stderr)
             return 1
         print(f"installed {dest}")
@@ -123,7 +123,12 @@ def command_docs(reference):
     rows = [r for r in section(reference, "Commands").splitlines() if r.startswith("|")]
     for row in rows[2:]:                                       # skip the header and the --- row
         first, what = cells(row)[:2]
-        docs[first.strip("`").split()[0]] = what
+        words = []
+        for w in first.strip("`").split():          # `vault reveal NAME`: the command's words, up to its arguments
+            if not re.fullmatch(r"[a-z][a-z-]*", w):
+                break
+            words.append(w)
+        docs[" ".join(words)] = what
     return docs
 
 
@@ -135,6 +140,15 @@ def subcommands(parser):
         if isinstance(action, argparse._SubParsersAction):
             return dict(action.choices)
     return {}
+
+
+def commands(parser):
+    """{name: parser} for every command, a command's actions after it (`vault`, `vault status`, ...), in order."""
+    out = {}
+    for name, p in subcommands(parser).items():
+        out[name] = p
+        out.update({f"{name} {k}": v for k, v in commands(p).items()})
+    return out
 
 
 def options(parser):
@@ -159,22 +173,22 @@ def usage(parser):
 def render(parser, reference):
     """The whole page, as troff."""
     docs = command_docs(reference)
-    commands = subcommands(parser)
-    undocumented = [c for c in commands if c not in docs]
+    every = commands(parser)
+    undocumented = [c for c in every if c not in docs]
     if undocumented:
         raise ValueError(f"docs/cli-reference.md's Commands table has no row for: {', '.join(undocumented)}")
     summary = parser.description.rstrip(".")
     out = ['.TH ROSTER 1 "" "roster" "User Commands"',
            ".SH NAME", "roster \\- " + esc(summary[:1].lower() + summary[1:]),
            ".SH SYNOPSIS", ".nf"]
-    out += [esc(usage(p)) for p in commands.values()]
+    out += [esc(usage(p)) for p in every.values()]
     out += [".fi", ".SH DESCRIPTION", ".PP", esc(parser.description)]
     out += blocks(section(reference, "Why it exists"))
     out += [".SH OPTIONS"]
     for flags, help_ in options(parser):
         out += [".TP", "\\fB" + esc(flags) + "\\fR", esc(help_) or "."]
     out += [".SH COMMANDS"]
-    for name, p in commands.items():
+    for name, p in every.items():
         out += [".SS " + esc(name), ".PP", "\\fB" + esc(usage(p)) + "\\fR", ".PP", inline(docs[name])]
         for flags, help_ in options(p):
             out += [".TP", "\\fB" + esc(flags) + "\\fR"] + ([esc(help_)] if help_ else [".br"])

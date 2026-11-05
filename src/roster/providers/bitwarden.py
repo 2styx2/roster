@@ -222,9 +222,9 @@ def _bw_list(ctx, *search):
 
 
 def _bw_summary(row):
-    """What may be shown about an item: its name and URIs (from the filter's row, Q191). Never a value. The filter
-    has no edit date, so `revised` is None."""
-    return {"name": row["name"], "revised": None, "uris": row["uris"]}
+    """What may be shown about an item: its name, when it was last edited (the filter's `revised`, the owner's ruling
+    in Q191) and its URIs, from the filter's row. Never a value."""
+    return {"name": row["name"], "revised": (row.get("revised") or "")[:10] or None, "uris": row["uris"]}
 
 
 def _bw_get(ctx, ref):
@@ -558,11 +558,11 @@ def _bw_login_fields(name, ctx):
 # ---- every item's name, URIs and username, never a password (Q191, the owner's ruling of 2026-11-04). bw has no
 # listing that leaves secrets out: `bw list items` prints every item whole. So its stdout goes straight into roster's
 # filter (bw_items_filter.py, its own Python process: `python -I -S`, an OS pipe between the two), and roster reads
-# only the filter's lines: {id, name, uris, username} per login item. bw's stderr is read as for any bw call.
+# only the filter's lines: {id, name, uris, username, revised} per login item. bw's stderr is read as for any bw call.
 
 FILTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bw_items_filter.py")
 LIST_CAP = 64 * 1024 * 1024            # bytes of `bw list items` the filter reads; more is refused, not cut short
-ROW_KEYS = {"id", "name", "uris", "username"}
+ROW_KEYS = {"id", "name", "uris", "username", "revised"}
 
 
 def _filter_argv():
@@ -573,8 +573,8 @@ def _filter_argv():
 
 
 def _bw_rows(ctx, *search, floor=1):
-    """`bw list items` (`--search SEARCH`, `--collectionid ID`, ...) through the filter: {id, name, uris, username}
-    per login item, never a value (Q191). The vault must be ready. SecretError if bw or the filter can't say."""
+    """`bw list items` (`--search SEARCH`, `--collectionid ID`, ...) through the filter: {id, name, uris, username,
+    revised} per login item, never a value (Q191). The vault must be ready. SecretError if bw or the filter can't say."""
     key = session_key()
     bw, filt = ctx.run_filtered(["bw", "list", "items", *search, "--nointeraction"], _filter_argv(),
                                 env={"BW_SESSION": key} if key else None, floor=floor)
@@ -592,7 +592,8 @@ def _bw_rows(ctx, *search, floor=1):
             if not isinstance(row, dict) or set(row) != ROW_KEYS:
                 raise ValueError
             rows.append({"id": str(row["id"]), "name": str(row["name"]), "keys": [str(row["id"]), str(row["name"])],
-                         "uris": [str(u) for u in row["uris"]], "username": row["username"]})
+                         "uris": [str(u) for u in row["uris"]], "username": row["username"],
+                         "revised": row["revised"]})
     except (ValueError, TypeError):
         raise SecretError("roster couldn't read the list of Bitwarden items (`bw list items` didn't print a list "
                           "of items)") from None

@@ -2,7 +2,7 @@
 accounts, API keys). They live under `resources:` in roster.yml.
 
 Every resource has the same COMMON fields, plus the fixed fields of its type in TYPES. Nothing else is
-allowed. Every view (`roster resources`, `roster info`, ROSTER.md, auth-check) is built from
+allowed. Every view (`roster hosts --resources`, `roster hosts NAME`, ROSTER.md, `roster check --auth`) is built from
 `fields()` and `summary()`, so a field is defined once and shows up the same way everywhere.
 """
 

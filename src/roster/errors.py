@@ -164,10 +164,10 @@ NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't 
 SHARED_BOX_NAME = 162       # warning: this Box's name is an OS image's default hostname, so another Box likely has
                             #   it too; Boxes with one name are one owner (its key's tag and the Mesh's)
 
-# `roster bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
+# `roster vault bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
 # None of the three messages repeats what came after bw's command: those arguments may hold a password
 BW_NEEDS_WRITE = 164        # a bw command that changes the vault, writes it out, or acts on the account, without --write
-BW_NOT_ALLOWED = 165        # a bw command or option before it that roster bw doesn't know, or --write among bw's own
+BW_NOT_ALLOWED = 165        # a bw command or option before it that roster vault bw doesn't know, or --write among bw's own
 BW_REFUSED = 166            # never run: `bw serve` (the vault to every local program) or a session on the command line
 
 # A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233, 235)
@@ -292,7 +292,7 @@ def login_problem(e, h, what="ssh"):
     if type(e) in VAULT_ERRORS:                 # the vault, not the item: its message already says what to run
         code = VAULT_ERRORS[type(e)]
         return Problem(code, str(e), fix="unlock the vault" if code == VAULT_LOCKED else str(e))
-    return Problem(LOOKUP_FAILED, f"{e} ({where})", fix="see the message; `roster auth-check` tests every Login")
+    return Problem(LOOKUP_FAILED, f"{e} ({where})", fix="see the message; `roster check --auth` tests every Login")
 
 
 def inventory_problem(message, path=None):
@@ -307,7 +307,7 @@ def inventory_problem(message, path=None):
 def unknown_provider(h, auth, what="ssh"):
     name = str(auth).partition(":")[0].strip()
     return Problem(NO_PROVIDER, f"{h['name']}'s {what} Login uses '{name}:', which isn't set up on this box",
-                   {"provider": name}, fix="see `roster providers` for the ones that are, then fix auth: in "
+                   {"provider": name}, fix="see `roster vault status` for the ones that are, then fix auth: in "
                                            "roster.yml (or add the provider)")
 
 

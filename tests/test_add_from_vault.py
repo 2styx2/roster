@@ -32,7 +32,7 @@ def test_the_filter_keeps_only_id_name_uris_and_username():
     assert r.returncode == 0 and r.stderr == b""
     rows = [json.loads(line) for line in r.stdout.decode().splitlines()]
     assert rows == [{"id": "aaaa-1", "name": "nas-01 ssh", "uris": ["ssh://10.0.0.50", "https://10.0.0.50"],
-                     "username": "admin"}]
+                     "username": "admin", "revised": None}]
     assert not any(s.encode() in r.stdout for s in SECRETS)
 
 
@@ -45,8 +45,17 @@ def test_the_filter_skips_what_isnt_a_login_and_drops_values_of_the_wrong_type()
     r = filtered(json.dumps(items).encode())
     assert r.returncode == 0
     assert [json.loads(x) for x in r.stdout.decode().splitlines()] == [
-        {"id": "l-1", "name": "", "uris": [], "username": None}]
+        {"id": "l-1", "name": "", "uris": [], "username": None, "revised": None}]
     assert not any(s.encode() in r.stdout + r.stderr for s in SECRETS)
+
+
+def test_the_filter_passes_the_revision_date_for_vault_sync():
+    items = [{"id": "aaaa-1", "name": "nas-01 ssh", "type": 1, "revisionDate": "2026-11-04T08:00:00.000Z",
+              "login": {"password": "pw-nas-SECRET"}},
+             {"id": "bbbb-2", "name": "web-02 web", "type": 1, "revisionDate": {"pw": "pw-web-SECRET"}}]
+    rows = [json.loads(x) for x in filtered(json.dumps(items).encode()).stdout.decode().splitlines()]
+    assert [r["revised"] for r in rows] == ["2026-11-04T08:00:00.000Z", None]      # a string or nothing
+    assert not any(s in repr(rows) for s in SECRETS)
 
 
 @pytest.mark.parametrize("data", [b"pw-nas-SECRET is not json", b'{"password": "pw-nas-SECRET"}',
@@ -347,7 +356,7 @@ def test_a_locked_vault_says_how_to_unlock_and_never_asks(capsys, yml, bw, monke
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked something"))
     rc, out, err = add(capsys)
     assert rc != 0
-    assert "[14]" in str(rc) + err and "locked" in str(rc) + err and "roster bw --write unlock" in str(rc) + err
+    assert "[14]" in str(rc) + err and "locked" in str(rc) + err and "roster vault bw --write -- unlock" in str(rc) + err
     assert not any(c[0] == "list" for c in calls(bw))
 
 

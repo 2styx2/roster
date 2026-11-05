@@ -102,11 +102,11 @@ def test_host_get(serve, write_config):
 
 
 def test_host_get_has_everything_roster_info_shows(serve, write_config, capsys):
-    """The app's Host details (ticket 18) draw `roster info HOST` from host.get alone: every field and every
+    """The app's Host details (ticket 18) draw `roster hosts HOST` from host.get alone: every field and every
     service's port, url and Login (the vault reference, never a value) is in the result."""
     write_config(INVENTORY)
     esx = serve().call("host.get", {"name": "esx"})["result"]
-    assert main(["info", "esx"]) == 0
+    assert main(["hosts", "esx"]) == 0
     info = capsys.readouterr().out
     assert f"{esx['ssh']['user']}@{esx['ip']}:{esx['ssh']['port']}" in info
     assert f"password: roster run {esx['name']} -- CMD" in info and esx["reviewed"] and not esx["enroll"]
@@ -596,7 +596,7 @@ def test_create_item_refuses_an_existing_name(serve, write_config, vault):
     before = vault.read_text()
     err = s.call("vault.create_item", {"name": "esx ssh", "password": NEW_PW})["error"]
     assert err["code"] == 60 and "'esx ssh' already exists" in err["message"]
-    assert err["data"]["matches"] == [{"name": "esx ssh", "revised": None, "uris": ["ssh://10.0.0.6"]}]
+    assert err["data"]["matches"] == [{"name": "esx ssh", "revised": "2026-10-01", "uris": ["ssh://10.0.0.6"]}]
     assert err["data"]["fix"]
     assert vault.read_text() == before
     assert NEW_PW not in json.dumps(s.responses)

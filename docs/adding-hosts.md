@@ -92,7 +92,9 @@ providers:
 
 `save_to: { group: Hosts }` says the same as `group: Hosts` and wins over it; the app's `init.lua` can set `vault.kp.database` and `vault.save_to` for its own Box.
 
-A local database isn't shared: every box (or person) keeps its own, so `auth-check` passes only where those entries exist.
+A local database isn't shared: every box (or person) keeps its own, so `roster check --auth` passes only where those entries exist.
+
+**The vault isn't watched.** An item you add or change in the Bitwarden app, the web vault or on another box reaches this box only at a sync, so roster sees new or changed items after one: `roster vault sync` syncs and says which items were added, changed or removed since the last sync (names and counts, never a password), and `roster vault status` says when it last ran. `roster add --from-vault` syncs first by itself. `roster vault bw -- sync` still runs bw's own sync, without the report ([The vault isn't watched](cli-reference.md#the-vault-isnt-watched-roster-vault-sync)).
 
 To see which items no Host uses yet: `roster add --from-vault --all --json` (never a password). To see what's in the vault with bw itself, without printing passwords (Bitwarden):
 
@@ -102,7 +104,7 @@ bw list items | jq -r '.[] | [.revisionDate[0:16], .name, (.login.username // "-
 bw get item "esxi-02 ssh+web" | jq -r '.login.uris[].uri'      # one item's address
 ```
 
-Going the other way, `roster info HOST` shows a host's address and which item each of its logins uses.
+Going the other way, `roster hosts HOST` shows a host's address and which item each of its logins uses.
 
 ## 3. Work out which box is which
 
@@ -144,14 +146,14 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 - If your team has its own word for one of roster's `login:` types, map it once at the top of `roster.yml` and keep using it: `web_login_names: { appliance: hub }` makes `login: appliance` work exactly like `login: hub`. roster shows the type it resolved to (`hub`). Details in [cli-reference.md](cli-reference.md#web-apis-with-stored-logins-roster-web).
 - **`shell_hooks: true`** (on a host, its group or `defaults`) lets the roster app send the host's shell one line after login that marks its prompts and says its folder, in that shell only: nothing is written on the host. Off unless set; `shell_hooks: false` keeps a host out, say network gear. It must be `true` or `false`. What's sent, and when not: [Shell hooks](plugins.md#shell-hooks-roster-sets-it-up).
-- A typo in a service entry (a port, a url, a `login:` type) doesn't break the file for everyone: that one service is left out, and `roster hosts`, `check` and `auth-check` warn about it with the fix. `roster info HOST` lists it under `problems`.
+- A typo in a service entry (a port, a url, a `login:` type) doesn't break the file for everyone: that one service is left out, and `roster hosts`, `check` and `check --auth` warn about it with the fix. `roster hosts HOST` lists it under `problems`.
 
 - Rename hosts to something people will search for, ideally the box's real hostname (`lab-hub3`, `esxi-02`). Set a real `title` and fix the guessed `type`. Don't shorten names: `hub2` and `lab-hub2` are different machines. Hosts you're not bringing in can stay `reviewed: false`. roster leaves them alone.
 
 ## 5. Test every login
 
 ```bash
-roster auth-check --only discovered-20261012     # every vault reference resolves ("ok")
+roster check --auth --only discovered-20261012   # every vault reference resolves ("ok")
 roster setup --only HOST1,HOST2                  # records fingerprints, installs keys on enroll: true hosts
 roster run HOST -- hostname                      # SSH password login
 ssh HOST hostname                                # SSH key login (enroll: true)
@@ -217,14 +219,14 @@ roster adds its key to a Windows Host that runs Microsoft's OpenSSH Server (Wind
 
 ## 6. Share it
 
-A plain file of your own needs nothing more: every edit is in it already. For a team repo, commit and push the updated `roster.yml` to [yourteam/infra](https://example.com/yourteam/infra) (`:publish` in the app does it for the app's edits). Every box picks it up with `~/infra/bin/roster-pull`; add `--setup` to install keys on new key hosts. Vault items need to be shared with them (a shared Bitwarden collection or 1Password vault), or `auth-check` will fail on their box.
+A plain file of your own needs nothing more: every edit is in it already. For a team repo, commit and push the updated `roster.yml` to [yourteam/infra](https://example.com/yourteam/infra) (`:publish` in the app does it for the app's edits). Every box picks it up with `~/infra/bin/roster-pull`; add `--setup` to install keys on new key hosts. Vault items need to be shared with them (a shared Bitwarden collection or 1Password vault), or `roster check --auth` will fail on their box.
 
 ## Adding a login to a host that's already on the map
 
 1. Create the vault item (named as in step 2, address in its URI field) in the shared collection.
 2. Find the host by address: `grep -n "10.0.0.XX" ~/infra/roster.yml`.
 3. Set `auth: "bw:<item>"` on the host, on its `ssh:` block, or on one service. A scanned host also gets its real name and `reviewed: true` (step 4).
-4. `roster auth-check --only HOST`, then `roster run HOST -- hostname` (step 5).
+4. `roster check --auth --only HOST`, then `roster run HOST -- hostname` (step 5).
 5. Commit and push (step 6).
 
 ## A separate sudo password
@@ -242,7 +244,7 @@ The app's fill key (`␣ p`, [keyboard](app/keyboard.md)) types a Host's passwor
 
 ## Things that aren't hosts
 
-A Wi-Fi network, a vendor portal or an API key goes under `resources:` instead of a group. It gets a fixed set of fields per type (`wifi`, `account`, `secret`) and an `auth:` vault reference, just like a host. See [Resources](cli-reference.md#resources-secrets-with-no-address) in the CLI reference. Check it with `roster auth-check --only <name>` and `roster info <name>`.
+A Wi-Fi network, a vendor portal or an API key goes under `resources:` instead of a group. It gets a fixed set of fields per type (`wifi`, `account`, `secret`) and an `auth:` vault reference, just like a host. See [Resources](cli-reference.md#resources-secrets-with-no-address) in the CLI reference. Check it with `roster check --auth --only <name>` and `roster hosts <name>`.
 
 ## See also
 

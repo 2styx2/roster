@@ -12,14 +12,16 @@ import textwrap
 
 USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 
-# Each command once, in the order a new user meets them. tests/test_cli_help.py checks every command is here.
+# Each command once, in the order a new user meets them: the 14 a person types (T222, decision Q194). The ones the
+# app or ssh runs are INTERNAL: they work, but the overview leaves them out. The old names (roster.aliases) are in
+# neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
-    ("Start here", ["init", "setup", "sync", "check", "auth-check"]),
-    ("Every day", ["hosts", "info", "run", "web", "resources", "reveal"]),
+    ("Start here", ["init", "setup", "sync", "check"]),
+    ("Every day", ["hosts", "run", "web"]),
     ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
-    ("Tools", ["bw", "providers", "man", "completion"]),
-    ("Run by the app, not by hand", ["serve", "askpass"]),
+    ("Vault and help", ["vault", "help"]),
 ]
+INTERNAL = ["serve", "askpass"]
 
 EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "init": [("roster init", "write a commented example roster.yml here"),
@@ -34,22 +36,18 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "check": [("roster check", "can this box reach every host?"),
               ("roster check esx-02", "why a login to one host fails, step by step"),
               ("roster check --box", "this box's own health; connects nowhere"),
+              ("roster check --auth", "every Login's password source answers (nothing secret printed)"),
               ("roster check --only db --json", "for a script")],
-    "auth-check": [("roster auth-check", "every password reference resolves (nothing printed)"),
-                   ("roster auth-check --only network", "one group")],
-    "hosts": [("roster hosts", "every host you can reach"),
+    "hosts": [("roster hosts", "every host and resource you can use"),
+              ("roster hosts esx-02", "everything about one host"),
+              ("roster hosts orion db", "fuzzy words work"),
               ("roster hosts --find postgres", "search names, titles, descriptions, addresses"),
-              ("roster hosts --only prod --long", "one type, with web URL and description")],
-    "info": [("roster info esx-02", "everything about one host"),
-             ("roster info orion db", "fuzzy words work")],
+              ("roster hosts --only prod --long", "one type, with web URL and description"),
+              ("roster hosts --resources --find guest", "only the Wi-Fi networks, accounts and secrets")],
     "run": [("roster run switch-01 -- show version", "a password-only host; roster logs in"),
             ("roster run --sudo web-01 -- systemctl restart nginx", "as root; sudo gets the password")],
     "web": [("roster web esx-02 GET /folder", "logged in with the host's stored credentials"),
             ("roster web app-01 https POST /api/login -d @body.json", "a named service, a body from a file")],
-    "resources": [("roster resources", "Wi-Fi networks, accounts and secrets"),
-                  ("roster resources --find guest", "search them")],
-    "reveal": [("roster reveal lab-guest", "print its secret, for you to type in"),
-               ("roster reveal lab-guest --wifi", "a WIFI:... string for a QR code")],
     "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
             ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
              "setup and check for it"),
@@ -63,18 +61,32 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "mesh": [("roster mesh --dry-run", "the plan for mesh: and links: in roster.yml"),
              ("roster mesh", "apply it, one host at a time"),
              ("roster mesh status", "who reaches whom, without connecting"),
-             ("roster mesh cut web-01", "take one host out everywhere")],
+             ("roster mesh cut web-01", "take one host out everywhere"),
+             ("roster mesh leftovers", "Mesh entries on the hosts this roster.yml doesn't ask for; changes nothing")],
     "revoke": [("roster revoke", "this box's key off every host of this roster.yml"),
                ("roster revoke --all", "off every Inventory's hosts (before removing roster)")],
-    "bw": [("roster bw list items --search web-01", "bw with this box's saved session (read-only)"),
-           ("roster bw sync", "pull the vault"),
-           ("roster bw --write login", "sign in (vault-changing, file-writing and account commands need --write)")],
-    "providers": [("roster providers", "which password providers work here")],
-    "completion": [("roster completion bash", "bash's script: eval \"$(roster completion bash)\" in ~/.bashrc"),
-                   ("roster completion fish", "fish's: roster completion fish | source"),
-                   ("roster completion powershell", "PowerShell's: ... | Out-String | Invoke-Expression in $PROFILE")],
-    "man": [("roster man", "the manual"),
-            ("roster man --install", "so `man roster` finds it")],
+    "vault": [("roster vault status", "which vaults work here, their state and last sync"),
+              ("roster vault sync", "pull the vaults, then what was added, changed or removed"),
+              ("roster vault reveal lab-guest", "a resource's secret, for you to type in"),
+              ("roster vault bw -- list items --search web-01", "the Bitwarden CLI itself, read-only")],
+    "vault status": [("roster vault status", "providers, tools, each vault's state and last sync"),
+                     ("roster vault status --json", "for a script")],
+    "vault sync": [("roster vault sync", "bw sync, then the items added, changed or removed since the last one")],
+    "vault reveal": [("roster vault reveal lab-guest", "print its secret, for you to type in"),
+                     ("roster vault reveal lab-guest --wifi", "a WIFI:... string for a QR code")],
+    "vault bw": [("roster vault bw -- list items --search web-01", "bw with this box's saved session (read-only)"),
+                 ("roster vault bw -- sync", "bw's own sync (roster vault sync also says what changed)"),
+                 ("roster vault bw --write -- login", "sign in (vault-changing, file-writing and account commands "
+                  "need --write)")],
+    "help": [("roster help", "this overview"),
+             ("roster help vault bw", "one command's options and examples"),
+             ("roster help --man", "the manual"),
+             ("roster help --man --install", "so `man roster` finds it"),
+             ("roster help --completion bash", "bash's script: eval \"$(roster help --completion bash)\" in "
+              "~/.bashrc"),
+             ("roster help --completion fish", "fish's: roster help --completion fish | source"),
+             ("roster help --completion powershell", "PowerShell's: ... | Out-String | Invoke-Expression in "
+              "$PROFILE")],
 }
 
 NOTES = {
@@ -89,7 +101,8 @@ COMMON = [("roster setup", "set up this box (once)"),
           ("roster run switch-01 -- show version", "password-only hosts"),
           ("roster check esx-02", "a login that doesn't work, explained")]
 
-MORE = ("`roster COMMAND --help` shows a command's options and examples, `man roster` (or `roster man`) the "
+MORE = ("`roster help COMMAND` (or `roster COMMAND --help`) shows a command's options and examples, `man roster` "
+        "(or `roster help --man`) the "
         "manual, and https://2styx2.github.io/roster/ every page of the docs.")
 
 

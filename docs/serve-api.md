@@ -312,7 +312,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 | `30` | The Host's ssh user is discover's placeholder `CHANGE-ME`: "no SSH user for esx (user: CHANGE-ME in roster.yml)" |
 | `31` | The Login's provider isn't set up on this box: "keeper's ssh Login uses 'keeper:', which isn't set up on this box". `data.provider` |
 | `32` | No vault item by that name: "no vault item named 'esx shh' (ssh Login of esx) - did you mean: 'esx ssh'". `data.near` lists similar item names (names only) |
-| `33` | Several vault items match: "2 vault items are named 'esx ssh' (ssh Login of esx): ...". `data.matches` is `[{name, revised, uris}]`: names and URIs, never a value (`revised`, the last-edited date, is `null` for Bitwarden and KeePassXC: Bitwarden's items are listed through Q191's filter, which gives no date). When some of the Bitwarden items that match aren't logins, the message says "N vault items match 'ITEM' (...), some of them aren't logins" and `matches` holds the login ones only (Q191 (p)) |
+| `33` | Several vault items match: "2 vault items are named 'esx ssh' (ssh Login of esx): ...". `data.matches` is `[{name, revised, uris}]`: names, last-edited dates and URIs, never a value (`revised` is `null` for KeePassXC, whose listing has no date; Bitwarden's comes from Q191's filter, the owner's ruling). When some of the Bitwarden items that match aren't logins, the message says "N vault items match 'ITEM' (...), some of them aren't logins" and `matches` holds the login ones only (Q191 (p)) |
 | `34` | The item has no password, or no such `#FIELD`: "vault item 'esx ssh' has no password (ssh Login of esx)". `data.field` |
 | `35` | The provider failed some other way; the message is the provider's |
 | `36` | askpass: the Host asked something roster won't answer (an expired password, an OTP); the prompt is in the message |
@@ -402,9 +402,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
 | `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
 | `162` | A `box.check` warning (topic `E222`): this Box's name is an OS image's default hostname, so another Box likely has it too; Boxes with the same name are one owner |
-| `164` | `roster bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
-| `165` | `roster bw`: a bw command (or an option before it) roster bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
-| `166` | `roster bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
+| `164` | `roster vault bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
+| `165` | `roster vault bw`: a bw command (or an option before it) roster vault bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
+| `166` | `roster vault bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
 | `170` | `roster init`: a `roster.yml` is there already, so it's kept as it is and nothing is written (T212). A CLI error so far |
 | `171` | `roster init`: the `roster.yml` to import isn't there or doesn't load, or a cloned repo has none at its top; nothing written (or the clone is kept, and said). A CLI error so far |
 | `172` | `roster init`: git couldn't clone the team's repo (not installed, a bad URL or access, or the folder isn't empty). A CLI error so far |
@@ -629,7 +629,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 |---|---|
 | `13` | The provider has no account to sign out of; roster doesn't try. KeePassXC: "KeePassXC has no account to sign out of: it opens a local database file. To use another one, change vault.kp.database in init.lua"; `env`, `cmd`: "provider 'env' has no account to sign out of - its Logins come from this box itself". Nothing was forgotten |
 | `15` | The CLI isn't signed in, so there's no account to sign out of: "the Bitwarden CLI isn't signed in on this box - there's no account to sign out of". `data.fix`: sign in from the lock screen. Everything was forgotten anyway |
-| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster bw --write logout` in a terminal shows the same. Everything was forgotten anyway |
+| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster vault bw --write -- logout` in a terminal shows the same. Everything was forgotten anyway |
 
 ## Saving to the vault: `vault.create_item`
 
@@ -659,7 +659,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 
 | Code | Meaning |
 |---|---|
-| `60` | An item named exactly that already exists. `data.matches`: `[{name, revised, uris}]` (`revised` `null`, as for 33) |
+| `60` | An item named exactly that already exists. `data.matches`: `[{name, revised, uris}]`, as for 33 |
 | `61` | The provider can only read Logins: "provider 'op' can't save to the vault - ..." |
 | `62` | The vault CLI refused the create or delete (no rights to the collection, an organization policy, the server). The message has bw's words with any value cut out |
 | `63` | `vault.undo_create`: this `serve` didn't create that item, or it's already undone |

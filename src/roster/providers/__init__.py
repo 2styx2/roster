@@ -195,7 +195,7 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                      (its id, name, path). MAPPED(item) says it's in roster.yml: its uris and username may be left
 #                      out then (one more CLI call each, for op and kp)
 #             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
-#                     roster add --from-vault, and T222's `roster vault sync`
+#                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -315,7 +315,7 @@ def get_secret(ref, group):
     name = name.strip()
     if name not in PROVIDERS:
         raise SecretError(f"unknown password source {name!r} in auth {ref!r} - available: "
-                          f"{', '.join(sorted(PROVIDERS))} (see `roster providers`)")
+                          f"{', '.join(sorted(PROVIDERS))} (see `roster vault status`)")
     cache_key = (ref, group) if name == "prompt" else ref
     with _secret_lock:
         if cache_key in _secrets:
@@ -606,8 +606,8 @@ def can_list(provider):
 
 
 def vault_items(provider, mapped=None, interactive=False):
-    """Every login item in PROVIDER's vault as [{id, name, keys, uris, uri, username}] (uri: the first of uris, or
-    None), never a password, TOTP seed, note or custom field (Q191: Bitwarden's through roster's filter process).
+    """Every login item in PROVIDER's vault as [{id, name, keys, uris, uri, username, revised}] (uri: the first of uris,
+    or None; revised: its revision date when the provider says, for `roster vault sync`), never a password, TOTP seed, note or custom field (Q191: Bitwarden's through roster's filter process).
     MAPPED(item) -> True: a Login in roster.yml names it, so its uris and username may stay empty. INTERACTIVE=False
     never asks, not even for the master password. Unsupported for a provider with no "items" hook."""
     fn = _vault_op(provider, "items")
@@ -618,14 +618,14 @@ def vault_items(provider, mapped=None, interactive=False):
         found = fn(_listing_ctx(provider, interactive), mapped or (lambda item: False))
     return [{"id": i["id"], "name": i["name"], "keys": sorted(set(i.get("keys") or (i["id"], i["name"]))),
              "uris": list(i.get("uris") or []), "uri": (i.get("uris") or [None])[0],
-             "username": i.get("username") or None} for i in found]
+             "username": i.get("username") or None, "revised": i.get("revised") or None} for i in found]
 
 
 def sync_vault(provider, interactive=False):
     """Fetch what changed in PROVIDER's vault on its server (`bw sync`): {provider, previous} (the sync before this
     one, an ISO time, or None when it never synced or can't say), or None for a provider with nothing to sync (a
-    local file, a CLI that always asks the server). The one sync `roster add --from-vault` and T222's
-    `roster vault sync` use. Raises SecretError (e.g. the sync failed, or the vault is locked)."""
+    local file, a CLI that always asks the server). The one sync `roster add --from-vault` and `roster vault sync`
+    (vaultsync.py) use. Raises SecretError (e.g. the sync failed, or the vault is locked)."""
     fn = _vault_op(provider, "sync")
     if not fn:
         return None

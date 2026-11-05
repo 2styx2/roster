@@ -32,12 +32,16 @@ src/roster/
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
   claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
+  aliases.py        the CLI's old names (T222, Q194): one table, each old command line rewritten to its new form
+                    before the parser sees it, with one stderr line naming it (none for `roster completion`)
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
   addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
                     (checks, the write through store.py, this Box's sync), and a vault item's address and user
                     without its password (`--from-vault`, vault.item_fields)
   fromvault.py      `roster add --from-vault` with no NAME (T221, Q191): the vault items no Login in roster.yml names,
                     new ones since the last run (the seen file), and the walk adding each through addhost
+  vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced, and the items added, changed
+                    or removed since the last sync, from a snapshot of ids and revision dates (vault-sync/, 0600)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
                     requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),
@@ -54,10 +58,10 @@ src/roster/
   newinventory.py   a new Inventory (`roster init --inventory`): blank, a copy, a clone, Hosts from an ssh config
   clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
                     and the nearest name for a mistyped command or option
-  completion.py     Tab completion: `roster completion SHELL`'s scripts and the hidden `roster __complete` helper that
+  completion.py     Tab completion: `roster help --completion SHELL`'s scripts and the hidden `roster __complete` helper that
                     walks the parser and reads names from the local roster.yml (decision Q183)
   manpage.py        roster(1): generated from the parser (cli.build_parser) and docs/cli-reference.md into
-                    roster.1 (committed, shipped in the wheel); `roster man`. Regenerate: uv run python -m roster.manpage
+                    roster.1 (committed, shipped in the wheel); `roster help --man`. Regenerate: uv run python -m roster.manpage
   errors.py         the stable error codes and Problem (code, message, fix): what serve, askpass and check report
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
                     drift for `roster check`; the sh it runs on Hosts (docs/mesh.md)
@@ -74,7 +78,7 @@ src/roster/
                     keepassxc (a local .kdbx through keepassxc-cli);
                     bw_login: `bw login` driven a step at a time on a PTY (serve's vault.login); ConPTY on Windows
                     bw_items_filter: the stdlib-only filter `bw list items` is piped into, so roster reads only each
-                    item's id, name, URIs and username (Q191)
+                    item's id, name, URIs, username and revision date (Q191, Q194)
 examples/           commented roster.yml and init.lua, provider plugin template, example Plugins and the Plugin API's types
 plugins/            the first-party Plugins (mesh, discover, topology), installed as Packages with dir = "plugins/NAME" (Q94)
 scripts/            gen-serve-api.py: docs/serve-api.md's method tables from serve's docstrings (Params:, Result:,

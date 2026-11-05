@@ -315,7 +315,7 @@ jobs:
           The app needs the roster CLI (\`roster serve\`) on the same machine, or in WSL on Windows.
 
           **The CLI:** unpack \`roster-cli-$VERSION.tar.gz\` and run \`./install.sh\`, or \`uv tool install roster-$VERSION-py3-none-any.whl\`
-          then \`roster man --install\`. Either way \`man roster\` works afterwards; \`roster.1\` is the page on its own, for packagers.
+          then \`roster help --man --install\`. Either way \`man roster\` works afterwards; \`roster.1\` is the page on its own, for packagers.
 
           **The docs:** \`roster-docs-$VERSION.pdf\` is every \`:help\` page in one document; they're online at https://2styx2.github.io/roster/.
 

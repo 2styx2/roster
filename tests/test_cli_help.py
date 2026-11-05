@@ -6,19 +6,23 @@ import pytest
 
 from roster import clihelp
 from roster.cli import build_parser, main
-from roster.manpage import subcommands
+from roster.manpage import commands, subcommands
 
 COMMANDS = list(subcommands(build_parser()))
 
 
-def test_every_command_is_in_exactly_one_group():
-    grouped = [n for _, names in clihelp.GROUPS for n in names]
+def test_every_command_is_in_exactly_one_group_or_internal():
+    grouped = [n for _, names in clihelp.GROUPS for n in names] + clihelp.INTERNAL
     assert sorted(grouped) == sorted(COMMANDS)
 
 
-@pytest.mark.parametrize("name", COMMANDS)
+@pytest.mark.parametrize("name", list(commands(build_parser())))
 def test_every_command_has_examples_or_says_why_not(name):
     assert clihelp.EXAMPLES.get(name) or name in clihelp.NOTES
+
+
+def test_every_example_is_for_a_command_that_exists():
+    assert set(clihelp.EXAMPLES) <= set(commands(build_parser()))
 
 
 EXAMPLES = [cmd for rows in clihelp.EXAMPLES.values() for cmd, _ in rows] + \

@@ -187,7 +187,7 @@ describe("outside edits to roster.yml", () => {
     const problem = { service: "web", message: "service 'web': login: 'appliance' isn't a login type roster knows", fix: "set login: to one of …" };
     const withProblem = { ...hosts, hosts: hosts.hosts.map((h) => (h.name === "linux-1-000" ? { ...h, problems: [problem] } : h)) };
     act(() => backend.outsideEdit(withProblem));
-    await said(/roster\.yml loaded, but left out linux-1-000's service web: login: 'appliance' isn't a login type roster knows \(roster info linux-1-000 says how to fix it\)/);
+    await said(/roster\.yml loaded, but left out linux-1-000's service web: login: 'appliance' isn't a login type roster knows \(roster hosts linux-1-000 says how to fix it\)/);
     expect(item("linux-1-000")).not.toBeNull();
   });
 
