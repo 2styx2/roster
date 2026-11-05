@@ -12,6 +12,10 @@ pull request each changed path adds the areas that test it, and Python 3.12 alon
     frontend  tsc, ESLint, Vitest, e2e, the bundle budget
     rust      fmt, clippy, cargo test on Linux and roster-core's tests on Windows
     release   the Windows and Linux release builds
+    install   scripts/test-install.sh on Ubuntu and Fedora, in containers (#444, decision Q199)
+
+The install test needs the network (apt, dnf, astral.sh, Bitwarden), so off a pull request it runs
+only on Monday's nightly run and on a run by hand, not on every push or tag.
 
 An unknown path, ci.yml itself or anything in scripts/ (shared by both halves) runs everything.
 The halves read each other's files (tests/ checks app/src and crates/, cargo test reads docs/,
@@ -22,17 +26,22 @@ adds every area that reads it, not only its own half's. Writes `area=true|false`
 from __future__ import annotations
 
 import argparse
+import datetime
 import fnmatch
 import json
 import sys
 
-AREAS = ("cli", "windows", "frontend", "rust", "release")
+AREAS = ("cli", "windows", "frontend", "rust", "release", "install")
 EVERYTHING = frozenset(AREAS)
+WEEKLY = 1                      # isoweekday: the nightly run that also runs the install test (Monday, UTC)
 PYTHONS_PR = ["3.12"]
 PYTHONS_ALL = ["3.10", "3.12", "3.13"]
 
 # First match wins.
 RULES: list[tuple[tuple[str, ...], frozenset[str]]] = [
+    # what test-install.sh runs (pytest's tests/test_install_scripts.py reads them too)
+    (("install.sh", "update.sh", "uninstall.sh", "install-lib.sh", "scripts/test-install.sh"),
+     frozenset({"cli", "windows", "install"})),
     ((".github/workflows/ci.yml", "scripts/*"), EVERYTHING),
     ((".github/workflows/release.yml",), frozenset({"release"})),
     ((".github/*",), frozenset()),                                  # the other workflows run themselves
@@ -47,10 +56,13 @@ RULES: list[tuple[tuple[str, ...], frozenset[str]]] = [
 ]
 
 
-def areas(event: str, files: list[str]) -> set[str]:
-    """The areas a change runs: everything off a pull request, else what its paths need."""
+def areas(event: str, files: list[str], weekday: int | None = None) -> set[str]:
+    """The areas a change runs: everything off a pull request (the install test only on WEEKLY's nightly run, WEEKDAY
+    being today's isoweekday, and by hand), else what its paths need."""
     if event != "pull_request":
-        return set(EVERYTHING)
+        if event == "workflow_dispatch" or (event == "schedule" and weekday == WEEKLY):
+            return set(EVERYTHING)
+        return set(EVERYTHING - {"install"})
     out: set[str] = set()
     for path in (f.strip() for f in files):
         if not path:
@@ -74,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.files:
         with open(args.files, encoding="utf-8") as f:
             files = f.read().splitlines()
-    run = areas(args.event, files)
+    run = areas(args.event, files, datetime.datetime.now(datetime.timezone.utc).isoweekday())
     lines = [f"{a}={'true' if a in run else 'false'}" for a in AREAS]
     lines.append("python=" + json.dumps(PYTHONS_PR if args.event == "pull_request" else PYTHONS_ALL))
     text = "\n".join(lines) + "\n"
