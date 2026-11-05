@@ -263,7 +263,7 @@ export function ConnectCard({
     const print = c?.querySelector(".key-print");
     const row = checkedBox.current?.closest("label");
     if (!c || !print || !row) return;
-    const fade = 12;
+    const fade = FADE_PX;
     const top =
       (c.querySelector(".connect-title")?.getBoundingClientRect().bottom ??
         c.getBoundingClientRect().top) + fade;
@@ -275,13 +275,26 @@ export function ConnectCard({
     let next = c.scrollTop;
     if (from < top) next -= top - from;
     else if (to > bottom) next += Math.min(to - bottom, from - top);
-    // Once it scrolls at all, at least as far as the title takes to pin (the card's top padding),
-    // so the title doesn't creep a pixel when the card scrolls on; and in whole pixels, so the
-    // sticky footer never lands half a pixel off.
-    const pin = parseFloat(getComputedStyle(c).paddingTop) || 0;
+    // Once it scrolls at all, at least as far as the title takes to pin (what lies above it: the
+    // map, in a tall window), so the title doesn't creep when the card scrolls on; and in whole
+    // pixels, so the sticky footer never lands half a pixel off.
+    const pin =
+      c.querySelector<HTMLElement>(".connect-title")?.offsetTop ?? 0;
     if (next > 0 && next < pin) next = pin;
     c.scrollTop = Math.round(next);
   };
+  // The question's edges say what's past them (round 20): the title's rule and fade only once
+  // something is under it, the footer's fade only while more lies below it, so neither fades a
+  // line that isn't going anywhere. Set as the card scrolls and whenever its size changes.
+  useEffect(() => {
+    const c = card.current;
+    if (!asking || !c) return;
+    markScroll(c);
+    if (typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(() => markScroll(c));
+    watch.observe(c);
+    return () => watch.disconnect();
+  }, [asking, short]);
   // Keyboard first: the question takes focus (after the terminal, which the active pane focuses
   // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q222). Once answered,
   // focus goes back to the terminal.
@@ -430,28 +443,28 @@ export function ConnectCard({
                 const tail = all[all.length - 1];
                 if (!head || !tail) return;
                 const at = document.activeElement;
-                if (e.shiftKey && (at === head || at === e.currentTarget)) {
-                  e.preventDefault();
-                  tail.focus();
-                } else if (!e.shiftKey && at === tail) {
-                  e.preventDefault();
-                  head.focus();
-                }
+                const i = all.indexOf(at as HTMLElement);
+                const next =
+                  i < 0
+                    ? e.shiftKey
+                      ? tail
+                      : head
+                    : all[(i + (e.shiftKey ? -1 : 1) + all.length) % all.length];
+                if (!next) return;
+                e.preventDefault();
+                // A control in the pinned title or footer is always in view: focusing it never
+                // scrolls the card (round 20: Shift+Tab to Trust scrolled it 24 px, a line of
+                // the question half under the title). Any other control scrolls just enough,
+                // clear of both (scroll-padding), as Tab would.
+                const pinned =
+                  next.closest(".key-actions, .connect-title") !== null;
+                next.focus({ preventScroll: pinned });
               }
             }
           : undefined
       }
       tabIndex={asking ? -1 : undefined}
-      onScroll={
-        asking
-          ? (e) =>
-              // The pinned title draws its rule only while something is under it (round 18).
-              e.currentTarget.toggleAttribute(
-                "data-scrolled",
-                e.currentTarget.scrollTop > 0,
-              )
-          : undefined
-      }
+      onScroll={asking ? (e) => markScroll(e.currentTarget) : undefined}
     >
       {/* The map: this Box, the edge, the Host. The edge says how far the connection has got
           (`data-phase`): part-way while ssh starts, to the Host's ring while it logs in, and the
@@ -594,11 +607,14 @@ export function ConnectCard({
             {/* The box and, after a blocked Enter, what it needs, on one row: the words sit
                 beside the box they're about, in the room the row already has, so nothing moves
                 (round 19: from the footer they had said "above" from ~220 px away). */}
-            <div className="quick-checked-row">
-              <label
-                className="add-check quick-checked"
-                data-nudged={(nudged && !checkedKey) || undefined}
-              >
+            {/* After a blocked Enter the row is marked as one, box and words inside one frame
+                (round 20: the box's own frame sat 1–2 px outside its focus ring, in another
+                colour, with the words outside it). */}
+            <div
+              className="quick-checked-row"
+              data-nudged={(nudged && !checkedKey) || undefined}
+            >
+              <label className="add-check quick-checked">
                 <input
                   ref={checkedBox}
                   type="checkbox"
@@ -857,7 +873,9 @@ function KeyAdvice({
 }) {
   return (
     <p className="muted key-advice">
-      Compare it with {where} console or its owner before you trust it.
+      {/* "trust it." breaks as one, so "it." never sits alone before the pointer (round 20). */}
+      Compare it with {where} console or its owner before you{" "}
+      <span className="nowrap">trust it.</span>
       {help && (
         <>
           {" "}
@@ -873,6 +891,20 @@ function KeyAdvice({
         </>
       )}
     </p>
+  );
+}
+
+/** The fades at the question's pinned title and footer: a line box (the advice's 17 px and the
+ * says line's 19 px, with room), so a line scrolled half under either fades out whole and no
+ * glyph fragment shows past it (round 20: 12 px left a sliver). styles.css says it too. */
+const FADE_PX = 22;
+
+/** Marks a question card scrolled (something under its title) and with more below its footer. */
+function markScroll(c: HTMLElement) {
+  c.toggleAttribute("data-scrolled", c.scrollTop > 0);
+  c.toggleAttribute(
+    "data-more",
+    c.scrollTop + c.clientHeight < c.scrollHeight - 1,
   );
 }
 

@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_EMAIL, FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
 import { BackendCallError, VaultError } from "./backend/types";
+import { onMessageLine } from "./test-messageLine";
 import { manualClock } from "./lock/manualClock";
 
 async function start(scenario: FakeScenario = fixtures["sign-out"]!) {
@@ -158,7 +159,7 @@ describe(":vault signout", () => {
   it("needs API 14", async () => {
     const { user } = await unlocked({ ...fixtures["sign-out"]!, apiVersion: 13 });
     await command(user, "vault signout");
-    expect(await screen.findByText(/needs a newer roster \(API version 14; this one speaks 13\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:vault signout needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
   });
 
   it("says what its subcommand is", async () => {

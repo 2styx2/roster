@@ -49,6 +49,9 @@ export interface Quiet {
 export interface Slip {
   kind: "slip";
   text: string;
+  /** What `:messages` keeps instead, when it says more than the line (the API numbers behind a
+   * "needs a newer roster"). */
+  logged?: string;
 }
 
 /** What goes on the message line: an error, a warning or an answer (always shown), a slip in
@@ -57,6 +60,17 @@ export type Message = string | Quiet | Slip;
 
 export function slip(text: string): Slip {
   return { kind: "slip", text };
+}
+
+/** A feature this roster is too old for, said calmly in the app's words (round 20, decision Q237):
+ * what needs a newer roster and what to do, in the text colour, with serve's API numbers kept for
+ * `:messages` only. `what` starts the sentence ("Quick Connect", ":edit"). */
+export function tooOld(what: string, need: number, speaks: number): Slip {
+  return {
+    kind: "slip",
+    text: `${what} needs a newer roster. Update roster on this Box.`,
+    logged: `${what} needs a newer roster (API version ${need}; this one speaks ${speaks}). Update roster on this Box.`,
+  };
 }
 
 export function quiet(said: string, text: string = said): Quiet {
@@ -155,7 +169,7 @@ export class MessageLog {
   };
 
   push(message: Message, at: Date = new Date()) {
-    const text = textOf(message);
+    const text = (typeof message !== "string" && message.kind === "slip" && message.logged) || textOf(message);
     if (!text) return;
     this.set([...this.snap, { at, text, quiet: typeof message !== "string" && message.kind === "quiet" }].slice(-KEPT));
   }

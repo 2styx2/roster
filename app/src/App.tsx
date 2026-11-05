@@ -253,6 +253,7 @@ import {
   registerMessages,
   slip,
   shownText,
+  tooOld,
   spokenText,
   type Message,
 } from "./ui/messages";
@@ -317,6 +318,13 @@ function hintFor(keymap: Keymap, line: Line): string | null {
     ([, b]) => b.action === line,
   )?.[0];
   return key ? `␣ ${key}` : null;
+}
+
+/** `␣ p` with no Session open (round 20): nothing to fill on any roster, so say how to open one. */
+function fillNoSession(findKeys: string | null): string {
+  return findKeys
+    ? `No Session to fill. Open one with ${findKeys}.`
+    : "No Session to fill. Open one with :open HOST.";
 }
 
 /** The first key a table binds to `action` (a list's "down", the Leader's "terminal"). */
@@ -2243,7 +2251,7 @@ function Workspace({
         const api =
           conn.state === "ready" ? conn.info.inventory.api_version : 0;
         return setMessage(
-          `Quick Connect needs a newer roster (API version ${QUICK_CONNECT_API_VERSION}; this one speaks ${api})`,
+          tooOld("Quick Connect", QUICK_CONNECT_API_VERSION, api),
         );
       }
       if (text === null) {
@@ -2302,7 +2310,7 @@ function Workspace({
       const api = conn.state === "ready" ? conn.info.inventory.api_version : 0;
       if (api < CHECK_API_VERSION) {
         return setMessage(
-          `:check needs a newer roster (API version ${CHECK_API_VERSION}; this one speaks ${api})`,
+          tooOld(":check", CHECK_API_VERSION, api),
         );
       }
       const run = ++checkRun.current;
@@ -2405,7 +2413,7 @@ function Workspace({
     vault: () => {
       if (apiVersion < SIGN_OUT_API_VERSION) {
         return setMessage(
-          `:vault signout needs a newer roster (API version ${SIGN_OUT_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":vault signout", SIGN_OUT_API_VERSION, apiVersion),
         );
       }
       // Ask roster who the CLI is signed in as now: a sign-in from the lock screen doesn't say.
@@ -2500,7 +2508,7 @@ function Workspace({
     inventory: (op) => {
       if (!canLive) {
         return setMessage(
-          `Changing the Inventory here needs a newer roster (API version ${LIVE_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld("Changing the Inventory here", LIVE_API_VERSION, apiVersion),
         );
       }
       if (op.op === "remove") {
@@ -2573,7 +2581,7 @@ function Workspace({
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
       if (!canEdit)
         return setMessage(
-          `:edit needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":edit", EDIT_API_VERSION, apiVersion),
         );
       if (editing === null && !changesView && !adding) rememberFocus();
       setChangesView(null);
@@ -2606,7 +2614,7 @@ function Workspace({
       const tab = sessions.tabs.find((t) => t.id === sessions.active);
       if (apiVersion < SAVE_TO_VAULT_API_VERSION) {
         return setMessage(
-          `Save to vault needs a newer roster (API version ${SAVE_TO_VAULT_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld("Save to vault", SAVE_TO_VAULT_API_VERSION, apiVersion),
         );
       }
       if (!tab?.save)
@@ -2627,13 +2635,17 @@ function Workspace({
       setSaving(tab.id);
     },
     fillPrompt: () => {
+      // No Session first: with none open, there's nothing to fill on any roster (round 20).
+      const id = sessions.active;
+      if (id === null)
+        return setMessage(
+          slip(fillNoSession(hintFor(keymap, "find"))),
+        );
       if (apiVersion < FILL_API_VERSION) {
         return setMessage(
-          `Filling a password prompt needs a newer roster (API version ${FILL_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld("Filling password prompts", FILL_API_VERSION, apiVersion),
         );
       }
-      const id = sessions.active;
-      if (id === null) return setMessage("No Session to fill");
       tabs.fill(id).then(
         (host) => setMessage(quiet(`Filled ${host}'s password`)),
         (e: unknown) => {
@@ -2655,11 +2667,11 @@ function Workspace({
       if (!h) return setMessage(`No Host named ${host}`);
       if (!canAdd)
         return setMessage(
-          `:${verb} needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(`:${verb}`, ADD_API_VERSION, apiVersion),
         );
       if (!reviewed && apiVersion < UNREVIEW_API_VERSION) {
         return setMessage(
-          `:host unreview needs a newer roster (API version ${UNREVIEW_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":host unreview", UNREVIEW_API_VERSION, apiVersion),
         );
       }
       const already = reviewed
@@ -2692,13 +2704,13 @@ function Workspace({
     showChanges: (then) => {
       if (!canEdit)
         return setMessage(
-          `:changes needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":changes", EDIT_API_VERSION, apiVersion),
         );
       if (plain && connInfo)
         return setMessage(nothingPending(connInfo.inventory));
       if (then === "publish" && !canPublish) {
         return setMessage(
-          `:publish needs a newer roster (API version ${PUBLISH_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":publish", PUBLISH_API_VERSION, apiVersion),
         );
       }
       if (editing === null && !changesView && !adding) rememberFocus();
@@ -2715,7 +2727,7 @@ function Workspace({
         );
       if (!listsInventories) {
         return setMessage(
-          `:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":inventory", INVENTORIES_API_VERSION, apiVersion),
         );
       }
       backend.listInventories().then(
@@ -2742,7 +2754,7 @@ function Workspace({
     pull: () => {
       if (!canEdit)
         return setMessage(
-          `:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
+          tooOld(":pull", EDIT_API_VERSION, apiVersion),
         );
       setMessage(quiet("Pulling the infra repo…"));
       gate.pull().then(

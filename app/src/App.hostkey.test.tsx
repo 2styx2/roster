@@ -113,6 +113,53 @@ describe("a Host whose host key roster hasn't seen", () => {
     }
   });
 
+  it("Tab and Shift+Tab to the pinned buttons never scroll the card, and Enter still only trusts from Trust (round 20)", async () => {
+    const calls: { el: Element; options: FocusOptions | undefined }[] = [];
+    const original = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (this: HTMLElement, options?: FocusOptions) {
+      calls.push({ el: this, options });
+      original.call(this, options);
+    };
+    try {
+      const { backend, trusted } = backendWith();
+      const user = await ready(backend);
+      await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
+      const q = await question();
+      const cancel = within(q).getByRole("button", { name: /^Cancel/ });
+      const trust = within(q).getByRole("button", { name: "Trust and connect" });
+      const link = within(q).getByRole("button", { name: /:help host-keys/ });
+      expect(cancel).toHaveFocus();
+      const focused = (el: Element) => calls.filter((c) => c.el === el).at(-1)?.options;
+      // Shift+Tab: Cancel to Trust, both in the pinned footer: focus without a scroll.
+      await user.keyboard("{Shift>}{Tab}{/Shift}");
+      expect(trust).toHaveFocus();
+      expect(focused(trust)?.preventScroll).toBe(true);
+      // On to the pointer (in the scrolling body): it may scroll, as Tab would.
+      await user.keyboard("{Shift>}{Tab}{/Shift}");
+      expect(link).toHaveFocus();
+      expect(focused(link)?.preventScroll).toBe(false);
+      // Round the cycle to Cancel (wraps), then Tab back to the pointer and to Trust.
+      await user.keyboard("{Shift>}{Tab}{/Shift}");
+      expect(cancel).toHaveFocus();
+      expect(focused(cancel)?.preventScroll).toBe(true);
+      await user.tab();
+      expect(link).toHaveFocus();
+      await user.tab();
+      expect(trust).toHaveFocus();
+      expect(focused(trust)?.preventScroll).toBe(true);
+      expect(trusted).toEqual([]);
+      // Enter on the card itself still never trusts; Enter on Trust does.
+      q.focus();
+      await user.keyboard("{Enter}");
+      expect(trusted).toEqual([]);
+      trust.focus();
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(trusted).toEqual([`${HOST.name} ${FAKE_FINGERPRINT}`]));
+    } finally {
+      HTMLElement.prototype.focus = original;
+    }
+  });
+
   it("Esc records nothing and leaves no Session", async () => {
     const { backend, trusted } = backendWith();
     const user = await ready(backend);
