@@ -3,8 +3,9 @@
 import base64
 import json
 import os
+import sys
 
-from ..common import NotPrivate, find_program, read_private_bytes, say, user_config_dir
+from ..common import WINDOWS, NotPrivate, find_program, read_private_bytes, say, user_config_dir
 from . import (
     PROVIDERS,
     ItemExists,
@@ -14,6 +15,8 @@ from . import (
     NotSignedIn,
     ReadOnlyTarget,
     SecretError,
+    SessionFileFailed,
+    SessionFileRefused,
     SeveralItems,
     SignOutFailed,
     TimedOut,
@@ -23,6 +26,7 @@ from . import (
     WrongPassword,
     check_item_name,
     errtext,
+    json_output,
     manual_unlock,
     near_names,
     register,
@@ -70,6 +74,44 @@ def session_file():
     return user_config_dir() / "bw-session"
 
 
+def check_session_dir():
+    """NotPrivate unless session_file()'s folder is yours alone to change (#480 review, LOW-3): a folder (or a link to
+    one that you own) owned by you that nobody else may write to, so no one else can swap, plant or remove the file
+    in it. Nothing there yet is fine (roster makes it 0700). Windows: not checked here: %APPDATA% is kept private by
+    its ACL, and the file's own owner and ACL are (common.read_private_bytes)."""
+    import stat
+    if WINDOWS:
+        return
+    d = session_file().parent
+    try:
+        st = os.lstat(d)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(st.st_mode):
+        if st.st_uid != os.getuid():
+            raise NotPrivate(f"{d} is a symlink someone else owns")
+        try:
+            st = os.stat(d)
+        except OSError as e:
+            raise NotPrivate(f"{d} can't be read ({e.strerror})") from None
+    if not stat.S_ISDIR(st.st_mode):
+        raise NotPrivate(f"{d} isn't a folder")
+    if st.st_uid != os.getuid():
+        raise NotPrivate(f"{d} isn't yours (another user owns it)")
+    if st.st_mode & 0o022:
+        raise NotPrivate(f"{d} is writable by others (chmod go-w {d})")
+
+
+def read_session_file():
+    """session_file()'s bytes, by read_private_bytes's rules, in a folder check_session_dir accepts. FileNotFoundError
+    if it isn't there; NotPrivate otherwise."""
+    f = session_file()
+    if not os.path.lexists(f):
+        raise FileNotFoundError(f)
+    check_session_dir()
+    return read_private_bytes(f)
+
+
 _BOMS = ((b"\xef\xbb\xbf", "utf-8"), (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"))
 
 
@@ -98,7 +140,7 @@ def load_session_file():
         return False
     f = session_file()
     try:
-        key = session_text(read_private_bytes(f))
+        key = session_text(read_session_file())
     except FileNotFoundError:
         return False
     except NotPrivate as e:
@@ -110,6 +152,166 @@ def load_session_file():
     if key:
         set_session(key)
     return bool(key)
+
+
+# ---- a saved session (T241, #474, decision Q203): `roster vault unlock` and the offer after an interactive unlock
+# write the key to session_file(), so every roster run on this Box uses it until it's locked. Any program running as
+# you can read it, and with bw's data file it opens the vault: the trade-off security.md states. bw keeps ONE unlock
+# at a time (unlock.command.ts makes a new key each time; lock clears it), so a `bw lock`, another `bw unlock` and the
+# roster app's lock or unlock (serve runs both) make the saved key stop working: "expired".
+
+UNTIL = "`roster vault lock`, `bw lock`, or the roster app's lock"
+OFFER = "Keep the vault unlocked for other roster runs on this Box? [y/N] "
+_offered = {"done": False}                      # asked once a run at most
+
+
+def note(text):
+    """A note line on stderr; never under --json (there, stderr is a JSON error or nothing)."""
+    if not json_output():
+        print(f"note: {text}", file=sys.stderr, flush=True)
+
+
+def check_session_file():
+    """SessionFileRefused if a session_file() is there that roster won't write over: one that isn't yours alone
+    (common.read_private_bytes: a link, another user's, not a plain file, others may read it), or one in a folder
+    that isn't yours alone (check_session_dir)."""
+    try:
+        check_session_dir()
+        read_private_bytes(session_file())
+    except FileNotFoundError:
+        pass
+    except NotPrivate as e:
+        raise SessionFileRefused(f"{e} - roster won't write over it; remove it yourself, then run "
+                                 "`roster vault unlock` again") from None
+
+
+def save_session_file(key):
+    """Write KEY to session_file() for other runs: whole or not at all (a temp file beside it, renamed over it), 0600
+    under umask 077. A file already there that isn't yours alone (common.read_private_bytes: a link, another user's,
+    not a plain file, others may read it) is refused, never written over or through: SessionFileRefused. The key is
+    checked to be one (session_text) and the new file to be private before it takes the name. SessionFileFailed if the
+    system says no. The key itself is never in a message."""
+    import tempfile
+    from pathlib import Path
+    f = session_file()
+    if not key or session_text(key.encode("ascii", "replace")) != key:
+        raise SessionFileFailed("bw's unlock didn't print a session key, so nothing was saved")
+    check_session_file()
+    old = os.umask(0o077)
+    try:
+        f.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".bw-session.", suffix=".new", dir=f.parent)
+        try:
+            if hasattr(os, "fchmod"):                  # the open file itself, never a name that could be swapped
+                os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as out:
+                out.write(key.encode("ascii") + b"\n")
+                out.flush()
+                os.fsync(out.fileno())                 # on disk before it takes the name
+            if not hasattr(os, "fchmod"):              # Windows (before 3.13): the read-only bit only; its ACL counts
+                os.chmod(tmp, 0o600)
+            if session_text(read_private_bytes(Path(tmp))) != key:
+                raise SessionFileFailed(f"the new {f} didn't read back as written, so nothing was saved")
+            os.replace(tmp, f)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+    except NotPrivate as e:
+        raise SessionFileFailed(f"the new session file wouldn't be yours alone ({e}), so nothing was saved") from None
+    except OSError as e:
+        raise SessionFileFailed(f"couldn't write {f} ({e.strerror or type(e).__name__})") from None
+    finally:
+        os.umask(old)
+
+
+def remove_session_file():
+    """Remove session_file() (a link itself, never what it points to): True if one was there."""
+    f = session_file()
+    try:
+        f.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        raise SessionFileFailed(f"couldn't remove {f} ({e.strerror or type(e).__name__})") from None
+    return True
+
+
+def saved_session(ctx):
+    """The saved session's state, without unlocking anything here: ("none", None) no file (or an empty one),
+    ("working", None) its key opens the vault, ("expired", None) it doesn't any more, ("ignored", why) roster won't
+    use it (load_session_file's rules), ("unknown", why) `bw status` failed. Its key goes only into one `bw status`'s
+    env."""
+    f = session_file()
+    try:
+        key = session_text(read_session_file())
+    except FileNotFoundError:
+        return "none", None
+    except NotPrivate as e:
+        return "ignored", str(e)
+    if key is None:
+        return "ignored", f"{f} isn't a Bitwarden session key (not plain ASCII text)"
+    if not key:
+        return "none", None
+    status = _key_status(ctx, key)
+    if status is None:
+        return "unknown", "bw status failed"
+    return ("working" if status == "unlocked" else "expired"), None
+
+
+def _key_status(ctx, key):
+    """`bw status` with KEY as the session, KEY only in its env: "unlocked", "locked", ..., or None when bw failed or
+    didn't print a status object."""
+    r = ctx.run(["bw", "status", "--nointeraction"], env={"BW_SESSION": key})
+    if r.returncode != 0:
+        return None
+    try:
+        st = json.loads(r.stdout or "")
+    except json.JSONDecodeError:
+        return None
+    return st.get("status") if isinstance(st, dict) else None
+
+
+def _bw_saved_session(ctx):
+    return saved_session(ctx) if find_program("bw") else ("none", None)
+
+
+def _offer_to_keep(ctx, key, expired):
+    """After an unlock this run asked for in a terminal: ask once whether to save it for other runs; on No (or when it
+    can't be saved), the note that says why the next run asks again."""
+    if json_output() or _offered["done"]:
+        return
+    _offered["done"] = True
+    if ctx.confirm(OFFER):
+        status = _key_status(ctx, key)                 # #480 review, LOW-4: another run may have unlocked meanwhile
+        if status != "unlocked":
+            note("not saved: this unlock was replaced by another one meanwhile (bw keeps one unlock at a time), so its "
+                 "key no longer works" if status else "not saved: `bw status` failed, so roster couldn't check the "
+                 "key still works")
+            return
+        try:
+            save_session_file(key)
+        except SecretError as e:
+            note(f"not saved: {e}")
+            return
+        note(f"saved in {session_file()}: other roster runs on this Box use it until {UNTIL}; "
+             "`roster vault lock` undoes this")
+        return
+    if expired:
+        note(f"the saved Bitwarden session in {session_file()} has expired (locked since it was saved, e.g. by the "
+             "roster app's lock or a bw lock/unlock); roster vault unlock saves a new one")
+    else:
+        note("this unlock lasts for this run only; to stay unlocked on this Box: roster vault unlock")
+
+
+def _bw_ask_unlock(ctx):
+    """`bw unlock` with the master password typed at the terminal (to bw by an env var, never argv): the new key."""
+    r = _bw(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER",
+            env={"ROSTER_BW_MASTER": ctx.ask("Bitwarden master password: ")})
+    if r.returncode != 0 or not r.stdout.strip():
+        if "not logged in" in errtext(r, stdout=False).lower():
+            raise NotLoggedIn(NOT_LOGGED_IN)
+        raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
+    return r.stdout.strip()
 
 
 def _bw_status_json(ctx):
@@ -136,7 +338,8 @@ def _bw_ready(ctx):
         if _bw(ctx, "login", "--apikey").returncode != 0:
             raise SecretError("`bw login --apikey` failed - check BW_CLIENTID / BW_CLIENTSECRET")
         status = "locked"
-    if status == "locked" and from_file:
+    expired = status == "locked" and from_file
+    if expired:
         forget_session()
         if not (os.environ.get("BW_PASSWORD") or ctx.interactive):
             raise VaultLocked(f"the Bitwarden session in {session_file()} has expired (vault locked) - refresh it: "
@@ -147,15 +350,18 @@ def _bw_ready(ctx):
         if os.environ.get("BW_PASSWORD"):
             r = _bw(ctx, "unlock", "--raw", "--passwordenv", "BW_PASSWORD")
         elif ctx.interactive:
-            r = _bw(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER",
-                    env={"ROSTER_BW_MASTER": ctx.ask("Bitwarden master password: ")})
+            key = _bw_ask_unlock(ctx)
+            set_session(key)
+            _offer_to_keep(ctx, key, expired)
+            r = None
         else:
             raise VaultLocked("Bitwarden vault is locked and there's no terminal to unlock it. In the shell "
                               "you start Claude (or roster) from, run:  export BW_SESSION=$(bw unlock --raw)  "
                               f"- or, for every session on this box:  (umask 077; bw unlock --raw > {session_file()})")
-        if r.returncode != 0 or not r.stdout.strip():
-            raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
-        set_session(r.stdout.strip())
+        if r is not None:
+            if r.returncode != 0 or not r.stdout.strip():
+                raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
+            set_session(r.stdout.strip())
     if ctx.settings.get("sync", True) and _bw(ctx, "sync").returncode != 0:
         say("warning      `bw sync` failed - using the vault as last synced")
     ctx.state["ready"] = True
@@ -618,4 +824,5 @@ def _bw_sync(ctx):
 PROVIDERS["bw"].update(unlock=_bw_unlock, lock=_bw_lock, forget=_bw_forget, status=_bw_vault_status,
                        account=_bw_account, logout=_bw_logout, not_logged_in=NOT_LOGGED_IN,
                        create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
-                       login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync)
+                       login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync,
+                       saved_session=_bw_saved_session)

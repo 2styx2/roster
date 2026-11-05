@@ -68,12 +68,15 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
                ("roster revoke --all", "off every Inventory's hosts (before removing roster)")],
     "vault": [("roster vault status", "which vaults work here, their state and last sync"),
               ("roster vault sync", "pull the vaults, then what was added, changed or removed"),
+              ("roster vault unlock", "unlock Bitwarden for every run on this box, until roster vault lock"),
               ("roster vault reveal lab-guest", "a resource's secret, for you to type in"),
               ("roster vault bw -- list items --search web-01", "the Bitwarden CLI itself, read-only"),
               ("roster vault op -- item list --vault Infra", "the 1Password CLI itself, read-only")],
     "vault status": [("roster vault status", "providers, tools, each vault's state and last sync"),
                      ("roster vault status --json", "for a script")],
     "vault sync": [("roster vault sync", "bw sync, then the items added, changed or removed since the last one")],
+    "vault unlock": [("roster vault unlock", "ask the master password once; runs on this box stop asking until locked")],
+    "vault lock": [("roster vault lock", "bw lock, and remove the saved session")],
     "vault reveal": [("roster vault reveal lab-guest", "print its secret, for you to type in"),
                      ("roster vault reveal lab-guest --wifi", "a WIFI:... string for a QR code")],
     "vault bw": [("roster vault bw -- list items --search web-01", "bw with this box's saved session (read-only)"),
@@ -251,7 +254,8 @@ def _hint(message: str, typed: list[str], options: list[str]) -> str:
     near = difflib.get_close_matches(_unquote(m[2]), choices, n=1, cutoff=0.6)
     if near:
         return f"did you mean `{near[0]}`?"
-    return f"one of: {', '.join(choices)}" if len(choices) <= 6 else "not a roster command"
+    # an action's few choices are listed (vault has 7, T241); roster's many commands are not
+    return f"one of: {', '.join(choices)}" if len(choices) <= 8 else "not a roster command"
 
 
 def _unquote(typed: str) -> str:

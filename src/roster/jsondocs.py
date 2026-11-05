@@ -164,6 +164,7 @@ class BoxCheck(Part, frozen=True):
     message: str = Field(repr=False)
     fix: str | None = None
     topic: str | None = None
+    saved_session: Literal["none", "working", "expired", "ignored", "unknown"] | None = None   # a vault's saved session (T241)
 
 
 class BoxCheckDoc(Part, frozen=True):

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import __version__, aliases, boxkeys, boxsync, clihelp, jsonout, mesh
+from . import __version__, aliases, boxkeys, boxsync, clihelp, jsonout, mesh, providers
 from .addhost import cmd_add
 from .claude import write_claude_files
 from .common import (
@@ -35,7 +35,7 @@ from .config import access_label, find_config, is_windows, load_config, matches,
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
-from .providers import NO_PASSWORD, PROVIDERS, get_secret, setup_providers
+from .providers import NO_PASSWORD, PROVIDERS, errtext, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import (
     NameTaken,
@@ -1298,6 +1298,99 @@ def cmd_vault_sync(cfg, args):
     return 1 if bad else 0
 
 
+# `roster vault unlock` / `vault lock` (T241, #474, decision Q203): an unlock that lasts until it's locked, saved in
+# the bw-session file every roster run on this Box reads. Bitwarden only: KeePassXC has no session, and 1Password's
+# `op signin` keeps its own.
+NO_SESSION_WHY = {"kp": "KeePassXC keeps no session: each run opens the database with its password, so there's "
+                        "nothing to keep unlocked",
+                  "op": "roster vault unlock and lock are Bitwarden only for now: 1Password's `op signin` keeps its "
+                        "own session (roster vault op --write -- signin)"}
+
+
+def vault_session_provider(args, need_bw=True):
+    from .errors import NO_SESSION
+    name = args.provider or "bw"
+    if name != "bw":
+        die(f"[{NO_SESSION}] " + NO_SESSION_WHY.get(name, f"'{name}' has no session roster can keep: roster vault "
+                                                            f"{args.vault_cmd} is for Bitwarden (bw)"))
+    if need_bw and not find_program("bw"):
+        die("bw (the Bitwarden CLI) isn't installed")
+    return name
+
+
+def session_problem(e):
+    """A SecretError from vault unlock/lock as die()'s text: its errors.py code first (serve's numbers)."""
+    from . import errors
+    from .providers import SessionFileFailed, SessionFileRefused
+    code = errors.SESSION_FILE_REFUSED if isinstance(e, SessionFileRefused) else \
+        errors.SESSION_FILE_FAILED if isinstance(e, SessionFileFailed) else errors.vault_problem(e).code
+    return f"[{code}] {e}"
+
+
+def cmd_vault_unlock(args):
+    """`roster vault unlock`: ask the master password (to bw by an env var, never argv), then save the session key in
+    the bw-session file (bitwarden.save_session_file: atomic, 0600, never over a link or someone else's file), so
+    every roster run on this Box uses it until `roster vault lock`, `bw lock` or the roster app's lock. Never prints
+    the key."""
+    from .providers import Ctx, NotLoggedIn, SecretError
+    from .providers import bitwarden as bwp
+    vault_session_provider(args)
+    if not sys.stdin.isatty():
+        die("roster vault unlock needs a terminal to ask for the master password")
+    ctx = Ctx("bw", None)
+    try:
+        bwp.check_session_file()                        # refused before the password is asked
+        if bwp.saved_session(ctx)[0] == "working":
+            say(f"already unlocked: the saved session in {bwp.session_file()} works until {bwp.UNTIL}")
+            return 0
+        status = bwp._bw_status(ctx)                    # with your shell's BW_SESSION, if it has one
+        if status == "unauthenticated":
+            raise NotLoggedIn(bwp.NOT_LOGGED_IN)
+        if status == "unlocked" and bwp.session_key():  # #480 review, LOW-2: a new unlock would lock it (and the app)
+            bwp.save_session_file(bwp.session_key())
+            say(f"saved your shell's working BW_SESSION in {bwp.session_file()} (no new unlock, so the roster app and "
+                f"other bw sessions stay unlocked): other roster runs on this Box use it until {bwp.UNTIL}. Any "
+                "program running as you can use it to read the vault until then")
+            return 0
+        key = bwp._bw_ask_unlock(ctx)
+        bwp.save_session_file(key)
+    except SecretError as e:
+        die(session_problem(e))
+    say(f"unlocked until {bwp.UNTIL}: saved in {bwp.session_file()}, so other roster runs on this Box don't ask. "
+        "Any program running as you can use it to read the vault until then. bw keeps one unlock at a time, so this "
+        "one locked the roster app and any other bw session on this Box")
+    return 0
+
+
+def cmd_vault_lock(args):
+    """`roster vault lock`: `bw lock` (every bw session on this Box, the app's too), then remove the bw-session file,
+    whatever bw did (even with no bw installed). Each is reported on its own (#480 review)."""
+    from .providers import Ctx, SecretError
+    from .providers import bitwarden as bwp
+    vault_session_provider(args, need_bw=False)
+    problem = None
+    if not find_program("bw"):
+        problem = "bw (the Bitwarden CLI) isn't installed, so nothing was locked"
+    else:
+        try:
+            r = Ctx("bw", None).run(["bw", "lock", "--nointeraction"], discard=True)
+            if r.returncode != 0:
+                problem = f"`bw lock` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}"
+        except SecretError as e:
+            problem = f"`bw lock` failed: {e}"
+        if problem is None:
+            say("bw lock: locked; bw keeps one unlock at a time, so the roster app and any other bw session on this "
+                "Box are locked too")
+    try:
+        removed = bwp.remove_session_file()
+    except SecretError as e:
+        die(session_problem(e) + (f"; {problem}" if problem else ""))
+    say(f"removed {bwp.session_file()}" if removed else "no saved session to remove")
+    if problem:
+        die(problem)
+    return 0
+
+
 def providers_locked():
     from .providers import NotLoggedIn, VaultLocked
     return (VaultLocked, NotLoggedIn)
@@ -1644,6 +1737,7 @@ def main(argv=None):
     argv, alias = aliases.rewrite(argv)  # an old name (roster info, roster bw): its new form, said once on stderr
     words = argv[:argv.index("--")] if "--" in argv else argv
     Parser.json_errors = "--json" in words
+    providers.JSON_OUTPUT = Parser.json_errors      # a vault's note or question would break the JSON (T241)
     if alias and not alias.silent and not Parser.json_errors:      # with --json, stderr is a JSON error or nothing
         print(aliases.warning(alias), file=sys.stderr, flush=True)
     try:
@@ -1666,6 +1760,7 @@ def main(argv=None):
         os._exit(0)
     finally:
         Parser.json_errors = False
+        providers.JSON_OUTPUT = False
         Parser.typed, Parser.root = [], None
 
 
@@ -1889,6 +1984,14 @@ def build_parser():
     s.add_argument("--json", **as_json)
     vault.add_parser("sync", help="sync every vault that keeps a local copy (Bitwarden: bw sync), then say which "
                      "items were added, changed or removed since the last sync: names and counts, never a secret")
+    s = vault.add_parser("unlock", help="unlock Bitwarden and keep it unlocked for every roster run on this Box "
+                         "(the session is saved in the bw-session file) until roster vault lock, bw lock or the "
+                         "roster app's lock; Bitwarden only for now")
+    s.add_argument("provider", nargs="?", metavar="PROVIDER", help="bw (the default and, for now, the only one: "
+                   "KeePassXC keeps no session, and 1Password's op signin keeps its own)")
+    s = vault.add_parser("lock", help="bw lock, then remove the saved session (the bw-session file); every bw session "
+                         "on this Box is locked, the roster app's too")
+    s.add_argument("provider", nargs="?", metavar="PROVIDER", help="bw (the default and, for now, the only one)")
     s = vault.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) for a person to type in, "
                          "not for Claude")
     values(s.add_argument("name", help="the resource"), RESOURCES)
@@ -1990,6 +2093,8 @@ def _main(argv=None):
     if args.cmd == "vault" and args.vault_cmd is None:     # plain `roster vault`: its actions
         sys.stdout.write(command_parser(parser, ["vault"]).format_help())
         return 0
+    if args.cmd == "vault" and args.vault_cmd in ("unlock", "lock"):     # this Box's vault: no roster.yml needed
+        return cmd_vault_unlock(args) if args.vault_cmd == "unlock" else cmd_vault_lock(args)
     if args.cmd == "discover":
         if args.json and args.write:
             build_parser().error("--json goes with discover's preview, not --write: drop one of them")
