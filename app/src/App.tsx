@@ -42,6 +42,7 @@ import {
   type HostList,
   type SaveTarget,
   VAULT_CONFIG_API_VERSION,
+  ITEM_FIELDS_API_VERSION,
   HOST_KEY_API_VERSION,
   QUICK_CONNECT_API_VERSION,
   SAVE_TO_VAULT_API_VERSION,
@@ -82,6 +83,8 @@ import type {
   InventoryFileError,
 } from "./backend/types";
 import { ErrorScreen } from "./ErrorScreen";
+import { FirstRun } from "./inventory/FirstRun";
+import { isPlainFile, keptAs, nothingPending } from "./inventory/store";
 import { Finder } from "./finder/Finder";
 import type { FinderContext, FinderItem } from "./finder/sources";
 import { CheckPanel, type CheckState } from "./errors/CheckPanel";
@@ -143,6 +146,7 @@ import { SavePanel } from "./quick/SavePanel";
 import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
+import { SessionList } from "./plugins/sessionList";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
 import {
   allRows,
@@ -382,6 +386,8 @@ interface WorkspaceProps extends AppProps {
 /** What `:integrate` says (ticket 121). */
 const INTEGRATE_SAYS: Record<IntegrateResult, (label: string) => string> = {
   on: (t) => `Shell integration is on in ${t}: its prompts are marked.`,
+  "on-kept": (t) =>
+    `Shell integration is on in ${t}: its prompts are marked. You'd typed in it already, so if it's zsh the hook line stays in its history (:help shell-hooks).`,
   "no-marks": (t) =>
     `Sent ${t}'s shell the hook line, but no marked prompt came back: its shell or prompt framework doesn't take it (:help shell-hooks).`,
   marked: (t) => `${t}'s shell marks its prompts already: nothing to send.`,
@@ -1000,7 +1006,14 @@ function Workspace({
   // the whole list goes to the core on start and whenever it changes, before the events that
   // changed it, for `roster.sessions.list()` (ticket 96, decision Q127).
   const openOrder = useRef(new Map<number, string | null>());
-  const sentOpen = useRef<string | null>(null);
+  // A folder change waits a little (SessionList: review of #426, L3); an open or an end goes at once.
+  const pluginsRef = useRef(plugins);
+  pluginsRef.current = plugins;
+  const sessionList = useRef<SessionList | null>(null);
+  sessionList.current ??= new SessionList((open) =>
+    pluginsRef.current.sessions(open),
+  );
+  useEffect(() => () => sessionList.current?.stop(), []);
   useEffect(() => {
     const before = seenTabs.current;
     const now = new Map<
@@ -1047,12 +1060,16 @@ function Workspace({
         ]);
     }
     seenTabs.current = now;
-    const open = [...order].map(([session, host]) => ({ session, host }));
-    const text = JSON.stringify(open);
-    if (text !== sentOpen.current) {
-      sentOpen.current = text;
-      plugins.sessions(open);
-    }
+    // With the folder each one's shell last said (OSC 7, #242): the core gives it to terminal.read's
+    // Plugins only (Q185), and a `cd` sends the list again.
+    const cwds = new Map(sessions.tabs.map((t) => [t.id, t.cwd ?? null]));
+    sessionList.current?.update(
+      [...order].map(([session, host]) => ({
+        session,
+        host,
+        cwd: cwds.get(session) ?? null,
+      })),
+    );
     for (const [toPlugins, toTutor] of events) {
       toPlugins();
       toTutor();
@@ -1089,6 +1106,10 @@ function Workspace({
   const configuresVault =
     connInfo !== null &&
     connInfo.inventory.api_version >= VAULT_CONFIG_API_VERSION;
+  /** `vault.item_fields` (API 29): the add form's "Fill from this item" (#437). */
+  const readsItemFields =
+    connInfo !== null &&
+    connInfo.inventory.api_version >= ITEM_FIELDS_API_VERSION;
   const vaultSettingsKey = JSON.stringify(vaultSettingsOf(config?.vault));
   const [vaultConfiguredFor, setVaultConfiguredFor] =
     useState<BackendInfo | null>(null);
@@ -1430,6 +1451,9 @@ function Workspace({
   );
   const canEdit = apiVersion >= EDIT_API_VERSION;
   const canPublish = apiVersion >= PUBLISH_API_VERSION;
+  // T212: a plain roster.yml saves every edit straight away; a team repo's are Pending changes
+  const plain = isPlainFile(connInfo?.inventory);
+  const kept = keptAs(plain);
   const canAdd = apiVersion >= ADD_API_VERSION;
   const canLive = apiVersion >= LIVE_API_VERSION;
   const canJobs = apiVersion >= JOBS_API_VERSION;
@@ -1766,6 +1790,10 @@ function Workspace({
     ],
   );
   helpView.setContext(() => helpCtx);
+  // Nor over a finder, the picker or the command line opened meanwhile.
+  useEffect(() => {
+    if (overlay !== null) helpView.cancelPending();
+  }, [overlay, helpView]);
   // Where help went, for `:tutor`'s steps: a page opened, Ctrl+O back, Ctrl+I forward.
   useEffect(() => {
     const at = helpAt.at;
@@ -2619,8 +2647,8 @@ function Workspace({
         : `${host} isn't reviewed.`;
       if (h.reviewed === reviewed) return setMessage(already);
       const done = reviewed
-        ? `Marked ${host} reviewed, as a Pending change. It can be opened now.`
-        : `Marked ${host} unreviewed, as a Pending change. It can't be opened until it's reviewed again.`;
+        ? `Marked ${host} reviewed${plain ? kept : `,${kept}`}. It can be opened now.`
+        : `Marked ${host} unreviewed${plain ? kept : `,${kept}`}. It can't be opened until it's reviewed again.`;
       backend.reviewHost(host, reviewed).then(
         (r) => {
           reloadHosts();
@@ -2646,6 +2674,8 @@ function Workspace({
         return setMessage(
           `:changes needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`,
         );
+      if (plain && connInfo)
+        return setMessage(nothingPending(connInfo.inventory));
       if (then === "publish" && !canPublish) {
         return setMessage(
           `:publish needs a newer roster (API version ${PUBLISH_API_VERSION}; this one speaks ${apiVersion})`,
@@ -2783,13 +2813,12 @@ function Workspace({
   }
 
   async function inventoryCall(op: InventoryOp): Promise<Message> {
-    const pendingNote = "as a Pending change";
     switch (op.op) {
       case "remove": {
         const r = await backend.removeHost(op.host);
         return routine(
           `Removed ${r.removed}`,
-          `Removed ${r.removed} from ${r.group} ${pendingNote}. Its vault item, if any, is untouched.`,
+          `Removed ${r.removed} from ${r.group}${kept}. Its vault item, if any, is untouched.`,
           afterChange(r),
         );
       }
@@ -2798,7 +2827,7 @@ function Workspace({
         return r.changed
           ? routine(
               `Renamed ${op.host} to ${op.to}`,
-              `Renamed ${op.host} to ${op.to} ${pendingNote}.`,
+              `Renamed ${op.host} to ${op.to}${kept}.`,
               afterChange(r),
             )
           : `${op.host} already has that name.`;
@@ -2809,12 +2838,12 @@ function Workspace({
         // What it keeps from its old group is worth knowing: said whatever the setting.
         if (r.pinned.length)
           return (
-            `Moved ${op.host} to ${op.group} ${pendingNote}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` +
+            `Moved ${op.host} to ${op.group}${kept}. It keeps its ${r.pinned.join(", ")}, now written on the Host.` +
             butWarnings(afterChange(r))
           );
         return routine(
           `Moved ${op.host} to ${op.group}`,
-          `Moved ${op.host} to ${op.group} ${pendingNote}.`,
+          `Moved ${op.host} to ${op.group}${kept}.`,
           afterChange(r),
         );
       }
@@ -2822,7 +2851,7 @@ function Workspace({
         const r = await backend.newGroup(op.name);
         return routine(
           `Added group ${op.name}`,
-          `Added group ${op.name} ${pendingNote}. Drag Hosts onto it, or + adds one.`,
+          `Added group ${op.name}${kept}. Drag Hosts onto it, or + adds one.`,
           afterChange(r),
         );
       }
@@ -2831,7 +2860,7 @@ function Workspace({
         return r.changed
           ? routine(
               `Renamed group ${op.group} to ${op.to}`,
-              `Renamed group ${op.group} to ${op.to} ${pendingNote}.`,
+              `Renamed group ${op.group} to ${op.to}${kept}.`,
               afterChange(r),
             )
           : `${op.group} already has that name.`;
@@ -2839,11 +2868,11 @@ function Workspace({
       case "group-delete": {
         const r = await backend.deleteGroup(op.group, op.to);
         return r.moved.length
-          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}, ${pendingNote}.` +
+          ? `Deleted group ${op.group}; ${countOf(r.moved.length, "Host")} moved to ${r.to ?? "?"}${plain ? kept : `,${kept}`}.` +
               butWarnings(afterChange(r))
           : routine(
               `Deleted group ${op.group}`,
-              `Deleted group ${op.group} ${pendingNote}.`,
+              `Deleted group ${op.group}${kept}.`,
               afterChange(r),
             );
       }
@@ -2886,6 +2915,8 @@ function Workspace({
 
   function run(line: Line) {
     setMessage("");
+    // A `:help` still waiting for the guides' text never opens over what ran next (T213, #431 F3).
+    helpView.cancelPending();
     const ran = runLine(commands, ctx, line);
     if (ran) {
       const arg = line.trim().split(/\s+/).slice(1).join(" ");
@@ -3022,6 +3053,7 @@ function Workspace({
     sidebarShown,
     quickConnect: quickConnects,
     detailsShown: detailsHost !== undefined,
+    plain,
   };
   const toolbarControls =
     ready && isShown(layout, "toolbar")
@@ -3080,6 +3112,26 @@ function Workspace({
       <div className="screen center">
         <p className="muted starting">Starting the backend…</p>
       </div>,
+    );
+  }
+  if (conn.state === "failed" && conn.problem.kind === "inventory-not-found") {
+    // T212: no Inventory on this Box: the three ways to make one, through serve
+    return frame(
+      <FirstRun
+        problem={conn.problem}
+        create={(params) => backend.createInventory(params)}
+        cancel={() => backend.cancelCreateInventory()}
+        onMade={(made) =>
+          void connect(true).then((ok) => {
+            if (ok)
+              setMessage(
+                `Made ${made.path}, the Inventory ${made.name} now${made.hosts ? ` (${countOf(made.hosts, "Host")})` : ": add Hosts with + on a group, or :discover"}.`,
+              );
+          })
+        }
+        onRetry={() => void connect(true)}
+        copy={copy}
+      />,
     );
   }
   if (conn.state === "failed") {
@@ -3806,7 +3858,7 @@ function Workspace({
                   update.changed
                     ? routine(
                         `Saved ${update.host.name}`,
-                        `Saved ${update.host.name} as a Pending change.`,
+                        `Saved ${update.host.name}${plain ? " to roster.yml" : " as a Pending change"}.`,
                         afterChange(update),
                       )
                     : `Nothing changed on ${update.host.name}.` +
@@ -3847,6 +3899,7 @@ function Workspace({
               actions={{ run, copy }}
               pull={gate}
               chooseTarget={configuresVault}
+              fillFromItem={readsItemFields}
               targetsVersion={targetsVersion}
               onAdded={(r) => {
                 closeAdd();
@@ -3858,10 +3911,10 @@ function Workspace({
                   r.host.reviewed
                     ? routine(
                         `Added ${where}`,
-                        `Added ${where} as a Pending change${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
+                        `Added ${where}${kept}${r.item ? `; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}` : ""}.`,
                         afterChange(r),
                       )
-                    : `Added ${where} unreviewed, as a Pending change. :review ${r.host.name} marks it reviewed.` +
+                    : `Added ${where} unreviewed${plain ? kept : `,${kept}`}. :review ${r.host.name} marks it reviewed.` +
                         butWarnings(afterChange(r)),
                 );
               }}
@@ -3876,6 +3929,7 @@ function Workspace({
             "save",
             <SavePanel
               key={saveTab.id}
+              plain={plain}
               backend={backend}
               hosts={hosts}
               what={
@@ -3905,12 +3959,12 @@ function Workspace({
                   "added" in r
                     ? routine(
                         `Saved ${r.host.name}`,
-                        `Saved ${r.host.name} to ${r.host.group} as a Pending change; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
+                        `Saved ${r.host.name} to ${r.host.group}${kept}; its password is in the vault as ${r.item.name}${savedIn(r.item.target)}.`,
                         afterChange(r),
                       )
                     : routine(
                         `Saved ${r.host.name}'s password`,
-                        `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now, as a Pending change.`,
+                        `Saved ${r.host.name}'s password to the vault as ${r.item.name}${savedIn(r.item.target)}; its Login points at it now${plain ? kept : `,${kept}`}.`,
                         afterChange(r),
                       ),
                 );
@@ -3976,9 +4030,11 @@ function Workspace({
             body={
               <>
                 <code>{confirming.host}</code> leaves group {confirming.group}{" "}
-                in roster.yml, as a Pending change you can discard until
-                it&rsquo;s Published. Its vault item, if it has one, stays in
-                the vault.
+                in roster.yml,{" "}
+                {plain
+                  ? "saved straight away (roster keeps the file as it was in roster.yml.bak)."
+                  : "as a Pending change you can discard until it\u2019s Published."}{" "}
+                Its vault item, if it has one, stays in the vault.
               </>
             }
             action="Remove"
@@ -4277,7 +4333,7 @@ export function servicesLeftOut(list: HostList): string | null {
   if (!first) return null;
   if (all.length === 1) {
     const why = first.message.replace(/^service '[^']*': /, "");
-    return `roster.yml loaded, but left out ${first.host}'s service ${first.service}: ${why} (roster info ${first.host} says how to fix it)`;
+    return `roster.yml loaded, but left out ${first.host}'s service ${first.service}: ${why} (roster hosts ${first.host} says how to fix it)`;
   }
   const names = all.slice(0, 3).map((p) => `${p.host}'s ${p.service}`);
   const more = all.length > 3 ? `, and ${all.length - 3} more` : "";

@@ -73,9 +73,9 @@ def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
           f"- List / filter hosts: `{run} hosts` (e.g. `{run} hosts | grep db-`). "
           f"Health check: `{run} check` (add `--only <name or group>`).",
           f"- The user will often name a box by product, role or description (\"the orion dev box\", "
-          f"\"the core switch\"). Look it up: `{run} hosts --find orion`, then `{run} info <name>`.",
+          f"\"the core switch\"). Look it up: `{run} hosts --find orion`, then `{run} hosts <name>`.",
           f"- **To read roster's data rather than show it** (to pick a Host, parse a check, script something), add "
-          f"`--json`: `{run} hosts --json`, `{run} info <name> --json`, `{run} check <name> --json`. One JSON "
+          f"`--json`: `{run} hosts --json`, `{run} hosts <name> --json`, `{run} check <name> --json`. One JSON "
           "document, Logins as references only; prefer it to parsing the tables.",
           *([f"- **access = left out**: another named Inventory on this Box has a Host by that name, and a plain "
              f"`ssh <name>` reaches that one. Never `ssh` to it; the user makes this Inventory the active one first "
@@ -88,11 +88,13 @@ def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
           "you only see the response. Never ask the user for the login or try to fetch it, and ask before "
           "any request that changes something (POST, PUT, PATCH, DELETE).",
           f"- **Resources** (Wi-Fi networks, accounts, secrets) have no address: they're listed below and in "
-          f"`{run} resources`; `{run} info <name>` shows one. Never run `{run} reveal` yourself. If the user "
-          f"needs a value (e.g. a Wi-Fi password), tell them to run `{run} reveal <name>` in their own shell.", "",
+          f"`{run} hosts --resources`; `{run} hosts <name>` shows one. Never run `{run} vault reveal` (or its old "
+          f"name, `{run} reveal`) yourself. If the user needs a value (e.g. a Wi-Fi password), tell them to run "
+          f"`{run} vault reveal <name>` in their own shell.", "",
           "## Rules",
           "- Never read, print or copy private keys (`~/.ssh/`) and never try to retrieve passwords "
-          "(don't run `bw`, `op` or any other password-manager command yourself).",
+          f"(don't run `bw`, `{run} vault bw` (or `{run} bw`), `op`, `{run} vault op` or any other password-manager command "
+          "yourself).",
           "- If `run` says a password manager is locked or signed out, tell the user what it said; they "
           "unlock it in the shell they start Claude from (e.g. `export BW_SESSION=$(bw unlock --raw)` "
           "or `eval $(op signin)`). Don't try to unlock it yourself.",

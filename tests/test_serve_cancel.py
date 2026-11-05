@@ -186,7 +186,8 @@ def test_a_running_waiting_mesh_run_stops_its_job_when_cancelled(state, monkeypa
 
 
 def test_the_running_cancellable_methods_are_the_waiting_forms_of_jobs():
-    assert rpc.CANCEL_RUNNING == {"host.check", "mesh.plan", "mesh.apply", "mesh.cut"}
+    # and inventory.create's clone (T212, #417 L5): stopped and tidied, nothing kept
+    assert rpc.CANCEL_RUNNING == {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}
     assert not rpc.CANCEL_RUNNING & {m for m, claims in rpc.LOCKS.items() if claims}
 
 

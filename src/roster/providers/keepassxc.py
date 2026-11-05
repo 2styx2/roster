@@ -12,9 +12,9 @@ Checked against keepassxc-cli 2.8.0: prompts go to stderr ("Enter password to un
 the unlock errors (a wrong password would be a bare exit 1)."""
 
 import os
-import shutil
 from pathlib import Path
 
+from ..common import find_program
 from . import (
     PROVIDERS,
     ItemExists,
@@ -87,7 +87,8 @@ def _kp(ctx, command, *options, entry=None, password=None, then="", floor=1):
     if password is None:
         raise VaultLocked(f"{NAME} database is locked - unlock it first")
     key = _path(ctx, "key_file")
-    argv = [TOOL, command, *(["-k", str(key)] if key else []), *options, str(db), *([entry] if entry else [])]
+    # `--` ends the options: a database or entry path starting with '-' is never read as one
+    argv = [TOOL, command, *(["-k", str(key)] if key else []), *options, "--", str(db), *([entry] if entry else [])]
     r = ctx.run(argv, input=f"{password}\n{then}", floor=floor)
     err = _errtext(r)
     if r.returncode != 0 and "Invalid credentials" in err:
@@ -118,12 +119,12 @@ def _ready(ctx):
     if manual_unlock():
         raise VaultLocked(f"{NAME} database is locked - unlock it first")
     if not ctx.interactive:
-        raise SecretError(f"{NAME} database is locked and there's no terminal to ask for its master password")
+        raise VaultLocked(f"{NAME} database is locked and there's no terminal to ask for its master password")
     _unlock(ctx.ask(f"{NAME} master password: "), ctx)
 
 
 def _status(ctx):
-    if not shutil.which(TOOL):
+    if not find_program(TOOL):
         return "missing"
     if not_set_up(ctx):
         return "unauthenticated"
@@ -288,6 +289,18 @@ def _delete(item_id, ctx):
         raise WriteFailed(f"{NAME} didn't delete entry '{item_id}': {_scrub(_errtext(r), ctx.state.get('password'))}")
 
 
+# ---- every entry, never its password (Q191): `ls -R -f`'s paths, and nothing more. Not `show -a UserName -a URL`:
+# keepassxc-cli resolves placeholders in what it prints for -a ({PASSWORD}, {REF:P@I:...}), so a URL or user name
+# written that way would print a password (review of #439, M2). The walk asks for the address and user. An entry whose
+# path starts with '-' is left out, as a name like that is never handed to a vault CLI.
+
+def _items(ctx, mapped):
+    _ready(ctx)
+    return [{"id": path, "name": path.rsplit("/", 1)[-1], "keys": [path, path.rsplit("/", 1)[-1]], "uris": [],
+             "username": None} for path in _entries(ctx) if not path.startswith("-")]
+
+
+PROVIDERS["kp"].update(items=_items)
 PROVIDERS["kp"].update(unlock=_unlock, lock=_lock, status=_status, not_logged_in=not_set_up,
                        login_help=f"{NAME} has no sign-in, only a master password: set providers: kp: database: in "
                                   "roster.yml (or vault.kp.database in the app's init.lua), then unlock",

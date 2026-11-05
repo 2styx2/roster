@@ -296,6 +296,7 @@ impl World {
             ops: Vec::new(),
             error: None,
             disabled: None,
+            listens: None,
         };
         for r in replies {
             ok(&r);
@@ -391,7 +392,7 @@ fn it_installs_from_its_folder_asks_for_the_discover_methods_and_flags_the_scan(
     let w = World::new("install", json!({}));
     let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 5);
+    assert_eq!(manifest.api, 6);
     let asked: Vec<String> = manifest.permissions.iter().map(Permission::to_string).collect();
     assert_eq!(asked, ALL);
     // The install prompt flags the two that act: the scan, and adding to the Inventory.

@@ -18,6 +18,8 @@ export interface ToolbarContext {
   quickConnect: boolean;
   /** The Host details panel is on screen (ticket 18). */
   detailsShown?: boolean;
+  /** roster.yml is a plain file (T212): every edit is saved, so there are no Pending changes to show. */
+  plain?: boolean;
 }
 
 export type ToolbarIcon = "find" | "quick" | "add" | "changes" | "publish" | "cmdline" | "keys" | "help" | "lock" | "mode" | "sidebar" | "details" | "map";
@@ -87,8 +89,9 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     icon: "changes",
     command: "changes",
     byDefault: true,
-    // Only while there's something to review: an empty "Changes" is noise (Q209).
-    when: (c) => c.pendingCount > 0,
+    // Only while there's something to review: an empty "Changes" is noise (Q209);
+    // a plain roster.yml has no Pending changes at all (T212).
+    when: (c) => !c.plain && c.pendingCount > 0,
     count: (c) => (c.pendingCount > 0 ? c.pendingCount : null),
   }),
   control({

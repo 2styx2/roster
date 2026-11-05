@@ -83,7 +83,7 @@ def test_every_cli_command_is_in_cli_reference_md():
 
 
 SYNC = ROOT / "app/scripts/app-sync.sh"
-APP_IMPORT = re.compile(r"""from\s+["']((?:\.\./)+[^"'?]+)(?:\?raw)?["']""")
+APP_IMPORT = re.compile(r"""from\s+["']((?:\.\./)+[^"'?]+)(?:\?[^"']*)?["']""")
 
 
 def sync_filters() -> list[str]:

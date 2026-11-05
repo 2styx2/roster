@@ -25,7 +25,7 @@ def test_inventory_info(serve, isolated):
     assert info["path"] == str(example.resolve())
     assert info["box"] and info["host_count"] == 5
     assert {"bw", "op", "env", "prompt"} <= set(info["providers"])
-    assert info["roster_version"] == __version__ and info["api_version"] == 27
+    assert info["roster_version"] == __version__ and info["api_version"] == 29
     assert s.close() == (0, "", "")
 
 
@@ -102,11 +102,11 @@ def test_host_get(serve, write_config):
 
 
 def test_host_get_has_everything_roster_info_shows(serve, write_config, capsys):
-    """The app's Host details (ticket 18) draw `roster info HOST` from host.get alone: every field and every
+    """The app's Host details (ticket 18) draw `roster hosts HOST` from host.get alone: every field and every
     service's port, url and Login (the vault reference, never a value) is in the result."""
     write_config(INVENTORY)
     esx = serve().call("host.get", {"name": "esx"})["result"]
-    assert main(["info", "esx"]) == 0
+    assert main(["hosts", "esx"]) == 0
     info = capsys.readouterr().out
     assert f"{esx['ssh']['user']}@{esx['ip']}:{esx['ssh']['port']}" in info
     assert f"password: roster run {esx['name']} -- CMD" in info and esx["reviewed"] and not esx["enroll"]
@@ -149,8 +149,9 @@ def test_an_inventory_that_doesnt_load_is_an_error_not_an_exit(serve, write_conf
     err = s.call("inventory.info")["error"]
     assert err["code"] == 1
     assert err["message"] == "host 'box' has no user (set it on the host, its group, or defaults)"
-    assert err["data"] == {"path": str(path), "roster_version": __version__, "api_version": 27,
-                           "fix": f"fix {path}, or run `roster init` if there's none yet"}
+    assert err["data"] == {"path": str(path), "roster_version": __version__, "api_version": 29,
+                           "fix": f"fix {path}, or make one if there's none yet: `roster init --blank` "
+                                  "(`roster init --help`: the others)"}
     assert s.call("hosts.list")["error"]["code"] == 1
     assert s.call("host.get", {"name": "box"})["error"]["code"] == 1
     assert s.close() == (0, "", "")

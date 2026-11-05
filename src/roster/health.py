@@ -5,10 +5,9 @@ vault CLI's own status and the infra repo's git as this Box last saw it. Nothing
 fetches; `roster check HOST` is the one that connects. No check returns a secret (Logins are counted, never read)."""
 
 import platform
-import shutil
 
-from . import __version__, changes, providers
-from .common import known_hosts_file, ssh_config_file
+from . import __version__, changes, providers, store
+from .common import find_program, known_hosts_file, ssh_config_file
 from .errors import Problem
 from .providers import PROVIDERS
 from .sshops import hk_name, known_names, ssh_config_hosts
@@ -17,6 +16,14 @@ from .sshops import hk_name, known_names, ssh_config_hosts
 SECTIONS = {"roster": "roster", "inventory": "Inventory", "ssh": "ssh", "vault": "Vault", "askpass": "askpass",
             "repo": "Infra repo"}
 PLACEHOLDER_USERS = ("", "CHANGE-ME")
+# Names many machines carry out of the box (an OS image's default hostname): a Box named one of them likely shares
+# its name with another Box, and Boxes with one name are one owner (#384). Lower case: compared with the name
+# lowered (config.py keeps its case).
+COMMON_BOX_NAMES = frozenset({
+    "localhost", "localdomain", "none", "-none-", "default", "ubuntu", "ubuntu-server", "debian", "raspberrypi",
+    "raspberry", "dietpi", "kali", "fedora", "centos", "rocky", "rockylinux", "almalinux", "archlinux", "alpine",
+    "nixos", "opensuse", "manjaro", "linuxmint", "mint", "pop-os", "vagrant", "osmc", "orangepi", "libreelec",
+    "macbook", "macbook-pro", "macbook-air", "imac", "imac-pro", "mac-mini", "mac-pro", "mac-studio"})
 SHOWN = 5                   # names listed before "and N more"
 
 
@@ -130,7 +137,7 @@ def named(cfg):
 
 def ssh(cfg):
     out = []
-    client = shutil.which("ssh")
+    client = find_program("ssh")
     if client:
         out.append(check("ssh", "ok", f"ssh found: {client}"))
     else:
@@ -152,6 +159,14 @@ def ssh(cfg):
                                             f"{names(missing)}", "run `roster sync`", "E2"))
         else:
             out.append(check("ssh", "ok", f"roster's ssh config has every Host: {ours}"))
+    if str(cfg["box"]).lower() in COMMON_BOX_NAMES:
+        out.append(check("ssh", "warn", f"this Box's name, {cfg['box']} (box_name:, or the hostname), is a common "
+                                        "default, so another Box may have it too: Boxes with the same name are one "
+                                        "owner, so each one's setup and revoke take the other's key, and each one's "
+                                        "Mesh the other's entries, off the Hosts they share",
+                         "set box_name: in roster.yml to a name no other Box uses, then run `roster setup` (on a Box "
+                         "already set up, it re-tags this Box's key under the new name where it works; a same-named "
+                         "Box whose key was taken runs `roster setup` again)", "E222"))
     if any(h["enroll"] for h in hosts):
         if cfg["key"].exists():
             out.append(check("ssh", "ok", f"this Box's key: {cfg['key']}"))
@@ -198,21 +213,34 @@ def vault(cfg):
     uses = {n: c for n, c in provider_uses(cfg).items() if n != "prompt"}     # prompt: typed, no vault to check
     if not uses:
         return [check("vault", "ok", "no Host Login uses a vault")]
-    return [provider_check(name, n) for name, n in sorted(uses.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return [provider_check(name, n) for name, n in sorted(uses.items(), key=lambda kv: (-kv[1], kv[0]))] + \
+        not_in_inventory(cfg)
+
+
+def not_in_inventory(cfg):
+    """The vault items no Login in roster.yml names that were new at the last `roster add --from-vault` (T221, Q191):
+    that run's count, never a vault call here."""
+    from .fromvault import cached_count
+    cached = cached_count(cfg["path"])
+    if not cached or not cached[0]:
+        return []
+    n, when = cached
+    return [check("vault", "ok", f"{count(n, 'vault item')} {'isn' if n == 1 else 'aren'}'t in roster.yml; roster add --from-vault"
+                                 + (f" (as of {str(when)[:16].replace('T', ' ')} UTC)" if when else ""))]
 
 
 def provider_check(name, n):
     used = f"{count(n, 'Login')}"
     if name not in PROVIDERS:
         return check("vault", "error", f"'{name}:' is used by {used} but isn't a provider on this Box",
-                     "see `roster providers` for the ones there are, then fix auth: in roster.yml", "E5")
+                     "see `roster vault status` for the ones there are, then fix auth: in roster.yml", "E5")
     tool = PROVIDERS[name].get("tool") or ""
     try:
         status, account = providers.vault_account(name)
     except providers.SecretError as e:
         return check("vault", "error", f"{name} ({used}): {e}", None, "E6")
     who = f" as {account['email']}" if account and account.get("email") else ""
-    if status == "missing" or (status == "unsupported" and tool and not shutil.which(tool)):
+    if status == "missing" or (status == "unsupported" and tool and not find_program(tool)):
         return check("vault", "error", f"{name} ({used}): {providers.not_installed(name)}",
                      f"install `{tool or name}`", "E6")
     if status == "unauthenticated":
@@ -230,9 +258,13 @@ def provider_check(name, n):
 # ---------------------------------------------------------------- the infra repo
 
 def repo(path):
-    """roster.yml's git repo as this Box last saw it (no fetch): clean, Pending changes, or other changes."""
+    """How roster.yml is kept (store.py, T212): a plain file is a note, no warning; in a repo, its git as this Box last
+    saw it (no fetch): clean, Pending changes, or other changes."""
     if path is None:
         return []
+    kept = store.at(path, for_show=True)
+    if kept.kind == store.FILE:
+        return [check("repo", "ok", kept.note)]
     try:
         r = changes.Repo(path)
     except Problem as e:

@@ -10,7 +10,17 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .common import KEY_TAG, LEGACY_KEY_TAGS, NAME_RE, SSH_UNSAFE, die, oneline, use_inventory, user_config_dir
+from .common import (
+    KEY_TAG,
+    KEY_TRAIL,
+    LEGACY_KEY_TAGS,
+    NAME_RE,
+    SSH_UNSAFE,
+    die,
+    oneline,
+    use_inventory,
+    user_config_dir,
+)
 from .providers import NO_PASSWORD
 from .resources import load_resources
 
@@ -59,15 +69,29 @@ def locate_config(arg: Any, inv: str | None = None) -> Path:
         return active
     if (user_config_dir() / "roster.yml").exists():
         return user_config_dir() / "roster.yml"
-    die("no roster.yml found here or in ~/.config/roster/ - run `roster init`, "
-        "or pass -c PATH / set ROSTER_CONFIG")
+    die("no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, or `roster init "
+        "--inventory file:PATH|repo:URL|ssh-config`), or pass -c PATH / set ROSTER_CONFIG")
+
+
+TOP_KEYS = {"bitwarden", "box_name", "claude_inline_limit", "defaults", "groups", "key_path", "links", "rate_limited",
+            "provider_dirs", "providers", "resources", "web_login_names", "workers"}
+
+
+def blank_shape(raw):
+    """No Hosts is a valid Inventory only shaped as `roster init --blank` writes it (T212, #409 C2): `groups:`
+    there, each group with a `hosts:` key (empty), and no top-level key roster doesn't know. So an empty file, a
+    typo'd `grups:` or `host:`, or another YAML file still doesn't load, and every Box keeps its ssh config."""
+    groups = raw.get("groups")
+    if not isinstance(groups, dict) or set(raw) - TOP_KEYS:
+        return False
+    return all(isinstance(g, dict) and "hosts" in g for g in groups.values())
 
 
 def load_inventory(path):
     """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
     path = Path(path).expanduser().resolve()
     if not path.exists():
-        die(f"{path} not found - run `roster init` to create one")
+        die(f"{path} not found - make one: roster -c {path} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
     return parse_inventory(path.read_text(), path)
 
 
@@ -94,9 +118,12 @@ def parse_inventory(text, path):
 
     from .models import Inventory, problem
     try:
-        raw = yaml.safe_load(text) or {}
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as e:
         die(f"{path} is not valid YAML:\n{e}")
+    if raw is not None and not isinstance(raw, dict):
+        die(f"{path} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
+    raw = raw or {}
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
     hosts, groups, mesh_dirs, seen_as, sudo_refs = {}, {}, {}, {}, {}
@@ -159,15 +186,16 @@ def parse_inventory(text, path):
                 m[k] = oneline(m.get(k))
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
             hosts[hname] = m
-    if not hosts:
+    if not hosts and not blank_shape(raw):
         die(f"{path} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
     key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
         die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
     key = Path(os.path.expanduser(key_path))
-    # matches this box's key line in authorized_keys, including tags from older versions
-    tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}$"
+    # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
+    # or spaces (T226, #435: sshd still reads it)
+    tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}{KEY_TRAIL}"
     try:
         return Inventory.model_validate(
             {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
@@ -175,7 +203,8 @@ def parse_inventory(text, path):
              "inline_limit": raw.get("claude_inline_limit") or 60, "hosts": hosts, "groups": groups,
              "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
              "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
-             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or [])})
+             "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or []),
+             "rate_limited": rate_limited(raw.get("rate_limited"))})
     except ValidationError as e:
         die(f"{path}: {problem(e)}")
 
@@ -196,6 +225,35 @@ def host_os(hname, v):
 def is_windows(h):
     """Does roster treat Host H (a Host dict) as Windows? Only `os: windows` says so: type: is a free label."""
     return h.get("os") == "windows"
+
+
+def rate_limited(v):
+    """`rate_limited:` (T191, decision Q180): the networks whose SSH rate limiter stops answering after many
+    connections, as the team knows them; each a network (`10.0.0.0/8`) or one address, IPv4 or IPv6. Empty (the
+    default) when nobody listed any. Returns them as text, one address as a /32 or /128."""
+    if v is None:
+        return []
+    if not isinstance(v, list):
+        die("rate_limited: must be a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]")
+    nets = []
+    for entry in v:
+        text = str(entry).strip()
+        try:
+            nets.append(str(ipaddress.ip_network(text)))
+            continue
+        except ValueError:
+            pass
+        why = f"rate_limited: {oneline(entry)!r} isn't a network or an address (10.0.0.0/8, 192.0.2.7)"
+        if isinstance(entry, int) and not isinstance(entry, bool):
+            why += "; quote an IPv6 one ('2001:db8::/32'): unquoted, YAML can read it as a number"
+        else:
+            try:
+                net = ipaddress.ip_network(text, strict=False)
+                why += f"; a network's address has no host bits set ({net}, not {text})"
+            except ValueError:
+                pass
+        die(why)
+    return nets
 
 
 # ---------------------------------------------------------------- the Mesh's links (decision Q63)

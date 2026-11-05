@@ -1,6 +1,6 @@
 [project]
 name = "roster"
-version = "0.5.0"
+version = "0.6.0"
 description = "Give a box - and Claude running on it - access to every host on your network, from one YAML file."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,7 +36,7 @@ build-backend = "hatchling.build"
 packages = ["src/roster"]
 
 # roster(1) also lands in PREFIX/share/man/man1 when pip or uv installs the wheel into a prefix, next to
-# PREFIX/bin/roster, so man finds it. `uv tool install` keeps it in the tool's venv: `roster man --install`.
+# PREFIX/bin/roster, so man finds it. `uv tool install` keeps it in the tool's venv: `roster help --man --install`.
 [tool.hatch.build.targets.wheel.shared-data]
 "src/roster/roster.1" = "share/man/man1/roster.1"
 

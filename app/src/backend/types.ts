@@ -81,6 +81,20 @@ export interface InventoryInfo {
   providers: string[];
   roster_version: string;
   api_version: number;
+  /** How roster.yml is kept (serve API 28, T212): absent from an older serve, which is a team repo's
+   * Pending changes as always. */
+  store?: InventoryStore;
+}
+
+/** `inventory.info`'s `store` (serve API 28, T212): `repo` when roster.yml is committed in a git repo
+ * with a remote (edits are Pending changes until Publish), `file` for a plain file (every edit is
+ * saved straight to it, and there's nothing to publish). roster decides per file, each time. */
+export interface InventoryStore {
+  kind: "repo" | "file";
+  /** Which, in a sentence, as `roster check --box` says it. */
+  note: string;
+  /** The git work tree it's in, or null. */
+  repo: string | null;
 }
 
 export interface BackendInfo {
@@ -91,7 +105,14 @@ export interface BackendInfo {
   inventory: InventoryInfo;
 }
 
-export type BackendProblemKind = "no-wsl" | "roster-missing" | "roster-too-old" | "inventory-not-found" | "failed";
+export type BackendProblemKind =
+  | "no-wsl"
+  | "roster-missing"
+  | "roster-too-old"
+  | "inventory-not-found"
+  /** A roster.yml was found (or named) but doesn't load: roster's words, never "make one" (#417 M1). */
+  | "inventory-invalid"
+  | "failed";
 
 /** Why the Backend couldn't start: shown as is on the error screen. */
 export interface BackendProblem {
@@ -256,7 +277,10 @@ export interface HostChange {
 /** `changes.diff`: roster.yml's uncommitted diff in the infra repo. */
 export interface PendingChanges {
   path: string;
-  repo: string;
+  /** The infra repo's top folder (null for a plain file, serve API 28). */
+  repo: string | null;
+  /** `file` for a plain file, whose edits are saved already: no diff, count 0 (serve API 28). */
+  kind?: "repo" | "file";
   /** git's unified diff of roster.yml against the last commit ("" when there are none). */
   diff: string;
   hosts: HostChange[];
@@ -453,6 +477,20 @@ export interface SaveTargets {
   problem: { code: number; message: string; fix: string } | null;
 }
 
+/** The first `api_version` with `vault.item_fields` (T220): the add-Host form's "Fill from this item" (#437). */
+export const ITEM_FIELDS_API_VERSION = 29;
+
+/** `vault.item_fields`: what a vault item says about its Host, never its password. A field the item
+ * doesn't have is left out; `note` says why its URI gave no address. */
+export interface VaultItemFields {
+  provider: string;
+  item: string;
+  address?: string;
+  port?: number;
+  user?: string;
+  note?: string;
+}
+
 /** roster's codes for where to save (ticket 35). */
 export const SaveToError = {
   unknownTarget: 64,
@@ -497,6 +535,40 @@ export const CHECK_JOBS_API_VERSION = 21;
 
 /** serve API 27 (ticket 115): named Inventories, `inventories.list` and `inventories.use`. */
 export const INVENTORIES_API_VERSION = 27;
+
+/** serve API 28 (T212): `inventory.info`'s `store` (a plain file or a team repo), and
+ * `inventory.create`, the first-run dialog's call when there's no Inventory. */
+export const STORE_API_VERSION = 28;
+
+/** The first-run dialog's three ways (T212): a blank roster.yml, a copy of one, or a clone. */
+export type NewInventoryHow = "blank" | "file" | "repo";
+
+/** `inventory.create`'s params: where roster.yml goes (a full path or `~/...`), and for `file` the
+ * roster.yml to copy, for `repo` the git URL. */
+export interface NewInventoryParams {
+  how: NewInventoryHow;
+  folder: string;
+  source?: string;
+  name?: string;
+}
+
+/** What `inventory.create` made: the new roster.yml, named and made the active Inventory, so the
+ * serve the app starts next finds it. */
+export interface NewInventory {
+  path: string;
+  name: string;
+  how: NewInventoryHow;
+  hosts: number;
+  restart: true;
+}
+
+/** `inventory.create`'s refusals (errors.md rows 230-232): one there already, a file that isn't a
+ * roster.yml, a clone that failed. */
+export const NewInventoryError = {
+  there: 170,
+  notAnInventory: 171,
+  cloneFailed: 172,
+} as const;
 
 /** One named Inventory (`inventories.list`): its name, its `roster.yml`, whether it's the active
  * one, and whether its file is there. */
@@ -905,6 +977,9 @@ export interface Backend {
   /** `vault.targets` (API 10): where "Save to vault" can put an item, and the default. Needs the
    * vault unlocked (14). */
   saveTargets(): Promise<SaveTargets>;
+  /** `vault.item_fields` (API 29): a vault item's address, SSH port and user, never its password.
+   * Rejects with BackendCallError (14 locked, 32 no such item, 33 several, 186 a provider that can't). */
+  vaultItemFields(item: string, provider?: string): Promise<VaultItemFields>;
   /** Start signing the vault CLI in (`vault.login`). Rejects with BackendCallError (SignInError
    * and VaultError codes); `data.step` says where a sign-in carries on after a failure. */
   signIn(start: SignInStart): Promise<SignInStep>;
@@ -1006,6 +1081,13 @@ export interface Backend {
    * its own; the app locks the vault first and restarts serve after. Rejects with BackendCallError
    * (140, 143). */
   useInventory(name: string): Promise<InventoryUsed>;
+  /** `inventory.create` (serve API 28, T212): with no Inventory, a new one made by serve (ADR 0001),
+   * on a serve started for this one call, since `connect()` can't start without one. Connect again
+   * (with restart) after. Rejects with BackendCallError (170-172; -32601 from an older roster). */
+  createInventory(params: NewInventoryParams): Promise<NewInventory>;
+  /** The first-run dialog's Cancel (#417 L5): the serve making it stops, and `createInventory`
+   * rejects with code 5 (nothing was kept). False when nothing was under way. */
+  cancelCreateInventory(): Promise<boolean>;
   /** `host.scan_key`: the host key an address offers, for the user to confirm before a first login. */
   scanKey(address: string, port: number): Promise<ScannedKey>;
   /** `host.scan_key {host}`: the key a Host offers, for the question before a Session to a Host
@@ -1059,8 +1141,8 @@ export interface Backend {
   onPluginReply(onReply: (reply: PluginReply) => void): () => void;
   /** `:tutor`'s demo (ticket 66, decision Q123): a Plugin host of its own, beside this one, over
    * the demo Inventory's `hosts`. Its Plugins run with the grants they have here, but roster serve
-   * answers only `hosts.list` and `host.get` from `hosts` (any other method is refused), no
-   * request reaches the network, and each Plugin's files are a throwaway folder, empty at the
+   * answers only `hosts.list` and `host.get` from `hosts`, and `mesh.status` with a made-up Mesh
+   * (any other method is refused), no request reaches the network, and each Plugin's files are a throwaway folder, empty at the
    * start. `close` stops them all and throws the folder away. Absent: the demo has only its own
    * built-in Plugins. */
   demoPlugins?(hosts: HostList): Promise<DemoPluginHost>;
@@ -1114,7 +1196,7 @@ export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "p
 /** The words a Plugin on the demo gets for a serve method the demo has no stand-in for (errors.md
  * row 135; the core's plugin/demo.rs says the same). */
 export function notOnDemo(method: string): string {
-  return `${method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get`;
+  return `${method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status`;
 }
 
 /** A newer commit, shown before it's applied. */
@@ -1191,6 +1273,9 @@ export interface PluginReply {
   ops: unknown[];
   error: PluginErrorInfo | null;
   disabled: string | null;
+  /** The events the Plugin listens for now, when that's news (always at load; then only after a
+   * call, event or answer that changed it; null or absent otherwise): #223, decision Q185. */
+  listens?: PluginEventName[] | null;
 }
 
 /** The events a Plugin can listen for (roster-core's plugin::EVENTS). */
@@ -1209,6 +1294,8 @@ export const PLUGIN_EVENTS = [
 export interface OpenSession {
   session: number;
   host: string | null;
+  /** The folder its shell last said it's in (OSC 7, osc7.ts); null until it says one (Q185). */
+  cwd?: string | null;
 }
 
 export type PluginEventName = (typeof PLUGIN_EVENTS)[number];

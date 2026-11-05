@@ -1,11 +1,15 @@
 // `:help TOPIC /TEXT`, `:helpgrep` and the outline (ticket 43), on HelpView and the finders alone.
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { defaultConfig } from "../config/fixture";
 import type { FinderContext } from "../finder/sources";
 import { defaultOptions, keymapOf } from "../keymap";
 import { builtinRegistries } from "../registries";
 import { helpgrepFinder, HelpView, outlineFinder } from "./command";
 import { helpContext } from "./pages";
+import { helpText } from "./text";
+
+// The guides' text is a chunk the app loads on the first :help (T213); these read it.
+beforeAll(() => helpText.load());
 
 function view(): HelpView {
   const r = builtinRegistries();

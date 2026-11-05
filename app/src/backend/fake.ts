@@ -12,6 +12,7 @@ import {
   type BackendInfo,
   type Inventories,
   InventoriesError,
+  NewInventoryError,
   type BackendProblem,
   type BoxCheck,
   BOX_CHECK_API_VERSION,
@@ -49,6 +50,8 @@ import {
   type VaultStatusWord,
   VaultError,
   VAULT_CONFIG_API_VERSION,
+  ITEM_FIELDS_API_VERSION,
+  type VaultItemFields,
   type VaultSettings,
   type SaveTarget,
   type SaveTargets,
@@ -163,6 +166,12 @@ export interface FakeScenario {
   boxChecks?: HealthCheck[];
   /** `inventory.info`'s api_version (default 2; editing needs 5). */
   apiVersion?: number;
+  /** How roster.yml is kept (T212, API 28): `file` saves every edit straight to it, so nothing is
+   * ever pending; `repo` (the default) is a team repo's Pending changes. Only sent from API 28. */
+  store?: "repo" | "file";
+  /** The first-run dialog's `inventory.create` (T212): `old` answers as a roster before API 28 does
+   * (unknown method). Otherwise it makes one, and the next connect() starts. */
+  firstRun?: "old" | "name-taken";
   /** Named Inventories (ticket 115, API 27): `inventories.list`'s, the active one, and the file an
    * earlier step of roster's lookup finds first (`$ROSTER_CONFIG` or `./roster.yml`), if any. Each
    * (re)start "detects" as the app's probe does: `override` if set, else the active one. A named
@@ -190,6 +199,9 @@ export interface FakeScenario {
   quickBoxes?: Record<string, { changesOnConnect?: boolean; unreachable?: boolean; hostname?: string }>;
   /** Vault item names already there ("Save to vault" refuses them: 60). */
   vaultItems?: string[];
+  /** #437 (API 29): what `vault.item_fields` says per item name (never a password), or the error it
+   * answers. An item not listed is 32. */
+  itemFields?: Record<string, Omit<VaultItemFields, "provider" | "item"> | { code: number; message: string }>;
   /** Ticket 11: per address, what `host.scan_key` answers (default: an unrecorded ed25519 key). */
   scanKeys?: Record<string, Partial<ScannedKey>>;
   /** Per new Host name: what `host.add`'s test login answers (default: ok when the typed password
@@ -491,6 +503,18 @@ export const fixtures: Record<string, FakeScenario> = {
   publish: { hosts: makeHosts(12), apiVersion: 7 },
   /** Ticket 11: a roster that can add Hosts (api 6). The new Host's password is FAKE_HOST_PASSWORD. */
   add: { hosts: makeHosts(12), apiVersion: 6 },
+  /** #437: today's add form (API 29): "Fill from this item" reads a vault item's address, port and
+   * user (`vault.item_fields`), and a Host at another Host's address and port is warned about. */
+  "add-vault": {
+    hosts: makeHosts(12),
+    apiVersion: 29,
+    itemFields: {
+      "nas-01 ssh": { address: "10.19.9.50", port: 2222, user: "root" },
+      "old box ssh": { address: "10.19.1.2", port: 22, user: "admin" },
+      "nas-01 web": { note: "its URI isn't a network address (androidapp:), so it gives no address" },
+      "printer ssh": { code: 186, message: "op can't give an item's address and user without roster reading its password" },
+    },
+  },
   /** Issue #78: today's roster (api 9), which can also un-review a Host. */
   review: { hosts: makeHosts(12), apiVersion: 9 },
   /** Two Pending changes already made on this Box. */
@@ -582,9 +606,40 @@ export const fixtures: Record<string, FakeScenario> = {
     startProblem: problem(
       "inventory-not-found",
       "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
-      "Clone the infra repo to ~/infra (or set ROSTER_CONFIG in ~/.profile), then retry.",
+      "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
     ),
   },
+  /** T212: the same, from a roster before serve API 28: the first-run dialog can't make one. */
+  "inventory-missing-old": {
+    hosts: makeHosts(0),
+    firstRun: "old",
+    startProblem: problem(
+      "inventory-not-found",
+      "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
+      "Make one: `roster init --blank` in a terminal (or `roster init --inventory repo:URL` for your team's repo), or set ROSTER_CONFIG in ~/.profile; then Retry.",
+    ),
+  },
+  /** #417 M1: a roster.yml that's there but doesn't load: the error screen, never Start your Inventory. */
+  "inventory-broken": {
+    hosts: makeHosts(0),
+    startProblem: problem(
+      "inventory-invalid",
+      "roster couldn't load the Inventory: ~/infra/roster.yml is not valid YAML: mapping values are not allowed here (line 3)",
+      "fix ~/infra/roster.yml at line 3, or run `roster init --blank` if there's none yet, then Retry.",
+    ),
+  },
+  /** #417 L4: the folder's name is a named Inventory's already. */
+  "inventory-missing-name-taken": {
+    hosts: makeHosts(0),
+    firstRun: "name-taken",
+    startProblem: problem(
+      "inventory-not-found",
+      "roster couldn't load the Inventory: no roster.yml found here or in ~/.config/roster/",
+      "Make one: `roster init --blank` in a terminal, then Retry.",
+    ),
+  },
+  /** T212: roster.yml is a plain file (serve API 28): every edit saved straight to it, nothing to publish. */
+  "plain-file": { hosts: makeHosts(12), apiVersion: 28, store: "file", info: { path: "~/infra/roster.yml" } },
   locked: { hosts: makeHosts(12) },
   "not-logged-in": { hosts: makeHosts(12), vault: { status: "not-logged-in" } },
   "missing-cli": { hosts: makeHosts(12), vault: { status: "missing-cli" } },
@@ -736,11 +791,50 @@ function pluginServe(scenario: FakeScenario): FakeServe | undefined {
   };
 }
 
-/** roster serve as `:tutor`'s demo has it (plugin/demo.rs in the core): its Hosts, and a refusal
- * for every other method. */
-function demoServe(demo: HostList): FakeServe {
+/** The demo's Mesh, fixed and made up, as plugin/demo.rs has it (#233): the lab's demo-01 to
+ * demo-03 meshed, demo-01 reaching demo-05 too, which didn't answer the last apply; the switch
+ * demo-04 kept out. */
+const DEMO_MESHED = ["demo-01", "demo-02", "demo-03"];
+const DEMO_LINKS: [string, string][] = [["demo-01", "demo-05"]];
+
+/** `mesh.status` on the demo, in real serve's shape: plain, `grouped` (API 19) or `brief` (API 17). */
+function demoMeshStatus(params: Record<string, unknown>): Record<string, unknown> {
+  const flag = (name: string) => {
+    const v = params[name];
+    if (v === undefined || v === null) return false;
+    if (typeof v !== "boolean") throw new BackendCallError(`params.${name} must be true or false`, -32602);
+    return v;
+  };
+  const grouped = flag("grouped");
+  const brief = flag("brief");
+  if (grouped && brief) throw new BackendCallError("params.grouped and params.brief don't go together", -32602);
+  const link = ([from, to]: [string, string]) => ({ from, to, kind: "key" });
+  const pairs = DEMO_MESHED.flatMap((a) => DEMO_MESHED.filter((b) => b !== a).map((b): [string, string] => [a, b]));
+  const links = [...pairs, ...DEMO_LINKS];
+  const count = (names: string[]) => names.reduce<Record<string, number>>((n, x) => ({ ...n, [x]: (n[x] ?? 0) + 1 }), {});
+  const out: Record<string, unknown> = {
+    links: links.map(link),
+    excluded: { "demo-04": "mesh: false" },
+    reach: count(links.map(([from]) => from)),
+    members: ["demo-01", "demo-02", "demo-03", "demo-05"],
+    pending: { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
+    cut_pending: {},
+    out_of_date: false,
+  };
+  if (grouped) Object.assign(out, { links: DEMO_LINKS.map(link), meshed: { "demo-lab": DEMO_MESHED } });
+  if (brief) {
+    // Untested Links all work (`asked`), with no hop: none is worth a look, so only counts.
+    Object.assign(out, { links: [], links_more: 0, link_count: links.length, link_statuses: { asked: links.length }, reached: count(links.map(([, to]) => to)) });
+  }
+  return out;
+}
+
+/** roster serve as `:tutor`'s demo has it (plugin/demo.rs in the core): its Hosts, a made-up Mesh
+ * (`mesh.status`), and a refusal for every other method. */
+export function demoServe(demo: HostList): FakeServe {
   return (method, params) => {
     if (method === "hosts.list") return demo;
+    if (method === "mesh.status") return demoMeshStatus(params);
     if (method === "host.get") {
       const host = demo.hosts.find((h) => h.name === params.name);
       if (!host) throw new BackendCallError(`No Host named '${String(params.name)}' on the demo Inventory`, 2);
@@ -1275,6 +1369,10 @@ const NAME = /^[A-Za-z0-9._-]+$/;
 
 export function fakeBackend(scenario: FakeScenario): FakeBackend {
   let failures = 0;
+  /** inventory.create made one (T212): connect() starts from now on. */
+  let created = false;
+  /** A slow clone's inventory.create under way, for its Cancel (#417 L5). */
+  let stopCreate: (() => void) | null = null;
   const printers: Printers = new Set();
   const { plugin: packagePlugin, ...packageHost } = fakePackageHost(scenario.packages ?? { named: [], lock: {} }, described);
   // ---- the Inventory as committed, and as edited on this Box (ticket 10)
@@ -1333,7 +1431,14 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     }
     onDisk = null;
   };
+  const plain = scenario.store === "file" && (scenario.apiVersion ?? 2) >= 28;
   const pending = (): PendingChanges => {
+    if (plain) {
+      // a plain file (T212): every edit was saved to it, so what's on disk is what's "committed"
+      committed = hosts;
+      committedGroups = groups;
+      return { path: scenario.info?.path ?? "~/infra/roster.yml", repo: null, kind: "file", diff: "", hosts: [], groups: [], count: 0, message: "", last_commit: null };
+    }
     const diff = fakeDiff(committed, hosts);
     const before = new Map(committed.map((h) => [h.name, h]));
     const changed = hosts.flatMap((h): HostChange[] => {
@@ -1461,7 +1566,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   /** host.scan_key / host.trust_key at an address that doesn't answer (roster's 42). */
   const unanswered = (h: Host) =>
     new BackendCallError(`${h.name} (${h.ip}:${h.ssh.port}) didn't answer within 5 s`, 42, {
-      fix: "retry later; is the Host up and the network path open? On 10.19.x the SSH rate limiter stops answering for about 4 minutes after many connections: wait a few minutes, don't retry in a loop",
+      fix: "retry later; is the Host up and the network path open? If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in a loop",
       details: "timed out",
     });
   const wait = () => new Promise((r) => setTimeout(r, scenario.delay ?? 0));
@@ -1640,7 +1745,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   return {
     async connect(options): Promise<BackendInfo> {
       await wait();
-      if (scenario.startProblem && !(scenario.failOnce && failures > 0)) {
+      if (scenario.startProblem && !created && !(scenario.failOnce && failures > 0)) {
         failures++;
         throw new BackendStartError(scenario.startProblem);
       }
@@ -1670,8 +1775,58 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           providers: ["bw"],
           roster_version: "0.1.0",
           api_version: scenario.apiVersion ?? 2,
+          ...((scenario.apiVersion ?? 2) >= 28
+            ? {
+                store:
+                  scenario.store === "file"
+                    ? { kind: "file" as const, note: "roster.yml isn't in a git repo, so it's a plain file: every edit saves straight to it", repo: null }
+                    : { kind: "repo" as const, note: "in the git repo ~/team-inventory: edits are Pending changes until you Publish them", repo: "~/team-inventory" },
+              }
+            : {}),
         },
       };
+    },
+    async cancelCreateInventory() {
+      await wait();
+      const stop = stopCreate;
+      if (stop) stop();
+      return stop !== null;
+    },
+    async createInventory(params) {
+      await wait();
+      if (scenario.firstRun === "old") throw new BackendCallError("unknown method 'inventory.create'", -32601);
+      if (created) throw new BackendCallError("this roster serve made one already", NewInventoryError.there);
+      if (params.how !== "blank" && !params.source) throw new BackendCallError(`params.source: the ${params.how === "file" ? "roster.yml to copy" : "git URL"}`, -32602);
+      if (scenario.firstRun === "name-taken" && !params.name) {
+        throw new BackendCallError("params.name: there's already an Inventory named 'infra'", -32602, {
+          field: "name",
+          name: "infra",
+          fix: "give it another name, or pick another folder (its name names the Inventory); `roster inv remove infra` forgets the other one",
+        });
+      }
+      if (params.how === "repo" && params.source?.includes("slow")) {
+        // a clone that takes a while: Cancel stops it (#417 L5)
+        await new Promise<void>((resolve) => {
+          stopCreate = resolve;
+        });
+        stopCreate = null;
+        throw new BackendCallError("inventory.create was stopped while git cloned the repo: nothing was kept", 5);
+      }
+      if (params.how === "repo" && params.source?.includes("nope")) {
+        throw new BackendCallError(`git couldn't clone ${params.source}`, NewInventoryError.cloneFailed, {
+          fix: "check the URL and your access to the repo (`git clone URL` in a terminal shows the same)",
+        });
+      }
+      if (params.how === "file" && params.source?.includes("broken")) {
+        throw new BackendCallError(`${params.source} doesn't load, so nothing was written: groups: isn't a mapping`, NewInventoryError.notAnInventory, {
+          fix: `fix ${params.source} first`,
+        });
+      }
+      created = true;
+      const folder = params.folder.replace(/\/+$/, "");
+      const name = params.name ?? folder.split("/").pop() ?? "infra";
+      const path = `${folder}/roster.yml`;
+      return { path, name, how: params.how, hosts: hosts.length, restart: true as const };
     },
     async listHosts() {
       await wait();
@@ -1742,6 +1897,23 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           from,
           problem: problem && { code: SaveToError.unknownTarget, message: problem.message, fix: "fix the setting the message names" },
         };
+      }),
+    vaultItemFields: (item, provider) =>
+      inOrder(async (): Promise<VaultItemFields> => {
+        await wait();
+        if ((scenario.apiVersion ?? 2) < ITEM_FIELDS_API_VERSION) {
+          throw new BackendCallError("unknown method 'vault.item_fields'", -32601);
+        }
+        if (vaultNow() !== "unlocked") throw new BackendCallError(VAULT_LOCKED, VaultError.locked);
+        const said = scenario.itemFields?.[item];
+        if (said === undefined) {
+          throw new BackendCallError(`no vault item matches '${item}'`, 32, {
+            near: [],
+            fix: "check the item's name in the vault, or use its id",
+          });
+        }
+        if ("code" in said) throw new BackendCallError(said.message, said.code);
+        return { provider: provider ?? vaultName, item, ...said };
       }),
     signOut: () =>
       inOrder(async (): Promise<SignedOut> => {

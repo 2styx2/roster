@@ -6,19 +6,23 @@ import pytest
 
 from roster import clihelp
 from roster.cli import build_parser, main
-from roster.manpage import subcommands
+from roster.manpage import commands, subcommands
 
 COMMANDS = list(subcommands(build_parser()))
 
 
-def test_every_command_is_in_exactly_one_group():
-    grouped = [n for _, names in clihelp.GROUPS for n in names]
+def test_every_command_is_in_exactly_one_group_or_internal():
+    grouped = [n for _, names in clihelp.GROUPS for n in names] + clihelp.INTERNAL
     assert sorted(grouped) == sorted(COMMANDS)
 
 
-@pytest.mark.parametrize("name", COMMANDS)
+@pytest.mark.parametrize("name", list(commands(build_parser())))
 def test_every_command_has_examples_or_says_why_not(name):
     assert clihelp.EXAMPLES.get(name) or name in clihelp.NOTES
+
+
+def test_every_example_is_for_a_command_that_exists():
+    assert set(clihelp.EXAMPLES) <= set(commands(build_parser()))
 
 
 EXAMPLES = [cmd for rows in clihelp.EXAMPLES.values() for cmd, _ in rows] + \
@@ -41,6 +45,15 @@ def test_plain_roster_shows_the_commands_in_groups(capsys):
         assert all(f"\n  {n} " in out for n in names)
     assert out.index("Start here:") < out.index("options:")       # the commands before the options
     assert "roster COMMAND --help" in out
+
+
+@pytest.mark.parametrize("flag", ["-v", "--version"])
+def test_dash_v_is_the_version(flag, capsys):
+    from roster import __version__
+    with pytest.raises(SystemExit) as e:
+        main([flag])
+    assert e.value.code == 0
+    assert capsys.readouterr().out == f"roster {__version__}\n"
 
 
 def test_help_is_the_same_as_plain_roster(capsys):

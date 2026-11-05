@@ -90,8 +90,8 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     row: 5,
     codes: [31],
     where: ["roster.yml"],
-    fix: () => "See `roster providers` for the ones set up on this Box, then fix auth: in roster.yml.",
-    actions: [copy(() => "roster providers"), retry],
+    fix: () => "See `roster vault status` for the ones set up on this Box, then fix auth: in roster.yml.",
+    actions: [copy(() => "roster vault status"), retry],
   }),
   row("vault-cli", {
     row: 6,
@@ -134,8 +134,8 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     row: null,
     codes: [35],
     where: ["the vault"],
-    fix: () => "See the provider's message; `roster auth-check` tests every Login.",
-    actions: [copy(() => "roster auth-check"), retry],
+    fix: () => "See the provider's message; `roster check --auth` tests every Login.",
+    actions: [copy(() => "roster check --auth"), retry],
   }),
   row("password-refused", {
     row: 11,
@@ -467,8 +467,8 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     row: 72,
     codes: [16],
     where: ["the vault", "this Box"],
-    fix: () => "See the details: the CLI's own words. `roster bw --write logout` in a terminal shows the same.",
-    actions: [copy(() => "roster bw --write logout")],
+    fix: () => "See the details: the CLI's own words. `roster vault bw --write -- logout` in a terminal shows the same.",
+    actions: [copy(() => "roster vault bw --write -- logout")],
   }),
   // The Mesh (`mesh.plan`, `mesh.apply`, ticket 39): docs/app/errors.md row 73. Rows 74-79 are a
   // Link's or a Host's status in the result, not errors.

@@ -8,9 +8,9 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ### New
 
-**CLI**
+**App**
 
-- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
+- **`:tutor topology` teaches reach** (#233): the tutorial's demo Inventory has a small, made-up Mesh now, so the Topology tutor's third lesson, "Who reaches whom", lights up what a Host reaches on the map and reads its details: `demo-01` reaches 3 Hosts directly, and `demo-05` is Mesh pending because it didn't answer the last apply. Nothing on the demo connects anywhere. A Plugin's tutorial can use the same Mesh: on the demo, roster serve answers `mesh.status` too (plain, `grouped` and `brief`, as real serve does).
 
 ### Changed
 
@@ -52,6 +52,103 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **Only what's live is apricot** (#418): a Host's node is grey at rest, in the same shape as before (filled for a key login, a ring for a password one). The Session on screen and its Host are apricot, other connected Sessions are in the text colour, and a Session that's still connecting is an open ring, in its row and its Host's alike. An idle Inventory is calm, and the Session you're in stands out.
 - **Connecting looks like the connection coming up** (#418): the pane shows this Box, an edge and the Host on the pane itself, not in a box over a blank terminal. The edge reaches part-way while ssh starts and the whole way while it logs in, the Host's ring fills when the shell answers, and the terminal appears with its first output. The Sidebar row no longer draws a line under itself while it connects. Words in the card no longer break mid-word in a narrow window.
 
+## v0.6.0
+
+### New
+
+**CLI**
+
+- **Your Inventory can be a plain `roster.yml` or a team's git repo, both first-class** (#401): roster decides per file, each time it writes. Committed in a git repo with a remote, edits are Pending changes as before. Anything else (outside a repo, no git on the Box, not committed, a repo with no remote) is a plain file: the app's edits, `roster discover --write` and `roster mesh cut` save straight to it, with `roster.yml.bak` beside it, and nothing asks for git or a Publish. `roster check --box` says which. See [A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo).
+- **`roster init` gets you an Inventory four ways** (#401): `--blank` (a short, empty `roster.yml` that loads), `--inventory file:PATH` (a copy, once it loads), `repo:URL` (a clone of the team's repo) or `ssh-config[:PATH]` (the Hosts in `~/.ssh/config`: HostName, User, Port and IdentityFile only, wildcards and `Match` blocks skipped, the file never changed). `roster init` alone still writes the commented example. A `roster.yml` already there is kept; `--name NAME` names a new one beside it. See [A new Inventory](cli-reference.md#a-new-inventory).
+- **`roster add`: one Host you already know, in one command** (#427): `roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab` writes it reviewed, through the same code as the app's add-Host form: only its lines added, a team repo's Pending change or a plain file saved in place. A name or address another Host has is refused, naming it. `--from-vault` takes the address and user from the vault item's URI and username, never its password (Bitwarden); it syncs this Box straight after, as `discover --write` does; `--setup` then runs setup and check for it; `--dry-run` shows the lines; it asks in a terminal for what's missing, and `-y` never asks. `roster serve` gets `vault.item_fields` (API 29) for the form to do the same later. See [Adding one Host](cli-reference.md#adding-one-host-roster-add).
+- **`roster add --from-vault`: the vault items that aren't in `roster.yml` yet** (#428): with no NAME, it syncs the vault, lists the login items no Login names (the ones new since the last run marked; `--all` every one), and in a terminal walks through adding each one [Y/n/edit/skip], prefilled from the item (`nas-01 ssh` with URI `ssh://10.0.0.50:2200` and username `admin` becomes `nas-01`, `10.0.0.50` port 2200, user `admin`), through the same path as `roster add NAME`, then offers setup for that Host. Bitwarden, 1Password and KeePassXC; never a password (Bitwarden's listing goes through a filter process roster never reads past, decision Q191). `--json` prints the list, `--mark-seen` marks them seen, `--no-sync` skips the sync, `-y` only lists. A locked vault says how to unlock it, never asks. `roster check --box` shows the count from the last run. See [Vault items not in roster.yml](cli-reference.md#vault-items-not-in-rosteryml-roster-add---from-vault).
+- **`install.sh` starts you with an Inventory** (#401): with none in the folder it offers the same four ways, a blank one by default (so `--yes` alone makes one, where it used to leave you with none), then `git init` as an option. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` still works). One already there is kept, or a new one is added beside it as a named Inventory.
+- **`roster vault sync`: what changed in the vault since the last sync** (#430): the vault isn't watched, so roster sees an item added or changed elsewhere only after a sync. `roster vault sync` syncs each vault `roster.yml` uses that keeps a local copy (Bitwarden's `bw sync`; 1Password and the others need none, and it says so), then names the items added and changed and counts the ones removed, from a snapshot of item ids and revision dates in `~/.config/roster/vault-sync/` (0600). Never a password. `roster vault status` says when each vault last synced.
+- **`roster vault op -- ARGS`: the 1Password CLI, read-only unless `--write`** (#432): next to `roster vault bw`, with the same rules. op gets your sign-in (the 1Password app, or the `OP_SESSION_*`/`OP_SERVICE_ACCOUNT_TOKEN` in your shell) in its environment and no Bitwarden variable; roster never reads what op prints. `item get`, `item list`, `read`, `vault list`, `whoami` and op's other reads run; commands that change the vault or the account (`item edit`, `signin`, ...) or write a file (`--out-file`, `update`) need `--write`; `op run`, `--session` and `--config` are refused, and so is any command roster doesn't know. See [`roster vault op`](cli-reference.md#roster-vault-op).
+- **`roster add NAME --from-vault` works with 1Password** (#432): an `op:` item's URL (from its overview, without any `user:password@`) and username, never its password; several items with that name need its id, as with Bitwarden.
+- **`roster help`** (#430): the overview; `roster help COMMAND` a command's options and examples (`roster help vault bw`), `--man` the manual, `--completion SHELL` Tab completion.
+- **`roster setup --host NAME`: exactly one Host** (#437): `--only NAME` also takes every Host whose group, type or product is NAME; `--host` takes only the Host by that name. `roster add` now prints `roster setup --host NAME` as its next step, and the fixes `roster check` and the Mesh give for one Host (a host key to record, a key to install) say it too.
+
+**App**
+
+- **`:tutor topology`** (#233): the Topology Plugin ships a tutorial of its own. On the demo Inventory, open the map, show one group, and go from a node to its Host's details and a Session; each step ticks as you do it. The demo has no Mesh, and the tutorial says so.
+- **No Inventory yet? The app makes one** (#401): on a Box with no `roster.yml`, **Start your Inventory** offers a blank one, a copy of a `roster.yml` you have, or a clone of your team's repo, in a folder you pick (`~/infra` by default). `roster serve` writes it and names it, and the app starts on it. With a roster older than serve API 28 it says to run `roster init --blank` instead.
+- **A plain `roster.yml` says "saved"** (#401): an edit to an Inventory that isn't in a team repo says it was saved to `roster.yml`, never "a Pending change", the toolbar has no Changes button, and `:changes`, `:discard` and `:publish` say there's nothing to publish.
+- **The add-Host form fills from a vault item** (#437): with "An existing vault item", **Fill from this item** asks roster for the item's address, SSH port and user (never its password) and fills them in, saying which changed. Needs serve API 29.
+- **The add-Host form warns about a taken address** (#437): an address and port another Host already has is said under Address, naming that Host, and the Host can still be added (a second Login to one machine). `roster add` still refuses it (184).
+
+**Plugin API 6**
+
+- **Plugins can know a Session's folder** (#242): with `terminal.read`, each Session from `roster.sessions.list()` has `cwd`, the folder its shell last said it's in (OSC 7), and `command_done` has `cwd`, where the command ran. It's the shell's word, read strictly (a plain `file://` folder, no control or invisible format characters, at most 1024 characters), never checked. [Shell integration](plugins.md#shell-integration).
+
+### Changed
+
+**CLI**
+
+- **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
+- **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
+- **14 commands to remember** (#430): `init`, `add`, `discover`, `hosts`, `check`, `setup`, `revoke`, `sync`, `run`, `web`, `mesh`, `inv`, `vault` and `help`; everything else is an action or a flag of one of them. `roster check --auth` (was `auth-check`), `roster hosts NAME` (was `info`), `roster hosts --resources` (was `resources`), `roster vault status` (was `providers`; it also shows each vault's state, as `check --box` does, and its last sync), `roster vault reveal NAME` (was `reveal`), `roster vault bw -- ARGS` (was `bw`, the same read-only rules), `roster help --man` (was `man`), `roster help --completion SHELL` (was `completion`), `roster mesh leftovers [--remove]` (was `mesh --find-leftovers`/`--remove-leftovers`). `serve` and `askpass` are run by the app and ssh, so the overview and Tab completion leave them out. Tab completion, the man page, the docs and every fix text name the new forms; `install.sh` writes the new completion line, and `./update.sh` rewrites roster's own old one.
+- **Clearer one-line help** (#430): `init` says it only makes a new file (to add Hosts, `add` or `discover`), `setup` that it installs the key on the Hosts not ready yet and syncs (run it again after adding Hosts), `sync` that it touches no Host, `check` one line for each form, `discover --write` that it adds unreviewed Hosts, `vault reveal` that it's for people.
+
+**App**
+
+- **The shell hooks keep their line out of your history** (#242): bash takes its own entry out, zsh starts its history list again from its file without it (only when you haven't typed in the Session yet; a later `:integrate` leaves zsh's history alone and says the line stays there), and PowerShell's PSReadLine keeps it in memory only, never in its history file. It still stays in zsh with `INC_APPEND_HISTORY` or `SHARE_HISTORY` (without `HIST_IGNORE_SPACE`) and with Windows PowerShell 5.1's own PSReadLine.
+- **The Sidebar's folder is read strictly** (#242): an OSC 7 that isn't a plain `file://` folder, or one with a control character, an invisible format character (bidi marks, zero-width characters) or more than 1024 characters, shows no folder, rather than a cleaned-up one or the one before.
+- **A command's output is kept for `command_done` only while a Plugin listens for it** (#223), not for every marked Session.
+- **The app starts lighter** (#405): `:help`'s guides load the first time you open help, `:helpgrep` or Tab-complete a topic, read from the app's own files (never the network), instead of with everything else at start. That takes the JS the app reads at start from about 2.5 MB to 1.5 MB. Every page, topic and search is still there; Tab completes a guide's headings before its text has loaded, and the rare wait past 150 ms says the page is loading.
+
+**`roster serve` API 28**
+
+- `inventory.info` has `store: {kind, note, repo}`: `repo` or `file` (a plain file). For a plain file, every write saves straight to it, `inventory.pull`, `changes.diff` (with `kind`) and `changes.discard` answer that nothing is pending instead of error `70`, `changes.publish` is `90`, and `mesh.cut`'s `change` has a `backup` and `kind`. A git repo with no remote is a plain file now, so its edits are no longer Pending changes. `inventory.create` makes a new Inventory when serve found none (the app's first run): blank, a copy or a clone, named after its folder and made the active one.
+
+### Security
+
+**CLI**
+
+- **A saved Bitwarden session is read only if it's yours alone** (#411): roster no longer follows a symlink at `~/.config/roster/bw-session`, ignores one another user owns or with a second name (hard link), and checks and reads it through the same open file, so it can't be swapped in between. On Windows it checks the file's owner and permissions too: one others may open is ignored with a warning.
+- **On Windows, roster never runs a program from the current folder** (#411): `bw`, `ssh`, `git`, `nmap` and every other program roster runs are found on `PATH` alone, so a `bw.exe` left in the folder you start roster from can't run with your vault's session. roster sets `NoDefaultCurrentDirectoryInExePath=1`, so `cmd:` providers and `providers:` commands don't look there either.
+- **A mistyped `bw:` Login no longer loads your whole vault into roster** (#443): when a `bw:` reference matched several items or none, roster parsed `bw list items` itself (for no match, the whole vault, to suggest near names), so every listed item's password, TOTP seed and notes passed through its memory; saving a new item did the same for its duplicate check and when bw's answer was lost. Every one of those listings now goes through the same filter process as `roster add --from-vault` (decision Q191): roster reads only each item's id, name, URIs and username, then fetches the one item it needs by its id. The filter passes on login items only, so when a `bw:` reference matches several items and any of them isn't a login (a Secure Note or Card by that name), roster refuses it ("3 vault items match 'db', some of them aren't logins": use the item's id) rather than picking the one login; a note or card by the same name no longer counts as a duplicate when saving. Messages about several items list their names and URIs, no longer the date each was edited, and `roster serve`'s errors 33 and 60 give `revised: null` for Bitwarden. When bw's answer to a create is lost, roster takes the item only if exactly one is named so, and never deletes one it found by name.
+
+### Fixed
+
+**CLI**
+
+- **install.sh finishes on a box with no init system** (#444): in a container (Fedora's, say) with no systemd or `service`, the Auto-update stage said "couldn't find the cron service" and install.sh exited 1. It now starts the cron daemon itself (`crond`, or Debian's `cron`) and says nothing starts it again after a restart; on a box with no cron daemon at all it skips the job, says to run `bin/roster-pull` yourself, and keeps that answer (no-cron in `~/.config/roster/install-choices`), so the box counts as set up and the install exits 0.
+- **The Mesh checks ESXi's login before writing its keys** (#445): on ESXi the Mesh's lines go in `/etc/ssh/keys-USER/authorized_keys`, USER as roster.yml's `user:`. When the Host names the login otherwise (`id -un`: another case, a directory account's form), sshd doesn't read that folder, so `roster mesh` (and cut, `mesh leftovers [--remove]`) now leaves that Host as it is, pending, and says why ("esx-02: this login is Root on ESXi, not root (its user: in roster.yml) …"), as `roster setup` and `roster revoke` already did. Before, it wrote a folder sshd never reads.
+- **Renaming a Box takes its key with it** (#412): after `box_name:` (or the hostname) changes on a Box already set up, `roster setup` re-tags this Box's key on the Hosts where it already works (`ok    nas-1 (re-tagged)`), and `roster revoke` finds the key under the earlier name too. Both match the line by this Box's own public key, so another Box's line under the old name is never touched. Before, `revoke` looked only for the new name and left the key on every Host. A line's options (`from="…"`) are kept. To rename a Box: set `box_name:`, then run `roster setup`; where it says it found no line (a line you wrote by hand), change that line by hand. Since the key is one per Box, `roster revoke` for one Inventory also takes it off a machine another Inventory lists under another `box_name:`, and says so.
+- **A Box's key on ESXi, and renaming onto a taken name** (#435): `roster setup`, its re-tag and `roster revoke` now manage ESXi's own key file, `/etc/ssh/keys-USER/authorized_keys` (the one its sshd reads and keeps across a reboot; a new one gets the sticky bit, as the Mesh's does), where before they only wrote `~/.ssh`, so a revoked Box's key stayed on an ESXi Host. Renaming a Box to a name another Box's key line already has on a Host now stops there (`FAIL  nas-1: [190] another key's line there is tagged roster-managed:NEW …`), as this Box's setup and revoke would take that Box's line too; `roster setup --force` goes ahead. A key line ending in CRLF (a file edited on Windows) is now found by `revoke` and re-tag, two copies of this Box's line become one when re-tagged, setup's 'no line' note names the file it looked in (on Windows, `administrators_authorized_keys` for an administrator), `revoke`'s "To finish" names `~/.config/roster/key-name*` too, and the Mesh's drift warning also sees lines under this Box's earlier name.
+- **`roster check` says when another Box replaced a shared Mesh key** (#412): when the Box whose Mesh files a source's are rotates that key or cuts the source, this Box's own lines for the old key stay on its peers until its next `roster mesh`; its `roster check` (and `roster mesh --dry-run`) now warns, per peer, that the line still lets the old key in, from its `from=` address.
+- **A Host whose `ip:` is a name gets its network's rate-limiter hint** (#420): when `roster check` gets no answer, the address the name resolved to is matched against `rate_limited:`, so a name in a listed network says to wait a few minutes, and one outside them gets no rate-limiter hint, as an address does.
+- **`roster inv add NAME <Tab>` offers nothing** (#420): a new name goes there, so the existing Inventories' names are no longer suggested.
+- **A `bw-session` file Windows PowerShell wrote works** (#433): Windows PowerShell 5.1's `bw unlock --raw > FILE` writes UTF-16 with a byte-order mark, which roster read as garbage, so bw failed. roster now reads a session file in UTF-16 or UTF-8 with a byte-order mark as well as plain text, without its line end; a file that isn't a session key (anything but plain ASCII) is ignored with a warning, as a file that isn't yours alone is. The docs give the line that writes plain text: `bw unlock --raw | Set-Content -Encoding ascii -NoNewline $env:APPDATA\roster\bw-session`.
+- **Moving a Host to another group keeps its `os:`** (#437): a Host that got `os: windows` from its group keeps it, and a Host moving into a group with `os: windows` gets `os: posix` written on it, so roster never runs the other shell on it.
+- **A locked vault with no terminal to unlock it is error 14** (#437), as the app and `roster check` say it, where some commands said 35. Bitwarden (no terminal, or an expired session file) and KeePassXC.
+
+### Deprecated
+
+**CLI**
+
+- **The old command names** (#430): `auth-check`, `info`, `resources`, `providers`, `reveal`, `bw`, `man`, `completion`, and `mesh --find-leftovers`/`--remove-leftovers` still work, hidden, and each prints one line on stderr naming its new form (nothing with `--json`; `roster completion`, run by the rc line at every shell start, says nothing). Change scripts and cron jobs to the new forms: [Deprecated names](deprecated.md#deprecated-in-06).
+
+## v0.5.1
+
+### New
+
+**CLI**
+
+- **Tab completion** (#406): `roster ho<Tab>` completes to `roster hosts`, `roster run <Tab>` lists your Hosts, and options, groups, resources and named Inventories complete too, from the local `roster.yml` only (no network, no vault). `install.sh` turns it on for bash, zsh and fish without asking (`--no-completion` leaves it off) and `uninstall.sh` removes it; `roster completion bash|zsh|fish|powershell` prints the script to add by hand. See [Tab completion](cli-reference.md#tab-completion).
+
+### Changed
+
+**CLI**
+
+- **Which networks have an SSH rate limiter is your setting** (#363): list them as `rate_limited: [10.0.0.0/8]` at the top of `roster.yml` (empty by default), and a Host there that doesn't answer is told its network's rate limiter may be why. With no list, a no-answer's fix says a rate limiter on the network can cause this; roster no longer assumes one fixed address range has one. See [Networks with an SSH rate limiter](cli-reference.md#networks-with-an-ssh-rate-limiter).
+- **The Mesh's one-time re-tag takes only this Box's own older lines** (#384): on the first `roster mesh` after upgrading to this release (v0.5.1), an untagged `authorized_keys` line (from a roster before v0.5.0) is taken as this Box's only when it's exactly the line this Box writes there, the same key, `from=` and options; another older Box's line for the same source stays, the apply warns about it (and, with `--rotate`, says when it still lets the replaced key in), and `roster mesh --find-leftovers` lists it. v0.5.0's first `roster mesh` took every untagged line for a source it writes, another older Box's too. `roster check --box` warns when this Box's name is an OS image's default hostname (`ubuntu`, `raspberrypi`, `localhost`, …): Boxes with the same name are one owner, so each one's `setup` and `revoke` take the other's key and each one's `roster mesh` the other's entries; set `box_name:` (on a Box already set up: `roster revoke` first, then set it and run `roster setup` again). **Upgrading Boxes that share Hosts:** upgrade them together, straight from v0.4 to this release, skipping v0.5.0, and run each one's `roster mesh` once. A Box that already ran v0.5.0's `roster mesh` may have taken another older Box's untagged line for a source it writes; that Box's next `roster mesh` puts it back, and `roster mesh --find-leftovers` lists the untagged lines still there. A roster older than v0.5.0 still running on another Box leaves the new tagged lines alone, but still removes untagged lines, and Mesh files on a Host it doesn't make a source, on every apply. See [Whose Mesh it is](mesh.md#whose-mesh-it-is).
+
+**App**
+
+- A Session that gets no answer says a rate limiter on the network can cause this, for any address; `:check HOST` names the network when it's in `rate_limited:` (#363).
+
 ### Security
 
 **CLI**
@@ -61,12 +158,21 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **An unanswered sign-in ends after 10 minutes** (#389), stopping `bw login` and forgetting the master password.
 - **The askpass channel checks who connects on macOS** (#390), as on Linux.
 - **`roster web` deletes an expired kept login** (#395).
-- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a Host's password, and what roster can and can't see.
+- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a Host's password, and what roster can and can't see.
 
 **App**
 
 - **A password typed but not sent is emptied when the app locks** (#393).
 - **Passwords crossing the app's core are moved, not copied, and wiped after use** (#392).
+
+### Fixed
+
+**CLI**
+
+- **`install.sh` installs the newest Release, not whatever the checkout is on** (#408): a checkout on a `main` never pulled installed roster 0.1.0 over 0.5.0 without a word. It now fetches `origin` and installs the highest `vX.Y.Z` tag from a clean copy, leaving your checkout as it is (`--ref REF` for another tag or branch; offline, the checkout as it is, with a warning). It never installs an older roster over a newer one without a yes (`--allow-downgrade`). On a box that's set up it runs `update.sh` instead, with the same flags; a box that isn't finished (no map yet, a failed stage, no cron job) gets every stage again, so running it again with `--infra-repo` finishes a first `--yes` run. It no longer pulls the map itself.
+- **`update.sh` checks the checkout it installs from** (#408): it fetches, offers to fast-forward a branch that's behind (under `--yes`, only a clean fast-forward), says when the checkout is older, and never installs an older roster over a newer one without a yes. It never switches branches or touches uncommitted work, and it turns on Tab completion on a box installed before `install.sh` did.
+- **`install.sh` and `update.sh` end with the roster they installed** (#408): `Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`.
+- **`roster -v` prints the version** (#408), as `roster --version` does. Plain `roster` shows the overview and exits 0.
 
 ## v0.5.0
 

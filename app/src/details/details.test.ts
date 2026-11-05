@@ -1,4 +1,4 @@
-// Host details (ticket 18): what `roster info HOST` says, as rows, and which web services open.
+// Host details (ticket 18): what `roster hosts HOST` says, as rows, and which web services open.
 import { describe, expect, it } from "vitest";
 import type { Host, HostList, Service } from "../backend/types";
 import urlCases from "../../../crates/roster-core/tests/fixtures/web-urls.json";
@@ -40,7 +40,7 @@ const esx: Host = {
 const groups: HostList["groups"] = { lab: { title: "The lab", description: "" } };
 
 describe("hostFacts", () => {
-  it("says what roster info says, in its order, leaving out the empty ones", () => {
+  it("says what roster hosts HOST says, in its order, leaving out the empty ones", () => {
     expect(hostFacts(esx, groups)).toEqual([
       { label: "title", value: "Rack 2 hypervisor" },
       { label: "description", value: "the one by the door" },

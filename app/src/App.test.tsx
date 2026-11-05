@@ -99,7 +99,7 @@ describe("App", () => {
 
   it.each([
     ["roster-missing", /roster wasn't found/i],
-    ["inventory-missing", /no inventory/i],
+    ["inventory-missing", /start your inventory/i],
     ["no-wsl", /no wsl/i],
   ])("explains %s", async (name, heading) => {
     render(<App backend={fakeBackend(fixtures[name]!)} />);

@@ -7,7 +7,7 @@ import PERMISSIONS from "../../../crates/roster-core/tests/fixtures/plugin-permi
 import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
 import { fakeFoldersPlugin } from "./fakeFolders";
 import { redact, redactError } from "./redact";
-import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginManifest, type PluginReply } from "./types";
+import { BackendCallError, PLUGIN_EVENTS, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginManifest, type PluginReply } from "./types";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
 type Spec = Record<string, unknown>;
@@ -84,7 +84,7 @@ export interface FakeRoster {
     request(done: (list: { hosts: Host[]; groups: Record<string, { title: string; description: string }> } | undefined, err?: string) => void): void;
   };
   /** `list` (api 4, decision Q127) with inventory.read or terminal.read: the Sessions open now. */
-  sessions: { show(session: number, line?: string): void; list?(): { session: number; host?: string }[]; open?(host: string): void };
+  sessions: { show(session: number, line?: string): void; list?(): { session: number; host?: string; cwd?: string }[]; open?(host: string): void };
   terminal?: { send(session: number, text: string): void };
   /** With a `serve:` grant: roster serve's methods by name, answered by the fake Backend.
    * `request` doesn't wait: `done` runs later, as the core's does (decision Q103). */
@@ -449,6 +449,8 @@ interface Running {
   /** The commands it added: `roster.cmd` may run them (ticket 78). */
   commands: Set<string>;
   listeners: Map<string, Fn[]>;
+  /** The events the app was last told it listens for (`listens` on a reply, as mod.rs's slot). */
+  told: string;
   errors: number;
   disabled: string | null;
   /** Its `roster.serve.request` calls not yet answered and run. */
@@ -597,7 +599,7 @@ export function fakePluginHost(
     const detailsIds = () =>
       [...r.own].filter(([k, m]) => k.startsWith("details:") && m.size > 0).map(([k]) => k.slice("details:".length)).sort();
     const m: FakeRoster = {
-      api_version: 5,
+      api_version: 6,
       plugin: { name: r.manifest.name, version: r.manifest.version, permissions: [...r.grants], config },
       commands: {
         add: (name, spec) => {
@@ -818,7 +820,9 @@ export function fakePluginHost(
     }
     // As runtime.rs: there for whoever may hear session_open.
     if (EVENT_NEEDS.session_open.some((p) => r.grants.has(p))) {
-      m.sessions.list = () => open.map(({ session, host }) => (host === null ? { session } : { session, host }));
+      // The folder is what the Session printed: terminal.read's, as runtime.rs's (Q185).
+      const reads = r.grants.has("terminal.read");
+      m.sessions.list = () => open.map(({ session, host, cwd }) => ({ session, ...(host === null ? {} : { host }), ...(reads && cwd ? { cwd } : {}) }));
     }
     if (r.grants.has("sessions.open")) m.sessions.open = (host) => push({ op: "open", host });
     if (r.grants.has("terminal.write")) m.terminal = { send: (session, text) => push({ op: "send", session, text }) };
@@ -877,7 +881,7 @@ export function fakePluginHost(
       } finally {
         [userCall, carried] = [false, false];
       }
-      if (reply.ops.length || reply.error) for (const w of replyWatchers) w(reply);
+      if (reply.ops.length || reply.error || reply.listens) for (const w of replyWatchers) w(reply);
     }, 0);
   };
 
@@ -897,15 +901,22 @@ export function fakePluginHost(
   const run = (name: string, r: Running, body: () => unknown, loading = false): PluginReply => {
     ops = [];
     const before = new Map([...r.own].map(([k, m]) => [k, new Map(m)]));
+    // As mod.rs's settle: which events it listens for, when that's news (always at load).
+    const listens = (): PluginEventName[] | null => {
+      const now = PLUGIN_EVENTS.filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
+      if (!loading && now.join() === r.told) return null;
+      r.told = now.join();
+      return now;
+    };
     try {
       const result = body();
-      return { plugin: name, result: data(r, result) ?? null, ops, error: null, disabled: null };
+      return { plugin: name, result: data(r, result) ?? null, ops, error: null, disabled: null, listens: listens() };
     } catch (e) {
       r.own = before;
       const message = e instanceof Error ? e.message : String(e);
       r.errors += loading ? 3 : 1;
       if (r.errors >= 3) r.disabled = loading ? `it failed to load: ${name}: init.lua: ${message}` : `it failed ${r.errors} times`;
-      return { plugin: name, result: null, ops: [], error: { plugin: name, file: "init.lua", line: null, message }, disabled: r.disabled };
+      return { plugin: name, result: null, ops: [], error: { plugin: name, file: "init.lua", line: null, message }, disabled: r.disabled, listens: loading ? null : listens() };
     }
   };
 
@@ -928,6 +939,7 @@ export function fakePluginHost(
         timers: new Map(),
         commands: new Set(),
         listeners: new Map(),
+        told: "",
         errors: 0,
         disabled: null,
         requests: 0,
@@ -969,7 +981,7 @@ export function fakePluginHost(
         const needs = EVENT_NEEDS[name];
         if (!fs || r.disabled || (needs.length && !needs.some((p) => r.grants.has(p))) || !hearsThis(name, payload, r.grants)) continue;
         const reply = run(plugin, r, () => fs.forEach((f) => f(heard)));
-        if (reply.ops.length || reply.error) replies.push(reply);
+        if (reply.ops.length || reply.error || reply.listens) replies.push(reply);
       }
       return replies;
     },

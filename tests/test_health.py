@@ -101,6 +101,7 @@ def test_pending_changes_in_the_infra_repo(write_config, capsys, vault, monkeypa
     git(work, "init", "-q", "-b", "main")
     git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "roster.yml")
     git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "inventory")
+    git(work, "remote", "add", "origin", str(work.parent / "origin.git"))
     _, _, found = box_check(capsys)
     assert found["infra"][0][0] == "ok" and "clean" in found["infra"][0][1]
     write_config(INVENTORY.replace("Lab box", "Lab box 2"))
@@ -109,11 +110,25 @@ def test_pending_changes_in_the_infra_repo(write_config, capsys, vault, monkeypa
     assert ":publish" in out
 
 
-def test_not_in_a_git_repo(write_config, capsys, vault, monkeypatch):
+def test_a_plain_file_is_a_note_not_a_warning(write_config, capsys, vault, monkeypatch):
+    """T212: roster.yml outside any repo is first-class: check --box says how edits are kept, and nags about nothing."""
     monkeypatch.setenv("BW_PASSWORD", "hunter2")
     synced(write_config, capsys, INVENTORY)
     _, out, found = box_check(capsys)
-    assert found["infra"][0][0] == "warn" and "help: E38" in out
+    assert found["infra"] == [("ok", found["infra"][0][1])]
+    assert "isn't in a git repo, so it's a plain file: every edit saves straight to it" in found["infra"][0][1]
+    assert "E38" not in out
+
+
+def test_a_repo_without_a_remote_says_edits_save_in_place(write_config, capsys, vault, monkeypatch, isolated):
+    monkeypatch.setenv("BW_PASSWORD", "hunter2")
+    synced(write_config, capsys, INVENTORY)
+    work = isolated["work"]
+    git(work, "init", "-q", "-b", "main")
+    git(work, "add", "roster.yml")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "inventory")
+    _, _, found = box_check(capsys)
+    assert found["infra"][0][0] == "ok" and "has no remote" in found["infra"][0][1]
 
 
 def test_box_and_a_host_together_is_refused(capsys):
@@ -127,7 +142,7 @@ def test_box_check_through_serve(serve, write_config, capsys, vault, ssh_log):
     synced(write_config, capsys, INVENTORY)
     s = serve()
     r = s.call("box.check")["result"]
-    assert r["api_version"] == 27 and r["roster_version"]
+    assert r["api_version"] == 29 and r["roster_version"]
     assert [c["section"] for c in r["checks"]] == sorted((c["section"] for c in r["checks"]), key=SECTIONS.index)
     assert {c["level"] for c in r["checks"]} <= {"ok", "warn", "error"}
     vault_checks = [c for c in r["checks"] if c["section"] == "vault"]
@@ -164,3 +179,18 @@ def test_check_box_reports_an_askpass_channel_that_opens_but_cannot_work(write_c
     write_config(INVENTORY)
     code, _, found = box_check(capsys)
     assert found["askpass"] == [("error", "roster-askpass.exe isn't installed next to roster")] and code == 1
+
+
+@pytest.mark.parametrize("name, box_name, shared", [("ubuntu", "", True), ("raspberrypi", "", True),
+                                                    ("localhost", "", True), ("ubuntu", "lab-laptop", False),
+                                                    ("ops-laptop-7", "", False), ("x", "debian", True)])
+def test_a_box_name_other_boxes_likely_share_is_a_warning(write_config, capsys, fakes, monkeypatch, name, box_name,
+                                                          shared):
+    """#384: two Boxes with one name are one owner: each one's revoke and Mesh take the other's entries."""
+    monkeypatch.setattr("socket.gethostname", lambda: name)
+    write_config((f"box_name: {box_name}\n" if box_name else "") + INVENTORY)
+    code, out, found = box_check(capsys)
+    warned = [m for lvl, m in found["ssh"] if lvl == "warn" and "a common default" in m]
+    assert bool(warned) == shared, out
+    if shared:
+        assert (box_name or name) in warned[0] and "box_name:" in out and "E222" in out

@@ -1,3 +1,3 @@
 """Roster: give a box - and Claude running on it - access to every host on your network."""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

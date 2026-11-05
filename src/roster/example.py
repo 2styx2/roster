@@ -21,7 +21,7 @@ EXAMPLE_CONFIG = """\
 # auth = how setup gets the password the FIRST time, to install this box's SSH key.
 #        After that the key is used and the password is never needed again
 #        (except for hosts with enroll: false, which always log in by password).
-#        The format is PROVIDER:WHAT. `roster providers` lists every provider you have.
+#        The format is PROVIDER:WHAT. `roster vault status` lists every provider you have.
 #   prompt                 ask once per group when you run setup
 #   agent                  no password; an SSH key you already have (ssh-agent) gets in
 #   env:VAR_NAME           an environment variable
@@ -57,6 +57,8 @@ workers: 32                  # how many hosts to work on in parallel
 claude_inline_limit: 60      # list hosts inside Claude's instructions up to this many
 # web_login_names:           # your team's own names for roster's login types: login: appliance
 #   appliance: hub           # on a service then works exactly like login: hub
+# rate_limited: [10.0.0.0/8] # networks whose SSH rate limiter stops answering after many
+#                            # connections: a Host there that doesn't answer is told so
 
 providers:
   bw:
@@ -144,7 +146,7 @@ groups:
 #                default wpa2), hidden (true/false)
 #   account      url (required) - a website, portal or SaaS login
 #   secret       nothing extra - an API key, license key, PSK
-# `roster resources` lists them, `roster reveal NAME` prints the secret for a person to use.
+# `roster hosts --resources` lists them, `roster vault reveal NAME` prints the secret for a person to use.
 resources:
   office-wifi:
     type: wifi

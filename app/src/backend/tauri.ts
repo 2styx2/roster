@@ -32,13 +32,16 @@ import {
   type InventoryReload,
   type Inventories,
   type InventoryUsed,
+  type NewInventory,
   type PendingChanges,
   type PackageChecked,
   type PackageStatus,
+  type OpenSession,
   type PluginReply,
   type PublishResult,
   type PullResult,
   type SaveTargets,
+  type VaultItemFields,
   type SignedOut,
   type ScannedKey,
   type ProviderStatus,
@@ -157,6 +160,11 @@ async function openQuickSession(
   };
 }
 
+/** One open Session as plugin_sessions takes it (mod.rs's OpenSession). */
+function openSessionArg(o: OpenSession) {
+  return { session: o.session, host: o.host, cwd: o.cwd ?? null };
+}
+
 function inventoryCall<T>(method: string, params: Record<string, unknown>): Promise<T> {
   return call<T>("inventory_call", { method, params });
 }
@@ -179,6 +187,8 @@ export function tauriBackend(): Backend {
     signOut: () => call<SignedOut>("vault_logout"),
     configureVault: (settings) => call<VaultConfigured>("vault_configure", { settings }),
     saveTargets: () => call<SaveTargets>("vault_targets"),
+    vaultItemFields: (item, provider) =>
+      call<VaultItemFields>("vault_item_fields", { params: { item, ...(provider ? { provider } : {}) } }),
     // Secrets in these params go once to serve's stdin, like vault_unlock's password.
     signIn: (start) => call<SignInStep>("vault_login", { params: { action: "start", ...start } }),
     signInAnswer: (login, answer) =>
@@ -200,6 +210,8 @@ export function tauriBackend(): Backend {
     // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
     listInventories: () => call<Inventories>("inventories_list"),
     useInventory: (name) => call<InventoryUsed>("inventories_use", { name }),
+    createInventory: (params) => call<NewInventory>("inventory_create", { params }),
+    cancelCreateInventory: () => call<boolean>("inventory_create_cancel"),
     verifyLogin: (host, changes: HostChanges) => call<HostCheck>("host_verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => call<HostUpdate>("host_update", { host, changes }),
     pendingChanges: () => call<PendingChanges>("changes_diff"),
@@ -230,7 +242,7 @@ export function tauriBackend(): Backend {
     pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null }),
     pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried" }),
     pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload }),
-    pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map((o) => [o.session, o.host]) }).then(() => undefined),
+    pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg) }).then(() => undefined),
     pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin }),
     pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin }),
     pluginBuiltins: (names) => call<null>("plugin_builtins", { names }).then(() => undefined),
@@ -251,7 +263,7 @@ export function tauriBackend(): Backend {
         pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null, onDemo }),
         pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", onDemo }),
         pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload, onDemo }),
-        pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map((o) => [o.session, o.host]), onDemo }).then(() => undefined),
+        pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg), onDemo }).then(() => undefined),
         pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),
         pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin, onDemo }),
         pluginBuiltins: (names) => call<null>("plugin_builtins", { names, onDemo }).then(() => undefined),

@@ -17,6 +17,81 @@ REAL_PATH = os.environ.get("PATH", "")       # before any test put the stand-ins
 posix_shell = pytest.mark.skipif(WINDOWS, reason="runs a POSIX shell script; native Windows has no sh")
 
 
+SHARD_DURATIONS = Path(__file__).parent / "durations-windows.json"
+# What a test costs on the Windows runner beyond its recorded setup, call and teardown, fitted to shard wall times
+# (T233, PR #455): a shard of 1,376 quick tests took 693 s against 409 s for 369 slow ones of more test time.
+SHARD_PER_TEST = 1.0
+
+
+def pytest_addoption(parser):
+    parser.addoption("--shard", metavar="K/N", default=None,
+                     help="run the Kth of N shards, balanced by recorded time (CI's Windows jobs, decision Q196)")
+    parser.addoption("--shard-durations", metavar="PATH", default=str(SHARD_DURATIONS),
+                     help="the seconds each test took, which --shard balances (default: tests/durations-windows.json)")
+    parser.addoption("--store-durations", metavar="PATH", default=None,
+                     help="write the seconds each test took (setup, call and teardown) to PATH as JSON")
+
+
+def pytest_collection_modifyitems(config, items):
+    """--shard K/N splits the tests so each shard's recorded time (--shard-durations, refreshed from the nightly run)
+    comes out about the same: the longest first, each to the shard with the least so far, each test counting its
+    time plus SHARD_PER_TEST. A test the file doesn't know counts as its average, so a new one needs no entry. A
+    shard keeps collection order: longest first ran slower on the Windows runner (T233). The same in every xdist
+    worker: it depends only on the collected tests and the file."""
+    shard = config.getoption("--shard")
+    if not shard:
+        return
+    k, n = (int(x) for x in shard.split("/"))
+    if not 1 <= k <= n:
+        raise pytest.UsageError(f"--shard {shard}: K must be 1 to N")
+    try:
+        recorded = json.loads(Path(config.getoption("--shard-durations")).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        recorded = {}
+    known = [recorded[i.nodeid] for i in items if i.nodeid in recorded]
+    average = sum(known) / len(known) if known else 1.0
+    longest_first = sorted(items, key=lambda i: (-recorded.get(i.nodeid, average), i.nodeid))
+    loads = [0.0] * n
+    home: dict[str, int] = {}
+    for item in longest_first:
+        j = loads.index(min(loads))
+        loads[j] += recorded.get(item.nodeid, average) + SHARD_PER_TEST
+        home[item.nodeid] = j
+    config.hook.pytest_deselected(items=[i for i in items if home[i.nodeid] != k - 1])
+    items[:] = [i for i in items if home[i.nodeid] == k - 1]
+
+
+_durations: dict[str, float] = {}
+
+
+def pytest_runtest_logreport(report):
+    _durations[report.nodeid] = _durations.get(report.nodeid, 0.0) + report.duration
+
+
+def pytest_sessionfinish(session):
+    """--store-durations: in the controller only (an xdist worker's reports reach it too)."""
+    path = session.config.getoption("--store-durations")
+    if path and not hasattr(session.config, "workerinput"):
+        times = {nodeid: round(t, 2) for nodeid, t in sorted(_durations.items())}
+        Path(path).write_text(json.dumps(times, indent=0) + "\n", encoding="utf-8")
+
+
+def source_copy(tmp_path):
+    """The files install.sh and update.sh read, in a folder of their own that isn't a git clone: they must never run
+    git (a fetch, a pull) on the checkout running the tests."""
+    src = tmp_path / "src-copy"
+    (src / "src/roster").mkdir(parents=True, exist_ok=True)
+    root = Path(__file__).parent.parent
+    for f in ("install.sh", "update.sh", "install-lib.sh", "pyproject.toml", "src/roster/roster.1"):
+        (src / f).write_bytes((root / f).read_bytes())
+    return src
+
+
+def no_roster_path():
+    """PATH without a directory holding a roster: on a box that has one, install.sh would run update.sh instead."""
+    return os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if d and not (Path(d) / "roster").exists())
+
+
 def find_posix_sh():
     """A POSIX sh for the stand-in Hosts (tests/fakes/ssh, FAKE_HOSTS): /bin/sh, or on native Windows Git for Windows'
     MSYS sh (Git/usr/bin/sh.exe, which has the awk, sed, mktemp and ssh-keygen a Host's side of `roster mesh` uses

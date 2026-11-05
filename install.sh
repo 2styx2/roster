@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 # Install roster on this box, one stage at a time. Every stage asks first and is safe to re-run.
+# On a box that's set up (roster, uv and a map in ROSTER_CONFIG) it runs ./update.sh instead, with --yes,
+# --dry-run, --prefix, --no-completion and --allow-downgrade; on one that isn't finished, it finishes it.
 #
 #   ./install.sh               interactive
 #   ./install.sh --yes         accept every default (stages that need a person, like `bw login`, are skipped)
 #   ./install.sh --dry-run     show what would happen, change nothing
 #   ./install.sh --prefix DIR  put the roster command in DIR/bin and its man page in DIR/share/man/man1
 #                              (default: uv's tool bin dir, ~/.local/bin, so ~/.local/share/man/man1); or PREFIX=DIR
-#   ./install.sh --infra-repo URL   the git URL of your team's map (the repo with roster.yml); or ROSTER_INFRA_REPO=URL
+#   ./install.sh --inventory HOW    how to get an Inventory (roster.yml) when the folder has none, without asking:
+#                              blank (a new, short one: the default), file:PATH (a copy of that roster.yml),
+#                              repo:URL (a clone of your team's git repo) or ssh-config[:PATH] (Hosts from ~/.ssh/config);
+#                              or ROSTER_INVENTORY=HOW
+#   ./install.sh --infra-repo URL   the same as --inventory repo:URL; or ROSTER_INFRA_REPO=URL
 #   ./install.sh --no-completion    don't turn on Tab completion for roster in your shell (it's on otherwise)
+#   ./install.sh --ref REF     install REF (a tag, or a branch of origin such as dev) instead of the newest Release
+#   ./install.sh --allow-downgrade  install it even when it's older than the roster this box has (--ref does too)
+#   ./install.sh --finish      run every stage on a box that has roster, instead of handing over to ./update.sh
 #
-# Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the roster config folder, making roster work from
+# roster comes from the newest Release tag (vX.Y.Z) origin has, whatever branch this checkout is on, unpacked into
+# ~/.local/share/roster/source: your checkout is never switched, pulled or changed. Offline, it installs the checkout
+# as it is, and says so. An older roster than the one installed is only installed when you say so.
+# Stages: prerequisites, uv, roster (with its man page, so `man roster` works), Bitwarden CLI, the Inventory's folder, making roster work from
 # any directory, unlocking the vault, `roster setup`, and auto-updates from cron. ./uninstall.sh undoes them.
 # "Work from anywhere" also turns on Tab completion for roster in bash, zsh and fish (unless --no-completion).
 # Output of each step goes to ~/.cache/roster/install.log; it is shown only when a step fails.
@@ -17,15 +29,19 @@ set -uo pipefail
 
 ROSTER_REPO="https://github.com/2styx2/roster.git"   # public: https needs no GitHub key on a new box
 INFRA_REPO=${ROSTER_INFRA_REPO:-}
+INVENTORY=${ROSTER_INVENTORY:-}
 LOG="$HOME/.cache/roster/install.log"
 SESSION_FILE="$HOME/.config/roster/bw-session"
 MARK="# roster: ROSTER_CONFIG"           # marks the lines we add to shell startup files (uninstall.sh looks for them)
 PATH_MARK="# roster: uv tools"
 MAN_MARK="# roster: man page"            # only when man doesn't find the page from PATH by itself
+# shellcheck disable=SC2034  # read by install-lib.sh's turn_on_completion
 COMP_MARK="# roster: completion"         # the Tab completion line (or fish's file), always added (decision Q183)
 NEED_MANPATH=0
+SRC_STORE="${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"   # the roster install.sh unpacked and installed
+CHOICES="$HOME/.config/roster/install-choices"   # answers kept for later runs: no-cron, no-completion
 
-YES=0 DRY=0 COMPLETION=1 PREFIX=${PREFIX:-}
+YES=0 DRY=0 COMPLETION=1 PREFIX=${PREFIX:-} REF="" ALLOW_DOWNGRADE=0 FINISH=0 keep=0 older_version=""
 while (( $# )); do
     case "$1" in
         -y|--yes) YES=1 ;;
@@ -35,66 +51,39 @@ while (( $# )); do
         --prefix=*) PREFIX=${1#--prefix=} ;;
         --infra-repo) [[ -n ${2:-} ]] || { echo "--infra-repo needs a git URL" >&2; exit 2; }; INFRA_REPO=$2; shift ;;
         --infra-repo=*) INFRA_REPO=${1#--infra-repo=} ;;
+        --inventory) [[ -n ${2:-} ]] || { echo "--inventory needs blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2; }
+                     INVENTORY=$2; shift ;;
+        --inventory=*) INVENTORY=${1#--inventory=} ;;
+        --ref) [[ -n ${2:-} ]] || { echo "--ref needs a tag or branch" >&2; exit 2; }; REF=$2; shift ;;
+        --ref=*) REF=${1#--ref=} ;;
+        --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
+        --finish) FINISH=1 ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
     shift
 done
 PREFIX=${PREFIX/#\~/$HOME}
-
-# ---- look
-
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
-else
-    B='' D='' R='' G='' Y='' C='' N=''
-fi
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8*|*utf8*) FULL="█" EMPTY="░" OK="✔" BAD="✘" SKIP="–" SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) ;;
-    *) FULL="#" EMPTY="-" OK="ok" BAD="x" SKIP="-" SPIN=('|' '/' '-' '\') ;;
+[[ -n $INFRA_REPO && -z $INVENTORY ]] && INVENTORY="repo:$INFRA_REPO"
+case "$INVENTORY" in
+    ""|blank|file:?*|repo:[!-]*|ssh-config|ssh-config:?*) ;;
+    *) echo "--inventory $INVENTORY: use blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2 ;;
 esac
 
-STAGES=("Prerequisites" "uv" "roster" "Bitwarden CLI" "Config folder" "Work from anywhere"
+# ---- what install.sh and update.sh share: the look, the questions, find_map and friends (install-lib.sh, beside this
+# script in a checkout and in the Release's roster-cli tarball)
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+if [[ ! -f $here/install-lib.sh ]]; then
+    echo "install.sh needs install-lib.sh beside it: run it in a roster checkout (git clone $ROSTER_REPO) or in the unpacked roster-cli tarball" >&2
+    exit 2
+fi
+# shellcheck source=install-lib.sh
+source "$here/install-lib.sh"
+
+STAGES=("Prerequisites" "uv" "roster" "Bitwarden CLI" "Inventory" "Work from anywhere"
         "Unlock the vault" "Set up this box" "Auto-update")
 TOTAL=${#STAGES[@]}
 DONE=() SKIPPED=() FAILED=()
-
-stage() {                       # stage N: progress bar + title
-    local n=$1 w=30 fill
-    fill=$(( n * w / TOTAL ))
-    local bar="" i
-    for ((i = 0; i < w; i++)); do (( i < fill )) && bar+="$FULL" || bar+="$EMPTY"; done
-    printf '\n%s%s%s %s%d/%d%s  %s%s%s\n' "$C" "$bar" "$N" "$D" "$n" "$TOTAL" "$N" "$B" "${STAGES[n-1]}" "$N"
-    CUR="${STAGES[n-1]}"
-}
-ok()   { printf '  %s%s%s %s\n' "$G" "$OK" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
-bad()  { printf '  %s%s%s %s\n' "$R" "$BAD" "$N" "$*"; }
-info() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
-skip() { printf '  %s%s %s%s\n' "$D" "$SKIP" "$*" "$N"; SKIPPED+=("$CUR"); }
-done_stage() { DONE+=("$CUR"); }
-fail_stage() { FAILED+=("$CUR"); }
-listed() { local x=$1 e; shift; for e in "$@"; do [[ $e == "$x" ]] && return 0; done; return 1; }  # listed NAME LIST...
-
-TTY=/dev/tty                    # prompts read the keyboard even when piped into bash
-( : < "$TTY" ) 2>/dev/null || TTY=/dev/stdin
-
-ask() {                         # ask "Question?" Y|N  -> 0 for yes
-    local q=$1 def=${2:-Y} hint reply
-    [[ $def == Y ]] && hint="Y/n" || hint="y/N"
-    if (( YES )); then
-        printf '  %s?%s %s %s[%s]%s %s\n' "$C" "$N" "$q" "$D" "$hint" "$N" "$([[ $def == Y ]] && echo yes || echo no)"
-        [[ $def == Y ]]; return
-    fi
-    while true; do
-        printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$hint" "$N"
-        read -r reply < "$TTY" || reply=""
-        case "${reply:-$def}" in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-        esac
-    done
-}
 
 ask_value() {                   # ask_value "Prompt" default -> echoes the answer
     local q=$1 def=$2 reply
@@ -104,10 +93,21 @@ ask_value() {                   # ask_value "Prompt" default -> echoes the answe
     echo "${reply:-$def}"
 }
 
+redact() {                      # redact TEXT -> TEXT with a URL's credentials cut out: https://***@host/...
+    # http(s)/ssh: the whole userinfo, up to the last @ before the host (a token as the user, an @ in a password);
+    # elsewhere a password only. As newinventory.py's shown_url (#409 N2)
+    sed -E 's#((https?|ssh|git\+ssh|ftps?)://)[^/[:space:]]*@#\1***@#gI; s#(://[^/:@[:space:]*]*):[^@/[:space:]]*@#\1:***@#g' <<<"$1"
+}
+
+safe_path() {                   # safe_path PATH -> 0 when PATH can go inside "..." in a shell startup file
+    [[ $1 != *[\"\$\`\\]* && $1 != *$'\n'* ]]
+}
+
+
 step() {                        # step "what" cmd...  - runs with a spinner, output to the log
-    local what=$1; shift
-    if (( DRY )); then info "would run: $*"; return 0; fi
-    printf '\n==== %s: %s\n' "$what" "$*" >> "$LOG"
+    local what; what=$(redact "$1"); shift
+    if (( DRY )); then info "would run: $(redact "$*")"; return 0; fi
+    printf '\n==== %s: %s\n' "$what" "$(redact "$*")" >> "$LOG"
     "$@" >> "$LOG" 2>&1 &
     local pid=$! i=0
     if [[ -t 1 ]]; then
@@ -124,13 +124,11 @@ step() {                        # step "what" cmd...  - runs with a spinner, out
 }
 
 live() {                        # live "what" cmd...  - runs in the foreground (it needs the keyboard)
-    local what=$1; shift
-    if (( DRY )); then info "would run: $*"; return 0; fi
+    local what; what=$(redact "$1"); shift
+    if (( DRY )); then info "would run: $(redact "$*")"; return 0; fi
     info "$what"
     if "$@" < "$TTY"; then ok "$what"; else bad "$what failed"; return 1; fi
 }
-
-have() { command -v "$1" >/dev/null 2>&1; }
 
 SUDO=sudo                       # root (a container, say) often has no sudo, and doesn't need it
 (( EUID == 0 )) && SUDO=""
@@ -156,28 +154,132 @@ cron_pkg() {                    # the package that brings crontab and the cron d
     fi
 }
 
-start_cron() {                  # make sure the cron daemon runs now and after a restart; 0 when it does
+running() {                     # running NAME: a process called NAME runs on this box (pgrep, else /proc)
+    if have pgrep; then pgrep -x "$1" >/dev/null 2>&1; return; fi
+    local c
+    for c in /proc/[0-9]*/comm; do [[ $(cat "$c" 2>/dev/null) == "$1" ]] && return 0; done
+    return 1
+}
+
+start_cron() {                  # make sure the cron daemon runs now and after a restart; 0 when it does,
+    # 2 when there's no cron daemon to start (the caller skips the job), 1 when starting it failed
     [[ $(uname -s) == Darwin ]] && return 0             # launchd starts cron on macOS
-    local svc wsl=0
-    grep -qi microsoft /proc/version 2>/dev/null && wsl=1
+    local svc wsl=0 wsl_tip="WSL without systemd: cron stops with WSL. Put [boot] systemd=true in /etc/wsl.conf so it starts by itself"
+    # WSL's own distro, not a container on WSL's kernel: /etc/wsl.conf is the distro's
+    [[ -e /run/.containerenv || -e /.dockerenv ]] || ! grep -qi microsoft /proc/version 2>/dev/null || wsl=1
     for svc in crond cron cronie; do                    # Fedora/RHEL, Debian/Ubuntu, Arch
-        if [[ -d /run/systemd/system ]]; then
+        if [[ -d /run/systemd/system ]] && have systemctl; then
             systemctl cat "$svc.service" >/dev/null 2>&1 || continue
             if systemctl is-active --quiet "$svc" && systemctl is-enabled --quiet "$svc" 2>/dev/null; then
                 ok "cron daemon ($svc) running"; return 0
             fi
             step "start the cron daemon ($svc), now and at boot" $SUDO systemctl enable --now "$svc"; return
-        elif [[ -x /etc/init.d/$svc ]]; then
+        elif [[ -x /etc/init.d/$svc ]] && have service; then
             if ! service "$svc" status >/dev/null 2>&1; then
                 step "start the cron daemon ($svc)" $SUDO service "$svc" start || return 1
             else ok "cron daemon ($svc) running"; fi
             # no systemd: nothing starts cron again when WSL (or the container) restarts
-            (( wsl )) && warn "WSL without systemd: cron stops with WSL. Put [boot] systemd=true in /etc/wsl.conf so it starts by itself"
+            (( wsl )) && warn "$wsl_tip"
             return 0
         fi
     done
+    # no init system to ask (a container, #444): the daemon itself, when the box has one
+    for svc in crond cron; do                           # cronie's, Debian's
+        have "$svc" || continue
+        if running "$svc"; then ok "cron daemon ($svc) running"
+        else step "start the cron daemon ($svc) directly: no init system here" $SUDO "$svc" || return 1; fi
+        warn "nothing starts $svc again when this box restarts: run sudo $svc then, or the job doesn't run"
+        (( wsl )) && warn "$wsl_tip"
+        return 0
+    done
     if (( DRY )); then info "would start the cron daemon"; return 0; fi
-    warn "couldn't find the cron service - start it yourself, or the job never runs"; return 1
+    return 2
+}
+
+in_checkout() { [[ -f "$1/pyproject.toml" ]] && grep -q '^name = "roster"' "$1/pyproject.toml"; }
+pick_source() {                 # pick_source DIR: which roster to install from the checkout DIR -> from, from_desc, pick_version
+    local d=$1 commit="" def tag="" refs="" spec="" ref="" err name
+    from=$d from_desc=$(describe_source "$d") pick_version=$(version_in "$d")
+    [[ -d $d ]] || return 0                 # a dry run's clone that didn't happen
+    if [[ $(git -C "$d" rev-parse --show-toplevel 2>/dev/null) != "$(cd "$d" && pwd -P)" ]]; then
+        info "$(home "$d") isn't a git clone (a Release tarball): installing it as it is"
+        [[ -n $REF ]] && warn "--ref $REF needs a git clone: ignored"
+        return 0
+    fi
+    has_ref() { awk -v r="$1" '$2 == r { found = 1 } END { exit !found }' <<<"$refs"; }   # a name, not a pattern
+    local_ref() { git -C "$d" rev-parse -q --verify "refs/remotes/origin/$REF^{commit}" 2>/dev/null ||
+                  git -C "$d" rev-parse -q --verify "$REF^{commit}" 2>/dev/null; }
+    if ! git -C "$d" remote get-url origin >/dev/null 2>&1 || ! refs=$(git_net "$d" ls-remote --refs --tags --heads origin 2>/dev/null); then
+        # offline, or nowhere to ask: the checkout as it is, or --ref as this clone has it
+        if [[ -n $REF ]]; then
+            commit=$(local_ref) || { bad "couldn't reach origin, and this clone has no $REF"; fail_stage; exit 1; }
+            tag=$REF; warn "couldn't reach origin: installing $REF as this clone has it"
+        else
+            warn "couldn't reach origin: installing the checkout as it is ($from_desc), which may not be the newest roster"
+            return 0
+        fi
+    else
+        # origin answered: the newest Release is the highest vX.Y.Z tag *origin* has (not a tag of yours, or a fork's)
+        if [[ -n $REF ]]; then
+            tag=$REF
+            if has_ref "refs/tags/$REF"; then spec="+refs/tags/$REF:refs/tags/$REF" ref="refs/tags/$REF"
+            elif has_ref "refs/heads/$REF"; then
+                spec="+refs/heads/$REF:refs/remotes/origin/$REF" ref="refs/remotes/origin/$REF"
+            else commit=$(git -C "$d" rev-parse -q --verify "$REF^{commit}" 2>/dev/null) ||
+                     { bad "no tag or branch $REF on origin"; fail_stage; exit 1; }
+            fi
+        else
+            tag=$(sed -n 's|.*[[:space:]]refs/tags/||p' <<<"$refs" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            if [[ -n $tag ]]; then spec="+refs/tags/$tag:refs/tags/$tag" ref="refs/tags/$tag"
+            else                                # no Release yet: origin's default branch
+                def=$(git_net "$d" ls-remote --symref origin HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\(.*\)[[:space:]]HEAD$|\1|p')
+                def=${def:-main} tag="origin/${def:-main}"
+                if ! has_ref "refs/heads/$def"; then
+                    warn "origin has no Release tag and no $def branch: installing the checkout as it is ($from_desc)"; return 0
+                fi
+                spec="+refs/heads/$def:refs/remotes/origin/$def" ref="refs/remotes/origin/$def"
+            fi
+        fi
+        if [[ -n $spec ]]; then
+            # just that one ref, forced: a tag origin moved updates here instead of failing the fetch. Your branches
+            # and the files you work on don't move (a dry run fetches too, for the same reason)
+            if ! err=$(git_net "$d" fetch --quiet --no-tags origin "$spec" 2>&1); then
+                bad "origin answered, but fetching $tag failed: $(tail -n 1 <<<"$err")"; fail_stage; exit 1
+            fi
+            commit=$(git -C "$d" rev-parse -q --verify "$ref^{commit}")
+        fi
+    fi
+    from_desc="$tag, commit $(git -C "$d" rev-parse --short "$commit")"
+    pick_version=$(version_in "$d" "$commit")
+    # unpacked where it stays (uv's record of the install points there, so `uv tool upgrade` finds it); update.sh is
+    # the way to update, and the next install prunes the copies before it
+    name=${tag//\//-}
+    from="$SRC_STORE/$name"
+    info "installing roster ${pick_version:-?} ($from_desc) from a clean copy: your checkout stays as it is"
+    if (( DRY )); then info "would unpack $tag into $(home "$from")"; return 0; fi
+    if mkdir -p "$SRC_STORE" && NEW_SRC=$(mktemp -d "$SRC_STORE/.new.XXXXXX") && trap 'rm -rf "$NEW_SRC"' EXIT &&
+            git -C "$d" archive --format=tar "$commit" | tar -x -C "$NEW_SRC" && rm -rf "$from" && mv "$NEW_SRC" "$from"; then :
+    else bad "couldn't unpack $tag into $(home "$SRC_STORE")"; fail_stage; exit 1; fi
+}
+
+prune_sources() {               # the copies of earlier installs, once this one is in
+    local o
+    [[ $from == "$SRC_STORE"/* ]] || return 0
+    for o in "$SRC_STORE"/* "$SRC_STORE"/.new.*; do [[ -e $o && $o != "$from" ]] && rm -rf "$o"; done
+    return 0
+}
+
+home_of() { [[ $1 == "$HOME"/* ]] && echo "~${1#"$HOME"}" || echo "$1"; }
+
+box_needs() {                   # what this box is missing that update.sh doesn't do -> the list, empty when none
+    local pull
+    find_map
+    if [[ -z $MAP ]]; then echo "an Inventory and ROSTER_CONFIG"; return; fi
+    [[ $MAP_FROM == infra ]] && echo "ROSTER_CONFIG"           # roster finds ~/infra/roster.yml only through it
+    pull="$(dirname "$MAP")/bin/roster-pull"
+    if [[ -x $pull ]] && ! chose no-cron && ! { have crontab && crontab -l 2>/dev/null | grep -qF "$pull"; }; then
+        echo "the auto-update cron job"
+    fi
 }
 
 # ---- start
@@ -192,6 +294,40 @@ printf '\n%sroster installer%s\n' "$B" "$N"
 info "Give this box (and Claude on it) access to every host in roster.yml. Passwords stay in the vault."
 (( DRY )) && warn "dry run: nothing will be changed"
 (( YES )) && info "--yes: taking the default answer everywhere"
+
+# Set up already: that's an update, update.sh's job (the same checkout's, with the same flags). Set up means roster
+# and uv, a map in ROSTER_CONFIG, and the cron job when the map has bin/roster-pull: update.sh does the rest (and
+# turns on Tab completion). A box without them (a first run with no map yet, a stage that failed, one installed
+# before install.sh had cron) gets every stage again, each skipping what's done (Q184).
+inst_bin=$(installed_roster) || inst_bin=""
+inst_version=""
+[[ -n $inst_bin ]] && inst_version=$("$inst_bin" --version 2>/dev/null | awk '{print $NF}')
+needs=""
+[[ -n $inst_bin ]] && needs=$(box_needs)
+if [[ -n $inst_bin ]] && have uv && [[ -z $needs ]] && (( ! FINISH )); then
+    info "roster $inst_version is already installed on this box: updating it with ./update.sh"
+    up=$here
+    if ! in_checkout "$up"; then up=$(ask_value "Where is the roster source?" "$HOME/roster"); up=${up/#\~/$HOME}; fi
+    if [[ ! -f "$up/update.sh" ]]; then
+        bad "no update.sh in $up: run update.sh in your roster checkout (or git clone $ROSTER_REPO there first)"; exit 1
+    fi
+    [[ -n $INFRA_REPO || -n $INVENTORY ]] && find_map && info "--inventory and --infra-repo are for a first install: this box has an Inventory ($(home_of "$MAP")); a second one beside it: roster -c FOLDER/roster.yml init --inventory HOW --name NAME"
+    [[ -n $REF ]] && info "--ref is for a first install: update.sh installs this checkout as it is (or ./install.sh --finish --ref $REF)"
+    flags=()
+    (( YES )) && flags+=(--yes)
+    (( DRY )) && flags+=(--dry-run)
+    (( COMPLETION )) || flags+=(--no-completion)
+    (( ALLOW_DOWNGRADE )) && flags+=(--allow-downgrade)
+    if [[ -n $PREFIX ]]; then flags+=(--prefix "$PREFIX")
+    elif ! have roster; then flags+=(--prefix "$(dirname "$(dirname "$inst_bin")")")     # where uv put it, off PATH
+    fi
+    bash "$up/update.sh" ${flags[@]+"${flags[@]}"} < "$TTY"
+    exit $?
+fi
+if [[ -n $inst_bin ]]; then
+    if (( FINISH )); then info "roster $inst_version is installed: --finish runs every stage, skipping what's done"
+    else info "roster $inst_version is installed, but this box isn't finished (no ${needs//$'\n'/, no }): finishing the install"; fi
+fi
 
 # 1. Prerequisites
 stage 1
@@ -216,7 +352,7 @@ if (( ${#missing[@]} )); then
 else
     done_stage
 fi
-if ! have man; then warn "man not installed (optional: for man roster; roster man shows the page without it)"; fi
+if ! have man; then warn "man not installed (optional: for man roster; roster help --man shows the page without it)"; fi
 if ! have jq || ! have nmap || ! have man; then
     opt=(); have jq || opt+=(jq); have nmap || opt+=(nmap)
     if ! have man && ! have brew; then opt+=(man-db); fi       # macOS has man; man-db is its name elsewhere
@@ -235,8 +371,7 @@ fi
 
 # 3. roster
 stage 3
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [[ -f "$here/pyproject.toml" ]] && grep -q '^name = "roster"' "$here/pyproject.toml"; then
+if in_checkout "$here"; then
     src=$here
     ok "using this checkout: $src"
 else
@@ -245,13 +380,21 @@ else
     if [[ -d "$src/.git" ]]; then ok "already cloned: $src"
     elif ! step "clone roster into $src" git clone -q "$ROSTER_REPO" "$src"; then fail_stage; exit 1; fi
 fi
-if have roster && ! ask "roster $(roster --version 2>/dev/null | awk '{print $NF}') is installed. Reinstall from $src?" Y; then
-    skip "kept the installed roster"
-    bindir=${PREFIX:+$PREFIX/bin}; bindir=${bindir:-$(dirname "$(command -v roster)")}
-elif bindir=${PREFIX:+$PREFIX/bin}; bindir=${bindir:-$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")}
-     step "install roster (uv tool install) into $bindir" \
-        env "UV_TOOL_BIN_DIR=$bindir" uv tool install --force --quiet "$src"; then
-    done_stage
+pick_source "$src"                      # the newest Release, not whatever this checkout happens to be on (#408)
+bindir=${PREFIX:+$PREFIX/bin}
+[[ -z $bindir && -n $inst_bin ]] && bindir=$(dirname "$inst_bin")       # where it is already: not a second copy
+bindir=${bindir:-$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")}
+keep=0                                  # never an older roster over a newer one without a yes (#408)
+if [[ -n $inst_version && -n $pick_version ]] && older "$pick_version" "$inst_version" && (( ! ALLOW_DOWNGRADE )) &&
+        [[ -z $REF ]] && ! ask "Install roster $pick_version over the newer $inst_version this box has?" N; then
+    keep=1
+fi
+if (( keep )); then
+    skip "kept roster $inst_version: $pick_version is older (--allow-downgrade installs it anyway)"
+    older_version=$pick_version
+elif step "install roster (uv tool install) into $bindir" \
+        env "UV_TOOL_BIN_DIR=$bindir" uv tool install --force --quiet "$from"; then
+    done_stage; (( DRY )) || prune_sources
 else
     fail_stage; exit 1
 fi
@@ -259,8 +402,8 @@ fi
 # reinstalled, so a roster from before the man page gets it too.
 page="$(dirname "$bindir")/share/man/man1/roster.1"
 mandir=$(dirname "$(dirname "$page")")
-if step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
-        "$page" "$src/src/roster/roster.1"; then
+if (( keep )) || step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
+        "$page" "$from/src/roster/roster.1"; then
     # man finds PREFIX/share/man from PREFIX/bin on PATH (man-db, mandoc); make sure, with the PATH a new terminal has
     # A minimized Ubuntu's man is a stand-in that only says so (the real one, if man-db is there, is man.REAL)
     manbin="man"; minimized=0
@@ -269,15 +412,15 @@ if step "install the man page (man roster)" sh -c 'mkdir -p "$(dirname "$1")" &&
     fi
     if (( DRY )) || ! have man; then :
     elif [[ $(PATH="$bindir:$USER_PATH" MANPATH="${MANPATH:-}" "$manbin" -w roster 2>/dev/null) == "$page"* ]]; then
-        if (( minimized )); then warn "this system is minimized: man shows no page until you run sudo unminimize (roster man works now)"
+        if (( minimized )); then warn "this system is minimized: man shows no page until you run sudo unminimize (roster help --man works now)"
         else ok "man roster finds it"; fi
     elif (( minimized )); then
-        warn "this system is minimized: for man roster, install man-db and run sudo unminimize (roster man works now)"
+        warn "this system is minimized: for man roster, install man-db and run sudo unminimize (roster help --man works now)"
     else
         warn "man doesn't look in ${mandir/#$HOME/\~} by itself: stage 6 adds it to MANPATH"; NEED_MANPATH=1
     fi
 else
-    warn "no man page; roster man shows it"
+    warn "no man page; roster help --man shows it"
 fi
 case ":$USER_PATH:" in
     *":$bindir:"*) ;;
@@ -311,42 +454,109 @@ else
     skip "no Bitwarden CLI - logins that use bw: won't work on this box"
 fi
 
-# 5. Config folder
+# 5. Inventory: the roster.yml in the folder you pick, kept if it's there; else one of four ways to get one (T212):
+# a blank one (the default), a copy of a roster.yml, a clone of the team's repo, or Hosts from ~/.ssh/config
 stage 5
-cfg_dir=$(ask_value "Folder for your roster config (roster.yml)" "$HOME/infra")
+
+choose_how() {                  # choose_how -> echoes blank | file:PATH | repo:URL | ssh-config
+    local c p
+    info "How do you want to start your Inventory?" >&2
+    info "  1  a blank one, to add Hosts to (the default)" >&2
+    info "  2  import a roster.yml you have" >&2
+    info "  3  clone your team's git repo (the one with roster.yml)" >&2
+    info "  4  import the Hosts in ~/.ssh/config (it isn't changed)" >&2
+    c=$(ask_value "1, 2, 3 or 4" 1)
+    case $c in
+        2) p=$(ask_value "Path of the roster.yml to import" ""); [[ -n $p ]] && { echo "file:${p/#\~\//$HOME/}"; return; } ;;
+        3) p=$(ask_value "Git URL of your team's repo" ""); [[ -n $p && $p != -* ]] && { echo "repo:$p"; return; } ;;
+        4) echo ssh-config; return ;;
+    esac
+    [[ $c == 1 ]] || warn "nothing to import from: a blank one, then" >&2
+    echo blank
+}
+
+clone_repo() {                  # clone_repo URL DIR: the team's repo into DIR
+    local url=$1 dir=$2
+    if [[ -e "$dir" && -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
+        bad "$dir exists and isn't empty - pick another folder or empty it"; return 1
+    fi
+    if (( YES )); then
+        # nobody to answer a passphrase question: fail instead of waiting on a hidden prompt. The repo was named
+        # on the command line, so a first-seen host key is taken (accept-new: a changed one still fails). Your
+        # own GIT_SSH_COMMAND or core.sshCommand (a deploy key, say) is left as it is.
+        local git_ssh=()
+        if [[ -z ${GIT_SSH_COMMAND:-} ]] && ! git config --get core.sshCommand >/dev/null 2>&1; then
+            git_ssh=("GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+        fi
+        step "clone $url into $dir" \
+            env GIT_TERMINAL_PROMPT=0 ${git_ssh[@]+"${git_ssh[@]}"} git clone -q -- "$url" "$dir" || return 1
+    else
+        live "clone $url into $dir" git clone -q -- "$url" "$dir" || return 1
+    fi
+    if (( DRY )) || [[ -f "$dir/roster.yml" ]]; then return 0; fi
+    warn "the clone has no roster.yml at its top"; return 1
+}
+
+make_inventory() {              # make_inventory CFG HOW [NAME]: CFG made the HOW way (named NAME); sets MADE
+    local cfg=$1 how=$2 name=${3:-} dir src
+    dir=$(dirname "$cfg"); MADE=$cfg
+    local named=(); [[ -n $name ]] && named=(--name "$name")
+    case $how in
+        repo:*)
+            clone_repo "${how#repo:}" "$dir" || return 1
+            if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$cfg" || return 1; fi
+            return 0 ;;
+        file:*)
+            src=${how#file:}; src=${src/#\~\//$HOME/}
+            if ! ask "Copy $src into $dir? (n: use it where it is)" Y; then
+                # a full path that's there, and one a shell startup file can hold (ROSTER_CONFIG="...")
+                if [[ ! -f $src ]]; then bad "no file at $src"; return 1; fi
+                src="$(CDPATH='' cd -- "$(dirname -- "$src")" && pwd)/$(basename -- "$src")"
+                if ! safe_path "$src"; then bad "$src can't hold \", \$, \` or a newline: rename it, or copy it"; return 1; fi
+                MADE=$src; ok "using $src where it is"
+                if [[ -n $name ]]; then step "name it $name (roster inv add)" roster inv add "$name" "$src" || return 1; fi
+                return 0
+            fi ;;
+    esac
+    (( DRY )) || mkdir -p "$dir" || return 1
+    step "roster init --inventory $how" roster -c "$cfg" init --inventory "$how" ${named[@]+"${named[@]}"} || return 1
+    # optional, never required: roster saves a plain file in place, and a repo without a remote the same way
+    if ask "Keep its history in git (git init in $dir)? roster works the same without it" N; then
+        step "git init" git -C "$dir" init -q || warn "no git history; roster works the same"
+    fi
+}
+
+cfg_dir=$(ask_value "Folder for your Inventory (roster.yml)" "$HOME/infra")
 cfg_dir=${cfg_dir/#\~/$HOME}
 CFG="$cfg_dir/roster.yml"
-if [[ ! -f $CFG && -z $INFRA_REPO ]] && (( ! YES )); then
-    INFRA_REPO=$(ask_value "Git URL of your team's map, the repo with roster.yml (Enter for none)" "")
-fi
-if [[ -f "$CFG" ]]; then
-    ok "found $CFG"
-    if [[ -d "$cfg_dir/.git" ]] && ask "Pull the latest map into $cfg_dir?" Y; then
-        step "git pull" git -C "$cfg_dir" pull --ff-only --quiet || warn "couldn't fast-forward; using it as it is"
+if ! safe_path "$cfg_dir"; then
+    # ROSTER_CONFIG="..." goes into the shell startup files (stage 6): a $( or ` there would run at every start
+    bad "the folder can't hold \", \$, \` or a newline (it goes into your shell startup files): run this again with another"
+    CFG=""; fail_stage
+elif [[ -f "$CFG" ]]; then
+    ok "found $CFG (as it is: ./update.sh pulls it)"
+    # a file that's there is kept (the default); a new one goes beside it, as a named Inventory (roster inv add)
+    if [[ -n $INVENTORY ]] || ask "Keep using it? (n: keep it, and add a new one beside it as a named Inventory)" Y; then
+        [[ -n $INVENTORY ]] && info "kept it: --inventory is for a folder with no roster.yml yet"
+        done_stage
+    else
+        how=$(choose_how)
+        name=$(ask_value "Name for the new Inventory (roster --inv NAME)" "home")
+        new_dir=$(ask_value "Folder for the new Inventory" "$HOME/$name")
+        new_dir=${new_dir/#\~/$HOME}
+        if make_inventory "$new_dir/roster.yml" "$how" "$name"; then
+            info "$CFG stays the one roster uses here; roster --inv $name reaches the new one (roster inv use $name switches)"
+            done_stage
+        else fail_stage; fi
     fi
-    done_stage
-elif [[ -n $INFRA_REPO ]] && ask "Create $cfg_dir with the team's map (clone $INFRA_REPO)?" Y; then
-    if [[ -e "$cfg_dir" && -n "$(ls -A "$cfg_dir" 2>/dev/null)" ]]; then
-        bad "$cfg_dir exists and isn't empty - pick another folder or empty it"; fail_stage
-    elif if (( YES )); then
-             # nobody to answer a passphrase question: fail instead of waiting on a hidden prompt. The repo was named
-             # on the command line, so a first-seen host key is taken (accept-new: a changed one still fails). Your
-             # own GIT_SSH_COMMAND or core.sshCommand (a deploy key, say) is left as it is.
-             git_ssh=()
-             if [[ -z ${GIT_SSH_COMMAND:-} ]] && ! git config --get core.sshCommand >/dev/null 2>&1; then
-                 git_ssh=("GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
-             fi
-             step "clone $INFRA_REPO into $cfg_dir" \
-                 env GIT_TERMINAL_PROMPT=0 ${git_ssh[@]+"${git_ssh[@]}"} git clone -q "$INFRA_REPO" "$cfg_dir"
-         else live "clone $INFRA_REPO into $cfg_dir" git clone -q "$INFRA_REPO" "$cfg_dir"; fi; then
-        if (( DRY )) || [[ -f $CFG ]]; then done_stage; else warn "the clone has no roster.yml at its top"; fail_stage; fi
-    else warn "no git access? copy roster.yml into $cfg_dir by hand"; fail_stage; fi
-elif [[ -z $INFRA_REPO ]] && (( YES )); then
-    skip "no team map given - run again with --infra-repo URL, or copy roster.yml into $cfg_dir"
-elif ask "Start $cfg_dir from the commented example instead (roster init)?" N; then
-    if (( DRY )) || mkdir -p "$cfg_dir"; then step "roster init" roster -c "$CFG" init && done_stage || fail_stage; fi
 else
-    skip "no config folder"
+    how=${INVENTORY:-}
+    [[ -n $how ]] || how=$( (( YES )) && echo blank || choose_how )
+    if make_inventory "$CFG" "$how"; then CFG=$MADE; cfg_dir=$(dirname "$CFG"); done_stage
+    else
+        case $how in repo:*) warn "no git access? copy roster.yml into $cfg_dir by hand, or run again with --inventory blank" ;; esac
+        fail_stage
+    fi
 fi
 [[ -f "$CFG" ]] || (( DRY )) || CFG=""
 
@@ -396,40 +606,15 @@ else
     skip "run roster from $cfg_dir, or pass -c $CFG"
 fi
 
-# Tab completion for roster (`roster ho<Tab>`, `roster run <Tab>` for Host names) in each shell this box uses: no
-# question, it's on unless --no-completion (decision Q183). bash and zsh get a marked line that asks roster for its
-# script when the shell starts (so a newer roster's commands complete too), fish a file it loads on the first Tab.
-comp_shell=${SHELL##*/}
-if (( ! COMPLETION )); then
-    info "--no-completion: no Tab completion (to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc;"
-    info "roster completion zsh, fish or powershell for those)"
+# Tab completion for roster in each shell this box uses: no question, it's on unless --no-completion (decision
+# Q183). The step is install-lib.sh's, shared with update.sh.
+(( COMPLETION )) || choose no-completion          # update.sh leaves it off too
+if (( ! COMPLETION )) || chose no-completion; then
+    (( COMPLETION )) || info "--no-completion: kept in ${CHOICES/#$HOME/\~} (delete the line to have it turned on)"
+    info "no Tab completion (to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc;"
+    info "roster help --completion zsh, fish or powershell for those)"
 else
-    comp_added=0
-    for sh in bash zsh; do
-        f="$HOME/.${sh}rc"
-        [[ -f $f || $comp_shell == "$sh" ]] || continue
-        if grep -qF "$COMP_MARK" "$f" 2>/dev/null; then ok "Tab completion already on in ${f/#$HOME/\~}"
-        elif (( DRY )); then info "would turn on Tab completion in ${f/#$HOME/\~}"
-        else
-            printf '\n%s\n' "command -v roster >/dev/null 2>&1 && eval \"\$(roster completion $sh)\"   $COMP_MARK" >> "$f"
-            ok "Tab completion for roster in ${f/#$HOME/\~}"
-        fi
-        comp_added=1
-    done
-    fish_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/roster.fish"
-    if [[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/fish || $comp_shell == fish ]]; then
-        comp_added=1
-        if [[ -f $fish_file ]] && head -n 1 "$fish_file" | grep -qF "$COMP_MARK"; then
-            ok "Tab completion already on for fish"
-        elif [[ -e $fish_file ]]; then warn "${fish_file/#$HOME/\~} isn't roster's: kept it (roster completion fish prints roster's)"
-        elif (( DRY )); then info "would turn on Tab completion in ${fish_file/#$HOME/\~}"
-        elif mkdir -p "$(dirname "$fish_file")" && printf '%s\n' \
-                "$COMP_MARK (install.sh wrote this file; uninstall.sh removes it)" 'roster completion fish | source' \
-                > "$fish_file"; then
-            ok "Tab completion for roster in ${fish_file/#$HOME/\~}"
-        else warn "couldn't write ${fish_file/#$HOME/\~}"; fi
-    fi
-    (( comp_added )) || info "no bash, zsh or fish here: roster completion SHELL prints Tab completion for yours"
+    turn_on_completion
 fi
 
 # 7. Unlock the vault
@@ -475,11 +660,11 @@ if [[ -z $CFG ]] || ! have roster; then
     skip "needs roster and a roster.yml"
 else
     [[ -f $SESSION_FILE ]] && export BW_SESSION="${BW_SESSION:-$(cat "$SESSION_FILE")}"
-    cd "$(dirname "$CFG")" || exit 1
-    if ask "Check that every vault reference in roster.yml can be found (roster auth-check)?" Y; then
-        if (( DRY )); then info "would run: roster auth-check"
+    cd "$(dirname "$CFG")" 2>/dev/null || (( DRY )) || exit 1      # a dry run made no folder
+    if ask "Check that every vault reference in roster.yml can be found (roster check --auth)?" Y; then
+        if (( DRY )); then info "would run: roster check --auth"
         else
-            out=$(roster auth-check 2>&1)
+            out=$(roster check --auth 2>&1)
             fails=$(grep -c '^  FAIL' <<<"$out")
             oks=$(grep -c '^  ok' <<<"$out")
             reasons=$(grep -A1 '^  FAIL' <<<"$out" | grep -v '^  FAIL\|^--' | sed 's/^ *//' | sort -u)
@@ -510,19 +695,26 @@ job="*/15 * * * * $pull >> \$HOME/.cache/roster-pull.log 2>&1"
 cron_ready=1
 if [[ ! -x $pull ]] && (( ! DRY )); then
     skip "no bin/roster-pull in $cfg_dir"; cron_ready=0
+elif chose no-cron; then
+    skip "no auto-update: you said no before (delete no-cron from ${CHOICES/#$HOME/\~} to be asked again)"; cron_ready=0
 elif ! have crontab; then
     # a minimal box or WSL distro (Fedora's, say) ships without cron
     pkg=$(cron_pkg)
     if [[ -z $pkg ]]; then
         skip "no crontab, and no package manager to get it with - run $pull yourself to update"; cron_ready=0
+        choose no-cron              # kept, so this box counts as set up (delete it from install-choices to retry)
     elif ! ask "Auto-update runs from cron, which isn't installed. Install $pkg?" Y; then
-        skip "no cron - run $pull yourself to update"; cron_ready=0
+        skip "no cron - run $pull yourself to update"; cron_ready=0; choose no-cron
     elif ! pkg_install "$pkg" || { (( ! DRY )) && ! have crontab; }; then
-        bad "cron didn't install"; fail_stage; cron_ready=0
+        bad "cron didn't install"; fail_stage; cron_ready=0; choose no-cron
     fi
 fi
 if (( cron_ready )); then
-    if ! start_cron; then
+    start_cron; cron_up=$?
+    if (( cron_up == 2 )); then
+        # crontab, but no init system and no cron daemon to start (#444): no job, kept, and the install goes on
+        skip "no cron daemon to run the job - run $pull yourself to update"; choose no-cron
+    elif (( cron_up )); then
         fail_stage
     elif crontab -l 2>/dev/null | grep -qF "$pull"; then
         ok "cron job already there"; done_stage
@@ -531,25 +723,24 @@ if (( cron_ready )); then
         elif (crontab -l 2>/dev/null; echo "$job") | crontab -; then ok "cron job added"; done_stage
         else bad "couldn't write the crontab"; fail_stage; fi
     else
-        skip "update by hand: $pull"
+        skip "update by hand: $pull"; choose no-cron
     fi
 fi
 
 # ---- summary
 
-printf '\n%sSummary%s\n' "$B" "$N"
-for s in "${STAGES[@]}"; do
-    if   listed "$s" ${FAILED[@]+"${FAILED[@]}"};   then bad "$s"
-    elif listed "$s" ${SKIPPED[@]+"${SKIPPED[@]}"}; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
-    elif listed "$s" ${DONE[@]+"${DONE[@]}"};       then ok "$s"
-    else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
-    fi
-done
-printf '\n'
+summary
 info "Next: open a new terminal, then try"
 printf '    roster hosts                      %s# every host you can reach%s\n' "$D" "$N"
 printf '    ssh <host>                        %s# key hosts%s\n' "$D" "$N"
 printf '    roster run <host> -- hostname     %s# password-only hosts%s\n' "$D" "$N"
 printf '    roster --help, man roster         %s# every command, with examples; the manual%s\n' "$D" "$N"
+printf '\n'
+where="${src/#$HOME/\~}${from_desc:+ ($from_desc)}"
+if (( keep )); then printf '%sKept roster %s%s (not the older %s from %s)\n' "$B" "$inst_version" "$N" "$older_version" "$where"
+elif (( DRY )); then info "dry run: a real run installs roster ${pick_version:+$pick_version }from $where"
+elif v=$("$bindir/roster" --version 2>/dev/null | awk '{print $NF}') && [[ -n $v ]]; then
+    printf '%sInstalled roster %s%s from %s\n' "$B" "$v" "$N" "$where"
+else bad "no roster in $bindir answers --version"; fi
 (( ${#FAILED[@]} )) && { info "Some stages failed - details in $LOG. Re-running this is safe."; exit 1; }
 exit 0

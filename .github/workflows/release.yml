@@ -79,7 +79,7 @@ jobs:
       # Laid out like a prefix for the man page too (share/man/man1/roster.1), as Neovim's tarballs are.
       - name: roster-cli tarball
         run: |
-          files=(pyproject.toml uv.lock .python-version README.md install.sh update.sh uninstall.sh src examples
+          files=(pyproject.toml uv.lock .python-version README.md install.sh update.sh uninstall.sh install-lib.sh src examples
                  docs/cli-reference.md docs/serve-api.md docs/new-box.md docs/adding-hosts.md)
           [ -f LICENSE ] && files+=(LICENSE)
           d="roster-cli-$VERSION"
@@ -315,7 +315,7 @@ jobs:
           The app needs the roster CLI (\`roster serve\`) on the same machine, or in WSL on Windows.
 
           **The CLI:** unpack \`roster-cli-$VERSION.tar.gz\` and run \`./install.sh\`, or \`uv tool install roster-$VERSION-py3-none-any.whl\`
-          then \`roster man --install\`. Either way \`man roster\` works afterwards; \`roster.1\` is the page on its own, for packagers.
+          then \`roster help --man --install\`. Either way \`man roster\` works afterwards; \`roster.1\` is the page on its own, for packagers.
 
           **The docs:** \`roster-docs-$VERSION.pdf\` is every \`:help\` page in one document; they're online at https://2styx2.github.io/roster/.
 

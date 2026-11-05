@@ -11,10 +11,13 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import IO, Any, NoReturn, cast
 
 KEY_TAG = "roster-managed"
 LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
+# the end of a Box key line's ERE: spaces or a CR may follow the tag (a file edited on Windows), and sshd still reads
+# the line (T226, #435). POSIX only: winhost's script trims each line first, and .NET has no [[:space:]]
+KEY_TRAIL = "[[:space:]]*$"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 WINDOWS = os.name == "nt"                  # roster running natively on Windows (not in WSL)
 
@@ -76,6 +79,14 @@ def mesh_state_file(name: Any = _CURRENT) -> Path:
     return user_config_dir() / ("mesh.json" if name is None else f"mesh-{name}.json")
 
 
+def key_name_file(name: Any = _CURRENT) -> Path:
+    """The Box name this Box's key lines on the Inventory NAME's Hosts were last all tagged with (T217, #412), so
+    `roster setup` sees box_name: (or the hostname) changed: ~/.config/roster/key-name, or key-name-NAME for a named
+    Inventory (each Inventory has its own box_name:)."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("key-name" if name is None else f"key-name-{name}")
+
+
 def known_hosts_label():
     """known_hosts_file() as messages name it: ~/.ssh/roster_known_hosts (or -NAME)."""
     return f"~/.ssh/{known_hosts_file().name}"
@@ -97,6 +108,76 @@ def user_config_dir() -> Path:
 # What may never go into a value roster writes into an ssh config file: a quote would end the value and a control
 # character (a newline above all) the line, so the rest would be read as directives of its own (PR #335's review, P1).
 SSH_UNSAFE = re.compile(r'["\x00-\x1f\x7f]')
+
+
+class NotPrivate(Exception):
+    """read_private: the file is there, but it isn't only yours (the message says how)."""
+
+
+PRIVATE_MAX = 64 * 1024        # read_private: a secret's file is small (a bw session key is about 88 bytes)
+
+
+def never_look_in_the_current_folder() -> None:
+    """Windows: tell Windows itself never to look in the current folder for a program (#424 M1), for roster and all it
+    starts. find_program already keeps it out of what roster runs by name; this covers what goes through cmd.exe (a
+    `cmd:` provider, a `providers:` command template), what Python 3.12+'s shutil.which would find, and the programs
+    roster's programs start (a bw.cmd's node). A no-op elsewhere."""
+    if WINDOWS:
+        os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+
+
+def read_private(path: Path) -> str:
+    """PATH's text (UTF-8), as read_private_bytes reads it."""
+    return read_private_bytes(path).decode("utf-8", "replace")
+
+
+def read_private_bytes(path: Path) -> bytes:
+    """PATH's bytes, read only if it's yours alone (#411), as a secret's file must be: opened without following a link,
+    then checked and read through that one open file, so it can't be swapped between the check and the read. On Linux
+    and macOS: a plain file (not a link, FIFO or device), owned by you, with no group or other bits. On Windows
+    (roster/winfile.py): a plain file (not a link or other reparse point), owned by you, that no one but you, SYSTEM
+    and Administrators may open. Either way it has one name (no hard link elsewhere) and is at most PRIVATE_MAX bytes.
+    Only the file itself is checked, not the folders it's in. FileNotFoundError if there's nothing there; NotPrivate if
+    it isn't yours alone or can't be read (whatever went wrong: never a traceback)."""
+    if WINDOWS:
+        from . import winfile
+        try:
+            return winfile.read_private_bytes(str(path))
+        except (FileNotFoundError, NotPrivate):
+            raise
+        except OSError as e:
+            raise NotPrivate(f"{path} can't be read ({e.strerror or type(e).__name__})") from None
+    import stat
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOCTTY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        if isinstance(e, FileNotFoundError):
+            raise
+        if os.path.islink(path):
+            raise NotPrivate(f"{path} is a symlink (roster never follows one here)") from None
+        raise NotPrivate(f"{path} can't be read ({e.strerror})") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise NotPrivate(f"{path} isn't a plain file")
+        if st.st_uid != os.getuid():
+            raise NotPrivate(f"{path} isn't yours (another user owns it)")
+        if st.st_mode & 0o077:
+            raise NotPrivate(f"{path} is readable by others (chmod 600 {path})")
+        if st.st_nlink != 1:
+            raise NotPrivate(f"{path} has other names (hard links), which may be changed from elsewhere")
+        chunks, size = [], 0
+        while size <= PRIVATE_MAX and (chunk := os.read(fd, 65536)):
+            chunks.append(chunk)
+            size += len(chunk)
+        if size > PRIVATE_MAX:
+            raise NotPrivate(f"{path} is too big to be a session (over {PRIVATE_MAX // 1024} KiB)")
+        return b"".join(chunks)
+    except OSError as e:
+        raise NotPrivate(f"{path} can't be read ({e.strerror or type(e).__name__})") from None
+    finally:
+        os.close(fd)
 
 
 def replace_file(path: Path, text: str, mode: int = 0o600) -> None:
@@ -131,13 +212,58 @@ def ssh_path(path: str | Path) -> str:
 CMD_SPECIAL = re.compile(r'["%^&|<>!\r\n]')
 
 
+RUNNABLE = (".com", ".exe", ".bat", ".cmd")      # what Windows' CreateProcess starts (a .cmd or .bat through cmd.exe)
+
+
+def rooted(folder: str) -> bool:
+    """Is FOLDER a fixed place? Absolute, and on Windows with a drive or UNC root as well: before Python 3.13 `\\tools`
+    counts as absolute, but it's on whatever drive the current folder is on (#424 L3)."""
+    import posixpath
+    return bool(folder) and os.path.isabs(folder) and (os.path is posixpath or bool(os.path.splitdrive(folder)[0]))
+
+
+def find_program(name: str) -> str | None:
+    """The program roster runs as NAME, as a path, or None: shutil.which, except on Windows, where it's looked up on
+    PATH alone, never in the current folder (#411). Windows' own lookup (CreateProcess, and shutil.which before
+    Python 3.12; from 3.12 unless NoDefaultCurrentDirectoryInExePath is set) tries the current folder first, so a bw.exe
+    or ssh.cmd left in whatever folder roster was started from would run in its place, with the vault's session in its
+    env. A relative PATH entry (empty, ".", or one with no drive) depends on the current folder too, so it's skipped. A
+    NAME with a folder in it is taken as named."""
+    if not WINDOWS or "/" in name or "\\" in name:
+        return shutil.which(name)
+    # only what CreateProcess can start: PATHEXT also lists .JS, .VBS, .MSC, .PY... (#424 L2)
+    exts = [e for e in (x.strip() for x in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";"))
+            if e.lower() in RUNNABLE]
+    names = [name] if name.lower().endswith(RUNNABLE) else [name + e for e in exts]
+    for folder in (os.environ.get("PATH") or "").split(os.pathsep):
+        folder = folder.strip().strip('"')
+        if not rooted(folder):
+            continue
+        for n in names:
+            path = os.path.join(folder, n)
+            if os.path.isfile(path):
+                return path
+    return None
+
+
+def git_program() -> str:
+    """The git to run: on Windows git.exe wherever it is on PATH, ahead of a git.cmd or git.bat shim earlier on it
+    (which can't be handed a quote, a % or a ! in a commit message or URL; #424 L5)."""
+    return (find_program("git.exe") or "git") if WINDOWS else "git"
+
+
 def program_argv(argv):
-    """ARGV ready for subprocess. On Windows the program is looked up on PATH with its extension (a tool installed as
-    bw.cmd is found as bw), and a .cmd or .bat program is refused an argument cmd.exe would act on: roster passes
-    item names and paths there, and those come from roster.yml and the vault."""
+    """ARGV ready for subprocess. On Windows the program is looked up on PATH alone with its extension (find_program: a
+    tool installed as bw.cmd is found as bw, one in the current folder never is; FileNotFoundError if it isn't on
+    PATH, as subprocess would raise, rather than leave Windows to look in the current folder), and a .cmd or .bat
+    program is refused an argument cmd.exe would act on: roster passes item names and paths there, and those come from
+    roster.yml and the vault."""
     if not WINDOWS:
         return list(argv)
-    found = shutil.which(argv[0]) or argv[0]
+    named = "/" in argv[0] or "\\" in argv[0]
+    found = (shutil.which(argv[0]) or argv[0]) if named else find_program(argv[0])
+    if found is None:
+        raise FileNotFoundError(f"{argv[0]} isn't on PATH")
     if found.lower().endswith((".cmd", ".bat")):
         bad = next((a for a in argv[1:] if CMD_SPECIAL.search(a)), None)
         if bad is not None:
@@ -151,17 +277,23 @@ def kill_tree(p):
     """Kill P and everything it started. On Windows a tool is often a batch file (npm's bw.cmd) whose real program is
     its child, which would outlive a plain kill and keep the output pipes open."""
     if WINDOWS:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        # Windows' own, by its full path: PATH may lack System32 (#424 L4)
+        taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
+        try:
+            subprocess.run([taskkill, "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        except OSError:
+            pass
     try:
         p.kill()
     except OSError:
         pass
 
 
-def run(args, timeout=None, input=None, **kw):
+def run(args, timeout=None, input=None, stdout=subprocess.PIPE, **kw):
     """subprocess.run with capture_output, but a timeout kills the whole process tree (kill_tree) before it waits for
-    the output, so a tool's leftover child can't hold the call past its timeout."""
-    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    the output, so a tool's leftover child can't hold the call past its timeout. STDOUT=subprocess.DEVNULL: what the
+    tool prints never reaches this process (an item a vault CLI prints, password and all)."""
+    with subprocess.Popen(args, stdout=stdout, stderr=subprocess.PIPE,
                           **({"stdin": subprocess.PIPE} if input is not None else {}), **kw) as p:
         try:
             out, err = p.communicate(input, timeout=timeout)
@@ -173,6 +305,61 @@ def run(args, timeout=None, input=None, **kw):
             kill_tree(p)
             raise
     return subprocess.CompletedProcess(args, p.returncode, out, err)
+
+
+STDERR_CAP = 64 * 1024         # bytes of a producer's stderr kept by run_filtered (an error message, never data)
+
+
+def filter_env():
+    """The environment run_filtered's filter gets: next to nothing (none of this process's variables, so no session
+    key, token or password a variable holds); on Windows SYSTEMROOT, which Python itself needs to start."""
+    return {k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ} if WINDOWS else {}
+
+
+def run_filtered(producer, filt, timeout=None, env=None, filter_env=None):
+    """PRODUCER's stdout connected straight to FILT's stdin, an OS pipe between the two child processes: this process
+    never reads a byte PRODUCER prints (Q191: `bw list items`, which prints every password). It reads FILT's stdout
+    and both programs' stderr (PRODUCER's up to STDERR_CAP). ENV: PRODUCER's environment (default this process's);
+    FILTER_ENV: FILT's (default this process's). Returns (PRODUCER's CompletedProcess with stdout None, FILT's).
+    A timeout kills both process trees, then raises subprocess.TimeoutExpired."""
+    import threading
+    import time
+    p1 = subprocess.Popen(producer, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    try:
+        p2 = subprocess.Popen(filt, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=filter_env)
+    except BaseException:
+        kill_tree(p1)
+        p1.wait()
+        raise
+    finally:
+        cast(IO[bytes], p1.stdout).close()              # the filter holds the read end now: never this process
+    err1 = []
+    stderr = cast(IO[bytes], p1.stderr)
+
+    def drain():
+        kept = b""
+        while chunk := stderr.read(65536):
+            kept = (kept + chunk)[:STDERR_CAP]
+        err1.append(kept)
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
+    start = time.monotonic()
+    try:
+        out2, err2 = p2.communicate(timeout=timeout)
+        p1.wait(timeout=None if timeout is None else max(0.1, timeout - (time.monotonic() - start)))
+    except BaseException:
+        kill_tree(p1)
+        kill_tree(p2)
+        p1.wait()
+        p2.wait()
+        raise
+    finally:
+        t.join(timeout=5)
+        stderr.close()
+    text = (err1[0] if err1 else b"").decode("utf-8", "replace")
+    return (subprocess.CompletedProcess(producer, p1.returncode, None, text),
+            subprocess.CompletedProcess(filt, p2.returncode, out2.decode("utf-8", "replace"),
+                                        err2.decode("utf-8", "replace")))
 
 
 def run_instead(argv):
@@ -189,7 +376,7 @@ def run_instead(argv):
 
 def roster_command():
     """How Claude (or anyone) should invoke roster on this box."""
-    if shutil.which("roster"):
+    if find_program("roster"):
         return "roster"
     return f"{shlex.quote(sys.executable)} -m roster"     # e.g. inside a uv venv that isn't on PATH
 

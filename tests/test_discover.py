@@ -104,6 +104,27 @@ def test_write_into_existing_file_keeps_comments_and_backs_up(isolated):
     assert yaml.safe_load(text)["groups"]["orion"]["title"] == "Product Orion"
 
 
+def test_write_into_a_team_repo_is_a_pending_change_with_the_backup_out_of_the_work_tree(isolated):
+    """T212: --write saves through store.py, as serve's edits: in a repo with a remote, the backup goes in its git
+    dir (never into the work tree), and roster.yml is left modified, uncommitted."""
+    import subprocess
+    work = isolated["work"]
+    path = work / "roster.yml"
+    path.write_text(EXAMPLE_CONFIG)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(work), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                              check=True, capture_output=True, text=True).stdout
+    git("init", "-q", "-b", "main")
+    git("add", "roster.yml")
+    git("commit", "-qm", "inventory")
+    git("remote", "add", "origin", str(work.parent / "origin.git"))
+    write_discovered(path, "discovered-20261007", entries(), "found by test", False, "2026-10-07")
+    assert (work / ".git" / "roster" / "roster.yml.bak").read_text() == EXAMPLE_CONFIG
+    assert not (work / "roster.yml.bak").exists()
+    assert git("status", "--porcelain", "--untracked-files=no").strip() == "M roster.yml"
+
+
 def test_new_group_gets_user_placeholder_when_only_other_groups_have_users(isolated):
     path = isolated["work"] / "roster.yml"
     path.write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      box: { ip: 10.0.9.1 }\n")

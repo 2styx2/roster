@@ -8,27 +8,39 @@
 // bash and zsh read their input piped in. fish 3 is interactive only on a terminal, whatever -i
 // says, and pwsh's PSReadLine needs one, so those two run under a pty (util-linux `script`), and
 // the test answers the few things they ask the terminal (the device attributes fish 4 waits for at
-// each prompt, the cursor position PSReadLine waits for), as a terminal would.
+// each prompt, the cursor position PSReadLine waits for), as a terminal would: the cursor position is
+// where a screen of the pty's size that has drawn everything so far has it.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Terminal } from "@xterm/xterm";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { XtermPromptScreen } from "./promptScreen";
 import { hookLine, promptShell, type CursorLine, type ShellKind } from "./shellHooks";
+
+/** A temp folder of the test's own (`roster-<name>-…`), removed once the file's tests are done. */
+const temps: string[] = [];
+const tempDir = (name: string) => {
+  const d = mkdtempSync(join(tmpdir(), `roster-${name}-`));
+  temps.push(d);
+  return d;
+};
+afterAll(() => {
+  for (const d of temps) rmSync(d, { recursive: true, force: true });
+});
 
 const has = (shell: string) => spawnSync("sh", ["-c", `command -v ${shell}`]).status === 0;
 const ENV = { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: "/tmp", TERM: "xterm-256color", SHELL: "/bin/sh" };
 
 /** Runs `argv` with `lines` piped in, one command a line; what it printed. */
-function run(argv: string[], lines: string[], cwd?: string): string {
+function run(argv: string[], lines: string[], cwd?: string, env: Record<string, string> = ENV): string {
   const r = spawnSync(argv[0]!, argv.slice(1), {
     cwd,
     input: lines.join("\n") + "\n",
     encoding: "utf8",
     timeout: 10_000,
-    env: ENV,
+    env,
   });
   return r.stdout + r.stderr;
 }
@@ -62,14 +74,12 @@ async function screenLine(out: string): Promise<CursorLine> {
   return at;
 }
 
-/** Has the shell drawn `line`, typed in at `mark` in what it printed (`out`)? Either the bytes
- * since hold it, or a screen of the pty's size shows it from the row it went in at (rows joined,
- * as a long line wraps; runs of spaces as one). fish draws a long line in pieces and moves the
- * cursor over cells it has drawn already, so its bytes needn't hold the line in one piece (#400);
- * pwsh draws where it's told the cursor is, and the test tells it the top row, so its line can be
- * above that row on the screen. */
+/** Has the shell drawn `line`, typed in at `mark` in what it printed (`out`)? A screen of the
+ * pty's size shows it from the row it went in at (rows joined, as a long line wraps; runs of
+ * spaces as one). Not the bytes: fish draws a long line in pieces and moves the cursor over cells
+ * it has drawn already, so its bytes needn't hold the line in one piece (#400). pwsh draws where
+ * it's told the cursor is, and the test tells it where the screen has it (#416). */
 async function drawnLine(out: string, mark: number, line: string): Promise<boolean> {
-  if (shown(out.slice(mark)).includes(line.trim())) return true;
   const term = new Terminal({ cols: 120, rows: 40, scrollback: 1000, allowProposedApi: false });
   const write = (data: string) => new Promise<void>((resolve) => term.write(data, resolve));
   await write(out.slice(0, mark));
@@ -85,11 +95,11 @@ async function drawnLine(out: string, mark: number, line: string): Promise<boole
 /** What the shell printed since the last Enter, and the cursor's line on a screen it's drawn on. */
 type Ready = (since: string, at: CursorLine) => boolean;
 
-function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Promise<string> {
+function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string, env: Record<string, string> = ENV): Promise<string> {
   return new Promise((resolve) => {
     // A pty `script` makes from a pipe is 0 by 0, which PSReadLine divides by: give it a size.
     const command = `stty cols 120 rows 40 2>/dev/null; exec ${argv.map(quote).join(" ")}`;
-    const child = spawn("script", ["-qfec", command, "/dev/null"], { env: ENV, cwd });
+    const child = spawn("script", ["-qfec", command, "/dev/null"], { env, cwd });
     let out = "";
     let answered = 0;
     // Where the last thing typed went in: what the shell printed after it is its answer.
@@ -125,18 +135,26 @@ function runPty(argv: string[], lines: string[], ready: Ready, cwd?: string): Pr
         mark = out.length;
       });
     };
+    // The screen the terminal shows: it answers where the cursor is (CSI 6n) from where its parse
+    // of the output has it when the question comes, as a real terminal does (#416). The device
+    // attributes are the test's own answer, below, and the screen's other replies go nowhere.
+    const screen = new Terminal({ cols: 120, rows: 40, scrollback: 1000, allowProposedApi: false });
+    // eslint-disable-next-line no-control-regex -- a cursor position report is an escape sequence
+    screen.onData((d) => /^\x1b\[\d+;\d+R$/.test(d) && child.stdin.write(d));
     const timer = setTimeout(() => child.kill("SIGKILL"), 40_000);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => {
       out += d;
-      const asks = out.match(ASK) ?? [];
-      for (; answered < asks.length; answered++) child.stdin.write(asks[answered] === "\x1b[6n" ? "\x1b[1;1R" : "\x1b[?62;22c");
+      screen.write(d);
+      const asks = (out.match(ASK) ?? []).filter((a) => a !== "\x1b[6n");
+      for (; answered < asks.length; answered++) child.stdin.write("\x1b[?62;22c");
       next();
     });
     child.stderr.on("data", (d: Buffer) => (out += d.toString()));
     child.stdin.on("error", () => {});
     child.on("close", () => {
       clearTimeout(timer);
+      screen.dispose();
       resolve(out);
     });
   });
@@ -179,7 +197,7 @@ const SHELLS: Shell[] = [
 /** A folder of its own, in no git checkout, for the shells to start in: fish's prompt shows the
  * folder and the checkout's branch, so a test run in this checkout would see a prompt as long as
  * the branch name, and the line typed in after it would wrap at another column (#400). */
-const AWAY = mkdtempSync(join(tmpdir(), "roster-shells-"));
+const AWAY = tempDir("shells");
 const runIn = (s: Shell, lines: string[], cwd = AWAY) =>
   s.pty ? runPty(s.argv, lines, s.pty, cwd) : Promise.resolve(run(s.argv, lines, cwd));
 const missing = (s: Shell) => !has(s.name) || (!!s.pty && !hasPty);
@@ -224,7 +242,7 @@ const hasGit = has("git");
 describe.each(["main", "dev", "fix/t211-a-long-branch-name"])("the hook line in fish, in a git checkout on %s", (branch) => {
   const fish = SHELLS.find((s) => s.name === "fish")!;
   it.skipIf(missing(fish) || !hasGit)("marks prompts, commands and their exit codes", async () => {
-    const repo = join(mkdtempSync(join(tmpdir(), "roster-shells-git-")), "w", "r", "r", "apps");
+    const repo = join(tempDir("shells-git"), "w", "r", "r", "apps");
     mkdirSync(repo, { recursive: true });
     expect(spawnSync("git", ["init", "-q", "-b", branch], { cwd: repo, env: ENV }).status).toBe(0);
     const out = await runIn(fish, [hookLine("fish", N), "false", "cd /tmp", "exit"], repo);
@@ -325,4 +343,91 @@ describe("the POSIX hook line in a POSIX shell that isn't bash or zsh", () => {
     expect(out).toContain("ok");
     expect(out).not.toMatch(/syntax error|not found|unexpected/i);
   });
+});
+
+// #242 (Q185): the hook line holds the Session's token, so it leaves no trace in the shell's
+// history: bash and zsh take it out of the history list once it runs, PowerShell's PSReadLine keeps
+// it in memory only (never its history file). Each shell's history goes to a HOME of its own.
+describe("the hook line and the shell's history", () => {
+  const home = () => tempDir("history");
+  const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
+  const BASH = ["bash", "--norc", "--noprofile", "-i"];
+  /** zsh with a .zshrc of its own (`setup` after the history settings): zsh saves its history at
+   * exit only when it read its rc files, so not with -f. */
+  const zsh = (h: string, setup: string, lines: string[]) => {
+    const zdot = tempDir("zdot");
+    writeFileSync(`${zdot}/.zshrc`, `HISTFILE=${h}/hist; HISTSIZE=100; SAVEHIST=100; ${setup}\n`);
+    return run(["zsh", "-i"], lines, AWAY, { ...ENV, HOME: h, ZDOTDIR: zdot });
+  };
+
+  it.skipIf(!has("bash"))("bash keeps it out of its history when nothing else would, and keeps what came before", () => {
+    const h = home();
+    const out = run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=`, "echo before", hookLine("posix", N), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    expect(out, tail(out)).toContain(own("A"));
+    const saved = read(`${h}/hist`);
+    expect(saved).toContain("echo before");
+    expect(saved).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  it.skipIf(!has("bash"))("bash with HISTCONTROL=ignorespace takes nothing else out", () => {
+    const h = home();
+    run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=ignorespace`, "echo before", hookLine("posix", N), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo before\n(?:.*\n)?echo after/);
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  it.skipIf(!has("zsh"))("zsh without HIST_IGNORE_SPACE keeps it out of its history, and keeps what was there", () => {
+    const h = home();
+    writeFileSync(`${h}/hist`, "echo before\n");
+    // As a login has it: the history file read at the start, the hook line the first one typed.
+    const out = zsh(h, "", [hookLine("posix", N), "echo after", "fc -ln 1", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    expect(out, tail(out)).toMatch(/echo before\s+echo after/);
+    const saved = read(`${h}/hist`);
+    expect(saved).toContain("echo before");
+    expect(saved).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  // Review of #426, M1: what was typed in that shell before a late :integrate stays in its history.
+  it.skipIf(!has("zsh"))("zsh keeps what was typed before a late :integrate, in memory and in its file", () => {
+    const h = home();
+    writeFileSync(`${h}/hist`, "echo before\n");
+    const out = zsh(h, "", ["echo mid", hookLine("posix", N, { typed: true }), "echo after", "fc -ln 1", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    expect(out, tail(out)).toMatch(/echo before\s+echo mid\s+/);
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo before\necho mid\n/);
+    expect(saved).toContain("echo after");
+  });
+
+  it.skipIf(!has("bash"))("bash keeps what was typed before a late :integrate, and still takes the line out", () => {
+    const h = home();
+    run(BASH, [`HISTFILE=${h}/hist; HISTCONTROL=`, "echo mid", hookLine("posix", N, { typed: true }), "echo after", "exit"], AWAY, { ...ENV, HOME: h });
+    const saved = read(`${h}/hist`);
+    expect(saved).toMatch(/echo mid\necho after/);
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  it.skipIf(!has("zsh"))("zsh with HIST_IGNORE_SPACE leaves it to the option", () => {
+    const h = home();
+    const out = zsh(h, "setopt HIST_IGNORE_SPACE", ["echo before", hookLine("posix", N), "echo after", "exit"]);
+    expect(out, tail(out)).toContain(own("A"));
+    const saved = read(`${h}/hist`);
+    expect(saved).toContain("echo before");
+    expect(saved).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  });
+
+  const pwsh = SHELLS.find((s) => s.name === "pwsh")!;
+  it.skipIf(missing(pwsh))("PowerShell keeps it out of PSReadLine's history file", async () => {
+    const h = home();
+    const out = await runPty(pwsh.argv, [hookLine("pwsh", N), "echo after", "exit"], pwsh.pty!, AWAY, { ...ENV, HOME: h });
+    expect(out, tail(out)).toContain(own("A"));
+    const saved = read(`${h}/.local/share/powershell/PSReadLine/ConsoleHost_history.txt`);
+    expect(saved, tail(out)).toContain("echo after");
+    expect(saved).not.toContain(`roster=${N}`);
+  }, 60_000);
 });

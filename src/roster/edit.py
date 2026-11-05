@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from .common import NAME_RE, oneline
-from .config import GROUP_ONLY, first, load_config_text, resolve_ssh
+from .config import GROUP_ONLY, OS_VALUES, first, host_os, load_config_text, resolve_ssh
 from .errors import (
     GROUP_NOT_EMPTY,
     HOST_EXISTS,
@@ -33,14 +33,14 @@ SSH_KEYS = ("user", "port", "auth")                 # can live in the Host's ssh
 
 
 FLAGS = ("enroll", "reviewed")
-NEW_FIELDS = ("ip", "user", "port", "auth", *FLAGS, *TEXT)          # what host.add can set
+NEW_FIELDS = ("ip", "user", "port", "auth", *FLAGS, *TEXT, "os")    # what host.add and `roster add` can set
 
 
 def current(h):
     """The editable fields of a loaded Host, as the edit form shows them, and its flags."""
     return {"title": h["title"], "description": h["description"], "type": h["type"], "ip": h["ip"],
             "user": h["ssh"]["user"], "port": h["ssh"]["port"], "auth": h["ssh"]["auth"],
-            "enroll": h["enroll"], "reviewed": h["reviewed"], "mesh": h["mesh"]}
+            "enroll": h["enroll"], "reviewed": h["reviewed"], "mesh": h["mesh"], "os": h.get("os")}
 
 
 def check_value(field, v):
@@ -264,14 +264,40 @@ def write_text(path, text):
 
 def replace_file(path, text):
     """Write TEXT to PATH all at once (a temporary file beside it, then a rename), keeping PATH's mode."""
+    write_over(path, text, path)
+
+
+def write_over(path, text, like=None):
+    """Write TEXT to PATH all at once: a temporary file beside it (flushed to disk), with LIKE's mode (else 0600,
+    as roster.yml is private), renamed over PATH. A symlink at PATH is replaced, never followed (T212, #409's S1):
+    a planted roster.yml.bak -> ~/.bashrc stays a link to nothing roster wrote."""
+    path = Path(path)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".new", dir=path.parent)
-    os.close(fd)
     try:
-        write_text(tmp, text)
-        shutil.copymode(path, tmp)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if like is not None:
+            shutil.copymode(like, tmp)
+        else:
+            os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+def keep_backup(bak, text, like):
+    """TEXT (what an edit replaced) as the backup BAK, with LIKE's (roster.yml's) mode, never through a symlink:
+    BAK's folder may not be one (a planted .git/roster -> elsewhere), and BAK itself is replaced, not followed."""
+    from .errors import ROSTER_ERROR, Problem
+    d = Path(bak).parent
+    if d.is_symlink():
+        raise Problem(ROSTER_ERROR, f"{d} is a symlink, so roster won't keep the backup through it; nothing was "
+                                    "written", {"path": str(d)}, fix=f"remove the link ({d}), then try again")
+    d.mkdir(mode=0o700, exist_ok=True)
+    write_over(bak, text, like)
+    return Path(bak)
 
 
 def load_text(path, text):
@@ -342,6 +368,10 @@ def check_new(field, v):
         return v
     if field not in NEW_FIELDS:
         raise ValueError(f"{field!r} can't be set here (only {', '.join(NEW_FIELDS)})")
+    if field == "os":
+        if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
+            raise ValueError(f"os must be {' or '.join(OS_VALUES)}")
+        return v.strip().lower()
     return check_value(field, v)
 
 
@@ -356,7 +386,8 @@ def inherited(text, group):
     layers = [{}, {k: v for k, v in g.items() if k not in GROUP_ONLY}, raw.get("defaults") or {}]
     ssh = resolve_ssh("new", layers)
     out = {k: ssh[k] for k in SSH_KEYS} | {k: bool(first(layers, k, True)) for k in FLAGS}
-    return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")}
+    return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")} \
+        | {"os": host_os("new", first(layers, "os"))}
 
 
 def last_value(node):
@@ -435,6 +466,8 @@ def added(path, group, name, fields):
         raise invalid("group", f"bad group name {group!r} (use letters, digits, . _ -)")
     if not fields.get("ip"):
         raise invalid("ip", f"host {name!r} has no ip")
+    if not good_address(fields["ip"]):
+        raise invalid("ip", f"bad address {fields['ip']!r} for {name} (an IPv4 or IPv6 address, or a DNS name)")
     text = read_text(path)
     before = load_text(path, text)
     if name in before["hosts"]:
@@ -452,6 +485,34 @@ def added(path, group, name, fields):
             or not same_plus(before, after, name):
         raise refuse("the result loads differently than asked")
     return text, new_text, h
+
+
+# An address (Q190): what Quick Connect opens, the form and `roster add` write, one rule (serve's quick_target uses it
+# too, so a Quick Connect that logged in can always be saved). Labels may hold '_' (compose and mDNS names), as ssh
+# resolves them; an IPv6 zone is letters, digits, '_', '.' and '-', never starting with '-'.
+LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+HOSTNAME_RE = re.compile(rf"^(?=.{{1,253}}\Z){LABEL}(?:\.{LABEL})*\.?\Z")
+ZONE_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\Z")
+
+
+def ip_of(v):
+    """V as an ipaddress address (an IPv6 zone checked), or None when it isn't an IP address."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(v)
+    except ValueError:
+        return None
+    zone = getattr(ip, "scope_id", None)
+    return ip if zone is None or ZONE_RE.match(zone) else None
+
+
+def good_address(v):
+    """V is an IPv4 or IPv6 address or a DNS name (what ssh can be pointed at), not a URL or a typo with a slash."""
+    if not isinstance(v, str):
+        return False
+    if ip_of(v) is not None:
+        return True
+    return "%" not in v and ":" not in v and bool(HOSTNAME_RE.match(v)) and not re.fullmatch(r"[\d.]+", v)
 
 
 # ---------------------------------------------------------------- the Live Inventory (ticket 28)
@@ -706,9 +767,11 @@ def own_keys(text, group, name):
 
 
 # What a move writes on the Host to keep it. A Host with no mesh: (or mesh_dir:) anywhere has nothing to keep: it
-# takes the Mesh setting of the group it moves to, as any new member would (decision Q77).
-PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", *TEXT)
+# takes the Mesh setting of the group it moves to, as any new member would (decision Q77). An unset os: is posix
+# (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198).
+PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", *TEXT)
 UNSET_JOINS = ("mesh", "mesh_dir")
+POSIX = "posix"
 
 
 def pinned_move(text, was_host, name, group, mesh_dir=None):
@@ -718,6 +781,7 @@ def pinned_move(text, was_host, name, group, mesh_dir=None):
     the result). Returns (new text, the fields pinned)."""
     old = current(was_host) | {"mesh_dir": mesh_dir}
     was, will = inherited(text, was_host["group"]), inherited(text, group)
+    old["os"], was["os"], will["os"] = (v or POSIX for v in (old["os"], was["os"], will["os"]))
     own = own_keys(text, was_host["group"], name)
     pin = {k: old[k] for k in PINNED if was[k] != will[k] and old[k] != will[k] and k not in own
            and not (k in UNSET_JOINS and old[k] is None)}
@@ -734,7 +798,8 @@ def check_moved(before, after, names, group):
         was = before["hosts"][name]
         dirs = before["mesh_dirs"].get(name), after["mesh_dirs"].get(name)
         differs = sorted([k for k in was if k != "group" and (h or {}).get(k) != was[k]
-                          and not (k == "mesh" and was[k] is None)]
+                          and not (k == "mesh" and was[k] is None)
+                          and not (k == "os" and ((h or {}).get(k) or POSIX) == (was[k] or POSIX))]
                          + (["mesh_dir"] if dirs[0] is not None and dirs[0] != dirs[1] else []))
         if h is None or h["group"] != group or differs:
             raise Problem(WOULD_CHANGE, f"{name} would come out different in group {group} ({', '.join(differs)} it "

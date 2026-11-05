@@ -774,3 +774,58 @@ def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, mo
     with pytest.raises(SystemExit) as e:
         main(["run", "--sudo", "dc-01", "--", "whoami"])
     assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)
+
+
+# T217 (#412): box_name: changed on a Box already set up. Its key's line on a Windows Host still carries the earlier
+# name: setup re-tags it there, and revoke finds it by this Box's public key; another Box's line is never touched.
+
+@needs_powershell
+def test_setup_retags_and_revoke_finds_a_renamed_boxs_key_on_a_windows_host(win, capsys, write_config):
+    theirs = b"ssh-ed25519 AAAAtheirs roster-managed:box\r\n"          # another Box named box: another key
+    win.admin_file("dc-01").write_bytes(OTHER)
+    assert main(["setup", "--only", "dc-01"]) == 0
+    win.admin_file("dc-01").write_bytes(win.admin_file("dc-01").read_bytes() + theirs)
+    write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
+    capsys.readouterr()
+    assert main(["setup", "--only", "dc-01"]) == 0
+    assert "ok    dc-01 (re-tagged)" in capsys.readouterr().out
+    # in place (#423's M1): the line keeps its spot and line end; another Box's line as it was
+    assert win.admin_file("dc-01").read_bytes() == OTHER + key_line(win).replace(b":box", b":box2") + theirs
+    write_config(WIN.replace("box_name: box\n", "box_name: box3\n"))
+    capsys.readouterr()
+    assert main(["revoke", "-y", "--only", "dc-01"]) == 0
+    assert win.admin_file("dc-01").read_bytes() == OTHER + theirs
+    assert "note: dc-01: also took this Box's key line tagged roster-managed:box2" in capsys.readouterr().err
+
+
+@needs_powershell
+def test_setup_on_a_renamed_box_says_when_a_windows_host_has_no_line_to_retag(win, capsys, write_config,
+                                                                              monkeypatch):
+    assert main(["setup", "--only", "dc-01"]) == 0
+    win.admin_file("dc-01").write_bytes(OTHER)              # the key works some other way: no roster line here
+    write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
+    monkeypatch.setattr("roster.cli.ssh_ok", lambda name: True)
+    capsys.readouterr()
+    main(["setup", "--only", "dc-01"])
+    out = capsys.readouterr().out
+    # T226 (#435, 7; #423's S3): the file sshd reads for this administrator, not ~/.ssh/authorized_keys
+    note = next(ln for ln in out.splitlines() if ln.startswith("  note  dc-01: the key works, but no roster-managed"))
+    assert "administrators_authorized_keys" in note and "~/.ssh" not in note and "(re-tagged)" not in out
+    assert win.admin_file("dc-01").read_bytes() == OTHER
+
+
+@needs_powershell
+def test_renaming_onto_a_name_another_box_uses_on_a_windows_host_needs_force(win, capsys, write_config):
+    """T226 (#435, 2): another key's line is already tagged with the new name: setup leaves the file as it is and says
+    so; --force re-tags (and keeps one copy of this Box's line, #435 6)."""
+    assert main(["setup", "--only", "dc-01"]) == 0
+    mine = key_line(win)
+    theirs = b"ssh-ed25519 AAAAtheirs roster-managed:box2\r\n"
+    win.admin_file("dc-01").write_bytes(OTHER + mine + mine + theirs)
+    write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
+    capsys.readouterr()
+    assert main(["setup", "--only", "dc-01"]) == 1
+    assert "FAIL  dc-01: [190] another key's line there is tagged roster-managed:box2" in capsys.readouterr().out
+    assert win.admin_file("dc-01").read_bytes() == OTHER + mine + mine + theirs
+    assert main(["setup", "--only", "dc-01", "--force"]) == 0
+    assert win.admin_file("dc-01").read_bytes() == OTHER + mine.replace(b":box", b":box2") + theirs

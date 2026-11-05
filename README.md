@@ -55,7 +55,7 @@ It comes in two parts that share that file:
 - `roster discover 10.0.1.0/24 --write`: an nmap sweep becomes inventory, marked unreviewed until a person looks.
 - `roster check`: SSH, web UI and service ports on every host; `roster check HOST` says which step fails and what to do.
 - `roster mesh`: Hosts in a group, or joined by a Link, reach each other with their own keys, through a jump Host if needed (`via:`); `roster mesh cut HOST` takes one out at once.
-- `--json` on the read commands (`hosts`, `info`, `resources`, `check`, `mesh status`, `providers`, `auth-check`) and on `discover` and `mesh --dry-run`: one JSON document for scripts and other tools, never a secret.
+- `--json` on the read commands (`hosts`, `hosts NAME`, `hosts --resources`, `check`, `check --auth`, `mesh status`, `vault status`) and on `discover` and `mesh --dry-run`: one JSON document for scripts and other tools, never a secret.
 - Password providers: Bitwarden, 1Password, `pass`, KeePassXC, an environment variable, or any command.
 - `ROSTER.md` for Claude: which hosts exist and how to reach them, with rules. Claude uses `ssh`, `roster run` and `roster web`; roster supplies the credentials and Claude sees only the output.
 
@@ -117,32 +117,36 @@ Requires Python 3.10+, the OpenSSH client, [uv](https://docs.astral.sh/uv/), and
 ```bash
 uv tool install git+https://github.com/2styx2/roster      # from the repo
 uv tool install ./roster-<version>-py3-none-any.whl       # or the wheel from a Release
-roster man --install                                      # the man page, next to the roster command
+roster help --man --install                               # the man page, next to the roster command
 roster --help
 ```
 
-Or use the installer. It walks through every stage (uv, roster, the Bitwarden CLI, your team's config repo, `ROSTER_CONFIG`, unlocking the vault, `roster setup`, auto-updates), asks before each change, and is safe to re-run:
+Or use the installer. It walks through every stage (uv, roster, the Bitwarden CLI, your Inventory, `ROSTER_CONFIG`, unlocking the vault, `roster setup`, auto-updates), asks before each change, and is safe to re-run. For the Inventory it offers four ways to start: a blank `roster.yml` (the default), a copy of one you have, a clone of your team's repo, or the Hosts already in `~/.ssh/config`. A `roster.yml` already in the folder is kept.
 
 ```bash
 git clone https://github.com/2styx2/roster.git && cd roster
-./install.sh                                  # interactive: asks for your team's map repo
-./install.sh --yes --infra-repo GIT-URL       # every default, no questions (bw login and unlock wait for you)
+./install.sh                                  # interactive: asks how to start your Inventory (blank by default)
+./install.sh --yes --inventory repo:GIT-URL   # every default, no questions: the team's repo (bw login and unlock wait for you)
+./install.sh --yes --inventory blank          # ... or a blank one (also file:PATH, ssh-config[:PATH])
 ./install.sh --dry-run                        # show what it would do, change nothing
-./update.sh                                   # later: newest roster, man page, the map pulled, roster sync
+./update.sh                                   # later: newest roster, man page, the map pulled, roster sync (install.sh on a box with roster runs it)
 ./uninstall.sh                                # take this box off its hosts, then remove roster from it
 ```
 
-A Release also has `roster-cli-<version>.tar.gz`: unpack it and run `./install.sh` inside, no git needed. `install.sh --prefix DIR` puts the command in `DIR/bin` instead of `~/.local/bin`. All three scripts take `--yes` and `--dry-run`. Before removing anything, `uninstall.sh` takes this box's key off every host (`roster mesh cut --all`, `roster revoke --all`). It keeps the key, and roster, while a host is still unreachable, and leaves uv, `bw`, the `~/.local/bin` PATH line and your config folder unless you say otherwise (or pass `--purge`). `scripts/test-install.sh [ubuntu|fedora]` runs all three on a fresh box in a container.
+`install.sh` installs the newest Release tag from `origin`, whatever branch the checkout is on, and never changes the checkout (`--ref dev` picks another). On a box that's set up it runs `update.sh` (on one that isn't finished, running it again finishes it), which fast-forwards the checkout when it is behind and warns when it is older than the newest Release. Both end by printing the version they installed and where from. A Release also has `roster-cli-<version>.tar.gz`: unpack it and run `./install.sh` inside, no git needed. `install.sh` and `update.sh` need the `install-lib.sh` beside them, which a checkout and the tarball both have. `install.sh --prefix DIR` puts the command in `DIR/bin` instead of `~/.local/bin`. All three scripts take `--yes` and `--dry-run`. Before removing anything, `uninstall.sh` takes this box's key off every host (`roster mesh cut --all`, `roster revoke --all`). It keeps the key, and roster, while a host is still unreachable, and leaves uv, `bw`, the `~/.local/bin` PATH line and your config folder unless you say otherwise (or pass `--purge`). `scripts/test-install.sh [ubuntu|fedora]` runs all three on a fresh box in a container.
 
 After installing, either way, `man roster` shows the manual: the man page goes to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster`, where `man` looks. `install.sh` checks that `man roster` finds it, and adds `MANPATH` only on a box where it doesn't. `roster --help` lists every command, and `roster COMMAND --help` shows a command's examples. Setting up another box, step by step: [docs/new-box.md](docs/new-box.md).
 
 ## Quick start
 
+Your Inventory is one `roster.yml`, a plain file or a file in your team's git repo; roster works the same with either. In a team repo, the app's edits are Pending changes you Publish (commit and push); in a plain file every edit is saved straight to it, with nothing to publish and no git needed.
+
 ```bash
 mkdir ~/infra && cd ~/infra
-roster discover 10.0.1.0/24 --write   # start from a scan (or `roster init` for the commented example)
+roster init --blank                   # a short, empty roster.yml (or: --inventory ssh-config, file:PATH, repo:URL)
+roster discover 10.0.1.0/24 --write   # add what a scan finds (or `roster init` alone: the commented example)
 # edit roster.yml: names, users, vault items; set reviewed: true on the groups you checked
-roster auth-check                     # can every login be found? (prints nothing secret)
+roster check --auth                   # can every login be found? (prints nothing secret)
 roster setup --dry-run && roster setup
 roster hosts --find orion
 ssh orion-dev-01 uptime               # key login just works
@@ -151,7 +155,7 @@ roster run net-sw-core-01 -- show ver # password-only gear; the password is fetc
 
 Point `ROSTER_CONFIG` at the file (`export ROSTER_CONFIG="$HOME/infra/roster.yml"`) so every command and the app find it. Then open the app, unlock the vault, press **Ctrl+Space f**, type part of a Host's name and press **Enter**.
 
-**Your `roster.yml` is private.** It names your hosts, addresses, users and vault items, so it belongs in your team's own private repo, never in a public one and never in this one.
+**Your `roster.yml` is private.** It names your hosts, addresses, users and vault items, so it belongs in your team's own private repo or only on your Box, never in a public one and never in this one.
 
 ## Configuration
 

@@ -1411,7 +1411,7 @@ pub const FUNCTIONS: &[Function] = &[
             p("tutorial", "Tutorial", "Its text and lessons."),
         ],
         summary: "Adds a tutorial, or replaces it",
-        doc: "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list` and `host.get`, `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
+        doc: "`:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list`, `host.get` and `mesh.status` (a small, made-up Mesh), `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.",
         returns: ("", ""),
         errors: &[("roster.tutor.set: \"ID\" isn't a name like …", "a bad `id`")],
         refused: &[
@@ -2312,7 +2312,10 @@ pub const FUNCTIONS: &[Function] = &[
         params: &[],
         summary: "The Sessions open now, in the order they opened",
         doc: "Every Session that is open, the ones that opened before the Plugin loaded too: the events only tell a Plugin what happens after it loads, so read this at load and follow `session_open` and `session_exit` from there. A Session is open from its `session_open` to its `session_exit`; one that ended but whose tab is still there isn't listed. The app keeps the list in the order it saw each Session open, and a Session that connects again (the same id) opens again, so it goes last. In a listener for either event the list already has (or no longer has) that Session. It reads what the app last said, never roster serve, so it never waits.",
-        returns: ("Session[]", "Each open Session's id and Host, oldest open first."),
+        returns: (
+            "Session[]",
+            "Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.",
+        ),
         errors: &[],
         refused: &[],
         needs: Needs::Hears("session_open"),
@@ -4286,6 +4289,11 @@ pub const TYPES: &[Type] = &[
             f("box", "string", "This Box's name."),
             f("host_count", "integer", "How many Hosts."),
             f("providers", "string[]", "The password providers roster has."),
+            o(
+                "store",
+                "InventoryStore",
+                "How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before).",
+            ),
             f("roster_version", "string", "roster's version."),
             f(
                 "api_version",
@@ -4388,13 +4396,34 @@ pub const TYPES: &[Type] = &[
         open: false,
     },
     Type {
+        name: "InventoryStore",
+        summary: "How `roster.yml` is kept: a plain file or a team repo (serve API 28)",
+        doc: "Decided per file, each time: `repo` when `roster.yml` is committed in a git repo with a remote (edits are Pending changes until Publish), `file` otherwise (every edit is saved straight to it, and there's nothing to publish).",
+        alias: "",
+        fields: &[
+            f("kind", "\"repo\"|\"file\"", "A team repo, or a plain file."),
+            f(
+                "note",
+                "string",
+                "Which, in a sentence, as `roster check --box` says it.",
+            ),
+            o("repo", "string", "The git work tree it's in; `nil` outside one."),
+        ],
+        open: false,
+    },
+    Type {
         name: "ChangesDiff",
         summary: "`changes.diff`'s result: the Pending changes",
         doc: "",
         alias: "",
         fields: &[
             f("path", "string", "`roster.yml`'s path."),
-            f("repo", "string", "The infra repo's top folder."),
+            o("repo", "string", "The infra repo's top folder; `nil` for a plain file."),
+            o(
+                "kind",
+                "\"repo\"|\"file\"",
+                "`file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before).",
+            ),
             f(
                 "diff",
                 "string",
@@ -4623,12 +4652,17 @@ pub const TYPES: &[Type] = &[
             o(
                 "backup",
                 "string",
-                "The copy of `roster.yml` from before; `nil` when it isn't in a git repo.",
+                "The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git).",
+            ),
+            o(
+                "kind",
+                "\"repo\"|\"file\"",
+                "A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before).",
             ),
             o(
                 "note",
                 "string",
-                "Why nothing was written, or that it went straight to a file outside git.",
+                "Why nothing was written (before serve API 28, also that it went straight to a file outside git).",
             ),
             o(
                 "error",
@@ -4928,6 +4962,11 @@ pub const TYPES: &[Type] = &[
                 "string",
                 "The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host.",
             ),
+            o(
+                "cwd",
+                "string",
+                "The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.",
+            ),
         ],
         open: false,
     },
@@ -5052,6 +5091,11 @@ pub const TYPES: &[Type] = &[
                 "What it printed, each line ending in `\\n`, as `terminal_output` sent it (its last line too, if it didn't end in a line feed). At most the last 16 KB.",
             ),
             o("code", "integer", "Its exit code; `nil` when the shell didn't say."),
+            o(
+                "cwd",
+                "string",
+                "The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As [`Session`](#session)'s `cwd`: the shell's word, never checked.",
+            ),
         ],
         open: false,
     },
@@ -5505,7 +5549,6 @@ pub fn stubs() -> String {
 
 // ---------------------------------------------------------------- the data
 
-/// crates/roster-core/tests/fixtures/plugin-api.json: the API as data, and the help topics.
 /// `:plugins types PATH` (ticket 74): writes [`stubs`] for this app's API as `types/roster.lua` in
 /// the Plugin folder `dir`, over an older copy, and gives where. `dir` must exist.
 pub fn write_stubs(dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
@@ -5525,6 +5568,10 @@ pub fn write_stubs(dir: &std::path::Path) -> Result<std::path::PathBuf, String> 
     Ok(file)
 }
 
+/// crates/roster-core/tests/fixtures/plugin-api.json: the API as data, and the help topics. It
+/// carries what [`stubs`] reads (each summary and doc, the types' order, the modules), so the app
+/// makes `:help plugin-types` from it (app/src/help/luaStubs.ts) rather than bundling roster.lua too
+/// (T213, decision Q189).
 pub fn json() -> Json {
     let mut tags = serde_json::Map::new();
     for v in VALUES {
@@ -5556,8 +5603,11 @@ pub fn json() -> Json {
         .map(|func| {
             json!({
                 "path": func.path,
-                "params": func.params.iter().map(|p| json!({ "name": p.name, "type": p.ty, "optional": p.optional })).collect::<Vec<_>>(),
+                "params": func.params.iter().map(|p| json!({ "name": p.name, "type": p.ty, "optional": p.optional, "doc": p.doc })).collect::<Vec<_>>(),
                 "returns": func.returns.0,
+                "returns_doc": func.returns.1,
+                "summary": func.summary,
+                "needs_text": func.needs.text(),
                 "permission": match func.needs { Needs::Nothing => Json::Null, Needs::Permission(p) => json!(p), Needs::AnyServe => json!("serve:*"), Needs::AnyNetwork => json!("network:*"), Needs::Hears(_) => json!(func.needs.any_of()) },
                 "since": func.since,
             })
@@ -5565,18 +5615,20 @@ pub fn json() -> Json {
         .collect();
     let types: serde_json::Map<String, Json> = TYPES
         .iter()
-        .map(|t| {
+        .enumerate()
+        .map(|(order, t)| {
             let value = if t.alias.is_empty() {
-                json!({ "fields": t.fields.iter().map(|fl| json!({ "name": fl.name, "type": fl.ty, "required": fl.required })).collect::<Vec<_>>(), "open": t.open })
+                json!({ "fields": t.fields.iter().map(|fl| json!({ "name": fl.name, "type": fl.ty, "required": fl.required, "doc": fl.doc })).collect::<Vec<_>>(), "open": t.open, "summary": t.summary, "order": order })
             } else {
-                json!({ "alias": t.alias })
+                json!({ "alias": t.alias, "summary": t.summary, "order": order })
             };
             (t.name.to_string(), value)
         })
         .collect();
     json!({
         "api_version": super::API_VERSION,
-        "values": VALUES.iter().map(|v| json!({ "path": v.path, "type": v.ty })).collect::<Vec<_>>(),
+        "values": VALUES.iter().map(|v| json!({ "path": v.path, "type": v.ty, "summary": v.summary })).collect::<Vec<_>>(),
+        "modules": MODULES.iter().map(|m| json!({ "name": m.name, "summary": m.summary, "doc": m.doc })).collect::<Vec<_>>(),
         "functions": functions,
         "events": EVENTS.iter().map(|e| json!({ "name": e.name, "needs": e.needs, "payload": e.payload })).collect::<Vec<_>>(),
         "commands": COMMANDS.iter().map(|c| json!({ "name": c.name, "permission": match c.needs { Needs::Permission(p) => json!(p), _ => Json::Null } })).collect::<Vec<_>>(),

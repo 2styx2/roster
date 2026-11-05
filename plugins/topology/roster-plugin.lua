@@ -2,10 +2,10 @@
 -- no `roster` module and no `require`, so reading it can't do anything.
 return {
   name = "topology",
-  version = "1.1.0",
+  version = "1.3.0",
   description = "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
   author = "roster",
-  api = 5,
+  api = 6,
   -- Why each one is here is in README.md ("Permissions"). It loads without any of them, and says
   -- what it's missing.
   permissions = {

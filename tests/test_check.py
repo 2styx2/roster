@@ -1,6 +1,6 @@
 """Ticket 26: `host.check {host}` (serve) and `roster check HOST` (CLI) run the diagnostics in order and stop
 at the first failure. Nothing touches the network once a local step has failed, and a whole check makes at
-most one TCP connection (port + host key) and one login attempt - the 10.19 rate limiter must never see more.
+most one TCP connection (port + host key) and one login attempt - a network's rate limiter must never see more.
 
 The Host is a local paramiko server that offers a host key and counts connections; the login is the stand-in
 ssh (tests/fakes/ssh), which logs each run and asks SSH_ASKPASS for the password as real ssh does."""
@@ -232,7 +232,7 @@ def test_a_changed_host_key_is_never_accepted(check, box, isolated):
 def test_no_recorded_host_key(check, box, isolated):
     (isolated["home"] / ".ssh" / "roster_known_hosts").write_text("")
     step = check("esx")["result"]["steps"][6]
-    assert (step["status"], step["code"]) == ("fail", 44) and "roster setup --only esx" in step["fix"]
+    assert (step["status"], step["code"]) == ("fail", 44) and "roster setup --host esx" in step["fix"]
 
 
 def test_the_host_refuses_the_password(check, box, monkeypatch):
@@ -292,7 +292,7 @@ def test_roster_check_host_shows_the_failure_and_its_fix(box, capsys, monkeypatc
     out = capsys.readouterr().out
     lines = out.splitlines()
     assert lines[3].startswith("FAIL vault-item") and "[33]" in lines[3]
-    assert "fix:" in out and "2026-10-20" in out
+    assert "fix:" in out and "https://10.0.0.7" in out
     assert [ln.split()[:2] for ln in lines if ln.startswith("skip")] == [["skip", s] for s in STEPS[4:]]
     assert not [x for x in ALL_SECRETS if x in out]
     assert box.sshd.accepts == 0 and box.ssh_runs() == []

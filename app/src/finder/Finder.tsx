@@ -66,10 +66,13 @@ export function Finder({
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
 
-  const results = useMemo(
-    () => finderResults(source, ctx, query),
-    [source, ctx, query],
-  );
+  // A source's own news (`subscribe`), counted, so its matches are asked for again.
+  const [changes, setChanges] = useState(0);
+  useEffect(() => source.subscribe?.(() => setChanges((n) => n + 1)), [source]);
+  const results = useMemo(() => {
+    void changes;
+    return finderResults(source, ctx, query);
+  }, [source, ctx, query, changes]);
   const shown = results.items.slice(0, MAX_ROWS);
   const current = Math.max(
     0,

@@ -7,6 +7,10 @@ import { defaultOptions, keymapOf } from "../keymap";
 import { memoryPlatform } from "../platform/memory";
 import { builtinRegistries } from "../registries";
 import { StateStore } from "../state/store";
+import demoInventory from "../../../crates/roster-core/tests/fixtures/demo-inventory.json";
+import demoMesh from "../../../crates/roster-core/tests/fixtures/demo-mesh-status.json";
+import { demoServe } from "../backend/fake";
+import { demoHosts } from "./demo";
 import { resumeAt, rosterTutorial, stepMatches, TutorProgress, TUTOR_KEY } from "./tutor";
 
 const ev = (name: string, data: Record<string, string | null> = {}) => ({ name, data });
@@ -93,5 +97,21 @@ describe("the tutor page", () => {
   it("says how to start outside the demo, and where you are inside it", () => {
     expect(pageBody(ctx([]), "tutor").map((b) => (b.t === "p" ? plain(b.text) : "")).join(" ")).toMatch(/:tutor starts it on a demo Inventory/);
     expect(pageBody(ctx([], "roster"), "tutor").map((b) => (b.t === "p" ? plain(b.text) : "")).join(" ")).toMatch(/You're on the demo Inventory/);
+  });
+});
+
+describe("the demo Inventory", () => {
+  it("is the one the core's tests teach Plugins' tutorials on (crates/roster-core/tests/fixtures/demo-inventory.json)", () => {
+    expect(demoHosts()).toEqual(demoInventory);
+  });
+
+  it("answers mesh.status as the core's demo does (crates/roster-core/tests/fixtures/demo-mesh-status.json, #233)", () => {
+    const serve = demoServe(demoHosts());
+    expect(serve("mesh.status", {})).toEqual(demoMesh.plain);
+    expect(serve("mesh.status", { grouped: true })).toEqual(demoMesh.grouped);
+    expect(serve("mesh.status", { brief: true })).toEqual(demoMesh.brief);
+    expect(() => serve("mesh.status", { grouped: "yes" })).toThrow("params.grouped must be true or false");
+    expect(() => serve("mesh.status", { grouped: true, brief: true })).toThrow("params.grouped and params.brief don't go together");
+    expect(() => serve("mesh.apply", {})).toThrow("mesh.apply isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status");
   });
 });

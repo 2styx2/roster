@@ -418,10 +418,10 @@ export function topologyPlugin(): FakePlugin {
   return {
     manifest: {
       name: "topology",
-      version: "1.1.0",
+      version: "1.3.0",
       description: "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
       author: "roster",
-      api: 5,
+      api: 6,
       permissions: TOPOLOGY_PERMISSIONS,
     },
     load(roster: FakeRoster) {
@@ -691,6 +691,7 @@ export function topologyPlugin(): FakePlugin {
       });
       roster.keymap.set("leader", settings.leader, "topology");
       roster.help.set("topology", { title: "Topology", summary: "The map: this Box, your Hosts by group, the Mesh, and who can reach whom", markdown: helpPage(settings.leader) });
+      roster.tutor.set("topology", tutorial(settings.leader));
       roster.health.set("topology", {
         title: "Topology",
         check: () => {
@@ -794,6 +795,52 @@ export function topologyPlugin(): FakePlugin {
   };
 }
 
+/** `:tutor topology` (#233), on the demo's Hosts and groups and its made-up Mesh (the demo's mesh.status). */
+function tutorial(leader: string) {
+  return {
+    title: "Topology tutor",
+    summary: "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
+    intro: [
+      "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.",
+      "",
+      "The map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
+    ].join("\n"),
+    lessons: [
+      {
+        title: "Open the map",
+        text: `\`:topology\` opens the map, and so does \`␣ ${leader}\`. This Box is the square; each group is a cluster of its Hosts, with a grey edge from this Box to it. Esc goes back.`,
+        steps: [
+          { id: "open", text: "Open the map with `:topology`.", on: { event: "command", id: "topology", arg: "" } },
+          { id: "group", text: "Show only the lab with `:topology demo-lab`. `:topology` alone shows every group again.", on: { event: "command", id: "topology", arg: "demo-lab" } },
+        ],
+      },
+      {
+        title: "From a node to its Host",
+        text: "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
+        steps: [
+          { id: "details", text: "On the map (`:topology`), find `demo-03` with `/`, then press `i` for its details.", on: { event: "command", id: "info", arg: "demo-03" } },
+          { id: "session", text: "Open the map again, find `demo-03` and press Enter: a Session to it opens.", on: { event: "session_open", host: "demo-03" } },
+        ],
+      },
+      {
+        title: "Who reaches whom",
+        text: "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+        steps: [
+          { id: "reach", text: "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly.", on: { event: "command", id: "info", arg: "demo-01" } },
+          { id: "pending", text: "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why.", on: { event: "command", id: "info", arg: "demo-05" } },
+        ],
+      },
+    ],
+    outro: [
+      "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.",
+      "",
+      "- `f` filters the map by group, kind or state, and `t` lists every node and edge.",
+      "- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.",
+      "- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
+    ].join("\n"),
+  };
+}
+
 function helpPage(leader: string): string {
   return [
     "# Topology",
@@ -808,6 +855,8 @@ function helpPage(leader: string): string {
     "Select a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.",
     "",
     "Keys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).",
+    "",
+    "`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.",
     "",
     "It needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
   ].join("\n");

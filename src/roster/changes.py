@@ -10,8 +10,8 @@ import signal
 import subprocess
 from pathlib import Path
 
-from .common import WINDOWS, kill_tree, time_left
-from .edit import load_text, read_text, write_text
+from .common import WINDOWS, git_program, kill_tree, program_argv, time_left
+from .edit import keep_backup, load_text, read_text
 from .errors import (
     COMMIT_FAILED,
     DIRTY,
@@ -36,19 +36,28 @@ HOST_VIEW = ("group", "ip", "title", "description", "type", "product", "enroll",
              "services")
 
 
+# Which repo git works on is roster.yml's folder's, never one the environment names (a dotfiles GIT_DIR, #409 S3)
+GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
+                "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
+
+
 def git(repo, *args, timeout=GIT_TIMEOUT, floor=1):
     """Run git in REPO, non-interactive. Past TIMEOUT its whole process group is killed (a push's remote side
     and hooks too, which would otherwise hold the output open) and it's a Problem."""
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"}
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
+    env.update({"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"})
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-    argv = ["git", "-C", str(repo), *args]
+    # a repo's own config never runs a program for roster's reads: core.fsmonitor runs on reading the index (#409 S3)
+    argv = [git_program(), "-C", str(repo), "-c", "core.fsmonitor=false", *args]
     timeout = round(time_left(timeout, floor), 1)          # held to serve's deadline for the whole request
     try:
-        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+        p = subprocess.Popen(program_argv(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                              text=True, env=env, start_new_session=True)
     except FileNotFoundError:
         raise Problem(NOT_A_REPO, "git isn't installed on this box, so roster can't keep Pending changes",
                       fix="install git") from None
+    except ValueError as e:                     # program_argv: a git.cmd and an argument cmd.exe would act on
+        raise Problem(NOT_A_REPO, f"can't run git {args[0]}: {e}", fix="install Git for Windows (git.exe)") from None
     try:
         stdout, stderr = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -105,11 +114,7 @@ class Repo:
 
     def backup(self, text):
         """Keep TEXT (what's about to be replaced) as roster.yml.bak in the git dir; returns its path."""
-        d = self.git_dir / "roster"
-        d.mkdir(exist_ok=True)
-        bak = d / (self.path.name + ".bak")
-        write_text(bak, text)
-        return bak
+        return keep_backup(self.git_dir / "roster" / (self.path.name + ".bak"), text, self.path)
 
     def diff_text(self):
         r = git(self.top, "diff", "--no-color", "--no-ext-diff", "HEAD", "--", self.rel)

@@ -2,7 +2,7 @@
 //! calls, Sessions).
 //! All logic lives in roster-core so it can be tested without Tauri (docs/app/dev/testing.md).
 
-use roster_core::backend::{Backend, BackendInfo, CheckStarted, QuickTarget, fill_refusal, timeout_for};
+use roster_core::backend::{Backend, BackendInfo, CheckStarted, CreateCancel, QuickTarget, fill_refusal, timeout_for};
 use roster_core::config::{self, Config, Loader, Report};
 use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
 use roster_core::package::{self, Packages};
@@ -27,18 +27,7 @@ impl BackendState {
     /// development env vars winning; a change takes effect at the next (re)start.
     fn connect(&self, restart: bool, config: &Config, notify: Notify) -> Result<BackendInfo, BackendError> {
         let backend = self.0.connect(restart, Backend::is_alive, || {
-            let env_cmd = roster_core::env::roster_override();
-            let env_distro = roster_core::env::wsl_distro();
-            let plan = config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref())
-                .map_err(|m| {
-                    BackendError::new(
-                        ErrorKind::Failed,
-                        m,
-                        "Fix it in init.lua (docs/app/config.md), then Retry.",
-                    )
-                })?;
-            let candidate = detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)?;
-            Backend::start_with(&candidate, Some(notify))
+            Backend::start_with(&candidate(config)?, Some(notify))
         })?;
         Ok(backend.info.clone())
     }
@@ -49,6 +38,21 @@ impl BackendState {
             message: "the backend isn't running".into(),
         })
     }
+}
+
+/// The roster the Config (and the development env vars) pick, found on this Box.
+fn candidate(config: &Config) -> Result<roster_core::detect::Candidate, BackendError> {
+    let env_cmd = roster_core::env::roster_override();
+    let env_distro = roster_core::env::wsl_distro();
+    let plan =
+        config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref()).map_err(|m| {
+            BackendError::new(
+                ErrorKind::Failed,
+                m,
+                "Fix it in init.lua (docs/app/config.md), then Retry.",
+            )
+        })?;
+    detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)
 }
 
 async fn blocking<T: Send + 'static, E: Send + 'static>(
@@ -82,6 +86,34 @@ async fn backend_connect(
         s.connect(restart, &config, notify)
     })
     .await
+}
+
+/// The first-run dialog (T212): with no Inventory, `inventory.create` on a serve started for that
+/// one call (roster-core `Backend::create_inventory`). serve writes roster.yml (ADR 0001); the
+/// frontend then connects again. The params are the dialog's choice: how, a folder, a path or a
+/// URL. Nothing secret is in them.
+#[tauri::command]
+async fn inventory_create(
+    config: tauri::State<'_, ConfigState>,
+    cancel: tauri::State<'_, CreateCancel>,
+    params: Value,
+) -> Result<Value, CallError> {
+    let loader = config.0.clone();
+    let cancel = cancel.inner().clone();
+    blocking(move || {
+        let config = loader.map(|l| l.settled()).unwrap_or_default();
+        let c = candidate(&config).map_err(|e| CallError::Io { message: e.message })?;
+        Backend::create_inventory_with(&c, params, &cancel)
+    })
+    .await
+}
+
+/// The first-run dialog's Cancel (#417 L5): the serve making the Inventory stops (a clone under way
+/// is killed, and what it left taken away). False when nothing was under way.
+#[tauri::command]
+async fn inventory_create_cancel(cancel: tauri::State<'_, CreateCancel>) -> Result<bool, ()> {
+    let cancel = cancel.inner().clone();
+    blocking(move || Ok(cancel.cancel())).await
 }
 
 /// The Config (`init.lua`, roster-core config/): None when there's no config dir. roster-core's
@@ -326,8 +358,18 @@ async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Val
     call(&state, "vault.targets", json!({})).await
 }
 
+/// A vault item's address, SSH port and user, never its password (`vault.item_fields`, API 29):
+/// the add-Host form's "Fill from this item" (#437). `params`: `{item, provider?}`.
+#[tauri::command]
+async fn vault_item_fields(
+    state: tauri::State<'_, Arc<BackendState>>,
+    params: serde_json::Map<String, Value>,
+) -> Result<Value, CallError> {
+    call(&state, "vault.item_fields", Value::Object(params)).await
+}
+
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
-/// first failure. roster makes at most one connection and one login, so this is safe on 10.19.
+/// first failure. roster makes at most one connection and one login, so this is safe on a rate-limited network.
 /// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
 /// worker of serve waits for it. `started` hears the check's job once serve has it under way, and
 /// whether it's the app's own to stop (`host_check_stop`, #221 item 1); an older serve sends none.
@@ -874,14 +916,14 @@ async fn plugin_event(
     blocking(move || Ok(host.event(plugin::Event { name, payload }))).await
 }
 
-/// The Sessions open now, `[id, host]` in the order the app saw them open (a Quick Connect
-/// Session's host is null): the whole list, replacing the last (`roster.sessions.list()`,
-/// decision Q127).
+/// The Sessions open now, `{ session, host, cwd }` in the order the app saw them open (a Quick
+/// Connect Session's host is null; `cwd` the folder its shell last said, OSC 7, or null): the
+/// whole list, replacing the last (`roster.sessions.list()`, decisions Q127 and Q185).
 #[tauri::command]
 fn plugin_sessions(
     plugins: tauri::State<'_, Arc<PluginHost>>,
     demo: tauri::State<'_, DemoPlugins>,
-    open: Vec<(u64, Option<String>)>,
+    open: Vec<plugin::OpenSession>,
     on_demo: Option<u64>,
 ) -> Result<(), String> {
     plugin_host(&plugins, &demo, on_demo)?.set_sessions(open);
@@ -1301,6 +1343,7 @@ pub fn run() {
         .manage(DemoPlugins::default())
         .manage(Arc::clone(&sessions))
         .manage(ConfigState(loader))
+        .manage(CreateCancel::default())
         .setup(move |app| {
             migrate_state(app.handle());
             // What a Plugin did when one of its requests answered (`roster.http`, the
@@ -1336,6 +1379,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_connect,
+            inventory_create,
+            inventory_create_cancel,
             open_url,
             hosts_list,
             host_get,
@@ -1375,6 +1420,7 @@ pub fn run() {
             vault_logout,
             vault_configure,
             vault_targets,
+            vault_item_fields,
             config_load,
             config_open,
             config_reload,

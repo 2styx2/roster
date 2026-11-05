@@ -5,15 +5,15 @@
 Every failure is an errors.Problem with a stable code, roster's message and the fix. Nothing here ever
 returns, prints or logs a password: it is looked up into this process's memory, at most."""
 
+import ipaddress
 import os
-import shutil
 import socket
 import subprocess
 import time
 from contextlib import nullcontext
 
 from . import askpass, errors, providers
-from .common import known_hosts_label, not_reviewed, time_left
+from .common import find_program, known_hosts_label, not_reviewed, time_left
 from .config import is_windows
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
 from .providers import PROVIDERS
@@ -175,14 +175,14 @@ def step_inventory(ctx):
         raise Problem(errors.NOT_REVIEWED, not_reviewed(h),
                       fix=f"review {h['name']} in roster.yml, then set reviewed: true")
     check_user(h)
-    ctx["cfg"], ctx["h"] = cfg, h
+    ctx["cfg"], ctx["h"], ctx["limited"] = cfg, h, cfg.get("rate_limited") or []
     how = "password" if uses_password(h) else "key" if h["enroll"] else f"auth {h['ssh']['auth'] or 'none'}"
     return f"{h['ssh']['user']}@{h['ip']}:{h['ssh']['port']} ({how} login)"
 
 
 def step_ssh_config(ctx):
     h = ctx["h"]
-    ctx["ssh"] = shutil.which("ssh")
+    ctx["ssh"] = find_program("ssh")
     if ctx["ssh"] is None:
         raise Problem(errors.NOT_SET_UP, "no ssh client on this box's PATH",
                       fix="install OpenSSH (openssh-client)")
@@ -226,19 +226,41 @@ def step_vault_item(ctx):
 def step_dns(ctx):
     h = ctx["h"]
     try:
-        socket.getaddrinfo(h["ip"], h["ssh"]["port"], type=socket.SOCK_STREAM)
+        found = socket.getaddrinfo(h["ip"], h["ssh"]["port"], type=socket.SOCK_STREAM)
     except (socket.gaierror, UnicodeError) as e:
         raise Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({h['name']})",
                       fix=f"fix ip: for {h['name']} in roster.yml", details=str(e)) from None
+    ctx["resolved"] = list(dict.fromkeys(str(a[4][0]) for a in found))     # for unreachable_fix (#420)
     return f"{h['ip']} resolves"
 
 
-def unreachable_fix(h):
-    fix = "retry later; is the Host up and the network path open?"
-    if h["ip"].startswith("10.19."):
-        fix += (" On 10.19.x the SSH rate limiter stops answering for about 4 minutes after many "
-                "connections: wait a few minutes, don't retry in a loop")
-    return fix
+UNREACHABLE = "retry later; is the Host up and the network path open?"
+
+
+def ip_of(text):
+    try:
+        return ipaddress.ip_address(str(text).partition("%")[0])
+    except ValueError:
+        return None
+
+
+def unreachable_fix(h, limited=(), resolved=None):
+    """The fix for a Host that didn't answer (code 42), from `rate_limited:` in roster.yml (LIMITED, its networks;
+    T191, decision Q180). An address in one of them names it; an address outside them, when the team listed some,
+    gets no rate-limiter hint; with no list the hint is the generic one. A name rather than an address is matched
+    by RESOLVED, the addresses the dns step found for it (#420, decision Q192); without them it gets the generic one."""
+    if limited:
+        addr = ip_of(h["ip"])
+        addrs = [addr] if addr is not None else [a for a in map(ip_of, resolved or ()) if a is not None]
+        if addrs:
+            hit = next(((a, n) for a in addrs for n in limited if a in ipaddress.ip_network(n)), None)
+            if hit is None:
+                return UNREACHABLE
+            where = h["ip"] if addr is not None else f"{h['ip']} ({hit[0]})"
+            return (f"{UNREACHABLE} {where} is in {hit[1]} (rate_limited: in roster.yml): its SSH rate limiter stops "
+                    "answering for a few minutes after many connections, so wait a few minutes, don't retry in a loop")
+    return (f"{UNREACHABLE} If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in "
+            "a loop")
 
 
 def step_tcp(ctx):
@@ -251,7 +273,7 @@ def step_tcp(ctx):
                       fix="check the port in roster.yml; is sshd running on the Host?", details=str(e)) from None
     except OSError as e:
         raise Problem(errors.TIMEOUT, f"{h['name']} ({where}) didn't answer within {CONNECT_TIMEOUT} s",
-                      fix=unreachable_fix(h), details=str(e)) from None
+                      fix=unreachable_fix(h, ctx.get("limited"), ctx.get("resolved")), details=str(e)) from None
     return f"{where} accepts connections"
 
 
@@ -262,14 +284,15 @@ def step_host_key(ctx):
     if not recorded:
         raise Problem(errors.HOST_KEY_UNKNOWN, f"no recorded host key for {h['name']}",
                       fix=f"check the Host's fingerprint (console, or its owner), then run "
-                          f"`roster setup --only {h['name']}` to record it")
+                          f"`roster setup --host {h['name']}` to record it")
     sock, ctx["sock"] = ctx["sock"], None
     try:
         key = offered_host_key(sock, list(recorded), timeout=CONNECT_TIMEOUT)
     except (paramiko.SSHException, OSError, EOFError) as e:
         if not isinstance(e, paramiko.SSHException) or "Incompatible" not in str(e):
             raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                          fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                          fix=unreachable_fix(h, ctx.get("limited"), ctx.get("resolved")),
+                          details=f"{type(e).__name__}: {e}") from None
         key = None
     finally:
         sock.close()
@@ -286,7 +309,7 @@ def changed_key(h, recorded, key):
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
                        f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
-                       f"and run `roster setup --only {h['name']}`",
+                       f"and run `roster setup --host {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 
 
@@ -307,7 +330,7 @@ def step_auth(ctx):
     r = login_attempt(argv, {**os.environ, **env}, limit, ctx.get("halted"))
     if r is None:
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't finish the login within {limit} s",
-                      fix=unreachable_fix(h))
+                      fix=unreachable_fix(h, ctx.get("limited"), ctx.get("resolved")))
     if r.returncode == 0:
         return f"logged in as {h['ssh']['user']}"
     details = r.stderr.strip()
@@ -318,7 +341,7 @@ def step_auth(ctx):
             secret = None
         if secret:
             details = details.replace(secret, "****")
-    raise login_failure(h, password, details)
+    raise login_failure(h, password, details, ctx.get("limited"), ctx.get("resolved"))
 
 
 STOP_POLL = 0.1            # s: how soon a stopped check notices it while its ssh logs in
@@ -382,7 +405,7 @@ def end_process(proc):
     proc.wait()                             # SIGKILL can't be refused: this returns
 
 
-def login_failure(h, password, stderr):
+def login_failure(h, password, stderr, limited=(), resolved=None):
     """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions)."""
     name, user = h["name"], h["ssh"]["user"]
     for line in stderr.splitlines():
@@ -402,7 +425,7 @@ def login_failure(h, password, stderr):
             return Problem(errors.PASSWORD_REFUSED, f"{name} refused the password for user {user}",
                            fix="check the vault item: the password may have been changed on the Host, or the user is wrong",
                            details=stderr)
-        fix = f"run `roster setup --only {name}`, or set enroll: false"
+        fix = f"run `roster setup --host {name}`, or set enroll: false"
         if is_windows(h):               # sshd ignores a key file with the wrong permissions or encoding, silently
             fix += (": on a Windows Host it also checks the key file (an administrator's is "
                     "%ProgramData%\\ssh\\administrators_authorized_keys) for permissions and an encoding sshd ignores")
@@ -417,7 +440,7 @@ def login_failure(h, password, stderr):
         return Problem(errors.REFUSED, f"{name} refused the connection",
                        fix="check the port in roster.yml; is sshd running on the Host?", details=stderr)
     if "timed out" in low:
-        return Problem(errors.TIMEOUT, f"{name} didn't answer within {LOGIN_TIMEOUT} s", fix=unreachable_fix(h),
+        return Problem(errors.TIMEOUT, f"{name} didn't answer within {LOGIN_TIMEOUT} s", fix=unreachable_fix(h, limited, resolved),
                        details=stderr)
     if "could not resolve" in low:
         return Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({name})", fix=f"fix ip: for {name} in roster.yml",
@@ -442,7 +465,7 @@ def stored_password(h):
     return login if login and str(login["auth"]).partition(":")[0].strip() != "prompt" else None
 
 
-def verify_login(h, key_path, previous=None, typed=None, host_key=None):
+def verify_login(h, key_path, previous=None, typed=None, host_key=None, limited=()):
     """One test login to Host H as an edit would leave it (new address, user or Login), or as host.add would add it,
     before anything is written. The same order as check_host, but against H's own values rather than this box's ssh
     config: the local steps, then ONE TCP connection that carries the key exchange and exactly one login attempt.
@@ -455,7 +478,7 @@ def verify_login(h, key_path, previous=None, typed=None, host_key=None):
     with no stored Login (auth: prompt, agent, none) gets everything but the login. A changed Login (auth differs
     from PREVIOUS's) that is a stored password is tested with that password even when H is enroll: true: the key
     login would prove nothing about it. Returns {host, ok, steps} like check_host."""
-    ctx = {"h": h, "key_path": key_path, "previous": previous, "typed": typed, "host_key": host_key,
+    ctx = {"h": h, "key_path": key_path, "previous": previous, "typed": typed, "host_key": host_key, "limited": limited,
            "login_changed": previous is not None and previous["ssh"]["auth"] != h["ssh"]["auth"]}
     steps, failed = [], False
     for step in VERIFY_STEPS:
@@ -548,14 +571,14 @@ def verify_host_key(ctx):
     if not recorded:
         raise Problem(errors.HOST_KEY_UNKNOWN, f"no recorded host key for {h['name']} at {h['ip']}",
                       fix=f"check the Host's fingerprint (console, or its owner) and record it with `roster setup "
-                          f"--only {h['name']}` after the change, or make this change by hand in roster.yml")
+                          f"--host {h['name']}` after the change, or make this change by hand in roster.yml")
     sock, ctx["sock"] = ctx["sock"], None
     try:
         t = start_transport(sock, list(recorded), timeout=CONNECT_TIMEOUT)
     except (paramiko.SSHException, OSError, EOFError) as e:
         sock.close()
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                      fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
     ctx["transport"] = t
     key = t.get_remote_server_key()
     old = recorded.get(key.get_name())
@@ -581,7 +604,7 @@ def confirmed_host_key(ctx):
     except (paramiko.SSHException, OSError, EOFError) as e:
         sock.close()
         raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
-                      fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
     ctx["transport"] = t
     key = t.get_remote_server_key()
     if fingerprint(key) != ctx["host_key"]:
@@ -594,18 +617,18 @@ def confirmed_host_key(ctx):
     return f"the {key.get_name()} key you confirmed, {fingerprint(key)}"
 
 
-def scan_key(h):
+def scan_key(h, limited=()):
     """The host key H's address offers ({key_type, fingerprint}) and how it compares with the one roster recorded
     (recorded: none, match or changed), for the user to confirm before a first login. One connection, key
     exchange only: never logs in, never records anything. Raises Problem 40-42 when it can't get there."""
-    key, state = offered_key(h)
+    key, state = offered_key(h, limited)
     return {"key_type": key.get_name(), "fingerprint": fingerprint(key), "recorded": state}
 
 
-def offered_key(h):
+def offered_key(h, limited=()):
     """scan_key's work: (the paramiko key H's address offers, recorded: none|match|changed)."""
     import paramiko
-    ctx = {"h": h}
+    ctx = {"h": h, "limited": limited}
     step_dns(ctx)
     step_tcp(ctx)
     recorded = recorded_host_keys(h)
@@ -613,7 +636,7 @@ def offered_key(h):
         key = offered_host_key(ctx["sock"], list(recorded), timeout=CONNECT_TIMEOUT)
     except (paramiko.SSHException, OSError, EOFError) as e:
         raise Problem(errors.TIMEOUT, f"{h['ip']} didn't complete the SSH handshake",
-                      fix=unreachable_fix(h), details=f"{type(e).__name__}: {e}") from None
+                      fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None
     finally:
         ctx["sock"].close()
     old = recorded.get(key.get_name())
@@ -645,7 +668,7 @@ def verify_auth(ctx):
             raise Problem(errors.PASSWORD_REFUSED, f"{h['name']} refused the password for user {user}",
                           fix="check the user and the vault item: the password may have changed on the Host") from None
         raise Problem(errors.KEY_REFUSED, f"{h['name']} didn't accept this box's key for user {user}",
-                      fix=f"check the user, or run `roster setup --only {h['name']}` after the change") from None
+                      fix=f"check the user, or run `roster setup --host {h['name']}` after the change") from None
     except (paramiko.SSHException, OSError, EOFError) as e:
         raise Problem(errors.AUTH_FAILED, f"logging in to {h['name']} failed", fix="see the details",
                       details=f"{type(e).__name__}: {e}") from None

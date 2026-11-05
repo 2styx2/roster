@@ -2,6 +2,32 @@
 
 The usual flow for bringing a new network or box into roster: scan it, review it, point each host at its vault item, then prove each login works. Passwords stay in the vault the whole time. `roster.yml` only gets the item's name.
 
+`roster.yml` may be a plain file (your own, on this Box) or a file in your team's git repo: every step here works the same on both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)). No `roster.yml` yet? `roster init --blank` writes a short, empty one, and `roster init --inventory ssh-config` starts it from the Hosts in your `~/.ssh/config` ([A new Inventory](cli-reference.md#a-new-inventory)).
+
+## One Host you already know
+
+No scan needed when you know the box: save its Login in the vault (named and filled as in [step 2](#2-add-the-logins-to-the-vault): the address in its URI field, the user in its username), then add the Host in one command:
+
+```bash
+roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab --no-enroll # everything said
+roster add nas-01 --auth "bw:nas-01 ssh" --from-vault --setup                   # address and user from the item, then set up
+```
+
+It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden and 1Password; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --host nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks, but for one: an address and port another Host has is a warning there, naming that Host, not a refusal (a second Login to one machine). Its **Fill from this item** (with "An existing vault item") is `--from-vault`: the item's address, SSH port and user, never its password.
+
+### After you put a login in the vault
+
+Saved a few logins in the vault (named `<host> ssh`, the address in the URI field, the user in the username)? Let roster find them:
+
+```bash
+roster add --from-vault            # sync, list the items roster.yml doesn't name yet, add each one [Y/n/edit/skip]
+roster add --from-vault --json     # just the list, for a script (or --all for the ones seen before too)
+```
+
+It syncs the vault first (`--no-sync` skips that), lists the login items no `auth:` in `roster.yml` names, new ones since the last run marked, and walks you through each: `nas-01 ssh` with URI `ssh://10.0.0.50` and username `admin` is offered as Host `nas-01` at `10.0.0.50`, user `admin`, `auth: "bw:nas-01 ssh"`. Enter adds it the `roster add` way (it asks the group), then offers setup for it; `edit` changes the name, address or user first; `n` hides it from now on; `skip` asks again next time. It works with Bitwarden, 1Password and KeePassXC (for KeePassXC entries it asks the address and user: roster reads only their paths there), and never reads a password. A locked vault is never unlocked here: it says how. Details: [Vault items not in roster.yml](cli-reference.md#vault-items-not-in-rosteryml-roster-add---from-vault).
+
+For a whole network you don't know yet, start here instead:
+
 ## 1. Scan the network
 
 ```bash
@@ -14,13 +40,13 @@ roster discover 10.0.0.0/24 --json      # the preview as JSON, for a script
 `--write` does the following:
 
 - Adds new hosts to the group with `reviewed: false`, `user: CHANGE-ME` (unless `defaults:` sets a user) and `auth: prompt`.
-- Keeps your comments and saves `roster.yml.bak`.
+- Keeps your comments and saves what it replaced as `roster.yml.bak` (beside it; in a team repo, in its git dir, so it's never committed).
 - Never overwrites hosts that are already in the file.
 - Refuses to write a file that wouldn't load.
 
 Each host gets a guessed `type`, a `title` from its web page, its services, and a description of every open port.
 
-From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.0.0.0/24`, keep the Hosts you want, and they're added unreviewed as Pending changes for you to Publish.
+From the app, the first-party [discover](../plugins/discover/README.md) Plugin does the same scan: `:discover 10.0.0.0/24`, keep the Hosts you want, and they're added unreviewed: as Pending changes for you to Publish in a team repo, saved straight to a plain file.
 
 Tell your security team before scanning big ranges.
 
@@ -66,9 +92,11 @@ providers:
 
 `save_to: { group: Hosts }` says the same as `group: Hosts` and wins over it; the app's `init.lua` can set `vault.kp.database` and `vault.save_to` for its own Box.
 
-A local database isn't shared: every box (or person) keeps its own, so `auth-check` passes only where those entries exist.
+A local database isn't shared: every box (or person) keeps its own, so `roster check --auth` passes only where those entries exist.
 
-To see what's in the vault without exposing passwords (Bitwarden):
+**The vault isn't watched.** An item you add or change in the Bitwarden app, the web vault or on another box reaches this box only at a sync, so roster sees new or changed items after one: `roster vault sync` syncs and says which items were added, changed or removed since the last sync (names and counts, never a password), and `roster vault status` says when it last ran. `roster add --from-vault` syncs first by itself. `roster vault bw -- sync` still runs bw's own sync, without the report ([The vault isn't watched](cli-reference.md#the-vault-isnt-watched-roster-vault-sync)).
+
+To see which items no Host uses yet: `roster add --from-vault --all --json` (never a password). To see what's in the vault with bw itself, without printing passwords (Bitwarden):
 
 ```bash
 bw sync
@@ -76,7 +104,7 @@ bw list items | jq -r '.[] | [.revisionDate[0:16], .name, (.login.username // "-
 bw get item "esxi-02 ssh+web" | jq -r '.login.uris[].uri'      # one item's address
 ```
 
-Going the other way, `roster info HOST` shows a host's address and which item each of its logins uses.
+Going the other way, `roster hosts HOST` shows a host's address and which item each of its logins uses.
 
 ## 3. Work out which box is which
 
@@ -118,15 +146,15 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 - If your team has its own word for one of roster's `login:` types, map it once at the top of `roster.yml` and keep using it: `web_login_names: { appliance: hub }` makes `login: appliance` work exactly like `login: hub`. roster shows the type it resolved to (`hub`). Details in [cli-reference.md](cli-reference.md#web-apis-with-stored-logins-roster-web).
 - **`shell_hooks: true`** (on a host, its group or `defaults`) lets the roster app send the host's shell one line after login that marks its prompts and says its folder, in that shell only: nothing is written on the host. Off unless set; `shell_hooks: false` keeps a host out, say network gear. It must be `true` or `false`. What's sent, and when not: [Shell hooks](plugins.md#shell-hooks-roster-sets-it-up).
-- A typo in a service entry (a port, a url, a `login:` type) doesn't break the file for everyone: that one service is left out, and `roster hosts`, `check` and `auth-check` warn about it with the fix. `roster info HOST` lists it under `problems`.
+- A typo in a service entry (a port, a url, a `login:` type) doesn't break the file for everyone: that one service is left out, and `roster hosts`, `check` and `check --auth` warn about it with the fix. `roster hosts HOST` lists it under `problems`.
 
 - Rename hosts to something people will search for, ideally the box's real hostname (`lab-hub3`, `esxi-02`). Set a real `title` and fix the guessed `type`. Don't shorten names: `hub2` and `lab-hub2` are different machines. Hosts you're not bringing in can stay `reviewed: false`. roster leaves them alone.
 
 ## 5. Test every login
 
 ```bash
-roster auth-check --only discovered-20261012     # every vault reference resolves ("ok")
-roster setup --only HOST1,HOST2                  # records fingerprints, installs keys on enroll: true hosts
+roster check --auth --only discovered-20261012   # every vault reference resolves ("ok")
+roster setup --only HOST1,HOST2                  # (or --host HOST: that Host alone) records fingerprints, installs keys on enroll: true hosts
 roster run HOST -- hostname                      # SSH password login
 ssh HOST hostname                                # SSH key login (enroll: true)
 roster web HOST [SERVICE] GET /path              # web API with basic or bearer auth
@@ -138,7 +166,7 @@ What the errors mean:
 
 | Message | Meaning |
 |---|---|
-| `host key not recorded` | `roster setup --only HOST` hasn't been run for it yet, or the SSH port didn't answer when it ran |
+| `host key not recorded` | `roster setup --host HOST` hasn't been run for it yet, or the SSH port didn't answer when it ran |
 | `no answer on SSH port` | SSH is off or filtered. ESXi often switches SSH off: enable it under Host → Actions → Services. |
 | `login refused (wrong user or password?)` | Wrong item, wrong user, or a different box from the one you think. Check the host key (step 3). |
 | `warning: HOST service 'NAME': ... - left out` | That service entry has a mistake roster can't work around, so the rest of the Host loads without it. The `fix:` line under it says what to change. |
@@ -150,7 +178,7 @@ What the errors mean:
 | `warning: [154] HOST has type: windows but no os:` | roster treats it as a POSIX Host. Set `os: windows` if it's Windows |
 | `[159] HOST is a Windows Host (os: windows), which has no sudo over ssh` | `roster run --sudo` on Windows: log in as an account in Administrators and run it without `--sudo` |
 | `[161] the command isn't PowerShell, so nothing ran` | `roster run` on a Windows Host runs PowerShell: rewrite it, or wrap cmd.exe's syntax in `cmd /c '…'` |
-| Port 22 accepts connections but sends no SSH banner, on many Hosts at once | A network IPS or rate limiter between this Box and the Hosts, not the Hosts: probe a neighbouring Host, or wait a few minutes and retry with fewer `workers:`. Don't retry in a loop |
+| Port 22 accepts connections but sends no SSH banner, on many Hosts at once | A network IPS or rate limiter between this Box and the Hosts, not the Hosts: probe a neighbouring Host, or wait a few minutes and retry with fewer `workers:`. Don't retry in a loop. List a network that has one in [`rate_limited:`](cli-reference.md#networks-with-an-ssh-rate-limiter), so a Host there that doesn't answer says so |
 
 ## Windows Hosts
 
@@ -191,14 +219,14 @@ roster adds its key to a Windows Host that runs Microsoft's OpenSSH Server (Wind
 
 ## 6. Share it
 
-Commit and push the updated `roster.yml` to [yourteam/infra](https://example.com/yourteam/infra). Every box picks it up with `~/infra/bin/roster-pull`; add `--setup` to install keys on new key hosts. Vault items need to be shared with them (a shared Bitwarden collection or 1Password vault), or `auth-check` will fail on their box.
+A plain file of your own needs nothing more: every edit is in it already. For a team repo, commit and push the updated `roster.yml` to [yourteam/infra](https://example.com/yourteam/infra) (`:publish` in the app does it for the app's edits). Every box picks it up with `~/infra/bin/roster-pull`; add `--setup` to install keys on new key hosts. Vault items need to be shared with them (a shared Bitwarden collection or 1Password vault), or `roster check --auth` will fail on their box.
 
 ## Adding a login to a host that's already on the map
 
 1. Create the vault item (named as in step 2, address in its URI field) in the shared collection.
 2. Find the host by address: `grep -n "10.0.0.XX" ~/infra/roster.yml`.
 3. Set `auth: "bw:<item>"` on the host, on its `ssh:` block, or on one service. A scanned host also gets its real name and `reviewed: true` (step 4).
-4. `roster auth-check --only HOST`, then `roster run HOST -- hostname` (step 5).
+4. `roster check --auth --only HOST`, then `roster run HOST -- hostname` (step 5).
 5. Commit and push (step 6).
 
 ## A separate sudo password
@@ -216,7 +244,7 @@ The app's fill key (`␣ p`, [keyboard](app/keyboard.md)) types a Host's passwor
 
 ## Things that aren't hosts
 
-A Wi-Fi network, a vendor portal or an API key goes under `resources:` instead of a group. It gets a fixed set of fields per type (`wifi`, `account`, `secret`) and an `auth:` vault reference, just like a host. See [Resources](cli-reference.md#resources-secrets-with-no-address) in the CLI reference. Check it with `roster auth-check --only <name>` and `roster info <name>`.
+A Wi-Fi network, a vendor portal or an API key goes under `resources:` instead of a group. It gets a fixed set of fields per type (`wifi`, `account`, `secret`) and an `auth:` vault reference, just like a host. See [Resources](cli-reference.md#resources-secrets-with-no-address) in the CLI reference. Check it with `roster check --auth --only <name>` and `roster hosts <name>`.
 
 ## See also
 
