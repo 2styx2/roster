@@ -77,6 +77,15 @@ mkdir -p ~/.config/roster
 (umask 077; bw unlock --raw > ~/.config/roster/bw-session)
 ```
 
+On Windows, in PowerShell (the folder is `%APPDATA%\roster`):
+
+```powershell
+New-Item -ItemType Directory -Force $env:APPDATA\roster | Out-Null
+bw unlock --raw | Set-Content -Encoding ascii -NoNewline $env:APPDATA\roster\bw-session
+```
+
+`Set-Content -Encoding ascii` writes the key as plain text. Windows PowerShell 5.1's `>` writes UTF-16 instead, and PowerShell 7's UTF-8; roster reads both (with or without a byte-order mark, and without the line end), and ignores, with a warning, a file that isn't a session key.
+
 roster only uses the session file if it's yours alone: a plain file (not a symlink or a hard link), owned by you, that only you can read (mode 600); otherwise it warns and ignores it. Only the file itself is checked, not the folders it's in, so keep `~/.config/roster` your own. On Windows the same holds through the file's owner and permissions: owned by you (or Administrators), and nobody but you, SYSTEM and Administrators may open it, as a file in your own `%APPDATA%` is. When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster vault bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster vault bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a password, what roster can and can't see).
 
 **1Password:** use the desktop app integration, `eval $(op signin)`, or `OP_SERVICE_ACCOUNT_TOKEN` on a headless box.

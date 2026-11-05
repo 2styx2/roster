@@ -65,6 +65,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **`roster check` says when another Box replaced a shared Mesh key** (#412): when the Box whose Mesh files a source's are rotates that key or cuts the source, this Box's own lines for the old key stay on its peers until its next `roster mesh`; its `roster check` (and `roster mesh --dry-run`) now warns, per peer, that the line still lets the old key in, from its `from=` address.
 - **A Host whose `ip:` is a name gets its network's rate-limiter hint** (#420): when `roster check` gets no answer, the address the name resolved to is matched against `rate_limited:`, so a name in a listed network says to wait a few minutes, and one outside them gets no rate-limiter hint, as an address does.
 - **`roster inv add NAME <Tab>` offers nothing** (#420): a new name goes there, so the existing Inventories' names are no longer suggested.
+- **A `bw-session` file Windows PowerShell wrote works** (#433): Windows PowerShell 5.1's `bw unlock --raw > FILE` writes UTF-16 with a byte-order mark, which roster read as garbage, so bw failed. roster now reads a session file in UTF-16 or UTF-8 with a byte-order mark as well as plain text, without its line end; a file that isn't a session key (anything but plain ASCII) is ignored with a warning, as a file that isn't yours alone is. The docs give the line that writes plain text: `bw unlock --raw | Set-Content -Encoding ascii -NoNewline $env:APPDATA\roster\bw-session`.
 
 ### Deprecated
 

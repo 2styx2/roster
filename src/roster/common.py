@@ -127,7 +127,12 @@ def never_look_in_the_current_folder() -> None:
 
 
 def read_private(path: Path) -> str:
-    """PATH's text, read only if it's yours alone (#411), as a secret's file must be: opened without following a link,
+    """PATH's text (UTF-8), as read_private_bytes reads it."""
+    return read_private_bytes(path).decode("utf-8", "replace")
+
+
+def read_private_bytes(path: Path) -> bytes:
+    """PATH's bytes, read only if it's yours alone (#411), as a secret's file must be: opened without following a link,
     then checked and read through that one open file, so it can't be swapped between the check and the read. On Linux
     and macOS: a plain file (not a link, FIFO or device), owned by you, with no group or other bits. On Windows
     (roster/winfile.py): a plain file (not a link or other reparse point), owned by you, that no one but you, SYSTEM
@@ -137,7 +142,7 @@ def read_private(path: Path) -> str:
     if WINDOWS:
         from . import winfile
         try:
-            return winfile.read_private(str(path))
+            return winfile.read_private_bytes(str(path))
         except (FileNotFoundError, NotPrivate):
             raise
         except OSError as e:
@@ -168,7 +173,7 @@ def read_private(path: Path) -> str:
             size += len(chunk)
         if size > PRIVATE_MAX:
             raise NotPrivate(f"{path} is too big to be a session (over {PRIVATE_MAX // 1024} KiB)")
-        return b"".join(chunks).decode("utf-8", "replace")
+        return b"".join(chunks)
     except OSError as e:
         raise NotPrivate(f"{path} can't be read ({e.strerror or type(e).__name__})") from None
     finally:

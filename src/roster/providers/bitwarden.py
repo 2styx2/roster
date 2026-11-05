@@ -4,7 +4,7 @@ import base64
 import json
 import os
 
-from ..common import NotPrivate, find_program, read_private, say, user_config_dir
+from ..common import NotPrivate, find_program, read_private_bytes, say, user_config_dir
 from . import (
     PROVIDERS,
     ItemExists,
@@ -70,19 +70,42 @@ def session_file():
     return user_config_dir() / "bw-session"
 
 
+_BOMS = ((b"\xef\xbb\xbf", "utf-8"), (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"))
+
+
+def session_text(data):
+    """A bw-session file's key: UTF-8, or UTF-8 or UTF-16 with a BOM (what Windows PowerShell 5.1's `>` writes, #433),
+    without the line end. "" for an empty file; None if it isn't a key (anything but printable ASCII, no spaces)."""
+    for bom, encoding in _BOMS:
+        if data.startswith(bom):
+            data, codec = data[len(bom):], encoding
+            break
+    else:
+        codec = "utf-8"
+    try:
+        key = data.decode(codec).strip()
+    except UnicodeDecodeError:
+        return None
+    return key if all("!" <= c <= "~" for c in key) else None
+
+
 def load_session_file():
     """BW_SESSION from ~/.config/roster/bw-session, so sessions without your shell's env (background jobs,
-    other terminals) can use an unlocked vault. Ignored, with a warning, unless it's yours alone (common.read_private:
-    not a link, owned by you, nobody else can read it; #411)."""
+    other terminals) can use an unlocked vault. Ignored, with a warning, unless it's yours alone
+    (common.read_private_bytes: not a link, owned by you, nobody else can read it; #411) and holds a key (session_text:
+    plain ASCII, as UTF-8 or as UTF-16 with a BOM; #433)."""
     if session_key():
         return False
     f = session_file()
     try:
-        key = read_private(f).strip()
+        key = session_text(read_private_bytes(f))
     except FileNotFoundError:
         return False
     except NotPrivate as e:
         say(f"warning      {e} - ignored")
+        return False
+    if key is None:
+        say(f"warning      {f} isn't a Bitwarden session key (not plain ASCII text) - ignored")
         return False
     if key:
         set_session(key)
