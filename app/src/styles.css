@@ -288,6 +288,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .recent-ip { color: var(--muted); font: 500 var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; }
 /* The digit that opens the row (Startify's numbers), as a key. */
 .recent-key { display: flex; justify-content: flex-end; }
+.empty { min-width: 0; max-width: 100%; }
 .empty-path { max-width: min(56ch, calc(100% - 32px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
 .empty-path code { direction: ltr; unicode-bidi: isolate; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
@@ -403,13 +404,20 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-rest { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-bottom: 10px; border-top: 1px solid transparent; }
 /* Scrolled: a hairline under Sessions. */
 .sb-rest:is([data-more="above"], [data-more="both"]) { border-top-color: var(--line-strong); }
+/* A click focuses the scroller (tabIndex -1); the tree's cursor row shows focus, not a browser box. */
+.sb-rest:focus { outline: none; }
 /* Held while the pointer is on the tree (Sidebar.tsx holdSessions, Q197): the section keeps its
    height and its list scrolls inside it, so the tree under the pointer never moves. */
 .sb-section[data-section="sessions"].held { height: var(--held-h); overflow: hidden; }
 .sb-section[data-section="sessions"].held > .sb-rows { max-height: var(--held-rows); }
 /* No Sessions: one quiet row of room, as high as a Session row and its list's edges, so the
    first Session takes its place and nothing under it moves (Q199). */
-.sb-section[data-section="sessions"] > .sb-empty { margin: 0 8px 0 24px; height: calc(var(--row-h) + 2px); line-height: calc(var(--row-h) + 2px); }
+/* Sessions keep three rows of room from the start (owner, after round 13), so the first three
+   Sessions opened never move the tree under the pointer; past three, the list grows (or, held
+   while the pointer is on the tree, scrolls inside that room). */
+.sb-section[data-section="sessions"] > .sb-empty { margin: 0 8px 0 24px; height: calc(3 * var(--row-h) + 2px); line-height: calc(var(--row-h) + 2px); }
+.sb-section[data-section="sessions"] > .sb-rows { min-height: calc(3 * var(--row-h) + 2px); }
+.sb-section[data-section="sessions"] > .sb-rows:not(:has(> .sb-row)) { display: none; }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -891,7 +899,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   border: 0; background: transparent; border-radius: 0;
  text-overflow: ellipsis;}
 .picker-query:focus-visible { box-shadow: none; }
-.picker-query.data { font-family: var(--font-mono); }
+/* What's typed is a Host name or an address: data, so Iosevka from the first key (round 13: it
+   switched from Inter at "@"); the placeholder is the app talking, in Inter. */
+.picker-query { font-family: var(--font-mono); }
+.picker-query::placeholder { font-family: var(--font-ui); }
 /* The rows share one grid (subgrid), so a column is as wide as its widest cell in the list and no
    wider: the badge column takes room only when a row has a badge, and an address is never cut
    mid-token (taste.md) up to 24 characters; the selected row shows the whole of a longer one.
@@ -1189,6 +1200,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* Scales with the pane, 160 to 240 px (owner, after rounds 8 and 9); strokes stay 1 and 1.5 px. */
 .connect-map { overflow: visible; margin-bottom: 12px; width: clamp(160px, 18vw, 240px); height: auto; }
 .connect-box { fill: var(--tone); }
+.connect-route { stroke: var(--line-strong); stroke-width: 1px; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
 .connect-edge {
   stroke: var(--accent); stroke-width: 1px; vector-effect: non-scaling-stroke;
   transform-box: fill-box; transform-origin: left center;
@@ -1196,7 +1208,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   @starting-style { transform: scaleX(0); }
 }
 .connect-map[data-phase="starting"] .connect-edge { transform: scaleX(0.4); }
-/* The Host's ring: open (one arc, its 50° gap centred at -45°, where the logo's Host sits)
+/* The Host's ring: open (one arc, its 50° gap facing the edge that plugs into it)
    while connecting; the closed ring and, for a key login, the fill fade in when the shell answers. */
 .connect-host {
   fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke;
@@ -1204,8 +1216,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-host-closed { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-card.leaving :is(.connect-host-closed, .connect-host-fill) { opacity: 1; }
-.connect-host-dot { fill: var(--accent); transition: opacity var(--dur-fade) var(--ease-out); }
-.connect-card.leaving .connect-host-dot { opacity: 0; }
+
 .connect-cmd { font-family: var(--font-mono); }
 /* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
 .connect-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -1247,6 +1258,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-card.key-question > .connect-map, .connect-card.key-question > .connect-title { align-self: flex-start; text-align: left; }
 .connect-card.key-question .key-actions { padding-top: 12px; border-top: 1px solid var(--line); }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
+/* The question stays in view when a short window scrolls the card (round 13). */
+.connect-card.key-question > .connect-title { position: sticky; top: -16px; z-index: 1; padding-block: 4px; background: var(--panel); }
 /* Its status line takes room only while it speaks ("Recording the key…"), so the card ends at
    its buttons; the form is the card's measure, as the fingerprint is, with its field kept short. */
 .connect-card.key-question .connect-phase:empty { display: none; }

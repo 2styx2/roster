@@ -46,7 +46,7 @@ export interface FinderProps {
 }
 
 /** A label that is data, not prose (an option such as keys.picker, a tag): set in Iosevka. */
-const DATA_NAME = /^[\w.:#/-]+$/;
+const DATA_NAME = /^[\w-]*[.:#/_][\w.:#/-]*$/;
 
 export function Finder({
   source,

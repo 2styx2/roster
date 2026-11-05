@@ -348,8 +348,7 @@ export function Picker({
             <path d="M10.5 10.5L14 14" strokeLinecap="round" />
           </svg>
           <input
-            // Typed as user@address it's data, so it's set in Iosevka like every address.
-            className={`picker-query${quick ? " data" : ""}`}
+            className="picker-query"
             role="combobox"
             aria-expanded="true"
             aria-controls={listId}

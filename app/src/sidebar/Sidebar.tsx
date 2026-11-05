@@ -600,12 +600,10 @@ function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
     return;
   }
   if (section.classList.contains("held")) return;
-  // Below its cap the list grows when a Session opens: the new row appears at once and the tree
-  // moves one row, as the click's own effect (round 11: holding it hid the Sessions just opened).
-  // Only a list already at its cap is held, as it scrolls inside itself anyway.
+  // Held once its reserved three rows are full, so a fourth Session scrolls into view inside them
+  // rather than moving the tree (owner, after round 13).
   const list = section.querySelector<HTMLElement>(":scope > .sb-rows");
-  const cap = list ? parseFloat(getComputedStyle(list).maxHeight) : NaN;
-  if (!list || !(list.scrollHeight >= cap - 1)) return;
+  if (!list || list.querySelectorAll(":scope > .sb-row").length < 3) return;
   // The room under the heading (a row list, or the one-row "None open"), which the held list keeps.
   const heading = section.querySelector<HTMLElement>(":scope > .sb-heading");
   const room =
@@ -769,6 +767,12 @@ export function Sidebar({
   // While the pointer is on the tree, the Sessions above it keep their height (Q197).
   const sessionsSection = () =>
     scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
+  // Whether the pointer is on the tree: a Session opened from it is held as soon as the reserved
+  // rows fill, not only when the pointer next enters.
+  const pointerOnTree = useRef(false);
+  useLayoutEffect(() => {
+    if (pointerOnTree.current) holdSessions(sessionsSection(), true);
+  });
 
   // The dragged row lives here; its Host also goes on the dataTransfer as text (WebView2 needs
   // some data for a drag to start).
@@ -950,8 +954,14 @@ export function Sidebar({
           ref={restRef}
           role="none"
           tabIndex={-1}
-          onPointerEnter={() => holdSessions(sessionsSection(), true)}
-          onPointerLeave={() => holdSessions(sessionsSection(), false)}
+          onPointerEnter={() => {
+            pointerOnTree.current = true;
+            holdSessions(sessionsSection(), true);
+          }}
+          onPointerLeave={() => {
+            pointerOnTree.current = false;
+            holdSessions(sessionsSection(), false);
+          }}
         >
           {sections.slice(lifted).map(renderSection)}
         </div>
