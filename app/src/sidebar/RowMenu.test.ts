@@ -61,18 +61,18 @@ describe("hostMenu", () => {
   });
 });
 
-describe("commandHint (round 18)", () => {
-  it("shows a command's words up to the row's own name, which … stands for", () => {
-    expect(commandHint("group rename lab", "lab")).toBe(":group rename …");
-    expect(commandHint("group delete lab", "lab")).toBe(":group delete …");
-    expect(commandHint("folder add esx-02", "esx-02")).toBe(":folder add …");
-    expect(commandHint("folder remove esx-02 Lab", "esx-02")).toBe(":folder remove …");
-    expect(commandHint("check esx-02", "esx-02")).toBe(":check …");
+describe("commandHint (round 18, round 19)", () => {
+  it("shows a command's words up to the row's own name, then the argument's shape, not a cut-looking …", () => {
+    expect(commandHint("group rename lab", "lab", "GROUP")).toBe(":group rename GROUP");
+    expect(commandHint("group delete lab", "lab")).toBe(":group delete NAME");
+    expect(commandHint("folder add esx-02", "esx-02", "HOST")).toBe(":folder add HOST");
+    expect(commandHint("folder remove esx-02 Lab", "esx-02", "HOST")).toBe(":folder remove HOST NAME");
+    expect(commandHint("check esx-02", "esx-02", "HOST")).toBe(":check HOST");
   });
 
   it("shows the whole command when the name isn't in it, and never matches part of a word", () => {
     expect(commandHint("host add", "Inventory")).toBe(":host add");
     expect(commandHint("group new", "")).toBe(":group new");
-    expect(commandHint("check esx-02b", "esx-02")).toBe(":check esx-02b");
+    expect(commandHint("check esx-02b", "esx-02", "HOST")).toBe(":check esx-02b");
   });
 });

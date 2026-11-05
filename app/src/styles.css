@@ -542,18 +542,18 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   background: var(--accent);
 }
 /* The App-mode cursor: raised, with the accent outline and no bar. */
-.sb-row.cursor, .sb-heading.cursor > .sb-heading-button { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
+.sb-row.cursor, .sb-heading.cursor { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
 /* While a row menu is open its focused item wears the accent outline: the row keeps the raised
    style without it, so one thing at a time is the cursor (round 18). */
-.sidebar[data-menu] .sb-row.cursor, .sidebar[data-menu] .sb-heading.cursor > .sb-heading-button { box-shadow: inset 0 0 0 1px var(--raised-line); }
-/* On a heading the cursor is its button's, inset like a row's, so its actions (+) sit outside it
-   (round 16: the outline wrapped the whole heading, wider than the rows). */
-.sb-heading.cursor { color: var(--text); }
+.sidebar[data-menu] .sb-row.cursor, .sidebar[data-menu] .sb-heading.cursor { box-shadow: inset 0 0 0 1px var(--raised-line); }
+/* On a heading the cursor is the whole heading row, the rows' own width, so its actions (+) sit
+   inside it, as a row's buttons do (round 19: on the title alone it stopped short of the +; round
+   16's wider outline is gone, the heading and the rows share their box). */
 .sidebar .sb-heading-button { margin-inline: 2px; }
 /* Forced colours drop fills and box-shadows: keep the bar and the cursor visible. */
 @media (forced-colors: active) {
   .sb-row.live::before { forced-color-adjust: none; background: Highlight; }
-  .sb-row.cursor, .sb-heading.cursor > .sb-heading-button { outline: 1px solid Highlight; outline-offset: -1px; }
+  .sb-row.cursor, .sb-heading.cursor { outline: 1px solid Highlight; outline-offset: -1px; }
 }
 .sidebar .sb-item {
   flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; color: inherit;
@@ -734,7 +734,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 @media (hover: hover) and (pointer: fine) {
   .sidebar .row-menu-item:hover:not(:focus) { background: var(--hover); }
 }
-.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+/* Where the menu's groups split: a rule you can see, 4px above and below, so the one larger gap
+   reads as a split and not as a slip (round 19: --line on the panel was 1.05:1 in Roster dark,
+   invisible). The menu's own border's tone. */
+.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-strong); }
 @media (forced-colors: active) {
   .row-menu { border-color: CanvasText; }
   .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
