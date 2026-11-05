@@ -2399,3 +2399,73 @@ def test_this_boxs_own_rotation_plan_says_no_old_key_line(net):
     mesh.run(net.cfg(), apply=True)
     r = mesh.run(net.cfg(), rotate=["orion-2"])
     assert not any("no longer has" in w for w in r["warnings"]), r["warnings"]
+
+
+# ---------------------------------------------------------------- T245 (#478, decision Q212): the Mesh follows key_type
+
+@pytest.fixture
+def fips_keygen(tmp_path, monkeypatch):
+    """A stand-in Host with a `fips-keygen` file is a FIPS-mode one whose ssh-keygen refuses to make an Ed25519 key,
+    as RHEL's does in FIPS mode; every other Host's is the real one."""
+    d = tmp_path / "fips-tools"
+    d.mkdir()
+    (d / "ssh-keygen").write_text(
+        '#!/bin/sh\n'
+        'if [ -f "$FAKE_HOST_ROOT/fips-keygen" ]; then\n'
+        '  p=; for a in "$@"; do [ "$p" = -t ] && [ "$a" = ed25519 ] && { echo "unsupported in FIPS mode" >&2; exit 1; }; p=$a; done\n'
+        'fi\n'
+        f'PATH={shutil.which("ssh-keygen").rsplit("/", 1)[0]}:$PATH exec ssh-keygen "$@"\n')
+    (d / "ssh-keygen").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(d))
+
+
+def mesh_pub(net, src, name):
+    return (net.host(src) / "home/.ssh/roster-mesh" / f"{name}.pub").read_text().split()
+
+
+@pytest.mark.skipif(WINDOWS, reason="the stand-in ssh-keygen is a POSIX sh script")
+def test_a_fips_hosts_mesh_key_is_made_of_its_own_key_type(net, fips_keygen, capsys):
+    (net.host("orion-3") / "fips-keygen").touch()
+    net.cfg_path.write_text(CONFIG.replace("      orion-3: 10.0.0.3\n", "      orion-3: {ip: 10.0.0.3, key_type: ecdsa}\n"))
+    g = mesh.graph(net.cfg())
+    assert "orion-3" not in g["excluded"] and "orion-3" in g["sources"]
+    assert main(["mesh"]) == 0, capsys.readouterr().out
+    pub = mesh_pub(net, "orion-3", "id_ecdsa")
+    assert pub[0] == "ecdsa-sha2-nistp384" and pub[2] == "roster-mesh:orion-3@box"
+    assert not (net.host("orion-3") / "home/.ssh/roster-mesh/id_ed25519").exists()
+    for peer, ip in (("orion-2", "10.0.0.3"), ("esx-02", "10.0.0.3"), ("db-9", "10.0.0.3")):
+        assert any(x.split()[1:3] == pub[:2] and x.endswith("roster-mesh:orion-3@box") for x in net.mesh_lines(peer))
+    assert f"IdentityFile {net.seen(net.host('orion-3'))}/home/.ssh/roster-mesh/id_ecdsa" in \
+        net.file("orion-3", "home/.ssh/roster-mesh/config")
+    assert mesh_pub(net, "orion-2", "id_ed25519")[0] == "ssh-ed25519"          # every other source's as before
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_a_key_type_change_replaces_the_mesh_key_with_one_of_the_new_type(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    old = mesh_pub(net, "orion-3", "id_ed25519")
+    net.cfg_path.write_text(CONFIG.replace("      orion-3: 10.0.0.3\n", "      orion-3: {ip: 10.0.0.3, key_type: rsa}\n"))
+    assert mesh.status(net.cfg())["out_of_date"]                                 # roster.yml changed the Mesh
+    plan = mesh.run(net.cfg())
+    o3 = next(h for h in plan["hosts"] if h["host"] == "orion-3")
+    assert o3["changes"][0] == "replace key (rsa, its key_type)"
+    assert "replace key from orion-3" in next(h for h in plan["hosts"] if h["host"] == "orion-2")["changes"]
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {}
+    new = mesh_pub(net, "orion-3", "id_rsa")
+    assert new[0] == "ssh-rsa"
+    d = net.host("orion-3") / "home/.ssh/roster-mesh"
+    assert not (d / "id_ed25519").exists() and not (d / "id_ed25519.pub").exists()
+    for peer in ("orion-2", "esx-02", "db-9"):
+        lines = [x for x in net.mesh_lines(peer) if "roster-mesh:orion-3@" in x]
+        assert [x.split()[1:3] for x in lines] == [new[:2]] and old[1] not in net.ak(peer)
+    assert mesh.run(net.cfg())["already"]
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0                       # a cut takes a key of any type
+    assert not d.exists()
+
+
+def test_an_ed25519_source_linked_to_a_host_of_another_key_type_is_warned_about(net):
+    net.cfg_path.write_text(CONFIG.replace("      nas-1: 10.0.0.30\n", "      nas-1: {ip: 10.0.0.30, key_type: ecdsa}\n"))
+    r = mesh.run(net.cfg())
+    assert any(w.startswith("[220] orion-2's Mesh key is Ed25519 (its key_type), and nas-1's key_type is ecdsa")
+               for w in r["warnings"]), r["warnings"]

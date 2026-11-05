@@ -331,18 +331,12 @@ def setup_run(cfg, args):
 
 def setup_mesh(cfg, narrowed_by):
     """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
-    flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
+    flag). {host: why} for what it left pending. (Since T245 the Mesh follows key_type, so no Host is left out for
+    it, and #471's MED-2 guard has nothing left to guard.)"""
     if not mesh.graph(cfg)["links"]:
         return {}
     if narrowed_by:
         say(f"mesh         not applied with {narrowed_by} (it covers the whole Mesh): run `roster mesh`")
-        return {}
-    if dropped := mesh.key_type_dropped(cfg):
-        # #471's review MED-2: never take a member's Mesh entries off as a side effect of setup
-        say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
-            "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
-            "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
-            "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
         return {}
     say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
     return {n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()}
@@ -685,9 +679,7 @@ def cmd_check(cfg, args):
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
     if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
-        # (and T239: a Host whose key_type isn't Ed25519)
-        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items()
-                   if is_windows(cfg["hosts"][n]) or mesh.key_type_out(cfg["hosts"][n])}
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if waiting := rotation_waiting(cfg, wanted):

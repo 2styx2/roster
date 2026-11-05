@@ -305,7 +305,7 @@ def test_check_on_a_host_that_refuses_ed25519_and_offers_only_nist_suggests_key_
         assert "key_type" not in out
 
 
-# ---------------------------------------------------------------- the Mesh: Ed25519 only for now (decision Q200)
+# ---------------------------------------------------------------- the Mesh follows key_type (T245, decision Q212)
 
 MESH_YML = """\
 groups:
@@ -326,12 +326,16 @@ links:
 """
 
 
-def test_the_mesh_leaves_a_host_whose_key_type_isnt_ed25519_out_and_says_why(write_config):
+def test_the_mesh_takes_a_host_whose_key_type_isnt_ed25519_and_its_via_links(write_config):
+    """T245: Q200 (g) left such a Host out (note 200), and dropped a Link through it (#478 item 5): now it's a source,
+    peer and hop like any other."""
     from roster import mesh
     g = mesh.graph(load_config(write_config(MESH_YML)))
-    assert g["excluded"]["fips-01"].startswith("[200] key_type: ecdsa: the Mesh's keys are Ed25519")
-    assert not any("fips-01" in (x["from"], x["to"], x.get("via")) for x in g["links"])
-    assert {(x["from"], x["to"]) for x in g["links"]} == {("a-01", "a-02"), ("a-02", "a-01")}
+    assert g["excluded"] == {}
+    pairs = {(x["from"], x["to"]): x.get("via") for x in g["links"]}
+    assert pairs[("b-01", "a-01")] == "fips-01" and ("b-01", "fips-01") in pairs
+    assert {("fips-01", "a-01"), ("a-01", "fips-01")} <= set(pairs) and "fips-01" in g["sources"]
+    assert mesh.mesh_key(load_config(write_config(MESH_YML))["hosts"]["fips-01"]).mesh_file == "id_ecdsa"
 
 
 def test_moving_a_host_out_of_its_key_type_group_keeps_its_key_type(write_config):
@@ -455,30 +459,25 @@ def test_renamed_box_own_line_of_another_type_isnt_another_boxs(lab, capsys, wri
 
 # ---------------------------------------------------------------- #471's review MED-2: the Mesh
 
-def test_a_box_wide_key_type_leaves_password_hosts_in_the_mesh(write_config):
+def test_a_box_wide_key_type_leaves_every_host_in_the_mesh(write_config):
     from roster import mesh
     g = mesh.graph(load_config(write_config("key_type: ecdsa\n" + MESH_YML.replace(
         "      a-02: 10.0.0.2", "      a-02: 10.0.0.2\n      p-01: {ip: 10.0.0.3, enroll: false, auth: env:PW}"))))
-    assert "p-01" not in g["excluded"] and {"a-01", "a-02", "fips-01"} <= set(g["excluded"])
+    assert g["excluded"] == {} and {"a-01", "a-02", "fips-01"} <= set(g["sources"])
 
 
-def test_setup_doesnt_take_a_member_out_of_the_mesh_for_its_key_type(write_config, capsys, monkeypatch):
-    """A full setup applies the Mesh; when that would take Mesh entries off a Host that is a member now because its
-    key_type leaves it out, it warns and leaves the Mesh alone: `roster mesh --dry-run` shows it, `roster mesh` does it."""
+def test_setup_applies_the_mesh_with_a_member_whose_key_type_isnt_ed25519(write_config, capsys, monkeypatch):
+    """T245 (#478 item 11): with no Host left out for its key type, setup's MED-2 guard is gone, so a member of
+    another key type (or one with mesh: false as well, NIT-2) never stops setup's Mesh apply."""
     from roster import cli, mesh
     from roster.cli import main
     monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
     applied = []
     monkeypatch.setattr(cli, "mesh_apply", lambda cfg: applied.append(1) or {})
-    yml = MESH_YML.replace("      fips-01: {ip: 10.0.0.5, key_type: ecdsa}\n", "      fips-01: 10.0.0.5\n")
-    write_config(yml)
     mesh.save_state({**mesh.load_state(), "members": ["a-01", "a-02", "b-01", "fips-01"]})
-    main(["setup"])
-    assert applied == [1]                                       # nothing left out for its key type: applied
     write_config(MESH_YML)
-    capsys.readouterr()
     main(["setup"])
-    out = capsys.readouterr().out
-    assert applied == [1]                                       # not applied this time
-    assert "mesh         NOT applied" in out and "fips-01" in out and "roster mesh --dry-run" in out
-    assert main(["setup", "--dry-run"]) == 0
+    write_config(MESH_YML.replace("{ip: 10.0.0.5, key_type: ecdsa}", "{ip: 10.0.0.5, key_type: ecdsa, mesh: false}"))
+    main(["setup"])
+    assert applied == [1, 1]
+    assert "NOT applied" not in capsys.readouterr().out

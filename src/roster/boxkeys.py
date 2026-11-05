@@ -51,6 +51,12 @@ class KeyType:
     def file_name(self) -> str:
         return f"roster_{self.name}"
 
+    @property
+    def mesh_file(self) -> str:
+        """The name of a Mesh key of this type on a source Host (T245, decision Q212): `id_ed25519` as before T245,
+        `id_<name>` for the rest (`id_ecdsa`, `id_rsa-4096`), so a type change is a key of another name."""
+        return f"id_{self.name}"
+
 
 def parse(value: Any) -> KeyType:
     """VALUE as roster.yml has it (any case), or ValueError naming the allowed values."""
@@ -71,6 +77,10 @@ def parse(value: Any) -> KeyType:
         raise ValueError(f"{value!r} isn't a key type roster makes: an RSA key has {RSA_MIN} to {RSA_MAX} bits "
                          f"(fewer is too weak) ({ALLOWED})")
     return KeyType("rsa" if bits == RSA_MIN else f"rsa-{bits}", "rsa", bits)
+
+
+# every Mesh key name a source Host may hold (mesh_file), as an sh `case` pattern: what the Mesh's scripts look for
+MESH_FILES = "id_ed25519|id_ecdsa|id_ecdsa-256|id_ecdsa-521|id_rsa|id_rsa-[0-9][0-9][0-9][0-9]|id_rsa-[0-9][0-9][0-9][0-9][0-9]"
 
 
 def key_file(box_key: Path, box_type: str, name: str) -> Path:
