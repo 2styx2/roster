@@ -4,7 +4,7 @@
 
 use roster_core::backend::{Backend, BackendInfo, CheckStarted, CreateCancel, QuickTarget, fill_refusal, timeout_for};
 use roster_core::config::{self, Config, Loader, Report};
-use roster_core::detect::{BackendError, ErrorKind, Platform, SystemRunner, detect_choice};
+use roster_core::detect::BackendError;
 use roster_core::package::{self, Packages};
 use roster_core::plugin::{self, Permission, PluginHost};
 use roster_core::rpc::{CallError, Notify};
@@ -27,7 +27,7 @@ impl BackendState {
     /// development env vars winning; a change takes effect at the next (re)start.
     fn connect(&self, restart: bool, config: &Config, notify: Notify) -> Result<BackendInfo, BackendError> {
         let backend = self.0.connect(restart, Backend::is_alive, || {
-            Backend::start_with(&candidate(config)?, Some(notify))
+            Backend::start_with(&roster_core::detect::for_config(config)?, Some(notify))
         })?;
         Ok(backend.info.clone())
     }
@@ -38,21 +38,6 @@ impl BackendState {
             message: "the backend isn't running".into(),
         })
     }
-}
-
-/// The roster the Config (and the development env vars) pick, found on this Box.
-fn candidate(config: &Config) -> Result<roster_core::detect::Candidate, BackendError> {
-    let env_cmd = roster_core::env::roster_override();
-    let env_distro = roster_core::env::wsl_distro();
-    let plan =
-        config::backend_plan(config, Platform::current(), env_cmd.as_deref(), env_distro.as_deref()).map_err(|m| {
-            BackendError::new(
-                ErrorKind::Failed,
-                m,
-                "Fix it in init.lua (docs/app/config.md), then Retry.",
-            )
-        })?;
-    detect_choice(&SystemRunner, Platform::current(), &plan.command, &plan.choice)
 }
 
 async fn blocking<T: Send + 'static, E: Send + 'static>(
@@ -102,7 +87,7 @@ async fn inventory_create(
     let cancel = cancel.inner().clone();
     blocking(move || {
         let config = loader.map(|l| l.settled()).unwrap_or_default();
-        let c = candidate(&config).map_err(|e| CallError::Io { message: e.message })?;
+        let c = roster_core::detect::for_config(&config).map_err(|e| CallError::Io { message: e.message })?;
         Backend::create_inventory_with(&c, params, &cancel)
     })
     .await

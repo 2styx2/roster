@@ -12,6 +12,7 @@
 use crate::detect::Target;
 pub use crate::screen::{Drawn, ScreenDiff};
 use crate::screen::{Screen, Why};
+use crate::wipe::Wiped;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -687,11 +688,11 @@ impl SessionManager {
         if running.writes.load(Ordering::SeqCst) != writes {
             return Err(FillError::Typed);
         }
-        let mut line = Secret(Vec::with_capacity(secret.0.len() + 1));
-        line.0.extend_from_slice(&secret.0);
-        line.0.push(b'\r');
+        let mut line = Wiped::with_capacity(secret.0.as_slice().len() + 1);
+        line.extend(secret.0.as_slice());
+        line.extend(b"\r");
         drop(secret);
-        w.write_all(&line.0).and_then(|_| w.flush()).map_err(fill_io)?;
+        w.write_all(line.as_slice()).and_then(|_| w.flush()).map_err(fill_io)?;
         Ok(hop.map_or(target.host, |h| h.to.host.clone()))
     }
 
@@ -774,17 +775,11 @@ const PROBE_KEYS: usize = 1;
 /// and its bytes are overwritten when it's dropped. It's moved here from serve's answer, never
 /// copied, and the line that answer came in is wiped too ([`crate::wipe`]; best effort: the
 /// pipe's read buffer and serde_json's scratch space aren't the core's to wipe).
-pub struct Secret(Vec<u8>);
+pub struct Secret(Wiped);
 
 impl Secret {
     pub fn new(value: String) -> Self {
-        Secret(value.into_bytes())
-    }
-}
-
-impl Drop for Secret {
-    fn drop(&mut self) {
-        crate::wipe::wipe_bytes(&mut self.0);
+        Secret(Wiped::from(value.into_bytes()))
     }
 }
 

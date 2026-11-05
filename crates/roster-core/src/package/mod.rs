@@ -389,7 +389,7 @@ impl Packages {
 
     fn write_lock(&self, lock: &Lock) -> Result<(), String> {
         let text = serde_json::to_string_pretty(lock).map_err(|e| e.to_string())? + "\n";
-        crate::config::write_atomic(&self.lock, &text).map_err(|e| format!("can't write {}: {e}", self.lock.display()))
+        crate::files::write_atomic(&self.lock, &text).map_err(|e| format!("can't write {}: {e}", self.lock.display()))
     }
 
     /// The folder of a Package `specs` names, and the settings init.lua hands it, for loading it

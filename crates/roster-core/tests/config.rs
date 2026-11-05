@@ -716,68 +716,55 @@ fn the_defaults_fixture_is_current() {
 
 #[test]
 fn the_env_vars_win_over_the_configs_backend_and_roster_command() {
-    use config::{BackendChoice, RosterCommand, backend_plan};
-    use roster_core::detect::{Choice, Platform};
+    use config::{BackendChoice, RosterCommand};
+    use roster_core::detect::{Choice, plan as backend_plan};
     let c = Config {
         roster_command: Some(RosterCommand(vec!["uv".into(), "run".into(), "roster".into()])),
         backend: BackendChoice::Wsl(Some("Ubuntu".into())),
         ..Config::default()
     };
-    let plan = backend_plan(&c, Platform::Windows, None, None).unwrap();
+    let plan = backend_plan(&c, None, None).unwrap();
     assert_eq!(plan.command, ["uv", "run", "roster"]);
-    assert_eq!(plan.distro(), Some("Ubuntu"));
+    assert_eq!(plan.choice, Choice::Wsl(Some("Ubuntu".into())));
 
-    let plan = backend_plan(&c, Platform::Windows, Some("roster-dev serve-stack"), Some("Debian")).unwrap();
+    let plan = backend_plan(&c, Some("roster-dev serve-stack"), Some("Debian")).unwrap();
     assert_eq!(plan.command, ["roster-dev", "serve-stack"]);
-    assert_eq!(plan.distro(), Some("Debian"));
+    assert_eq!(plan.choice, Choice::Wsl(Some("Debian".into())));
 
     // Blank env vars don't count.
-    let plan = backend_plan(&Config::default(), Platform::Windows, Some("  "), Some("")).unwrap();
+    let plan = backend_plan(&Config::default(), Some("  "), Some("")).unwrap();
     assert_eq!(plan.command, ["roster"]);
-    assert_eq!(plan.distro(), None);
     assert_eq!(plan.choice, Choice::Auto);
 
-    // Native Windows roster (ticket 19): `local` is a plan of its own on both platforms, and the
-    // distro env var still wins over it (development).
+    // Native Windows roster (ticket 19): `local` is a plan of its own, and the distro env var
+    // still wins over it (development).
     let local = Config {
         backend: BackendChoice::Local,
         ..Config::default()
     };
+    assert_eq!(backend_plan(&local, None, None).unwrap().choice, Choice::Local);
     assert_eq!(
-        backend_plan(&local, Platform::Windows, None, None).unwrap().choice,
-        Choice::Local
-    );
-    assert_eq!(
-        backend_plan(&local, Platform::Linux, None, None).unwrap().choice,
-        Choice::Local
-    );
-    assert_eq!(
-        backend_plan(&local, Platform::Windows, None, Some("Debian"))
-            .unwrap()
-            .choice,
+        backend_plan(&local, None, Some("Debian")).unwrap().choice,
         Choice::Wsl(Some("Debian".into()))
     );
     let any_wsl = Config {
         backend: BackendChoice::Wsl(None),
         ..Config::default()
     };
-    assert_eq!(
-        backend_plan(&any_wsl, Platform::Windows, None, None).unwrap().choice,
-        Choice::Wsl(None)
-    );
+    assert_eq!(backend_plan(&any_wsl, None, None).unwrap().choice, Choice::Wsl(None));
 }
 
 /// Changing `backend` in init.lua is a different plan, both ways, so the app restarts serve on
 /// `:source` (ticket 19); a reload that keeps it is the same plan, so serve keeps running.
 #[test]
 fn switching_backend_changes_the_plan_both_ways() {
-    use config::{BackendChoice, backend_plan};
-    use roster_core::detect::Platform;
+    use config::BackendChoice;
+    use roster_core::detect::plan as backend_plan;
     let with = |b: BackendChoice| Config {
         backend: b,
         ..Config::default()
     };
-    let plan = |b| backend_plan(&with(b), Platform::Windows, None, None).unwrap();
+    let plan = |b| backend_plan(&with(b), None, None).unwrap();
     let wsl = plan(BackendChoice::Wsl(Some("Ubuntu".into())));
     let local = plan(BackendChoice::Local);
     assert_ne!(wsl, local);
@@ -957,15 +944,15 @@ fn roster_command_from_init_lua_must_run_roster() {
 
 #[test]
 fn the_backend_plan_refuses_a_roster_command_that_isnt_roster_but_the_env_var_may_wrap() {
-    use config::{RosterCommand, backend_plan};
-    use roster_core::detect::Platform;
+    use config::RosterCommand;
+    use roster_core::detect::plan as backend_plan;
     let c = Config {
         roster_command: Some(RosterCommand(vec!["sh".into(), "-c".into(), "roster".into()])),
         ..Config::default()
     };
-    let e = backend_plan(&c, Platform::Linux, None, None).unwrap_err();
+    let e = backend_plan(&c, None, None).unwrap_err();
     assert!(e.contains("ROSTER_APP_ROSTER"), "{e}");
-    let plan = backend_plan(&c, Platform::Linux, Some("my-wrapper roster"), None).unwrap();
+    let plan = backend_plan(&c, Some("my-wrapper roster"), None).unwrap();
     assert_eq!(plan.command, ["my-wrapper", "roster"]);
 }
 

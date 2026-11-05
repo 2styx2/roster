@@ -3,7 +3,7 @@
 //! ROSTER_APP_ROSTER (or the old ROSTER_DESK_ROSTER), then `roster`; ROSTER_APP_WSL_DISTRO picks the
 //! WSL distro.
 use roster_core::backend::Backend;
-use roster_core::detect::{Platform, SystemRunner, detect, roster_command};
+use roster_core::detect::{Os, SystemRunner, detect, roster_command};
 use roster_core::env;
 use serde_json::json;
 
@@ -15,7 +15,7 @@ fn main() {
         args
     };
     let distro = env::wsl_distro();
-    let started = detect(&SystemRunner, Platform::current(), &cmd, distro.as_deref()).and_then(|c| {
+    let started = detect(&SystemRunner, Os::current(), &cmd, distro.as_deref()).and_then(|c| {
         println!("{} -> {:?}", c.target.label(), c.serve_argv);
         Backend::start(&c)
     });

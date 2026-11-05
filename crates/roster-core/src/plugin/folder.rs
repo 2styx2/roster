@@ -25,36 +25,7 @@ pub const MAX_FILES: usize = 1000;
 /// The longest a file name may be.
 pub const MAX_NAME: usize = 100;
 
-/// The real path of `rel` in `root` (a Plugin's folder), if it's really inside it once symlinks
-/// and junctions are followed. `rel` is relative; `..` or an absolute path that leads out is
-/// refused the same way.
-pub fn inside(root: &Path, rel: &Path) -> Result<PathBuf, String> {
-    let top = root.canonicalize().map_err(|e| format!("{}: {e}", root.display()))?;
-    let path = root.join(rel);
-    let real = path.canonicalize().map_err(|e| format!("{}: {e}", rel.display()))?;
-    if real.starts_with(&top) {
-        Ok(real)
-    } else {
-        Err(format!(
-            "{} leads outside the Plugin's folder (through a symlink or ..): roster won't read it",
-            rel.display()
-        ))
-    }
-}
-
-/// Whether `meta` (from `symlink_metadata`) is a link: a symlink, or on Windows any reparse
-/// point (a junction, a mount point, a cloud placeholder), which can lead somewhere else.
-pub fn is_link(meta: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return true;
-        }
-    }
-    meta.file_type().is_symlink()
-}
+pub use crate::files::{inside, is_link};
 
 /// Whether `name` is a Plugin's name (the manifest's rule): the only names a data folder has.
 fn plugin_name(name: &str) -> bool {

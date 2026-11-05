@@ -778,7 +778,7 @@ pub fn apply(dir: &Path, settings_text: &str, settings_path: &str, previewed: &P
                 .into(),
         );
     }
-    config::write_atomic(&dir.join(config::FILE_NAME), &new).map_err(|e| format!("can't write init.lua: {e}"))
+    crate::files::write_atomic(&dir.join(config::FILE_NAME), &new).map_err(|e| format!("can't write init.lua: {e}"))
 }
 
 /// Today as YYYY-MM-DD (UTC), for the block's comment.

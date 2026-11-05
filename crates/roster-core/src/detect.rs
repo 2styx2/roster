@@ -18,24 +18,10 @@
 //! (`ROSTER_APP_ROSTER`) either, so the probe reports the target's `$HOME` and a leading `~/` in
 //! the program or its arguments is expanded with it.
 
+use crate::config::{BackendChoice, Config};
 pub use crate::error::{BackendError, DISTRO_VAR, ErrorKind, OVERRIDE_VAR};
+pub use crate::platform::Os;
 use std::process::Command;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Platform {
-    Windows,
-    Linux,
-}
-
-impl Platform {
-    pub fn current() -> Self {
-        if cfg!(windows) {
-            Platform::Windows
-        } else {
-            Platform::Linux
-        }
-    }
-}
 
 /// Which Backend to look for: init.lua's `backend` (`auto`, `local`, `wsl`, `wsl:<distro>`), or
 /// [`DISTRO_VAR`], which names one distro.
@@ -49,6 +35,16 @@ pub enum Choice {
     Local,
     /// roster in WSL: in this distro, or found as Auto finds one.
     Wsl(Option<String>),
+}
+
+impl Choice {
+    /// The one distro [`DISTRO_VAR`] names, as a choice; None when it's unset or blank.
+    pub fn of_distro(distro: Option<&str>) -> Option<Choice> {
+        distro
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(|d| Choice::Wsl(Some(d.to_string())))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,57 +125,24 @@ pub trait Runner {
 /// waits, as it did before).
 pub const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Run `argv` in `dir` and wait at most `limit`: past it the process is killed and the answer is
-/// a `TimedOut` error. Its output is read as it comes, so a chatty process can't block on a full pipe.
-pub fn run_with_timeout(
+/// `argv` with `env` added, in `dir` (or the caller's folder), waited for at most `limit` (or for
+/// as long as it takes): [`crate::process::run`].
+fn output(
     argv: &[String],
     env: &[(&str, &str)],
-    dir: &str,
-    limit: std::time::Duration,
+    dir: Option<&str>,
+    limit: Option<std::time::Duration>,
 ) -> std::io::Result<Output> {
-    use std::io::Read;
-    use std::process::Stdio;
     let mut c = Command::new(&argv[0]);
-    c.args(&argv[1..])
-        .envs(env.iter().copied())
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    crate::rpc::no_console_window(&mut c);
-    let mut child = c.spawn()?;
-    let reader = |r: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut r) = r {
-                let _ = r.read_to_end(&mut buf);
-            }
-            buf
-        })
-    };
-    let out = reader(child.stdout.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
-    let err = reader(child.stderr.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
-    let start = std::time::Instant::now();
-    let status = loop {
-        if let Some(st) = child.try_wait()? {
-            break st;
-        }
-        if start.elapsed() >= limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!("{} didn't answer within {} s", argv[0], limit.as_secs()),
-            ));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+    c.args(&argv[1..]).envs(env.iter().copied());
+    if let Some(dir) = dir {
+        c.current_dir(dir);
+    }
+    let done = crate::process::run(c, limit)?;
     Ok(Output {
-        code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        code: done.status.code(),
+        stdout: String::from_utf8_lossy(&done.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&done.stderr).into_owned(),
     })
 }
 
@@ -187,22 +150,14 @@ pub fn run_with_timeout(
 pub struct SystemRunner;
 
 impl Runner for SystemRunner {
+    /// No limit of its own: the WSL probe holds `roster inv which` to [`ASK_TIMEOUT`] itself, and
+    /// the first probe may boot the default distro.
     fn run(&self, argv: &[String], env: &[(&str, &str)]) -> std::io::Result<Output> {
-        let mut c = Command::new(&argv[0]);
-        c.args(&argv[1..])
-            .envs(env.iter().copied())
-            .stdin(std::process::Stdio::null());
-        crate::rpc::no_console_window(&mut c);
-        let o = c.output()?;
-        Ok(Output {
-            code: o.status.code(),
-            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        })
+        output(argv, env, None, None)
     }
 
     fn run_in(&self, argv: &[String], env: &[(&str, &str)], dir: &str) -> std::io::Result<Output> {
-        run_with_timeout(argv, env, dir, ASK_TIMEOUT)
+        output(argv, env, Some(dir), Some(ASK_TIMEOUT))
     }
 
     fn var(&self, name: &str) -> Option<String> {
@@ -499,21 +454,18 @@ fn candidate(target: Target, roster_cmd: &[String], p: &Probe) -> Candidate {
 /// otherwise it's [`Choice::Auto`].
 pub fn detect(
     runner: &dyn Runner,
-    platform: Platform,
+    os: Os,
     roster_cmd: &[String],
     distro: Option<&str>,
 ) -> Result<Candidate, BackendError> {
-    let choice = match distro.map(str::trim).filter(|d| !d.is_empty()) {
-        Some(d) => Choice::Wsl(Some(d.to_string())),
-        None => Choice::Auto,
-    };
-    detect_choice(runner, platform, roster_cmd, &choice)
+    let choice = Choice::of_distro(distro).unwrap_or_default();
+    detect_choice(runner, os, roster_cmd, &choice)
 }
 
 /// Find the Backend `choice` asks for (see the module docs).
 pub fn detect_choice(
     runner: &dyn Runner,
-    platform: Platform,
+    os: Os,
     roster_cmd: &[String],
     choice: &Choice,
 ) -> Result<Candidate, BackendError> {
@@ -524,7 +476,7 @@ pub fn detect_choice(
     };
     // roster on Windows itself, unless WSL was asked for.
     let mut fallback = None;
-    let native = platform == Platform::Windows && matches!(choice, Choice::Auto | Choice::Local);
+    let native = os == Os::Windows && matches!(choice, Choice::Auto | Choice::Local);
     if native {
         let (roster, inventory, home) = probe_windows(runner, roster_cmd);
         if roster.is_some() {
@@ -549,10 +501,10 @@ pub fn detect_choice(
         }
     }
     let mut stopped = Vec::new();
-    let targets = match (platform, chosen) {
-        (Platform::Linux, _) => vec![Target::Local],
-        (Platform::Windows, Some(d)) => vec![Target::Wsl { distro: d.to_string() }],
-        (Platform::Windows, None) => match list_distros(runner) {
+    let targets = match (os, chosen) {
+        (Os::Linux | Os::Macos, _) => vec![Target::Local],
+        (Os::Windows, Some(d)) => vec![Target::Wsl { distro: d.to_string() }],
+        (Os::Windows, None) => match list_distros(runner) {
             Ok(d) => {
                 stopped = d.stopped;
                 d.probe.into_iter().map(|distro| Target::Wsl { distro }).collect()
@@ -593,13 +545,13 @@ pub fn detect_choice(
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let mut where_ = match (platform, chosen) {
-            (Platform::Linux, _) => "on this machine".to_string(),
-            (Platform::Windows, Some(d)) => format!("in WSL distro {d} (chosen with {DISTRO_VAR} or backend)"),
-            (Platform::Windows, None) if native => {
+        let mut where_ = match (os, chosen) {
+            (Os::Linux | Os::Macos, _) => "on this machine".to_string(),
+            (Os::Windows, Some(d)) => format!("in WSL distro {d} (chosen with {DISTRO_VAR} or backend)"),
+            (Os::Windows, None) if native => {
                 format!("on Windows or in any WSL distro (searched: {})", names(&targets))
             }
-            (Platform::Windows, None) => format!("in any WSL distro (searched: {})", names(&targets)),
+            (Os::Windows, None) => format!("in any WSL distro (searched: {})", names(&targets)),
         };
         let mut hint = format!(
             "Install roster (`uv tool install roster` from the roster repo) so it's on PATH, \
@@ -620,4 +572,52 @@ pub fn detect_choice(
             hint,
         )
     })
+}
+
+/// Which roster to start, from the Config and the development env vars.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    pub command: Vec<String>,
+    /// Where to look for it: init.lua's `backend`, or the one WSL distro the env var names.
+    pub choice: Choice,
+}
+
+/// The roster command and where to look for it: `ROSTER_APP_ROSTER` and `ROSTER_APP_WSL_DISTRO`
+/// win (they're for development, and set by the user outside the Config), then `roster_command`
+/// and `backend` from init.lua, then detection. Blank env vars don't count. A `roster_command`
+/// that isn't roster itself is refused ([`crate::config::RosterCommand::check`]); only the env var
+/// may wrap it. The plan is what the app compares after a `:source`: a different one restarts
+/// `roster serve`.
+pub fn plan(config: &Config, env_command: Option<&str>, env_distro: Option<&str>) -> Result<Plan, String> {
+    let env_command = env_command.filter(|v| !v.trim().is_empty());
+    let command = match (env_command, &config.roster_command) {
+        (None, Some(command)) => {
+            command
+                .check()
+                .map_err(|m| format!("roster_command in init.lua: {m}."))?;
+            command.0.clone()
+        }
+        (given, _) => roster_command(given),
+    };
+    let choice = Choice::of_distro(env_distro).unwrap_or_else(|| match &config.backend {
+        BackendChoice::Auto => Choice::Auto,
+        BackendChoice::Local => Choice::Local,
+        BackendChoice::Wsl(d) => Choice::Wsl(d.clone()),
+    });
+    Ok(Plan { command, choice })
+}
+
+/// The roster `config` (and the development env vars) pick, found on this machine. Blocks for the
+/// whole detection: run it on a blocking thread.
+pub fn for_config(config: &Config) -> Result<Candidate, BackendError> {
+    let env_cmd = crate::env::roster_override();
+    let env_distro = crate::env::wsl_distro();
+    let plan = plan(config, env_cmd.as_deref(), env_distro.as_deref()).map_err(|m| {
+        BackendError::new(
+            ErrorKind::Failed,
+            m,
+            "Fix it in init.lua (docs/app/config.md), then Retry.",
+        )
+    })?;
+    detect_choice(&SystemRunner, Os::current(), &plan.command, &plan.choice)
 }
