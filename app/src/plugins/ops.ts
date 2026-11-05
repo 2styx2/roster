@@ -4,7 +4,7 @@
 // checked before the app draws anything: a field of the wrong kind drops the op with a reason, and
 // text is cut to what the UI can show. A Lua function arrives as `{ handler: N }`.
 import type { ThemeDef } from "../config/types";
-import type { RowAction } from "../sidebar/Sidebar";
+import type { RowAction } from "../sidebar/model";
 import type { StepMatch } from "../tutor/tutor";
 import type { ColumnKind, Sort, TableColumn, TableRow, Tone } from "../ui/table";
 import { CORE } from "./core.gen";

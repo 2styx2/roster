@@ -32,9 +32,6 @@ import { allRows, cursorIn, headingId, rowDomId, rowFacts, rowName, tagName, typ
 import { RowMenu } from "./RowMenu";
 import { keepFocus } from "../ui/keepFocus";
 
-// Plugins' code still names these from here.
-export type { RowAction, SidebarRow } from "./model";
-
 export interface SidebarProps {
   sections: readonly SidebarSection[];
   side: "left" | "right";

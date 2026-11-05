@@ -15,10 +15,6 @@ import type { ActionIcon } from "../ui/icons";
 import type { TableModel } from "../ui/table";
 import type { GraphModel } from "../graph/model";
 
-// Plugins' code still names these from here.
-export type { GraphModel, NodeActionDef } from "../graph/model";
-export type { TableActionDef, TableModel } from "../ui/table";
-
 export interface Fact {
   label: string;
   value: string;

@@ -3,21 +3,21 @@
 // `OpHost`). The kinds are the core's (`CORE.ops`, from roster-core's plugin::op): a kind the core
 // sends without an entry here, or one here the core never sends, doesn't compile.
 import type { CommandContext, CommandDef } from "../commands/table";
-import { themeOf } from "../config/apply";
+import { themeBase, themeOf } from "../config/apply";
 import type { ThemeDef } from "../config/types";
 import { sectionFinder, type FinderItem, type FinderSourceDef } from "../finder/sources";
-import { mergeGraph, type GraphNode } from "../graph/model";
+import { mergeGraph, type GraphModel, type GraphNode } from "../graph/model";
 import { HEALTH_LATER_MS, SECTION_WAIT_MS } from "../health/health";
 import { parseMarkdown } from "../help/markdown";
 import { bindingId, type KeymapContext } from "../keymap";
 import type { Registries } from "../registries";
 import { hostRow } from "../sidebar/sections";
-import type { SidebarRow } from "../sidebar/Sidebar";
+import type { SidebarRow } from "../sidebar/model";
 import { pluginTutorial } from "../tutor/plugin";
 import { DEFAULT_TUTORIAL, TUTOR_EVENTS, tutorPage, type StepMatch } from "../tutor/tutor";
 import { quiet as quietMessage } from "../ui/messages";
 import { mergeRows, type TableRow } from "../ui/table";
-import { detailsId, type Content, type GraphModel } from "../view/views";
+import { detailsId, type Content } from "../view/views";
 import type { Host, PluginCaller, PluginManifest } from "../backend/types";
 import { CORE } from "./core.gen";
 import { GraphInvalid, MAX_CLUSTERS, MAX_EDGES, MAX_NODES, parseGraph, parseGraphUpdate, type PluginGraph } from "./graphOps";
@@ -371,8 +371,7 @@ const OPS: { [K in OpKind]: Entry<K> } = {
     apply(c, op) {
       const r = c.host.registries;
       if (taken(r.themes, op.id, c.plugin)) return refuse(c, `there's a Theme named ${op.id} already`);
-      const baseId = op.theme.base ?? (op.theme.appearance === "light" ? "roster-light" : "roster-dark");
-      const base = r.themes.get(baseId) ?? r.themes.get("roster-dark");
+      const { base } = themeBase(op.theme, (id) => r.themes.get(id));
       if (!base) return;
       put(c, `theme:${op.id}`, r.themes.register(themeOf(op.id, op.theme, base, c.plugin)));
     },

@@ -25,7 +25,7 @@ import { useConnection } from "./backend/useConnection";
 import { runLine, type CommandContext, type Commands } from "./commands/table";
 import { layoutWarnings } from "./config/apply";
 import { ConfigToast } from "./config/ConfigToast";
-import { defaultConfig } from "./config/fixture";
+import { defaultConfig } from "./config/defaults";
 import { ImportPanel } from "./config/ImportPanel";
 import type { ConfigReport } from "./config/types";
 import { useConfigActions } from "./config/useConfigActions";
@@ -60,7 +60,7 @@ import { SignOutPanel } from "./lock/SignOutPanel";
 import { useWorkspaceVault } from "./lock/useWorkspaceVault";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
-import { closeTop, usePanelState, type Layer } from "./panel/stack";
+import { closeTop, inLayer, usePanelState, type Layer } from "./panel/stack";
 import { pickerTimer } from "./picker/timing";
 import { memoryPlatform } from "./platform/memory";
 import type { Platform } from "./platform/types";
@@ -462,7 +462,7 @@ function Workspace({
   ];
   function closeKeys() {
     keysPanel.set(null);
-    if (document.activeElement?.closest('[data-panel="keys"]')) focus.restore();
+    if (inLayer("keys")) focus.restore();
   }
   const selectedHost = () => sidebar.cursorRow()?.host ?? onScreenTab?.host ?? null;
   const { openWeb, whyNoSave, ...session } = sessionCommands({

@@ -2,6 +2,7 @@
 // they show; a `:help` still loading never opens over what the user went on to; and the command
 // line help was opened from comes back as it was when help closes (ticket 52).
 import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { inLayer } from "../panel/stack";
 import type { Config } from "../config/types";
 import type { HealthReport } from "../health/health";
 import type { Keymap, Options } from "../keymap";
@@ -80,7 +81,7 @@ export function useHelp(opts: {
   // help panel itself (its loading line) isn't moving on.
   useEffect(() => {
     const onPointer = (e: PointerEvent) => {
-      if (!(e.target instanceof Element && e.target.closest('[data-panel="help"]'))) view.cancelPending();
+      if (!(e.target instanceof Element && inLayer("help", e.target))) view.cancelPending();
     };
     document.addEventListener("pointerdown", onPointer, true);
     return () => document.removeEventListener("pointerdown", onPointer, true);
