@@ -221,8 +221,11 @@ export function helpFinder(view: HelpView): FinderSourceDef {
       return topics(ctx).map((t) => ({
         id: t.tag,
         label: t.label,
+        // An entry titled by its own tag (`E31`, `theme`): a name you'd type.
+        ...(t.anchor !== undefined && t.label === t.anchor ? { dataLabel: true } : {}),
         ...(t.label !== t.tag ? { detail: t.tag } : {}),
         ...(t.path ? { path: t.path } : {}),
+        ...(t.codes ? { pathData: t.codes } : {}),
         command: `help ${t.tag}`,
       }));
     },

@@ -56,6 +56,15 @@ describe("topics", () => {
     expect(new Set(tags).size).toBe(tags.length);
   });
 
+  it("the topic finder titles an entry by what it says it is, never by a page's slug (round 19)", () => {
+    const ctx = ctxOf();
+    const all = topicIndex(ctx).topics;
+    for (const t of all.filter((t) => t.kind !== "page" && t.tag.includes("#"))) expect(t.label, t.tag).not.toBe(t.tag);
+    // An alias is titled as what it goes to; its own tag stays its tag.
+    const target = all.find((t) => t.tag === "errors-guide#checking-a-host-key");
+    expect(all.find((t) => t.tag === "host-keys")).toMatchObject({ label: target?.label, kind: "alias" });
+  });
+
   it(":help TOPIC finds a tag exactly, an alias, or the best fuzzy match", () => {
     const ctx = ctxOf();
     expect(findTopic(ctx, "terminal.size")).toMatchObject({ page: "options", anchor: "terminal.size" });

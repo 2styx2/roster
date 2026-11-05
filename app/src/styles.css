@@ -1690,7 +1690,7 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 /* Sources whose items are prose (help's outline and :helpgrep) read in Inter, as prose does, */
 .finder.prose :is(.finder-name, .finder-path) { font-family: var(--font-ui); }
 /* unless it's an option's name or a tag, in either column: data (taste.md, the paste rule). */
-.finder.prose :is(.finder-name, .finder-path).data { font-family: var(--font-mono); }
+.finder.prose :is(.finder-name, .finder-path).data, .finder.prose .finder-path .data { font-family: var(--font-mono); }
 /* The detail (a help tag, an address, a status) sits at the row's end. It gives way before the
    path (down to 8ch) but only once the name's spare room is used; no fixed cap (round 17's 40%
    cut tags beside that spare room). Data, so Iosevka. */
@@ -1702,6 +1702,14 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    cells; a long IPv6 address already drops whole groups): the path gives way instead. */
 .finder:not(.prose) .finder-detail { flex: none; min-width: 0; }
 .finder-legend { font-family: var(--font-mono); white-space: nowrap; }
+/* Round 19: a prose finder (Help, :helpgrep, the outline) starts every row's middle column at one
+   x, the widest title in view (layOutTitles), at most 42% of the row; a longer title is cut there
+   (whole in its tooltip). Title | page or section | tag, in that order on every row. A row with
+   no middle column (a page) keeps the room up to its tag. */
+.finder.prose .finder-row:has(> .finder-path) > .finder-label {
+  flex: 0 0 min(var(--finder-title-w, 42%), 42%); max-width: none; min-width: 0;
+}
+.finder.prose .finder-label > .finder-name { flex: 0 1 auto; }
 
 /* ---------- The Config's problems (ticket 21) ---------- */
 

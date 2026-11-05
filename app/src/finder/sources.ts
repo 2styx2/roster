@@ -18,8 +18,13 @@ import { buildSections, hostDot, type SidebarContext, type SidebarSectionDef } f
 export interface FinderItem {
   id: string;
   label: string;
+  /** The label is a name you'd type (a help tag such as `E31` or `theme`): Iosevka even in a
+   * prose finder (taste.md's paste rule). */
+  dataLabel?: boolean;
   /** Where it sits ("Inventory › subnet-42"): faint, and matched like the label. */
   path?: string;
+  /** What in `path` is code (`roster sync`): Iosevka in a prose finder. */
+  pathData?: readonly string[];
   /** Right-aligned and faint (an address, a status); matched too. */
   detail?: string;
   dot?: Dot;

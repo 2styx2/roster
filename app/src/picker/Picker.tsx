@@ -100,8 +100,11 @@ export interface PickerProps {
 }
 
 /** `text` with what the query's terms matched wrapped in <mark>: each term as one run where it
- * appears whole (case-insensitive), else its letters in order, as the ranking scatters them. */
-export function marked(text: string, query: string): React.ReactNode {
+ * appears whole (case-insensitive), else its letters in order, as the ranking scatters them.
+ * With `whole` (prose finders, round 19) only a term found whole and two or more characters long
+ * is marked, so a title isn't dotted with underlined single letters ("Ke·ep y·our"); the ranking
+ * is the same either way. */
+export function marked(text: string, query: string, whole = false): React.ReactNode {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0 || text === "") return text;
   const hit = new Array<boolean>(text.length).fill(false);
@@ -109,9 +112,10 @@ export function marked(text: string, query: string): React.ReactNode {
   for (const term of terms) {
     const at = lower.indexOf(term);
     if (at >= 0) {
-      for (let i = at; i < at + term.length; i++) hit[i] = true;
+      if (!whole || term.length >= 2) for (let i = at; i < at + term.length; i++) hit[i] = true;
       continue;
     }
+    if (whole) continue;
     const picks: number[] = [];
     let from = 0;
     for (const ch of term) {

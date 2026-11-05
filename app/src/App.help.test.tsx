@@ -64,16 +64,16 @@ describe(":help", () => {
     expect(document.activeElement).toBe(before);
   });
 
-  it("␣ ? counts topics before a query and sets an identifier in either column in Iosevka (round 18)", async () => {
+  it("␣ ? counts topics before a query; an alias is titled as what it goes to, in Iosevka when that's a name (rounds 18, 19)", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}?`);
     const finder = await screen.findByRole("dialog", { name: /find a help topic/i });
     expect(finder.querySelector(".picker-count")?.textContent).toMatch(/^[\d,]+ topics$/);
     await user.keyboard("roster.o.keys.picker");
     const row = within(finder).getAllByRole("option")[0]!;
+    expect(row.querySelector(".finder-name")).toHaveTextContent(/^keys\.picker$/);
     expect(row.querySelector(".finder-name")).toHaveClass("data");
-    expect(row.querySelector(".finder-path")).toHaveTextContent("keys.picker");
-    expect(row.querySelector(".finder-path")).toHaveClass("data");
+    expect(row.querySelector(".finder-detail")).toHaveTextContent("roster.o.keys.picker");
     expect(finder.querySelector(".picker-count")).toHaveTextContent(/results?$/);
   });
 
