@@ -31,7 +31,7 @@ const MONO_FALLBACK = '"Cascadia Mono", Consolas, ui-monospace, monospace';
 const EMOJI = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji"';
 
 /** A CSS font stack from a family name ("Iosevka"), or the stack as given if it has a comma. */
-export function fontStack(font: string, fallback: string): string {
+function fontStack(font: string, fallback: string): string {
   const name = font.trim();
   if (name.includes(",")) return name;
   const rest = fallback
@@ -92,7 +92,7 @@ export function normalizeChord(chord: string): string {
 }
 
 /** A key sequence ("g g", "ctrl+x k") with each chord normalized. */
-export const normalizeKeys = (keys: string) => keys.trim().split(/\s+/).map(normalizeChord).join(" ");
+const normalizeKeys = (keys: string) => keys.trim().split(/\s+/).map(normalizeChord).join(" ");
 
 /** The app's options from the Config. */
 export function deriveConfig(c: Config): Derived {

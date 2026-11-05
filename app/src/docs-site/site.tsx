@@ -81,7 +81,7 @@ export function siteContext(): HelpContext {
 }
 
 /** The pages in the index's order: the index, then each part's pages by their order. */
-export function indexOrder(ctx: HelpContext): HelpPage[] {
+function indexOrder(ctx: HelpContext): HelpPage[] {
   const parts: string[] = [...PARTS];
   const rank = (pg: HelpPage) => (pg.id === "index" ? -1 : parts.indexOf(pg.part ?? "") < 0 ? parts.length : parts.indexOf(pg.part ?? ""));
   return [...ctx.pages].sort((a, b) => rank(a) - rank(b) || a.order - b.order);

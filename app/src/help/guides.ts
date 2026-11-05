@@ -230,7 +230,7 @@ export const guides: readonly Guide[] = [
 ];
 
 /** A path from the repo's root, `.` and `..` resolved: `docs/app/../serve-api.md` → `docs/serve-api.md`. */
-export function repoPath(from: string, href: string): string {
+function repoPath(from: string, href: string): string {
   const out = from.split("/").slice(0, -1);
   for (const seg of href.split("/")) {
     if (seg === "..") out.pop();

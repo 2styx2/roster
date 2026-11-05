@@ -37,7 +37,7 @@ export function routine(said: string, text: string, warnings: readonly string[] 
 }
 
 /** Where a saved password went, for the add message: said unless it's the personal vault (ticket 35). */
-export function savedIn(target: Omit<SaveTarget, "save_to"> | undefined): string {
+function savedIn(target: Omit<SaveTarget, "save_to"> | undefined): string {
   return target && target.kind !== "personal" ? `, in ${target.label}` : "";
 }
 

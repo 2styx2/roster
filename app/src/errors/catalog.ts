@@ -59,7 +59,7 @@ const copy = (text: (p: Problem, ctx?: RowContext) => string | null): ErrorActio
 const sync = copy(() => "roster sync");
 /** `roster setup` for this one Host: `--host` (that Host alone) on a roster that has it (API 29),
  * else `--only`, which also takes a group, type or product by that name (#461). */
-export const setupHost = (host: string, ctx: RowContext = {}): string =>
+const setupHost = (host: string, ctx: RowContext = {}): string =>
   `roster setup ${ctx.api === undefined || ctx.api >= SETUP_HOST_API_VERSION ? "--host" : "--only"} ${host}`;
 const setupOne: ErrorAction = { ...copy((p, ctx) => setupHost(p.host, ctx)), hostOnly: true };
 /** The first `command` in roster's message (e.g. "run `bw login` once"). */

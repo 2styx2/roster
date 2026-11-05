@@ -205,7 +205,7 @@ export function helpCommand(view: HelpView): CommandDef {
 }
 
 /** The topic finder (`␣ ?`): every topic, fuzzy-matched; Enter runs `help TAG`. */
-export function helpFinder(view: HelpView): FinderSourceDef {
+function helpFinder(view: HelpView): FinderSourceDef {
   return {
     id: "help",
     source: BUILTIN,
@@ -228,7 +228,7 @@ export function helpFinder(view: HelpView): FinderSourceDef {
 
 /** `:lookup` (␣ F1, ticket 52): help on what's selected, Neovim's `K`. A Host's row opens
  * `:connect`, any other row the command it runs; with no row under the cursor, the topic finder. */
-export function lookupCommand(view: HelpView): CommandDef {
+function lookupCommand(view: HelpView): CommandDef {
   return {
     id: "lookup",
     source: BUILTIN,
@@ -245,7 +245,7 @@ export function lookupCommand(view: HelpView): CommandDef {
 
 /** `:version` (T180): this build's version, roster's licence and the third-party notices, as Neovim's
  * `:version`; the `version` help page, made from THIRD-PARTY-NOTICES when the app is built. */
-export function versionCommand(view: HelpView): CommandDef {
+function versionCommand(view: HelpView): CommandDef {
   return {
     id: "version",
     source: BUILTIN,
@@ -335,7 +335,7 @@ export function outlineFinder(view: HelpView): FinderSourceDef {
 }
 
 /** `:options [TEXT]`: the `options` finder, Neovim's `:options` window as a finder. */
-export function optionsCommand(): CommandDef {
+function optionsCommand(): CommandDef {
   return {
     id: "options",
     source: BUILTIN,
@@ -350,7 +350,7 @@ export function optionsCommand(): CommandDef {
 
 /** The `options` finder: each option that holds a value, its value now on the left after the
  * name, where it was set on the right, and its default and type in the footer. Enter opens its help. */
-export function optionsFinder(view: HelpView): FinderSourceDef {
+function optionsFinder(view: HelpView): FinderSourceDef {
   const rows = () => {
     const ctx = view.context();
     return ctx ? optionRows(ctx.config, ctx.state) : [];

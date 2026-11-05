@@ -41,7 +41,7 @@ const SAY_AFTER_MS = 600;
 const label = (step: string) => STEP_LABEL[step] ?? step;
 
 /** Stop's own key while the panel has focus (#361), as a view's heading button has one. */
-export const STOP_KEY = "x";
+const STOP_KEY = "x";
 
 export interface CheckPanelProps {
   check: CheckState;

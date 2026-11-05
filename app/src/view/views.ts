@@ -121,7 +121,7 @@ export class ViewHost {
 }
 
 /** `:view ID` opens a view; `:view` alone lists them (the `views` finder). */
-export function viewCommand(views: ViewRegistry, host: ViewHost): CommandDef {
+function viewCommand(views: ViewRegistry, host: ViewHost): CommandDef {
   return {
     id: "view",
     source: BUILTIN,
@@ -141,7 +141,7 @@ export function viewCommand(views: ViewRegistry, host: ViewHost): CommandDef {
 }
 
 /** The `views` finder: every view, with where it's from. */
-export function viewsFinder(views: ViewRegistry): FinderSourceDef {
+function viewsFinder(views: ViewRegistry): FinderSourceDef {
   return {
     id: "views",
     source: BUILTIN,

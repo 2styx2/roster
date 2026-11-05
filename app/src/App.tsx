@@ -9,7 +9,7 @@
 // which is also what the command line and every button run. The commands, keymap and Sidebar
 // sections are registries (ADR 0006), read live. What each part of the workspace does is its own
 // hook; this file wires them together and draws the screen.
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Latest } from "./app/latest";
 import { Overlays, type Overlay } from "./app/Overlays";
 import { PluginLayers } from "./app/PluginLayers";
@@ -52,7 +52,7 @@ import { BindingsPanel } from "./keyboard/BindingsPanel";
 import { bindingRows } from "./keyboard/bindings";
 import { terminalMode } from "./keyboard/mode";
 import { useAppKeys } from "./keyboard/useAppKeys";
-import { defaultOptions, keyHint, keymapOf, keysFor, type CommandLine as Line, type Options } from "./keymap";
+import { defaultOptions, keyHint, keymapOf, type CommandLine as Line, type Options } from "./keymap";
 import { TypedPasswordsContext } from "./lock/forgetOnLock";
 import type { Clock } from "./lock/idle";
 import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
@@ -67,7 +67,7 @@ import { PluginNotices, PluginProgressItems } from "./plugins/PluginsPanel";
 import { type QuickTarget } from "./quick/target";
 import { builtinRegistries, type Registries } from "./registries";
 import { sessionCommands } from "./session/commands";
-import { SessionPanes, TabStrip } from "./session/Sessions";
+import { SessionsMain } from "./session/SessionsMain";
 import { Tabs } from "./session/tabs";
 import { hostMenu } from "./sidebar/hostMenu";
 import type { SidebarRow } from "./sidebar/model";
@@ -83,7 +83,6 @@ import { defaultAppearance, type AppearanceOptions } from "./theme/theme";
 import { DemoBanner } from "./tutor/DemoBanner";
 import { resumeAt, tutorPage, type TutorEvent, type TutorialDef } from "./tutor/tutor";
 import { useDemo, type TutorLink } from "./tutor/useDemo";
-import { Logo } from "./chrome/Logo";
 import { shownControls, type ToolbarContext } from "./chrome/toolbar";
 import { countOf, errorText } from "./ui/format";
 import { HintsShown } from "./ui/hints";
@@ -93,6 +92,7 @@ import { useFocusReturn } from "./ui/useFocusReturn";
 import { GraphMemory } from "./graph/memory";
 import { isShown, otherMode, placed, type Place } from "./view/layout";
 import { SessionBar } from "./view/SessionBar";
+import { ModeHint } from "./view/ModeHint";
 import { StatusBar } from "./view/StatusBar";
 import { useLayout } from "./view/useLayout";
 import { ViewPanel } from "./view/ViewContent";
@@ -647,9 +647,6 @@ function Workspace({
     say,
   });
 
-  // The custom title bar (decision Q32) sits above every screen, the lock screen too, so the window
-  // can always be moved and closed; the view mode's layout says whether it shows at all. The
-  // toolbar (decision Q65) is in it once the app is ready and unlocked, else a bar of its own.
   const [toastClosedFor, setToastClosedFor] = useState<ConfigReport | null>(null);
   const finderCtx = useMemo<FinderContext | null>(
     () =>
@@ -715,9 +712,6 @@ function Workspace({
   const appMode = keyState.mode === "app" && overlay === null;
   const spokenMessage = spokenText(message, messagesChoice.all());
   const findKeys = keyHint(keymap, "find");
-  const modeKeys = [keyHint(keymap, "mode"), keyHint(keymap, "focus"), ...keysFor(keymap, "mode", { leader: false }), ...keysFor(keymap, "focus", { leader: false })].filter(
-    (k): k is string => k !== null,
-  );
   const progress = <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => say(plugins.cancelProgress(id))} />;
   /** The pieces the layout places at `at`, in order. The title bar is drawn by `frame` above
    * every screen (the lock and error screens too). */
@@ -827,58 +821,30 @@ function Workspace({
             }}
           />
         )}
-        <main
-          className="workspace"
-          ref={mainRef}
-          tabIndex={-1}
-          aria-label="Workspace"
-          onMouseDown={(e) => {
-            if ((e.target as HTMLElement).closest(".pane")) setMode(terminalMode);
+        <SessionsMain
+          mainRef={mainRef}
+          onPaneClick={() => setMode(terminalMode)}
+          tabStrip={options.sessions === "tabs"}
+          noHostsIn={conn.hosts.hosts.length === 0 ? conn.info.inventory.path : null}
+          findKeys={findKeys}
+          panes={{
+            tabs,
+            snapshot: sessions,
+            leader: options.leader,
+            terminalView,
+            terminalEnv: terminal.env,
+            reconnectKeys: keyHint(keymap, "reconnect"),
+            run,
+            errorRows,
+            copy,
+            addressOf: (name) => hostByName.get(name)?.ip ?? null,
+            canSave: caps.has("saveToVault") && vault.view.state === "unlocked",
+            saveKeys: keyHint(keymap, "save"),
+            canFill: caps.has("fill"),
+            fillKeys: keyHint(keymap, "fill"),
+            reveal,
           }}
-        >
-          {options.sessions === "tabs" && !noSessions && <TabStrip snapshot={sessions} run={run} />}
-          {noSessions && conn.hosts.hosts.length === 0 ? (
-            // Nothing to find yet: say where Hosts come from (S7), not "Find a Host".
-            <div className="empty">
-              <Logo size={48} className="empty-mark" />
-              <p className="empty-title">No Hosts in the Inventory yet.</p>
-              <p className="empty-hint">
-                Add them to <code>{conn.info.inventory.path}</code> and they show up here.
-              </p>
-            </div>
-          ) : noSessions ? (
-            <div className="empty">
-              <Logo size={48} className="empty-mark" />
-              <p className="empty-title">No Sessions open</p>
-              <button type="button" className="find primary" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>
-                Find a Host
-              </button>
-              {findKeys && (
-                <p className="empty-hint key-hint">
-                  or press <Keys keys={findKeys} leader={options.leader} />
-                </p>
-              )}
-            </div>
-          ) : (
-            <SessionPanes
-              tabs={tabs}
-              snapshot={sessions}
-              leader={options.leader}
-              terminalView={terminalView}
-              terminalEnv={terminal.env}
-              reconnectKeys={keyHint(keymap, "reconnect")}
-              run={run}
-              errorRows={errorRows}
-              copy={copy}
-              addressOf={(name) => hostByName.get(name)?.ip ?? null}
-              canSave={caps.has("saveToVault") && vault.view.state === "unlocked"}
-              saveKeys={keyHint(keymap, "save")}
-              canFill={caps.has("fill")}
-              fillKeys={keyHint(keymap, "fill")}
-              reveal={reveal}
-            />
-          )}
-        </main>
+        />
         {detailsHost &&
           framed(
             "details",
@@ -1022,18 +988,7 @@ function Workspace({
           {progress}
         </div>
       )}
-      {hint && modeKeys.length > 0 && (
-        <div className="mode-hint key-hint" role="status" aria-label={`How to leave ${viewMode === "focus" ? "Focus" : "this mode"}`}>
-          {/* Two ways out, not one sequence: "␣ m or F11", never "␣ m F11". */}
-          {modeKeys.map((k, i) => (
-            <Fragment key={k}>
-              {i > 0 && <span className="muted"> or </span>}
-              <Keys keys={k} leader={options.leader} />
-            </Fragment>
-          ))}{" "}
-          leave {viewMode === "focus" ? "Focus" : "this mode"}
-        </div>
-      )}
+      {hint && <ModeHint keymap={keymap} leader={options.leader} viewMode={viewMode} />}
       <Overlays at="dialog" {...overlayProps} />
     </div>
   );

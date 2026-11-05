@@ -105,7 +105,7 @@ export interface KeyAnswers {
  * It's the network-map motif (taste.md), never a spinner. When the shell answers, it fades out
  * over the first output; a failure replaces it with the error at once.
  */
-export function ConnectCard({
+function ConnectCard({
   host,
   address,
   phase,

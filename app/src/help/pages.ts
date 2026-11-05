@@ -718,7 +718,7 @@ const page = (id: string, order: number, part: string, title: string, summary: s
   ...(aliases ? { aliases } : {}),
 });
 
-export const builtinHelpPages: readonly HelpPage[] = [
+const builtinHelpPages: readonly HelpPage[] = [
   page("index", 0, "Getting started", "roster help", "Where to start", indexPage),
   page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { qr: "quickref", cheatsheet: "quickref" }),
   page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage),

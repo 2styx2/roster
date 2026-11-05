@@ -263,7 +263,7 @@ export interface KeymapHost {
 }
 
 /** The built-in bindings for Windows only, over `defaultBindings` (decision Q138). */
-export const windowsBindings: KeymapOverrides = { terminal: terminalKeys.terminalWindows };
+const windowsBindings: KeymapOverrides = { terminal: terminalKeys.terminalWindows };
 
 /** A keymap registry holding the built-in bindings (Windows' too when `host.windows`). */
 export function builtinKeymap(host: KeymapHost = {}): KeymapRegistry {
