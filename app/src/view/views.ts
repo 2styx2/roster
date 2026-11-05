@@ -117,12 +117,16 @@ export interface ViewSnapshot {
   /** The node or row it opened at (`roster.views.open(id, { select })`), and which opening that
    * was: each such opening counts, so asking again while it's open selects again. */
   select?: { id: string; n: number };
+  /** How many times a view was asked to open: asking again while it's open (`:topology` from a
+   * Session beside it) hands it the keys back (#475). */
+  asked?: number;
 }
 
 /** Which view is open. */
 export class ViewHost {
   private snap: ViewSnapshot = { at: null };
   private openings = 0;
+  private asks = 0;
   private readonly listeners = new Set<() => void>();
 
   snapshot = (): ViewSnapshot => this.snap;
@@ -132,9 +136,14 @@ export class ViewHost {
     return () => this.listeners.delete(listener);
   };
 
-  /** Opens view `id`; with `select`, at that node or row, even when it's already open. */
+  /** Opens view `id`; with `select`, at that node or row, even when it's already open. Asked again
+   * while it's open, it takes the focus back. */
   open(id: string, select?: string) {
-    if (select === undefined && this.snap.at === id) return;
+    if (select === undefined && this.snap.at === id) {
+      this.snap = { ...this.snap, asked: ++this.asks };
+      for (const l of this.listeners) l();
+      return;
+    }
     this.set(id, select);
   }
 

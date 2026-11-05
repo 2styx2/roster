@@ -2465,7 +2465,7 @@ function Workspace({
           { side: sidebarSide === "right" ? "left" : "right" },
         )}
         {openView &&
-          framed(`view:${openView.id}`, openView.title, "view", <ViewPanel view={openView} leader={options.leader} onClose={() => viewHost.close()} graphs={graphMemory} select={viewAt.select} />, {
+          framed(`view:${openView.id}`, openView.title, "view", <ViewPanel view={openView} leader={options.leader} onClose={() => viewHost.close()} graphs={graphMemory} select={viewAt.select} asked={viewAt.asked} />, {
             fallback: openView.place,
           })}
         {importing && (
