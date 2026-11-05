@@ -534,6 +534,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   color: var(--muted); font: var(--text-xs) var(--font-mono); white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .sb-detail, .sb-note { line-height: var(--row-h); }
+/* In Sessions a name keeps 18 characters (a whole user@address, the Never-Cut-Mid-Token rule) and
+   a long note gives way first, cut at its end; the row's tooltip holds it whole (round 16:
+   "root@10.0.0…" beside "new host key"). */
+.sb-section[data-section="sessions"] .sb-row:has(.dot) .sb-text > .sb-name { min-width: min(18ch, max-content); }
+.sb-section[data-section="sessions"] .sb-note { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
 .sb-num {
   margin-left: auto; padding-left: 8px; flex: none;
   color: var(--muted); font: var(--text-xs) var(--font-mono); font-variant-numeric: tabular-nums;
