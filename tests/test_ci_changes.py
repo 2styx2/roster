@@ -102,3 +102,4 @@ def test_shards_split_the_suite_with_nothing_lost_or_run_twice():
     shards = [collected("--shard", f"{k}/3") for k in (1, 2, 3)]
     assert sorted(sum(shards, [])) == sorted(every)
     assert all(abs(len(s) - len(every) / 3) < 1 for s in shards)   # every 3rd test: even, slow files spread out
+# CI timing probe (T232): a CLI-only change.
