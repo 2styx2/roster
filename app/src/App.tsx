@@ -22,16 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ADD_API_VERSION,
-  UNREVIEW_API_VERSION,
   BackendStartError,
-  CHECK_API_VERSION,
-  CHECK_JOBS_API_VERSION,
-  BOX_CHECK_API_VERSION,
-  EDIT_API_VERSION,
-  PUBLISH_API_VERSION,
-  LIVE_API_VERSION,
-  JOBS_API_VERSION,
   LiveError,
   BackendCallError,
   type Backend,
@@ -40,19 +31,11 @@ import {
   type Host,
   type HostList,
   type SaveTarget,
-  VAULT_CONFIG_API_VERSION,
-  ITEM_FIELDS_API_VERSION,
-  HOST_KEY_API_VERSION,
-  QUICK_CONNECT_API_VERSION,
-  SAVE_TO_VAULT_API_VERSION,
-  FILL_API_VERSION,
-  NESTED_FILL_API_VERSION,
-  SIGN_OUT_API_VERSION,
-  INVENTORIES_API_VERSION,
   type Inventories,
   type VaultAccount,
   type VaultSettings,
 } from "./backend/types";
+import { capabilities } from "./backend/capabilities";
 import { publishChecked } from "./backend/afterTimeout";
 import { CommandLine } from "./cmdline/CommandLine";
 import { complete, runLine, type CommandContext, type Commands, type FoldHow } from "./commands/table";
@@ -735,9 +718,8 @@ function Workspace({
   // lock screen asks where the vault stands (a KeePassXC database may be init.lua's), and again on
   // every `:source`.
   const connInfo = conn.state === "ready" ? conn.info : null;
-  const configuresVault = connInfo !== null && connInfo.inventory.api_version >= VAULT_CONFIG_API_VERSION;
-  /** `vault.item_fields` (API 29): the add form's "Fill from this item" (#437). */
-  const readsItemFields = connInfo !== null && connInfo.inventory.api_version >= ITEM_FIELDS_API_VERSION;
+  const caps = useMemo(() => capabilities(connInfo?.inventory), [connInfo]);
+  const configuresVault = caps.has("vaultConfig");
   const vaultSettingsKey = JSON.stringify(vaultSettingsOf(config?.vault));
   const [vaultConfiguredFor, setVaultConfiguredFor] = useState<BackendInfo | null>(null);
   /** Goes up when where "Save to vault" can go may have changed (ticket 35): the add form lists again. */
@@ -774,8 +756,8 @@ function Workspace({
   // `vault` is a new object each render; its `lock` is stable, so the handler is set once.
   const lockVault = vault.lock;
   useEffect(() => tabs.setVaultLockedHandler(() => void lockVault()), [tabs, lockVault]);
-  const asksAboutKeys = conn.state === "ready" && conn.info.inventory.api_version >= HOST_KEY_API_VERSION;
-  const quickConnects = conn.state === "ready" && conn.info.inventory.api_version >= QUICK_CONNECT_API_VERSION;
+  const asksAboutKeys = caps.has("hostKey");
+  const quickConnects = caps.has("quickConnect");
   useEffect(() => tabs.setAsksAboutKeys(asksAboutKeys), [tabs, asksAboutKeys]);
   const vaultUnlocked = vault.view.state === "unlocked";
   const backendReady = conn.state === "ready";
@@ -820,8 +802,8 @@ function Workspace({
   }, [hosts]);
   const folded = useMemo(() => new Set(appState.folded), [appState.folded]);
   // The Live Inventory (ticket 28, API 8): what's added and not Published yet shows dimmed.
-  const canLiveNow = conn.state === "ready" && conn.info.inventory.api_version >= LIVE_API_VERSION;
-  const canUnreview = conn.state === "ready" && conn.info.inventory.api_version >= UNREVIEW_API_VERSION;
+  const canLiveNow = caps.has("live");
+  const canUnreview = caps.has("unreview");
   const live = useMemo(() => {
     if (!canLiveNow) return undefined;
     const changes = pending?.state === "done" ? pending.changes : null;
@@ -840,13 +822,8 @@ function Workspace({
     [sectionDefs, layout.sections],
   );
   // The Inventory heading's "Add a Host" (iteration 3 feedback): its keys, or why it can't.
-  const addApi = conn.state === "ready" ? conn.info.inventory.api_version : 0;
-  const addTooOld = `Adding a Host needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${addApi})`;
   const addKeys = hintFor(keymap, "host add");
-  const addHost = useMemo(
-    () => ({ keys: addKeys, tooOld: addApi >= ADD_API_VERSION ? null : addTooOld }),
-    [addKeys, addApi, addTooOld],
-  );
+  const addHost = useMemo(() => ({ keys: addKeys, tooOld: caps.has("add") ? null : caps.needsNewer("add") }), [addKeys, caps]);
   // Kept between renders: a Session's events rebuild only the sections that show Sessions (#62).
   const [buildSections] = useState(sectionBuilder);
   const sections = useMemo(
@@ -953,13 +930,12 @@ function Workspace({
 
   // Pending changes (ticket 10): asked for once the Backend is up, and after every edit, discard
   // and pull. A roster older than API 5 has none to show.
-  const apiVersion = conn.state === "ready" ? conn.info.inventory.api_version : 0;
   // A prompt fill (ticket 119): Sessions to Hosts are watched for sudo's prompt for their login
   // user, only on a roster that can fill one.
-  const canFill = apiVersion >= FILL_API_VERSION;
+  const canFill = caps.has("fill");
   // A nested ssh (ticket 120): the watch follows it to an Inventory Host (the breadcrumb), read at
-  // the shell's C mark against the Inventory as it is then; filling that Host's prompts needs API 26.
-  const canNestedFill = apiVersion >= NESTED_FILL_API_VERSION;
+  // the shell's C mark against the Inventory as it is then.
+  const canNestedFill = caps.has("nestedFill");
   const inventoryNow = useRef<readonly Host[]>([]);
   inventoryNow.current = hosts?.hosts ?? [];
   useEffect(
@@ -974,15 +950,15 @@ function Workspace({
       ),
     [tabs, canFill, canNestedFill, hostByName],
   );
-  const canEdit = apiVersion >= EDIT_API_VERSION;
-  const canPublish = apiVersion >= PUBLISH_API_VERSION;
+  const canEdit = caps.has("edit");
+  const canPublish = caps.has("publish");
   // T212: a plain roster.yml saves every edit straight away; a team repo's are Pending changes
   const plain = isPlainFile(connInfo?.inventory);
   const kept = keptAs(plain);
-  const canAdd = apiVersion >= ADD_API_VERSION;
-  const canLive = apiVersion >= LIVE_API_VERSION;
-  const canJobs = apiVersion >= JOBS_API_VERSION;
-  const canSave = apiVersion >= SAVE_TO_VAULT_API_VERSION && vault.view.state === "unlocked";
+  const canAdd = caps.has("add");
+  const canLive = caps.has("live");
+  const canJobs = caps.has("jobs");
+  const canSave = caps.has("saveToVault") && vault.view.state === "unlocked";
   const refreshPending = useCallback(() => {
     if (!canEdit) return;
     backend.pendingChanges().then(
@@ -1079,7 +1055,7 @@ function Workspace({
 
   // Named Inventories (ticket 115, API 27): asked of each serve once it's up, so the status bar
   // names the one it runs on and Sessions are marked with theirs. Forgotten while serve (re)starts.
-  const listsInventories = apiVersion >= INVENTORIES_API_VERSION;
+  const listsInventories = caps.has("inventories");
   const inventories = inventoriesOf && connInfo && inventoriesOf.info === connInfo ? inventoriesOf.list : null;
   const setInventories = useCallback((info: BackendInfo, list: Inventories | null) => setInventoriesOf(list && { info, list }), []);
   useEffect(() => {
@@ -1521,8 +1497,8 @@ function Workspace({
     const run = ++healthRun.current;
     setHealth({ state: "running" });
     helpView.open({ page: "health" });
-    const info = conn.state === "ready" ? conn.info : null;
-    const api = info?.inventory.api_version ?? 0;
+    const info = connInfo;
+    const api = caps.api;
     const finish = async (box: HealthContext["box"], boxProblem: string | null) => {
       if (run !== healthRun.current) return;
       const hctx: HealthContext = {
@@ -1536,7 +1512,7 @@ function Workspace({
       const sections = await runHealth(registries.health.list(), hctx);
       if (run === healthRun.current) setHealth({ state: "done", at: new Date(), sections });
     };
-    if (!info || api < BOX_CHECK_API_VERSION) return void finish(null, null);
+    if (!info || !caps.has("boxCheck")) return void finish(null, null);
     backend.checkBox().then(
       (box) => finish(box, null),
       (e: unknown) => finish(null, e instanceof Error ? e.message : String(e)),
@@ -1557,10 +1533,7 @@ function Workspace({
       openHost(name, here);
     },
     quickConnect: (text) => {
-      if (!quickConnects) {
-        const api = conn.state === "ready" ? conn.info.inventory.api_version : 0;
-        return setMessage(`Quick Connect needs a newer roster (API version ${QUICK_CONNECT_API_VERSION}; this one speaks ${api})`);
-      }
+      if (!quickConnects) return setMessage(caps.needsNewer("quickConnect"));
       if (text === null) {
         if (overlay === null) rememberFocus();
         return setOverlay("quick");
@@ -1586,7 +1559,7 @@ function Workspace({
       if (name === null) return checkBox();
       // `:check stop` (#361): Stop's command. A Host named stop is still checked by it.
       if (name === "stop" && !hostByName.has(name)) {
-        const target = stopTarget(check, conn.state === "ready" ? conn.info.inventory.api_version : 0);
+        const target = stopTarget(check, caps);
         return "job" in target ? stopCheck(target.job) : setMessage(target.message);
       }
       // `:check %` (ticket 60): the Host of the Session on screen, as Vim's `%` is the current file.
@@ -1596,14 +1569,11 @@ function Workspace({
       }
       const host = name === "%" ? (current ?? "") : name;
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
-      const api = conn.state === "ready" ? conn.info.inventory.api_version : 0;
-      if (api < CHECK_API_VERSION) {
-        return setMessage(`:check needs a newer roster (API version ${CHECK_API_VERSION}; this one speaks ${api})`);
-      }
+      if (!caps.has("check")) return setMessage(caps.needsNewer("check"));
       const run = ++checkRun.current;
       setCheck((prev) => checkStarted(prev, host, Date.now()));
       // A check already running (serve joins it) sent its progress before now: ask once where it is.
-      if (api >= CHECK_JOBS_API_VERSION) {
+      if (caps.has("checkJobs")) {
         backend.listJobs().then(
           (jobs) => run === checkRun.current && setCheck((c) => checkJoined(c, jobs, Date.now())),
           () => undefined,
@@ -1661,9 +1631,7 @@ function Workspace({
       if (!vault.lock()) setMessage("Nothing to lock: no Host Login uses a vault with a master password.");
     },
     vault: () => {
-      if (apiVersion < SIGN_OUT_API_VERSION) {
-        return setMessage(`:vault signout needs a newer roster (API version ${SIGN_OUT_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (!caps.has("signOut")) return setMessage(caps.needsNewer("signOut"));
       // Ask roster who the CLI is signed in as now: a sign-in from the lock screen doesn't say.
       backend.vaultStatus().then(
         (s) => {
@@ -1732,9 +1700,7 @@ function Workspace({
     hostNames: () => hosts?.hosts.map((h) => h.name) ?? [],
     groupNames: () => groupNames,
     inventory: (op) => {
-      if (!canLive) {
-        return setMessage(`Changing the Inventory here needs a newer roster (API version ${LIVE_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (!canLive) return setMessage(caps.needsNewer("live"));
       if (op.op === "remove") {
         const h = hostByName.get(op.host);
         if (!h) return setMessage(`No Host named ${op.host}`);
@@ -1787,7 +1753,7 @@ function Workspace({
       const host = name ?? ctx.selectedHost();
       if (!host) return setMessage("edit needs a Host name (no Host is selected)");
       if (!hostByName.has(host)) return setMessage(`No Host named ${host}`);
-      if (!canEdit) return setMessage(`:edit needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canEdit) return setMessage(caps.needsNewer("edit"));
       if (editing === null && !changesView && !adding) rememberFocus();
       setChangesView(null);
       setAdding(null);
@@ -1795,7 +1761,7 @@ function Workspace({
       setEditing(host);
     },
     addHost: (inGroup) => {
-      if (!canAdd) return setMessage(addTooOld);
+      if (!canAdd) return setMessage(caps.needsNewer("add"));
       if (editing === null && !changesView && !adding) rememberFocus();
       const selected = ctx.selectedHost();
       const group = inGroup ?? (selected && hostByName.get(selected)?.group) ?? Object.keys(hosts?.groups ?? {})[0] ?? "";
@@ -1811,9 +1777,7 @@ function Workspace({
     },
     saveSession: () => {
       const tab = sessions.tabs.find((t) => t.id === sessions.active);
-      if (apiVersion < SAVE_TO_VAULT_API_VERSION) {
-        return setMessage(`Save to vault needs a newer roster (API version ${SAVE_TO_VAULT_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (!caps.has("saveToVault")) return setMessage(caps.needsNewer("saveToVault"));
       if (!tab?.save) return setMessage("Nothing to save: tick Save to vault when you type a Session's password.");
       if (tab.save.saved !== null) return setMessage(`Already saved as ${tab.save.saved}.`);
       if (!tab.save.loggedIn) return setMessage(`${tab.host} hasn't logged in yet: roster saves the password only after it works.`);
@@ -1824,9 +1788,7 @@ function Workspace({
       setSaving(tab.id);
     },
     fillPrompt: () => {
-      if (apiVersion < FILL_API_VERSION) {
-        return setMessage(`Filling a password prompt needs a newer roster (API version ${FILL_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (!canFill) return setMessage(caps.needsNewer("fill"));
       const id = sessions.active;
       if (id === null) return setMessage("No Session to fill");
       tabs.fill(id).then(
@@ -1844,10 +1806,8 @@ function Workspace({
       if (!host) return setMessage(`${verb} needs a Host name (no Host is selected)`);
       const h = hostByName.get(host);
       if (!h) return setMessage(`No Host named ${host}`);
-      if (!canAdd) return setMessage(`:${verb} needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${apiVersion})`);
-      if (!reviewed && apiVersion < UNREVIEW_API_VERSION) {
-        return setMessage(`:host unreview needs a newer roster (API version ${UNREVIEW_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (!canAdd) return setMessage(caps.needsNewer("review", `:${verb}`));
+      if (!reviewed && !canUnreview) return setMessage(caps.needsNewer("unreview"));
       const already = reviewed ? `${host} is already reviewed.` : `${host} isn't reviewed.`;
       if (h.reviewed === reviewed) return setMessage(already);
       const done = reviewed
@@ -1864,11 +1824,9 @@ function Workspace({
       );
     },
     showChanges: (then) => {
-      if (!canEdit) return setMessage(`:changes needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canEdit) return setMessage(caps.needsNewer("changes"));
       if (plain && connInfo) return setMessage(nothingPending(connInfo.inventory));
-      if (then === "publish" && !canPublish) {
-        return setMessage(`:publish needs a newer roster (API version ${PUBLISH_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (then === "publish" && !canPublish) return setMessage(caps.needsNewer("publish"));
       if (editing === null && !changesView && !adding) rememberFocus();
       setEditing(null);
       setAdding(null);
@@ -1878,9 +1836,7 @@ function Workspace({
     },
     switchInventory: (name) => {
       if (switchingTo.current !== null) return setMessage(`A switch to ${switchingTo.current} is already running`);
-      if (!listsInventories) {
-        return setMessage(`:inventory needs a newer roster (API version ${INVENTORIES_API_VERSION}; this one speaks ${apiVersion})`);
-      }
+      if (!listsInventories) return setMessage(caps.needsNewer("inventories"));
       backend.listInventories().then(
         async (list) => {
           if (connInfo) setInventories(connInfo, list);
@@ -1894,7 +1850,7 @@ function Workspace({
       );
     },
     pull: () => {
-      if (!canEdit) return setMessage(`:pull needs a newer roster (API version ${EDIT_API_VERSION}; this one speaks ${apiVersion})`);
+      if (!canEdit) return setMessage(caps.needsNewer("pull"));
       setMessage(quiet("Pulling the infra repo…"));
       gate.pull().then(
         (r) => {
@@ -2153,7 +2109,7 @@ function Workspace({
   );
   const frame = (content: React.ReactNode) => (
     <HintsShown value={hintsShown}>
-      <RosterApi.Provider value={conn.state === "ready" ? conn.info.inventory.api_version : undefined}>
+      <RosterApi.Provider value={connInfo ? caps.api : undefined}>
         <div className="window">
           {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
           {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
@@ -2388,8 +2344,7 @@ function Workspace({
               const h = row.host === undefined ? undefined : hostByName.get(row.host);
               return hostMenu(row, {
                 reviewed: h ? h.reviewed : null,
-                live: canLive,
-                edit: canEdit,
+                caps,
                 folders: commands.get("folder") !== undefined,
                 keys: (command) => hintFor(keymap, command),
               });
@@ -2571,7 +2526,7 @@ function Workspace({
                   },
                 }
               : {})}
-            {...(apiVersion >= UNREVIEW_API_VERSION
+            {...(canUnreview
               ? {
                   onUnreview: (name: string) => {
                     closeEdit();
@@ -2591,7 +2546,7 @@ function Workspace({
             actions={{ run, copy }}
             pull={gate}
             chooseTarget={configuresVault}
-            fillFromItem={readsItemFields}
+            fillFromItem={caps.has("itemFields")}
             targetsVersion={targetsVersion}
             onAdded={(r) => {
               closeAdd();

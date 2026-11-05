@@ -28,7 +28,7 @@ describe("placeMenu", () => {
 
 describe("hostMenu", () => {
   const row: SidebarRow = { id: "inventory:esx-02", label: "esx-02", host: "esx-02", command: "open esx-02", menu: true };
-  const all: HostMenuOptions = { reviewed: true, live: true, edit: true, folders: true, keys: (c: string) => (c === "host rename" ? "␣ R" : null) };
+  const all: HostMenuOptions = { reviewed: true, caps: { has: () => true }, folders: true, keys: (c: string) => (c === "host rename" ? "␣ R" : null) };
   const labels = (r: SidebarRow, o = all) => hostMenu(r, o).map((e) => ("separator" in e ? "|" : e.label));
 
   it("groups open, look, change and remove, with a row's own actions among the changes", () => {
