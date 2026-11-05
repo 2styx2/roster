@@ -1212,6 +1212,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   @starting-style { transform: scaleX(0); }
 }
 .connect-map[data-phase="starting"] .connect-edge { transform: scaleX(0.4); }
+/* Logging in, the edge reaches the gap's mouth (x 62.46: 54.06 of its 52.6 units), so it reads as
+   plugged in, not 4 px short (round 16); it stays there as the ring closes round it. */
+.connect-map[data-phase="logging-in"] .connect-edge { transform: scaleX(1.0278); }
 /* The Host's ring: open (one arc, its 50° gap facing the edge that plugs into it)
    while connecting; the closed ring and, for a key login, the fill fade in when the shell answers. */
 .connect-host {
@@ -1220,10 +1223,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-host-closed { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-card.leaving :is(.connect-host-closed, .connect-host-fill) { opacity: 1; }
-/* While connecting the edge stops just short of the ring's gap, so the ring still reads open; as
-   the ring closes it reaches the ring's outline (52.6 → 53.8 units, the draw token's 120 ms),
-   never inside it (round 14). */
-.connect-card.leaving .connect-edge { transform: scaleX(1.0228); }
+/* Only while ssh starts (and while a question waits) does the edge stop short of the ring; from
+   logging in to the landing it sits at the gap's mouth, inside the ring's stroke once it closes. */
+.connect-card.leaving .connect-edge { transform: scaleX(1.0278); }
 
 .connect-cmd { font-family: var(--font-mono); }
 /* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
@@ -1264,7 +1266,19 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* One axis, the left (round 12: centred map and title over a left body and right buttons read as
    three); the buttons close it on the right, under a hairline. */
 .connect-card.key-question > .connect-map, .connect-card.key-question > .connect-title { align-self: flex-start; text-align: left; }
-.connect-card.key-question .key-actions { padding-top: 12px; border-top: 1px solid var(--line); }
+.connect-card.key-question .key-actions { padding-top: 12px; border-top: 1px solid var(--line-strong); }
+/* The buttons stay at the card's foot when a short window scrolls it (round 16: at 480×320 the
+   focused Cancel was out of view), the counterpart of the sticky title. */
+.connect-card.key-question .key-actions {
+  position: sticky; bottom: -16px; z-index: 1; background: var(--panel);
+  margin-inline: -20px; padding-inline: 20px; padding-bottom: 16px; margin-bottom: -16px;
+}
+/* Enter shows on Trust only while it has focus: the question opens on Cancel (Q203). */
+.btn-keys.key-on-focus { display: none; }
+button:focus-visible > .btn-keys.key-on-focus { display: inline-flex; }
+/* Quick Connect's error room: says why Enter did nothing before the key was ticked. */
+.key-nudge { margin: 0; min-height: 0; font-size: var(--text-xs); color: var(--warn); }
+.key-nudge:empty { display: none; }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
 /* The question stays in view when a short window scrolls the card (round 13). */
 .connect-card.key-question > .connect-title {
@@ -1276,7 +1290,7 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    its buttons; the form is the card's measure, as the fingerprint is, with its field kept short. */
 .connect-card.key-question .connect-phase:empty { display: none; }
 .connect-card.key-question .quick-login { width: 100%; }
-.connect-card.key-question .quick-password input { max-width: 320px; }
+.connect-card.key-question .quick-password input { width: 100%; max-width: min(320px, 100%); }
 /* A short window: the question takes the whole pane (no lift), and the map gives way, so the
    card's top is never under the title bar and its buttons stay in reach. */
 @media (max-height: 460px) {

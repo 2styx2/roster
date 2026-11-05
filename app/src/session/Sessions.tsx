@@ -236,6 +236,8 @@ export function ConnectCard({
   // Quick Connect's key question: Enter connects only once the key is marked checked, so a
   // password typed and entered never trusts a key nobody read (owner, after round 14).
   const [checkedKey, setCheckedKey] = useState(false);
+  // Enter before the tick isn't silent: the error room says what's missing (round 16).
+  const [nudged, setNudged] = useState(false);
   const question =
     (phase === "asking" || phase === "trusting") &&
     hostKey !== null &&
@@ -326,7 +328,7 @@ export function ConnectCard({
       role={asking ? "alertdialog" : "status"}
       aria-label={
         asksQuick
-          ? `Quick Connect to ${host}`
+          ? `Trust ${quick.address}'s host key?`
           : asksPassword
             ? `Password for ${host}`
             : question
@@ -349,7 +351,29 @@ export function ConnectCard({
                 // prompt (no key in question) still connects.
                 e.preventDefault();
                 if (asksPassword) connectQuick();
-                else if (asksQuick && checkedKey) connectQuick();
+                else if (asksQuick) {
+                  if (checkedKey) connectQuick();
+                  else setNudged(true);
+                }
+              } else if (e.key === "Tab") {
+                // The question holds focus until it's answered (round 16): Tab cycles its own
+                // controls and never wanders off to the Sidebar behind it.
+                const all = Array.from(
+                  e.currentTarget.querySelectorAll<HTMLElement>(
+                    "button, input, [href], [tabindex]:not([tabindex='-1'])",
+                  ),
+                ).filter((el) => !el.hasAttribute("disabled"));
+                const head = all[0];
+                const tail = all[all.length - 1];
+                if (!head || !tail) return;
+                const at = document.activeElement;
+                if (e.shiftKey && (at === head || at === e.currentTarget)) {
+                  e.preventDefault();
+                  tail.focus();
+                } else if (!e.shiftKey && at === tail) {
+                  e.preventDefault();
+                  head.focus();
+                }
               }
             }
           : undefined
@@ -401,7 +425,8 @@ export function ConnectCard({
         {asking && !asksPassword ? (
           <>
             <span className="muted">Trust </span>
-            <span className="connect-name">{host}</span>
+            {/* Quick Connect's host is `user@address`: the key belongs to the address (round 16). */}
+            <span className="connect-name">{quick ? quick.address : host}</span>
             <span className="muted">'s host key?</span>
             {where && (
               <span className="connect-address connect-address-line">
@@ -493,13 +518,17 @@ export function ConnectCard({
             onSubmit={(e) => {
               e.preventDefault();
               if (checkedKey) connectQuick();
+              else setNudged(true);
             }}
           >
             <label className="add-check quick-checked">
               <input
                 type="checkbox"
                 checked={checkedKey}
-                onChange={(e) => setCheckedKey(e.target.checked)}
+                onChange={(e) => {
+                  setCheckedKey(e.target.checked);
+                  setNudged(false);
+                }}
               />
               I've checked this key
             </label>
@@ -528,6 +557,11 @@ export function ConnectCard({
                 Save to vault once it logs in
               </label>
             )}
+            <p className="key-nudge" role="alert">
+              {nudged && !checkedKey
+                ? "Tick “I've checked this key” to trust it and connect."
+                : ""}
+            </p>
             <div className="key-actions">
               <button
                 type="submit"
@@ -568,8 +602,12 @@ export function ConnectCard({
               ref={trustButton}
               onClick={() => answers.trust()}
             >
-              {/* No Enter on it: the question opens on Cancel, so trusting is deliberate (Q60). */}
+              {/* The question opens on Cancel, so trusting is deliberate (Q203): Enter shows on
+                  Trust only once Tab has brought focus to it (round 16). */}
               Trust and connect
+              <span className="btn-keys key-on-focus" aria-hidden="true">
+                <Keys keys="Enter" />
+              </span>
             </button>
             <button
               type="button"
