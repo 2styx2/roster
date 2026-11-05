@@ -129,6 +129,15 @@ def test_each_test_also_costs_a_second_of_its_own_so_quick_ones_spread_out_too(t
     assert all(abs(len(s) - len(every) / 3) < 1 for s in shards)
 
 
+def test_a_shard_runs_its_longest_tests_first_so_no_worker_is_left_with_one_at_the_end(tmp_path):
+    every = collected()
+    times = tmp_path / "durations.json"
+    times.write_text(json.dumps({t: float(i) for i, t in enumerate(every)}))   # the last collected is the longest
+    for k in (1, 2, 3):
+        shard = collected("--shard", f"{k}/3", "--shard-durations", str(times))
+        assert shard == sorted(shard, key=every.index, reverse=True)
+
+
 def test_a_test_with_no_recorded_time_counts_as_the_average(tmp_path):
     every = collected()
     times = tmp_path / "durations.json"
