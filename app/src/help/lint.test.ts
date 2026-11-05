@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { defaultConfig } from "../config/fixture";
 import { defaultOptions, keymapOf } from "../keymap";
 import { builtinRegistries } from "../registries";
-import { HelpView, registerHelp } from "./command";
+import { docsBuiltins, registerBuiltins } from "../commands/builtins";
 import { blockLinks, slug } from "./doc";
 import pluginApi from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
 import { findTopic, linkKind, pageBody, topicIndex, type HelpContext, helpContext } from "./pages";
@@ -28,7 +28,7 @@ const exists = (path: string) => FILES.has(path) || [...FILES].some((f) => f.sta
 
 function ctxOf(): HelpContext {
   const r = builtinRegistries();
-  registerHelp(r, new HelpView());
+  registerBuiltins(r, docsBuiltins(r));
   return helpContext(r, {
     keymap: keymapOf(r.keymap.list()),
     options: defaultOptions,

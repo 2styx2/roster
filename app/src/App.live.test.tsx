@@ -7,7 +7,8 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { App, servicesLeftOut } from "./App";
+import { App } from "./App";
+import { servicesLeftOut } from "./inventory/said";
 import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
 import { configWith, defaultConfig } from "./config/fixture";
 import type { Config, ConfigReport } from "./config/types";

@@ -154,12 +154,11 @@ export function allRows(sections: readonly SidebarSection[]): SidebarRow[] {
   return sections.flatMap((s) => [headingRow(s), ...(s.folded ? [] : s.rows)]);
 }
 
+/** Where j, k, gg and G take the cursor. */
+export type ListMoveTo = "down" | "up" | "top" | "bottom";
+
 /** The cursor after a list action; it stays put at either end. */
-export function moveCursor(
-  rows: readonly SidebarRow[],
-  cursor: string | null,
-  move: "down" | "up" | "top" | "bottom",
-): string | null {
+export function moveCursor(rows: readonly SidebarRow[], cursor: string | null, move: ListMoveTo): string | null {
   if (rows.length === 0) return null;
   const i = rows.findIndex((r) => r.id === cursor);
   const last = rows.length - 1;

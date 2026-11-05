@@ -4,7 +4,7 @@
 // and an unreviewed Host can be marked reviewed from the Sidebar, the Picker, `:review` and the
 // edit form.
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
@@ -143,6 +143,18 @@ describe("the add form", () => {
     await screen.findByRole("main", { name: /workspace/i });
     expect(within(await form()).getByLabelText("Password")).toHaveValue("");
     expect(JSON.stringify(calls)).not.toContain(FAKE_HOST_PASSWORD);
+  });
+
+  it("keeps what you typed when only the tutor's demo locks: each workspace empties its own", async () => {
+    const { user } = await ready();
+    const panel = await openForm(user);
+    await user.type(within(panel).getByLabelText("Password"), FAKE_HOST_PASSWORD);
+    await user.keyboard(`${LEADER}:tutor{Enter}`);
+    await screen.findByRole("region", { name: "Demo Inventory" });
+    await screen.findByRole("complementary", { name: "Help" });
+    await user.keyboard(`${LEADER}:tutor quit{Enter}`);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Demo Inventory" })).toBeNull());
+    expect(within(await form()).getByLabelText("Password")).toHaveValue(FAKE_HOST_PASSWORD);
   });
 
   it("a lock while the host key waits to be confirmed goes back to the form, so nothing is sent without a password", async () => {

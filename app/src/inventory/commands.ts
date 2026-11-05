@@ -121,3 +121,20 @@ export const groupCommand: CommandDef = {
   run: runGroup,
   complete: (arg, _hosts, ctx) => completeGroup(arg, ctx?.groupNames ?? []),
 };
+
+/** `:review` and `:unreview`: `:host review` and `:host unreview`, for short. */
+const review = (reviewed: boolean): CommandDef => ({
+  id: reviewed ? "review" : "unreview",
+  source: BUILTIN,
+  area: "Inventory",
+  arg: "host",
+  optionalArg: true,
+  label: (h) =>
+    reviewed
+      ? h ? `Mark ${h} reviewed` : "Mark a Host reviewed, so it can be opened"
+      : h ? `Mark ${h} unreviewed` : "Mark a Host unreviewed again (a review made by mistake)",
+  run: (ctx, h) => runHost(ctx, `${reviewed ? "review" : "unreview"} ${h ?? ""}`),
+});
+
+export const reviewCommand = review(true);
+export const unreviewCommand = review(false);

@@ -166,8 +166,6 @@ export const guides: readonly Guide[] = [
     aliases: {
       permissions: "plugins#permissions",
       "plugin-events": "plugin-api#events",
-      ":plugins": "plugins#installing-and-trusting",
-      ":packages": "plugins#packages",
       "shell-integration": "plugins#shell-integration",
       "osc-133": "plugins#shell-integration",
       "shell-hooks": "plugins#shell-hooks-roster-sets-it-up",
