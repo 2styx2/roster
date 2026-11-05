@@ -17,6 +17,7 @@ pub const LEGACY_DISTRO_VAR: &str = "ROSTER_DESK_WSL_DISTRO";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "BackendProblemKind"))]
 pub enum ErrorKind {
     /// Windows without WSL, or WSL with no distro.
     NoWsl,
@@ -34,6 +35,7 @@ pub enum ErrorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "BackendProblem"))]
 pub struct BackendError {
     pub kind: ErrorKind,
     /// What went wrong, one sentence.

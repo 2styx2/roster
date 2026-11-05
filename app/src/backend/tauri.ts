@@ -4,6 +4,7 @@
 // imported when running inside Tauri (see index.ts).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { CallErrorWire, OpenedSession } from "../config/core.gen";
 import {
   BackendCallError,
   BackendStartError,
@@ -49,7 +50,6 @@ import {
   type ProviderStatus,
   type SignInStep,
   type VaultStatus,
-  type SessionAuth,
   type SessionEvents,
   type SessionExit,
   type SessionHandle,
@@ -57,13 +57,6 @@ import {
   type PluginData,
   type TermSize,
 } from "./types";
-
-/** roster-core's CallError, as serde sends it. */
-type CallErrorWire =
-  | { kind: "rpc"; code: number; message: string; data?: unknown }
-  | { kind: "exited"; code: number | null; stderr: string }
-  | { kind: "timeout" }
-  | { kind: "io"; message: string };
 
 function isProblem(e: unknown): e is BackendProblem {
   return typeof e === "object" && e !== null && "hint" in e && "message" in e && "kind" in e;
@@ -111,8 +104,8 @@ function sessionChannel(events: SessionEvents): Channel<SessionMessage> {
 }
 
 async function openSession(host: string, size: TermSize, events: SessionEvents, typed?: TypedPassword, marks?: string): Promise<SessionHandle> {
-  // A typed password (ticket 16) goes once to serve's stdin, like vault_unlock's.
-  const { id, auth, held, conpty, user } = await call<{ id: number; auth: SessionAuth; held?: string; conpty?: boolean; user?: string }>("session_open", {
+  // A typed password (ticket 16) goes once to serve's stdin, inside session.prepare's request.
+  const { id, auth, held, conpty, user } = await call<OpenedSession>("session_open", {
     host,
     password: typed?.password ?? null,
     save: typed?.save === true,
@@ -125,7 +118,7 @@ async function openSession(host: string, size: TermSize, events: SessionEvents, 
     id,
     auth,
     ...(held === undefined ? {} : { held }),
-    ...(conpty === true ? { conpty } : {}),
+    ...(conpty ? { conpty } : {}),
     ...(user === undefined ? {} : { fillUser: user }),
     write: (data) => call("session_write", { id, data }),
     resize: ({ cols, rows }) => call("session_resize", { id, cols, rows }),
@@ -135,7 +128,7 @@ async function openSession(host: string, size: TermSize, events: SessionEvents, 
   };
 }
 
-/** A Quick Connect (ticket 14): the typed password goes once to serve's stdin, like vault_unlock's. */
+/** A Quick Connect (ticket 14): the typed password goes once to serve's stdin, inside quick.prepare's request. */
 async function openQuickSession(
   to: QuickConnect,
   password: string | null,
@@ -143,7 +136,7 @@ async function openQuickSession(
   events: SessionEvents,
   options: { save?: boolean } = {},
 ): Promise<SessionHandle> {
-  const { id, auth, quick, held } = await call<{ id: number; auth: SessionAuth; quick?: string; held?: string }>("quick_session_open", {
+  const { id, auth, quick, held } = await call<OpenedSession>("quick_session_open", {
     to,
     password,
     save: options.save === true,

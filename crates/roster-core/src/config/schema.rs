@@ -15,6 +15,7 @@ use std::fmt;
 /// The whole Config: built-in defaults with `init.lua`'s values layered over them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct Config {
     /// A Theme's id, or "auto" to follow the OS with `dark_theme` / `light_theme`.
     pub theme: String,
@@ -102,6 +103,7 @@ pub const DEPRECATED_OPTIONS: &[Renamed] = &[];
 /// A deprecated option the file set, for the frontend's warning.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DeprecatedUse {
     pub old: String,
     pub new: String,
@@ -148,6 +150,7 @@ impl Default for Config {
 /// The UI's look, apart from fonts and colours.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct Ui {
     /// Show the keycap hints (status bar, empty states, panels, Picker footers, menus). Unset:
     /// `:hints` decides and the State keeps its choice; set, it wins.
@@ -161,6 +164,7 @@ pub struct Ui {
 /// `ui.messages`: which messages the message line shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum MessagesLevel {
     Quiet,
     All,
@@ -170,6 +174,7 @@ pub enum MessagesLevel {
 /// State, wins over these: they're defaults (decision Q106).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct Panel {
     /// A docked panel's width in percent of the window (10 to 95). Unset: each panel's own.
     pub width: Option<u32>,
@@ -178,6 +183,7 @@ pub struct Panel {
 /// `views.ID`: one panel's or view's default place and width.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct ViewLayout {
     /// Docked beside the terminal (`"panel"`) or over the whole window (`"full"`).
     pub place: Option<PanelPlace>,
@@ -187,6 +193,7 @@ pub struct ViewLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum PanelPlace {
     Panel,
     Full,
@@ -197,6 +204,11 @@ pub enum PanelPlace {
 /// `:source`. Paths and choices only, never a secret (docs/app/security.md).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(rename_all = "camelCase", rename = "VaultConfig")
+)]
 pub struct Vault {
     /// Where "Save to vault" puts new Vault items by default (ticket 35). None: roster.yml's.
     pub save_to: Option<SaveTo>,
@@ -208,8 +220,10 @@ pub struct Vault {
 /// group (KeePassXC). The same shape as roster.yml's `providers: NAME: save_to:`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum SaveTo {
     #[serde(serialize_with = "personal")]
+    #[cfg_attr(feature = "ts", ts(type = "\"personal\""))]
     Personal,
     Collection {
         organization: String,
@@ -272,6 +286,7 @@ impl<'de> Deserialize<'de> for SaveTo {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct KeePassXc {
     /// The `.kdbx`, on the Box roster runs on (WSL's file system for a WSL Backend).
     #[serde(deserialize_with = "backend_path")]
@@ -320,6 +335,7 @@ pub(crate) fn windows_path(t: &str) -> Option<String> {
 
 /// A place in a Lua file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ConfigLocation"))]
 pub struct Location {
     /// Relative to the config dir, `/`-separated: `init.lua`, `lua/keys.lua`.
     pub file: String,
@@ -328,6 +344,7 @@ pub struct Location {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct Fonts {
     /// A family name ("Inter") or a whole CSS font stack (anything with a comma).
     pub ui: String,
@@ -349,6 +366,7 @@ impl Default for Fonts {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
 pub struct Terminal {
     /// Font families in order of preference: the first one installed (or bundled) is used
     /// (ticket 33). A name, a CSS stack, or a list.
@@ -413,6 +431,7 @@ impl Default for Terminal {
 /// Font families, most wanted first. From Lua: a name ("Iosevka"), a CSS stack
 /// ("\"Fira Code\", Consolas"), or a list ({ "Iosevka Nerd Font", "Iosevka" }).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct FontList(pub Vec<String>);
 
 impl PartialEq<&str> for FontList {
@@ -466,6 +485,7 @@ impl<'de> Deserialize<'de> for FontList {
 
 /// A font size: px, or points (Windows Terminal's unit).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 pub enum FontSize {
     Px(f64),
     Pt(f64),
@@ -530,6 +550,7 @@ impl<'de> Deserialize<'de> for FontSize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Renderer {
     Webgl,
     Dom,
@@ -537,6 +558,7 @@ pub enum Renderer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum CursorStyle {
     Block,
     Bar,
@@ -548,10 +570,12 @@ macro_rules! colors {
     ($(#[$doc:meta])* $name:ident { $($field:ident),* $(,)? }) => {
         $(#[$doc])*
         #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+        #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "camelCase"))]
         #[serde(default, deny_unknown_fields, rename_all(serialize = "camelCase"))]
         pub struct $name {
             $(
                 #[serde(skip_serializing_if = "Option::is_none")]
+                #[cfg_attr(feature = "ts", ts(optional))]
                 pub $field: Option<String>,
             )*
         }
@@ -602,16 +626,20 @@ colors!(
 /// A Theme defined in `init.lua`: a bundled one (`base`) with tokens changed, or a new one.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ThemeDef {
     /// Shown in the app; the id if left out.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub label: Option<String>,
     /// "dark" or "light": which OS appearance it suits. The base's if left out.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub appearance: Option<Appearance>,
     /// The Theme it starts from: every token it doesn't set comes from there. Defaults to
     /// Roster dark or Roster light, by `appearance`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub base: Option<String>,
     pub colors: ThemeColors,
     pub terminal: ThemeTerminalColors,
@@ -622,6 +650,7 @@ pub struct ThemeDef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Appearance {
     Dark,
     Light,
@@ -629,6 +658,7 @@ pub enum Appearance {
 
 /// `ansi = { … }`, `ansi = false`, or nothing.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "\"inherit\" | \"standard\" | Ansi"))]
 pub enum AnsiChoice {
     #[default]
     Inherit,
@@ -675,6 +705,7 @@ impl<'de> Deserialize<'de> for AnsiChoice {
 /// console window of its own).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Editor {
     Os,
     Wsl,
@@ -682,6 +713,7 @@ pub enum Editor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum ViewMode {
     Standard,
     Focus,
@@ -689,6 +721,7 @@ pub enum ViewMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum SessionsIn {
     Sidebar,
     Tabs,
@@ -697,6 +730,7 @@ pub enum SessionsIn {
 /// The keymap's contexts (src/keymap.ts Keymap).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum KeyContext {
     /// After the Leader (App mode).
     Leader,
@@ -745,6 +779,7 @@ impl KeyContext {
 
 /// One key binding from the Config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ConfigKey"))]
 pub struct KeyBinding {
     pub context: KeyContext,
     /// A chord or a sequence: "x", "Ctrl+n", "g g".
@@ -755,6 +790,7 @@ pub struct KeyBinding {
 /// The Config's key bindings, in context order, then key order.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(from = "KeysPatch")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Keys(pub Vec<KeyBinding>);
 
 impl Serialize for Keys {
@@ -803,6 +839,7 @@ impl From<KeysPatch> for Keys {
 /// What a key does: an action (a command line such as "session 1"), or nothing (`false`
 /// unbinds a default). Serialized as the string, or null.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string | null"))]
 pub enum KeyAction {
     Run(String),
     Unbind,
@@ -849,6 +886,7 @@ impl<'de> Deserialize<'de> for KeyAction {
 /// session bar, status bar (and its segments).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(from = "ModesPatch")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Modes {
     pub standard: ModeLayout,
     pub focus: ModeLayout,
@@ -907,6 +945,7 @@ impl Default for Modes {
 
 /// One mode's layout, as sent to the frontend: every piece, shown or not.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ModeConfig"))]
 pub struct ModeLayout {
     /// OS fullscreen (Focus by default).
     pub fullscreen: bool,
@@ -981,6 +1020,7 @@ impl From<ModesPatch> for Modes {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Side {
     #[default]
     Left,
@@ -989,12 +1029,14 @@ pub enum Side {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Edge {
     Top,
     Bottom,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SidebarPiece {
     pub shown: bool,
     pub side: Side,
@@ -1039,6 +1081,7 @@ impl<'de> Deserialize<'de> for SidebarPiece {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SessionBarPiece {
     pub shown: bool,
     pub at: Edge,
@@ -1081,6 +1124,7 @@ impl<'de> Deserialize<'de> for SessionBarPiece {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct StatusBarPiece {
     pub shown: bool,
     /// Segment ids in order ("backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode"); null: all.
@@ -1124,6 +1168,7 @@ impl<'de> Deserialize<'de> for StatusBarPiece {
 /// ids from the app's toolbar registry: "sidebar", "find", "quick", "add", "changes", "publish", "details", and the
 /// ones not shown by default, "cmdline", "keys", "help", "lock", "mode"); null: the default set.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ToolbarPiece {
     pub shown: bool,
     pub controls: Option<Vec<String>>,
@@ -1165,6 +1210,7 @@ impl<'de> Deserialize<'de> for ToolbarPiece {
 /// A Folder defined in `init.lua`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct FolderDef {
     pub name: String,
     #[serde(default, deserialize_with = "list")]
@@ -1176,6 +1222,7 @@ pub struct FolderDef {
 /// default branch. Checked by [`crate::package::check_spec`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct PackageSpec {
     /// `"owner/repo"` (on GitHub) or a full git URL (`https://…`, `ssh://…`, `git@host:path`,
     /// `file://…` or a full path to a repo on this machine).
@@ -1195,12 +1242,14 @@ pub struct PackageSpec {
     pub dir: Option<String>,
     /// Settings handed to the Package as `roster.plugin.config` (a table; never a function).
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Map<String, serde_json::Value>,
 }
 
 /// `roster_command = "uv run --project ~/work/roster roster"` (split on spaces) or a list.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(transparent)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RosterCommand(pub Vec<String>);
 
 impl RosterCommand {
@@ -1275,6 +1324,7 @@ impl<'de> Deserialize<'de> for RosterCommand {
 
 /// Which roster to run (ticket 19 adds native Windows `local`).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 pub enum BackendChoice {
     /// Detect: local on Linux; the default WSL distro, then running ones, on Windows.
     Auto,

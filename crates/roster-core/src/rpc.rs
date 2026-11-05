@@ -29,11 +29,13 @@ pub const EXIT_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "CallErrorWire"))]
 pub enum CallError {
     /// The child answered with a JSON-RPC error object.
     Rpc {
         code: i64,
         message: String,
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
         data: Option<Value>,
     },
     /// The child exited (or closed stdout) before answering. `stderr` is the tail of what it printed.

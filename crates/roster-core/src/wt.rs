@@ -541,6 +541,7 @@ fn with_block(init: &str, block: &str) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum DiffKind {
     Same,
     Add,
@@ -548,6 +549,7 @@ pub enum DiffKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DiffLine {
     pub kind: DiffKind,
     pub text: String,
@@ -592,9 +594,9 @@ pub fn diff(old: &str, new: &str) -> Vec<DiffLine> {
 /// What `:config import-terminal` would do, before it does it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ImportPreview"))]
 pub struct Preview {
     pub settings_path: String,
-    pub profile: Profile,
     /// One line per thing it takes ("Font: Iosevka Nerd Font, 16 pt (21.3 px)").
     pub summary: Vec<String>,
     pub diff: Vec<DiffLine>,
@@ -619,6 +621,7 @@ pub struct Preview {
 /// What wins over the import for an option it sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Wins {
     /// init.lua's returned table sets it: that wins over every `roster.*` line.
     Returned,
@@ -629,6 +632,7 @@ pub enum Wins {
 
 /// An option the import sets that init.lua sets again where it wins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ImportOverridden"))]
 pub struct Overridden {
     pub option: String,
     pub by: Wins,
@@ -646,6 +650,7 @@ fn block_lines(text: &str) -> Option<(u32, u32)> {
 
 /// What the app hands back to [`apply`] from the [`Preview`] the user confirmed.
 #[derive(Debug, Clone, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Previewed {
     pub base: String,
     pub result: String,
@@ -767,7 +772,6 @@ pub fn preview(dir: &Path, settings_text: &str, settings_path: &str, date: &str)
     let theme = profile.scheme.as_ref().map(|s| theme_id(&s.name));
     Ok(Preview {
         settings_path: settings_path.into(),
-        profile,
         summary,
         diff: diff(&old, &new),
         theme,

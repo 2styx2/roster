@@ -42,6 +42,7 @@ pub const CONFIG_VERSION: u32 = 4;
 
 /// What went wrong: where, and what. Shown as `init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ConfigError {
     /// Relative to the config dir: `init.lua`, `lua/keys.lua`.
     pub file: String,
@@ -697,6 +698,7 @@ fn lines(
 
 /// What a load gave: the Config in effect, and the error if the file couldn't be used.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ConfigReport"))]
 pub struct Report {
     pub config: Config,
     pub error: Option<ConfigError>,

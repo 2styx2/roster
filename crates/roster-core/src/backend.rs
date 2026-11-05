@@ -79,15 +79,19 @@ pub struct Ready {
 
 /// A Session that's started, as the frontend hears of it.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct OpenedSession {
     pub id: SessionId,
-    /// How it logs in: "key" or "password".
+    /// How it logs in: "key" or "password", as serve said.
+    #[cfg_attr(feature = "ts", ts(type = "\"key\" | \"password\""))]
     pub auth: String,
     /// serve's id for a Quick Connect (ticket 14).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub quick: Option<String>,
     /// The id serve holds a typed password under for "Save to vault" (tickets 15, 16), when asked.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub held: Option<String>,
     /// Its PTY is Windows' ConPTY: the app offers only the fills the core makes there (decision
     /// Q151 (i), ticket 162).
@@ -95,6 +99,7 @@ pub struct OpenedSession {
     /// The ssh user the core fills sudo's prompt for (`session.prepare`'s login), so the app judges
     /// sudo's prompt by the same user (the review of #308, #6). None for a Quick Connect.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub user: Option<String>,
 }
 
@@ -263,12 +268,14 @@ impl Drop for OwnCheck<'_> {
 
 /// What the UI learns about the Backend once it's up.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BackendInfo {
     /// "Local" or "WSL: <distro>".
     pub backend: String,
     /// The command line that runs serve.
     pub command: Vec<String>,
-    /// The `inventory.info` result as roster sent it.
+    /// The `inventory.info` result as roster sent it (its shape is serve's, not the core's).
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub inventory: Value,
 }
 
@@ -277,6 +284,7 @@ pub struct BackendInfo {
 /// had started itself. A check another caller started (a Plugin's `host.check`) isn't: stopping it
 /// would cut that caller's answer short.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct CheckStarted {
     pub job: String,
     pub own: bool,
