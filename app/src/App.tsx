@@ -281,10 +281,11 @@ function Workspace({
   // a Plugin's section or segment isn't there while the Config is applied (ticket 79).
   const layoutsJudged = pluginSnap.settled || conn.state === "failed";
   const warnings = useMemo(
-    () => (config && layoutsJudged ? [...configState.warnings, ...layoutWarnings(registries, config)] : configState.warnings),
-    // The registries' lists are what layoutWarnings reads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config, configState.warnings, layoutsJudged, registries, sectionDefs, statusDefs, toolbarDefs],
+    () =>
+      config && layoutsJudged
+        ? [...configState.warnings, ...layoutWarnings({ sections: sectionDefs, segments: statusDefs, controls: toolbarDefs }, config)]
+        : configState.warnings,
+    [config, configState.warnings, layoutsJudged, sectionDefs, statusDefs, toolbarDefs],
   );
 
   const { theme, themeChoice, themeInEffect, hintsChoice, hintsShown } = useWorkspaceTheme(registries.themes, store, config, appearance, !suspended);

@@ -261,13 +261,13 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
 /** The `modes` layouts' names the app has nothing for (a typo, most likely). Plugins' sections,
  * segments and controls count, so this waits until they've loaded (ticket 79: Plugins load after
  * the Config, and their names were warned about as unknown). */
-export function layoutWarnings(registries: Registries, c: Config): ConfigWarning[] {
+export function layoutWarnings(known: { sections: readonly { id: string }[]; segments: readonly { id: string }[]; controls: readonly { id: string }[] }, c: Config): ConfigWarning[] {
   const warnings: ConfigWarning[] = [];
   const warn = (message: string) => warnings.push({ file: "init.lua", line: null, message });
   // Folders registers its section from App; it counts as known from the start.
-  const sections = new Set(["sessions", "folders", "inventory", ...registries.sidebar.list().map((s) => s.id)]);
-  const segments = [...new Set([...STATUS_SEGMENTS, ...registries.status.list().map((s) => s.id)])];
-  const controls = registries.toolbar.list().map((t) => t.id);
+  const sections = new Set(["sessions", "folders", "inventory", ...known.sections.map((s) => s.id)]);
+  const segments = [...new Set([...STATUS_SEGMENTS, ...known.segments.map((s) => s.id)])];
+  const controls = known.controls.map((t) => t.id);
   for (const [mode, m] of Object.entries(c.modes)) {
     for (const id of m.sidebar.sections ?? []) {
       if (!sections.has(id)) warn(`modes.${mode}.sidebar.sections: no section named "${id}" (there's ${[...sections].join(", ")})`);
