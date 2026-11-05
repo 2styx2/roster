@@ -65,6 +65,10 @@ const setupOne: ErrorAction = { ...copy((p, ctx) => setupHost(p.host, ctx)), hos
 /** The first `command` in roster's message (e.g. "run `bw login` once"). */
 const quoted = (p: Problem) => /`([^`]+)`/.exec(p.message)?.[1] ?? null;
 
+/** Row 1's roster.yml path, if roster named one: a -c value shaped like a token comes as HIDDEN_PATH (#484 N3). */
+const HIDDEN_PATH = "(not repeated)";
+const rosterYmlPath = (p: Problem) => (p.data?.path && p.data.path !== HIDDEN_PATH ? String(p.data.path) : null);
+
 const row = (id: string, r: Omit<ErrorRow, "id" | "source">): ErrorRow => ({ id, source: BUILTIN, ...r });
 
 export const builtinErrorRows: readonly ErrorRow[] = [
@@ -73,7 +77,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
     codes: [1],
     where: ["roster.yml"],
     fix: () => "Fix roster.yml where roster's message says, then retry.",
-    actions: [copy((p) => (p.data?.path ? String(p.data.path) : null)), retry],
+    actions: [copy(rosterYmlPath), retry],
   }),
   row("not-in-ssh-config", {
     row: 2,

@@ -10,9 +10,17 @@
 # FAKE_ARGV_LOG=FILE: every call's full argv, one JSON list per line.
 # FAKE_LOG=FILE: "keepassxc-cli COMMAND" per call.
 # FAKE_KP_WRITE_FAIL=TEXT: add and rm fail with TEXT on stderr (e.g. the file is read-only).
-# FAKE_KP_ADD_HANG=SECONDS: `add` saves the entry, then hangs before answering.
-# FAKE_KP_ADD_STALL=SECONDS: `add` hangs before saving anything.
+# FAKE_KP_ADD_HANG=1: `add` saves the entry, then hangs before answering.
+# FAKE_KP_ADD_STALL=1: `add` hangs before saving anything.
+# Either says "fake: hanging" on a line of stdout when it gets there, so a test stops it on that word, not on a clock
+# (a 1 s limit ran out on Windows CI before the stand-in had started: #487). It hangs until it's killed.
 import json, os, sys, time
+
+
+def hang(where):
+    print(f"fake: hanging ({where})", flush=True)
+    while True: time.sleep(60)
+
 argv = sys.argv[1:]
 os.environ.get("FAKE_ARGV_LOG") and open(os.environ["FAKE_ARGV_LOG"], "a").write(json.dumps(argv) + "\n")
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("keepassxc-cli " + (argv[0] if argv else "") + "\n")
@@ -83,7 +91,7 @@ if cmd == "show":
     print("\n".join(out)); sys.exit()
 if cmd == "add":
     if os.environ.get("FAKE_KP_WRITE_FAIL"): fail(os.environ["FAKE_KP_WRITE_FAIL"])
-    if os.environ.get("FAKE_KP_ADD_STALL"): time.sleep(float(os.environ["FAKE_KP_ADD_STALL"]))
+    if os.environ.get("FAKE_KP_ADD_STALL"): hang("nothing saved")
     p = pos[1].strip("/")
     group = p.rpartition("/")[0]
     if find(p) or (group and group not in groups): fail(f"Could not create entry with path {pos[1]}.")
@@ -94,7 +102,7 @@ if cmd == "add":
     entries.append({"path": p, "UserName": (opts.get("-u") or opts.get("--username") or [""])[0],
                     "Password": pw, "URL": (opts.get("--url") or [""])[0], "Notes": ""})
     save()
-    if os.environ.get("FAKE_KP_ADD_HANG"): time.sleep(float(os.environ["FAKE_KP_ADD_HANG"]))
+    if os.environ.get("FAKE_KP_ADD_HANG"): hang("saved")
     print(f"Successfully added entry {p.split('/')[-1]}."); sys.exit()
 if cmd == "rm":
     if os.environ.get("FAKE_KP_WRITE_FAIL"): fail(os.environ["FAKE_KP_WRITE_FAIL"])
