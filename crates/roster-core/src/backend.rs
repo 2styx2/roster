@@ -12,7 +12,8 @@ use std::process::Command;
 /// The oldest `roster serve` API this app understands.
 pub const REQUIRED_API_VERSION: i64 = 1;
 
-/// roster's own error codes (roster/src/roster/serve.py).
+/// roster's own error codes (src/roster/errors.py; by name in docs/serve-contract.json, which the
+/// `contract` tests below hold these to).
 pub const INVENTORY_ERROR: i64 = 1;
 /// `session.prepare` (API 11, ticket 36): roster has no host key recorded for the Host (`data`: its
 /// address and port). The app asks the user ([`Backend::scan_host_key`], then [`Backend::trust_host_key`]).
@@ -58,10 +59,10 @@ fn sha256_shaped(fingerprint: &str) -> bool {
 
 /// How long the app waits for a method's answer, in seconds, where that isn't [`DEFAULT_TIMEOUT`].
 /// Each is longer than `roster serve`'s own deadline for the method plus what serve may still run
-/// once that's past (serve.py's `DEADLINES` and `AFTER_DEADLINE`; a roster test checks the two
-/// tables agree), so serve always answers before the app gives up, and its answer says what
-/// actually happened. `vault.login` has no serve deadline: each bw step is held to 40 s, and a
-/// wrong code runs bw once more.
+/// once that's past (each method's `deadline` and the `after_deadline` in docs/serve-contract.json,
+/// which a `contract` test below holds this to), so serve always answers before the app gives up,
+/// and its answer says what actually happened. `vault.login` has no serve deadline: each bw step is
+/// held to 40 s, and a wrong code runs bw once more.
 ///
 /// [`DEFAULT_TIMEOUT`]: crate::rpc::DEFAULT_TIMEOUT
 pub const CALL_SECS: &[(&str, u64)] = &[
@@ -647,5 +648,68 @@ pub fn fill_refusal(e: FillError<CallError>) -> CallError {
         other => CallError::Io {
             message: other.to_string(),
         },
+    }
+}
+
+/// The constants above are roster's facts: each is checked against `docs/serve-contract.json`,
+/// which `scripts/gen-serve-api.py` writes from serve's method registry and `errors.py`.
+#[cfg(test)]
+mod contract {
+    use super::*;
+    use crate::plugin::permission::SERVE_METHODS;
+
+    fn contract() -> Value {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/serve-contract.json"
+        )))
+        .expect("docs/serve-contract.json is JSON")
+    }
+
+    #[test]
+    fn the_codes_are_rosters() {
+        let c = contract();
+        assert_eq!(c["codes"]["INVENTORY_ERROR"], INVENTORY_ERROR);
+        assert_eq!(c["codes"]["HOST_KEY_UNKNOWN"], HOST_KEY_UNKNOWN);
+        assert_eq!(c["codes"]["FILL_REFUSED"], FILL_REFUSED);
+        assert_eq!(c["json_rpc"]["METHOD_NOT_FOUND"], METHOD_NOT_FOUND);
+    }
+
+    #[test]
+    fn the_api_versions_are_where_serve_added_each() {
+        let c = contract();
+        assert_eq!(c["methods"]["host.check_job"]["since"], CHECK_JOBS_API_VERSION);
+        assert_eq!(c["methods"]["session.fill"]["forms"][1], NESTED_FILL_API_VERSION);
+        assert!(c["api_version"].as_i64().is_some_and(|v| v >= REQUIRED_API_VERSION));
+    }
+
+    #[test]
+    fn the_app_waits_longer_than_every_deadline_plus_what_runs_after_it() {
+        let c = contract();
+        let after = c["after_deadline"].as_f64().expect("after_deadline");
+        let methods = c["methods"].as_object().expect("methods");
+        for (method, _) in CALL_SECS {
+            assert!(
+                methods.contains_key(*method),
+                "CALL_SECS names {method}, which serve doesn't have"
+            );
+        }
+        for (method, m) in methods {
+            if let Some(deadline) = m["deadline"].as_f64() {
+                let wait = timeout_for(method).as_secs_f64();
+                assert!(
+                    deadline + after < wait,
+                    "{method}: serve's {deadline} s + {after} s isn't under the app's {wait} s"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_plugin_is_granted_only_methods_serve_has() {
+        let c = contract();
+        for method in SERVE_METHODS {
+            assert!(c["methods"].get(*method).is_some(), "{method} isn't a serve method");
+        }
     }
 }
