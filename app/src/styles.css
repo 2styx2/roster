@@ -1440,14 +1440,17 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   position: sticky; bottom: -16px; z-index: 1; background: var(--panel);
   margin-inline: -20px; padding-inline: 20px; padding-bottom: 16px; margin-bottom: -16px;
 }
-/* Enter on Trust is dim until it means something: until Tab brings focus to it (the question
-   opens on Cancel, Q222), or until Quick Connect's box is ticked. Always there, so the button's
-   width and its label's centre never change (round 18: an invisible keycap's room had pushed the
-   label 20 px off-centre). No transition: focus moves with a key. */
-/* 0.68: its ↵ still reads at 3:1 on the button (3.4:1 dark, 3.1:1 light; round 19: 0.45 was
-   2.2:1 and 2.0:1), and still plainly quieter than the armed key's 5.7:1 and 6.6:1. */
-.btn-keys.key-dim { opacity: 0.68; }
-button:focus-visible > .btn-keys.key-on-focus { opacity: 1; }
+/* ↵ shows only on the button Enter acts on (Sessions.tsx `enterOn`; round 21: a dim ↵ on Trust
+   read as the default while the focused Cancel was what Enter pressed): the focused button, or
+   Quick Connect's Trust while its password field or the card has focus. Hidden, never removed,
+   so each button keeps one width and its label one place whatever has focus (round 18). No
+   transition: focus moves with a key. On a Quick Connect Trust not yet armed by the tick it's at
+   0.68: 3:1 or more on the button (3.4:1 dark, 3.1:1 light), plainly quieter than the armed
+   key's 5.7:1 and 6.6:1. */
+.btn-keys { gap: 3px; }
+.btn-keys .key-enter { visibility: hidden; }
+.btn-keys .key-enter.on { visibility: visible; }
+.btn-keys .key-dim { opacity: 0.68; }
 /* Quick Connect's box and, after a blocked Enter, what it needs: one row, the words beside the
    box in the room the row already has, one line that never wraps, so nothing moves when they
    come (round 19: from the footer, "Tick the box above first." pointed up ~220 px, in warn
@@ -1544,6 +1547,12 @@ button:focus-visible > .btn-keys.key-on-focus { opacity: 1; }
   .connect-card.key-question .key-actions { padding-top: 8px; }
   /* Clear of the sticky title (about 59 px) and footer (53 px) and their 22 px fades. */
   .connect-card.key-question { scroll-padding-block: 84px 78px; }
+  /* The Host question's advice starts a step apart from the key (12 px, the footer's own rule
+     gap), so at 480×320 the card opens with its first line whole in the fade and the second
+     wholly under the footer, and Tab to `:help host-keys` scrolls to where the opening sentence
+     is wholly under the title (round 21: at rest "trust it." sat half across the footer's edge,
+     and after Tab "roster hasn't seen this Host's key before." half across the title's rule). */
+  .connect-card.key-question > .key-advice { margin-top: 6px; }
 }
 .btn-keys { display: inline-flex; margin-left: 8px; }
 .btn-keys .keycap { height: 16px; min-width: 16px; }

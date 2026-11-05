@@ -1,13 +1,20 @@
 // Ticket 36 (decision Q60): a Session to a Host whose host key roster hasn't recorded asks first,
 // in the pane's connect card: the Host, address:port, key type and SHA256 fingerprint. Enter
 // trusts and connects, Esc cancels and leaves no Session.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
 import { HOST_KEY_API_VERSION } from "./backend/types";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { revealInCard } from "./session/reveal";
+
+// Where the card scrolls is reveal.test.ts's (jsdom has no layout); here, what it's asked to show.
+vi.mock("./session/reveal", async (original) => {
+  const real = await original<typeof import("./session/reveal")>();
+  return { ...real, revealInCard: vi.fn(real.revealInCard) };
+});
 
 const hosts = makeHosts(12);
 const HOST = hosts.hosts.find((h) => h.reviewed && h.enroll)!;
@@ -104,9 +111,10 @@ describe("a Host whose host key roster hasn't seen", () => {
       const cancel = within(q).getByRole("button", { name: /^Cancel/ });
       expect(cancel).toHaveFocus();
       expect(scrolled.filter((el) => q.contains(el))).toEqual([]);
-      // Trust keeps its Enter key at one width, dim until it has focus (round 18).
+      // Trust keeps its Enter key's room, shown only once it has focus (rounds 18, 21).
       const trust = within(q).getByRole("button", { name: "Trust and connect" });
-      expect(trust.querySelector(".btn-keys.key-dim")).not.toBeNull();
+      expect(trust.querySelector(".key-enter")).not.toBeNull();
+      expect(trust.querySelector(".key-enter.on")).toBeNull();
       expect(trusted).toEqual([]);
     } finally {
       Element.prototype.scrollIntoView = original;
@@ -134,10 +142,13 @@ describe("a Host whose host key roster hasn't seen", () => {
       await user.keyboard("{Shift>}{Tab}{/Shift}");
       expect(trust).toHaveFocus();
       expect(focused(trust)?.preventScroll).toBe(true);
-      // On to the pointer (in the scrolling body): it may scroll, as Tab would.
+      // On to the pointer (in the scrolling body): focus doesn't scroll on its own; the card
+      // brings it whole into view, no line cut at an edge (round 21; reveal.test.ts).
+      vi.mocked(revealInCard).mockClear();
       await user.keyboard("{Shift>}{Tab}{/Shift}");
       expect(link).toHaveFocus();
-      expect(focused(link)?.preventScroll).toBe(false);
+      expect(focused(link)?.preventScroll).toBe(true);
+      expect(revealInCard).toHaveBeenCalledWith(q, link, null, 22);
       // Round the cycle to Cancel (wraps), then Tab back to the pointer and to Trust.
       await user.keyboard("{Shift>}{Tab}{/Shift}");
       expect(cancel).toHaveFocus();
@@ -158,6 +169,31 @@ describe("a Host whose host key roster hasn't seen", () => {
     } finally {
       HTMLElement.prototype.focus = original;
     }
+  });
+
+  it("↵ shows on the button Enter acts on: Cancel as it opens, Trust only once it has focus (round 21)", async () => {
+    const { backend, trusted } = backendWith();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
+    const q = await question();
+    const cancel = within(q).getByRole("button", { name: /^Cancel/ });
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    const enter = (b: HTMLElement) => b.querySelector(".key-enter.on") !== null;
+    // Both keep the ↵'s room, so focus never resizes either.
+    expect(cancel.querySelector(".key-enter")).not.toBeNull();
+    expect(trust.querySelector(".key-enter")).not.toBeNull();
+    expect(cancel).toHaveFocus();
+    expect([enter(cancel), enter(trust)]).toEqual([true, false]);
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(trust).toHaveFocus();
+    expect([enter(cancel), enter(trust)]).toEqual([false, true]);
+    // On the help pointer Enter opens help: neither button shows it.
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect([enter(cancel), enter(trust)]).toEqual([false, false]);
+    // Clicking the card's text focuses the card: Enter there never trusts, so no ↵.
+    await user.click(within(q).getByText("roster hasn't seen this Host's key before."));
+    expect([enter(cancel), enter(trust)]).toEqual([false, false]);
+    expect(trusted).toEqual([]);
   });
 
   it("Esc records nothing and leaves no Session", async () => {

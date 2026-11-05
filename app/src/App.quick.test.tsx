@@ -2,13 +2,21 @@
 // Typed in the Picker, after `:connect`, or reached from the toolbar. The pane shows the box's key
 // and asks for the password in a masked field that empties as soon as it's sent; Esc connects
 // nothing. Fake Backend, stub terminal.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
 import { QUICK_CONNECT_API_VERSION } from "./backend/types";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { revealInCard } from "./session/reveal";
+
+// Where the card scrolls is reveal.test.ts's (jsdom has no layout); here, that every way in asks
+// it to bring the box's row into view, with the key above it (round 21).
+vi.mock("./session/reveal", async (original) => {
+  const real = await original<typeof import("./session/reveal")>();
+  return { ...real, revealInCard: vi.fn(real.revealInCard) };
+});
 
 const hosts = makeHosts(12);
 
@@ -71,8 +79,9 @@ describe("Quick Connect", () => {
     const q = await question("root@10.0.0.5");
     const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
     const trust = within(q).getByRole("button", { name: "Trust and connect" });
-    // The Enter key on Trust is there from the start, dim until the tick: ticking never resizes it.
-    expect(trust.querySelector(".btn-keys.key-dim")).not.toBeNull();
+    // The Enter key on Trust keeps its room from the start, dim until the tick: ticking never
+    // resizes it.
+    expect(trust.querySelector(".key-enter.key-dim")).not.toBeNull();
     await user.click(trust);
     expect(within(q).getByRole("alert")).toHaveTextContent("Tick it to trust and connect.");
     box.focus();
@@ -85,7 +94,7 @@ describe("Quick Connect", () => {
     await screen.findByRole("complementary", { name: "Help" });
     expect(backend.quickConnects()).toEqual([]);
     await user.click(box);
-    expect(trust.querySelector(".btn-keys.key-dim")).toBeNull();
+    expect(trust.querySelector(".key-enter.key-dim")).toBeNull();
     expect(within(q).getByRole("alert")).toHaveTextContent("");
   });
 
@@ -122,6 +131,56 @@ describe("Quick Connect", () => {
     expect(box).toBeChecked();
     expect(row).not.toHaveAttribute("data-nudged");
     expect(within(q).getByRole("alert")).toHaveTextContent("");
+    expect(backend.quickConnects()).toEqual([]);
+  });
+
+  it("every blocked Enter scrolls the box's row into view, with the key: the button, Enter in the field, on the card (round 21)", async () => {
+    const backend = backendAt();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+    const q = await question("root@10.0.0.5");
+    const row = q.querySelector(".quick-checked-row");
+    const print = q.querySelector(".key-print");
+    const field = within(q).getByLabelText("Password for root");
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    const reveal = vi.mocked(revealInCard);
+    for (const press of [
+      () => user.click(trust),
+      () => user.type(field, `${FAKE_HOST_PASSWORD}{Enter}`),
+      async () => {
+        q.focus();
+        await user.keyboard("{Enter}");
+      },
+    ]) {
+      await user.click(field);
+      reveal.mockClear();
+      await press();
+      expect(reveal).toHaveBeenCalledWith(q, row, print, 22);
+    }
+    expect(backend.quickConnects()).toEqual([]);
+  });
+
+  it("↵ shows on the button Enter acts on: Trust from the password field or Trust itself, Cancel on Cancel, neither on the box (round 21)", async () => {
+    const backend = backendAt();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+    const q = await question("root@10.0.0.5");
+    const cancel = within(q).getByRole("button", { name: /^Cancel/ });
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    const field = within(q).getByLabelText("Password for root");
+    const enter = (b: HTMLElement) => b.querySelector(".key-enter.on") !== null;
+    // It opens on the box: Enter there does nothing.
+    expect([enter(trust), enter(cancel)]).toEqual([false, false]);
+    await user.click(field);
+    expect([enter(trust), enter(cancel)]).toEqual([true, false]);
+    await user.tab();
+    expect(trust).toHaveFocus();
+    expect([enter(trust), enter(cancel)]).toEqual([true, false]);
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    expect([enter(trust), enter(cancel)]).toEqual([false, true]);
+    // Dim until the tick arms it.
+    expect(trust.querySelector(".key-enter.key-dim")).not.toBeNull();
     expect(backend.quickConnects()).toEqual([]);
   });
 
