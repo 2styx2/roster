@@ -444,9 +444,10 @@ def test_vault_unlock_refuses_a_folder_others_may_write_to(isolated, fakes, monk
     session_path().parent.mkdir(parents=True, exist_ok=True)
     session_path().parent.chmod(0o777)
     term = Terminal(monkeypatch)
-    with pytest.raises(SystemExit, match=r"\[202\] .*writable by others"):
+    with pytest.raises(SystemExit, match=r"\[202\] .*writable by others") as e:
         main(["vault", "unlock"])
     assert term.passwords == 0 and not session_path().exists()
+    assert "fix its permissions: chmod go-w" in str(e.value) and "remove it" not in str(e.value)   # it may hold init.lua
 
 
 @posix_only
@@ -555,3 +556,108 @@ def test_vault_lock_removes_the_file_when_bw_isnt_installed(isolated, monkeypatc
         main(["vault", "lock"])
     assert not session_path().exists()
     assert f"removed {session_path()}" in capsys.readouterr().out
+
+
+# ---- T248 (#486; #480's second review, LOW-5): every folder above the session file, from $HOME down, is checked
+# too, and the file is made, read back and renamed through one open handle on its folder, so a folder swapped after
+# the check can't take the key elsewhere (Linux and macOS)
+
+@posix_only
+def test_vault_unlock_refuses_a_link_to_your_folder_inside_a_shared_one(isolated, fakes, monkeypatch, capsys,
+                                                                        tmp_path):
+    """Anyone who may write to the 777 folder could rename `roster` away and put a folder of theirs there."""
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    (shared / "roster").mkdir(mode=0o700)
+    session_path().parent.parent.mkdir(parents=True, exist_ok=True)
+    session_path().parent.symlink_to(shared / "roster")
+    term = Terminal(monkeypatch)
+    with pytest.raises(SystemExit, match=rf"\[202\] {shared} is writable by others"):
+        main(["vault", "unlock"])
+    assert term.passwords == 0 and not (shared / "roster" / "bw-session").exists()
+
+
+@posix_only
+def test_vault_unlock_refuses_a_dot_config_others_may_write_to(isolated, fakes, monkeypatch, capsys):
+    dot_config = session_path().parent.parent
+    dot_config.mkdir(parents=True, exist_ok=True)
+    dot_config.chmod(0o777)
+    term = Terminal(monkeypatch)
+    with pytest.raises(SystemExit, match=rf"\[202\] {dot_config} is writable by others - roster won't keep a session "
+                                         rf"key in it; fix its permissions: chmod go-w {dot_config}, then run"):
+        main(["vault", "unlock"])
+    assert term.passwords == 0 and not session_path().exists()
+
+
+@posix_only
+def test_a_session_file_under_a_home_others_may_write_to_is_ignored(isolated, fakes, capsys):
+    _saved()
+    home = session_path().parent.parent.parent
+    home.chmod(0o777)
+    try:
+        with pytest.raises(providers.SecretError, match="locked"):
+            get_secret("bw:Network gear", "g")
+        assert f"warning      {home} is writable by others (fix its permissions: chmod go-w {home}) - ignored" in (
+            capsys.readouterr().out)
+        assert bitwarden.saved_session(providers.Ctx("bw", None))[0] == "ignored"
+    finally:
+        home.chmod(0o755)
+
+
+@posix_only
+def test_a_link_to_your_folder_in_a_sticky_shared_one_is_fine(isolated, fakes, monkeypatch, capsys, tmp_path):
+    """As /tmp: anyone may add to a sticky folder, but only an entry's owner may rename or remove it."""
+    shared = tmp_path / "sticky"
+    shared.mkdir()
+    shared.chmod(0o1777)
+    (shared / "roster").mkdir(mode=0o700)
+    session_path().parent.parent.mkdir(parents=True, exist_ok=True)
+    session_path().parent.symlink_to(shared / "roster")
+    Terminal(monkeypatch)
+    assert main(["vault", "unlock"]) == 0
+    assert (shared / "roster" / "bw-session").read_text() == "fake-session-key\n"
+
+
+@posix_only
+def test_a_folder_swapped_after_it_was_checked_never_gets_the_key(isolated, fakes, monkeypatch, capsys, tmp_path):
+    """#480's second review's race: the folder renamed away and a link to a 777 folder put in its place right after
+    the check. The key is written through the folder that was checked, so it ends up there, never in the 777 one."""
+    d = session_path().parent
+    d.mkdir(parents=True, mode=0o700)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    real = bitwarden.open_session_dir
+
+    def open_then_swap(create=False):
+        fd = real(create)
+        if d.is_dir() and not d.is_symlink():                # what a writer to ~/.config could do in the gap
+            d.rename(tmp_path / "orig")
+            d.symlink_to(shared)
+        return fd
+    monkeypatch.setattr(bitwarden, "open_session_dir", open_then_swap)
+    bitwarden.save_session_file("abc123")
+    assert not (shared / "bw-session").exists()
+    assert (tmp_path / "orig" / "bw-session").read_text() == "abc123\n"
+
+
+def test_a_terminal_error_while_asking_counts_as_no(isolated, fakes, monkeypatch, capsys):
+    """#486 item 3: the terminal hung up while the question waited (EIO): No, never a traceback."""
+    def hung_up():
+        raise OSError(5, "Input/output error")
+    term = Terminal(monkeypatch, "y\n", on_ask=hung_up)
+    assert get_secret("bw:Network gear", "g") == "pw-netops"
+    assert OFFER in term.shown and not session_path().exists()
+    assert "this unlock lasts for this run only" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("raw", ["[1]", '"locked"', "null"])
+def test_check_box_with_a_bw_status_that_isnt_an_object_says_so(isolated, fakes, write_config, monkeypatch, capsys,
+                                                                raw):
+    """#486 item 4: valid JSON that isn't a status object gets the error output that isn't JSON at all already got,
+    never an AttributeError (a traceback)."""
+    write_config(BW_YML)
+    monkeypatch.setenv("FAKE_BW_STATUS_RAW", raw)
+    c = bw_check(capsys, "check", "--box")
+    assert c["level"] == "error" and c["message"].endswith(": couldn't read `bw status` output")
