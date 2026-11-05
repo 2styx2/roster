@@ -19,12 +19,15 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **`roster vault op -- ARGS`: the 1Password CLI, read-only unless `--write`** (#432): next to `roster vault bw`, with the same rules. op gets your sign-in (the 1Password app, or the `OP_SESSION_*`/`OP_SERVICE_ACCOUNT_TOKEN` in your shell) in its environment and no Bitwarden variable; roster never reads what op prints. `item get`, `item list`, `read`, `vault list`, `whoami` and op's other reads run; commands that change the vault or the account (`item edit`, `signin`, ...) or write a file (`--out-file`, `update`) need `--write`; `op run`, `--session` and `--config` are refused, and so is any command roster doesn't know. See [`roster vault op`](cli-reference.md#roster-vault-op).
 - **`roster add NAME --from-vault` works with 1Password** (#432): an `op:` item's URL (from its overview, without any `user:password@`) and username, never its password; several items with that name need its id, as with Bitwarden.
 - **`roster help`** (#430): the overview; `roster help COMMAND` a command's options and examples (`roster help vault bw`), `--man` the manual, `--completion SHELL` Tab completion.
+- **`roster setup --host NAME`: exactly one Host** (#437): `--only NAME` also takes every Host whose group, type or product is NAME; `--host` takes only the Host by that name. `roster add` now prints `roster setup --host NAME` as its next step, and the fixes `roster check` and the Mesh give for one Host (a host key to record, a key to install) say it too.
 
 **App**
 
 - **`:tutor topology`** (#233): the Topology Plugin ships a tutorial of its own. On the demo Inventory, open the map, show one group, and go from a node to its Host's details and a Session; each step ticks as you do it. The demo has no Mesh, and the tutorial says so.
 - **No Inventory yet? The app makes one** (#401): on a Box with no `roster.yml`, **Start your Inventory** offers a blank one, a copy of a `roster.yml` you have, or a clone of your team's repo, in a folder you pick (`~/infra` by default). `roster serve` writes it and names it, and the app starts on it. With a roster older than serve API 28 it says to run `roster init --blank` instead.
 - **A plain `roster.yml` says "saved"** (#401): an edit to an Inventory that isn't in a team repo says it was saved to `roster.yml`, never "a Pending change", the toolbar has no Changes button, and `:changes`, `:discard` and `:publish` say there's nothing to publish.
+- **The add-Host form fills from a vault item** (#437): with "An existing vault item", **Fill from this item** asks roster for the item's address, SSH port and user (never its password) and fills them in, saying which changed. Needs serve API 29.
+- **The add-Host form warns about a taken address** (#437): an address and port another Host already has is said under Address, naming that Host, and the Host can still be added (a second Login to one machine). `roster add` still refuses it (184).
 
 **Plugin API 6**
 
@@ -70,6 +73,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A Host whose `ip:` is a name gets its network's rate-limiter hint** (#420): when `roster check` gets no answer, the address the name resolved to is matched against `rate_limited:`, so a name in a listed network says to wait a few minutes, and one outside them gets no rate-limiter hint, as an address does.
 - **`roster inv add NAME <Tab>` offers nothing** (#420): a new name goes there, so the existing Inventories' names are no longer suggested.
 - **A `bw-session` file Windows PowerShell wrote works** (#433): Windows PowerShell 5.1's `bw unlock --raw > FILE` writes UTF-16 with a byte-order mark, which roster read as garbage, so bw failed. roster now reads a session file in UTF-16 or UTF-8 with a byte-order mark as well as plain text, without its line end; a file that isn't a session key (anything but plain ASCII) is ignored with a warning, as a file that isn't yours alone is. The docs give the line that writes plain text: `bw unlock --raw | Set-Content -Encoding ascii -NoNewline $env:APPDATA\roster\bw-session`.
+- **Moving a Host to another group keeps its `os:`** (#437): a Host that got `os: windows` from its group keeps it, and a Host moving into a group with `os: windows` gets `os: posix` written on it, so roster never runs the other shell on it.
+- **A locked vault with no terminal to unlock it is error 14** (#437), as the app and `roster check` say it, where some commands said 35. Bitwarden (no terminal, or an expired session file) and KeePassXC.
 
 ### Deprecated
 

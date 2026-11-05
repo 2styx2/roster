@@ -614,3 +614,26 @@ def test_serves_own_writes_are_not_outside_edits(repo):
         assert taken(got) == [("inventory.changed", {"applied": False, "error": None})]
     finally:
         looks.set()
+
+
+WINDOWS = ("groups:\n  win:\n    user: u\n    os: windows\n    hosts:\n      w1: 10.0.0.1\n"
+           "  plain:\n    user: u\n    hosts:\n      p1: 10.0.0.9\n")
+
+
+def test_moving_a_host_out_of_a_windows_group_keeps_its_os(write_config):
+    path = write_config(WINDOWS)
+    _, new, h, pinned = edit.moved(path, "w1", "plain")
+    assert pinned == ["os"] and h["os"] == "windows" and "      w1:\n        ip: 10.0.0.1\n        os: windows\n" in new
+
+
+def test_moving_a_posix_host_into_a_windows_group_keeps_it_posix(write_config):
+    path = write_config(WINDOWS)
+    _, new, h, pinned = edit.moved(path, "p1", "win")          # unset is posix (Q174): written so the group's can't win
+    assert pinned == ["os"] and h["os"] == "posix" and "      p1:\n        ip: 10.0.0.9\n        os: posix\n" in new
+
+
+def test_deleting_a_windows_group_moves_its_hosts_keeping_their_os(write_config):
+    from roster.config import load_config_text
+    path = write_config(WINDOWS)
+    _, new, moved = edit.group_deleted(path, "win", "plain")
+    assert moved == ["w1"] and load_config_text(new, path)["hosts"]["w1"]["os"] == "windows"

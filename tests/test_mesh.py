@@ -742,7 +742,7 @@ def test_a_peer_without_a_recorded_host_key_is_left_out(net, isolated):
     kh.write_text("".join(x + "\n" for x in kh.read_text().splitlines() if not x.startswith("10.0.0.30 ")))
     r = mesh.run(net.cfg(), apply=True)
     link = next(x for x in r["links"] if x["to"] == "nas-1")
-    assert link["status"] == "no-host-key" and "roster setup --only nas-1" in link["why"]
+    assert link["status"] == "no-host-key" and "roster setup --host nas-1" in link["why"]
     assert net.mesh_lines("nas-1") == []
 
 
@@ -1261,7 +1261,7 @@ def test_a_via_link_whose_jump_host_has_no_recorded_host_key_is_not_written(net,
     r = mesh.run(net.cfg(), apply=True)
     link = next(x for x in r["links"] if (x["from"], x["to"]) == ("orion-3", "db-9"))
     assert link["status"] == "no-host-key"
-    assert link["why"] == "no recorded host key for jump-1 (orion-3's hop to db-9) on this Box (roster setup --only jump-1)"
+    assert link["why"] == "no recorded host key for jump-1 (orion-3's hop to db-9) on this Box (roster setup --host jump-1)"
     assert net.mesh_lines("db-9") == []
     assert "ProxyJump" not in net.file("orion-3", "home/.ssh/roster-mesh/config")
 

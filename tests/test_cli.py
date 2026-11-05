@@ -88,6 +88,31 @@ def test_setup_skips_unreviewed_hosts(capsys, write_config):
     assert rc == 0 and "skipping     1 hosts with reviewed: false" in out
 
 
+SAME_NAME_YML = ("groups:\n  nas:\n    user: u\n    enroll: false\n    auth: env:PW\n    hosts:\n"
+                 "      nas: 127.0.0.1\n      backup-01: {ip: 127.0.0.2, type: nas}\n")
+
+
+def test_setup_host_sets_up_exactly_that_host_never_its_group_or_type(capsys, write_config, monkeypatch):
+    scanned = []                                                 # #437 (1): --only nas would take backup-01 too
+    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    write_config(SAME_NAME_YML)
+    rc, out = run(capsys, "setup", "--host", "nas", "--dry-run")
+    assert rc == 0 and scanned == ["nas"] and "1 hosts from" in out
+
+
+def test_setup_host_names_an_unknown_host(capsys, write_config):
+    write_config(SAME_NAME_YML)
+    with pytest.raises(SystemExit, match="unknown host 'backup'"):
+        main(["setup", "--host", "backup"])
+
+
+def test_setup_host_and_only_dont_go_together(capsys, write_config):
+    write_config(SAME_NAME_YML)
+    with pytest.raises(SystemExit) as e:
+        main(["setup", "--host", "nas", "--only", "nas"])
+    assert e.value.code == 2 and "not allowed with argument" in capsys.readouterr().err
+
+
 def test_providers_flags_unknown(capsys, write_config):
     write_config("groups:\n  g: {user: u, auth: 'keeper:x', hosts: {h1: 10.0.0.1}}\n")
     rc, out = run(capsys, "vault", "status")

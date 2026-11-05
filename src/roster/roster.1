@@ -4,7 +4,7 @@ roster \- give this box (and Claude) access to the hosts in roster.yml
 .SH SYNOPSIS
 .nf
 roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
-roster setup [\-\-only LIST] [\-\-dry\-run] [\-\-force]
+roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force]
 roster sync
 roster check [\-\-box] [\-\-auth] [\-\-only LIST] [\-\-json] [host]
 roster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]
@@ -63,12 +63,15 @@ blank, file:PATH (a copy of that roster.yml, once it loads), repo:URL (a git clo
 name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you keep
 .SS setup
 .PP
-\fBroster setup [\-\-only LIST] [\-\-dry\-run] [\-\-force]\fR
+\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force]\fR
 .PP
-One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-dry\-run\fR). After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
+One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR). \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
+.TP
+\fB\-\-host NAME\fR
+only the Host by exactly this name, never a group, type or product by it (\-\-only would take those too)
 .TP
 \fB\-\-dry\-run\fR
 show what would happen, change nothing remote

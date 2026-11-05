@@ -51,7 +51,7 @@ def test_a_session_with_no_recorded_key_asks_first(app, sshd, unknown):
     assert err["message"] == "roster hasn't seen esx's host key before"
     assert err["data"] == {"address": "127.0.0.1", "port": sshd.port,
                            "fix": "compare its fingerprint with the Host's console or owner, then trust it when "
-                                  "the app asks, or run `roster setup --only esx`"}
+                                  "the app asks, or run `roster setup --host esx`"}
     assert sshd.accepts == 0                     # prepare stays local: the app fetches the key when it asks
 
 

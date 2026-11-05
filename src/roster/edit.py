@@ -767,9 +767,11 @@ def own_keys(text, group, name):
 
 
 # What a move writes on the Host to keep it. A Host with no mesh: (or mesh_dir:) anywhere has nothing to keep: it
-# takes the Mesh setting of the group it moves to, as any new member would (decision Q77).
-PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", *TEXT)
+# takes the Mesh setting of the group it moves to, as any new member would (decision Q77). An unset os: is posix
+# (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198).
+PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", *TEXT)
 UNSET_JOINS = ("mesh", "mesh_dir")
+POSIX = "posix"
 
 
 def pinned_move(text, was_host, name, group, mesh_dir=None):
@@ -779,6 +781,7 @@ def pinned_move(text, was_host, name, group, mesh_dir=None):
     the result). Returns (new text, the fields pinned)."""
     old = current(was_host) | {"mesh_dir": mesh_dir}
     was, will = inherited(text, was_host["group"]), inherited(text, group)
+    old["os"], was["os"], will["os"] = (v or POSIX for v in (old["os"], was["os"], will["os"]))
     own = own_keys(text, was_host["group"], name)
     pin = {k: old[k] for k in PINNED if was[k] != will[k] and old[k] != will[k] and k not in own
            and not (k in UNSET_JOINS and old[k] is None)}
@@ -795,7 +798,8 @@ def check_moved(before, after, names, group):
         was = before["hosts"][name]
         dirs = before["mesh_dirs"].get(name), after["mesh_dirs"].get(name)
         differs = sorted([k for k in was if k != "group" and (h or {}).get(k) != was[k]
-                          and not (k == "mesh" and was[k] is None)]
+                          and not (k == "mesh" and was[k] is None)
+                          and not (k == "os" and ((h or {}).get(k) or POSIX) == (was[k] or POSIX))]
                          + (["mesh_dir"] if dirs[0] is not None and dirs[0] != dirs[1] else []))
         if h is None or h["group"] != group or differs:
             raise Problem(WOULD_CHANGE, f"{name} would come out different in group {group} ({', '.join(differs)} it "

@@ -477,6 +477,20 @@ export interface SaveTargets {
   problem: { code: number; message: string; fix: string } | null;
 }
 
+/** The first `api_version` with `vault.item_fields` (T220): the add-Host form's "Fill from this item" (#437). */
+export const ITEM_FIELDS_API_VERSION = 29;
+
+/** `vault.item_fields`: what a vault item says about its Host, never its password. A field the item
+ * doesn't have is left out; `note` says why its URI gave no address. */
+export interface VaultItemFields {
+  provider: string;
+  item: string;
+  address?: string;
+  port?: number;
+  user?: string;
+  note?: string;
+}
+
 /** roster's codes for where to save (ticket 35). */
 export const SaveToError = {
   unknownTarget: 64,
@@ -963,6 +977,9 @@ export interface Backend {
   /** `vault.targets` (API 10): where "Save to vault" can put an item, and the default. Needs the
    * vault unlocked (14). */
   saveTargets(): Promise<SaveTargets>;
+  /** `vault.item_fields` (API 29): a vault item's address, SSH port and user, never its password.
+   * Rejects with BackendCallError (14 locked, 32 no such item, 33 several, 186 a provider that can't). */
+  vaultItemFields(item: string, provider?: string): Promise<VaultItemFields>;
   /** Start signing the vault CLI in (`vault.login`). Rejects with BackendCallError (SignInError
    * and VaultError codes); `data.step` says where a sign-in carries on after a failure. */
   signIn(start: SignInStart): Promise<SignInStep>;

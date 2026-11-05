@@ -358,6 +358,16 @@ async fn vault_targets(state: tauri::State<'_, Arc<BackendState>>) -> Result<Val
     call(&state, "vault.targets", json!({})).await
 }
 
+/// A vault item's address, SSH port and user, never its password (`vault.item_fields`, API 29):
+/// the add-Host form's "Fill from this item" (#437). `params`: `{item, provider?}`.
+#[tauri::command]
+async fn vault_item_fields(
+    state: tauri::State<'_, Arc<BackendState>>,
+    params: serde_json::Map<String, Value>,
+) -> Result<Value, CallError> {
+    call(&state, "vault.item_fields", Value::Object(params)).await
+}
+
 /// roster's diagnostics for one Host (`host.check`, api 2): its steps in order, stopping at the
 /// first failure. roster makes at most one connection and one login, so this is safe on a rate-limited network.
 /// From serve API 21 it's a job in serve, followed by the core (`Backend::check_host`), so no
@@ -1410,6 +1420,7 @@ pub fn run() {
             vault_logout,
             vault_configure,
             vault_targets,
+            vault_item_fields,
             config_load,
             config_open,
             config_reload,

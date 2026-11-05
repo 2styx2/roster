@@ -453,7 +453,7 @@ def known_key(h):
         raise RpcError(HOST_KEY_UNKNOWN, f"roster hasn't seen {h['name']}'s host key before",
                        {"address": h["ip"], "port": h["ssh"]["port"]},
                        fix="compare its fingerprint with the Host's console or owner, then trust it when the app "
-                           f"asks, or run `roster setup --only {h['name']}`")
+                           f"asks, or run `roster setup --host {h['name']}`")
 
 
 # An app Session never trusts a host key on its own (Q60): the key must already be in roster's known hosts, put

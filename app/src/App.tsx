@@ -41,6 +41,7 @@ import {
   type HostList,
   type SaveTarget,
   VAULT_CONFIG_API_VERSION,
+  ITEM_FIELDS_API_VERSION,
   HOST_KEY_API_VERSION,
   QUICK_CONNECT_API_VERSION,
   SAVE_TO_VAULT_API_VERSION,
@@ -734,6 +735,8 @@ function Workspace({
   // every `:source`.
   const connInfo = conn.state === "ready" ? conn.info : null;
   const configuresVault = connInfo !== null && connInfo.inventory.api_version >= VAULT_CONFIG_API_VERSION;
+  /** `vault.item_fields` (API 29): the add form's "Fill from this item" (#437). */
+  const readsItemFields = connInfo !== null && connInfo.inventory.api_version >= ITEM_FIELDS_API_VERSION;
   const vaultSettingsKey = JSON.stringify(vaultSettingsOf(config?.vault));
   const [vaultConfiguredFor, setVaultConfiguredFor] = useState<BackendInfo | null>(null);
   /** Goes up when where "Save to vault" can go may have changed (ticket 35): the add form lists again. */
@@ -2575,6 +2578,7 @@ function Workspace({
             actions={{ run, copy }}
             pull={gate}
             chooseTarget={configuresVault}
+            fillFromItem={readsItemFields}
             targetsVersion={targetsVersion}
             onAdded={(r) => {
               closeAdd();

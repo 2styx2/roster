@@ -7,7 +7,7 @@ import pytest
 from conftest import WINDOWS
 
 from roster import providers
-from roster.providers import SecretError, get_secret, setup_providers
+from roster.providers import get_secret, setup_providers
 
 MASTER = "c0rrect-h0rse"                # the database's master password: never in argv, output or an error
 NEW_PW = "n3w-kp-s3cret"
@@ -63,7 +63,7 @@ def test_a_locked_database_is_never_opened_with_a_guess(kdbx, tmp_path, monkeypa
     with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
         get_secret("kp:esx ssh", "g")
     monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)             # the CLI with no terminal to ask in
-    with pytest.raises(SecretError, match="no terminal"):
+    with pytest.raises(providers.VaultLocked, match="no terminal"):   # 14, not 35 (#437)
         get_secret("kp:esx ssh", "g")
     assert argv_log(tmp_path) == ""                                     # keepassxc-cli never ran
 
