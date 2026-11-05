@@ -3730,6 +3730,7 @@ function Workspace({
               canFill={canFill}
               fillKeys={hintFor(keymap, "fill")}
               reveal={reveal}
+              say={setMessage}
             />
           )}
           {/* The bottom line, as Neovim's: the message row, where the command line types too, so

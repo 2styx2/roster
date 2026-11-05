@@ -231,6 +231,8 @@ describe("Quick Connect", () => {
     await user.keyboard("typed{Escape}");
     await waitFor(() => expect(screen.queryByRole("group", { name: "Session root@10.0.0.5" })).toBeNull());
     expect(backend.quickConnects()).toEqual([]);
+    // It says so, naming the address the key belongs to (round 21).
+    expect(document.querySelector(".message-line")).toHaveTextContent("Didn't trust 10.0.0.5's key; nothing was saved.");
   });
 
   it("refuses a key that differs from the recorded one, without Host-only fixes", async () => {

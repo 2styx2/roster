@@ -25,6 +25,7 @@ import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { useForgetOnLock } from "../lock/forgetOnLock";
 import { revealInCard } from "./reveal";
+import { slip, type Message } from "../ui/messages";
 
 /** Where a Session is on its way to a shell (issue #78): `starting` while roster prepares it and
  * ssh starts on this Box, `logging-in` once ssh runs and the Host hasn't answered yet, null once
@@ -787,6 +788,12 @@ export function endedTone(exit: Exit): "warn" | null {
   return exit.closed || exit.code === 0 ? null : "warn";
 }
 
+/** What the message line says when a key question is cancelled: nothing reaches roster's
+ * known_hosts until Trust (`tabs.cancelKey` calls no Backend). */
+export function keyCancelled(host: string): string {
+  return `Didn't trust ${host}'s key; nothing was saved.`;
+}
+
 /** Cancel's keys on a key question: Esc always, and ↵ before it while Cancel has focus (Enter
  * then cancels, as the question opens; round 21). The ↵ keeps its room when hidden, so focus
  * never resizes the button. */
@@ -1008,6 +1015,8 @@ export interface SessionPanesProps {
   canFill?: boolean;
   /** The keys that fill it (`:fill`), if the keymap has them. */
   fillKeys?: string | null;
+  /** Says something on the message line (a key question cancelled, round 21). */
+  say?(message: Message): void;
 }
 
 export function SessionPanes({
@@ -1027,6 +1036,7 @@ export function SessionPanes({
   reveal = null,
   canFill = false,
   fillKeys = null,
+  say,
 }: SessionPanesProps) {
   const actions: ProblemActions = { run, copy };
   return (
@@ -1077,7 +1087,15 @@ export function SessionPanes({
                 hostKey={s.state === "asking" ? s.key : null}
                 answers={{
                   trust: () => tabs.trustKey(tab.id),
-                  cancel: () => tabs.cancelKey(tab.id),
+                  cancel: () => {
+                    // Cancel on a key question closes the Session (or takes a reconnect back):
+                    // it says so, and that nothing was recorded, since nothing was (round 21:
+                    // it closed with no word). Calm, in the text colour.
+                    const keyQuestion = s.state === "asking" && s.key !== null;
+                    tabs.cancelKey(tab.id);
+                    if (keyQuestion)
+                      say?.(slip(keyCancelled(tab.quick?.to.address ?? tab.host)));
+                  },
                   connect: (password, save) =>
                     tab.quick
                       ? tabs.connectQuick(tab.id, password, save)

@@ -207,6 +207,20 @@ describe("a Host whose host key roster hasn't seen", () => {
     expect(trusted).toEqual([]);
   });
 
+  it("Cancel says the key wasn't trusted and nothing was saved, calmly (round 21)", async () => {
+    const { backend, trusted } = backendWith();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
+    const q = await question();
+    await user.click(within(q).getByRole("button", { name: /^Cancel/ }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: `Session ${HOST.name}` })).toBeNull());
+    const line = document.querySelector(".message-line") as HTMLElement;
+    expect(line).toHaveTextContent(`Didn't trust ${HOST.name}'s key; nothing was saved.`);
+    expect(line).toHaveClass("slip");
+    // It's true: nothing reached roster's known_hosts.
+    expect(trusted).toEqual([]);
+  });
+
   it("refuses a key that changed between the question and the trust", async () => {
     const { backend } = backendWith({ changesOnTrust: true });
     const user = await ready(backend);

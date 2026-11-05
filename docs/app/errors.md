@@ -159,7 +159,7 @@ The question shows the key's type and its SHA256 fingerprint. Before you trust i
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-It prints the key's size, `SHA256:` and the fingerprint, then the key's comment and type (`(ED25519)`). Use the file of the type the question names: `ssh_host_rsa_key.pub` for `ssh-rsa`, `ssh_host_ecdsa_key.pub` for `ecdsa-sha2-nistp256`. On Windows (OpenSSH Server) the files are in `C:\ProgramData\ssh\`. A switch, an appliance or ESXi may show it on its own console or web page instead. Every character must match; if one doesn't, press Cancel and find out why (a reinstalled machine, a reused address, or someone in between). The app's question links here (`:help host-keys`). Trust records the key in `~/.ssh/roster_known_hosts`, and from then on a different key is refused, never asked about (row 13).
+It prints the key's size, `SHA256:` and the fingerprint, then the key's comment and type (`(ED25519)`). Use the file of the type the question names: `ssh_host_rsa_key.pub` for `ssh-rsa`, `ssh_host_ecdsa_key.pub` for `ecdsa-sha2-nistp256`. On Windows (OpenSSH Server) the files are in `C:\ProgramData\ssh\`. A switch, an appliance or ESXi may show it on its own console or web page instead. Every character must match; if one doesn't, press Cancel and find out why (a reinstalled machine, a reused address, or someone in between). The app's question links here (`:help host-keys`). Trust records the key in `~/.ssh/roster_known_hosts`, and from then on a different key is refused, never asked about (row 13). Cancel records nothing and closes the Session; the message line says so ("Didn't trust esx-02's key; nothing was saved.").
 
 ## Quick Connect
 
