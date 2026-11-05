@@ -222,6 +222,15 @@ describe("the status bar's order of giving way (rounds 18, 19, 21)", () => {
   });
 });
 
+describe("Key bindings in a short window (round 21)", () => {
+  it("gives the list the room: no footer and tighter rows at 360 px tall or less", () => {
+    const short = rules(stylesCss).filter(([, , at]) => at.some((a) => /max-height:\s*360px/.test(a)));
+    const body = (sel: string) => short.filter(([s]) => s.split(",").map((x) => x.trim()).includes(sel)).map(([, b]) => b).join(";");
+    expect(body(".keys-panel .panel-foot")).toMatch(/display:\s*none/);
+    expect(body(".keys-panel td")).toMatch(/padding-block:\s*4px/);
+  });
+});
+
 describe("the Finder's list", () => {
   it("stacks its rows: it never takes the Picker's column grid", () => {
     // Round 2 made .picker-list a grid; the Finder, which reuses the class, laid every row side by side.

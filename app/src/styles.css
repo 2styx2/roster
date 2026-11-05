@@ -797,6 +797,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 .panel-empty { margin: 0; padding: 12px 14px; color: var(--muted); }
+/* A window 360 px tall or less (480 × 320 showed three rows and a cut footer, round 21): the list
+   takes the room. The header, filter and rows are tighter (rows 29 px), group headings closer to
+   their rows, and the footer isn't drawn; each row's tooltip names its option in init.lua instead. */
+@media (max-height: 360px) {
+  .keys-panel header { padding-block: 4px 2px; }
+  .keys-filter { height: 26px; margin-bottom: 4px; }
+  .keys-panel tr.group th { padding-top: 6px; padding-bottom: 3px; }
+  .keys-panel td, .keys-panel td:first-child { padding-block: 4px; }
+  .keys-panel .panel-foot { display: none; }
+}
 
 .check-panel, .side-panel {
   width: var(--keys-width); flex: none; overflow: auto; padding: 10px 14px;

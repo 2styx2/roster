@@ -144,6 +144,8 @@ describe("Option names where configurable things show", () => {
     expect(await optionOf(/^Lock/)).toBe("keys.leader");
     expect(await optionOf(/^Copy/)).toBe("keys.terminal");
     await user.unhover(rowOf(/^Copy/));
+    // A short window has no footer (round 21): the row's tooltip names the option too.
+    expect(rowOf(/^Copy/).querySelector("td")).toHaveAttribute("title", expect.stringMatching(/\nIn init\.lua: keys\.terminal$/));
     // The filter finds bindings by option name.
     await user.type(within(panel).getByRole("searchbox"), "keys.terminal");
     expect(within(panel).queryByText(/^Lock$/)).toBeNull();
