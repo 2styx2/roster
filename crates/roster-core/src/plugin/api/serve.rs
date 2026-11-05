@@ -1,4 +1,5 @@
-//! `roster.serve`: roster serve's methods a Plugin was granted. Its functions as the API declares them.
+//! `roster.serve`: roster serve's methods a Plugin was granted.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -85,3 +86,41 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "roster.commands.add(\"count\", { run = function()\n  roster.serve.request(\"hosts.list\", {}, function(r, err)\n    if not r then return roster.notify(err, \"warn\") end\n    roster.echo(#r.hosts .. \" Hosts\")\n  end)\nend })",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        let g = &shared.grants;
+        if g.iter().any(|p| matches!(p, Permission::Serve(_))) {
+            let t = lua.create_table()?;
+            func!(
+                lua,
+                shared,
+                t,
+                "call",
+                |lua, s, (method, params): (String, Option<Value>)| {
+                    need(s, &Permission::Serve(method.clone()), "roster.serve.call")?;
+                    let params = match params {
+                        Some(v) => plain(s, "roster.serve.call", &v)?,
+                        None => json!({}),
+                    };
+                    serve(lua, s, &format!("roster.serve.call {method}"), &method, params)
+                }
+            );
+            // The same call, without waiting (decision Q103): `done(result)` or `done(nil, why)`.
+            func!(lua, shared, t, "request", |lua,
+                                              s,
+                                              (method, params, done): (
+                String,
+                Option<Value>,
+                Function
+            )| {
+                serve_request(lua, s, method, params, done)
+            });
+            roster.raw_set("serve", t)?;
+        }
+        Ok(())
+    }
+}

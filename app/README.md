@@ -110,8 +110,12 @@ app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config impo
 examples/init.lua     every option with its default, commented (a Rust test loads it)
 crates/roster-core/src/plugin/
                       Plugins (ticket 23, docs/plugins.md): mod.rs (PluginHost: one thread and Lua state per Plugin,
-                      load/call/event, time budget, strikes, the manifest), runtime.rs (the `roster` module a
-                      Plugin gets, by its grants; ops), permission.rs (what can be granted, the serve allow-list),
+                      load/call/event, time budget, strikes, the manifest, Plugin paths), runtime.rs (a Plugin's
+                      Lua: runs, handlers, timers, requests, and the helpers the modules' bindings use), api/ (the
+                      `roster` module, declared once (Q89): one file per Lua module with its declarations and its
+                      binding, types.rs the data types, generate.rs the reference, stubs, plugin-api.json and
+                      app/src/plugins/core.gen.ts), op.rs (the ops' wire format, `Op`), demo.rs (`:tutor`'s demo
+                      host), permission.rs (what can be granted, the serve allow-list, each permission's words),
                       network.rs (`network:SITE`: the HTTP client, sites, the private-address check; Q97),
                       fair.rs (the Plugins' fair share of serve: 2 calls each, 4 in all, Q112),
                       folder.rs (a Plugin's folders are its own, Q93: `inside` for its code's files, `Storage` for
@@ -125,10 +129,12 @@ crates/roster-core/plugins/hosts/
 crates/roster-core/plugins/folders/
                       the Sidebar's Folders (`builtin:folders`, Q93): section, `:folder`, ␣ a / ␣ A, its Folders in
                       its own data folder; init.lua's handed over as settings, folders.yml's moved in once
-app/src/plugins/      Plugins in the frontend: manager.ts (installed + grants in the State, prompts, ops → registries,
-                      events, timers, the Sessions' output for terminal.read; Packages as `package:NAME`), committed.ts
-                      (a Session's committed lines, from a terminal of its own, for terminal_output; OSC 133 marks for command_done), ops.ts (checks every
-                      op), command.ts (`:plugins`, `:packages`), PluginsPanel.tsx (the prompt, an update's diff,
+app/src/plugins/      Plugins in the frontend: manager.ts (installed + grants in the State, prompts, loading, calls and
+                      events; Packages as `package:NAME`), opRegistry.ts (each op kind's parse and apply, keyed by the
+                      core's kinds), ops.ts (the ops' types and field checks), shown.ts (notices, the float, the
+                      question, progress), outputFeed.ts (the Sessions' output for terminal.read), core.gen.ts (the
+                      core's tables: events, limits, permissions' words, op kinds; generated), committed.ts
+                      (a Session's committed lines, from a terminal of its own, for terminal_output; OSC 133 marks for command_done), command.ts (`:plugins`, `:packages`), PluginsPanel.tsx (the prompt, an update's diff,
                       `:plugins`, `:packages`, a float, notices); backend/fakePackages.ts is the fake Backend's
 app/src/view/status.ts  the status segment and Host-badge registries Plugins add to
 app/src/view/views.ts   views and Host-details sections as registries (ticket 76): `:view`, the `views` finder, the open

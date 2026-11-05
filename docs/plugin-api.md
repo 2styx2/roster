@@ -1,6 +1,6 @@
 # The Plugin API
 
-<!-- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
+<!-- Generated from crates/roster-core/src/plugin/api/ by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
 
 Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 6. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
 

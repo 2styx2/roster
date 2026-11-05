@@ -1,6 +1,6 @@
 ---@meta roster
 -- roster's Plugin API, roster.api_version 6: LuaCATS annotations for lua-language-server.
--- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
+-- Generated from crates/roster-core/src/plugin/api/ by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
 -- The reference: docs/plugin-api.md (`:help plugin-api`).
 
 --- `roster-plugin.lua`: who the Plugin is and what it asks for

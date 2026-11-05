@@ -1,21 +1,25 @@
 //! The Plugin API, declared once (ticket 70, decision Q89): every `roster.*` function and value,
 //! every data type a Plugin hands the app or gets back, and every event, with its parameters,
-//! returns, errors, permission and `Since: api N`. From this table come
+//! returns, errors, permission and `Since: api N`. Each Lua module has a file of its own here with
+//! its functions' declarations and their binding (`binding::bind`, which runtime.rs's `api` calls
+//! for each in turn), so a function and what it does change together; the eight UI pieces set by
+//! id share `pieces.rs`. The data types are in `types.rs`. From these tables, `generate.rs` writes
 //!
 //! - `docs/plugin-api.md`, the reference (`:help plugin-api`, `:help roster.inventory.host()`,
 //!   `:help roster-Host`);
 //! - `examples/plugins/types/roster.lua`, the LuaCATS stubs for lua-language-server;
 //! - `crates/roster-core/tests/fixtures/plugin-api.json`, the same as data, which the app's help
 //!   (its topics), its tests (ops.ts reads exactly the documented fields) and serve's tests (a
-//!   Host has exactly the documented fields) read.
+//!   Host has exactly the documented fields) read, with the host's own tables beside it
+//!   ([`runtime`]);
+//! - `app/src/plugins/core.gen.ts`, those tables for the app and its fake Backend.
 //!
-//! `cargo run -p roster-core --example gen_plugin_api` writes the three; `tests/plugin_api.rs`
-//! fails when they aren't what it writes, and when the runtime (runtime.rs) exposes a function,
-//! value or event this table lacks, or the other way round, for any set of grants.
+//! `cargo run -p roster-core --example gen_plugin_api` writes the four; `tests/plugin_api.rs`
+//! fails when they aren't what it writes, and when the runtime exposes a function, value or event
+//! these tables lack, or the other way round, for any set of grants.
 //!
 //! Types are written as LuaCATS (`string?`, `Host[]`, `"info"|"warn"`, `table<string, Group>`);
 //! a capitalised name is one of [`TYPES`], made `roster.Host` in the stubs and a link in the docs.
-
 
 /// What a function or value needs to exist in a Plugin's `roster` module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,25 +402,24 @@ pub const VALUES: &[Value] = &[
     },
 ];
 
-
-mod badges;
-mod clipboard;
-mod commands;
-mod details;
-mod float;
+pub(in crate::plugin) mod badges;
+pub(in crate::plugin) mod clipboard;
+pub(in crate::plugin) mod commands;
+pub(in crate::plugin) mod details;
+pub(in crate::plugin) mod float;
 mod generate;
-mod http;
-mod inventory;
-mod keymap;
-mod pieces;
-mod roster;
-mod serve;
-mod sessions;
-mod storage;
-mod terminal;
-mod themes;
+pub(in crate::plugin) mod http;
+pub(in crate::plugin) mod inventory;
+pub(in crate::plugin) mod keymap;
+pub(in crate::plugin) mod pieces;
+pub(in crate::plugin) mod roster;
+pub(in crate::plugin) mod serve;
+pub(in crate::plugin) mod sessions;
+pub(in crate::plugin) mod storage;
+pub(in crate::plugin) mod terminal;
+pub(in crate::plugin) mod themes;
 mod types;
-mod views;
+pub(in crate::plugin) mod views;
 
 pub use generate::*;
 pub use types::TYPES;
@@ -448,7 +451,6 @@ pub fn functions() -> impl Iterator<Item = &'static Function> {
 
 /// [`functions`] as a list.
 pub static FUNCTIONS: std::sync::LazyLock<Vec<&'static Function>> = std::sync::LazyLock::new(|| functions().collect());
-
 
 pub const EVENTS: &[Event] = &[
     Event {

@@ -319,7 +319,7 @@ fn roster_cmd_with_sessions_open_may_open_a_host() {
 /// A Plugin that names its commands after roster's own can't run them with `roster.cmd`: the app
 /// tells the core its built-in commands (`PluginHost::set_builtins`), and a word is the Plugin's
 /// own only if no built-in has it (issue #184). Until the app has said, none of its commands runs
-/// (the ones that change trust or writes, api.rs's ROSTER_ONLY, are refused as ever), and a list
+/// (the ones that change trust or writes, plugin/api's ROSTER_ONLY, are refused as ever), and a list
 /// reaches a Plugin already running.
 #[test]
 fn a_plugins_command_named_after_one_of_rosters_isnt_its_own() {

@@ -1,4 +1,5 @@
-//! `roster.badges`: a badge on a Host's rows. Its functions as the API declares them.
+//! `roster.badges`: a badge on a Host's rows.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -77,3 +78,42 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "for _, host in ipairs(roster.badges.list()) do roster.badges.remove(host) end",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // A badge on a Host's rows ("2 alerts"); `remove` (or `set` with nil, its old spelling, checked
+        // as `remove` is) takes it off. Its own badges read back by Host (api 5, #262).
+        let badges = lua.create_table()?;
+        func!(lua, shared, badges, "set", |lua,
+                                           s,
+                                           (host, text): (
+            String,
+            Option<mlua::LuaString>
+        )| {
+            let text = text.map(|t| t.to_string_lossy());
+            match &text {
+                Some(t) => own_put(lua, s, "badge", &host, Value::String(lua.create_string(t)?))?,
+                None => unbadge(lua, s, "roster.badges.set", &host)?,
+            }
+            push(s, Op::Badge { host, text })
+        });
+        func!(lua, shared, badges, "remove", |lua, s, host: String| {
+            unbadge(lua, s, "roster.badges.remove", &host)?;
+            push(s, Op::Badge { host, text: None })
+        });
+        func!(lua, shared, badges, "get", |lua, _s, host: String| {
+            own_get(lua, "badge", &host)
+        });
+        func!(lua, shared, badges, "has", |lua, _s, host: String| {
+            Ok(!own_get(lua, "badge", &host)?.is_nil())
+        });
+        func!(lua, shared, badges, "list", |lua, _s, (): ()| {
+            lua.create_sequence_from(own_ids(lua, "badge")?)
+        });
+        roster.raw_set("badges", badges)?;
+        Ok(())
+    }
+}

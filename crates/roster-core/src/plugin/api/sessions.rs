@@ -1,4 +1,5 @@
-//! `roster.sessions`: going to a Session, the ones open now, and opening one. Its functions as the API declares them.
+//! `roster.sessions`: going to a Session, the ones open now, and opening one.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -53,3 +54,52 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "roster.sessions.open(\"esx-02\")",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        let g = &shared.grants;
+        // Sessions: going to one (ticket 78) needs nothing but the user's call; opening one needs
+        // sessions.open.
+        let sessions = lua.create_table()?;
+        func!(lua, shared, sessions, "show", |_lua,
+                                              s,
+                                              (session, line): (
+            u64,
+            Option<mlua::LuaString>
+        )| {
+            user_only(s, "roster.sessions.show")?;
+            let line = line.map(|l| l.to_string_lossy());
+            push(s, Op::SessionShow { session, line })
+        });
+        // The Sessions open now (decision Q127): the sum of what `session_open` and `session_exit`
+        // say, so there for whoever may hear them (plugin/api's `Needs::Hears`).
+        if may_hear("session_open", g).is_ok() {
+            func!(lua, shared, sessions, "list", |lua, s, (): ()| {
+                let list = lua.create_table()?;
+                // The folder is what the Session printed (OSC 7): terminal.read's, as the output is.
+                let reads = s.grants.contains(&Permission::TerminalRead);
+                for open in s.sessions.list() {
+                    let one = lua.create_table()?;
+                    one.raw_set("session", open.session)?;
+                    one.raw_set("host", open.host)?;
+                    if reads {
+                        one.raw_set("cwd", open.cwd)?;
+                    }
+                    list.raw_push(one)?;
+                }
+                Ok(list)
+            });
+        }
+        if g.contains(&Permission::SessionsOpen) {
+            func!(lua, shared, sessions, "open", |_lua, s, host: String| {
+                need(s, &Permission::SessionsOpen, "roster.sessions.open")?;
+                push(s, Op::Open { host })
+            });
+        }
+        roster.raw_set("sessions", sessions)?;
+        Ok(())
+    }
+}

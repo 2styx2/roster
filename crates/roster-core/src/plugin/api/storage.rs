@@ -1,4 +1,5 @@
-//! `roster.storage`: the Plugin's own data folder (decision Q93). Its functions as the API declares them.
+//! `roster.storage`: the Plugin's own data folder (decision Q93).
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -145,3 +146,62 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "roster.storage.write_json(\"state.json\", { hosts = { \"esx-02\" } })",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // The Plugin's own data folder (decision Q93): files by plain name, never a path. Every
+        // Plugin has it; nothing outside its folder is reachable through it.
+        let storage = lua.create_table()?;
+        func!(lua, shared, storage, "read", |lua, s, name: String| {
+            let bytes = on_disk(s, "roster.storage.read", |st| st.read(&name))?;
+            match bytes {
+                Some(b) => Ok(Value::String(lua.create_string(b)?)),
+                None => Ok(Value::Nil),
+            }
+        });
+        func!(lua, shared, storage, "write", |_lua,
+                                              s,
+                                              (name, text): (
+            String,
+            mlua::LuaString
+        )| {
+            let bytes = text.as_bytes().to_vec();
+            on_disk(s, "roster.storage.write", |st| st.write(&name, &bytes))
+        });
+        func!(lua, shared, storage, "list", |lua, s, (): ()| {
+            let names = on_disk(s, "roster.storage.list", Storage::list)?;
+            lua.create_sequence_from(names)
+        });
+        func!(lua, shared, storage, "remove", |_lua, s, name: String| {
+            on_disk(s, "roster.storage.remove", |st| st.remove(&name))
+        });
+        func!(lua, shared, storage, "read_json", |lua, s, name: String| {
+            let what = "roster.storage.read_json";
+            let Some(bytes) = on_disk(s, what, |st| st.read(&name))? else {
+                return Ok(Value::Nil);
+            };
+            let value: Json = serde_json::from_slice(&bytes)
+                .map_err(|e| mlua::Error::runtime(format!("{what}: {name} isn't JSON ({e})")))?;
+            to_lua(lua, &value)
+        });
+        func!(
+            lua,
+            shared,
+            storage,
+            "write_json",
+            |_lua, s, (name, value): (String, Value)| {
+                let what = "roster.storage.write_json";
+                let value = plain(s, what, &value)?;
+                let mut text =
+                    serde_json::to_string_pretty(&value).map_err(|e| mlua::Error::runtime(format!("{what}: {e}")))?;
+                text.push('\n');
+                on_disk(s, what, |st| st.write(&name, text.as_bytes()))
+            }
+        );
+        roster.raw_set("storage", storage)?;
+        Ok(())
+    }
+}

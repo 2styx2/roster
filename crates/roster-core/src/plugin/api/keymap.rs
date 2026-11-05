@@ -1,4 +1,5 @@
-//! `roster.keymap`: a Plugin's key bindings, after the Leader and in the Sidebar. Its functions as the API declares them.
+//! `roster.keymap`: a Plugin's key bindings, after the Leader and in the Sidebar.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -125,3 +126,95 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "for keys, line in pairs(roster.keymap.list(\"leader\")) do roster.echo(keys .. \": \" .. line) end",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // Key bindings, as init.lua's: the action is a command line (one of the Plugin's commands).
+        let keymap = lua.create_table()?;
+        func!(lua, shared, keymap, "set", |lua,
+                                           s,
+                                           (context, keys, action): (
+            String,
+            String,
+            Value
+        )| {
+            let what = "roster.keymap.set";
+            let known = key_context(s, what, &context, false)?;
+            let action = match action {
+                Value::String(a) => Json::String(a.to_str()?.to_string()),
+                // `false` is `del`'s old spelling (api 3), and checked as `del` is.
+                Value::Boolean(false) => {
+                    if known {
+                        unbind(lua, s, what, &context, &keys)?;
+                    }
+                    Json::Bool(false)
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "roster.keymap.set: the action is a command line such as \"alerts\" (add a command for a function)",
+                    ));
+                }
+            };
+            if known && let Json::String(a) = &action {
+                own_put(
+                    lua,
+                    s,
+                    &format!("key:{context}"),
+                    &keys,
+                    Value::String(lua.create_string(a)?),
+                )?;
+            }
+            push(s, Op::Key { context, keys, action })
+        });
+        // Takes the Plugin's own binding off (api 3); `set(…, false)` did the same before it.
+        func!(
+            lua,
+            shared,
+            keymap,
+            "del",
+            |lua, s, (context, keys): (String, String)| {
+                if key_context(s, "roster.keymap.del", &context, false)? {
+                    unbind(lua, s, "roster.keymap.del", &context, &keys)?;
+                }
+                push(
+                    s,
+                    Op::Key {
+                        context,
+                        keys,
+                        action: Json::Bool(false),
+                    },
+                )
+            }
+        );
+        // Its own bindings (api 5), as init.lua's `roster.keymap` reads the Config's.
+        func!(
+            lua,
+            shared,
+            keymap,
+            "get",
+            |lua, s, (context, keys): (String, String)| {
+                key_context(s, "roster.keymap.get", &context, true)?;
+                own_get(lua, &format!("key:{context}"), &keys)
+            }
+        );
+        func!(
+            lua,
+            shared,
+            keymap,
+            "has",
+            |lua, s, (context, keys): (String, String)| {
+                key_context(s, "roster.keymap.has", &context, true)?;
+                Ok(!own_get(lua, &format!("key:{context}"), &keys)?.is_nil())
+            }
+        );
+        func!(lua, shared, keymap, "list", |lua, s, context: String| {
+            key_context(s, "roster.keymap.list", &context, true)?;
+            copy(lua, &Value::Table(own_kind(lua, &format!("key:{context}"))?))
+        });
+        roster.raw_set("keymap", keymap)?;
+        Ok(())
+    }
+}

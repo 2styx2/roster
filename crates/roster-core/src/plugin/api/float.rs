@@ -1,4 +1,5 @@
-//! `roster.float`: a floating window over the terminal. Its functions as the API declares them.
+//! `roster.float`: a floating window over the terminal.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -28,3 +29,22 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "roster.float.close()",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // A floating window over the terminal: a title and lines of text; `close` hides it.
+        let float = lua.create_table()?;
+        func!(lua, shared, float, "open", |lua, s, spec: Table| {
+            let spec = data(lua, s, "roster.float.open", &Value::Table(spec), "float")?;
+            push(s, Op::Float { spec })
+        });
+        func!(lua, shared, float, "close", |_lua, s, (): ()| {
+            push(s, Op::Float { spec: Json::Null })
+        });
+        roster.raw_set("float", float)?;
+        Ok(())
+    }
+}

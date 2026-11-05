@@ -183,7 +183,7 @@ export const guides: readonly Guide[] = [
     part: "Extending",
     order: 82,
     // `:help roster.inventory.host()`, `:help roster-Host`: one topic per function, value, module
-    // and type, written by the generator with the page (crates/roster-core/src/plugin/api.rs).
+    // and type, written by the generator with the page (crates/roster-core/src/plugin/api/).
     aliases: { "roster-api": "plugin-api", ...pluginApiTags },
   },
   {

@@ -1,4 +1,5 @@
-//! `roster.themes`: Themes a Plugin defines. Its functions as the API declares them.
+//! `roster.themes`: Themes a Plugin defines.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -79,3 +80,47 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "for _, id in ipairs(roster.themes.list()) do roster.themes.remove(id) end",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // Themes, checked as init.lua's `themes` are.
+        let themes = lua.create_table()?;
+        func!(lua, shared, themes, "define", |lua, s, (id, theme): (String, Table)| {
+            check_id("roster.themes.define", &id)?;
+            let given = Value::Table(theme.clone());
+            let value = data(lua, s, "roster.themes.define", &Value::Table(theme), "theme")?;
+            let def: ThemeDef = serde_json::from_value(value)
+                .map_err(|e| mlua::Error::runtime(format!("roster.themes.define {id:?}: {e}")))?;
+            let def = serde_json::to_value(def).map_err(mlua::Error::external)?;
+            own_put(lua, s, "theme", &id, copy(lua, &given)?)?;
+            push(s, Op::Theme { id, theme: def })
+        });
+        func!(lua, shared, themes, "remove", |lua, s, id: String| {
+            let what = "roster.themes.remove";
+            check_id(what, &id)?;
+            if own_get(lua, "theme", &id)?.is_nil() {
+                not_had(
+                    s,
+                    what,
+                    format!(
+                        "the Plugin has no Theme {id:?} (roster.themes.list() names its own; roster.themes.define adds one)"
+                    ),
+                )?;
+            }
+            own_put(lua, s, "theme", &id, Value::Nil)?;
+            push(
+                s,
+                Op::Remove {
+                    kind: Removable::Theme,
+                    id,
+                },
+            )
+        });
+        reads(lua, &themes, "themes", "theme")?;
+        roster.raw_set("themes", themes)?;
+        Ok(())
+    }
+}

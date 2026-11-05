@@ -1,4 +1,5 @@
-//! `roster.inventory`: the Hosts, with `inventory.read`, and their edits as Pending changes, with `inventory.write`. Its functions as the API declares them.
+//! `roster.inventory`: the Hosts, with `inventory.read`, and their edits as Pending changes, with `inventory.write`.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -202,3 +203,65 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "roster.inventory.review(\"esx-02\")",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        let g = &shared.grants;
+        // Without a grant the function isn't there at all (decision Q81).
+        if g.contains(&Permission::InventoryRead) || g.contains(&Permission::InventoryWrite) {
+            let inventory = lua.create_table()?;
+            if g.contains(&Permission::InventoryRead) {
+                func!(lua, shared, inventory, "hosts", |lua, s, (): ()| {
+                    need(s, &Permission::InventoryRead, "roster.inventory.hosts")?;
+                    with_host_list(s, "roster.inventory.hosts", |list| to_lua(lua, &list["hosts"]))
+                });
+                func!(lua, shared, inventory, "groups", |lua, s, (): ()| {
+                    need(s, &Permission::InventoryRead, "roster.inventory.groups")?;
+                    with_host_list(s, "roster.inventory.groups", |list| match &list["groups"] {
+                        groups @ Json::Object(_) => to_lua(lua, groups),
+                        _ => Ok(Value::Table(lua.create_table()?)),
+                    })
+                });
+                // The whole Inventory without waiting (decision Q127): serve's `hosts.list`, as
+                // `roster.serve.request` asks.
+                func!(lua, shared, inventory, "request", |lua, s, done: Function| {
+                    need(s, &Permission::InventoryRead, "roster.inventory.request")?;
+                    ask_later(
+                        lua,
+                        s,
+                        "roster.inventory.request".into(),
+                        "hosts.list".into(),
+                        json!({}),
+                        done,
+                    )
+                });
+                // An unknown name is `nil` (api 3): serve's code 2 for host.get.
+                func!(lua, shared, inventory, "host", |lua, s, name: String| {
+                    need(s, &Permission::InventoryRead, "roster.inventory.host")?;
+                    match ask_serve(s, "host.get", json!({ "name": name })) {
+                        Err(message) if message.ends_with("(code 2)") => Ok(Value::Nil),
+                        result => answer(lua, "roster.inventory.host", result),
+                    }
+                });
+            }
+            if g.contains(&Permission::InventoryWrite) {
+                for (name, method, params) in WRITES {
+                    let what = format!("roster.inventory.{name}");
+                    func!(lua, shared, inventory, *name, |lua, s, args: Variadic<Value>| {
+                        need(s, &Permission::InventoryWrite, &what)?;
+                        let mut p = Map::new();
+                        for (key, v) in params.iter().zip(args.iter()) {
+                            p.insert((*key).into(), plain(s, &what, v)?);
+                        }
+                        serve(lua, s, &what, method, Json::Object(p))
+                    });
+                }
+            }
+            roster.raw_set("inventory", inventory)?;
+        }
+        Ok(())
+    }
+}

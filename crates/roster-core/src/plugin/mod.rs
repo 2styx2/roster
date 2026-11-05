@@ -24,6 +24,21 @@
 //! Package's clone, ticket 24, [`crate::package`], loaded with its settings from init.lua as
 //! [`Load::config`]) or a folder (`:plugins install PATH`).
 
+/// A function `f(lua, shared, args)` in a `roster` module table: `func!(lua, shared, table, "name",
+/// |lua, s, args: Type| { … })`, where `s` is the Plugin's `Shared` in the body.
+macro_rules! func {
+    ($l:ident, $shared:ident, $table:expr, $name:expr, |$lua:ident, $s:ident, $args:tt : $ty:ty| $body:block) => {{
+        let $s = std::rc::Rc::clone($shared);
+        $table.raw_set(
+            $name,
+            $l.create_function(move |$lua, $args: $ty| {
+                let $s: &Shared = &$s;
+                $body
+            })?,
+        )?;
+    }};
+}
+
 pub mod api;
 pub mod demo;
 pub mod fair;
@@ -108,7 +123,7 @@ pub const BUNDLED: &[Bundled] = &[
     },
 ];
 
-/// The keys a manifest may have (api.rs's `Manifest` documents each).
+/// The keys a manifest may have (plugin/api's `Manifest` documents each).
 pub const MANIFEST_FIELDS: &[&str] = &["name", "version", "description", "author", "api", "permissions"];
 
 /// The manifest's file name, in the Plugin's folder.
@@ -427,7 +442,7 @@ impl PluginHost {
     /// whenever one registers later: none of them is a Plugin's own to run with `roster.cmd` or a
     /// `run` line, whatever the Plugin named its commands (issue #184). Each replaces the last and
     /// reaches the Plugins running at once. Until the app has said them once, no Plugin's own
-    /// command runs that way either (api.rs's
+    /// command runs that way either (plugin/api's
     /// [`api::ROSTER_ONLY`](crate::plugin::api::ROSTER_ONLY) are refused all the same).
     pub fn set_builtins(&self, names: impl IntoIterator<Item = String>) {
         *self.builtins.write().expect("builtin commands") = Some(names.into_iter().collect());

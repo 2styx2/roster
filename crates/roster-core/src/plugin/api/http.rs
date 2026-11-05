@@ -1,4 +1,5 @@
-//! `roster.http`: requests to the sites a Plugin was granted (decision Q97). Its functions as the API declares them.
+//! `roster.http`: requests to the sites a Plugin was granted (decision Q97).
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -72,3 +73,60 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "roster.http.get(\"https://status.example.com/api/v2/status.json\", function(res, err)\n  roster.status.set(\"upstream\", { text = res and res.status == 200 and \"upstream ok\" or \"upstream ?\" })\nend)",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        let g = &shared.grants;
+        if g.iter().any(|p| matches!(p, Permission::Network(_))) {
+            let http = lua.create_table()?;
+            func!(
+                lua,
+                shared,
+                http,
+                "request",
+                |lua, s, (req, done): (Table, Function)| {
+                    let what = "roster.http.request";
+                    for pair in req.pairs::<Value, Value>() {
+                        let (k, _) = pair?;
+                        let key = match &k {
+                            Value::String(k) => k.to_string_lossy(),
+                            _ => String::new(),
+                        };
+                        if !REQUEST_KEYS.contains(&key.as_str()) {
+                            return Err(mlua::Error::runtime(format!(
+                                "{what}: {key:?} isn't a key of a request (there's {})",
+                                REQUEST_KEYS.join(", ")
+                            )));
+                        }
+                    }
+                    let url: String = req
+                        .raw_get::<Option<String>>("url")?
+                        .ok_or_else(|| mlua::Error::runtime(format!("{what}: `url` is missing")))?;
+                    let method = req.raw_get::<Option<String>>("method")?.unwrap_or_else(|| "GET".into());
+                    let mut headers = Vec::new();
+                    if let Some(h) = req.raw_get::<Option<Table>>("headers")? {
+                        for pair in h.pairs::<String, mlua::LuaString>() {
+                            let (k, v) = pair.map_err(|_| {
+                                mlua::Error::runtime(format!("{what}: `headers` is a table of names to strings"))
+                            })?;
+                            headers.push((k, v.to_str()?.to_string()));
+                        }
+                    }
+                    let body = req
+                        .raw_get::<Option<mlua::LuaString>>("body")?
+                        .map(|b| b.as_bytes().to_vec());
+                    let timeout = req.raw_get::<Option<f64>>("timeout")?;
+                    request(lua, s, what, &method, &url, headers, body, timeout, done)
+                }
+            );
+            func!(lua, shared, http, "get", |lua, s, (url, done): (String, Function)| {
+                request(lua, s, "roster.http.get", "GET", &url, Vec::new(), None, None, done)
+            });
+            roster.raw_set("http", http)?;
+        }
+        Ok(())
+    }
+}

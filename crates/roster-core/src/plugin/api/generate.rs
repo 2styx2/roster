@@ -47,7 +47,7 @@ pub fn markdown() -> String {
     let mut s = String::new();
     s.push_str("# The Plugin API\n\n");
     s.push_str(&format!(
-        "<!-- Generated from crates/roster-core/src/plugin/api.rs by `{COMMAND}`: edit that, then run it. -->\n\n"
+        "<!-- Generated from crates/roster-core/src/plugin/api/ by `{COMMAND}`: edit that, then run it. -->\n\n"
     ));
     s.push_str(&format!(
         "Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` {}. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.\n\n",
@@ -279,7 +279,7 @@ pub fn stubs() -> String {
     let mut s = String::new();
     s.push_str("---@meta roster\n");
     s.push_str(&format!(
-        "-- roster's Plugin API, roster.api_version {}: LuaCATS annotations for lua-language-server.\n-- Generated from crates/roster-core/src/plugin/api.rs by `{COMMAND}`; don't edit.\n-- The reference: docs/plugin-api.md (`:help plugin-api`).\n\n",
+        "-- roster's Plugin API, roster.api_version {}: LuaCATS annotations for lua-language-server.\n-- Generated from crates/roster-core/src/plugin/api/ by `{COMMAND}`; don't edit.\n-- The reference: docs/plugin-api.md (`:help plugin-api`).\n\n",
         crate::plugin::API_VERSION
     ));
     for t in TYPES {

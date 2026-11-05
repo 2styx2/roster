@@ -1,6 +1,6 @@
 //! The Plugin API's one source (`roster_core::plugin::api`, ticket 70, decision Q89) against what
 //! a Plugin really gets: for every set of grants, the `roster` module has exactly the functions
-//! and values api.rs declares for them, `roster.plugin` exactly the Plugin type's fields, and
+//! and values plugin/api declares for them, `roster.plugin` exactly the Plugin type's fields, and
 //! the committed reference, stubs and data are what the generator writes.
 
 mod common;
@@ -81,7 +81,7 @@ fn walk(test: &str, permissions: &[&str]) -> (BTreeSet<String>, Vec<String>, Str
     (found, plugin, errors, parts.next().unwrap().to_string())
 }
 
-/// What api.rs says a Plugin granted `permissions` has.
+/// What plugin/api says a Plugin granted `permissions` has.
 fn declared(permissions: &[&str]) -> BTreeSet<String> {
     let serve = permissions.iter().any(|p| p.starts_with("serve:"));
     let network = permissions.iter().any(|p| p.starts_with("network:"));
@@ -129,7 +129,7 @@ fn the_runtime_exposes_exactly_what_the_api_declares_for_every_grant() {
         let missing: Vec<_> = want.difference(&found).collect();
         assert!(
             extra.is_empty() && missing.is_empty(),
-            "with {set:?}, the runtime has {extra:?} that crates/roster-core/src/plugin/api.rs doesn't declare, and lacks {missing:?} that it does: add or remove them in api.rs, then run  {}",
+            "with {set:?}, the runtime has {extra:?} that crates/roster-core/src/plugin/api/ doesn't declare, and lacks {missing:?} that it does: add or remove them in plugin/api, then run  {}",
             api::COMMAND
         );
     }
@@ -162,7 +162,7 @@ fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
         let committed = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         assert!(
             committed == text,
-            "{path} is out of date with crates/roster-core/src/plugin/api.rs: run  {}",
+            "{path} is out of date with crates/roster-core/src/plugin/api/: run  {}",
             api::COMMAND
         );
     }

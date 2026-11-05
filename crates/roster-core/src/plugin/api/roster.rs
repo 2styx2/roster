@@ -1,4 +1,5 @@
-//! The `roster` module's own functions: notices, messages, the command line, questions, timers, events and grants. Its functions as the API declares them.
+//! The `roster` module's own functions: notices, messages, the command line, questions, timers, events and grants.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -281,3 +282,195 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "local t = roster.every(60000, refresh)\nroster.commands.add(\"stop\", { run = function() roster.cancel(t) end })",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // A question the app draws and the user answers (ticket 78): `run` is called only when they
+        // confirm, `cancel` when they don't. Only in a call the user started, so a question never
+        // comes up on its own; the Plugin can't draw one itself or answer it.
+        func!(lua, shared, roster, "confirm", |lua, s, spec: Table| {
+            user_only(s, "roster.confirm")?;
+            let spec = data(lua, s, "roster.confirm", &Value::Table(spec), "confirm")?;
+            if spec.get("run").and_then(|r| r.get("handler")).is_none() {
+                return Err(mlua::Error::runtime(
+                    "roster.confirm: `run` must be a function: what happens when the user confirms",
+                ));
+            }
+            push(s, Op::Confirm { spec })
+        });
+
+        // A command line, as typed after `:` (ticket 78): the Plugin's own commands and the few of
+        // roster's that plugin/api's COMMANDS lists, each only with the permission it needs there. Only
+        // in a call the user started.
+        func!(lua, shared, roster, "cmd", |_lua, s, line: mlua::LuaString| {
+            user_only(s, "roster.cmd")?;
+            let line = line.to_string_lossy();
+            let line = line.trim();
+            let Some(word) = line.split_whitespace().next() else {
+                return Err(mlua::Error::runtime(
+                    "roster.cmd: which command? (a line such as \"finder alerts\")",
+                ));
+            };
+            if line.len() > 500 {
+                return Err(mlua::Error::runtime("roster.cmd: the line is over 500 characters"));
+            }
+            if let Some(why) = not_yet(s, word) {
+                return Err(mlua::Error::runtime(format!("roster.cmd: {why}")));
+            }
+            if !own_command(s, word) {
+                command_allowed(word, &s.grants).map_err(|m| mlua::Error::runtime(format!("roster.cmd: {m}")))?;
+            }
+            // Made in a run that carries the user's call already (issue #183): the app runs the
+            // Plugin's own command it names as the app's call, so a chain stops after one hop.
+            let user = s.carried.get().then_some(false);
+            push(
+                s,
+                Op::Cmd {
+                    line: line.into(),
+                    user,
+                },
+            )
+        });
+
+        // A line on the message line, as roster's own commands answer (api 3): only in a call the
+        // user started, so it always answers something they did. `quiet = true` (api 4) marks a
+        // routine confirmation, which follows `ui.messages` as roster's own do (ticket 118).
+        func!(lua, shared, roster, "echo", |_lua,
+                                            s,
+                                            (text, opts): (
+            mlua::LuaString,
+            Option<Table>
+        )| {
+            user_only(s, "roster.echo")?;
+            let text = text.to_string_lossy();
+            let quiet = (quiet_opt(opts.as_ref(), "roster.echo")? == Some(true)).then_some(true);
+            push(s, Op::Echo { text, quiet })
+        });
+
+        // Opens the command line with text typed in (api 3), for the user to finish: only the
+        // Plugin's own commands, and only in a call the user started.
+        func!(lua, shared, roster, "cmdline", |_lua, s, text: mlua::LuaString| {
+            user_only(s, "roster.cmdline")?;
+            let text = text.to_string_lossy();
+            if text.len() > 500 {
+                return Err(mlua::Error::runtime("roster.cmdline: the line is over 500 characters"));
+            }
+            let word = text.split_whitespace().next().unwrap_or("");
+            if let Some(why) = not_yet(s, word) {
+                return Err(mlua::Error::runtime(format!("roster.cmdline: {why}")));
+            }
+            if !own_command(s, word) {
+                return Err(mlua::Error::runtime(format!(
+                    "roster.cmdline: {word:?} isn't one of your commands (a line such as \"alerts \")"
+                )));
+            }
+            push(s, Op::Cmdline { text })
+        });
+
+        func!(lua, shared, roster, "notify", |_lua,
+                                              s,
+                                              (text, level, opts): (
+            mlua::LuaString,
+            Option<String>,
+            Option<Table>
+        )| {
+            let text = text.to_string_lossy();
+            let level = level.unwrap_or_else(|| "info".into());
+            if !matches!(level.as_str(), "info" | "warn" | "error") {
+                return Err(mlua::Error::runtime(
+                    "roster.notify: the level is \"info\", \"warn\" or \"error\"",
+                ));
+            }
+            // Buttons on the notice (ticket 91): plain data, each a command line the user's click
+            // runs (`view mesh-plan`), so a notice holds no function that would outlive it.
+            let actions = match opts {
+                Some(ref t) => {
+                    let v: Value = t.raw_get("actions")?;
+                    if v.is_nil() {
+                        None
+                    } else {
+                        Some(plain(s, "roster.notify: actions", &v).map_err(|e| {
+                            mlua::Error::runtime(format!(
+                                "{} (a notice's action runs a command line, not a function)",
+                                lua::error_text(&e)
+                            ))
+                        })?)
+                    }
+                }
+                None => None,
+            };
+            // Whether an info notice follows `ui.messages` (api 4, ticket 117): the app decides,
+            // so only what the Plugin said is passed on.
+            let quiet = quiet_opt(opts.as_ref(), "roster.notify")?;
+            push(
+                s,
+                Op::Notify {
+                    text,
+                    level,
+                    actions: actions.filter(|a| !a.is_null()),
+                    quiet,
+                },
+            )
+        });
+
+        // Timers: the app keeps the clock and runs the function in the Plugin when it's time.
+        func!(lua, shared, roster, "defer", |lua, s, (ms, f): (f64, Function)| {
+            add_timer(lua, s, "roster.defer", ms, f, false)
+        });
+        func!(lua, shared, roster, "every", |lua, s, (ms, f): (f64, Function)| {
+            add_timer(lua, s, "roster.every", ms, f, true)
+        });
+        func!(lua, shared, roster, "cancel", |lua, s, id: Value| {
+            let id = match id {
+                Value::Integer(i) if i > 0 => i as u64,
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "roster.cancel: a timer, as roster.defer or roster.every returned it",
+                    ));
+                }
+            };
+            if !s.timers.borrow().contains_key(&id) {
+                return Ok(());
+            }
+            take_timer(lua, s, id)?;
+            push(
+                s,
+                Op::Remove {
+                    kind: Removable::Timer,
+                    id: id.to_string(),
+                },
+            )
+        });
+
+        // Whether a permission was granted: one that can't be (`network`, a serve method that
+        // isn't allowed) is just false, so a Plugin can ask about what a newer roster has.
+        func!(lua, shared, roster, "has", |_lua, s, name: String| {
+            match Permission::parse(&name) {
+                Ok(p) => Ok(s.grants.contains(&p)),
+                // Any site: whether `roster.http` is there.
+                Err(_) if name == "network" => Ok(s.grants.iter().any(|g| matches!(g, Permission::Network(_)))),
+                Err(_) if name.starts_with("serve:") || name.starts_with("network:") => Ok(false),
+                Err(e) => Err(mlua::Error::runtime(format!("roster.has: {e}"))),
+            }
+        });
+
+        // Events: `roster.on("session_open", function(e) … end)`.
+        func!(lua, shared, roster, "on", |lua, s, (event, f): (String, Function)| {
+            may_hear(&event, &s.grants).map_err(|m| mlua::Error::runtime(format!("roster.on: {m}")))?;
+            let listeners: Table = lua.named_registry_value(LISTENERS)?;
+            let list = match listeners.raw_get::<Option<Table>>(event.as_str())? {
+                Some(l) => l,
+                None => {
+                    let l = lua.create_table()?;
+                    listeners.raw_set(event.as_str(), l.clone())?;
+                    l
+                }
+            };
+            list.raw_push(f)
+        });
+        Ok(())
+    }
+}

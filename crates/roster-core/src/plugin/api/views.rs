@@ -1,4 +1,5 @@
-//! `roster.views`: a side panel or a full view of text, facts, a table or a graph. Its functions as the API declares them.
+//! `roster.views`: a side panel or a full view of text, facts, a table or a graph.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -164,3 +165,136 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "for _, id in ipairs(roster.views.list()) do roster.views.remove(id) end",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // Views (ticket 76): a side panel or a full view of text, facts and a table, which the app
+        // draws. Rows are plain data; a table's actions are functions that get the row. Opening one
+        // is the user's call (an action, a command, a finder item), never the Plugin's on its own.
+        let views = lua.create_table()?;
+        func!(lua, shared, views, "set", |lua, s, (id, spec): (String, Table)| {
+            check_id("roster.views.set", &id)?;
+            // A table's actions are owned apart from the rest (its `open`), as an update's are, so an
+            // update that replaces them drops their functions at once (ticket 85).
+            let (spec, actions) = table_actions(lua, &spec)?;
+            let mut spec = data(lua, s, "roster.views.set", &Value::Table(spec), &format!("view:{id}"))?;
+            let actions = data(
+                lua,
+                s,
+                "roster.views.set: table.actions",
+                &actions,
+                &format!("view:{id}:actions"),
+            )?;
+            if !actions.is_null()
+                && let Some(table) = spec.get_mut("table").and_then(Json::as_object_mut)
+            {
+                table.insert("actions".into(), actions);
+            }
+            own_put(lua, s, "view", &id, Value::Boolean(true))?;
+            push(s, Op::View { id, spec })
+        });
+        func!(
+            lua,
+            shared,
+            views,
+            "update",
+            |lua, s, (id, changes): (String, Table)| {
+                check_id("roster.views.update", &id)?;
+                must_have(lua, s, "roster.views.update", "views", "view", "view", &id)?;
+                // Plain data, but for the table's `actions` (ticket 78), whose functions replace the ones
+                // the set or an earlier update gave; `open` stays the set's.
+                let rest = lua.create_table()?;
+                let mut actions = None;
+                for pair in changes.pairs::<Value, Value>() {
+                    let (k, v) = pair?;
+                    if matches!(&k, Value::String(k) if k.as_bytes().as_ref() == b"actions") {
+                        actions = Some(v);
+                    } else {
+                        rest.raw_set(k, v)?;
+                    }
+                }
+                let mut changes =
+                    plain(s, &format!("roster.views.update {id:?}"), &Value::Table(rest)).map_err(|e| {
+                        mlua::Error::runtime(format!(
+                            "{} (an update is plain data: functions go in roster.views.set, or a table's actions)",
+                            lua::error_text(&e)
+                        ))
+                    })?;
+                if let Some(actions) = actions {
+                    let actions = data(lua, s, "roster.views.update", &actions, &format!("view:{id}:actions"))?;
+                    if let Json::Object(m) = &mut changes {
+                        m.insert("actions".into(), actions);
+                    } else {
+                        changes = json!({ "actions": actions });
+                    }
+                }
+                push(s, Op::ViewUpdate { id, changes })
+            }
+        );
+        func!(lua, shared, views, "open", |lua, s, (id, opts): (String, Value)| {
+            check_id("roster.views.open", &id)?;
+            must_have(lua, s, "roster.views.open", "views", "view", "view", &id)?;
+            if !s.user_call.get() {
+                return Err(mlua::Error::runtime(
+                    "roster.views.open: only while the user runs one of your actions, commands or finder items",
+                ));
+            }
+            let mut select = None;
+            // At a node of its graph or a row of its table (T99, api 4).
+            let opts = match opts {
+                Value::Nil => None,
+                Value::Table(t) => Some(t),
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "roster.views.open: opts is a table, as { select = ID }",
+                    ));
+                }
+            };
+            if let Some(opts) = opts {
+                match opts.raw_get::<Value>("select")? {
+                    Value::Nil => {}
+                    Value::String(v) => select = Some(v.to_string_lossy().to_string()),
+                    _ => {
+                        return Err(mlua::Error::runtime(
+                            "roster.views.open: select is the id of a node or row (a string)",
+                        ));
+                    }
+                }
+            }
+            push(s, Op::ViewOpen { id, select })
+        });
+        func!(lua, shared, views, "close", |lua, s, id: String| {
+            check_id("roster.views.close", &id)?;
+            must_have(lua, s, "roster.views.close", "views", "view", "view", &id)?;
+            push(s, Op::ViewClose { id })
+        });
+        func!(lua, shared, views, "remove", |lua, s, id: String| {
+            check_id("roster.views.remove", &id)?;
+            must_have(lua, s, "roster.views.remove", "views", "view", "view", &id)?;
+            let (owner, actions) = (format!("view:{id}"), format!("view:{id}:actions"));
+            drop_owners(lua, s, |k| k == owner || k == actions)?;
+            own_put(lua, s, "view", &id, Value::Nil)?;
+            push(
+                s,
+                Op::Remove {
+                    kind: Removable::View,
+                    id,
+                },
+            )
+        });
+        // Which views it has (api 5). A view's `get` waits for the core to keep each view as its
+        // updates leave it (a follow-up of ticket 145).
+        func!(lua, shared, views, "has", |lua, _s, id: String| {
+            check_id("roster.views.has", &id)?;
+            Ok(!own_get(lua, "view", &id)?.is_nil())
+        });
+        func!(lua, shared, views, "list", |lua, _s, (): ()| {
+            lua.create_sequence_from(own_ids(lua, "view")?)
+        });
+        roster.raw_set("views", views)?;
+        Ok(())
+    }
+}

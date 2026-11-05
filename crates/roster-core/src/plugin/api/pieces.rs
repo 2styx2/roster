@@ -1,4 +1,5 @@
-//! The UI pieces the app draws for a Plugin, each set and taken away by id: `roster.sidebar`, `roster.status`, `roster.finders`, `roster.help`, `roster.health`, `roster.tutor`, `roster.toolbar` and `roster.progress`. Its functions as the API declares them.
+//! The UI pieces the app draws for a Plugin, each set and taken away by id: `roster.sidebar`, `roster.status`, `roster.finders`, `roster.help`, `roster.health`, `roster.tutor`, `roster.toolbar` and `roster.progress`.
+//! Its functions as the API declares them, and their binding into a Plugin's `roster` module.
 
 use super::*;
 
@@ -629,3 +630,71 @@ pub(super) const FUNCTIONS: &[Function] = &[
         example: "for _, id in ipairs(roster.progress.list()) do roster.progress.remove(id) end",
     },
 ];
+
+/// Puts this module's functions in `roster` (runtime.rs's `api`), as the Plugin's grants allow.
+pub(in crate::plugin) mod binding {
+    use crate::plugin::runtime::prelude::*;
+
+    pub(in crate::plugin) fn bind(lua: &Lua, shared: &Rc<Shared>, roster: &Table) -> mlua::Result<()> {
+        // UI pieces the core draws: a Sidebar section, a status segment, a finder source, a help
+        // page, a `:check` section, a tutorial (`:tutor`), a toolbar control, a progress (ticket 78). `set` adds or replaces one; `remove` takes it away.
+        for (module, piece, noun) in [
+            ("sidebar", Removable::Section, "Sidebar section"),
+            ("status", Removable::Status, "status segment"),
+            ("finders", Removable::Finder, "finder"),
+            ("help", Removable::Help, "help page"),
+            ("health", Removable::Health, "`:check` section"),
+            ("tutor", Removable::Tutor, "tutorial"),
+            ("toolbar", Removable::Toolbar, "toolbar control"),
+            ("progress", Removable::Progress, "progress"),
+        ] {
+            let kind = piece.name();
+            let t = lua.create_table()?;
+            let what = format!("roster.{module}.set");
+            func!(lua, shared, t, "set", |lua, s, (id, spec): (String, Table)| {
+                check_id(&what, &id)?;
+                let given = Value::Table(spec.clone());
+                let spec = data(lua, s, &what, &Value::Table(spec), &format!("{kind}:{id}"))?;
+                // What the app runs on its own, never the user's choice: a finder's `items` as it
+                // opens (whoever opened it, another Plugin's `roster.cmd` included) and a `:check`
+                // section's `check`.
+                let unasked = match kind {
+                    "finder" => spec.get("items"),
+                    "health" => spec.get("check"),
+                    _ => None,
+                };
+                if let Some(id) = unasked.and_then(|f| f.get("handler")).and_then(Json::as_u64) {
+                    s.quiet.borrow_mut().insert(id);
+                }
+                own_put(lua, s, kind, &id, copy(lua, &given)?)?;
+                push(s, op::set(piece, id, spec))
+            });
+            let removing = format!("roster.{module}.remove");
+            func!(lua, shared, t, "remove", |lua, s, id: String| {
+                check_id(&removing, &id)?;
+                must_have(lua, s, &removing, module, noun, kind, &id)?;
+                own_put(lua, s, kind, &id, Value::Nil)?;
+                push(s, Op::Remove { kind: piece, id })
+            });
+            reads(lua, &t, module, kind)?;
+            roster.raw_set(module, t)?;
+        }
+
+        // A `:check` section's lines for a run whose `check` returned "later" (decision Q112h): from a
+        // request's answer, so the check never waits for serve on the Plugin's thread.
+        {
+            let health: Table = roster.raw_get("health")?;
+            func!(
+                lua,
+                shared,
+                health,
+                "answer",
+                |_lua, s, (check, lines): (u64, Value)| {
+                    let checks = plain(s, "roster.health.answer: lines", &lines)?;
+                    push(s, Op::HealthAnswer { check, checks })
+                }
+            );
+        }
+        Ok(())
+    }
+}
