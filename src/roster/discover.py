@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from . import boxsync, jsonout, store
-from .common import die, find_program, oneline, program_argv, replace_file, say, tcp_ok
+from .common import die, die_message, find_program, oneline, program_argv, replace_file, say, tcp_ok
 from .config import find_config, load_config, load_config_text
 
 # ---------------------------------------------------------------- discover (network scan)
@@ -303,7 +303,7 @@ def cmd_discover(args):
             # a roster.yml that's there but broken is error 1 under --json, found by -c or not; none at all (nothing
             # found, or ROSTER_CONFIG naming no file) is fine: a scan needs no Inventory
             if args.json and (args.config or (cfg_path is not None and cfg_path.expanduser().exists())):
-                raise inventory_problem(str(e.code).removeprefix("error: "), cfg_path) from None
+                raise inventory_problem(die_message(e), cfg_path) from None
             if args.config:
                 raise
     known = {h["ip"]: h["name"] for h in cfg["hosts"].values()} if cfg else {}
@@ -536,7 +536,7 @@ class Scan:
         except ScanFailed as e:
             self.error = str(e)
         except SystemExit as e:                 # parse_nmap_xml's die()
-            self.error = str(e.code).removeprefix("error: ")
+            self.error = die_message(e)
         except Exception as e:
             self.error = f"{type(e).__name__}: {e}"
         with self.lock:
