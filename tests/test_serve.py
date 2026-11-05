@@ -596,7 +596,7 @@ def test_create_item_refuses_an_existing_name(serve, write_config, vault):
     before = vault.read_text()
     err = s.call("vault.create_item", {"name": "esx ssh", "password": NEW_PW})["error"]
     assert err["code"] == 60 and "'esx ssh' already exists" in err["message"]
-    assert err["data"]["matches"] == [{"name": "esx ssh", "revised": "2026-10-01", "uris": ["ssh://10.0.0.6"]}]
+    assert err["data"]["matches"] == [{"name": "esx ssh", "revised": None, "uris": ["ssh://10.0.0.6"]}]
     assert err["data"]["fix"]
     assert vault.read_text() == before
     assert NEW_PW not in json.dumps(s.responses)
