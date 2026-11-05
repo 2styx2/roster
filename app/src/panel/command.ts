@@ -12,7 +12,7 @@ import { currentPercent, roomOf } from "./PanelFrame";
 export const PANEL_WORDS = ["toggle", "full", "dock", "wider", "narrower", "width", "reset"] as const;
 
 const LABELS: Record<string, string> = {
-  toggle: "Switch the panel between docked and full window",
+  toggle: "Panel: docked or full window",
   full: "Make the panel full window",
   dock: "Dock the panel beside the terminal",
   wider: "Widen the docked panel",

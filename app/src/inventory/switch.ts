@@ -91,7 +91,7 @@ export const inventoryCommand: CommandDef = {
   arg: "text",
   optionalArg: true,
   seldom: true,
-  label: (name) => (name ? `Switch to the ${name} Inventory (asks first)` : "Switch to another named Inventory (asks first)"),
+  label: (name) => (name ? `Switch to the ${name} Inventory (asks first)` : "Switch Inventory (asks first)"),
   doc:
     "Switches roster to another named Inventory (`roster inv add NAME PATH` names one). It asks first, saying what " +
     "happens: roster starts again on that Inventory's file, and the vault locks, since only one Inventory's vault is " +

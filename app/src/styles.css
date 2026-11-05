@@ -762,8 +762,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The pointed binding (its name is in the footer, owner after round 10): the row's hover fill. */
 .keys-panel tr.named td { background: var(--hover); }
 .panel-foot .keys-option { display: inline; margin: 0; color: var(--text); }
-/* Two lines at most, never cut mid-token (round 12: "…:con…"). */
+/* Two lines at most, never cut mid-token (round 12: "…:con…"); in a short window one line, cut at
+   its end (whole in its tooltip), so the rows keep the room (round 19: 54 px at 480 × 320). */
 .keys-panel .panel-foot { text-wrap: balance; }
+@media (max-height: 480px) {
+  .keys-panel .panel-foot { padding-block: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);
 }
