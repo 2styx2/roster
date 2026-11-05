@@ -74,42 +74,137 @@ def session_file():
     return user_config_dir() / "bw-session"
 
 
-def check_session_dir():
-    """NotPrivate unless session_file()'s folder is yours alone to change (#480 review, LOW-3): a folder (or a link to
-    one that you own) owned by you that nobody else may write to, so no one else can swap, plant or remove the file
-    in it. Nothing there yet is fine (roster makes it 0700). Windows: not checked here: %APPDATA% is kept private by
-    its ACL, and the file's own owner and ACL are (common.read_private_bytes)."""
+class UnsafeFolder(NotPrivate):
+    """A folder roster won't keep a session key in (T248): WHY it isn't safe, FIX how to make it so. Its message (what
+    a load's warning shows) says both."""
+
+    def __init__(self, why, fix):
+        super().__init__(f"{why} ({fix})")
+        self.why, self.fix = why, fix
+
+
+_MAX_LINKS = 40                                     # as the kernel's own limit (ELOOP)
+
+
+def _above(here, home):
+    """Whether real path HERE is a folder above HOME (not HOME itself), which open_session_dir doesn't check."""
+    return here != home and home.startswith(here.rstrip("/") + "/")
+
+
+def _check_folder(fd, here, last, home):
+    """UnsafeFolder unless the open folder FD (at the real path HERE) is safe to keep the key under: LAST (the folder
+    the file is in) yours, nobody else may write to it; one above it (from $HOME down: those above $HOME aren't
+    checked) yours or root's, nobody else may write to it unless it's sticky (as /tmp, where only an entry's owner
+    may rename or remove it)."""
     import stat
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode):
+        raise UnsafeFolder(f"{here} isn't a folder", "fix it: roster keeps the key in a folder there")
+    if last:
+        if st.st_uid != os.getuid():
+            raise UnsafeFolder(f"{here} isn't yours (another user owns it)", "fix its owner: it must be yours")
+        if st.st_mode & 0o022:
+            raise UnsafeFolder(f"{here} is writable by others", f"fix its permissions: chmod go-w {here}")
+        return
+    if _above(here, home):
+        return
+    if st.st_uid not in (os.getuid(), 0):
+        raise UnsafeFolder(f"{here} isn't yours (another user owns it)", "fix its owner: it must be yours or root's")
+    if st.st_mode & 0o022 and not st.st_mode & stat.S_ISVTX:
+        raise UnsafeFolder(f"{here} is writable by others", f"fix its permissions: chmod go-w {here}")
+
+
+def open_session_dir(create=False):
+    """An open handle on session_file()'s folder, reached one folder at a time from / through open handles, never by a
+    name that could be swapped after it was checked (#486, T248): each folder from $HOME down is checked as it's
+    opened (_check_folder), and a link on the way (yours or root's) is followed by reading it and checking where it
+    leads in the same way. CREATE: make missing folders (0700). FileNotFoundError if one isn't there (and not CREATE),
+    UnsafeFolder if one isn't safe. Linux and macOS only; the caller closes it."""
+    import stat
+    from pathlib import Path
+    home = os.path.realpath(Path.home())
+    todo = list(session_file().parent.absolute().parts[1:])
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd, real, links = os.open("/", os.O_RDONLY | os.O_DIRECTORY), [], 0
+    try:
+        _check_folder(fd, "/", not todo, home)
+        while todo:
+            name = todo.pop(0)
+            if name in ("", "."):
+                continue
+            if name == "..":
+                real, nfd = real[:-1], os.open("..", flags, dir_fd=fd)
+            else:
+                here = "/" + "/".join([*real, name])
+                try:
+                    st = os.lstat(name, dir_fd=fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    os.mkdir(name, 0o700, dir_fd=fd)
+                    st = os.lstat(name, dir_fd=fd)
+                if stat.S_ISLNK(st.st_mode):
+                    if st.st_uid not in (os.getuid(), 0) and not _above("/" + "/".join(real), home):
+                        raise UnsafeFolder(f"{here} is a symlink someone else owns", "fix it: a link there must be "
+                                           "yours")
+                    links += 1
+                    if links > _MAX_LINKS:
+                        raise UnsafeFolder(f"{here} goes through too many links", "fix it")
+                    target = Path(os.readlink(name, dir_fd=fd))
+                    todo[:0] = target.parts[1:] if target.is_absolute() else target.parts
+                    if target.is_absolute():
+                        os.close(fd)
+                        fd, real = -1, []
+                        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+                        _check_folder(fd, "/", not todo, home)
+                    continue
+                nfd = os.open(name, flags, dir_fd=fd)
+                real = [*real, name]
+            os.close(fd)
+            fd = nfd
+            _check_folder(fd, "/" + "/".join(real), not todo, home)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        raise
+    return fd
+
+
+def check_session_dir():
+    """UnsafeFolder unless session_file()'s folder is yours alone to change (#480 review, LOW-3; #486, T248): it, and
+    every folder above it from $HOME down, as open_session_dir checks them. Nothing there yet is fine (roster makes it
+    0700). Windows: not checked here: %APPDATA% is kept private by its ACL, and the file's own owner and ACL are
+    (common.read_private_bytes)."""
     if WINDOWS:
         return
-    d = session_file().parent
     try:
-        st = os.lstat(d)
+        os.close(open_session_dir())
     except FileNotFoundError:
         return
-    if stat.S_ISLNK(st.st_mode):
-        if st.st_uid != os.getuid():
-            raise NotPrivate(f"{d} is a symlink someone else owns")
-        try:
-            st = os.stat(d)
-        except OSError as e:
-            raise NotPrivate(f"{d} can't be read ({e.strerror})") from None
-    if not stat.S_ISDIR(st.st_mode):
-        raise NotPrivate(f"{d} isn't a folder")
-    if st.st_uid != os.getuid():
-        raise NotPrivate(f"{d} isn't yours (another user owns it)")
-    if st.st_mode & 0o022:
-        raise NotPrivate(f"{d} is writable by others (chmod go-w {d})")
+    except OSError as e:
+        raise UnsafeFolder(f"{session_file().parent} can't be opened ({e.strerror or type(e).__name__})",
+                           "fix its permissions") from None
 
 
 def read_session_file():
-    """session_file()'s bytes, by read_private_bytes's rules, in a folder check_session_dir accepts. FileNotFoundError
-    if it isn't there; NotPrivate otherwise."""
+    """session_file()'s bytes, by read_private_bytes's rules, in folders check_session_dir accepts, read through the
+    folder's open handle (Linux and macOS). FileNotFoundError if it isn't there; NotPrivate otherwise."""
     f = session_file()
     if not os.path.lexists(f):
         raise FileNotFoundError(f)
-    check_session_dir()
-    return read_private_bytes(f)
+    if WINDOWS:
+        return read_private_bytes(f)
+    try:
+        fd = open_session_dir()
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise UnsafeFolder(f"{f.parent} can't be opened ({e.strerror or type(e).__name__})",
+                           "fix its permissions") from None
+    try:
+        return read_private_bytes(f, dir_fd=fd)
+    finally:
+        os.close(fd)
 
 
 _BOMS = ((b"\xef\xbb\xbf", "utf-8"), (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"))
@@ -171,57 +266,119 @@ def note(text):
         print(f"note: {text}", file=sys.stderr, flush=True)
 
 
+def refused(e):
+    """SessionFileRefused for NotPrivate E: a folder's says to fix it (it may hold init.lua: #486 item 2), a file's to
+    remove it."""
+    if isinstance(e, UnsafeFolder):
+        return SessionFileRefused(f"{e.why} - roster won't keep a session key in it; {e.fix}, then run "
+                                  "`roster vault unlock` again")
+    return SessionFileRefused(f"{e} - roster won't write over it; remove it yourself, then run "
+                              "`roster vault unlock` again")
+
+
 def check_session_file():
     """SessionFileRefused if a session_file() is there that roster won't write over: one that isn't yours alone
     (common.read_private_bytes: a link, another user's, not a plain file, others may read it), or one in a folder
     that isn't yours alone (check_session_dir)."""
     try:
-        check_session_dir()
-        read_private_bytes(session_file())
+        read_session_file() if os.path.lexists(session_file()) else check_session_dir()
     except FileNotFoundError:
         pass
     except NotPrivate as e:
-        raise SessionFileRefused(f"{e} - roster won't write over it; remove it yourself, then run "
-                                 "`roster vault unlock` again") from None
+        raise refused(e) from None
 
 
 def save_session_file(key):
     """Write KEY to session_file() for other runs: whole or not at all (a temp file beside it, renamed over it), 0600
     under umask 077. A file already there that isn't yours alone (common.read_private_bytes: a link, another user's,
-    not a plain file, others may read it) is refused, never written over or through: SessionFileRefused. The key is
-    checked to be one (session_text) and the new file to be private before it takes the name. SessionFileFailed if the
-    system says no. The key itself is never in a message."""
-    import tempfile
-    from pathlib import Path
+    not a plain file, others may read it), or folders that aren't (check_session_dir), are refused, never written over
+    or through: SessionFileRefused. On Linux and macOS it all happens through one open handle on the folder
+    (open_session_dir), so a folder swapped meanwhile can't take the key elsewhere (#486, T248). The key is checked to
+    be one (session_text) and the new file to be private before it takes the name. SessionFileFailed if the system
+    says no. The key itself is never in a message."""
     f = session_file()
     if not key or session_text(key.encode("ascii", "replace")) != key:
         raise SessionFileFailed("bw's unlock didn't print a session key, so nothing was saved")
-    check_session_file()
+    data = key.encode("ascii") + b"\n"
     old = os.umask(0o077)
     try:
-        f.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=".bw-session.", suffix=".new", dir=f.parent)
-        try:
-            if hasattr(os, "fchmod"):                  # the open file itself, never a name that could be swapped
-                os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "wb") as out:
-                out.write(key.encode("ascii") + b"\n")
-                out.flush()
-                os.fsync(out.fileno())                 # on disk before it takes the name
-            if not hasattr(os, "fchmod"):              # Windows (before 3.13): the read-only bit only; its ACL counts
-                os.chmod(tmp, 0o600)
-            if session_text(read_private_bytes(Path(tmp))) != key:
-                raise SessionFileFailed(f"the new {f} didn't read back as written, so nothing was saved")
-            os.replace(tmp, f)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+        if WINDOWS:
+            check_session_file()
+            _save_by_name(f, data, key)
+        else:
+            try:
+                fd = open_session_dir(create=True)
+            except NotPrivate as e:
+                raise refused(e) from None
+            try:
+                _save_in(fd, f, data, key)
+            finally:
+                os.close(fd)
+    except SessionFileRefused:
+        raise
     except NotPrivate as e:
         raise SessionFileFailed(f"the new session file wouldn't be yours alone ({e}), so nothing was saved") from None
     except OSError as e:
         raise SessionFileFailed(f"couldn't write {f} ({e.strerror or type(e).__name__})") from None
     finally:
         os.umask(old)
+
+
+def _save_in(dir_fd, f, data, key):
+    """save_session_file on Linux and macOS: what's there checked, the temp file made, read back and renamed, all in
+    the open folder DIR_FD."""
+    import secrets
+    try:
+        read_private_bytes(f, dir_fd=dir_fd)
+    except FileNotFoundError:
+        pass
+    except NotPrivate as e:
+        raise refused(e) from None
+    while True:
+        tmp = f".{f.name}.{secrets.token_hex(8)}.new"
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+            break
+        except FileExistsError:
+            continue
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())                     # on disk before it takes the name
+        if session_text(read_private_bytes(f.parent / tmp, dir_fd=dir_fd)) != key:
+            raise SessionFileFailed(f"the new {f} didn't read back as written, so nothing was saved")
+        os.rename(tmp, f.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)   # rename(2) replaces a link, never follows it
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=dir_fd)
+        except OSError:
+            pass
+        raise
+
+
+def _save_by_name(f, data, key):
+    """save_session_file on Windows, by path names: %APPDATA%'s ACL keeps the folder private."""
+    import tempfile
+    from pathlib import Path
+    f.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".bw-session.", suffix=".new", dir=f.parent)
+    try:
+        if hasattr(os, "fchmod"):                      # the open file itself, never a name that could be swapped
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        if not hasattr(os, "fchmod"):                  # before 3.13: the read-only bit only; its ACL counts
+            os.chmod(tmp, 0o600)
+        if session_text(read_private_bytes(Path(tmp))) != key:
+            raise SessionFileFailed(f"the new {f} didn't read back as written, so nothing was saved")
+        os.replace(tmp, f)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def remove_session_file():
@@ -315,11 +472,15 @@ def _bw_ask_unlock(ctx):
 
 
 def _bw_status_json(ctx):
-    """`bw status` as a dict: status, and (when it says) userEmail and serverUrl (None for bitwarden.com)."""
+    """`bw status` as a dict: status, and (when it says) userEmail and serverUrl (None for bitwarden.com). SecretError
+    when it isn't a JSON object (#486: valid JSON of another kind was an AttributeError in `check --box`)."""
     try:
-        return json.loads(_bw(ctx, "status").stdout or "{}")
+        st = json.loads(_bw(ctx, "status").stdout or "{}")
     except json.JSONDecodeError:
+        st = None
+    if not isinstance(st, dict):
         raise SecretError("couldn't read `bw status` output")
+    return st
 
 
 def _bw_status(ctx):
