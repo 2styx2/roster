@@ -68,7 +68,7 @@ def cmd_init(args):
         try:
             how, value = newinventory.parse_how(args.inventory)
         except ValueError as e:
-            build_parser().error(f"--inventory {e}")
+            build_parser().error(f"--inventory: {e}")
     try:
         if how is None:
             if path.exists():
@@ -1610,6 +1610,7 @@ def main(argv=None):
         os._exit(0)
     finally:
         Parser.json_errors = False
+        Parser.typed, Parser.root = [], None
 
 
 class Parser(argparse.ArgumentParser):
@@ -1618,16 +1619,32 @@ class Parser(argparse.ArgumentParser):
     roster's own --help lists the commands in groups (clihelp.GROUPS) before its options."""
     json_errors = False
     commands_text = ""
+    typed: list[str] = []               # the words of this command line (_main): no usage error repeats one
+    root: "Parser | None" = None        # roster's own parser, for the names that may be repeated
 
     def error(self, message):
         # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
         # password or a session token: no usage error repeats one (#402 N3, T235 #460)
-        message = clihelp.hide_values(clihelp.suggest(message, self.all_options()))
+        root = Parser.root or self
+        message = clihelp.usage_error(message, Parser.typed, root.names(), self.all_options())
         if Parser.json_errors:
             jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")
             sys.exit(2)
         self.print_usage(sys.stderr)
         self.exit(2, f"{self.prog}: error: {message}\n(`{self.prog} --help` shows how)\n")
+
+    def names(self):
+        """Every name roster's parsers know (options, commands, choices): a typed one may be repeated."""
+        found = set()
+        for a in self._actions:
+            found.update(a.option_strings)
+            if isinstance(a, argparse._SubParsersAction):
+                found.update(a.choices)
+                for s in a.choices.values():
+                    found |= s.names()
+            elif a.choices:
+                found.update(str(c) for c in a.choices)
+        return found
 
     def all_options(self):
         """Every --option of this parser and its commands' (an unknown one is reported by roster's own parser)."""
@@ -1869,7 +1886,8 @@ def command_parser(parser, words):
     for i, w in enumerate(words):
         found = next((a.choices for a in parser._actions if isinstance(a, argparse._SubParsersAction)), {})
         if w not in found:
-            parser.error(f"no help for {' '.join(words[:i + 1])!r}: `roster help` lists the commands")
+            lists = f"`roster help {' '.join(words[:i])}` lists its commands" if i else "`roster help` lists the commands"
+            parser.error(f"no help for that {clihelp.HIDDEN}: {lists}")
         parser = found[w]
     return parser
 
@@ -1891,6 +1909,7 @@ def inventory(args):
 
 def _main(argv=None):
     parser = build_parser()
+    Parser.typed, Parser.root = list(argv or []), parser
     args, extra = parser.parse_known_args(argv)
     passthrough = args.cmd == "vault" and args.vault_cmd in ("bw", "op")
     if extra and passthrough:                  # options before the tool's command are its own: its allowlist judges them, unrepeated

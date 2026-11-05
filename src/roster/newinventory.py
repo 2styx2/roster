@@ -56,7 +56,8 @@ def parse_how(text):
         if how == "repo" and value.startswith("-"):
             raise ValueError("repo: a git URL can't start with '-'")
         return how, value
-    raise ValueError(f"{text!r}: use blank, file:PATH, repo:URL or ssh-config[:PATH]")
+    # never the text itself: it may be a clone URL with a token in it (T235)
+    raise ValueError("not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]")
 
 
 @dataclass
