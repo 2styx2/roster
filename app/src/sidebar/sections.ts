@@ -217,7 +217,8 @@ export const sessionsSection: SidebarSectionDef = {
           // that slot and nothing under it moves (Q218).
           empty: "None open",
           rows: sessions.tabs.map((tab, i) => {
-            const facts = tabFacts(tab);
+            const done = !isLive(tab);
+            const facts = done ? endedFacts(tab) : tabFacts(tab);
             return {
               id: `session-${tab.id}`,
               label: tab.label,
@@ -225,7 +226,7 @@ export const sessionsSection: SidebarSectionDef = {
               host: tab.host,
               dot: dotOf(tab, hostByName.get(tab.host)),
               link: linkOf(tab),
-              ...(statusText(tab) ? { note: statusText(tab) } : {}),
+              ...(done ? { note: endedNote(tab) } : statusText(tab) ? { note: statusText(tab) } : {}),
               ...(tab.hop ? { hop: tab.hop } : {}),
               ...(tab.cwd ? { detail: folderName(tab.cwd) } : {}),
               ...(facts ? { title: facts } : {}),
@@ -233,11 +234,47 @@ export const sessionsSection: SidebarSectionDef = {
               ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
               ...(i < 9 ? { index: i + 1 } : {}),
               command: `session ${i + 1}`,
-              actions: [{ label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` }],
+              actions: [
+                { label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` },
+                // Ended or refused: the one next step, on the row and always there (round 20), last so
+                // the selected row's Close appears beside it without moving it.
+                ...(done
+                  ? [{ label: `Reconnect ${tab.label}`, icon: "reconnect" as const, command: `reconnect ${i + 1}`, pinned: true }]
+                  : []),
+              ],
             };
           }),
         },
 };
+
+/** An ended or refused Session's note: one short word that is never cut ("ended (code 255)" was
+ * cut to "end…" beside a long name, round 20). The code and the reason are in its tooltip. */
+export function endedNote(tab: Tab): string {
+  const s = tab.status;
+  if (s.state === "failed") return "failed";
+  if (s.state !== "ended") return "";
+  if (s.exit.closed) return "closed";
+  return s.problem ? "failed" : "ended";
+}
+
+/** What happened to an ended or refused Session, and the one next step: its tooltip, and the
+ * details foot under the tree in App mode. */
+export function endedFacts(tab: Tab): string {
+  const s = tab.status;
+  const what =
+    s.state === "failed"
+      ? `Couldn't open: ${s.problem.message}`
+      : s.state !== "ended"
+        ? ""
+        : s.problem
+          ? `Ended: ${s.problem.message}`
+          : s.exit.closed
+            ? "Closed."
+            : s.exit.code === null
+              ? "Ended by a signal."
+              : `Ended (exit code ${s.exit.code}).`;
+  return `${what}\n↻ reconnects it; its pane says what to fix.`;
+}
 
 /** A Host's dot in the tree: how it would log in, or hollow and faint while it's unreviewed. */
 export function hostDot(host: Host): Dot {

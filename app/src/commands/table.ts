@@ -28,8 +28,9 @@ export interface CommandContext {
   quickConnect(target: string | null): void;
   /** Goes to the Host's open Session if there is one, else opens one (as `connect`). */
   open(host: string): void;
-  /** Reconnects the current tab if its Session has ended or was refused. */
-  reconnect(): void;
+  /** Reconnects Session `n` (1-based, going to it) if it has ended or was refused; with none, the
+   * one on screen. */
+  reconnect(n?: number | null): void;
   /** Runs roster's diagnostics (`host.check`) for the Host; with none, this Box's health (`:help health`). */
   check(host: string | null): void;
   /** The Session `delta` places after the current one, wrapping. */
@@ -274,8 +275,11 @@ export const builtinCommands: readonly CommandDef[] = [
     id: "reconnect",
     source: BUILTIN,
     area: "Sessions",
-    label: () => "Reconnect an ended Session",
-    run: (ctx) => ctx.reconnect(),
+    // A number: that Session (the Sidebar's ended rows, round 20); none: the one on screen.
+    arg: "number",
+    optionalArg: true,
+    label: (n) => (n ? `Reconnect Session ${n}, if it has ended` : "Reconnect an ended Session"),
+    run: (ctx, n) => ctx.reconnect(n === undefined ? null : Number(n)),
   },
   {
     id: "check",

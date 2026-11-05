@@ -20,9 +20,11 @@
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
 import {
+  Fragment,
   memo,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -37,6 +39,7 @@ import { Keys, LEADER, WithKeys } from "../ui/Keys";
 import { DOT_WORDS, StateDot, type Dot, type Light } from "../ui/StateDot";
 import type { MenuEntry } from "./hostMenu";
 import { RowMenu } from "./RowMenu";
+import { MessageText } from "../ui/MessageText";
 
 export type { Dot } from "../ui/StateDot";
 
@@ -56,7 +59,8 @@ export interface RowAction {
     | "plan"
     | "apply"
     | "cut"
-    | "map";
+    | "map"
+    | "reconnect";
   command: CommandLine;
   /** Always shown, not only on the selected row (the Inventory's "Add a Host"). */
   pinned?: boolean;
@@ -180,7 +184,22 @@ export interface SidebarProps {
   onMenu?(menu: OpenMenu | null): void;
   /** What a Host row's menu offers (hostMenu.ts). */
   rowMenu?(row: SidebarRow): readonly MenuEntry[];
+  /** What the row's own command said went wrong, shown under the row until the next key or press. */
+  slip?: RowSlipData | null;
+  onSlipDone?(): void;
 }
+
+/** What a row's own command said went wrong, said under the row (round 20). */
+export interface RowSlipData {
+  row: string;
+  text: string;
+  /** The row's name where the text says it: set in Iosevka, as data (taste.md). */
+  name?: string;
+}
+
+/** How long after a row's command a message it causes is still that row's (a slow refusal from
+ * roster serve included). */
+export const ROW_SLIP_MS = 8000;
 
 export interface OpenMenu {
   row: string;
@@ -316,6 +335,8 @@ const ICONS: Record<RowAction["icon"], string> = {
   // An edge broken by a cross, as a cut edge is drawn in a graph (a Mesh cut).
   cut: "M1.5 8h3.5M11 8h3.5M6.5 5.5l3 5M9.5 5.5l-3 5",
   // Three nodes joined, as the toolbar's map: show it on a graph (Topology's section, T99).
+  // An arrow coming round to start again: reconnect an ended Session (round 20).
+  reconnect: "M12.75 8a4.75 4.75 0 11-1.4-3.36M12.5 2.5v2.75H9.75",
   map: "M3.75 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM12.25 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM8 2.25a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM5.5 11.5h5M4.7 10L7.1 5.6M11.3 10L8.9 5.6",
 };
 
@@ -730,6 +751,8 @@ export function Sidebar({
   menu = null,
   onMenu,
   rowMenu,
+  slip = null,
+  onSlipDone,
 }: SidebarProps) {
   // A stable `run` and `select` for the memoized rows; they always call the latest one.
   const runRef = useRef(run);
@@ -1024,11 +1047,73 @@ export function Sidebar({
           close={closeMenu}
         />
       )}
+      {slip && !(menuShown && menu) && (
+        <RowSlip key={`${slip.row}:${slip.text}`} slip={slip} done={onSlipDone} />
+      )}
       {/* A heading says nothing the tree doesn't (round 16: a bare "Inventory" strip). */}
       {cursorRow && (cursorRow.dot || rowFacts(cursorRow).length > 0) && (
         <Details row={cursorRow} />
       )}
     </nav>
+  );
+}
+
+/** What a row's own command said went wrong (round 20, H9): under the row, where you were looking
+ * (it had gone to the foot of the pane, the width of the window away), in the message's words,
+ * which say what happened and the one next step. It floats over the rows below, so the tree never
+ * moves, and is gone at the next key, press or scroll; `:messages` keeps it. No motion: it answers
+ * a click or a key at once, as the message line does. */
+function RowSlip({ slip, done }: { slip: RowSlipData; done: (() => void) | undefined }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const doneRef = useRef(done);
+  useLayoutEffect(() => {
+    doneRef.current = done;
+  });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const row = document.querySelector(`.sidebar [data-row="${CSS.escape(slip.row)}"]`);
+    if (!el || !row) return;
+    const r = row.getBoundingClientRect();
+    const h = el.offsetHeight;
+    // Under the row's name (past its node), or above the row where the window ends first.
+    const below = r.bottom + 2 + h <= window.innerHeight - 4;
+    el.style.left = `${Math.round(r.left + 20)}px`;
+    el.style.width = `${Math.max(160, Math.round(r.width - 24))}px`;
+    el.style.top = `${Math.round(below ? r.bottom + 2 : r.top - 2 - h)}px`;
+    el.dataset.side = below ? "below" : "above";
+  }, [slip]);
+  useEffect(() => {
+    const end = (e: Event) => {
+      if (e instanceof KeyboardEvent && ["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+      if (e.type !== "keydown" && e.target instanceof Node && ref.current?.contains(e.target)) return;
+      doneRef.current?.();
+    };
+    // Added after the press or key that ran the row's command has finished.
+    const t = window.setTimeout(() => {
+      document.addEventListener("keydown", end, true);
+      document.addEventListener("pointerdown", end, true);
+      document.addEventListener("scroll", end, true);
+      window.addEventListener("resize", end);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("keydown", end, true);
+      document.removeEventListener("pointerdown", end, true);
+      document.removeEventListener("scroll", end, true);
+      window.removeEventListener("resize", end);
+    };
+  }, []);
+  return (
+    <div ref={ref} className="sb-slip" role="alert" data-row-slip={slip.row}>
+      {slip.name && slip.text.includes(slip.name)
+        ? slip.text.split(slip.name).map((part, i) => (
+            <Fragment key={i}>
+              {i > 0 && <code className="message-cmd">{slip.name}</code>}
+              <MessageText text={part} files />
+            </Fragment>
+          ))
+        : <MessageText text={slip.text} files />}
+    </div>
   );
 }
 
