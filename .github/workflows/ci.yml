@@ -1,8 +1,9 @@
 # roster CI: both halves of the repo, on pull requests, on pushes to main/dev and tags, and every night.
 #   What runs when (decision Q196, docs/development.md "What CI runs when"): a push to main or dev, a tag, the
 #   nightly schedule and a run by hand run every job (but the install test: Q199), on every supported Python. A pull request runs a PR-sized
-#   set: Python 3.12 only, and only the jobs its changed files need (the `changes` job, scripts/ci_changes.py);
-#   the `CI` job at the end always reports, and fails if any job that ran failed.
+#   set: Python 3.12 only, and only the jobs its changed files need (the `changes` job, scripts/ci_changes.py),
+#   with Windows' pytest only for Windows-specific code (T237); the `CI` job at the end always reports, and fails if
+#   any job that ran failed. scripts/check-local.sh runs the PR's checks on your own machine.
 #   Install (install.sh, update.sh, uninstall.sh): scripts/test-install.sh on Ubuntu and Fedora in containers, on
 #        a pull request that touches them, on Monday's nightly run and by hand (it needs the network; decision Q199).
 #   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows
@@ -173,6 +174,8 @@ jobs:
           path: report.xml
           retention-days: 7
 
+  # On a pull request only when it touches Windows-specific code (ci_changes.py WINDOWS_PATHS, T237); every push to
+  # dev or main, a tag, the nightly run and a run by hand run it.
   # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
   # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
   # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.

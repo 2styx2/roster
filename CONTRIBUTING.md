@@ -51,6 +51,9 @@ The sources: `crates/roster-core/src/config/shape` for `init.lua`'s `roster` tab
 - Every commit passes the checks of the half it touches; CI (`.github/workflows/ci.yml`) runs the ones a pull request's files need, and all of them on every push to `main` or `dev` and every night ([development.md](docs/development.md#what-ci-runs-when)):
   - CLI: `uv run ruff check src tests scripts app/scripts`, `uv run pyright` and `uv run pytest`.
   - App: in `app/`, `npm run check` (tsc, ESLint, Vitest); at the root, `cargo test`, `cargo clippy -p roster-core --all-targets -- -D warnings` and `cargo fmt --check`.
+  - `scripts/check-local.sh` runs the ones your changes need (`--quick`: ruff, pyright and pytest, for a pre-push hook; `--full`: all of them). To run it on every push, add this line at the end of your `.git/hooks/pre-push` ([development.md](docs/development.md#checking-before-you-push)):
+    `"$(git rev-parse --show-toplevel)/scripts/check-local.sh" --quick </dev/null || exit 1`
+  - A pull request runs Windows' pytest only when it touches Windows-specific code; every push to `dev` runs it, so check `dev`'s run after a merge.
 - Tickets are GitHub issues, grouped by iteration milestones; the issue is the ticket and its open or closed state is its status. Filing or changing a ticket needs no pull request. Merges into `dev` don't fire "Closes #N", so the issue is closed when its pull request is merged.
 
 ## License of contributions
