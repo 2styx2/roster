@@ -321,8 +321,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
 /* Long values give way in order (FitBar): the path by whole folders (down to "…/roster.yml"), the
-   hints (removed whole, last first), the path (removed), then the Backend's label (its node
-   stays), this Box's name and the Session on screen's last, each cut in its middle to 24, 16 and
+   hints (removed whole, last first), the path (removed), then the Backend, node and label
+   (round 22: a bare node said nothing), this Box's name and the Session on screen's last, each cut in its middle to 24, 16 and
    10 characters and then removed (Q209 d, round 21). Nothing is cut by CSS or clipped by the
    bar's edge: a segment is whole, in one of its own forms, or not there. The Host count and the
    mode never give way. Each value has its whole text in a tooltip. */
@@ -1818,11 +1818,13 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder:not(.prose) .finder-detail { flex: none; min-width: 0; }
 .finder-legend { font-family: var(--font-mono); white-space: nowrap; }
 /* Round 19: a prose finder (Help, :helpgrep, the outline) starts every row's middle column at one
-   x, the widest title in view (layOutTitles), at most 42% of the row; a longer title is cut there
-   (whole in its tooltip). Title | page or section | tag, in that order on every row. A row with
-   no middle column (a page) keeps the room up to its tag. */
+   x, the widest title in view (layOutTitles); a longer title is cut there (whole in its tooltip).
+   Title | page or section, in that order on every row. Round 22 took the tag off the rows (the
+   footer names the selected row's), so a title may take everything but the widest page in view
+   (and the 12 px gap), never less than half the row, where round 20 capped it at 42% beside a tag
+   column. A row with no middle column (a page) takes the whole row. */
 .finder.prose .finder-row:has(> .finder-path) > .finder-label {
-  flex: 0 0 min(var(--finder-title-w, 42%), 42%); max-width: none; min-width: 0;
+  flex: 0 0 min(var(--finder-title-w, 62%), max(50%, 100% - var(--finder-page-w, 0px) - 12px)); max-width: none; min-width: 0;
 }
 .finder.prose .finder-label > .finder-name { flex: 0 1 auto; }
 /* What a help entry is, after its name ("E31 · Pick Bitwarden cloud…"), muted; it's cut before
@@ -1831,25 +1833,15 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder-note .data { font-family: var(--font-mono); }
 .finder.prose .finder-label > .finder-name:has(+ .finder-note) { flex-shrink: 0; max-width: 100%; }
 .finder-row.selected .finder-note { color: var(--muted); }
-/* A help tag is what you type after :help: whole or not drawn (round 21: a middle cut read as a
-   fragment, "the…-one-theme"). A row that can't hold its title, page and tag drops the tag
-   (dropCutTags), and under 560 px no row draws one: the footer names the selected row's. */
-.finder.prose .finder-detail { flex: none; min-width: auto; }
-/* A page's row (no middle column): the title and what it is take the room up to the tag. */
-.finder.prose .finder-row:not(:has(> .finder-path)) > .finder-label { max-width: none; min-width: 0; }
-.finder-row > .finder-detail[data-off] { display: none; }
-/* The selected row's `:help TAG` in the footer's free room, only when its row doesn't draw the tag:
-   Iosevka in the text colour, whole (two lines when it must), as the Picker names a cut Host. */
-.finder-foot-tag { display: none; flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 16px; }
+/* A page's row (no middle column): the title and what it is take the row. */
+.finder.prose .finder-row:not(:has(> .finder-path)) > .finder-label { flex-grow: 1; max-width: none; min-width: 0; }
+/* The selected row's `:help TAG` in the footer's free room (no row draws a tag, round 22):
+   Iosevka in the text colour. On two lines only when it must, and then only after the `#`
+   (footTag); each part on one line, cut at its end before it would break inside the tag. */
+.finder-foot-tag { flex: 1; min-width: 0; line-height: 16px; }
 .finder-foot-tag code { font-family: var(--font-mono); color: var(--text); }
-.finder:has(.finder-row.selected > .finder-detail[data-off]) .finder-foot-tag { display: block; }
+.finder-foot-part { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; }
 .finder:has(.finder-foot-tag) .picker-footer { height: auto; min-height: 34px; padding-block: 6px; }
-@media (max-width: 560px) {
-  .finder.prose .finder-row > .finder-detail { display: none; }
-  .finder.prose .finder-foot-tag { display: block; }
-  /* No tag column: a title takes up to 60% of the row before it's cut (it was 42%, beside one). */
-  .finder.prose .finder-row:has(> .finder-path) > .finder-label { flex-basis: min(var(--finder-title-w, 60%), 60%); }
-}
 /* A group's heading over its rows (help's pages under the index's parts, round 21): the Sidebar's
    section heading, 12 px uppercase Inter, tracked and muted, so the finder reads as roster's
    index rather than a palette of 1,360 rows. Not a row: the cursor never stops on it. */
@@ -1859,11 +1851,19 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 }
 .finder-group:first-child { padding-top: 4px; }
 /* A Host's row in a data finder reads as the Picker's: name, address, group, type (round 21: the
-   tree put the group before the address). The address is a column as wide as the list's widest
-   (layOutNames), never cut; the group takes what's left, cut at its end; the type sits at the end.
-   Under 600 px, as in the Picker, only the node, name and address stay. */
+   tree put the group before the address). Round 22: the name is the Picker's column, one width for
+   the whole list, the widest name in view at most 45% of the row (layOutHosts), a longer name cut
+   there, so the address and the group each start at one x on every row (round 21's per-name tab
+   stop put them at nine). The address is a column as wide as the list's widest, never cut; the
+   group takes what's left, cut at its end; the type sits at the end. One line, 40 px, always (a
+   fallback font's taller line made one row 44). Under 600 px, as in the Picker, only the node,
+   name and address stay. The name in the text colour, as the Picker's (Paper, not muted). */
+.finder-row.host-row { height: 40px; }
+.finder-row.host-row > .finder-label { flex: 0 0 min(var(--finder-host-w, 45%), 45%); max-width: none; min-width: 0; }
+.finder-row.host-row:not(.unreviewed) .finder-name { color: var(--text); }
+.finder-row.host-row > .finder-type { width: var(--finder-type-w, auto); }
 .finder-row.host-row > .finder-addr {
-  margin-left: 0; flex: none; min-width: var(--finder-addr-w, auto); text-align: left; font-variant-numeric: tabular-nums;
+  margin-left: 0; flex: none; width: var(--finder-addr-w, auto); min-width: 0; text-align: left; font-variant-numeric: tabular-nums;
 }
 .finder-row.host-row > .finder-path { flex: 1 1 auto; }
 .finder-type { flex: none; margin-left: auto; font-size: var(--text-sm); color: var(--muted); }

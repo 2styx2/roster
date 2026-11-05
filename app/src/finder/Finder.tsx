@@ -80,50 +80,78 @@ export function layOutNames(list: HTMLElement) {
     const at = Math.ceil(((names[i] ?? 0) + gap) / stop) * stop;
     row.style.setProperty("--finder-name-basis", `${at - gap}px`);
   });
-  // A Host's address is a column, as wide as the widest in the list, so the group after it starts
-  // at one x (round 21: the Picker's order, name · address · group · type).
-  let addr = 0;
-  for (const a of list.querySelectorAll<HTMLElement>(".finder-row > .finder-addr")) addr = Math.max(addr, a.scrollWidth);
-  list.style.setProperty("--finder-addr-w", `${Math.ceil(addr)}px`);
+  layOutHosts(list);
 }
 
-/** Where a prose finder's middle column starts (round 19): one x for the whole list, the widest
- * title among the rows in view (CSS caps it at 42% of the row, and a title past it is cut, whole
- * in its tooltip), so every description starts at the same place. Round 18's per-row tab stops
- * put it at three to eight places once a query mixed titles. Sets --finder-title-w on the list. */
-export function layOutTitles(list: HTMLElement) {
+/** Where a Host row's address starts (round 22): the Picker's name column, one x for the whole
+ * list, the widest name in view (CSS caps it at 45% of the row; a longer name is cut there, whole
+ * in its tooltip). Round 21 put the address one tab stop past each name, so with names of unlike
+ * lengths (the worst case) the address and group started at nine x positions and a long name cut
+ * the group to "Fo…". The address is a column as wide as the list's widest, so the group after it
+ * starts at one x too (name · address · group · type, the Picker's order), and the type is one as
+ * wide as the widest, so every group ends at one x. Sets --finder-host-w, --finder-addr-w and
+ * --finder-type-w on the list. */
+export function layOutHosts(list: HTMLElement) {
   const bottom = list.getBoundingClientRect().bottom;
   let inView = 0;
   let all = 0;
-  for (const row of list.querySelectorAll<HTMLElement>(".finder-row")) {
-    if (!row.querySelector(":scope > .finder-path")) continue;
+  let addr = 0;
+  let type = 0;
+  for (const row of list.querySelectorAll<HTMLElement>(".finder-row.host-row")) {
     let name = 0;
     for (const part of row.querySelector(".finder-label")?.children ?? []) name += (part as HTMLElement).scrollWidth;
     all = Math.max(all, name);
     // In view (jsdom has no layout: every row is); with none in view, the whole list counts.
     if (list.clientHeight === 0 || row.getBoundingClientRect().top < bottom) inView = Math.max(inView, name);
+    addr = Math.max(addr, row.querySelector<HTMLElement>(":scope > .finder-addr")?.scrollWidth ?? 0);
+    type = Math.max(type, row.querySelector<HTMLElement>(":scope > .finder-type")?.scrollWidth ?? 0);
   }
-  list.style.setProperty("--finder-title-w", `${Math.ceil(inView || all)}px`);
-  dropCutTags(list);
+  list.style.setProperty("--finder-host-w", `${Math.ceil(inView || all)}px`);
+  list.style.setProperty("--finder-addr-w", `${Math.ceil(addr)}px`);
+  list.style.setProperty("--finder-type-w", `${Math.ceil(type)}px`);
 }
 
-/** A prose finder's tag (what you'd type after `:help`) is whole or not drawn (round 21: a tag cut
- * in its middle read as a fragment, "the…-one-theme"): a row whose title, page and tag don't fit
- * drops its tag, and the footer names the selected row's. Under 560 px no row draws one (CSS). */
-export function dropCutTags(list: HTMLElement) {
-  const rows = [...list.querySelectorAll<HTMLElement>(".finder-row")].flatMap((row) => {
-    const tag = row.querySelector<HTMLElement>(":scope > .finder-detail");
-    return tag ? [{ row, tag }] : [];
-  });
-  // Every tag drawn, then measured in one pass (one layout), then the ones that don't fit dropped.
-  for (const { tag } of rows) tag.removeAttribute("data-off");
-  const over = rows.map(({ row }) =>
-    // No layout (jsdom): every tag is drawn.
-    row.clientWidth > 0 &&
-    (row.scrollWidth > row.clientWidth + 1 ||
-      [...row.children].some((c) => (c as HTMLElement).scrollWidth > (c as HTMLElement).clientWidth + 1)),
-  );
-  rows.forEach(({ tag }, i) => over[i] && tag.setAttribute("data-off", ""));
+/** Where a prose finder's middle column starts (round 19): one x for the whole list, the widest
+ * title among the rows in view, so every page or section starts at the same place (round 18's
+ * per-row tab stops put it at three to eight places once a query mixed titles). Round 22: no tag
+ * column follows it any more (the footer names the selected row's `:help TAG`), so a title may
+ * take everything but the widest page in view (CSS: never less than half the row), where round 20
+ * capped it at 42% and cut descriptions beside empty room; a title past that is cut, whole in its
+ * tooltip. Sets --finder-title-w and --finder-page-w on the list. */
+export function layOutTitles(list: HTMLElement) {
+  const bottom = list.getBoundingClientRect().bottom;
+  const widest = { title: 0, page: 0 };
+  const all = { title: 0, page: 0 };
+  for (const row of list.querySelectorAll<HTMLElement>(".finder-row")) {
+    const path = row.querySelector<HTMLElement>(":scope > .finder-path");
+    if (!path) continue;
+    let name = 0;
+    for (const part of row.querySelector(".finder-label")?.children ?? []) name += (part as HTMLElement).scrollWidth;
+    all.title = Math.max(all.title, name);
+    all.page = Math.max(all.page, path.scrollWidth);
+    // In view (jsdom has no layout: every row is); with none in view, the whole list counts.
+    if (list.clientHeight === 0 || row.getBoundingClientRect().top < bottom) {
+      widest.title = Math.max(widest.title, name);
+      widest.page = Math.max(widest.page, path.scrollWidth);
+    }
+  }
+  const use = widest.title ? widest : all;
+  list.style.setProperty("--finder-title-w", `${Math.ceil(use.title)}px`);
+  list.style.setProperty("--finder-page-w", `${Math.ceil(use.page)}px`);
+}
+
+/** The footer's `:help TAG`, broken only after the `#` when it must take two lines (round 22: at
+ * 480 px it broke inside the tag, "trusting-a-new-/host-key"); each part stays on one line, cut
+ * at its end if even that line is too narrow (whole in the tooltip). */
+export function footTag(command: string): ReactNode {
+  const hash = command.indexOf("#");
+  const parts = hash < 0 ? [`:${command}`] : [`:${command.slice(0, hash + 1)}`, command.slice(hash + 1)];
+  return parts.map((part, i) => [
+    i > 0 && <wbr key={`b${i}`} />,
+    <span key={i} className="finder-foot-part">
+      {part}
+    </span>,
+  ]);
 }
 
 /** `text` with each of `codes` (in order, each where it's next found) in an Iosevka span. */
@@ -370,8 +398,9 @@ export function Finder({
                 )}
               </span>
               {/* A Host's address comes before its group and type, as in the Picker (round 21). */}
-              {item.host !== undefined && item.detail && (
-                <span className="finder-detail finder-addr" title={item.detail}>
+              {/* Drawn with no address too, empty, so the group after it keeps its column. */}
+              {item.host !== undefined && (
+                <span className="finder-detail finder-addr" title={item.detail || undefined}>
                   {item.detail}
                 </span>
               )}
@@ -389,7 +418,10 @@ export function Finder({
                   {item.type}
                 </span>
               )}
-              {item.host === undefined && item.detail && (
+              {/* A help topic's tag isn't drawn on its row (round 22: dropped whenever its title was
+                  cut, it flickered on and off down the list); the footer names the selected row's,
+                  and the query still matches it. */}
+              {item.host === undefined && item.detail && !source.prose && (
                 <span className="finder-detail" title={item.detail}>
                   {item.detail}
                 </span>
@@ -426,11 +458,11 @@ export function Finder({
           >
             {notice || source.note?.(shown[current])}
           </span>
-          {/* The selected row's tag, when its row doesn't draw it (dropped, or under 560 px): what
-              Enter runs, ":help TAG" (round 21), as the Picker names a cut Host. */}
+          {/* The selected row's tag, which no row draws (round 22): what Enter runs, ":help TAG"
+              (round 21), as the Picker names a cut Host. */}
           {source.prose && selectedItem?.detail && (
             <span className="finder-foot-tag" title={`:${selectedItem.command}`}>
-              <code>:{selectedItem.command}</code>
+              <code>{footTag(selectedItem.command)}</code>
             </span>
           )}
           {shown.some((i) => i.mark) && (

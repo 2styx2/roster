@@ -1,7 +1,7 @@
 // The status bar, one line that gives way in a fixed order when it runs out of room (round 19):
 // the Inventory's path drops whole folders, form by form down to "~/…/roster.yml" (round 20,
 // PathText), the hints go whole, last first, then "~/" ("…/roster.yml"), then the path, and only
-// then the Backend's label, this Box's name and the Session on screen's (round 21: shortened by
+// then the Backend (node and label), this Box's name and the Session on screen's (round 21: shortened by
 // their own middle cut, then removed, where CSS had cut them a second time and the bar clipped
 // them). A segment that gives way is removed (display: none, out of the
 // accessibility tree), so it never keeps room it draws nothing in; round 18 let them wrap to a
@@ -48,7 +48,7 @@ export function NameForms({ name }: { name: string }) {
 /** Shows every segment that can give way at its longest, then while the bar's content is wider
  * than it takes the next step: the path's next shorter form (whole folders dropped) down to
  * "~/…/roster.yml", then each hint (last first), then "…/roster.yml", then the path; then the
- * Backend's label (its node stays, the label in its tooltip), this Box's name form by form and
+ * Backend, node and label (round 22: its node alone was a grey dot no one could read), this Box's name form by form and
  * then the name (its square stays), and the Session on screen's name the same way, last. A segment
  * is whole, shortened by its own rule or removed; nothing is ever clipped by the bar's edge
  * (round 21: "WSL:…" and "aleksandra-w…orali…" at 480). */
@@ -57,7 +57,8 @@ export function giveWay(bar: HTMLElement) {
   const path = bar.querySelector<HTMLElement>(":scope > .path");
   const text = path?.querySelector<HTMLElement>(".path-text");
   const label = (cls: string) => bar.querySelector<HTMLElement>(`:scope > .${cls} > .statusbar-cut`);
-  const backend = label("backend");
+  // The Backend goes whole, node and label (round 22: a bare grey dot at 480 said nothing).
+  const backend = bar.querySelector<HTMLElement>(":scope > .backend");
   const names = [label("box"), label("session-seg")].filter((n): n is HTMLElement => n !== null);
   for (const el of [...hints, ...(path ? [path] : []), ...(backend ? [backend] : []), ...names]) show(el);
   if (text) showCut(text, 0);

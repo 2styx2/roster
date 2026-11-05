@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { dropCutTags, footerCount, layOutNames, layOutTitles, withData } from "./Finder";
+import { footTag, footerCount, layOutHosts, layOutNames, layOutTitles, withData } from "./Finder";
 
 describe("the finder footer's count", () => {
   it("says how many there are before a query, and how many matched after (round 18)", () => {
@@ -73,30 +73,59 @@ describe("a prose finder's one middle column (round 19)", () => {
   });
 });
 
-describe("a help tag is whole or not drawn (round 21)", () => {
-  /** A row `width` px wide whose content measures `content` px. */
-  function row(width: number, content: number) {
-    const li = document.createElement("li");
-    li.className = "finder-row";
-    const size = { content };
-    Object.defineProperty(li, "clientWidth", { value: width });
-    Object.defineProperty(li, "scrollWidth", { get: () => size.content });
-    const tag = document.createElement("span");
-    tag.className = "finder-detail";
-    li.append(tag);
-    return { li, tag, size };
-  }
-  it("drops the tag of a row that can't hold it whole, keeps the others", () => {
+describe("a Host row's columns (round 22)", () => {
+  it("puts every address at the widest name's end and sizes the address and type columns", () => {
     const ul = document.createElement("ul");
-    const fits = row(400, 380);
-    const over = row(400, 460);
-    ul.append(fits.li, over.li);
-    dropCutTags(ul);
-    expect(fits.tag).not.toHaveAttribute("data-off");
-    expect(over.tag).toHaveAttribute("data-off");
-    // Room again (a wider window): drawn again.
-    over.size.content = 300;
-    dropCutTags(ul);
-    expect(over.tag).not.toHaveAttribute("data-off");
+    for (const [name, addr, type] of [[48, 80, 40], [400, 120, 56], [96, 0, 0]] as const) {
+      const li = document.createElement("li");
+      li.className = "finder-row host-row";
+      const label = document.createElement("span");
+      label.className = "finder-label";
+      const n = document.createElement("span");
+      Object.defineProperty(n, "scrollWidth", { value: name });
+      label.append(n);
+      const a = document.createElement("span");
+      a.className = "finder-detail finder-addr";
+      Object.defineProperty(a, "scrollWidth", { value: addr });
+      const t = document.createElement("span");
+      t.className = "finder-type";
+      Object.defineProperty(t, "scrollWidth", { value: type });
+      li.append(label, a, t);
+      ul.append(li);
+    }
+    layOutHosts(ul);
+    // One name column for the list (CSS caps it at 45% of the row), not a stop per name.
+    expect(ul.style.getPropertyValue("--finder-host-w")).toBe("400px");
+    expect(ul.style.getPropertyValue("--finder-addr-w")).toBe("120px");
+    expect(ul.style.getPropertyValue("--finder-type-w")).toBe("56px");
+  });
+});
+
+describe("Help's rows have no tag column (round 22)", () => {
+  it("leaves the title everything but the widest page", () => {
+    const ul = document.createElement("ul");
+    for (const [title, page] of [[300, 90], [120, 134]] as const) {
+      const li = document.createElement("li");
+      li.className = "finder-row";
+      const label = document.createElement("span");
+      label.className = "finder-label";
+      const n = document.createElement("span");
+      Object.defineProperty(n, "scrollWidth", { value: title });
+      label.append(n);
+      const p = document.createElement("span");
+      p.className = "finder-path";
+      Object.defineProperty(p, "scrollWidth", { value: page });
+      li.append(label, p);
+      ul.append(li);
+    }
+    layOutTitles(ul);
+    expect(ul.style.getPropertyValue("--finder-title-w")).toBe("300px");
+    expect(ul.style.getPropertyValue("--finder-page-w")).toBe("134px");
+  });
+
+  it("breaks the footer's :help TAG only after its #, never inside the tag", () => {
+    const html = renderToStaticMarkup(createElement(Fragment, null, footTag("help errors-guide#trusting-a-new-host-key")));
+    expect(html).toBe('<span class="finder-foot-part">:help errors-guide#</span><wbr/><span class="finder-foot-part">trusting-a-new-host-key</span>');
+    expect(renderToStaticMarkup(createElement(Fragment, null, footTag("help theme")))).toBe('<span class="finder-foot-part">:help theme</span>');
   });
 });

@@ -23,7 +23,9 @@ export function BindingsPanel({
   onHelp,
 }: BindingsPanelProps) {
   const [query, setQuery] = useState("");
-  // The binding the pointer is on: its init.lua name shows in the footer (owner, after round 10).
+  // The binding the pointer is on, or the one ↑ and ↓ in the filter moved to (round 22: the
+  // footer's name was the pointer's only): its init.lua name shows in the footer (owner, after
+  // round 10). Whichever moved last wins.
   const [pointed, setPointed] = useState<BindingRow | null>(null);
   const shown = useMemo(() => filterRows(rows, query), [rows, query]);
   const groups = useMemo(() => {
@@ -31,9 +33,13 @@ export function BindingsPanel({
     for (const r of shown) out.set(r.area, [...(out.get(r.area) ?? []), r]);
     return [...out];
   }, [shown]);
-  // Pointed at, or else the filter's first match: whose option the footer names.
+  // The rows in the order they're drawn (by area), which ↑ and ↓ step through.
+  const order = useMemo(() => groups.flatMap(([, list]) => list), [groups]);
+  // Pointed at or moved to (while it's still shown), or else the filter's first match: whose
+  // option the footer names.
   const named =
-    pointed ?? (query.trim() !== "" ? (groups[0]?.[1][0] ?? null) : null);
+    (pointed && order.includes(pointed) ? pointed : null) ?? (query.trim() !== "" ? (order[0] ?? null) : null);
+  const keyed = useRef(false);
   // More rows below: the list's last 24 px fade at the footer's edge, as the tree's do (round 20:
   // the footer sliced the last row in a short window).
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -53,6 +59,13 @@ export function BindingsPanel({
       resize?.disconnect();
     };
   }, [shown]);
+
+  // A row the arrows moved to comes into view (the pointer's is already in it).
+  useLayoutEffect(() => {
+    if (!keyed.current) return;
+    keyed.current = false;
+    scrollRef.current?.querySelector("tr.named")?.scrollIntoView?.({ block: "nearest" });
+  }, [named]);
 
   return (
     <aside className="keys-panel" aria-label="Key bindings">
@@ -82,9 +95,20 @@ export function BindingsPanel({
           if (e.key === "Escape") {
             e.preventDefault();
             onClose();
+          } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            // The filter keeps focus; the arrows move the named row, as a finder's do.
+            e.preventDefault();
+            if (order.length === 0) return;
+            const at = named ? order.indexOf(named) : -1;
+            const next =
+              e.key === "ArrowDown"
+                ? Math.min(at + 1, order.length - 1)
+                : Math.max(at - 1, 0);
+            keyed.current = true;
+            setPointed(order[next] ?? null);
           } else if (e.key === "F1" && onHelp) {
             e.preventDefault();
-            const option = shown[0]?.options[0];
+            const option = (named ?? shown[0])?.options[0];
             if (option) onHelp(option);
           }
         }}
@@ -152,10 +176,12 @@ export function BindingsPanel({
           down the list. */}
       <p
         className="panel-foot"
+        // Said when ↑ or ↓ names another binding (the arrows leave focus in the filter).
+        aria-live="polite"
         title={
           named
             ? `In init.lua: ${named.options.join(" ")}${named.source !== BUILTIN ? ` · from ${named.source}` : ""}`
-            : ":config opens init.lua. Point at a binding for its name there."
+            : ":config opens init.lua. ↓ or point at a binding for its name there."
         }
       >
         {named ? (
@@ -168,7 +194,7 @@ export function BindingsPanel({
           <>
             <code>:config</code>{" "}
             <span className="panel-foot-rest">
-              opens init.lua. Point at a binding for its name there.
+              opens init.lua. <Keys keys="ArrowDown" className="binding-keys" /> or point at a binding for its name there.
             </span>
           </>
         )}

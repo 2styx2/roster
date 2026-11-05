@@ -77,7 +77,10 @@ describe(":help", () => {
     const row = within(finder).getAllByRole("option")[0]!;
     expect(row.querySelector(".finder-name")).toHaveTextContent(/^keys\.picker$/);
     expect(row.querySelector(".finder-name")).toHaveClass("data");
-    expect(row.querySelector(".finder-detail")).toHaveTextContent("roster.o.keys.picker");
+    // Its tag isn't on the row (round 22): the footer names the selected row's, and the query
+    // still matched it.
+    expect(row.querySelector(".finder-detail")).toBeNull();
+    expect(finder.querySelector(".finder-foot-tag")).toHaveTextContent(":help keys.picker");
     expect(finder.querySelector(".picker-count")).toHaveTextContent(/results?$/);
   });
 

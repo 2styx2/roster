@@ -93,7 +93,7 @@ describe("the status bar gives way in order (round 19)", () => {
     expect(path).not.toHaveAttribute("aria-hidden");
   });
 
-  it("then removes the Backend's label, and cuts this Box's and the Session's names by their own forms, never clipped (round 21)", () => {
+  it("then removes the Backend, node and label, and cuts this Box's and the Session's names by their own forms, never clipped (round 21)", () => {
     const el = document.createElement("footer");
     Object.defineProperty(el, "clientWidth", { value: 340 });
     const seg = (cls: string, forms: string[] | null) => {
@@ -117,12 +117,13 @@ describe("the status bar gives way in order (round 19)", () => {
     const box = seg("box", nameForms("aleksandra-wisniewska-kowalczyk-fedoralinux-44"));
     const session = seg("session-seg", nameForms("linux-1-0040"));
     // 10 px a character, plus 50 px for the marks and the count.
-    const shown = (label: HTMLElement) => (label.hasAttribute("data-off") ? "" : [...label.children].find((c) => !c.hasAttribute("data-off"))?.textContent ?? label.textContent ?? "");
+    const shown = (label: HTMLElement) => (label.hasAttribute("data-off") || label.parentElement?.hasAttribute("data-off") ? "" : [...label.children].find((c) => !c.hasAttribute("data-off"))?.textContent ?? label.textContent ?? "");
     const width = () => 50 + [backend, box, session].reduce((sum, l) => sum + 10 * [...shown(l)].length, 0);
     Object.defineProperty(el, "scrollWidth", { get: () => Math.max(340, width()) });
     giveWay(el);
-    // The Backend's label goes first, whole; then the Box's name steps to 16 characters.
-    expect(backend).toHaveAttribute("data-off");
+    // The Backend goes first, whole, its node with its label (round 22: not a bare dot); then the
+    // Box's name steps to 16 characters.
+    expect(backend.parentElement).toHaveAttribute("data-off");
     expect(shown(box)).toBe("aleksand…inux-44");
     expect(shown(session)).toBe("linux-1-0040");
     expect(width()).toBeLessThanOrEqual(340);
