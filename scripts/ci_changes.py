@@ -7,7 +7,7 @@ FILE holds one changed path per line (a pull request's diff against its base). O
 (a push to main or dev, a tag, the schedule, a run by hand) every area runs, on every Python. On a
 pull request each changed path adds the areas that test it, and Python 3.12 alone runs:
 
-    cli       pytest on Linux and the wheel build
+    cli       pytest on Linux
     windows   pytest on Windows
     frontend  tsc, ESLint, Vitest, e2e, the bundle budget
     rust      fmt, clippy, cargo test on Linux and roster-core's tests on Windows

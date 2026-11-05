@@ -17,23 +17,58 @@ REAL_PATH = os.environ.get("PATH", "")       # before any test put the stand-ins
 posix_shell = pytest.mark.skipif(WINDOWS, reason="runs a POSIX shell script; native Windows has no sh")
 
 
+SHARD_DURATIONS = Path(__file__).parent / "durations-windows.json"
+
+
 def pytest_addoption(parser):
     parser.addoption("--shard", metavar="K/N", default=None,
-                     help="run every Nth collected test, from the Kth on (CI's Windows jobs, decision Q196)")
+                     help="run the Kth of N shards, balanced by recorded time (CI's Windows jobs, decision Q196)")
+    parser.addoption("--shard-durations", metavar="PATH", default=str(SHARD_DURATIONS),
+                     help="the seconds each test took, which --shard balances (default: tests/durations-windows.json)")
+    parser.addoption("--store-durations", metavar="PATH", default=None,
+                     help="write the seconds each test took (setup, call and teardown) to PATH as JSON")
 
 
 def pytest_collection_modifyitems(config, items):
-    """--shard K/N keeps every Nth test, so each shard gets a slice of every file and the slow ones (test_mesh.py)
-    spread evenly. The same in every xdist worker: the order is collection order."""
+    """--shard K/N splits the tests so each shard's recorded time (--shard-durations, refreshed from the nightly run)
+    comes out about the same: the longest first, each to the shard with the least so far. A test the file doesn't
+    know counts as its average, so a new one needs no entry. The same in every xdist worker: it depends only on the
+    collected tests and the file; a shard keeps collection order."""
     shard = config.getoption("--shard")
     if not shard:
         return
     k, n = (int(x) for x in shard.split("/"))
     if not 1 <= k <= n:
         raise pytest.UsageError(f"--shard {shard}: K must be 1 to N")
-    kept = items[k - 1::n]
-    config.hook.pytest_deselected(items=[i for j, i in enumerate(items) if j % n != k - 1])
-    items[:] = kept
+    try:
+        recorded = json.loads(Path(config.getoption("--shard-durations")).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        recorded = {}
+    known = [recorded[i.nodeid] for i in items if i.nodeid in recorded]
+    average = sum(known) / len(known) if known else 1.0
+    loads = [0.0] * n
+    home: dict[str, int] = {}
+    for item in sorted(items, key=lambda i: (-recorded.get(i.nodeid, average), i.nodeid)):
+        j = loads.index(min(loads))
+        loads[j] += recorded.get(item.nodeid, average)
+        home[item.nodeid] = j
+    config.hook.pytest_deselected(items=[i for i in items if home[i.nodeid] != k - 1])
+    items[:] = [i for i in items if home[i.nodeid] == k - 1]
+
+
+_durations: dict[str, float] = {}
+
+
+def pytest_runtest_logreport(report):
+    _durations[report.nodeid] = _durations.get(report.nodeid, 0.0) + report.duration
+
+
+def pytest_sessionfinish(session):
+    """--store-durations: in the controller only (an xdist worker's reports reach it too)."""
+    path = session.config.getoption("--store-durations")
+    if path and not hasattr(session.config, "workerinput"):
+        times = {nodeid: round(t, 2) for nodeid, t in sorted(_durations.items())}
+        Path(path).write_text(json.dumps(times, indent=0) + "\n", encoding="utf-8")
 
 
 def source_copy(tmp_path):
