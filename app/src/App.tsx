@@ -4317,6 +4317,16 @@ function Workspace({
           hosts={conn.hosts}
           recent={appState.recentHosts}
           live={liveHosts}
+          manySessions={sessions.tabs.length >= 9}
+          {...(canAdd
+            ? {
+                onAdd: () => {
+                  closeOverlay();
+                  run("host add");
+                },
+                addKeys: addHost.keys,
+              }
+            : {})}
           vim={options.vim}
           keymap={keymap}
           onClose={closeOverlay}

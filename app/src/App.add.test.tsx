@@ -509,3 +509,23 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
     expect(within(panel).queryByRole("button", { name: "Fill from this item" })).toBeNull();
   });
 });
+
+describe("the Picker with nothing matching (round 19)", () => {
+  it("offers Add a Host with its keys, and those keys open the form from there", async () => {
+    const { user } = await ready();
+    await user.keyboard(`${LEADER}f`);
+    await user.keyboard("zzzz");
+    const next = document.querySelector(".picker-empty-next") as HTMLElement;
+    expect(next).toHaveTextContent(/Add a Host/);
+    expect(next.querySelector(".keycap")).not.toBeNull();
+    await user.keyboard(`${LEADER}+`);
+    expect(await form()).toBeInTheDocument();
+  });
+
+  it("isn't offered on a roster too old to add Hosts", async () => {
+    const { user } = await ready({ ...(fixtures.add as FakeScenario), apiVersion: 5 });
+    await user.keyboard(`${LEADER}f`);
+    await user.keyboard("zzzz");
+    expect(screen.queryByRole("button", { name: "Add a Host" })).toBeNull();
+  });
+});
