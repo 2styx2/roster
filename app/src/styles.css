@@ -1321,14 +1321,18 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .key-type { color: var(--muted); }
 /* A little air between characters, so a long fingerprint is easier to compare by eye. */
 .key-fingerprint { color: var(--text); overflow-wrap: anywhere; letter-spacing: 0.03em; }
-.key-advice { font-size: var(--text-sm); }
-.key-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.key-advice { font-size: var(--text-sm); text-wrap: pretty; }
+.key-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 4px; }
+.key-actions > button { flex: none; }
 /* The question card: what it asks, the fingerprint and the form read left at one measure; the
    buttons sit right. */
 .connect-card.key-question { align-items: stretch; text-align: left; }
 /* One axis, the left (round 12: centred map and title over a left body and right buttons read as
    three); the buttons close it on the right, under a hairline. */
-.connect-card.key-question > .connect-map, .connect-card.key-question > .connect-title { align-self: flex-start; text-align: left; }
+.connect-card.key-question > .connect-title { align-self: flex-start; text-align: left; }
+/* The map stays where the connecting card drew it, centred (round 18: it jumped 124 px left as
+   the card turned into the question); the words keep the one left axis. */
+.connect-card.key-question > .connect-map { align-self: center; }
 .connect-card.key-question .key-actions { padding-top: 12px; border-top: 1px solid var(--line-strong); }
 /* The buttons stay at the card's foot when a short window scrolls it (round 16: at 480×320 the
    focused Cancel was out of view), the counterpart of the sticky title. */
@@ -1336,17 +1340,26 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   position: sticky; bottom: -16px; z-index: 1; background: var(--panel);
   margin-inline: -20px; padding-inline: 20px; padding-bottom: 16px; margin-bottom: -16px;
 }
-/* Enter shows on Trust only while it has focus: the question opens on Cancel (Q222). */
-.btn-keys.key-on-focus { visibility: hidden; }
-button:focus-visible > .btn-keys.key-on-focus { visibility: visible; }
-/* Quick Connect's error room: says why Enter did nothing before the key was ticked. */
-.key-nudge { margin: 0 auto 0 0; flex: 1 1 auto; white-space: nowrap; align-self: center; font-size: var(--text-xs); color: var(--warn); text-align: left; }
-.key-nudge:empty { flex-basis: 0; }
+/* Enter on Trust is dim until it means something: until Tab brings focus to it (the question
+   opens on Cancel, Q222), or until Quick Connect's box is ticked. Always there, so the button's
+   width and its label's centre never change (round 18: an invisible keycap's room had pushed the
+   label 20 px off-centre). No transition: focus moves with a key. */
+.btn-keys.key-dim { opacity: 0.45; }
+button:focus-visible > .btn-keys.key-on-focus { opacity: 1; }
+/* Quick Connect's error room: says why Enter did nothing before the key was ticked. It takes only
+   the room left of the buttons (never theirs: basis and min-width 0, so it can't wrap them onto
+   a second row) and at most two lines of 14 px, the buttons' 28 px, so the footer and the card
+   never change height when it speaks (round 18: at 480 px it had pushed Trust up a row). */
+.key-nudge {
+  margin: 0; flex: 1 1 0; min-width: 0; align-self: center; text-align: left;
+  font-size: var(--text-xs); line-height: 14px; max-height: 28px; color: var(--warn);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
 /* The Quick Connect form lays out in the card, so its buttons can stick to the card's foot (round
    16: inside the form they couldn't leave it, and fell below a 480×320 window). */
 .connect-card.key-question form.quick-login { display: contents; }
 /* A field focused or scrolled to never lands under the sticky title or buttons. */
-.connect-card.key-question { scroll-padding-block: 64px 72px; }
+.connect-card.key-question { scroll-padding-block: 80px 72px; }
 /* A long fingerprint breaks evenly, never leaving two characters alone. */
 .key-fingerprint { text-wrap: balance; }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
@@ -1356,6 +1369,23 @@ button:focus-visible > .btn-keys.key-on-focus { visibility: visible; }
   /* The card's full width, so nothing scrolls into view beside it (round 14). */
   align-self: stretch; margin-inline: -20px; padding-inline: 20px;
 }
+/* Once the card scrolls, a hairline closes the title, so a line half under it reads as scrolled
+   under, not as a stray glyph (round 18); the footer's rule colour, so the two edges match. */
+.connect-card.key-question[data-scrolled] > .connect-title { box-shadow: 0 1px 0 var(--line-strong); }
+/* The way to check a key (`:help host-keys`): the advice's last words, a command in Iosevka you
+   can click, quiet like the empty Inventory's help line (round 18). */
+.key-help-link {
+  height: auto; padding: 1px 4px; margin: -1px -4px; display: inline; vertical-align: baseline;
+  background: transparent; border-color: transparent; color: var(--muted);
+  font: 500 var(--text-xs) var(--font-mono); white-space: nowrap;
+  text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) { .key-help-link:hover:not(:disabled) { color: var(--text); background: var(--hover); text-decoration-color: currentColor; } }
+/* The card's checkboxes: a 24 px row to hit, and the buttons' focus ring (round 18: a 13 px box
+   in a 20 px label, focused by a 1 px inset). */
+.connect-card .add-check { min-height: 24px; }
+.connect-card .add-check input[type="checkbox"] { margin: 0 2px; }
+.connect-card .add-check input[type="checkbox"]:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); border-radius: 2px; }
 /* Its status line takes room only while it speaks ("Recording the key…"), so the card ends at
    its buttons; the form is the card's measure, as the fingerprint is, with its field kept short. */
 .connect-card.key-question .connect-phase:empty { display: none; }
@@ -1366,6 +1396,13 @@ button:focus-visible > .btn-keys.key-on-focus { visibility: visible; }
 @media (max-height: 460px) {
   .connect-card.key-question { inset: 0; margin-block: 8px; }
   .connect-card.key-question > .connect-map { display: none; }
+  /* Tighter, so at 480×320 the card opens at its top with the advice's first line in view above
+     the buttons, cut where it goes on, so the scroll reads (round 18). */
+  .connect-card.key-question { gap: 6px; padding-top: 12px; }
+  .connect-card.key-question > .connect-title { top: -12px; padding-block: 2px; font-size: var(--text-lg); }
+  .connect-card.key-question .connect-address-line { margin-top: 0; }
+  .connect-card.key-question .key-print { padding-block: 4px; }
+  .connect-card.key-question .key-actions { padding-top: 8px; }
 }
 .btn-keys { display: inline-flex; margin-left: 8px; }
 .btn-keys .keycap { height: 16px; min-width: 16px; }

@@ -70,6 +70,49 @@ describe("a Host whose host key roster hasn't seen", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
+  it("points to :help host-keys, and Enter on that pointer never trusts (round 18)", async () => {
+    const { backend, trusted } = backendWith();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
+    const q = await question();
+    const link = within(q).getByRole("button", { name: /:help host-keys/ });
+    expect(link).toHaveTextContent(":help host-keys");
+    // Enter on the pointer (Tab reaches it) opens help; it never trusts or connects.
+    link.focus();
+    await user.keyboard("{Enter}");
+    const help = await screen.findByRole("complementary", { name: "Help" });
+    expect(await within(help).findByRole("heading", { name: "Checking a host key" })).toBeInTheDocument();
+    expect(trusted).toEqual([]);
+    expect(within(pane()).getByRole("alertdialog")).toBeInTheDocument();
+    // Nor does Enter on the card itself, or a click on the dim key on Trust's side: only Trust.
+    q.focus();
+    await user.keyboard("{Enter}");
+    expect(trusted).toEqual([]);
+  });
+
+  it("opens at its top: focusing Cancel in the pinned footer doesn't scroll the card (round 18)", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const { backend, trusted } = backendWith();
+      const user = await ready(backend);
+      await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
+      const q = await question();
+      const cancel = within(q).getByRole("button", { name: /^Cancel/ });
+      expect(cancel).toHaveFocus();
+      expect(scrolled.filter((el) => q.contains(el))).toEqual([]);
+      // Trust keeps its Enter key at one width, dim until it has focus (round 18).
+      const trust = within(q).getByRole("button", { name: "Trust and connect" });
+      expect(trust.querySelector(".btn-keys.key-dim")).not.toBeNull();
+      expect(trusted).toEqual([]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("Esc records nothing and leaves no Session", async () => {
     const { backend, trusted } = backendWith();
     const user = await ready(backend);
