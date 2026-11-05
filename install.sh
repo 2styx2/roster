@@ -70,59 +70,20 @@ case "$INVENTORY" in
     *) echo "--inventory $INVENTORY: use blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2 ;;
 esac
 
-# ---- look
-
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
-else
-    B='' D='' R='' G='' Y='' C='' N=''
+# ---- what install.sh and update.sh share: the look, the questions, find_map and friends (install-lib.sh, beside this
+# script in a checkout and in the Release's roster-cli tarball)
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+if [[ ! -f $here/install-lib.sh ]]; then
+    echo "install.sh needs install-lib.sh beside it: run it in a roster checkout (git clone $ROSTER_REPO) or in the unpacked roster-cli tarball" >&2
+    exit 2
 fi
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8*|*utf8*) FULL="█" EMPTY="░" OK="✔" BAD="✘" SKIP="–" SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) ;;
-    *) FULL="#" EMPTY="-" OK="ok" BAD="x" SKIP="-" SPIN=('|' '/' '-' '\') ;;
-esac
+# shellcheck source=install-lib.sh
+source "$here/install-lib.sh"
 
 STAGES=("Prerequisites" "uv" "roster" "Bitwarden CLI" "Inventory" "Work from anywhere"
         "Unlock the vault" "Set up this box" "Auto-update")
 TOTAL=${#STAGES[@]}
 DONE=() SKIPPED=() FAILED=()
-
-stage() {                       # stage N: progress bar + title
-    local n=$1 w=30 fill
-    fill=$(( n * w / TOTAL ))
-    local bar="" i
-    for ((i = 0; i < w; i++)); do (( i < fill )) && bar+="$FULL" || bar+="$EMPTY"; done
-    printf '\n%s%s%s %s%d/%d%s  %s%s%s\n' "$C" "$bar" "$N" "$D" "$n" "$TOTAL" "$N" "$B" "${STAGES[n-1]}" "$N"
-    CUR="${STAGES[n-1]}"
-}
-ok()   { printf '  %s%s%s %s\n' "$G" "$OK" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
-bad()  { printf '  %s%s%s %s\n' "$R" "$BAD" "$N" "$*"; }
-info() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
-skip() { printf '  %s%s %s%s\n' "$D" "$SKIP" "$*" "$N"; SKIPPED+=("$CUR"); }
-done_stage() { DONE+=("$CUR"); }
-fail_stage() { FAILED+=("$CUR"); }
-listed() { local x=$1 e; shift; for e in "$@"; do [[ $e == "$x" ]] && return 0; done; return 1; }  # listed NAME LIST...
-
-TTY=/dev/tty                    # prompts read the keyboard even when piped into bash
-( : < "$TTY" ) 2>/dev/null || TTY=/dev/stdin
-
-ask() {                         # ask "Question?" Y|N  -> 0 for yes
-    local q=$1 def=${2:-Y} hint reply
-    [[ $def == Y ]] && hint="Y/n" || hint="y/N"
-    if (( YES )); then
-        printf '  %s?%s %s %s[%s]%s %s\n' "$C" "$N" "$q" "$D" "$hint" "$N" "$([[ $def == Y ]] && echo yes || echo no)"
-        [[ $def == Y ]]; return
-    fi
-    while true; do
-        printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$hint" "$N"
-        read -r reply < "$TTY" || reply=""
-        case "${reply:-$def}" in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-        esac
-    done
-}
 
 ask_value() {                   # ask_value "Prompt" default -> echoes the answer
     local q=$1 def=$2 reply
@@ -141,6 +102,7 @@ redact() {                      # redact TEXT -> TEXT with a URL's credentials c
 safe_path() {                   # safe_path PATH -> 0 when PATH can go inside "..." in a shell startup file
     [[ $1 != *[\"\$\`\\]* && $1 != *$'\n'* ]]
 }
+
 
 step() {                        # step "what" cmd...  - runs with a spinner, output to the log
     local what; what=$(redact "$1"); shift
@@ -168,8 +130,6 @@ live() {                        # live "what" cmd...  - runs in the foreground (
     if "$@" < "$TTY"; then ok "$what"; else bad "$what failed"; return 1; fi
 }
 
-have() { command -v "$1" >/dev/null 2>&1; }
-
 SUDO=sudo                       # root (a container, say) often has no sudo, and doesn't need it
 (( EUID == 0 )) && SUDO=""
 
@@ -194,77 +154,55 @@ cron_pkg() {                    # the package that brings crontab and the cron d
     fi
 }
 
-start_cron() {                  # make sure the cron daemon runs now and after a restart; 0 when it does
+running() {                     # running NAME: a process called NAME runs on this box (pgrep, else /proc)
+    if have pgrep; then pgrep -x "$1" >/dev/null 2>&1; return; fi
+    local c
+    for c in /proc/[0-9]*/comm; do [[ $(cat "$c" 2>/dev/null) == "$1" ]] && return 0; done
+    return 1
+}
+
+start_cron() {                  # make sure the cron daemon runs now and after a restart; 0 when it does,
+    # 2 when there's no cron daemon to start (the caller skips the job), 1 when starting it failed
     [[ $(uname -s) == Darwin ]] && return 0             # launchd starts cron on macOS
-    local svc wsl=0
-    grep -qi microsoft /proc/version 2>/dev/null && wsl=1
+    local svc wsl=0 wsl_tip="WSL without systemd: cron stops with WSL. Put [boot] systemd=true in /etc/wsl.conf so it starts by itself"
+    # WSL's own distro, not a container on WSL's kernel: /etc/wsl.conf is the distro's
+    [[ -e /run/.containerenv || -e /.dockerenv ]] || ! grep -qi microsoft /proc/version 2>/dev/null || wsl=1
     for svc in crond cron cronie; do                    # Fedora/RHEL, Debian/Ubuntu, Arch
-        if [[ -d /run/systemd/system ]]; then
+        if [[ -d /run/systemd/system ]] && have systemctl; then
             systemctl cat "$svc.service" >/dev/null 2>&1 || continue
             if systemctl is-active --quiet "$svc" && systemctl is-enabled --quiet "$svc" 2>/dev/null; then
                 ok "cron daemon ($svc) running"; return 0
             fi
             step "start the cron daemon ($svc), now and at boot" $SUDO systemctl enable --now "$svc"; return
-        elif [[ -x /etc/init.d/$svc ]]; then
+        elif [[ -x /etc/init.d/$svc ]] && have service; then
             if ! service "$svc" status >/dev/null 2>&1; then
                 step "start the cron daemon ($svc)" $SUDO service "$svc" start || return 1
             else ok "cron daemon ($svc) running"; fi
             # no systemd: nothing starts cron again when WSL (or the container) restarts
-            (( wsl )) && warn "WSL without systemd: cron stops with WSL. Put [boot] systemd=true in /etc/wsl.conf so it starts by itself"
+            (( wsl )) && warn "$wsl_tip"
             return 0
         fi
     done
+    # no init system to ask (a container, #444): the daemon itself, when the box has one
+    for svc in crond cron; do                           # cronie's, Debian's
+        have "$svc" || continue
+        if running "$svc"; then ok "cron daemon ($svc) running"
+        else step "start the cron daemon ($svc) directly: no init system here" $SUDO "$svc" || return 1; fi
+        warn "nothing starts $svc again when this box restarts: run sudo $svc then, or the job doesn't run"
+        (( wsl )) && warn "$wsl_tip"
+        return 0
+    done
     if (( DRY )); then info "would start the cron daemon"; return 0; fi
-    warn "couldn't find the cron service - start it yourself, or the job never runs"; return 1
+    return 2
 }
 
 in_checkout() { [[ -f "$1/pyproject.toml" ]] && grep -q '^name = "roster"' "$1/pyproject.toml"; }
-home_() { printf '%s' "${1/#$HOME/\~}"; }
-
-describe_source() {             # describe_source DIR [REF] -> "branch main, commit abc1234, v0.5.0" (as update.sh)
-    local d=$1 at=${2:-HEAD} branch="" tag
-    git -C "$d" rev-parse -q --verify "$at" >/dev/null 2>&1 || return 0
-    [[ $at == HEAD ]] && branch=$(git -C "$d" symbolic-ref -q --short HEAD)
-    tag=$(git -C "$d" describe --tags "$at" 2>/dev/null)
-    printf '%s, commit %s%s' "${branch:+branch $branch}" "$(git -C "$d" rev-parse --short "$at")" "${tag:+, $tag}" |
-        sed 's/^, //'
-}
-
-version_in() {                  # version_in DIR [COMMIT] -> the version in pyproject.toml (at COMMIT, else on disk)
-    if [[ -n ${2:-} ]]; then git -C "$1" show "$2:pyproject.toml" 2>/dev/null; else cat "$1/pyproject.toml" 2>/dev/null; fi |
-        sed -n 's/^version = "\(.*\)"/\1/p' | head -1
-}
-
-older() { [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1) == "$1" ]]; }   # older A B: A < B
-
-git_net() {                     # git_net DIR ARGS...: git that talks to a remote, and can't hang an install
-    # no password or host key question; ssh in BatchMode only when you haven't set your own (GIT_SSH_COMMAND, or
-    # core.sshCommand for a deploy key); 30 s at most where the box has timeout
-    local d=$1 e=(GIT_TERMINAL_PROMPT=0) t=(); shift
-    if [[ -z ${GIT_SSH_COMMAND:-} ]] && ! git -C "$d" config --get core.sshCommand >/dev/null 2>&1; then
-        e+=("GIT_SSH_COMMAND=ssh -o BatchMode=yes")
-    fi
-    have timeout && t=(timeout 30)
-    env "${e[@]}" ${t[@]+"${t[@]}"} git -C "$d" "$@"
-}
-
-chose() { grep -qx "$1" "$CHOICES" 2>/dev/null; }                       # chose no-cron: an answer kept from earlier
-choose() { (( DRY )) || chose "$1" || { mkdir -p "$(dirname "$CHOICES")" && echo "$1" >> "$CHOICES"; }; }
-
-installed_roster() {            # the roster command this box has: on PATH (PREFIX/bin first), else where uv put it
-    local p
-    p=$(command -v roster 2>/dev/null) && [[ -n $p ]] && { echo "$p"; return 0; }
-    have uv || return 1
-    p=$(uv tool list --show-paths 2>/dev/null | sed -n 's/^- roster (\(.*\))$/\1/p' | head -1)
-    [[ -n $p && -x $p ]] && echo "$p"
-}
-
 pick_source() {                 # pick_source DIR: which roster to install from the checkout DIR -> from, from_desc, pick_version
     local d=$1 commit="" def tag="" refs="" spec="" ref="" err name
     from=$d from_desc=$(describe_source "$d") pick_version=$(version_in "$d")
     [[ -d $d ]] || return 0                 # a dry run's clone that didn't happen
     if [[ $(git -C "$d" rev-parse --show-toplevel 2>/dev/null) != "$(cd "$d" && pwd -P)" ]]; then
-        info "$(home_ "$d") isn't a git clone (a Release tarball): installing it as it is"
+        info "$(home "$d") isn't a git clone (a Release tarball): installing it as it is"
         [[ -n $REF ]] && warn "--ref $REF needs a git clone: ignored"
         return 0
     fi
@@ -318,10 +256,10 @@ pick_source() {                 # pick_source DIR: which roster to install from 
     name=${tag//\//-}
     from="$SRC_STORE/$name"
     info "installing roster ${pick_version:-?} ($from_desc) from a clean copy: your checkout stays as it is"
-    if (( DRY )); then info "would unpack $tag into $(home_ "$from")"; return 0; fi
+    if (( DRY )); then info "would unpack $tag into $(home "$from")"; return 0; fi
     if mkdir -p "$SRC_STORE" && NEW_SRC=$(mktemp -d "$SRC_STORE/.new.XXXXXX") && trap 'rm -rf "$NEW_SRC"' EXIT &&
             git -C "$d" archive --format=tar "$commit" | tar -x -C "$NEW_SRC" && rm -rf "$from" && mv "$NEW_SRC" "$from"; then :
-    else bad "couldn't unpack $tag into $(home_ "$SRC_STORE")"; fail_stage; exit 1; fi
+    else bad "couldn't unpack $tag into $(home "$SRC_STORE")"; fail_stage; exit 1; fi
 }
 
 prune_sources() {               # the copies of earlier installs, once this one is in
@@ -329,28 +267,6 @@ prune_sources() {               # the copies of earlier installs, once this one 
     [[ $from == "$SRC_STORE"/* ]] || return 0
     for o in "$SRC_STORE"/* "$SRC_STORE"/.new.*; do [[ -e $o && $o != "$from" ]] && rm -rf "$o"; done
     return 0
-}
-
-find_map() {                    # the Inventory this box uses -> MAP (empty: none) and MAP_FROM; the same in
-    # install.sh and update.sh (Q184): $ROSTER_CONFIG, the line install.sh wrote, the active named Inventory,
-    # ~/.config/roster/roster.yml (roster finds those by itself), then ~/infra/roster.yml (it doesn't, without
-    # ROSTER_CONFIG). Only a file that's there: a team repo's or a plain one, blank included (T212)
-    local f v
-    MAP="" MAP_FROM=""
-    if [[ -n ${ROSTER_CONFIG:-} && -f ${ROSTER_CONFIG:-} ]]; then MAP=$ROSTER_CONFIG MAP_FROM=env; return; fi
-    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
-        v=$(grep -F "$MARK" "$f" 2>/dev/null | sed -n 's/^export ROSTER_CONFIG="\(.*\)".*/\1/p' | tail -1)
-        v=${v//\$HOME/$HOME}
-        if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=rc; return; fi
-    done
-    # the active named Inventory (`roster inv`, T212: a plain file of your own is as much a map as the team's repo)
-    # shellcheck disable=SC2016  # Python, not shell, in the single quotes
-    v=$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); a = d.get("active")
-print(next((x["path"] for x in d.get("inventories", []) if x.get("name") == a), ""))' \
-        "$HOME/.config/roster/inventories.json" 2>/dev/null)       # roster's own folder (common.user_config_dir)
-    if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=named; return; fi
-    if [[ -f $HOME/.config/roster/roster.yml ]]; then MAP=$HOME/.config/roster/roster.yml MAP_FROM=config; return; fi
-    if [[ -f $HOME/infra/roster.yml ]]; then MAP=$HOME/infra/roster.yml MAP_FROM=infra; fi
 }
 
 home_of() { [[ $1 == "$HOME"/* ]] && echo "~${1#"$HOME"}" || echo "$1"; }
@@ -383,7 +299,6 @@ info "Give this box (and Claude on it) access to every host in roster.yml. Passw
 # and uv, a map in ROSTER_CONFIG, and the cron job when the map has bin/roster-pull: update.sh does the rest (and
 # turns on Tab completion). A box without them (a first run with no map yet, a stage that failed, one installed
 # before install.sh had cron) gets every stage again, each skipping what's done (Q184).
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 inst_bin=$(installed_roster) || inst_bin=""
 inst_version=""
 [[ -n $inst_bin ]] && inst_version=$("$inst_bin" --version 2>/dev/null | awk '{print $NF}')
@@ -692,21 +607,14 @@ else
 fi
 
 # Tab completion for roster in each shell this box uses: no question, it's on unless --no-completion (decision
-# Q183). The step is install-lib.sh's, shared with update.sh: beside this script, or in the checkout it cloned.
+# Q183). The step is install-lib.sh's, shared with update.sh.
 (( COMPLETION )) || choose no-completion          # update.sh leaves it off too
 if (( ! COMPLETION )) || chose no-completion; then
     (( COMPLETION )) || info "--no-completion: kept in ${CHOICES/#$HOME/\~} (delete the line to have it turned on)"
     info "no Tab completion (to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc;"
     info "roster help --completion zsh, fish or powershell for those)"
 else
-    lib=""
-    for f in "$here/install-lib.sh" "$src/install-lib.sh"; do [[ -f $f ]] && { lib=$f; break; }; done
-    # shellcheck source=install-lib.sh
-    if [[ -n $lib ]] && source "$lib"; then turn_on_completion
-    else
-        warn "no install-lib.sh beside install.sh: Tab completion left off"
-        info "to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc (roster help --completion zsh, fish or powershell for those)"
-    fi
+    turn_on_completion
 fi
 
 # 7. Unlock the vault
@@ -802,7 +710,11 @@ elif ! have crontab; then
     fi
 fi
 if (( cron_ready )); then
-    if ! start_cron; then
+    start_cron; cron_up=$?
+    if (( cron_up == 2 )); then
+        # crontab, but no init system and no cron daemon to start (#444): no job, kept, and the install goes on
+        skip "no cron daemon to run the job - run $pull yourself to update"; choose no-cron
+    elif (( cron_up )); then
         fail_stage
     elif crontab -l 2>/dev/null | grep -qF "$pull"; then
         ok "cron job already there"; done_stage
@@ -817,15 +729,7 @@ fi
 
 # ---- summary
 
-printf '\n%sSummary%s\n' "$B" "$N"
-for s in "${STAGES[@]}"; do
-    if   listed "$s" ${FAILED[@]+"${FAILED[@]}"};   then bad "$s"
-    elif listed "$s" ${SKIPPED[@]+"${SKIPPED[@]}"}; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
-    elif listed "$s" ${DONE[@]+"${DONE[@]}"};       then ok "$s"
-    else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
-    fi
-done
-printf '\n'
+summary
 info "Next: open a new terminal, then try"
 printf '    roster hosts                      %s# every host you can reach%s\n' "$D" "$N"
 printf '    ssh <host>                        %s# key hosts%s\n' "$D" "$N"
