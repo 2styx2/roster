@@ -99,7 +99,7 @@ describe("another Host at the same address and port (#437: a warning, never a re
     expect(sameAddress(draft(), hosts)).toEqual([]);
   });
 
-  it("compares names without case or a final dot, as roster add does", () => {
+  it("compares names without case or a final dot (IPs as typed)", () => {
     const named = { ...hosts, hosts: [{ ...hosts.hosts[0]!, ip: "NAS-01.lan" }] };
     expect(sameAddress(draft({ address: "nas-01.lan." }), named)).toEqual(["linux-1-000"]);
   });
@@ -120,6 +120,15 @@ describe("fill from a vault item (#437, API 29)", () => {
     expect(itemRef(draft({ login: "item", item: "" }))).toEqual({ provider: "bw", item: "nas-01 ssh" });
     expect(itemRef(draft({ login: "item", item: "nas ssh" }))).toBeNull();
     expect(itemRef(draft({ login: "password" }))).toBeNull();
+  });
+
+  it("asks for the item, not its #field (review of #458, L3)", () => {
+    expect(itemRef(draft({ login: "item", item: "bw:nas ssh#password2" }))).toEqual({ provider: "bw", item: "nas ssh" });
+    expect(itemRef(draft({ login: "item", item: "bw:#x" }))).toBeNull();
+  });
+
+  it("names no item while both Name and Vault item are empty (L4)", () => {
+    expect(itemRef(draft({ login: "item", name: "", item: "" }))).toBeNull();
   });
 
   it("fills the address, port and user the item has, and says which changed", () => {

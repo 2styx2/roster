@@ -120,7 +120,9 @@ export function addParams(draft: AddDraft, hosts: HostList, password?: string, s
   return params;
 }
 
-/** An address as roster add compares it (decision Q190 (c)): a name without case or a final dot. */
+/** An address compared about as roster add does (decision Q190 (c)): a name without case or a final
+ * dot. IPs are compared as typed (roster add parses them: `::1` is `0:0::1` there), which is enough
+ * for a warning. */
 const sameText = (a: string) => a.trim().toLowerCase().replace(/\.$/, "");
 
 /** The Hosts already at the draft's address and SSH port (#437). The form only warns: two Hosts at
@@ -132,12 +134,14 @@ export function sameAddress(draft: AddDraft, hosts: HostList): string[] {
   return hosts.hosts.filter((h) => sameText(h.ip) === address && h.ssh.port === Number(port)).map((h) => h.name);
 }
 
-/** The vault item the draft's Login names (or would, left empty), as `vault.item_fields` takes it;
- * null unless it's an existing item's reference. */
+/** The vault item the draft's Login names (or would, left empty), as `vault.item_fields` takes it:
+ * without a `#field` (the Login keeps it). Null unless it's an existing item's reference, and while
+ * neither the Name nor the Vault item says which item. */
 export function itemRef(draft: AddDraft): { provider: string; item: string } | null {
-  if (draft.login !== "item") return null;
+  if (draft.login !== "item" || (draft.item.trim() === "" && draft.name.trim() === "")) return null;
   const ref = draft.item.trim() || defaultRef(draft.name);
-  const [, provider, item] = /^([\w.-]+):(\S.*)$/.exec(ref) ?? [];
+  const [, provider, rest] = /^([\w.-]+):(\S.*)$/.exec(ref) ?? [];
+  const item = rest?.split("#")[0]?.trim();
   return provider && item ? { provider, item } : null;
 }
 

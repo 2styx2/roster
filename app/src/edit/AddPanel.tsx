@@ -194,17 +194,33 @@ export function AddPanel({
   const ref = itemRef(draft);
   const refText = ref ? `${ref.provider}:${ref.item}` : "";
 
+  const reading = itemFill.at === "reading";
+  /** Goes up on every Fill and every change of the item or the Login way: a reply for an older one is
+   * dropped, so it never pairs one item's address with another's Login. */
+  const fillSeq = useRef(0);
+  const itemChanged = () => {
+    fillSeq.current += 1;
+    setItemFill({ at: "idle" });
+  };
+
   const fillFrom = async () => {
-    if (!ref) return;
+    // aria-disabled while it reads (the button keeps focus): a press then asks nothing more
+    if (!ref || reading || busy) return;
+    const seq = ++fillSeq.current;
     setItemFill({ at: "reading" });
     try {
       const fields = await backend.vaultItemFields(ref.item, ref.provider);
-      if (!live.current) return;
+      if (!live.current || seq !== fillSeq.current) return;
+      // Address, port and user are read-only while it reads, so the click-time draft is theirs now.
       const { draft: next, changed } = filled(draft, fields);
-      if (changed.length) set(Object.fromEntries(changed.map((f) => [f, next[f]])));
+      if (changed.length) {
+        set(Object.fromEntries(changed.map((f) => [f, next[f]])));
+        // As if typed and left: their problems, and the taken-address warning, show at once.
+        setTouched((t) => new Set([...t, ...changed]));
+      }
       setItemFill({ at: "done", changed, ref: refText, note: fields.note ?? null });
     } catch (e) {
-      if (!live.current) return;
+      if (!live.current || seq !== fillSeq.current) return;
       setItemFill({ at: "failed", message: e instanceof Error ? e.message : String(e) });
     }
   };
@@ -367,7 +383,7 @@ export function AddPanel({
             const note = f.name === "group" && newGroup ? "new group" : null;
             const warn =
               f.name === "address" && !problem && sharing.length
-                ? `${sharing.join(" and ")} ${sharing.length > 1 ? "are" : "is"} at ${draft.address.trim()}:${draft.port.trim()} too. Fine for a second Login to that machine; otherwise check the address.`
+                ? `${sharing.join(" and ")} ${sharing.length > 1 ? "are" : "is"} at ${draft.address.trim()}:${Number(draft.port.trim())} too. Fine for a second Login to that machine; otherwise check the address.`
                 : null;
             const describedBy = problem ? `${id}-problem` : warn ? `${id}-warn` : undefined;
             return (
@@ -386,6 +402,7 @@ export function AddPanel({
                   autoComplete="off"
                   inputMode={f.name === "port" ? "numeric" : undefined}
                   disabled={busy}
+                  readOnly={reading && (f.name === "address" || f.name === "port" || f.name === "user")}
                   aria-invalid={problem ? true : undefined}
                   aria-describedby={describedBy}
                   onBlur={() => touch(f.name)}
@@ -424,7 +441,7 @@ export function AddPanel({
                     onChange={() => {
                       set({ login: way, item: "" });
                       setHasPassword(false);
-                      setItemFill({ at: "idle" });
+                      itemChanged();
                     }}
                   />
                   {label}
@@ -473,7 +490,7 @@ export function AddPanel({
                   onBlur={() => touch("item")}
                   onChange={(e) => {
                     set({ item: e.target.value });
-                    setItemFill({ at: "idle" });
+                    itemChanged();
                   }}
                 />
                 <datalist id={`${ids}-items`} data-testid="item-suggestions">
@@ -489,7 +506,12 @@ export function AddPanel({
                 </span>
                 {login === "item" && fillFromItem && (
                   <div className="add-fill">
-                    <button type="button" disabled={!ref || itemFill.at === "reading"} onClick={() => void fillFrom()}>
+                    <button
+                      type="button"
+                      disabled={busy || !ref}
+                      aria-disabled={reading ? true : undefined}
+                      onClick={() => void fillFrom()}
+                    >
                       Fill from this item
                     </button>
                     <span className="edit-hint" role="status">

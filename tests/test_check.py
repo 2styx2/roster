@@ -232,7 +232,7 @@ def test_a_changed_host_key_is_never_accepted(check, box, isolated):
 def test_no_recorded_host_key(check, box, isolated):
     (isolated["home"] / ".ssh" / "roster_known_hosts").write_text("")
     step = check("esx")["result"]["steps"][6]
-    assert (step["status"], step["code"]) == ("fail", 44) and "roster setup --only esx" in step["fix"]
+    assert (step["status"], step["code"]) == ("fail", 44) and "roster setup --host esx" in step["fix"]
 
 
 def test_the_host_refuses_the_password(check, box, monkeypatch):

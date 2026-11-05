@@ -510,6 +510,7 @@ export const fixtures: Record<string, FakeScenario> = {
     apiVersion: 29,
     itemFields: {
       "nas-01 ssh": { address: "10.19.9.50", port: 2222, user: "root" },
+      "old box ssh": { address: "10.19.1.2", port: 22, user: "admin" },
       "nas-01 web": { note: "its URI isn't a network address (androidapp:), so it gives no address" },
       "printer ssh": { code: 186, message: "op can't give an item's address and user without roster reading its password" },
     },

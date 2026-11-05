@@ -387,6 +387,13 @@ describe("another Host at the same address and port (#437)", () => {
     expect((await backend.getHost("printer-9")).ip).toBe("10.19.1.2");
   });
 
+  it("says the port as a number (review of #458, L5)", async () => {
+    const { user } = await ready();
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "printer-9", Address: "10.19.1.2", Port: "022", User: "admin" });
+    expect(within(panel).getByText(/linux-1-000 is at 10\.19\.1\.2:22 too/)).toBeInTheDocument();
+  });
+
   it("says nothing on another port: a second sshd on one machine", async () => {
     const { user } = await ready();
     const panel = await openForm(user);
@@ -411,6 +418,44 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
     expect(within(panel).getByLabelText("Port")).toHaveValue("2222");
     expect(within(panel).getByLabelText("User")).toHaveValue("root");
     expect(calls.filter((c) => c.method === "vaultItemFields").map((c) => c.args)).toEqual([["nas-01 ssh", "bw"]]);
+  });
+
+  it("warns at once when the item's address and port are another Host's (review of #458, M1)", async () => {
+    const { user } = await ready(vault());
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "nas-01" });
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    await fill(user, panel, { "Vault item": "bw:old box ssh" });
+    await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
+    expect(await within(panel).findByText(/linux-1-000 is at 10\.19\.1\.2:22 too/)).toBeInTheDocument();
+  });
+
+  it("drops a reply that comes after the item changed (M2)", async () => {
+    const { user } = await ready({ ...vault(), delay: 300 });
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "nas-01", Address: "10.19.9.9" });
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
+    await user.type(within(panel).getByLabelText("Vault item"), "bw:nas-01 web");
+    await new Promise((r) => setTimeout(r, 500));
+    expect(within(panel).getByLabelText("Address")).toHaveValue("10.19.9.9");
+    expect(within(panel).queryByText(/^Filled/)).toBeNull();
+  });
+
+  it("holds the address, port and user while it reads, and keeps focus on the button (M2, L1)", async () => {
+    const { user } = await ready({ ...vault(), delay: 300 });
+    const panel = await openForm(user);
+    await fill(user, panel, { Name: "nas-01" });
+    await user.click(within(panel).getByLabelText("An existing vault item"));
+    const button = within(panel).getByRole("button", { name: "Fill from this item" });
+    button.focus();
+    await user.keyboard("{Enter}");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveFocus();
+    for (const label of ["Address", "Port", "User"]) expect(within(panel).getByLabelText(label)).toHaveAttribute("readonly");
+    await user.keyboard("{Enter}");                               // a second press while it reads asks nothing more
+    await within(panel).findByDisplayValue("10.19.9.50");
+    expect(within(panel).getByLabelText("Address")).not.toHaveAttribute("readonly");
   });
 
   it("says why an item gave no address, and keeps what was typed", async () => {
@@ -444,6 +489,8 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
     expect(within(panel).queryByRole("button", { name: "Fill from this item" })).toBeNull();     // Type its password
     await user.click(within(panel).getByLabelText("An existing vault item"));
     await fill(user, panel, { "Vault item": "nas ssh" });
+    expect(within(panel).getByRole("button", { name: "Fill from this item" })).toBeDisabled();
+    await fill(user, panel, { "Vault item": "", Name: "" });          // L4: no item to read
     expect(within(panel).getByRole("button", { name: "Fill from this item" })).toBeDisabled();
     await user.keyboard("{Escape}");
   });

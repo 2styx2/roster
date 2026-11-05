@@ -166,7 +166,7 @@ What the errors mean:
 
 | Message | Meaning |
 |---|---|
-| `host key not recorded` | `roster setup --only HOST` hasn't been run for it yet, or the SSH port didn't answer when it ran |
+| `host key not recorded` | `roster setup --host HOST` hasn't been run for it yet, or the SSH port didn't answer when it ran |
 | `no answer on SSH port` | SSH is off or filtered. ESXi often switches SSH off: enable it under Host → Actions → Services. |
 | `login refused (wrong user or password?)` | Wrong item, wrong user, or a different box from the one you think. Check the host key (step 3). |
 | `warning: HOST service 'NAME': ... - left out` | That service entry has a mistake roster can't work around, so the rest of the Host loads without it. The `fix:` line under it says what to change. |
