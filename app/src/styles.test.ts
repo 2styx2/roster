@@ -211,22 +211,14 @@ describe("the Key bindings panel's rows (round 18)", () => {
   });
 });
 
-describe("the status bar's order of giving way (rounds 18, 19)", () => {
-  const shrink = (selector: string) => {
-    const body = rules(stylesCss)
-      .filter(([s, , at]) => at.length === 0 && s.trim() === selector)
-      .map(([, b]) => b)
-      .join(";");
-    return Number(/(?:^|[;{\s])flex:\s*\S+\s+(\S+)/.exec(body)?.[1]);
-  };
-  it("the Backend is cut first, then this Box, and the Session on screen last (Q209 d)", () => {
-    // The hints and the path aren't cut by CSS: FitBar shortens the path by whole folders, removes
-    // the hints whole, then the path, before the Backend is cut (round 20).
-    expect(shrink(".statusbar-right")).toBe(0);
+describe("the status bar's order of giving way (rounds 18, 19, 21)", () => {
+  it("cuts nothing by CSS: FitBar gives every segment way by its own forms (round 21)", () => {
+    // Round 21: the Backend's label was cut to a stub ("WSL:…") and this Box's middle-cut name cut
+    // again at its end, both clipped by the bar's edge at 480. FitBar steps them (FitBar.test.tsx).
     expect(stylesCss).toMatch(/\.statusbar \.path \{ flex: none; \}/);
-    const order = [".statusbar .backend", ".statusbar .box", ".statusbar .session-seg"].map(shrink);
-    expect(order.every((n) => Number.isFinite(n) && n > 0)).toBe(true);
-    for (let i = 1; i < order.length; i++) expect(order[i - 1]! / order[i]!).toBeGreaterThanOrEqual(1e4);
+    expect(stylesCss).toMatch(/\.statusbar > \* \{ flex: none; \}/);
+    expect(stylesCss).not.toMatch(/\.statusbar \.(?:backend|box|session-seg) \{[^}]*flex:/);
+    expect(stylesCss).not.toMatch(/\.statusbar-cut \{[^}]*text-overflow/);
   });
 });
 

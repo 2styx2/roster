@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { giveWay } from "./FitBar";
+import { giveWay, nameForms } from "./FitBar";
 
 /** A 400 px bar whose segments are `widths` wide (jsdom has no layout): a Box, a path and three
  * hints. The bar's content is the sum of what's still shown. */
@@ -91,5 +91,49 @@ describe("the status bar gives way in order (round 19)", () => {
     giveWay(el);
     expect([path, ...parts].some((p) => p.hasAttribute("data-off"))).toBe(false);
     expect(path).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("then removes the Backend's label, and cuts this Box's and the Session's names by their own forms, never clipped (round 21)", () => {
+    const el = document.createElement("footer");
+    Object.defineProperty(el, "clientWidth", { value: 340 });
+    const seg = (cls: string, forms: string[] | null) => {
+      const s = document.createElement("span");
+      s.className = cls;
+      const label = document.createElement("span");
+      label.className = "statusbar-cut";
+      for (const [i, f] of (forms ?? []).entries()) {
+        const form = document.createElement("span");
+        form.className = "path-cut";
+        form.textContent = f;
+        if (i > 0) form.setAttribute("data-off", "");
+        label.append(form);
+      }
+      if (!forms) label.textContent = "WSL: FedoraLinux-44";
+      s.append(label);
+      el.append(s);
+      return label;
+    };
+    const backend = seg("backend", null);
+    const box = seg("box", nameForms("aleksandra-wisniewska-kowalczyk-fedoralinux-44"));
+    const session = seg("session-seg", nameForms("linux-1-0040"));
+    // 10 px a character, plus 50 px for the marks and the count.
+    const shown = (label: HTMLElement) => (label.hasAttribute("data-off") ? "" : [...label.children].find((c) => !c.hasAttribute("data-off"))?.textContent ?? label.textContent ?? "");
+    const width = () => 50 + [backend, box, session].reduce((sum, l) => sum + 10 * [...shown(l)].length, 0);
+    Object.defineProperty(el, "scrollWidth", { get: () => Math.max(340, width()) });
+    giveWay(el);
+    // The Backend's label goes first, whole; then the Box's name steps to 16 characters.
+    expect(backend).toHaveAttribute("data-off");
+    expect(shown(box)).toBe("aleksand…inux-44");
+    expect(shown(session)).toBe("linux-1-0040");
+    expect(width()).toBeLessThanOrEqual(340);
+  });
+
+  it("gives a name its forms: whole up to 24 characters, then cut in its middle to 24, 16 and 10", () => {
+    expect(nameForms("devbox")).toEqual(["devbox"]);
+    expect(nameForms("aleksandra-wisniewska-kowalczyk-fedoralinux-44")).toEqual([
+      "aleksandra-w…oralinux-44",
+      "aleksand…inux-44",
+      "aleks…x-44",
+    ]);
   });
 });

@@ -320,23 +320,19 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar > * { flex: none; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the path by whole folders (down to "…/roster.yml"), the
-   hints (removed whole, last first, FitBar), the path (removed), then the Backend's label, then this Box's name, and the Session on
-   screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
-   count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
-   way only once the one before it is at its least (factors 1e5 apart: a step's share of
-   the overflow stays under a layout unit). Each cut value has its whole text in a tooltip. */
-.statusbar-cut { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Each keeps 6 characters, or its whole text when shorter (--keep, set from its length in App.tsx,
-   so "Fake" gets no empty room after it), beside its 6 px mark and the 6 px gap. In Iosevka, so
-   ch is a character. */
-.statusbar :is(.backend, .box, .session-seg) { min-width: calc(var(--keep, 6ch) + 12px); font-family: var(--font-mono); }
-.statusbar .backend { flex: 0 1e5 auto; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-.statusbar .box { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; }
+/* Long values give way in order (FitBar): the path by whole folders (down to "…/roster.yml"), the
+   hints (removed whole, last first), the path (removed), then the Backend's label (its node
+   stays), this Box's name and the Session on screen's last, each cut in its middle to 24, 16 and
+   10 characters and then removed (Q209 d, round 21). Nothing is cut by CSS or clipped by the
+   bar's edge: a segment is whole, in one of its own forms, or not there. The Host count and the
+   mode never give way. Each value has its whole text in a tooltip. */
+.statusbar-cut { white-space: nowrap; }
+.statusbar :is(.backend, .box, .session-seg) { font-family: var(--font-mono); }
+.statusbar .backend { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.statusbar .box { display: inline-flex; align-items: center; gap: 6px; }
 /* This Box (decision Q57): a small square in the second tone, the logo's Box at the foot of the R.
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
-.statusbar .box .statusbar-cut { min-width: 0; }
 /* The path takes its text's width: whole, or with whole folders given way for one "…/" (FitBar
    picks the form; PathText). Past "…/roster.yml" it's removed (FitBar), never left as a blank box,
    a stub ("/ho…") or a folder cut inside ("~/ …ventory/", round 19). */
@@ -346,7 +342,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
-.statusbar .session-seg { flex: 0 1e-5 auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
+.statusbar .session-seg { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
 /* What the status line names is data (taste.md's paste rule): the Backend, this Box, the Host
    count and the Inventory's path are in Iosevka, as in a tmux line. The words around them are Inter. */
 .statusbar .backend .statusbar-cut, .statusbar .box .statusbar-cut, .statusbar .count, .statusbar .path { font-family: var(--font-mono); }
@@ -1956,7 +1952,7 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    accent (that means a live Session). Reduced motion: the fill steps, and the edge stays put as
    a dashed track. */
 .statusbar-progress { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
-.statusbar-progress-title { max-width: 28ch; }
+.statusbar-progress-title { max-width: 28ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .statusbar-progress-share { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .progress-track { position: relative; flex: none; width: 48px; height: 1px; background: var(--line-strong); overflow: hidden; }
 .progress-fill { position: absolute; inset: 0; background: var(--text); transform-origin: left center; transform: scaleX(0); transition: transform 120ms linear; }

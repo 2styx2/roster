@@ -19,7 +19,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
@@ -171,7 +170,7 @@ import { PluginManager, type DemoPlugins } from "./plugins/manager";
 import { ViewPanel } from "./view/ViewContent";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
-import { FitBar } from "./chrome/FitBar";
+import { FitBar, NameForms } from "./chrome/FitBar";
 import { MessageText } from "./ui/MessageText";
 import { PathText } from "./chrome/PathText";
 import { registerPanel } from "./panel/command";
@@ -234,7 +233,7 @@ import {
 } from "./theme/picker";
 import { useTheme } from "./theme/useTheme";
 import { Logo } from "./chrome/Logo";
-import { countOf, middleCut } from "./ui/format";
+import { countOf } from "./ui/format";
 import {
   afterSwitch,
   NONE_NAMED,
@@ -3293,7 +3292,6 @@ function Workspace({
             key={id}
             className="backend"
             title={info.backend}
-            style={keepChars(info.backend)}
           >
             <span className="status-dot" aria-hidden="true" />
             <span className="statusbar-cut">{info.backend}</span>
@@ -3305,12 +3303,10 @@ function Workspace({
             key={id}
             className="box"
             title={info.inventory.box}
-            style={keepChars(middleCut(info.inventory.box, 24))}
           >
             <span className="box-mark" aria-hidden="true" />
-            <span className="statusbar-cut" title={info.inventory.box}>
-              {middleCut(info.inventory.box, 24)}
-            </span>
+            {/* Cut in its middle as room runs out, then removed (FitBar): its square stays. */}
+            <NameForms name={info.inventory.box} />
           </span>
         );
       case "session": {
@@ -3331,16 +3327,13 @@ function Workspace({
             key={id}
             className="session-seg"
             title={`Session ${tab.label}`}
-            style={keepChars(middleCut(tab.label, 24))}
           >
             <StateDot
               dot={dot}
               lit={ended || connectPhase(tab) ? undefined : "current"}
             />
             <span className="visually-hidden">Session </span>
-            <span className="statusbar-cut" title={tab.label}>
-              {middleCut(tab.label, 24)}
-            </span>
+            <NameForms name={tab.label} />
           </span>
         );
       }
@@ -3352,7 +3345,6 @@ function Workspace({
               key={id}
               className="box"
               title={`Inventory ${inventories.name}: ${inventories.path ?? ""}`}
-              style={keepChars(`${inventories.name} Inventory`)}
             >
               <span className="statusbar-cut">
                 {inventories.name} Inventory
@@ -4588,11 +4580,6 @@ function mapKey(
   }
 }
 
-/** How much of a status segment's text stays when the bar runs out of room: 6 characters, or all
- * of a shorter one (the segment's --keep, round 18). */
-function keepChars(text: string): CSSProperties {
-  return { "--keep": `${Math.min(6, [...text].length)}ch` } as CSSProperties;
-}
 /** Where the idle map's edges end: past the 48px edge column and the row's 10px padding, at the
  * node's left edge, so each edge meets its node (round 12: they stopped ~14px short). */
 const EDGE_END = 48 + 10 + 0.75;
