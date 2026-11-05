@@ -315,7 +315,7 @@ def synced(write_config, capsys, text=INVENTORY):
     """roster.yml written and `roster sync` run, so this box's ssh config has every Host's alias, and a host key
     recorded for each Host, as `roster setup` would (without one, session.prepare asks first: ticket 36)."""
     path = write_config(text)
-    assert main(["sync"]) == 0
+    assert main(["sync", "--no-vault"]) == 0
     capsys.readouterr()
     record_keys(path)
 

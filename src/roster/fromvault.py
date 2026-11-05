@@ -26,8 +26,7 @@ from . import addhost, providers
 from .common import NAME_RE, NotPrivate, die, read_private, replace_file, say, user_config_dir
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
-UNLOCK = {"bw": "roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put the session in "
-                "~/.config/roster/bw-session: (umask 077; bw unlock --raw > ~/.config/roster/bw-session)",
+UNLOCK = {"bw": "run in a terminal: roster vault unlock",
           "kp": "KeePassXC has no session roster can reuse: give the address and user yourself (roster add NAME "
                 "--ip ADDR --user USER --auth kp:ENTRY), or unlock it in the app",
           "op": "sign in: turn on the 1Password app's CLI integration, or eval $(op signin)"}

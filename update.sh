@@ -225,8 +225,12 @@ if [[ -z $cfg ]]; then
 else
     export ROSTER_CONFIG="$cfg"
     cd "$(dirname "$cfg")" || exit 1
-    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync; then done_stage; else fail_stage; fi
-    info "a host the map gained needs this box's key once: roster setup (roster check says which)"
+    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync; then
+        done_stage
+        # T243: end as `roster sync` does: its next command (the last line it printed), only when something is left
+        last=$(tail -n 1 "$LOG")
+        (( DRY )) || [[ $last != *"next: "* ]] || info "next: ${last#*next: }"
+    else fail_stage; fi
 fi
 
 # 5. Tab completion: on, as install.sh turns it on, for a box installed before it did (unless you said no)

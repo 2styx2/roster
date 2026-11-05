@@ -207,6 +207,24 @@ def test_update_reinstalls_roster_and_syncs_the_map(box, tmp_path):
 
 
 @posix_shell
+@pytest.mark.parametrize(("said", "shown"), [
+    ("map: 1 Host added (db-01); next: roster setup --host db-01 (no key on db-01 yet)",
+     "next: roster setup --host db-01 (no key on db-01 yet)"),
+    ("ssh config   written (2 hosts)", None),
+])
+def test_update_ends_with_the_next_line_roster_sync_gave_and_only_then(box, tmp_path, said, shown):
+    """T243 (#476): update.sh ends the way `roster sync` does: its next command when something is left, else none."""
+    home, env = box
+    src = source_copy(tmp_path)
+    roster = Path(env["PATH"].split(":")[0]) / "roster"
+    roster.write_text(FAKES["roster"].replace("exit 0", f'[ "$1" = sync ] && echo "{said}"\nexit 0'))
+    r = run(src / "update.sh", env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "a host the map gained needs" not in r.stdout
+    assert (shown in r.stdout) if shown else "next:" not in r.stdout
+
+
+@posix_shell
 def test_update_on_a_detached_checkout_skips_the_pull(box, tmp_path):
     home, env = box
     src = source_copy(tmp_path)

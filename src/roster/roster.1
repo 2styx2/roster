@@ -5,8 +5,8 @@ roster \- give this box (and Claude) access to the hosts in roster.yml
 .nf
 roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
 roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]
-roster sync
-roster check [\-\-box] [\-\-auth] [\-\-only LIST] [\-\-json] [host]
+roster sync [\-\-no\-vault]
+roster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]
 roster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]
 roster run [\-\-sudo] host ...
 roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
@@ -88,12 +88,15 @@ with \-\-host: try this SSH key type there, over roster.yml's key_type: (ed25519
 replace the Box key (this Box's own key, not a Mesh key: `roster mesh \-\-rotate HOST` does those) on every Host: a new key, proven on each Host before the old key's line goes, then the old key deleted. \-\-host NAME (a Host or a group) narrows it; a Host not reached stays pending until setup \-\-rotate runs again
 .SS sync
 .PP
-\fBroster sync\fR
+\fBroster sync [\-\-no\-vault]\fR
 .PP
-Rewrite the SSH config and Claude files after editing \fBroster.yml\fR
+Rewrite the SSH config and Claude files after editing \fBroster.yml\fR, and sync the vault too, as \fBvault sync\fR does (\fB\-\-no\-vault\fR: the map only). It touches no Host. It ends with one line: what changed in each (\fBvault: bw: 1 item changed (web\-01 ssh) since the last sync; map: 1 Host added (db\-01)\fR) and, only when something is left, \fBnext:\fR and the command that does it (\fBroster setup \-\-host db\-01 (no key on db\-01 yet)\fR, \fBroster add \-\-from\-vault\fR, \fBroster mesh\fR, \fBroster setup \-\-rotate\fR). A vault it couldn't sync doesn't fail it: locked with no terminal, it says so and names \fBroster vault unlock\fR; offline, it says when the vault last synced. A Host taken out of \fBroster.yml\fR loses its ssh entry, with a note that this Box's key may still be on it; one renamed at the same address is said as renamed
+.TP
+\fB\-\-no\-vault\fR
+the map only: leave the vault as last synced
 .SS check
 .PP
-\fBroster check [\-\-box] [\-\-auth] [\-\-only LIST] [\-\-json] [host]\fR
+\fBroster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]\fR
 .PP
 \-\-box \e
 .TP
@@ -108,6 +111,9 @@ test each Login's password source (SSH, services, resources) instead, connecting
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
+.TP
+\fB\-\-host NAME\fR
+check exactly this Host (never a group or type by the name); again for more, as setup's last line names them
 .TP
 \fB\-\-json\fR
 print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
@@ -348,12 +354,12 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 .PP
 \fBroster vault sync\fR
 .PP
-Sync every vault \fBroster.yml\fR\&'s Logins use that keeps a local copy (Bitwarden: \fBbw sync\fR; 1Password and the others ask their server or file each time, so it says they need none), then say what changed since the last sync: the items added and changed by name, the removed ones by count. Never a password: see The vault isn't watched. Exits 1 if a sync failed
+Sync every vault \fBroster.yml\fR\&'s Logins use that keeps a local copy (Bitwarden: \fBbw sync\fR; 1Password and the others ask their server or file each time, so it says they need none), then say what changed since the last sync: the items added and changed by name, the removed ones by count. Never a password: see The vault isn't watched. Nothing changed: \fBup to date\fR\&. An item added that no Login in \fBroster.yml\fR names ends it with \fBnext: roster add \-\-from\-vault\fR\&. Exits 1 if a sync failed, saying when roster last synced it
 .SS vault unlock
 .PP
 \fBroster vault unlock [PROVIDER]\fR
 .PP
-Unlock Bitwarden and keep it unlocked for every roster run on this Box: asks the master password (it goes to \fBbw\fR in an environment variable, never on a command line), then saves the session key in \fB~/.config/roster/bw\-session\fR (a new file renamed into place, mode 0600; a file there that's a symlink or isn't yours is refused, 202). It lasts until \fBroster vault lock\fR, \fBbw lock\fR, or the roster app's lock. Already unlocked by a working saved session: says so, asks nothing; a working \fBBW_SESSION\fR in your shell is saved as it is, with no new unlock (which would lock it and the app). Bitwarden only for now (203 for \fBkp\fR, which keeps no session, and \fBop\fR). See Staying unlocked
+Unlock Bitwarden and keep it unlocked for every roster run on this Box: asks the master password (it goes to \fBbw\fR in an environment variable, never on a command line), then saves the session key in \fB~/.config/roster/bw\-session\fR (a new file renamed into place, mode 0600; a file there that's a symlink or isn't yours is refused, 202). It lasts until \fBroster vault lock\fR, \fBbw lock\fR, or the roster app's lock. Already unlocked by a working saved session: says so, asks nothing; a working \fBBW_SESSION\fR in your shell is saved as it is, with no new unlock (which would lock it and the app). Bitwarden only for now (203 for \fBkp\fR, which keeps no session, and \fBop\fR). It ends with the \fBnext:\fR line \fBroster sync\fR would give, when something is left (a \fBroster setup\fR the locked vault held up). See Staying unlocked
 .TP
 \fBPROVIDER\fR
 bw (the default and, for now, the only one: KeePassXC keeps no session, and 1Password's op signin keeps its own)
@@ -525,6 +531,9 @@ During a Box key rotation: the new key before it takes \fBkey_path:\fR\&'s place
 .TP
 \fB~/.config/roster/key\-rotation\fR
 The Hosts a Box key rotation is pending on (a named Inventory's: \fBkey\-rotation\-NAME\fR); gone once it's done
+.TP
+\fB~/.config/roster/setup\-left\fR
+The Hosts the last \fBroster setup\fR that reached them didn't finish, by name (a named Inventory's: \fBsetup\-left\-NAME\fR), so \fBsync\fR and \fBvault unlock\fR name \fBroster setup \-\-host\fR for them; gone once none is left
 .TP
 \fB~/.config/roster/key\-created\fR
 When roster made or rotated each of this Box's keys, for \fBkey_max_age:\fR
