@@ -90,11 +90,32 @@ def blank_shape(raw):
     return all(isinstance(g, dict) and "hosts" in g for g in groups.values())
 
 
+HIDDEN_PATH = "that path (not repeated)"
+_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
+
+
+def shown_path(path) -> str | None:
+    """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
+    when it mustn't be (#479, #484 M1/L1). A file that's there is shown. One that isn't is shown only when its folder
+    exists and the value isn't token-shaped (24 or more of A-Z a-z 0-9 + / = _ -, so no . or ~): `roster -cTOKEN
+    hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an op service-account token
+    can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
+    given = str(path)
+    full = Path(path).expanduser().resolve()
+    if full.exists() or (full.parent.is_dir() and not _TOKEN_SHAPED.fullmatch(given)):
+        return str(full)
+    return None
+
+
 def load_inventory(path):
     """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
+    shown = shown_path(path)
     path = Path(path).expanduser().resolve()
     if not path.exists():
-        die(f"{path} not found - make one: roster -c {path} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
+        if shown is None:
+            die(f"no config file at {HIDDEN_PATH} - check -c PATH (or $ROSTER_CONFIG); make one: "
+                "roster -c PATH init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
+        die(f"{shown} not found - make one: roster -c {shown} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
     return parse_inventory(path.read_text(), path)
 
 

@@ -558,7 +558,9 @@ fn spawn_serve(c: &Candidate, notify: Option<Notify>) -> std::io::Result<RpcClie
 fn classify(e: CallError, shown: &str) -> BackendError {
     match e {
         CallError::Exited { stderr, code } => {
-            if stderr.contains("invalid choice") && stderr.contains("serve") {
+            // argparse's exact words for an unknown command `serve` (#479): any other "invalid choice" is a
+            // failure of its own, even in a line that says serve, so the app can run more than `roster serve`
+            if stderr.contains("invalid choice: 'serve'") {
                 too_old("This roster has no `serve` command (it predates the roster app).".into()).with_detail(stderr)
             } else {
                 BackendError::new(

@@ -33,7 +33,7 @@ from .common import (
     tcp_ok,
 )
 from .completion import COMMANDS, DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
-from .config import access_label, find_config, is_windows, load_config, matches, selected
+from .config import HIDDEN_PATH, access_label, find_config, is_windows, load_config, matches, selected, shown_path
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
@@ -1807,12 +1807,13 @@ def cmd_inv(args):
     if act == "which":
         path = locate_config(args.config, args.inv)
         name = args.inv or inventories.name_of(path)
+        shown = shown_path(path)            # its purpose is the path, but a token typed as -c PATH isn't (#484 L2)
         if args.json:
             from . import jsondocs
-            jsonout.emit(jsondocs.WhichDoc(path=str(path.expanduser().resolve()), name=name, exists=path.is_file()))
+            jsonout.emit(jsondocs.WhichDoc(path=shown or "(not repeated)", name=name, exists=path.is_file()))
             return 0 if path.is_file() else 1
         if not path.is_file():
-            die(f"roster would use {path}, but it isn't there")
+            die(f"roster would use {shown or HIDDEN_PATH}, but it isn't there")
         say(str(path.expanduser().resolve()))
         return 0
     if act == "list":

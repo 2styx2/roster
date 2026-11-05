@@ -42,6 +42,14 @@ fn a_roster_without_serve_is_too_old_and_points_at_the_override() {
 }
 
 #[test]
+fn another_invalid_choice_that_mentions_serve_is_not_too_old() {
+    // #479: only argparse's exact "invalid choice: 'serve'" (no such command) means a roster from before serve
+    let e = Backend::start(&fake("other-choice")).err().unwrap();
+    assert_eq!(e.kind, ErrorKind::Failed);
+    assert!(e.detail.unwrap().contains("invalid choice: 'loud'"));
+}
+
+#[test]
 fn no_inventory_is_inventory_not_found_with_roster_wording() {
     let e = Backend::start(&fake("no-inventory")).err().unwrap();
     assert_eq!(e.kind, ErrorKind::InventoryNotFound);
