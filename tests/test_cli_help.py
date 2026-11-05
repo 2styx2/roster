@@ -1,5 +1,6 @@
 """`roster --help`, `roster COMMAND --help` and usage errors (roster.clihelp)."""
 
+import json
 import shlex
 
 import pytest
@@ -278,10 +279,11 @@ def test_a_token_read_as_a_config_path_is_not_repeated(capsys, tmp_path, monkeyp
 def test_a_missing_config_path_is_shown_when_it_looks_like_one(capsys, tmp_path, monkeypatch, typed):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))                # what ~ is on Windows
     (tmp_path / "inv").mkdir()
     want = tmp_path / typed.removeprefix("~/")
     assert f"{want} not found" in _run(capsys, ["-c", typed, "hosts"])
-    assert str(want) in _run(capsys, ["-c", typed, "hosts", "--json"])
+    assert json.dumps(str(want))[1:-1] in _run(capsys, ["-c", typed, "hosts", "--json"])   # a Windows path's \ is \\
     assert str(want) in _run(capsys, ["-c", typed, "inv", "which"])
 
 
