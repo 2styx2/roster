@@ -11,7 +11,7 @@ import { meshPlugin, words } from "../backend/fakeMesh";
 import { fakePluginHost } from "../backend/fakePlugins";
 import type { PluginEventName, PluginReply } from "../backend/types";
 import transcript from "./mesh.transcript.json";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 type Call = { method: string; params: Json; result?: Json; error?: string };

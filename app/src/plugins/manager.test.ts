@@ -6,7 +6,7 @@ import { fakeBackend, makeHosts } from "../backend/fake";
 import type { FakePlugin } from "../backend/fakePlugins";
 import { builtinRegistries } from "../registries";
 import { PluginManager, STATE_KEY, type PluginUi } from "./manager";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 const ALERTS = "~/plugins/recent-alerts";
 const SIZE = { cols: 80, rows: 24 };

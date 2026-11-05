@@ -5,7 +5,7 @@
 // and run `cargo run -p roster-core --example gen_plugin_api`.
 import { describe, expect, it } from "vitest";
 import api from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 type Types = Record<string, { fields?: { name: string }[]; alias?: string }>;
 const TYPES = api.types as Types;
