@@ -145,8 +145,68 @@ export const JsonRpcCode = {
   INTERNAL_ERROR: -32603,
 } as const;
 
-/** Every serve method, and the first `api_version` that has it. */
-export const SINCE = {
+/** Every serve method's name. */
+export type ServeMethod =
+  | "$/cancel"
+  | "box.check"
+  | "changes.diff"
+  | "changes.discard"
+  | "changes.publish"
+  | "discover.add"
+  | "discover.plan"
+  | "discover.start"
+  | "discover.status"
+  | "discover.stop"
+  | "group.delete"
+  | "group.new"
+  | "group.rename"
+  | "host.add"
+  | "host.check"
+  | "host.check_job"
+  | "host.get"
+  | "host.move"
+  | "host.remove"
+  | "host.rename"
+  | "host.review"
+  | "host.save_login"
+  | "host.scan_key"
+  | "host.trust_key"
+  | "host.update"
+  | "host.verify_login"
+  | "hosts.list"
+  | "inventories.list"
+  | "inventories.use"
+  | "inventory.create"
+  | "inventory.info"
+  | "inventory.pull"
+  | "inventory.reload"
+  | "inventory.watch"
+  | "jobs.list"
+  | "jobs.stop"
+  | "mesh.apply"
+  | "mesh.cut"
+  | "mesh.job"
+  | "mesh.plan"
+  | "mesh.status"
+  | "mesh.stop"
+  | "quick.prepare"
+  | "quick.save"
+  | "session.fill"
+  | "session.prepare"
+  | "vault.configure"
+  | "vault.create_item"
+  | "vault.forget_typed"
+  | "vault.item_fields"
+  | "vault.lock"
+  | "vault.login"
+  | "vault.logout"
+  | "vault.status"
+  | "vault.targets"
+  | "vault.undo_create"
+  | "vault.unlock";
+
+/** Every serve method, and the first `api_version` that has it (a number: the app counts down from it). */
+export const SINCE: Readonly<Record<ServeMethod, number>> = {
   "$/cancel": 21,
   "box.check": 16,
   "changes.diff": 5,
@@ -204,7 +264,7 @@ export const SINCE = {
   "vault.targets": 10,
   "vault.undo_create": 4,
   "vault.unlock": 1,
-} as const;
+};
 
 /** The `api_version` that added each of a method's forms (its rows in docs/serve-api.md), in order. */
 export const FORMS = {
@@ -279,8 +339,10 @@ export const LOGIN_FIELDS = ["ip", "user", "port", "auth"] as const;
 /** Where a vault stands, in `vault.status`'s words. */
 export const VAULT_STATUSES = ["locked", "unlocked", "not-logged-in", "missing-cli", "unsupported"] as const;
 
+/** Login references with no password behind them (`prompt` has none saved either, but it's a provider of its own). */
+export const NO_PASSWORD_AUTHS = ["agent", "key", "none"] as const;
+
 /** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */
 export const PATH_NOT_REPEATED = "(not repeated)";
 
-export type ServeMethod = keyof typeof SINCE;
 export type CodeName = keyof typeof Code;

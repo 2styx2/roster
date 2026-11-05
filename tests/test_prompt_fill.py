@@ -208,17 +208,6 @@ def test_session_fill_names_the_sudo_login_when_its_item_is_missing(serve, write
     assert err["code"] == 32 and "sudo Login of box" in err["message"]
 
 
-def test_the_apps_list_of_logins_without_a_password_is_roster_s():
-    """app/src/backend/types.ts keeps providers.NO_PASSWORD as NO_PASSWORD_AUTHS: one list, checked here."""
-    import re
-    from pathlib import Path
-
-    from roster import providers
-    ts = (Path(__file__).parents[1] / "app" / "src" / "backend" / "types.ts").read_text(encoding="utf-8")
-    m = re.search(r"export const NO_PASSWORD_AUTHS = \[([^\]]*)\]", ts)
-    assert m and tuple(re.findall(r'"([^"]+)"', m[1])) == providers.NO_PASSWORD
-
-
 # ---------------------------------------------------------------- a nested ssh's Host (ticket 120, decision Q131)
 
 def hop(name, **over):

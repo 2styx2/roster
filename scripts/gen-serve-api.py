@@ -40,7 +40,8 @@ A field with no `description=` is refused, so a field added to a model can't be 
 
 The contract: the API version, every method (the API that added it, each form's, its deadline), every code by its
 errors.py name and JSON-RPC's, and the lists the app switches on (host.check's and host.verify_login's steps, the
-fields an edit needs a test login for, vault.status's words, the stand-in for a path roster won't repeat).
+fields an edit needs a test login for, vault.status's words, the Logins with no password behind them, the stand-in
+for a path roster won't repeat).
 """
 
 import argparse
@@ -259,7 +260,7 @@ def handlers():
 
 def contract():
     """What the app and the Rust core read from roster serve, as data (docs/serve-contract.json)."""
-    from roster import diagnose, edit, errors, serve
+    from roster import diagnose, edit, errors, providers, serve
     roster_codes, rpc_codes = codes_by_name()
     methods = {}
     for name, m in sorted(serve.METHODS.items()):
@@ -276,6 +277,7 @@ def contract():
         "verify_steps": list(diagnose.VERIFY_STEPS),
         "login_fields": list(edit.LOGIN_FIELDS),
         "vault_statuses": list(dict.fromkeys(serve.STATUS_WORDS.values())),
+        "no_password_auths": list(providers.NO_PASSWORD),
         "path_not_repeated": errors.PATH_NOT_REPEATED,
     }
 
@@ -296,10 +298,13 @@ def ts_value(v):
 
 def contract_ts(c):
     """The contract as a TypeScript module: each fact `as const`, so the app's types follow it."""
-    def record(name, doc, values, kind=""):
+    def record(name, doc, values, typed=None):
+        """An object of VALUES: `as const` (each value its own literal type), or of the type TYPED."""
         rows = "".join(f"  {json.dumps(k) if not k.isidentifier() else k}: {ts_value(v)},\n"
                        for k, v in values.items())
-        return f"/** {doc} */\nexport const {name} = {{\n{rows}}} as const{kind};\n"
+        if typed:
+            return f"/** {doc} */\nexport const {name}: {typed} = {{\n{rows}}};\n"
+        return f"/** {doc} */\nexport const {name} = {{\n{rows}}} as const;\n"
 
     def array(name, doc, values):
         return f"/** {doc} */\nexport const {name} = {ts_value(values)} as const;\n"
@@ -312,7 +317,10 @@ def contract_ts(c):
         f"/** The serve API this roster speaks. */\nexport const SERVE_API_VERSION = {c['api_version']};\n",
         record("Code", "roster's error codes by their errors.py name (docs/app/errors.md has their rows).", c["codes"]),
         record("JsonRpcCode", "JSON-RPC's own error codes, which serve answers with too.", c["json_rpc"]),
-        record("SINCE", "Every serve method, and the first `api_version` that has it.", since),
+        "/** Every serve method's name. */\nexport type ServeMethod =\n"
+        + "".join(f"  | {json.dumps(k)}\n" for k in since).rstrip("\n") + ";\n",
+        record("SINCE", "Every serve method, and the first `api_version` that has it (a number: the app counts down "
+               "from it).", since, typed="Readonly<Record<ServeMethod, number>>"),
         record("FORMS", "The `api_version` that added each of a method's forms (its rows in docs/serve-api.md), in "
                "order.", form_since),
         array("CHECK_STEPS", "`host.check`'s steps, in the order roster runs them.", c["check_steps"]),
@@ -320,9 +328,11 @@ def contract_ts(c):
         array("LOGIN_FIELDS", "Changing these needs a test login that just succeeded (`host.verify_login`, decision "
               "Q43).", c["login_fields"]),
         array("VAULT_STATUSES", "Where a vault stands, in `vault.status`'s words.", c["vault_statuses"]),
+        array("NO_PASSWORD_AUTHS", "Login references with no password behind them (`prompt` has none saved either, "
+              "but it's a provider of its own).", c["no_password_auths"]),
         f"/** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */\n"
         f"export const PATH_NOT_REPEATED = {ts_value(c['path_not_repeated'])};\n",
-        "export type ServeMethod = keyof typeof SINCE;\nexport type CodeName = keyof typeof Code;\n",
+        "export type CodeName = keyof typeof Code;\n",
     ]
     return "\n".join(parts)
 
