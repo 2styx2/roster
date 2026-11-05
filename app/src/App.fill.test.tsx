@@ -202,7 +202,10 @@ describe("filling a password prompt", () => {
     for (const apiVersion of [FILL_API_VERSION - 1, NESTED_FILL_API_VERSION]) {
       const user = await ready({ apiVersion });
       await user.keyboard(`${LEADER}p`);
-      await waitFor(() => expect(messageLine()).toHaveTextContent("No Session to fill. Open one with ␣ f."));
+      // The keys are keycaps, as every key hint is (round 21); the tooltip and :messages keep the text.
+      await waitFor(() => expect(messageLine()).toHaveAttribute("title", "No Session to fill. Open one with ␣ f."));
+      expect(messageLine()).toHaveTextContent("No Session to fill. Open one with Leader f.");
+      expect([...messageLine().querySelectorAll(".message-keys .keycap")].map((k) => k.textContent)).toEqual(["Leader", "f"]);
       expect(messageLine()).not.toHaveTextContent(/newer roster|API/);
       expect(messageLine()).toHaveClass("slip");
       cleanup();

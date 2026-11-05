@@ -395,6 +395,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .message-line.slip { color: var(--text); }
 /* A command a message names is something you'd type: Iosevka (the paste rule), in the line's colour. */
 .message-cmd { font: 500 var(--text-sm) var(--font-mono); color: inherit; }
+/* Keys a message names ("Open one with ␣ f."): keycaps, at the inline size the buttons' are, so
+   they sit in the 22 px line (round 21: "␣" in Inter read as an underscore). */
+.message-keys .keycap { height: 16px; min-width: 16px; }
 /* What was typed, quoted back by an empty list (round 19, the paste rule): Iosevka, no quote marks. */
 :is(.picker-empty, .panel-empty) .data { font-family: var(--font-mono); color: var(--text); overflow-wrap: anywhere; }
 
