@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { footerCount, layOutNames, layOutTitles, TagText, tagMin, withData } from "./Finder";
+import { dropCutTags, footerCount, layOutNames, layOutTitles, withData } from "./Finder";
 
 describe("the finder footer's count", () => {
   it("says how many there are before a query, and how many matched after (round 18)", () => {
@@ -73,16 +73,30 @@ describe("a prose finder's one middle column (round 19)", () => {
   });
 });
 
-describe("a help tag is never a stub (round 20)", () => {
-  const html = (tag: string) => renderToStaticMarkup(createElement(TagText, { tag }));
-  it("keeps a tag of 16 characters or fewer whole", () => {
-    expect(html("host-keys")).toBe('<span class="tag-tail">host-keys</span>');
-    expect(tagMin("host-keys")).toEqual({ "--tag-min": "9ch" });
-  });
-  it("cuts a longer one in its middle, its end kept, never below its first 4 and last 10", () => {
-    expect(html("errors-guide#trusting-a-new-host-key")).toBe(
-      '<span class="tag-head">errors-guide#trusting-a-ne</span><span class="tag-tail">w-host-key</span>',
-    );
-    expect(tagMin("errors-guide#trusting-a-new-host-key")).toEqual({ "--tag-min": "15ch" });
+describe("a help tag is whole or not drawn (round 21)", () => {
+  /** A row `width` px wide whose content measures `content` px. */
+  function row(width: number, content: number) {
+    const li = document.createElement("li");
+    li.className = "finder-row";
+    const size = { content };
+    Object.defineProperty(li, "clientWidth", { value: width });
+    Object.defineProperty(li, "scrollWidth", { get: () => size.content });
+    const tag = document.createElement("span");
+    tag.className = "finder-detail";
+    li.append(tag);
+    return { li, tag, size };
+  }
+  it("drops the tag of a row that can't hold it whole, keeps the others", () => {
+    const ul = document.createElement("ul");
+    const fits = row(400, 380);
+    const over = row(400, 460);
+    ul.append(fits.li, over.li);
+    dropCutTags(ul);
+    expect(fits.tag).not.toHaveAttribute("data-off");
+    expect(over.tag).toHaveAttribute("data-off");
+    // Room again (a wider window): drawn again.
+    over.size.content = 300;
+    dropCutTags(ul);
+    expect(over.tag).not.toHaveAttribute("data-off");
   });
 });

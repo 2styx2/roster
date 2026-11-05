@@ -64,11 +64,15 @@ describe(":help", () => {
     expect(document.activeElement).toBe(before);
   });
 
-  it("␣ ? counts topics before a query; an alias is titled as what it goes to, in Iosevka when that's a name (rounds 18, 19)", async () => {
+  it("␣ ? lists the pages under the index's groups before a query; an alias is titled as what it goes to, in Iosevka when that's a name (rounds 18, 19, 21)", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}?`);
     const finder = await screen.findByRole("dialog", { name: /find a help topic/i });
-    expect(finder.querySelector(".picker-count")?.textContent).toMatch(/^[\d,]+ topics$/);
+    expect(finder.querySelector(".picker-count")?.textContent).toMatch(/^[\d,]+ pages$/);
+    // Quiet headings, not rows: the cursor never stops on one.
+    const groups = [...finder.querySelectorAll(".finder-group")].map((g) => g.textContent);
+    expect(groups.slice(0, 3)).toEqual(["Getting started", "Make it yours", "Reference"]);
+    expect(within(finder).getAllByRole("option")[0]).toHaveAttribute("data-label", "roster help");
     await user.keyboard("roster.o.keys.picker");
     const row = within(finder).getAllByRole("option")[0]!;
     expect(row.querySelector(".finder-name")).toHaveTextContent(/^keys\.picker$/);

@@ -4,10 +4,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { configWith, defaultConfig } from "../config/fixture";
 import { defaultOptions, keymapOf, registerBindings } from "../keymap";
 import { builtinRegistries, type Registries } from "../registries";
-import { CONFIG } from "../registry";
+import { BUILTIN, CONFIG } from "../registry";
 import { plain, type Block, type Def } from "./doc";
 import { UPGRADE_TOPIC } from "../plugins/PluginsPanel";
-import { findTopic, helpContext, pageBody, topicIndex, topics, type HelpContext } from "./pages";
+import { findTopic, helpContext, pageBody, pageLabel, topicIndex, topics, type HelpContext } from "./pages";
 import { blockTags } from "./guideBlocks";
 import { guides } from "./guides";
 import { helpText } from "./text";
@@ -90,9 +90,20 @@ describe("topics", () => {
       expect(docs.get(t.tag)!.startsWith(t.note!.slice(0, -1))).toBe(true);
     }
     for (const t of short) expect(t.note).toBe(docs.get(t.tag));
-    // The finder's middle column means one thing on every row: the page (round 20).
-    const titles = new Set(ctx.pages.map((pg) => pg.title));
-    for (const t of entries) expect(titles.has(t.path!), `${t.tag}: ${t.path}`).toBe(true);
+    // The finder's middle column means one thing on every row: the page (round 20), by its short
+    // name (round 21).
+    const labels = new Set(ctx.pages.map(pageLabel));
+    for (const t of entries) expect(labels.has(t.path!), `${t.tag}: ${t.path}`).toBe(true);
+  });
+
+  it("names every built-in page in 24 characters or fewer, each its own (round 21)", () => {
+    const ctx = ctxOf();
+    const labels = ctx.pages.filter((pg) => pg.source === BUILTIN).map(pageLabel);
+    for (const l of labels) expect([...l].length, l).toBeLessThanOrEqual(24);
+    expect(new Set(labels).size).toBe(labels.length);
+    // The two error pages read apart; the guide keeps its long title.
+    expect(labels).toEqual(expect.arrayContaining(["When a Session fails", "Error catalog"]));
+    expect(ctx.pages.find((pg) => pg.id === "errors-guide")?.title).toBe("Connection errors: every way a Session can fail");
   });
 });
 

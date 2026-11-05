@@ -1,14 +1,14 @@
 // The status bar, one line that gives way in a fixed order when it runs out of room (round 19):
 // the Inventory's path drops whole folders, form by form down to "~/…/roster.yml" (round 20,
-// PathText), the hints go whole, last first, then "~/" ("…/roster.yml"), then the path, and only then do the Backend's label, this Box and the Session on screen get
-// cut (CSS, shrink factors). A segment that gives way is removed (display: none, out of the
+// PathText), the hints go whole, last first, then "~/" ("…/roster.yml"), then the path, and only
+// then the Backend's label, this Box's name and the Session on screen's (round 21: shortened by
+// their own middle cut, then removed, where CSS had cut them a second time and the bar clipped
+// them). A segment that gives way is removed (display: none, out of the
 // accessibility tree), so it never keeps room it draws nothing in; round 18 let them wrap to a
 // hidden second line, which left their boxes blank (98 px at 480, ~190 px at 800).
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { middleCut } from "../ui/format";
 import { cutCount, showCut } from "./PathText";
-
-/** The segments that are cut rather than removed: when one of them is cut, the bar is tight. */
-const KEPT = ":scope > :is(.backend, .box, .session-seg) .statusbar-cut";
 
 function show(el: HTMLElement) {
   if (!el.hasAttribute("data-off")) return;
@@ -21,16 +21,47 @@ function hide(el: HTMLElement) {
   el.setAttribute("aria-hidden", "true");
 }
 
-/** Shows every segment that can give way, the path whole, then while the bar is tight (its
- * content wider than it, or a kept segment cut) takes the next step: the path's next shorter form
- * (whole folders dropped) down to "~/…/roster.yml", then each hint (last first), then
- * "…/roster.yml", then the path. */
+/** The lengths a name the status bar names (this Box, the Session on screen) is shortened to, each
+ * cut in its middle: its start and its end, which tell names apart, stay. */
+const NAME_FORMS = [24, 16, 10] as const;
+
+/** A name's forms, longest first: whole up to 24 characters, then cut in its middle to 24, 16 and
+ * 10 (round 21: one middle cut, never a second end cut on top, "aleksandra-w…orali…"). */
+export function nameForms(name: string): string[] {
+  return [...new Set(NAME_FORMS.map((n) => middleCut(name, n)))];
+}
+
+/** A name in the forms `nameForms` gives, one shown (FitBar picks it); the segment's `title` has
+ * it whole. */
+export function NameForms({ name }: { name: string }) {
+  return (
+    <span className="statusbar-cut path-text">
+      {nameForms(name).map((form, i) => (
+        <span key={form} className="path-cut" data-off={i === 0 ? undefined : ""}>
+          {form}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Shows every segment that can give way at its longest, then while the bar's content is wider
+ * than it takes the next step: the path's next shorter form (whole folders dropped) down to
+ * "~/…/roster.yml", then each hint (last first), then "…/roster.yml", then the path; then the
+ * Backend's label (its node stays, the label in its tooltip), this Box's name form by form and
+ * then the name (its square stays), and the Session on screen's name the same way, last. A segment
+ * is whole, shortened by its own rule or removed; nothing is ever clipped by the bar's edge
+ * (round 21: "WSL:…" and "aleksandra-w…orali…" at 480). */
 export function giveWay(bar: HTMLElement) {
   const hints = [...bar.querySelectorAll<HTMLElement>(".statusbar-hints > *")].reverse();
   const path = bar.querySelector<HTMLElement>(":scope > .path");
   const text = path?.querySelector<HTMLElement>(".path-text");
-  for (const el of path ? [...hints, path] : hints) show(el);
+  const label = (cls: string) => bar.querySelector<HTMLElement>(`:scope > .${cls} > .statusbar-cut`);
+  const backend = label("backend");
+  const names = [label("box"), label("session-seg")].filter((n): n is HTMLElement => n !== null);
+  for (const el of [...hints, ...(path ? [path] : []), ...(backend ? [backend] : []), ...names]) show(el);
   if (text) showCut(text, 0);
+  for (const n of names) showCut(n, 0);
   // No layout (a hidden bar, or jsdom): nothing gives way.
   if (bar.clientWidth === 0) return;
   // Its least form, "…/roster.yml", only once the hints are gone: "~/…/roster.yml" says more.
@@ -40,8 +71,12 @@ export function giveWay(bar: HTMLElement) {
   for (const el of hints) steps.push(() => hide(el));
   if (text && forms > 1) steps.push(() => showCut(text, forms - 1));
   if (path) steps.push(() => hide(path));
-  const tight = () =>
-    bar.scrollWidth > bar.clientWidth || [...bar.querySelectorAll<HTMLElement>(KEPT)].some((c) => c.scrollWidth > c.clientWidth);
+  if (backend) steps.push(() => hide(backend));
+  for (const n of names) {
+    for (let i = 1; i < cutCount(n); i++) steps.push(() => showCut(n, i));
+    steps.push(() => hide(n));
+  }
+  const tight = () => bar.scrollWidth > bar.clientWidth;
   for (const step of steps) {
     if (!tight()) break;
     step();

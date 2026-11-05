@@ -322,8 +322,9 @@ describe("The Key bindings panel", () => {
     const user = await ready({ bindings: { leader: { t: "next" } } });
     await user.keyboard(`${LEADER}K`);
     const [builtin, config] = rowOf("Next Session").map((r) => r.querySelector("td"));
-    expect(builtin).toHaveAttribute("title", "Next Session");
-    expect(config).toHaveAttribute("title", "Next Session init.lua");
+    // Then its option (round 21: a short window has no footer to name it).
+    expect(builtin).toHaveAttribute("title", expect.stringMatching(/^Next Session\nIn init\.lua: keys\./));
+    expect(config).toHaveAttribute("title", expect.stringMatching(/^Next Session init\.lua\nIn init\.lua: keys\.leader/));
   });
 
   it("shows a changed Leader as coming from the Config", async () => {

@@ -320,23 +320,19 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar > * { flex: none; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the path by whole folders (down to "…/roster.yml"), the
-   hints (removed whole, last first, FitBar), the path (removed), then the Backend's label, then this Box's name, and the Session on
-   screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
-   count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
-   way only once the one before it is at its least (factors 1e5 apart: a step's share of
-   the overflow stays under a layout unit). Each cut value has its whole text in a tooltip. */
-.statusbar-cut { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Each keeps 6 characters, or its whole text when shorter (--keep, set from its length in App.tsx,
-   so "Fake" gets no empty room after it), beside its 6 px mark and the 6 px gap. In Iosevka, so
-   ch is a character. */
-.statusbar :is(.backend, .box, .session-seg) { min-width: calc(var(--keep, 6ch) + 12px); font-family: var(--font-mono); }
-.statusbar .backend { flex: 0 1e5 auto; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-.statusbar .box { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; }
+/* Long values give way in order (FitBar): the path by whole folders (down to "…/roster.yml"), the
+   hints (removed whole, last first), the path (removed), then the Backend's label (its node
+   stays), this Box's name and the Session on screen's last, each cut in its middle to 24, 16 and
+   10 characters and then removed (Q209 d, round 21). Nothing is cut by CSS or clipped by the
+   bar's edge: a segment is whole, in one of its own forms, or not there. The Host count and the
+   mode never give way. Each value has its whole text in a tooltip. */
+.statusbar-cut { white-space: nowrap; }
+.statusbar :is(.backend, .box, .session-seg) { font-family: var(--font-mono); }
+.statusbar .backend { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.statusbar .box { display: inline-flex; align-items: center; gap: 6px; }
 /* This Box (decision Q57): a small square in the second tone, the logo's Box at the foot of the R.
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
-.statusbar .box .statusbar-cut { min-width: 0; }
 /* The path takes its text's width: whole, or with whole folders given way for one "…/" (FitBar
    picks the form; PathText). Past "…/roster.yml" it's removed (FitBar), never left as a blank box,
    a stub ("/ho…") or a folder cut inside ("~/ …ventory/", round 19). */
@@ -346,7 +342,7 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
-.statusbar .session-seg { flex: 0 1e-5 auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
+.statusbar .session-seg { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
 /* What the status line names is data (taste.md's paste rule): the Backend, this Box, the Host
    count and the Inventory's path are in Iosevka, as in a tmux line. The words around them are Inter. */
 .statusbar .backend .statusbar-cut, .statusbar .box .statusbar-cut, .statusbar .count, .statusbar .path { font-family: var(--font-mono); }
@@ -399,6 +395,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .message-line.slip { color: var(--text); }
 /* A command a message names is something you'd type: Iosevka (the paste rule), in the line's colour. */
 .message-cmd { font: 500 var(--text-sm) var(--font-mono); color: inherit; }
+/* Keys a message names ("Open one with ␣ f."): keycaps, at the inline size the buttons' are, so
+   they sit in the 22 px line (round 21: "␣" in Inter read as an underscore). */
+.message-keys .keycap { height: 16px; min-width: 16px; }
 /* What was typed, quoted back by an empty list (round 19, the paste rule): Iosevka, no quote marks. */
 :is(.picker-empty, .panel-empty) .data { font-family: var(--font-mono); color: var(--text); overflow-wrap: anywhere; }
 
@@ -818,6 +817,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 .panel-empty { margin: 0; padding: 12px 14px; color: var(--muted); }
+/* A window 360 px tall or less (480 × 320 showed three rows and a cut footer, round 21): the list
+   takes the room. The header, filter and rows are tighter (rows 29 px), group headings closer to
+   their rows, and the footer isn't drawn; each row's tooltip names its option in init.lua instead. */
+@media (max-height: 360px) {
+  .keys-panel header { padding-block: 4px 2px; }
+  .keys-filter { height: 26px; margin-bottom: 4px; }
+  .keys-panel tr.group th { padding-top: 6px; padding-bottom: 3px; }
+  .keys-panel td, .keys-panel td:first-child { padding-block: 4px; }
+  .keys-panel .panel-foot { display: none; }
+}
 
 .check-panel, .side-panel {
   width: var(--keys-width); flex: none; overflow: auto; padding: 10px 14px;
@@ -1808,12 +1817,48 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder-note .data { font-family: var(--font-mono); }
 .finder.prose .finder-label > .finder-name:has(+ .finder-note) { flex-shrink: 0; max-width: 100%; }
 .finder-row.selected .finder-note { color: var(--muted); }
-/* A help tag is what you type after :help: never a stub (round 20: "host-k…"). Up to 16
-   characters it's whole; a longer one gives way first, cut in its middle down to its first 4
-   and last 10 characters (TagText; --tag-min from Finder.tsx), and only then is the page cut. */
-.finder.prose .finder-detail { display: flex; justify-content: flex-end; flex: 0 1e5 auto; min-width: var(--tag-min, 8ch); }
-.tag-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.tag-tail { flex: none; }
+/* A help tag is what you type after :help: whole or not drawn (round 21: a middle cut read as a
+   fragment, "the…-one-theme"). A row that can't hold its title, page and tag drops the tag
+   (dropCutTags), and under 560 px no row draws one: the footer names the selected row's. */
+.finder.prose .finder-detail { flex: none; min-width: auto; }
+/* A page's row (no middle column): the title and what it is take the room up to the tag. */
+.finder.prose .finder-row:not(:has(> .finder-path)) > .finder-label { max-width: none; min-width: 0; }
+.finder-row > .finder-detail[data-off] { display: none; }
+/* The selected row's `:help TAG` in the footer's free room, only when its row doesn't draw the tag:
+   Iosevka in the text colour, whole (two lines when it must), as the Picker names a cut Host. */
+.finder-foot-tag { display: none; flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 16px; }
+.finder-foot-tag code { font-family: var(--font-mono); color: var(--text); }
+.finder:has(.finder-row.selected > .finder-detail[data-off]) .finder-foot-tag { display: block; }
+.finder:has(.finder-foot-tag) .picker-footer { height: auto; min-height: 34px; padding-block: 6px; }
+@media (max-width: 560px) {
+  .finder.prose .finder-row > .finder-detail { display: none; }
+  .finder.prose .finder-foot-tag { display: block; }
+  /* No tag column: a title takes up to 60% of the row before it's cut (it was 42%, beside one). */
+  .finder.prose .finder-row:has(> .finder-path) > .finder-label { flex-basis: min(var(--finder-title-w, 60%), 60%); }
+}
+/* A group's heading over its rows (help's pages under the index's parts, round 21): the Sidebar's
+   section heading, 12 px uppercase Inter, tracked and muted, so the finder reads as roster's
+   index rather than a palette of 1,360 rows. Not a row: the cursor never stops on it. */
+.finder-group {
+  flex: none; padding: 12px 12px 4px; color: var(--muted); font: 600 max(11px, calc(var(--text-xs) - 1px)) var(--font-ui);
+  letter-spacing: 0.06em; text-transform: uppercase; list-style: none;
+}
+.finder-group:first-child { padding-top: 4px; }
+/* A Host's row in a data finder reads as the Picker's: name, address, group, type (round 21: the
+   tree put the group before the address). The address is a column as wide as the list's widest
+   (layOutNames), never cut; the group takes what's left, cut at its end; the type sits at the end.
+   Under 600 px, as in the Picker, only the node, name and address stay. */
+.finder-row.host-row > .finder-addr {
+  margin-left: 0; flex: none; min-width: var(--finder-addr-w, auto); text-align: left; font-variant-numeric: tabular-nums;
+}
+.finder-row.host-row > .finder-path { flex: 1 1 auto; }
+.finder-type { flex: none; margin-left: auto; font-size: var(--text-sm); color: var(--muted); }
+@media (max-width: 600px) {
+  .finder-row.host-row > :is(.finder-path, .finder-type) { display: none; }
+  /* The name takes the room; the address is the row's end column, as the Picker's is. */
+  .finder-row.host-row > .finder-label { flex-grow: 1; max-width: none; min-width: 0; }
+  .finder-row.host-row > .finder-addr { margin-left: auto; text-align: right; }
+}
 
 /* ---------- The Config's problems (ticket 21) ---------- */
 
@@ -1971,7 +2016,7 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    accent (that means a live Session). Reduced motion: the fill steps, and the edge stays put as
    a dashed track. */
 .statusbar-progress { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
-.statusbar-progress-title { max-width: 28ch; }
+.statusbar-progress-title { max-width: 28ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .statusbar-progress-share { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .progress-track { position: relative; flex: none; width: 48px; height: 1px; background: var(--line-strong); overflow: hidden; }
 .progress-fill { position: absolute; inset: 0; background: var(--text); transform-origin: left center; transform: scaleX(0); transition: transform 120ms linear; }

@@ -43,3 +43,18 @@ describe("the files a message names (round 19)", () => {
     expect(files("Saved: 3 Hosts.")).toEqual([]);
   });
 });
+
+describe("the keys a message names (round 21)", () => {
+  const keys = (text: string) => messageParts(text).filter((p) => p.keys).map((p) => p.text);
+  it("marks the Leader and the keys after it, not the sentence's full stop or the words after", () => {
+    expect(keys("No Session to fill. Open one with ␣ f.")).toEqual(["␣ f"]);
+    expect(keys("Press ␣ d d to close it, or ␣ Ctrl+x.")).toEqual(["␣ d d", "␣ Ctrl+x"]);
+    expect(keys("Open one with ␣ f to start")).toEqual(["␣ f"]);
+    expect(keys("No Session to fill. Open one with :open HOST.")).toEqual([]);
+  });
+
+  it("keeps the whole text, in order, for :messages and the tooltip", () => {
+    const text = "No Session to fill. Open one with ␣ f.";
+    expect(messageParts(text).map((p) => p.text).join("")).toBe(text);
+  });
+});

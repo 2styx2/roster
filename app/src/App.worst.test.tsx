@@ -169,6 +169,10 @@ describe("the worst case", () => {
     await user.keyboard(`${LEADER}t`);
     const tree = screen.getByRole("dialog", { name: "Find in the tree" });
     expect(within(tree).getByText(/^1,3\d\d Hosts$/)).toBeInTheDocument();
+    // A Host's row reads as the Picker's: name, address, group, type (round 21).
+    const host = tree.querySelector(".finder-row.host-row")!;
+    const order = [...host.children].map((c) => c.getAttribute("class") ?? "");
+    expect(order.findIndex((c) => c.includes("finder-addr"))).toBeLessThan(order.findIndex((c) => c.includes("finder-path")));
     expect(cutWithoutTooltip()).toEqual([]);
     expect(bareLeaders()).toEqual([]);
   }, 30_000);

@@ -108,9 +108,8 @@ export function BindingsPanel({
                 >
                   <td
                     role="cell"
-                    title={
-                      r.source !== BUILTIN ? `${r.label} ${r.source}` : r.label
-                    }
+                    // Its name in init.lua too: a short window has no footer (round 21).
+                    title={`${r.source !== BUILTIN ? `${r.label} ${r.source}` : r.label}${r.options.length ? `\nIn init.lua: ${r.options.join(" ")}` : ""}`}
                   >
                     {r.label}
                     {/* Where it comes from, when it isn't built in, on the same line as its name

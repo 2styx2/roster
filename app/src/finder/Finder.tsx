@@ -11,7 +11,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -81,6 +80,11 @@ export function layOutNames(list: HTMLElement) {
     const at = Math.ceil(((names[i] ?? 0) + gap) / stop) * stop;
     row.style.setProperty("--finder-name-basis", `${at - gap}px`);
   });
+  // A Host's address is a column, as wide as the widest in the list, so the group after it starts
+  // at one x (round 21: the Picker's order, name · address · group · type).
+  let addr = 0;
+  for (const a of list.querySelectorAll<HTMLElement>(".finder-row > .finder-addr")) addr = Math.max(addr, a.scrollWidth);
+  list.style.setProperty("--finder-addr-w", `${Math.ceil(addr)}px`);
 }
 
 /** Where a prose finder's middle column starts (round 19): one x for the whole list, the widest
@@ -100,6 +104,26 @@ export function layOutTitles(list: HTMLElement) {
     if (list.clientHeight === 0 || row.getBoundingClientRect().top < bottom) inView = Math.max(inView, name);
   }
   list.style.setProperty("--finder-title-w", `${Math.ceil(inView || all)}px`);
+  dropCutTags(list);
+}
+
+/** A prose finder's tag (what you'd type after `:help`) is whole or not drawn (round 21: a tag cut
+ * in its middle read as a fragment, "the…-one-theme"): a row whose title, page and tag don't fit
+ * drops its tag, and the footer names the selected row's. Under 560 px no row draws one (CSS). */
+export function dropCutTags(list: HTMLElement) {
+  const rows = [...list.querySelectorAll<HTMLElement>(".finder-row")].flatMap((row) => {
+    const tag = row.querySelector<HTMLElement>(":scope > .finder-detail");
+    return tag ? [{ row, tag }] : [];
+  });
+  // Every tag drawn, then measured in one pass (one layout), then the ones that don't fit dropped.
+  for (const { tag } of rows) tag.removeAttribute("data-off");
+  const over = rows.map(({ row }) =>
+    // No layout (jsdom): every tag is drawn.
+    row.clientWidth > 0 &&
+    (row.scrollWidth > row.clientWidth + 1 ||
+      [...row.children].some((c) => (c as HTMLElement).scrollWidth > (c as HTMLElement).clientWidth + 1)),
+  );
+  rows.forEach(({ tag }, i) => over[i] && tag.setAttribute("data-off", ""));
 }
 
 /** `text` with each of `codes` (in order, each where it's next found) in an Iosevka span. */
@@ -116,30 +140,6 @@ export function withData(text: string, codes: readonly string[] | undefined): Re
   }
   if (at < text.length) out.push(text.slice(at));
   return out;
-}
-
-/** How much of a long tag's end always shows: what tells two tags on one page apart. */
-const TAG_TAIL = 10;
-
-/** A help tag, what you'd type after `:help`: never cut to a stub ("host-k…", round 20). Up to
- * 16 characters it's whole; a longer one is cut in its middle, its last characters kept
- * ("errors-gu…ew-host-key"), and the middle column gives way before it does (CSS). */
-/** The least room a tag takes: its whole width up to 16 characters, else its first 4, the "…" and
- * its last 10 (Iosevka: a character is 1ch). */
-export function tagMin(tag: string): CSSProperties {
-  const n = [...tag].length;
-  return { "--tag-min": `${n <= 16 ? n : 4 + 1 + TAG_TAIL}ch` } as CSSProperties;
-}
-
-export function TagText({ tag }: { tag: string }) {
-  const chars = [...tag];
-  if (chars.length <= 16) return <span className="tag-tail">{tag}</span>;
-  return (
-    <>
-      <span className="tag-head">{chars.slice(0, -TAG_TAIL).join("")}</span>
-      <span className="tag-tail">{chars.slice(-TAG_TAIL).join("")}</span>
-    </>
-  );
 }
 
 export function Finder({
@@ -198,7 +198,13 @@ export function Finder({
   }, []);
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (list) (source.prose ? layOutTitles : layOutNames)(list);
+    if (!list) return;
+    const lay = () => (source.prose ? layOutTitles : layOutNames)(list);
+    lay();
+    // The window's width changes what fits (a tag drawn or dropped): lay out again.
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(lay);
+    resize?.observe(list);
+    return () => resize?.disconnect();
   }, [shown, fontsReady, source.prose]);
 
 
@@ -322,7 +328,13 @@ export function Finder({
           ref={listRef}
           aria-label={source.prompt}
         >
-          {shown.map((item, i) => (
+          {shown.map((item, i) => [
+            // A group's quiet heading over its first row (help's pages under the index's parts).
+            item.group !== undefined && item.group !== shown[i - 1]?.group && (
+              <li key={`group:${item.group}`} role="presentation" className="finder-group">
+                {item.group}
+              </li>
+            ),
             <li
               key={item.id}
               id={`${listId}-${i}`}
@@ -331,7 +343,7 @@ export function Finder({
               aria-disabled={item.disabled ? true : undefined}
               data-label={item.label}
               data-index={i}
-              className={`finder-row${i === current ? " selected" : ""}${item.disabled ? " unreviewed" : ""}`}
+              className={`finder-row${i === current ? " selected" : ""}${item.disabled ? " unreviewed" : ""}${item.host !== undefined ? " host-row" : ""}`}
               onMouseDown={(e) => e.preventDefault()}
               onMouseMove={() => i !== current && setMoved(i)}
               onClick={() => choose(item)}
@@ -357,6 +369,12 @@ export function Finder({
                   </>
                 )}
               </span>
+              {/* A Host's address comes before its group and type, as in the Picker (round 21). */}
+              {item.host !== undefined && item.detail && (
+                <span className="finder-detail finder-addr" title={item.detail}>
+                  {item.detail}
+                </span>
+              )}
               {item.path && (
                 <span
                   className={`finder-path${source.prose && DATA_NAME.test(item.path) ? " data" : ""}`}
@@ -366,17 +384,18 @@ export function Finder({
                   {item.path}
                 </span>
               )}
-              {item.detail && (
-                <span
-                  className="finder-detail"
-                  title={item.detail}
-                  style={source.prose ? tagMin(item.detail) : undefined}
-                >
-                  {source.prose ? <TagText tag={item.detail} /> : item.detail}
+              {item.type && (
+                <span className="finder-type" title={item.type}>
+                  {item.type}
                 </span>
               )}
-            </li>
-          ))}
+              {item.host === undefined && item.detail && (
+                <span className="finder-detail" title={item.detail}>
+                  {item.detail}
+                </span>
+              )}
+            </li>,
+          ])}
         </ul>
         {/* How many results the query left, said once typing pauses (the count above is only seen). */}
         <Announce
@@ -407,6 +426,13 @@ export function Finder({
           >
             {notice || source.note?.(shown[current])}
           </span>
+          {/* The selected row's tag, when its row doesn't draw it (dropped, or under 560 px): what
+              Enter runs, ":help TAG" (round 21), as the Picker names a cut Host. */}
+          {source.prose && selectedItem?.detail && (
+            <span className="finder-foot-tag" title={`:${selectedItem.command}`}>
+              <code>:{selectedItem.command}</code>
+            </span>
+          )}
           {shown.some((i) => i.mark) && (
             <span className="finder-legend" aria-hidden="true">
               * current · - previous

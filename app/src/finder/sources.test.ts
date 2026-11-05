@@ -89,6 +89,14 @@ describe("the Hosts finder", () => {
     expect(r.items[0]?.disabled).toMatch(/isn't reviewed/);
     expect(labels(finderResults(source("hosts"), context(), "").items)).toHaveLength(12);
   });
+
+  it("gives each row its Host, address, group and type, the Picker's columns (round 21)", () => {
+    const h = hosts.hosts.find((x) => x.type)!;
+    const item = finderResults(source("hosts"), context(), h.name).items[0];
+    expect(item).toMatchObject({ host: h.name, detail: h.ip, path: h.group, type: h.type });
+    const tree = finderResults(source("tree"), context(), h.name).items.find((i) => i.host === h.name);
+    expect(tree).toMatchObject({ detail: h.ip, type: h.type });
+  });
 });
 
 describe("the tree finder (␣ e in Focus)", () => {
