@@ -40,57 +40,19 @@ while (( $# )); do
 done
 EXTRA=N; (( PURGE )) && EXTRA=Y          # the default for things other tools may share
 
-# ---- look (as install.sh)
-
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
-else
-    B='' D='' R='' G='' Y='' C='' N=''
+# ---- what install.sh, update.sh and uninstall.sh share: the look, the questions, have and home (install-lib.sh,
+# beside this script in a checkout and in the Release's roster-cli tarball)
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)     # before any cd: BASH_SOURCE may be relative
+if [[ ! -f $here/install-lib.sh ]]; then
+    echo "uninstall.sh needs install-lib.sh beside it: run it in a roster checkout or in the unpacked roster-cli tarball" >&2
+    exit 2
 fi
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8*|*utf8*) FULL="█" EMPTY="░" OK="✔" BAD="✘" SKIP="–" ;;
-    *) FULL="#" EMPTY="-" OK="ok" BAD="x" SKIP="-" ;;
-esac
+# shellcheck source=install-lib.sh
+source "$here/install-lib.sh"
 
 STAGES=("Hosts" "Auto-update" "Shell startup" "SSH files" "Vault" "roster" "Config folder")
 TOTAL=${#STAGES[@]}
 DONE=() SKIPPED=() FAILED=()
-
-stage() {
-    local n=$1 w=30 fill bar="" i
-    fill=$(( n * w / TOTAL ))
-    for ((i = 0; i < w; i++)); do (( i < fill )) && bar+="$FULL" || bar+="$EMPTY"; done
-    printf '\n%s%s%s %s%d/%d%s  %s%s%s\n' "$C" "$bar" "$N" "$D" "$n" "$TOTAL" "$N" "$B" "${STAGES[n-1]}" "$N"
-    CUR="${STAGES[n-1]}"
-}
-ok()   { printf '  %s%s%s %s\n' "$G" "$OK" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
-bad()  { printf '  %s%s%s %s\n' "$R" "$BAD" "$N" "$*"; }
-info() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
-skip() { printf '  %s%s %s%s\n' "$D" "$SKIP" "$*" "$N"; SKIPPED+=("$CUR"); }
-done_stage() { DONE+=("$CUR"); }
-fail_stage() { FAILED+=("$CUR"); }
-listed() { local x=$1 e; shift; for e in "$@"; do [[ $e == "$x" ]] && return 0; done; return 1; }  # listed NAME LIST...
-
-TTY=/dev/tty
-( : < "$TTY" ) 2>/dev/null || TTY=/dev/stdin
-
-ask() {                         # ask "Question?" Y|N  -> 0 for yes
-    local q=$1 def=${2:-Y} hint reply
-    [[ $def == Y ]] && hint="Y/n" || hint="y/N"
-    if (( YES )); then
-        printf '  %s?%s %s %s[%s]%s %s\n' "$C" "$N" "$q" "$D" "$hint" "$N" "$([[ $def == Y ]] && echo yes || echo no)"
-        [[ $def == Y ]]; return
-    fi
-    while true; do
-        printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$hint" "$N"
-        read -r reply < "$TTY" || reply=""
-        case "${reply:-$def}" in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-        esac
-    done
-}
 
 step() {                        # step "what" cmd...  - output to the log, shown when it fails
     local what=$1; shift
@@ -133,9 +95,6 @@ drop_lines() {                  # drop_lines FILE PATTERN  - delete the lines ma
     ok "removed roster's line from ${f/#$HOME/\~}"
 }
 
-have() { command -v "$1" >/dev/null 2>&1; }
-home() { printf '%s' "${1/#$HOME/\~}"; }
-
 # ---- what's here
 
 (( DRY )) || mkdir -p "$(dirname "$LOG")"
@@ -172,7 +131,6 @@ for y in ${yamls[@]+"${yamls[@]}"}; do
     k=${k/#\~/$HOME}
     [[ -n $k && $k != "${keys[0]}" ]] && ! listed "$k" ${other_keys[@]+"${other_keys[@]}"} && other_keys+=("$k")
 done
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)       # before any cd: BASH_SOURCE may be relative
 
 printf '\n%sroster uninstaller%s\n' "$B" "$N"
 info "Takes this box off its hosts, then removes roster and the files it wrote here. Your vault is not touched."
@@ -424,15 +382,7 @@ fi
 
 # ---- summary
 
-printf '\n%sSummary%s\n' "$B" "$N"
-for s in "${STAGES[@]}"; do
-    if   listed "$s" ${FAILED[@]+"${FAILED[@]}"};   then bad "$s"
-    elif listed "$s" ${SKIPPED[@]+"${SKIPPED[@]}"}; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
-    elif listed "$s" ${DONE[@]+"${DONE[@]}"};       then ok "$s"
-    else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
-    fi
-done
-printf '\n'
+summary
 info "Not touched: your vault, the hosts' own accounts, and this roster source folder ($(home "$here"))."
 if have uv && (( PURGE )); then
     info "uv stays (other tools use it). To remove it too: uv cache clean; rm ~/.local/bin/uv ~/.local/bin/uvx"

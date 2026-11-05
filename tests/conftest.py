@@ -77,12 +77,12 @@ def pytest_sessionfinish(session):
 
 
 def source_copy(tmp_path):
-    """The files install.sh and update.sh read, in a folder of their own that isn't a git clone: they must never run
-    git (a fetch, a pull) on the checkout running the tests."""
+    """The files install.sh, update.sh and uninstall.sh read, in a folder of their own that isn't a git clone: they
+    must never run git (a fetch, a pull) on the checkout running the tests."""
     src = tmp_path / "src-copy"
     (src / "src/roster").mkdir(parents=True, exist_ok=True)
     root = Path(__file__).parent.parent
-    for f in ("install.sh", "update.sh", "install-lib.sh", "pyproject.toml", "src/roster/roster.1"):
+    for f in ("install.sh", "update.sh", "uninstall.sh", "install-lib.sh", "pyproject.toml", "src/roster/roster.1"):
         (src / f).write_bytes((root / f).read_bytes())
     return src
 
