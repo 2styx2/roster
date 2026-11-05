@@ -178,6 +178,8 @@ def model_table(name, cls):
     intro = " ".join(inspect.cleandoc(text).split("\n\n")[0].split())
     rows = []
     for field, info in cls.model_fields.items():
+        if info.exclude:                    # kept on the model, never in its JSON (models.Host's mesh_dir, sudo)
+            continue
         if not info.description:
             raise DocError(f"{name}.{field} has no description: give it Field(description=...) in {where}")
         key = info.alias or field

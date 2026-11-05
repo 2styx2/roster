@@ -16,8 +16,12 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .common import UTC_TIME, die, program_argv, replace_file, say, utc_now
+from .context import key_created_file
 
 DEFAULT = "ed25519"
 # key_max_age:'s default (T240, decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
@@ -99,7 +103,6 @@ def derived(key: Path) -> list[str] | None:
         return None
     stamp = (str(key), st.st_size, st.st_mtime_ns)
     if stamp not in _derived:
-        from .common import program_argv
         try:
             r = subprocess.run(program_argv(["ssh-keygen", "-y", "-P", "", "-f", str(key)]), capture_output=True,
                                text=True, stdin=subprocess.DEVNULL, timeout=30)
@@ -141,13 +144,64 @@ def owned(key: Path) -> bool:
 
 def rsa_bits(pub: Path) -> int | None:
     """An RSA public key's size in bits (`ssh-keygen -l`), or None when it can't tell."""
-    from .common import program_argv
     try:
         r = subprocess.run(program_argv(["ssh-keygen", "-l", "-f", str(pub)]), capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=30)
         return int(r.stdout.split()[0]) if r.returncode == 0 else None
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
         return None
+
+
+def generate(kt: KeyType, path: Path, comment: str) -> None:
+    """A new key of type KT at PATH (and PATH.pub), with no passphrase and COMMENT as its comment (ssh-keygen -C).
+    CalledProcessError or OSError when ssh-keygen fails."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(program_argv(["ssh-keygen", "-q", *kt.keygen_args(), "-N", "", "-C", comment, "-f", str(path)]),
+                   check=True, stdin=subprocess.DEVNULL, capture_output=True)
+
+
+def ensure_key(key: BoxKey, tag: str) -> None:
+    """This Box's KEY on disk, made with ssh-keygen and tagged TAG when it isn't there yet. A key that's there is
+    kept; one of another type than KEY's (an ECDSA or RSA key's file holding another key) is refused (201), as the
+    Hosts that want this type would refuse it. An Ed25519 key's file is taken as it is (as before T239: key_path may
+    name a key of the user's own)."""
+    from .errors import KEY_TYPE_MISMATCH
+    if key.key.exists():
+        if not key.pub.exists():
+            die(f"{key.key} exists but {key.pub} is missing")
+        fix = "move it away (roster makes the new key there), or point key_path at another file"
+        if key.type.name != "ed25519":
+            have = (key.pub.read_text().split() or ["nothing"])[0]
+            if have != key.type.public_word:
+                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is an {have} key, not {key.type.name} "
+                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}")
+            bits = rsa_bits(key.pub) if key.type.algorithm == "rsa" else None
+            if bits is not None and key.type.bits is not None and bits < key.type.bits:     # #471's review LOW-2
+                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
+                    f"key_type: {key.type.name} asks for: {fix}")
+        # #471's review (NIT): a .pub that isn't this key's would go on the Hosts and never log in. Checked only when
+        # ssh-keygen can read the key without a passphrase (a key of the user's own may have one, as before)
+        have_words, words = derived(key.key), public_words(key.pub)
+        if have_words is not None and have_words != words:
+            die(f"[{KEY_TYPE_MISMATCH}] {key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
+                f"{fix}")
+        say(f"key          {key.key} ({key.type.name}, existing)")
+        return
+    try:
+        generate(key.type, key.key, tag)
+    except subprocess.CalledProcessError as e:
+        die(f"ssh-keygen couldn't make {key.key}: {(e.stderr or b'').decode(errors='replace').strip() or e}")
+    stamp(key.key)                          # its age counts from now (key_max_age:, T240)
+    say(f"key          {key.key} ({key.type.name}, created)")
+
+
+def public_key_line(key: BoxKey, tag: str) -> str:
+    """KEY's public key line as it goes on a Host: its type and key, then TAG (which lets revoke find exactly this
+    Box's line)."""
+    parts = key.pub.read_text().split()
+    if len(parts) < 2:
+        die(f"{key.pub} doesn't look like a public key")
+    return f"{parts[0]} {parts[1]} {tag}"
 
 
 def for_host(h: dict[str, Any]) -> BoxKey:
@@ -206,17 +260,13 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
 # ---------------------------------------------------------------- the key's age (T240, key_max_age:)
 
 def stamp(key: Path) -> None:
-    """Record that roster made (or rotated) KEY now (common.key_created_file): its age is counted from this."""
-    from datetime import datetime, timezone
-
-    from .common import key_created_file, replace_file
+    """Record that roster made (or rotated) KEY now (context.key_created_file): its age is counted from this."""
     rows = {p: t for t, p in _created_rows()}
-    rows[str(key)] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows[str(key)] = utc_now()
     replace_file(key_created_file(), "".join(f"{t}\t{p}\n" for p, t in sorted(rows.items())), 0o600)
 
 
 def _created_rows() -> list[tuple[str, str]]:
-    from .common import key_created_file
     try:
         text = key_created_file().read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -227,11 +277,10 @@ def _created_rows() -> list[tuple[str, str]]:
 def created(key: Path):
     """When KEY was made or last rotated (a UTC datetime): roster's record of it, else the file's own time (a key made
     before T240, or by hand). None when there's no such file."""
-    from datetime import datetime, timezone
     for t, p in _created_rows():
         if p == str(key):
             try:
-                return datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                return datetime.strptime(t, UTC_TIME).replace(tzinfo=timezone.utc)
             except ValueError:
                 break
     try:

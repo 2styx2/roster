@@ -16,9 +16,8 @@ from pathlib import Path
 import yaml
 
 from . import boxsync, jsonout, store
-from .common import die, find_program, oneline, program_argv, say, tcp_ok
+from .common import die, find_program, oneline, program_argv, replace_file, say, tcp_ok
 from .config import find_config, load_config, load_config_text
-from .edit import write_over
 
 # ---------------------------------------------------------------- discover (network scan)
 
@@ -343,7 +342,8 @@ def cmd_discover(args):
     say("guessed      " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))
 
     note = f"Found by scanning {', '.join(targets)} on {today} - rename, fill in titles, then set reviewed: true"
-    needs_user = not _defaults_user(cfg_path)   # the new group inherits only from defaults
+    # the new group inherits only from defaults
+    needs_user = not (cfg_path and Path(cfg_path).exists() and defaults_user(Path(cfg_path).read_text()))
 
     if not args.write:
         say("\n# preview - nothing written. Re-run with --write to add this to roster.yml:\ngroups:")
@@ -351,13 +351,6 @@ def cmd_discover(args):
         return 0
     write_discovered(cfg_path, group, entries, note, needs_user, today)
     return 0
-
-
-def _defaults_user(cfg_path):
-    if not cfg_path or not Path(cfg_path).exists():
-        return None
-    raw = yaml.safe_load(Path(cfg_path).read_text()) or {}
-    return (raw.get("defaults") or {}).get("user")
 
 
 def with_group(text, group, entries, note, needs_user):
@@ -393,14 +386,17 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
         load_config_text(new_text, path)          # refuse to write a file roster can't read back (checked in memory)
     except SystemExit as e:
         die(f"the merged roster.yml didn't validate, nothing written ({e})")
+    def wrote(backup=None):
+        if backup is not None:
+            say(f"backup       {backup}")
+        say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
     if path.exists():                             # T212: saved as serve's edits are (store.py), repo or plain file
-        backup = store.at(path).save(text, new_text)
-        say(f"backup       {backup}")
+        _, synced = store.at(path).write(text, new_text, then=wrote)
     else:                                         # a new one is private (0600), as `roster init`'s (#409 S2)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_over(path, new_text)
-    say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
-    boxsync.after_edit(path)                      # T153: this Box follows, as after serve's changes
+        replace_file(path, new_text, 0o600, follow=False)
+        wrote()
+        synced = boxsync.sync_file(path)
+    boxsync.warn(synced)                          # T153: this Box follows, as after serve's changes
     say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")
     say("             set the login user, move hosts into the right groups if you like,")
     say(f"             then set `reviewed: true` and run:  roster setup --only {group}")

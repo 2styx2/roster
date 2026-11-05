@@ -18,26 +18,22 @@ secrets, and nothing written: a missing or broken file completes nothing, and th
 import argparse
 import contextlib
 import io
-import re
 import sys
 from typing import cast
 
-SHELLS = ("bash", "zsh", "fish", "powershell")
-
-# what an argument's values are: the names in roster.yml (and the Inventory list) it takes
-HOSTS, GROUPS, RESOURCES, INVENTORIES, FILES, DIRS = "hosts", "groups", "resources", "inventories", "files", "dirs"
-ONLY = "only"              # a comma-separated LIST of the other kinds (--only)
-COMMANDS = "commands"      # roster's own commands (`help COMMAND`)
-NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-
-
-def values(action: argparse.Action, *kinds: str, new_after: tuple[str, ...] = ()) -> argparse.Action:
-    """Tag ACTION (an add_argument result) with the KINDs of name it takes, for completion; returns it. NEW_AFTER: the
-    words (an action, `inv add`) after which it's a new name, so it completes nothing: an existing name would only
-    invite a clash (#420)."""
-    vars(action)["complete"] = kinds
-    vars(action)["new_after"] = new_after
-    return action
+from .cliparser import (
+    COMMANDS,
+    DIRS,
+    FILES,
+    GROUPS,
+    HOSTS,
+    INVENTORIES,
+    NAME_RE,
+    ONLY,
+    RESOURCES,
+    SHELLS,
+    build_parser,
+)
 
 
 def main(argv: list[str]) -> int:
@@ -57,7 +53,6 @@ def main(argv: list[str]) -> int:
 
 
 def candidates(words: list[str], current: str, shell: str) -> list[str]:
-    from .cli import build_parser
     parser = build_parser()
     found = walk(parser, words, current)
     if isinstance(found, str):
@@ -169,7 +164,6 @@ def names(action: argparse.Action, current: str, root: dict[str, str | None]) ->
     if not kinds:
         return []
     if COMMANDS in kinds:
-        from .cli import build_parser
         commands, helps = subcommands(build_parser())
         return [(n, helps.get(n, "")) for n in commands if n not in internal()]
     found: list[tuple[str, str]] = []
@@ -214,9 +208,9 @@ def roster_yml(root: dict[str, str | None]) -> dict[object, object]:
 
 
 def inventory_names() -> list[str]:
-    from . import inventories
+    from . import named
     try:
-        return [x.name for x in inventories.load().inventories]
+        return [x.name for x in named.load().inventories]
     except (SystemExit, Exception):     # noqa: BLE001
         return []
 

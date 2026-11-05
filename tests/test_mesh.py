@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from conftest import POSIX_SH, WINDOWS, stand_in_hosts
 
-from roster import mesh
+from roster import authorized, mesh
 from roster.cli import main
 from roster.config import load_config
 
@@ -2232,14 +2232,14 @@ def test_setup_installs_the_key_in_esxis_own_keys_file_with_the_sticky_bit(net, 
     from roster import sshops
     net.cfg_path.write_text(CONFIG.replace("esx-02: { ip: 10.0.0.12, user: root }", "esx-02: { ip: 10.0.0.12, user: ops }"))
     (net.host("esx-02") / "login").write_text("ops\n")
-    monkeypatch.setattr(sshops, "get_secret", lambda ref, group: "pw")
+    monkeypatch.setattr(authorized, "get_secret", lambda ref, group: "pw")
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
             [sys.executable, str(fakes / "ssh"), h["name"], command], capture_output=True, text=True)))
     cfg = net.cfg()
     pub = "ssh-ed25519 AAAAbox2 roster-managed:box"
     for _ in range(2):
-        sshops.enroll(cfg["hosts"]["esx-02"], pub, cfg["tag_re"])
+        authorized.enroll(cfg["hosts"]["esx-02"], pub, cfg["tag_re"])
     ak = net.host("esx-02") / "etc/ssh/keys-ops/authorized_keys"
     assert ak.read_text() == pub + "\n"
     assert ak.stat().st_mode & 0o7777 == 0o1600
@@ -2300,8 +2300,8 @@ def test_renaming_onto_a_name_another_box_uses_needs_force(net, isolated, capsys
             "that name") in out
     assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box", theirs]      # as it was
     assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, "orion-3")                # the rest: done
-    from roster.common import key_name_file
-    assert not key_name_file().exists()                                                          # again next time
+    from roster.context import current
+    assert not current().key_name.exists()                                                          # again next time
     assert main(["setup", "--force"]) == 0
     assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box2", theirs]
 
@@ -2319,8 +2319,8 @@ def test_renaming_onto_a_taken_name_where_the_key_works_from_a_line_of_your_own(
     assert main(["setup"]) == 1
     assert "FAIL  orion-2: [190]" in capsys.readouterr().out
     assert box_lines(net, "orion-2") == [theirs] and "ssh-ed25519 AAAAbox me@laptop" in net.ak("orion-2")
-    from roster.common import key_name_file
-    assert not key_name_file().exists()
+    from roster.context import current
+    assert not current().key_name.exists()
 
 
 def test_setup_dry_run_on_a_renamed_box_says_it_would_retag_and_changes_nothing(net, isolated, capsys, monkeypatch):

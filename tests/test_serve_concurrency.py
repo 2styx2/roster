@@ -10,6 +10,7 @@ import time
 import pytest
 
 from roster import serve as rpc
+from roster.context import current
 
 INVENTORY = """\
 defaults:
@@ -222,7 +223,7 @@ def test_two_requests_recording_the_same_host_key_at_once_record_it_once(isolate
         t.start()
     for t in threads:
         t.join()
-    lines = sshops.known_hosts_file().read_text().splitlines()
+    lines = current().known_hosts.read_text().splitlines()
     assert lines.count("10.0.0.30 ssh-ed25519 AAAAC3Nza") == 1
 
 

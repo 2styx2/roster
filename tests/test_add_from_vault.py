@@ -458,9 +458,9 @@ def test_kp_from_the_cli_says_how_to_add_it_by_hand(capsys, write_config, kp):
 
 
 def test_setup_flag_sets_each_added_host_up_without_asking(capsys, yml, bw, monkeypatch):
-    from roster import addhost
+    from roster import cli
     done = []
-    monkeypatch.setattr(addhost, "set_up", lambda args, path: done.append(args.name) or 0)
+    monkeypatch.setattr(cli, "set_up", lambda name, path: done.append(name) or 0)
     asked = walk(monkeypatch, "", "lab", "n", "n", "n")
     assert add(capsys, "--no-sync", "--setup")[0] == 0
     assert done == ["nas-01"] and not any("up now" in a for a in asked)

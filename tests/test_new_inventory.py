@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from roster import inventories
+from roster import inventories, named
 from roster.cli import main
 from roster.config import load_config
 from roster.example import EXAMPLE_CONFIG
@@ -85,7 +85,7 @@ def test_a_new_one_beside_it_as_a_named_inventory(isolated, capsys):
     home = isolated["home"] / "home-net" / "roster.yml"
     code, out, _ = run(capsys, "-c", str(home), "init", "--blank", "--name", "home")
     assert code == 0 and load_config(home)["hosts"] == {}
-    assert inventories.path_of("home") == home.resolve() and "named home" in out
+    assert named.path_of("home") == home.resolve() and "named home" in out
     assert (isolated["work"] / "roster.yml").read_text() == "groups: {}\n"
 
 
@@ -346,7 +346,7 @@ def test_serve_with_no_inventory_makes_a_blank_one_and_names_it(serve, isolated)
     target = folder / "roster.yml"
     assert r == {"path": str(target.resolve()), "name": "infra", "how": "blank", "hosts": 0, "restart": True}
     assert load_config(target)["hosts"] == {}
-    assert inventories.load().active == "infra" and inventories.path_of("infra") == target.resolve()
+    assert named.load().active == "infra" and named.path_of("infra") == target.resolve()
     s2 = serve()                                            # the restarted serve finds it
     assert s2.call("inventory.info")["result"]["path"] == str(target.resolve())
 
@@ -378,7 +378,7 @@ def test_serve_says_why_it_cannot_make_one(serve, isolated, tmp_path):
         err = s.call("inventory.create", params)["error"]
         assert err["code"] == code, (params, err)
     assert not (isolated["home"] / "infra" / "roster.yml").exists()
-    assert not inventories.load().inventories
+    assert not named.load().inventories
 
 
 def test_serve_never_makes_one_while_it_has_one(serve, write_config, isolated):
@@ -529,7 +529,7 @@ def test_a_clone_under_way_stops_on_cancel_and_leaves_nothing(serve, isolated, t
     s.p.stdin.flush()
     err = s.answer(rid)["error"]
     assert err["code"] == 5 and "nothing was kept" in err["message"] and time.monotonic() - t < 10
-    assert not folder.exists() and not inventories.load().inventories
+    assert not folder.exists() and not named.load().inventories
 
 
 def test_two_first_runs_at_once_make_one(serve, isolated):

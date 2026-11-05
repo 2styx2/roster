@@ -8,24 +8,24 @@ roster.yml refers to, the ones that are new since the last run marked, and a wal
 - The seen file: per Inventory, in roster's config folder (`vault-seen/`), the ids and names of the items a run
   has shown and marked, and how many unmapped ones were new at the last run (`roster check --box` says that count,
   without asking the vault). Never a value.
-- `cmd_from_vault(cfg, args)`: the CLI. A list (`--json`, `-y`, no terminal), or in a terminal a walk: each item
-  [Y/n/edit/skip], a yes through addhost.cmd_add (the same checks, write and sync as `roster add NAME`), then setup
-  for that Host alone if you want it."""
+The CLI (a list, or in a terminal a walk through the items, each one added as `roster add NAME` adds it) is
+cli.py's."""
 
 import hashlib
 import json
 import os
 import re
-import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 import yaml
 
 from . import addhost, providers
-from .common import NAME_RE, NotPrivate, die, read_private, replace_file, say, user_config_dir
+from .common import NAME_RE, NotPrivate, plain, read_private, say, utc_now, write_private
+from .context import user_config_dir
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
+NOT_VAULTS = ("env", "cmd", "prompt")       # providers that hold no items to list or sync
 UNLOCK = {"bw": "roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put the session in "
                 "~/.config/roster/bw-session: (umask 077; bw unlock --raw > ~/.config/roster/bw-session)",
           "kp": "KeePassXC has no session roster can reuse: give the address and user yourself (roster add NAME "
@@ -90,12 +90,8 @@ def load_seen(path):
 
 
 def save_seen(path, seen):
-    f = seen_path(path)
-    if f.is_symlink():
-        say(f"warning      {f} is a symlink (roster never writes through one here) - not updated")
-        return
-    seen = {**seen, "inventory": str(path), "checked": now()}
-    replace_file(f, json.dumps(seen, indent=1, sort_keys=True) + "\n", mode=0o600)
+    seen = {**seen, "inventory": str(path), "checked": utc_now()}
+    write_private(seen_path(path), json.dumps(seen, indent=1, sort_keys=True) + "\n")
 
 
 def cached_count(path):
@@ -109,10 +105,6 @@ def cached_count(path):
     return data["new"], data.get("checked")
 
 
-def now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 # ---------------------------------------------------------------- the list
 
 def listing(path, sync=True, interactive=False):
@@ -122,7 +114,7 @@ def listing(path, sync=True, interactive=False):
     used = refs(path)
     listable = [p for p in used if p in providers.PROVIDERS and providers.can_list(p)]
     skipped = [f"{p}: can't list its items without roster reading their passwords" for p in sorted(used)
-               if p in providers.PROVIDERS and p not in listable and p not in ("env", "cmd", "prompt")]
+               if p in providers.PROVIDERS and p not in listable and p not in NOT_VAULTS]
     if not listable:
         raise Problem(NO_LISTABLE_VAULT, "roster.yml uses no vault roster can list (bw, op, kp)",
                       fix="add one Host with --auth bw:ITEM (or op:, kp:) first; then roster add --from-vault "
@@ -157,12 +149,6 @@ def problem(provider, e):
     if isinstance(e, providers.Unsupported):
         return Problem(NO_LISTABLE_VAULT, str(e))
     return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster check --auth tests the vault")
-
-
-def plain(text):
-    """Is TEXT safe to show on a terminal and to write into an `auth:` reference: no control, escape, bidi or other
-    format character (str.isprintable), so a vault item can't rewrite the prompt it's offered in (review of #439)?"""
-    return bool(text) and text.isprintable()
 
 
 def row(provider, item, unique, new):
@@ -226,133 +212,3 @@ def ago(iso):
             n = s // size
             return f"{n} {unit}{'' if n == 1 else 's'} ago"
     return "just now"
-
-
-# ---------------------------------------------------------------- `roster add --from-vault`
-
-def cmd_from_vault(cfg, args):
-    path = cfg["path"]
-    walking = sys.stdin.isatty() and not args.yes and not args.json
-    try:
-        found = listing(path, sync=not args.no_sync)
-    except Problem as e:
-        if args.json:
-            from . import jsonout
-            jsonout.fail(e.code, e.message, e.fix)
-            return 1
-        die(addhost.shown(e))
-    for s in found["synced"]:
-        before = ago(s["previous"])
-        say(f"synced       {s['provider']} (the previous sync was {before})" if before else
-            f"synced       {s['provider']} (its first sync on this box)")
-    for note in found["skipped"]:
-        say(f"not listed   {note}")
-    seen, rows = found["seen"], found["items"]
-    shown = rows if args.all else [r for r in rows if r["new"]]
-    if args.json:
-        from . import jsondocs, jsonout
-        jsonout.emit(jsondocs.VaultItemsDoc.model_validate(
-            {"items": [{k: v for k, v in r.items()} for r in shown], "unmapped": len(rows),
-             "new": sum(r["new"] for r in rows)}))
-    elif walking:
-        failed = walk(cfg, args, shown, seen)
-    else:
-        show_list(rows, shown)
-    if args.mark_seen:
-        for r in rows:
-            seen["items"].setdefault(r["provider"], {})[r["id"]] = r["name"]
-    seen["new"] = sum(1 for r in rows if r["id"] not in seen["items"].get(r["provider"], {}))
-    save_seen(path, seen)
-    return 1 if walking and failed else 0
-
-
-def show_list(rows, shown):
-    new = sum(r["new"] for r in rows)
-    for r in shown:
-        say(f"{'new' if r['new'] else 'seen':<12} {r['auth']:<28} -> {described(r)}")
-        if r.get("note"):
-            say(f"             {r['note']}")
-    if not shown:
-        say("no new vault items" + (f" ({len(rows)} seen before: --all lists them)" if rows else
-                                    ": every item is in roster.yml"))
-        return
-    old = len(rows) - new
-    are = " isn't" if len(rows) == 1 else "s aren't"
-    say(f"\n{len(rows)} vault item{are} in roster.yml ({new} new"
-        + (f", {old} seen before: --all" if old and len(shown) < len(rows) else "") + "): roster add --from-vault "
-        "in a terminal adds them")
-
-
-def ask(text):
-    """input(), or None at the end of input (which stops the walk: an empty answer would be a yes)."""
-    try:
-        return input(text).strip()
-    except EOFError:
-        return None
-
-
-def walk(cfg, args, shown, seen):
-    """Each item: [Y/n/edit/skip]. A yes (or an edit) goes through addhost.cmd_add; a no is remembered as seen; skip
-    leaves it new. Returns how many adds or setups failed."""
-    import argparse
-    path, failed = cfg["path"], 0
-    if not shown:
-        say("no new vault items" + (" (--all lists the ones seen before)" if not args.all else ""))
-    for r in shown:
-        say(f"\n{'new' if r['new'] else 'seen':<12} {r['auth']}")
-        if r.get("note"):
-            say(f"             {r['note']}")
-        while True:
-            answer = ask(f"Add it as {described(r)}? [Y/n/edit/skip] ")
-            if answer is None:
-                return failed
-            answer = answer.lower()
-            if answer in ("", "y", "yes", "n", "no", "skip", "s", "edit", "e"):
-                break
-            say("             answer y, n, edit or skip")
-        if answer in ("skip", "s"):
-            continue
-        if answer in ("n", "no"):
-            seen["items"].setdefault(r["provider"], {})[r["id"]] = r["name"]
-            continue
-        fields = {"host": r.get("host"), "address": r.get("address"), "user": r.get("user")}
-        if answer in ("edit", "e"):
-            for key, label in (("host", "Name"), ("address", "Address"), ("user", "User")):
-                got = ask(f"{label}{f' [{fields[key]}]' if fields[key] else ''}: ")
-                if got is None:
-                    return failed
-                fields[key] = got or fields[key]
-        if not fields["host"]:
-            got = ask("Name: ")
-            if not got:
-                return failed
-            fields["host"] = got
-        if not fields["user"] and answer not in ("edit", "e"):  # none in the item (kp never says): Enter keeps the group's
-            got = ask("User (Enter: its group's): ")
-            if got is None:
-                return failed
-            fields["user"] = got or None
-        port = r.get("port") if fields["address"] == r.get("address") else None
-        one = argparse.Namespace(name=fields["host"], ip=fields["address"] or None, user=fields["user"] or None,
-                                 port=port, auth=r["auth"], group=args.group, enroll=args.enroll, os=None,
-                                 title=None, type=None, from_vault=False, setup=False, dry_run=args.dry_run,
-                                 yes=False)
-        try:
-            addhost.cmd_add(fresh(cfg), one)
-        except SystemExit as e:
-            failed += 1
-            print(str(e.code), file=sys.stderr, flush=True)
-            continue
-        if args.dry_run:
-            continue
-        seen["items"].setdefault(r["provider"], {})[r["id"]] = r["name"]
-        if args.setup or (ask(f"Set {one.name} up now (setup for it alone, then check)? [y/N] ") or "").lower() \
-                .startswith("y"):
-            failed += bool(addhost.set_up(one, path))
-    return failed
-
-
-def fresh(cfg):
-    """The Inventory as it is now (an add before this one may have made a group)."""
-    from .config import load_config
-    return load_config(cfg["path"])

@@ -13,7 +13,7 @@ from conftest import EXAMPLES
 
 from roster import __version__
 from roster.cli import main
-from roster.common import known_hosts_file
+from roster.context import current
 from roster.sshops import hk_name
 
 
@@ -327,8 +327,8 @@ def record_keys(path):
     """A host key in roster's known hosts for every Host in the roster.yml at PATH (none of them is ever reached)."""
     from roster.config import load_config
     lines = {f"{hk_name(h)} {HOST_KEY.get_name()} {HOST_KEY.get_base64()}\n" for h in load_config(path)["hosts"].values()}
-    known_hosts_file().parent.mkdir(mode=0o700, exist_ok=True)
-    known_hosts_file().write_text("".join(sorted(lines)))
+    current().known_hosts.parent.mkdir(mode=0o700, exist_ok=True)
+    current().known_hosts.write_text("".join(sorted(lines)))
 
 
 def test_session_prepare_for_an_enrolled_host(serve, write_config, capsys, fakes):

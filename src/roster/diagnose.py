@@ -12,10 +12,11 @@ import subprocess
 import time
 from contextlib import nullcontext
 
-from . import askpass, errors, providers
-from .common import find_program, known_hosts_label, not_reviewed, time_left
-from .config import is_windows
+from . import askpass, errors, hosts, providers, rotation, sshconfig
+from .common import end_group, find_program, not_reviewed, time_left
+from .context import current
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
+from .hosts import ip_of, is_windows, placeholder_user
 from .providers import PROVIDERS
 from .sshops import (
     fingerprint,
@@ -24,14 +25,11 @@ from .sshops import (
     in_ssh_config,
     left_out,
     not_reached,
-    offered_host_key,
     recorded_host_keys,
     start_transport,
     sync_fix,
-    written_host_block,
 )
 
-PLACEHOLDER_USERS = ("", "CHANGE-ME")         # discover's placeholder: no SSH user set yet
 STEPS = ("inventory", "ssh-config", "provider", "vault-item", "dns", "tcp", "host-key", "auth")
 CONNECT_TIMEOUT = 5         # seconds for the TCP step and for the key exchange
 LOGIN_TIMEOUT = 10          # ssh's ConnectTimeout for the one login attempt
@@ -41,8 +39,7 @@ LOGIN_TIMEOUT = 10          # ssh's ConnectTimeout for the one login attempt
 
 def password_login(h):
     """The Host's ssh Login, if it's a password one (a vault reference, not agent/key/none)."""
-    auth = h["ssh"].get("auth")
-    return None if auth in (None, "") or auth in providers.NO_PASSWORD else h["ssh"]
+    return h["ssh"] if hosts.password_login(h["ssh"].get("auth")) else None
 
 
 def uses_password(h):
@@ -50,7 +47,7 @@ def uses_password(h):
 
 
 def check_user(h):
-    if h["ssh"]["user"] in PLACEHOLDER_USERS:
+    if placeholder_user(h):
         raise no_user(h)
 
 
@@ -197,8 +194,9 @@ def step_ssh_config(ctx):
         if why:                         # another roster.yml's, or this Inventory isn't synced here
             raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
         raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
-    from .rotation import config_waiting  # mid-rotation, the block offers the old key too (T240)
-    want, have = host_block(ctx["cfg"], h["name"], h, config_waiting(ctx["cfg"])), written_host_block(h["name"]) or []
+    # mid-rotation, the block offers the old key too (T240)
+    want = host_block(ctx["cfg"], h["name"], h, rotation.config_waiting(ctx["cfg"]))
+    have = sshconfig.written_block(current().ssh_config, h["name"]) or []
     if have != want:
         stale = f"{h['name']}'s entry in this box's ssh config is out of date"
         if "    IdentitiesOnly yes" in want and "    IdentitiesOnly yes" not in have:
@@ -237,13 +235,6 @@ def step_dns(ctx):
 
 
 UNREACHABLE = "retry later; is the Host up and the network path open?"
-
-
-def ip_of(text):
-    try:
-        return ipaddress.ip_address(str(text).partition("%")[0])
-    except ValueError:
-        return None
 
 
 def unreachable_fix(h, limited=(), resolved=None):
@@ -312,7 +303,7 @@ def changed_key(h, recorded, key):
     data = {"recorded": [fingerprint(k) for k in recorded.values()], "offered": fingerprint(key) if key else None}
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
-                       f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
+                       f"If the change is expected (reinstall), delete its line in {current().known_hosts_label} "
                        f"and run `roster setup --host {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 
@@ -377,36 +368,7 @@ def login_attempt(argv, env, limit, halted=None):
                     return None
     finally:
         if proc.returncode is None:         # stopped, out of time, or interrupted (Ctrl+C): it doesn't outlive us
-            end_process(proc)
-
-
-def end_process(proc):
-    """End PROC and everything in its process group on POSIX (SIGTERM first, so ssh closes its connection, then
-    SIGKILL), and always reap it; our ends of its pipes are closed, so a child of it that still holds them can't keep
-    us waiting."""
-    import signal
-
-    def send(sig):
-        try:
-            if os.name == "nt":
-                proc.kill() if sig == "kill" else proc.terminate()
-            else:
-                os.killpg(proc.pid, signal.SIGKILL if sig == "kill" else signal.SIGTERM)
-        except OSError:
-            pass
-    send("term")
-    try:
-        proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        pass
-    send("kill")                            # the group too, even once the leader has gone
-    for pipe in (proc.stdout, proc.stderr):
-        if pipe is not None:
-            try:
-                pipe.close()
-            except OSError:
-                pass
-    proc.wait()                             # SIGKILL can't be refused: this returns
+            end_group(proc, gentle=True)
 
 
 def login_failure(h, password, stderr, limited=(), resolved=None, nist_only=False):
@@ -644,7 +606,7 @@ def offered_key(h, limited=()):
     step_tcp(ctx)
     recorded = recorded_host_keys(h)
     try:
-        key = offered_host_key(ctx["sock"], list(recorded), timeout=CONNECT_TIMEOUT)
+        key = handshake(ctx["sock"], list(recorded), timeout=CONNECT_TIMEOUT)[0]
     except (paramiko.SSHException, OSError, EOFError) as e:
         raise Problem(errors.TIMEOUT, f"{h['ip']} didn't complete the SSH handshake",
                       fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None

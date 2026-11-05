@@ -4,27 +4,26 @@ text; only those spans change. A result that doesn't load, that loads to anythin
 that changes any other Host, group or resource is refused, and nothing is written."""
 
 import json
-import os
 import re
-import shutil
-import tempfile
 from pathlib import Path
 
 import yaml
 
-from .common import NAME_RE, oneline
-from .config import GROUP_ONLY, OS_VALUES, first, host_os, key_type, load_config_text, resolve_ssh
+from .common import NAME_RE, die_message, oneline, replace_file
+from .config import GROUP_ONLY, OS_VALUES, first, host_os, key_type, load_config_text, resolve_ssh, sudo_auth
 from .errors import (
     GROUP_NOT_EMPTY,
     HOST_EXISTS,
     INVALID_EDIT,
     INVALID_HOST,
     NAME_TAKEN,
+    ROSTER_ERROR,
     UNKNOWN_GROUP,
     UNKNOWN_HOST,
     WOULD_CHANGE,
     Problem,
 )
+from .hosts import ip_of
 
 TEXT = ("title", "description", "type")
 LOGIN_FIELDS = ("ip", "user", "port", "auth")       # an edit to these needs a test login first (decision Q43)
@@ -72,6 +71,8 @@ def render(v, style=None):
         return "true" if v else "false"
     if isinstance(v, int):
         return str(v)
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{k}: {render(x)}" for k, x in v.items()) + "}"
     if style == "'" and "\n" not in v:
         return "'" + v.replace("'", "''") + "'"
     if style != '"' and v and v == v.strip() and not re.match(r"[-?:,\[\]{}#&*!|>'\"%@`]", v) \
@@ -262,41 +263,16 @@ def write_text(path, text):
         f.write(text)
 
 
-def replace_file(path, text):
-    """Write TEXT to PATH all at once (a temporary file beside it, then a rename), keeping PATH's mode."""
-    write_over(path, text, path)
-
-
-def write_over(path, text, like=None):
-    """Write TEXT to PATH all at once: a temporary file beside it (flushed to disk), with LIKE's mode (else 0600,
-    as roster.yml is private), renamed over PATH. A symlink at PATH is replaced, never followed (T212, #409's S1):
-    a planted roster.yml.bak -> ~/.bashrc stays a link to nothing roster wrote."""
-    path = Path(path)
-    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".new", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        if like is not None:
-            shutil.copymode(like, tmp)
-        else:
-            os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    finally:
-        Path(tmp).unlink(missing_ok=True)
-
-
 def keep_backup(bak, text, like):
-    """TEXT (what an edit replaced) as the backup BAK, with LIKE's (roster.yml's) mode, never through a symlink:
-    BAK's folder may not be one (a planted .git/roster -> elsewhere), and BAK itself is replaced, not followed."""
-    from .errors import ROSTER_ERROR, Problem
+    """TEXT (what an edit replaced) as the backup BAK, with LIKE's (roster.yml's) mode, never through a symlink
+    (T212, #409's S1): BAK's folder may not be one (a planted .git/roster -> elsewhere), and BAK itself is replaced,
+    not followed (a planted roster.yml.bak -> ~/.bashrc stays a link to nothing roster wrote)."""
     d = Path(bak).parent
     if d.is_symlink():
         raise Problem(ROSTER_ERROR, f"{d} is a symlink, so roster won't keep the backup through it; nothing was "
                                     "written", {"path": str(d)}, fix=f"remove the link ({d}), then try again")
     d.mkdir(mode=0o700, exist_ok=True)
-    write_over(bak, text, like)
+    replace_file(Path(bak), text, like=like, follow=False)
     return Path(bak)
 
 
@@ -305,7 +281,7 @@ def load_text(path, text):
     try:
         return load_config_text(text, path)
     except SystemExit as e:
-        msg = str(e.code).removeprefix("error: ")
+        msg = die_message(e)
         raise refuse("the result wouldn't load", msg.replace(str(Path(path).resolve()), path.name)) from None
 
 
@@ -387,7 +363,8 @@ def inherited(text, group):
     ssh = resolve_ssh("new", layers)
     out = {k: ssh[k] for k in SSH_KEYS} | {k: bool(first(layers, k, True)) for k in FLAGS}
     return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")} \
-        | {"os": host_os("new", first(layers, "os"))} | {"key_type": key_type("new", first(layers, "key_type"))}
+        | {"os": host_os("new", first(layers, "os"))} | {"key_type": key_type("new", first(layers, "key_type"))} \
+        | {"sudo": sudo_auth("new", layers)}
 
 
 def last_value(node):
@@ -492,20 +469,6 @@ def added(path, group, name, fields):
 # resolves them; an IPv6 zone is letters, digits, '_', '.' and '-', never starting with '-'.
 LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
 HOSTNAME_RE = re.compile(rf"^(?=.{{1,253}}\Z){LABEL}(?:\.{LABEL})*\.?\Z")
-ZONE_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\Z")
-
-
-def ip_of(v):
-    """V as an ipaddress address (an IPv6 zone checked), or None when it isn't an IP address."""
-    import ipaddress
-    try:
-        ip = ipaddress.ip_address(v)
-    except ValueError:
-        return None
-    zone = getattr(ip, "scope_id", None)
-    return ip if zone is None or ZONE_RE.match(zone) else None
-
-
 def good_address(v):
     """V is an IPv4 or IPv6 address or a DNS name (what ssh can be pointed at), not a URL or a typo with a slash."""
     if not isinstance(v, str):
@@ -768,20 +731,31 @@ def own_keys(text, group, name):
 
 # What a move writes on the Host to keep it. A Host with no mesh: (or mesh_dir:) anywhere has nothing to keep: it
 # takes the Mesh setting of the group it moves to, as any new member would (decision Q77). An unset os: is posix
-# (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198).
-PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", "key_type", *TEXT)
+# (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198). Its sudo: (ticket
+# 119) is kept too, as `sudo: null` when it had none and the new group gives one.
+PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", "key_type", "sudo", *TEXT)
 UNSET_JOINS = ("mesh", "mesh_dir")
 POSIX = "posix"
+# what a loaded Inventory keeps beside its Hosts (models.Inventory.as_config), by name: a move keeps these too
+BESIDE = {"mesh_dir": "mesh_dirs", "sudo": "sudo", "seen_as": "seen_as"}
 
 
-def pinned_move(text, was_host, name, group, mesh_dir=None):
-    """move_text, then whatever Host NAME (WAS_HOST, as loaded before, and its MESH_DIR, which the loaded config
-    keeps beside its Hosts) would now inherit differently (its user, Login, flags, text, Mesh settings) written on
-    the Host itself, so it comes out the same but for its group. Text only: nothing is loaded (check_moved checks
-    the result). Returns (new text, the fields pinned)."""
-    old = current(was_host) | {"mesh_dir": mesh_dir, "key_type": was_host["key_type"]}
+def beside(cfg, name):
+    """Host NAME's fields the loaded CFG keeps beside its Hosts (BESIDE), None (or []) when unset."""
+    return {k: cfg[key].get(name, [] if k == "seen_as" else None) for k, key in BESIDE.items()}
+
+
+def pinned_move(text, cfg, name, group):
+    """move_text, then whatever Host NAME (as CFG, loaded before, has it) would now inherit differently (its user,
+    Login, flags, text, Mesh settings, sudo:) written on the Host itself, so it comes out the same but for its group.
+    Text only: nothing is loaded (check_moved checks the result). Returns (new text, the fields pinned)."""
+    was_host = cfg["hosts"][name]
+    old = current(was_host) | beside(cfg, name) | {"key_type": was_host["key_type"]}
+    old["sudo"] = {"auth": old["sudo"]} if old["sudo"] is not None else None
     was, will = inherited(text, was_host["group"]), inherited(text, group)
     old["os"], was["os"], will["os"] = (v or POSIX for v in (old["os"], was["os"], will["os"]))
+    for x in (was, will):
+        x["sudo"] = {"auth": x["sudo"]} if x["sudo"] is not None else None
     own = own_keys(text, was_host["group"], name)
     pin = {k: old[k] for k in PINNED if was[k] != will[k] and old[k] != will[k] and k not in own
            and not (k in UNSET_JOINS and old[k] is None)}
@@ -795,12 +769,11 @@ def check_moved(before, after, names, group):
     """Each of Hosts NAMES came out in AFTER as it was in BEFORE but for its group, or Problem(WOULD_CHANGE)."""
     for name in names:
         h = after["hosts"].get(name)
-        was = before["hosts"][name]
-        dirs = before["mesh_dirs"].get(name), after["mesh_dirs"].get(name)
-        differs = sorted([k for k in was if k != "group" and (h or {}).get(k) != was[k]
-                          and not (k == "mesh" and was[k] is None)
-                          and not (k == "os" and ((h or {}).get(k) or POSIX) == (was[k] or POSIX))]
-                         + (["mesh_dir"] if dirs[0] is not None and dirs[0] != dirs[1] else []))
+        was = before["hosts"][name] | beside(before, name)
+        now = (h or {}) | beside(after, name)
+        differs = sorted(k for k in was if k != "group" and now.get(k) != was[k]
+                         and not (k in UNSET_JOINS and was[k] is None)
+                         and not (k == "os" and (now.get(k) or POSIX) == (was[k] or POSIX)))
         if h is None or h["group"] != group or differs:
             raise Problem(WOULD_CHANGE, f"{name} would come out different in group {group} ({', '.join(differs)} it "
                                         "inherits there) - nothing was written", {"host": name, "fields": differs},
@@ -819,7 +792,7 @@ def moved(path, name, group):
     group_entry(groups_node(text), group)
     if h["group"] == group:
         return text, text, h, []
-    new_text, pinned = pinned_move(text, h, name, group, before["mesh_dirs"].get(name))
+    new_text, pinned = pinned_move(text, before, name, group)
     after = load_text(path, new_text)
     check_moved(before, after, [name], group)
     if without(after["hosts"], name) != without(before["hosts"], name) or not others_same(before, after, hosts=False):
@@ -894,7 +867,7 @@ def group_deleted(path, group, to=None):
         group_entry(groups_node(text), to)
     new_text = text
     for name in members:                                # as text only; the result is loaded once, below
-        new_text, _ = pinned_move(new_text, before["hosts"][name], name, to, before["mesh_dirs"].get(name))
+        new_text, _ = pinned_move(new_text, before, name, to)
     groups = groups_node(new_text)
     gk, g = group_entry(groups, group)
     t = Text(new_text)

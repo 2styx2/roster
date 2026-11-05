@@ -18,6 +18,8 @@ windows_only = pytest.mark.skipif(not WINDOWS, reason="needs Windows itself")
 
 @pytest.fixture
 def as_windows(monkeypatch):
+    from roster import context
+    monkeypatch.setattr(context, "WINDOWS", True)
     monkeypatch.setattr(common, "WINDOWS", True)
     monkeypatch.setattr(sshops, "WINDOWS", True)
 
@@ -83,7 +85,7 @@ def test_the_ssh_config_on_windows_has_forward_slashes_and_no_shared_connections
     cfg = load_config(write_config(INVENTORY))
     block = "\n".join(sshops.host_block(cfg, "esx", cfg["hosts"]["esx"]))
     assert "Control" not in block                     # Windows' OpenSSH has no Unix sockets to share one on
-    assert f'UserKnownHostsFile "{common.known_hosts_file().as_posix()}"' in block
+    assert f'UserKnownHostsFile "{common.current().known_hosts.as_posix()}"' in block
     assert "\\" not in block
 
 

@@ -11,123 +11,24 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, Any, NoReturn, cast
+from typing import IO, NoReturn, cast
 
-KEY_TAG = "roster-managed"
-LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
-# the end of a Box key line's ERE: spaces or a CR may follow the tag (a file edited on Windows), and sshd still reads
-# the line (T226, #435). POSIX only: winhost's script trims each line first, and .NET has no [[:space:]]
-KEY_TRAIL = "[[:space:]]*$"
+from .context import WINDOWS, current, ssh_dir, user_config_dir  # noqa: F401 (others import these from here)
+
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
-WINDOWS = os.name == "nt"                  # roster running natively on Windows (not in WSL)
 
 
-def ssh_dir() -> Path:
-    return Path.home() / ".ssh"
-
-
-# The named Inventory this run uses (ticket 115): its own generated ssh config and known_hosts, so syncing one never
-# wipes another's. None (no named Inventories, or a roster.yml that isn't one of them): the files roster always wrote.
-# config.find_config sets it as it finds roster.yml; one process uses one Inventory (serve restarts to switch).
-_inventory: str | None = None
-_config_path: Path | None = None       # the roster.yml this run uses, set with _inventory (None: not looked up)
-_CURRENT = object()
-CURRENT = _CURRENT          # "this run's Inventory", for a function that takes an Inventory's name or this default
-
-
-def use_inventory(name: str | None, path: Path | None = None) -> None:
-    global _inventory, _config_path
-    _inventory = name
-    _config_path = Path(path) if path is not None else None
-
-
+# serve.py's names for this run's Inventory, until it reads context.current() itself
 def current_inventory() -> str | None:
-    return _inventory
+    return current().name
 
 
-def current_config_path() -> Path | None:
-    """The roster.yml this run uses, as config.find_config found it (None when nothing looked one up)."""
-    return _config_path
+def ssh_config_file() -> Path:
+    return current().ssh_config
 
 
-def ssh_config_file(name: Any = _CURRENT) -> Path:
-    """roster's generated ssh config for the Inventory NAME (default: the one this run uses)."""
-    name = _inventory if name is _CURRENT else name
-    if name is None:
-        return ssh_dir() / "config.d" / "roster"
-    # Not in config.d: a user's `Include ~/.ssh/config.d/*` would read it beside the index, and a Host the index
-    # leaves out (a name clash) would add its IdentityFile again (PR #335's review, N3).
-    return ssh_dir() / "roster-inventories" / name
-
-
-def legacy_ssh_config_file(name: str) -> Path:
-    """Where a named Inventory's ssh config was before it moved out of config.d."""
-    return ssh_dir() / "config.d" / f"roster-{name}"
-
-
-def known_hosts_file(name: Any = _CURRENT) -> Path:
-    """roster's known_hosts for the Inventory NAME (default: the one this run uses)."""
-    name = _inventory if name is _CURRENT else name
-    return ssh_dir() / ("roster_known_hosts" if name is None else f"roster_known_hosts-{name}")
-
-
-def mesh_state_file(name: Any = _CURRENT) -> Path:
-    """roster's Mesh state for the Inventory NAME (default: the one this run uses): ~/.config/roster/mesh.json for a
-    roster.yml that isn't named, as always, and mesh-NAME.json beside it for a named one (T182, #346), so two
-    Inventories never share it."""
-    name = _inventory if name is _CURRENT else name
-    return user_config_dir() / ("mesh.json" if name is None else f"mesh-{name}.json")
-
-
-def key_name_file(name: Any = _CURRENT) -> Path:
-    """The Box name this Box's key lines on the Inventory NAME's Hosts were last all tagged with (T217, #412), so
-    `roster setup` sees box_name: (or the hostname) changed: ~/.config/roster/key-name, or key-name-NAME for a named
-    Inventory (each Inventory has its own box_name:)."""
-    name = _inventory if name is _CURRENT else name
-    return user_config_dir() / ("key-name" if name is None else f"key-name-{name}")
-
-
-def rotation_file(name: Any = _CURRENT) -> Path:
-    """The Box key rotation's pending record for the Inventory NAME (T240, #469): ~/.config/roster/key-rotation, or
-    key-rotation-NAME for a named Inventory, beside key-name and never in mesh.json: the Hosts not finished yet."""
-    name = _inventory if name is _CURRENT else name
-    return user_config_dir() / ("key-rotation" if name is None else f"key-rotation-{name}")
-
-
-def lock_file(name: Any = _CURRENT) -> Path:
-    """The Box-wide lock for the Inventory NAME (T240): ~/.config/roster/run.lock, or run-NAME.lock, held by every run
-    that changes this Box's keys or Mesh entries on its Hosts (boxlock)."""
-    name = _inventory if name is _CURRENT else name
-    return user_config_dir() / ("run.lock" if name is None else f"run-{name}.lock")
-
-
-def key_created_file() -> Path:
-    """When roster made or rotated each of this Box's keys (T240): ~/.config/roster/key-created, a line per key file
-    (`ISO-TIME<TAB>PATH`); one key file serves every Inventory that names it, so one record for the Box."""
-    return user_config_dir() / "key-created"
-
-
-def known_hosts_label():
-    """known_hosts_file() as messages name it: ~/.ssh/roster_known_hosts (or -NAME)."""
-    return f"~/.ssh/{known_hosts_file().name}"
-
-
-def ssh_index_file() -> Path:
-    """With named Inventories: the file ~/.ssh/config includes, which includes each one's ssh config, the active
-    one's first (named Inventories' own files are in ~/.ssh/roster-inventories/)."""
-    return ssh_dir() / "config.d" / "roster.inventories"
-
-
-def user_config_dir() -> Path:
-    """roster's own folder: ~/.config/roster, or %APPDATA%\\roster on Windows (where the app's init.lua is too)."""
-    if WINDOWS:
-        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "roster"
-    return Path.home() / ".config" / "roster"
-
-
-# What may never go into a value roster writes into an ssh config file: a quote would end the value and a control
-# character (a newline above all) the line, so the rest would be read as directives of its own (PR #335's review, P1).
-SSH_UNSAFE = re.compile(r'["\x00-\x1f\x7f]')
+def known_hosts_label() -> str:
+    return current().known_hosts_label
 
 
 class NotPrivate(Exception):
@@ -207,23 +108,33 @@ def read_private_bytes(path: Path, dir_fd: int | None = None) -> bytes:
         os.close(fd)
 
 
-def replace_file(path: Path, text: str, mode: int = 0o600) -> None:
+def replace_file(path: Path, text: str, mode: int = 0o600, *, follow: bool = True, like: Path | None = None) -> None:
     """Write TEXT to PATH whole or not at all: a new file beside it (a name of its own, so two writers can't take each
-    other's), then renamed over it, with MODE (0600: ~/.ssh/config as roster always left it, since OpenSSH refuses one
-    others can write). A symlink is followed, so its target is what changes."""
+    other's), flushed to disk, then renamed over it, with MODE (0600: ~/.ssh/config as roster always left it, since
+    OpenSSH refuses one others can write) or LIKE's mode. FOLLOW: a symlink at PATH is followed, so its target is what
+    changes (an ~/.ssh/config kept elsewhere); else the link itself is replaced, never written through."""
     import tempfile
-    target = Path(os.path.realpath(path))
+    target = Path(os.path.realpath(path)) if follow else Path(path)
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    keep = mode
     fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".new", dir=target.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
-        os.chmod(tmp, keep)
+            f.flush()
+            os.fsync(f.fileno())
+        if like is not None:
+            shutil.copymode(like, tmp)
+        else:
+            os.chmod(tmp, mode)
         os.replace(tmp, target)
-    except BaseException:
+    finally:
         Path(tmp).unlink(missing_ok=True)
-        raise
+
+
+def write_private(path: Path, text: str) -> None:
+    """replace_file for a file of roster's own state (Mesh state, the rotation's record, a vault snapshot, a web
+    session): this user's alone (0600), and a symlink planted at PATH is replaced, never written through."""
+    replace_file(path, text, 0o600, follow=False)
 
 
 def ssh_path(path: str | Path) -> str:
@@ -316,6 +227,44 @@ def kill_tree(p):
         pass
 
 
+def end_group(p, gentle=False):
+    """End P (started with start_new_session=True) and everything it started: on POSIX its process group, SIGTERM first
+    when GENTLE (an ssh closes its connection), then SIGKILL, to the group even once P itself has gone; on Windows,
+    which has no process groups, its tree (kill_tree). Then P is reaped, our ends of its pipes closed first, so a child
+    that still holds them can't keep us waiting."""
+    import signal
+
+    def send(sig):
+        try:
+            os.killpg(p.pid, sig)
+        except OSError:
+            if sig == signal.SIGKILL:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+    if WINDOWS:
+        kill_tree(p)
+    else:
+        if gentle:
+            send(signal.SIGTERM)
+            try:
+                p.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+        send(signal.SIGKILL)
+    for pipe in (p.stdin, p.stdout, p.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+    try:
+        p.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def run(args, timeout=None, input=None, stdout=subprocess.PIPE, **kw):
     """subprocess.run with capture_output, but a timeout kills the whole process tree (kill_tree) before it waits for
     the output, so a tool's leftover child can't hold the call past its timeout. STDOUT=subprocess.DEVNULL: what the
@@ -349,8 +298,6 @@ def run_filtered(producer, filt, timeout=None, env=None, filter_env=None):
     and both programs' stderr (PRODUCER's up to STDERR_CAP). ENV: PRODUCER's environment (default this process's);
     FILTER_ENV: FILT's (default this process's). Returns (PRODUCER's CompletedProcess with stdout None, FILT's).
     A timeout kills both process trees, then raises subprocess.TimeoutExpired."""
-    import threading
-    import time
     p1 = subprocess.Popen(producer, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     try:
         p2 = subprocess.Popen(filt, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=filter_env)
@@ -418,6 +365,51 @@ def die_message(e):
     return msg.removeprefix("error: ")
 
 
+# ---------------------------------------------------------------- what looks like a token, not a name
+
+_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")          # a whole value: a bw key, with its / and +
+_TOKEN_PART = re.compile(r"[A-Za-z0-9+=_.-]{24,}")            # one part of a path: an op token, a JWT (eyJ….….…)
+_INVENTORY_SUFFIXES = (".yml", ".yaml", ".yml.example")
+
+
+def token_shaped(value: str | Path) -> bool:
+    """VALUE (a -c PATH, or an Inventory's name) looks like a token, not something a person names a file
+    (#479, #484 L1/L3, #489 M1): the whole of it is 24 or more of A-Z a-z 0-9 + / = _ - (a bw key, whose parts
+    between its /s are often short), or any one part of it between / or \\ is 24 or more of A-Z a-z 0-9 + = _ . -
+    (an op session or service-account token, a JWT such as an op Connect token, also as a folder). A last part
+    ending .yml, .yaml or .yml.example is a file name, whatever its length."""
+    text = str(value)
+    parts = re.split(r"[\\/]", text)
+    if parts[-1].lower().endswith(_INVENTORY_SUFFIXES):
+        parts = parts[:-1]
+    elif _TOKEN_SHAPED.fullmatch(text):
+        return True
+    return any(_TOKEN_PART.fullmatch(p) for p in parts)
+
+
+def typed_token(path: str | Path) -> bool:
+    """PATH as typed is token_shaped (#489 M1, #494 L3). In an absolute value (after ~ is expanded) the folders at
+    its start that exist are left out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never
+    counts. A relative value is tested whole, every part but . and .., whether it exists or not: a token typed as
+    a folder is caught even when an older roster already made that folder."""
+    text = os.path.expanduser(str(path))
+    if not Path(text).is_absolute():
+        return token_shaped(str(path))
+    parts = re.split(r"[\\/]", text)
+    for k in range(len(parts) - 1, 0, -1):
+        if Path("/".join(parts[:k]) or "/").is_dir():
+            return token_shaped("/".join(parts[k:]))
+    return token_shaped(text)
+
+
+UTC_TIME = "%Y-%m-%dT%H:%M:%SZ"      # how roster writes a time in its own files
+
+
+def utc_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime(UTC_TIME)
+
+
 def failure_text(e):
     """What went wrong, safe to show: an OSError's own words (paths only), else just the exception's type."""
     if isinstance(e, OSError):
@@ -428,6 +420,12 @@ def failure_text(e):
 def not_reviewed(h):
     """Why roster won't log in to a Host discover found (`roster run`, `roster serve` session.prepare)."""
     return f"{h['name']} is not reviewed yet (reviewed: false in roster.yml) - not logging in"
+
+
+def plain(text):
+    """Is TEXT safe to show on a terminal and to write into an `auth:` reference: no control, escape, bidi or other
+    format character (str.isprintable), so a vault item can't rewrite the prompt it's offered in (review of #439)?"""
+    return bool(text) and text.isprintable()
 
 
 def say(msg=""):

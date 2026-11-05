@@ -10,20 +10,11 @@ from urllib.parse import urlparse
 
 import yaml
 
-from . import boxkeys
-from .common import (
-    KEY_TAG,
-    KEY_TRAIL,
-    LEGACY_KEY_TAGS,
-    NAME_RE,
-    SSH_UNSAFE,
-    die,
-    oneline,
-    use_inventory,
-    user_config_dir,
-)
-from .providers import NO_PASSWORD
+from . import boxkeys, context, keyline
+from .common import NAME_RE, die, oneline, typed_token, user_config_dir
+from .hosts import vault_login
 from .resources import load_resources
+from .sshconfig import SSH_UNSAFE
 
 HOST_DEFAULTS = {"user": None, "port": 22, "enroll": True, "auth": "prompt",
                  "web": None, "services": {}, "notes": "",
@@ -45,27 +36,27 @@ HTTPS_PORTS, HTTP_PORTS = (443, 8443), (80, 8000, 8008, 8080, 8888)
 def find_config(arg, inv=None):
     """The roster.yml this run uses: `-c PATH` (ARG), `--inv NAME` (INV), $ROSTER_CONFIG, ./roster.yml, the active named
     Inventory, then ~/.config/roster/roster.yml (ticket 115). It also picks the generated ssh config and known_hosts
-    this run reads and writes: the named Inventory's own when the file is one (common.use_inventory)."""
-    from . import inventories  # Pydantic: only once a roster.yml is looked for
+    this run reads and writes: the named Inventory's own when the file is one (context.use)."""
+    from . import named  # Pydantic: only once a roster.yml is looked for
     path = locate_config(arg, inv)
-    use_inventory(inventories.canonical(inv) if inv and not arg else inventories.name_of(path), path)
-    inventories.rebuild_if_stale()
+    context.use(named.canonical(inv) if inv and not arg else named.name_of(path), path)
+    named.rebuild_if_stale()
     return path
 
 
 def locate_config(arg: Any, inv: str | None = None) -> Path:
     """find_config's lookup alone."""
-    from . import inventories
+    from . import named
     if arg:
         return Path(arg).expanduser()
     if inv:
-        return inventories.path_of(inv)
+        return named.path_of(inv)
     if os.environ.get("ROSTER_CONFIG"):
         return Path(os.environ["ROSTER_CONFIG"]).expanduser()
     here = Path.cwd() / "roster.yml"
     if here.exists():
         return here
-    active = inventories.active_path()
+    active = named.active_path()
     if active is not None:
         return active
     if (user_config_dir() / "roster.yml").exists():
@@ -91,41 +82,6 @@ def blank_shape(raw):
 
 
 HIDDEN_PATH = "that path (not repeated)"
-_TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")          # a whole value: a bw key, with its / and +
-_TOKEN_PART = re.compile(r"[A-Za-z0-9+=_.-]{24,}")            # one part of a path: an op token, a JWT (eyJ….….…)
-_INVENTORY_SUFFIXES = (".yml", ".yaml", ".yml.example")
-
-
-def token_shaped(value: str | Path) -> bool:
-    """VALUE (a -c PATH, or an Inventory's name) looks like a token, not something a person names a file
-    (#479, #484 L1/L3, #489 M1): the whole of it is 24 or more of A-Z a-z 0-9 + / = _ - (a bw key, whose parts
-    between its /s are often short), or any one part of it between / or \\ is 24 or more of A-Z a-z 0-9 + = _ . -
-    (an op session or service-account token, a JWT such as an op Connect token, also as a folder). A last part
-    ending .yml, .yaml or .yml.example is a file name, whatever its length."""
-    text = str(value)
-    parts = re.split(r"[\\/]", text)
-    if parts[-1].lower().endswith(_INVENTORY_SUFFIXES):
-        parts = parts[:-1]
-    elif _TOKEN_SHAPED.fullmatch(text):
-        return True
-    return any(_TOKEN_PART.fullmatch(p) for p in parts)
-
-
-def typed_token(path: str | Path) -> bool:
-    """PATH as typed is token_shaped (#489 M1, #494 L3). In an absolute value (after ~ is expanded) the folders at
-    its start that exist are left out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never
-    counts. A relative value is tested whole, every part but . and .., whether it exists or not: a token typed as
-    a folder is caught even when an older roster already made that folder."""
-    text = os.path.expanduser(str(path))
-    if not Path(text).is_absolute():
-        return token_shaped(str(path))
-    parts = re.split(r"[\\/]", text)
-    for k in range(len(parts) - 1, 0, -1):
-        if Path("/".join(parts[:k]) or "/").is_dir():
-            return token_shaped("/".join(parts[k:]))
-    return token_shaped(text)
-
-
 def shown_path(path) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
     when it mustn't be (#479, #484 M1/L1/L3, #489 M1). A file that's there is shown. One that isn't is shown only
@@ -157,12 +113,8 @@ def load_config(path: Any) -> dict[str, Any]:
 
 def load_config_text(text, path):
     """load_config of TEXT as if it were PATH's (an edit checked before it's written): no file is read or written."""
-    return parse_config(text.replace("\r\n", "\n").replace("\r", "\n"), Path(path).expanduser().resolve())
-
-
-def parse_config(text, path):
-    """parse_inventory's dict view."""
-    return parse_inventory(text, path).as_config()
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return parse_inventory(text, Path(path).expanduser().resolve()).as_config()
 
 
 def parse_inventory(text, path):
@@ -180,7 +132,7 @@ def parse_inventory(text, path):
     raw = raw or {}
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
-    hosts, groups, mesh_dirs, seen_as, sudo_refs = {}, {}, {}, {}, {}
+    hosts, groups = {}, {}
     box_type = key_type("key_type", raw.get("key_type")) or boxkeys.DEFAULT
     key_type("defaults: key_type", (raw.get("defaults") or {}).get("key_type"))
     for g, x in (raw.get("groups") or {}).items():
@@ -234,22 +186,16 @@ def parse_inventory(text, path):
             # The app sends this Host's shell its hook line (ticket 121); roster only checks it.
             if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
                 die(f"host {hname!r}: shell_hooks: must be true or false")
-            md = mesh_dir(hname, first(layers, "mesh_dir"))
-            m.pop("mesh_dir", None)          # kept beside the Hosts, so serve's Host (and the Plugin API's) is as it was
-            if md:
-                mesh_dirs[hname] = md
-            m.pop("sudo", None)              # kept beside the Hosts too: a vault reference only the prompt fill reads
-            if sudo := sudo_auth(hname, layers):
-                sudo_refs[hname] = sudo
-            if seen := addresses_seen(hname, m.pop("seen_as", None)):
-                seen_as[hname] = seen
+            m["mesh_dir"] = mesh_dir(hname, first(layers, "mesh_dir"))
+            m["sudo"] = sudo_auth(hname, layers)
+            m["seen_as"] = addresses_seen(hname, h.get("seen_as"))
             for k in TEXT_FIELDS:
                 m[k] = oneline(m.get(k))
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
             hosts[hname] = m
     if not hosts and not blank_shape(raw):
         die(f"{path} defines no hosts")
-    box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
+    box = keyline.box_name(str(raw.get("box_name") or socket.gethostname().split(".")[0]))
     key_path = str(raw.get("key_path") or f"~/.ssh/{boxkeys.parse(box_type).file_name}")
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
         die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
@@ -259,19 +205,16 @@ def parse_inventory(text, path):
         if m["key_type"] != box_type and Path(m["key_file"]) == key:
             die(f"{path}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
                 f"(key_type: {m['key_type']}): point key_path at another file")
-    # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
-    # or spaces (T226, #435: sshd still reads it)
-    tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}{KEY_TRAIL}"
     try:                                    # T240: how old this Box's key may get before check --box warns
         max_age = boxkeys.parse_age(raw.get("key_max_age", boxkeys.MAX_AGE))
     except ValueError as e:
         die(f"{path}: key_max_age: {e}")
     try:
         return Inventory.model_validate(
-            {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key, "key_type": box_type,
+            {"path": path, "box": box, "tag": keyline.tag(box), "tag_re": keyline.tag_re(box), "key": key,
+             "key_type": box_type,
              "pub": Path(str(key) + ".pub"), "workers": raw.get("workers") or 32,
              "inline_limit": raw.get("claude_inline_limit") or 60, "hosts": hosts, "groups": groups,
-             "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
              "resources": load_resources(raw, groups, hosts), "links": load_links(raw, hosts, groups),
              "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or []),
              "rate_limited": rate_limited(raw.get("rate_limited")), "key_max_age": max_age})
@@ -301,11 +244,6 @@ def host_os(hname, v):
     if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
         die(f"host {hname!r}: os: must be windows or posix (unset is posix), not {oneline(v)!r}")
     return v.strip().lower()
-
-
-def is_windows(h):
-    """Does roster treat Host H (a Host dict) as Windows? Only `os: windows` says so: type: is a free label."""
-    return h.get("os") == "windows"
 
 
 def rate_limited(v):
@@ -496,7 +434,7 @@ def sudo_auth(hname, layers):
         die(f"host {hname!r}: sudo: must be a mapping with only auth (a vault reference, e.g. "
             "sudo: {auth: \"bw:esx-02 sudo\"})")
     ref = as_auth(blk["auth"]) or ""
-    if ref.partition(":")[0].strip() in ("prompt", "", *NO_PASSWORD):
+    if not vault_login(ref):
         die(f"host {hname!r}: sudo: auth must be a vault reference (bw:ITEM, op:ITEM, ...), not {ref!r}")
     return ref
 

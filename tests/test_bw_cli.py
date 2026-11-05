@@ -116,6 +116,8 @@ def test_write_alone_still_needs_bw_arguments(bw):
 
 def test_a_batch_file_bw_is_refused_cmd_specials_without_repeating_them(bw, monkeypatch):
     import roster.common as common
+    import roster.context as context
+    monkeypatch.setattr(context, "WINDOWS", True)
     monkeypatch.setattr(common, "WINDOWS", True)
     monkeypatch.setattr(common, "find_program", lambda name: r"C:\npm\bw.cmd")
     msg = refused("get", "password", "a&b" + SECRET)
