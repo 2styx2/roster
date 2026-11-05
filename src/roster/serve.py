@@ -2345,9 +2345,10 @@ def vault_item_fields(state, params):
     """What a vault item says about its Host (T220, Q190), for an add-Host form's "fill from a vault item": the
     address and SSH port from its URI, the user from its username (addhost.vault_fields, as `roster add
     --from-vault`). Never the password: only a provider that gives these fields without it (Bitwarden's `bw get uri`
-    and `bw get username`) can answer; any other is `186`. A field the item doesn't have is left out.
+    and `bw get username`; 1Password's item overview and username field, never `--reveal`) can answer; any other
+    is `186`. A field the item doesn't have is left out.
 
-    Params: `{item, provider?}`: `item` the item's name or id (as after `bw:` in auth), `provider` the vault (default:
+    Params: `{item, provider?}`: `item` the item's name or id (as after `bw:` or `op:` in auth), `provider` the vault (default:
         the Inventory's, as vault.status's)
     Result: `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address
         (another scheme than ssh, sftp, http or https, or a host that isn't an address)

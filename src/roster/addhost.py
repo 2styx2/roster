@@ -108,7 +108,7 @@ def vault_fields(auth, interactive=True):
                       fix="check the item's name in the vault, or use its id") from None
     except providers.SeveralItems as e:
         raise Problem(SEVERAL_ITEMS, str(e), {"matches": e.matches},
-                      fix="put its id in auth: (bw:ID), or rename the extra items in the vault") from None
+                      fix="put its id in auth: (bw:ID, op:ID), or rename the extra items in the vault") from None
     except providers.SecretError as e:
         if type(e) is providers.SecretError:
             raise Problem(LOOKUP_FAILED, str(e), fix="see the message; `roster check --auth` tests every Login") from None

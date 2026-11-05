@@ -5,10 +5,13 @@
 #   category, additional_information (a login's username), urls), never a field's value. FAKE_OP_ITEMS=JSON: those
 #   items, [{"id", "title", "vault", "username", "urls": [...], "fields": {label: value}}] (default: the two below).
 #   `op item get ID --fields label=X` reads one of their fields (it prints concealed ones only with --reveal).
+#   FAKE_OP_CONCEALED=LABEL,...: those fields are CONCEALED (default: password), their value printed as a worst case.
 # FAKE_ARGV_LOG=FILE: every call's full argv, one JSON list per line.
+# FAKE_OP_ENV_LOG=FILE: every call's environment variable names (never their values), one JSON list per line.
 import json, os, sys
 a = sys.argv[1:]
 os.environ.get("FAKE_ARGV_LOG") and open(os.environ["FAKE_ARGV_LOG"], "a").write(json.dumps(["op", *a]) + "\n")
+os.environ.get("FAKE_OP_ENV_LOG") and open(os.environ["FAKE_OP_ENV_LOG"], "a").write(json.dumps(sorted(os.environ)) + "\n")
 if a[:1] == ["--account"]: a = a[2:]
 signed = os.environ.get("OP_SESSION_test") == "tok" or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("op " + " ".join(a[:2]) + "\n")
@@ -40,7 +43,8 @@ if a[:2] == ["item", "get"] and any(i["id"] == a[2] for i in listed):
     if label not in i.get("fields", {}): print(f'[ERROR] could not find field {label}', file=sys.stderr); sys.exit(1)
     concealed = label == "password" and "--reveal" not in a
     value = "[use 'op item get {} --reveal' to reveal]".format(i["id"]) if concealed else i["fields"][label]
-    print(json.dumps({"id": label, "label": label, "type": "STRING", "value": value})); sys.exit()
+    kind = "CONCEALED" if label in os.environ.get("FAKE_OP_CONCEALED", "password").split(",") else "STRING"
+    print(json.dumps({"id": label, "label": label, "type": kind, "value": value})); sys.exit()
 if os.environ.get("OLD_OP") and "--reveal" in a: print("[ERROR] unknown flag: --reveal", file=sys.stderr); sys.exit(1)
 if a[:2] == ["item", "get"]:
     item = a[2]; field = a[a.index("--fields") + 1].split("=", 1)[1]

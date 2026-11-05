@@ -227,6 +227,79 @@ def test_from_vault_with_a_provider_that_cant_say_without_the_password_is_refuse
     assert yml.read_text() == YML
 
 
+# 1Password (T223, #432, Q197): the item's overview (`op item list`: its id, title, vault and URLs, no field values),
+# then its username field by that id (never --reveal, never the password)
+
+OP_ITEMS = [{"id": "op-1", "title": "nas ssh", "vault": "Infra", "urls": ["ssh://admin:pw-in-url-secret@10.0.0.60:2200"],
+             "fields": {"username": "admin", "password": "pw-nas-secret"}},
+            {"id": "op-2", "title": "bare", "vault": "Infra", "fields": {"username": "root", "password": "pw-bare-secret"}}]
+
+
+@pytest.fixture
+def op_items(fakes, monkeypatch, tmp_path):
+    def put(*rows):
+        monkeypatch.setenv("FAKE_OP_ITEMS", json.dumps(list(rows) or OP_ITEMS))
+    put()
+    log = tmp_path / "argv.log"
+    monkeypatch.setenv("FAKE_ARGV_LOG", str(log))
+    monkeypatch.setenv("OP_SESSION_test", "tok")
+    return lambda: [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else [], put
+
+
+def test_from_vault_with_1password_reads_the_url_and_username_never_the_password(capsys, yml, op_items):
+    calls, _ = op_items
+    rc, out, err = run(capsys, "nas", "--auth", "op:nas ssh", "--from-vault", "--yes")
+    assert rc == 0
+    assert "      nas: {ip: 10.0.0.60, user: admin, port: 2200, auth: op:nas ssh}\n" in yml.read_text()
+    assert not any(s in out + err + yml.read_text() for s in ("pw-nas-secret", "pw-in-url-secret"))
+    gets = [c for c in calls() if c[1:3] == ["item", "get"]]
+    assert gets == [["op", "item", "get", "op-1", "--fields", "label=username", "--format", "json"]]   # by its id
+    assert not any("--reveal" in c or "label=password" in c or c[1:2] == ["read"] for c in calls())
+
+
+def test_from_vault_with_1password_takes_the_id_and_a_vault_path_too(capsys, yml, op_items):
+    calls, put = op_items
+    put(*OP_ITEMS, {**OP_ITEMS[0], "id": "op-3", "vault": "Lab", "urls": ["10.0.0.70"],
+                    "fields": {"username": "lab", "password": "pw-lab-secret"}})
+    assert run(capsys, "nas", "--auth", "op:Lab/nas ssh", "--from-vault", "--yes")[0] == 0
+    assert "      nas: {ip: 10.0.0.70, user: lab, auth: op:Lab/nas ssh}\n" in yml.read_text()
+    assert ["op", "item", "list", "--format", "json", "--vault", "Lab"] in calls()
+    assert run(capsys, "nas2", "--auth", "op:op-2", "--from-vault", "--ip", "10.0.0.71", "--yes")[0] == 0
+    assert "      nas2: {ip: 10.0.0.71, user: root, auth: op:op-2}\n" in yml.read_text()
+
+
+@pytest.mark.parametrize("other", [{"category": "LOGIN"}, {"category": "SECURE_NOTE", "urls": []}])
+def test_from_vault_with_1password_several_matches_fail_closed(capsys, yml, op_items, other):
+    calls, put = op_items
+    put(*OP_ITEMS, {**OP_ITEMS[0], "id": "op-9", "title": "NAS ssh", "vault": "Shared", **other})
+    message = fails(capsys, "nas", "--auth", "op:nas ssh", "--from-vault", "--yes")
+    assert "[33]" in message and "item's id" in message and "pw-" not in message
+    assert not any(c[1:3] == ["item", "get"] for c in calls()) and yml.read_text() == YML
+
+
+def test_from_vault_with_1password_no_such_item_and_no_url(capsys, yml, op_items):
+    assert "[32]" in fails(capsys, "nas", "--auth", "op:nope", "--from-vault", "--yes")
+    message = fails(capsys, "nas", "--auth", "op:bare", "--from-vault", "--yes")
+    assert "[185]" in message and "--ip" in message
+
+
+def test_from_vault_with_1password_never_takes_a_concealed_username(capsys, yml, op_items, monkeypatch):
+    _, put = op_items
+    put({**OP_ITEMS[0], "fields": {"username": "pw-concealed-secret", "password": "pw-nas-secret"}})
+    monkeypatch.setenv("FAKE_OP_CONCEALED", "username")       # a username field someone made a concealed one
+    rc, out, err = run(capsys, "nas", "--auth", "op:nas ssh", "--from-vault", "--yes")
+    assert rc == 0 and "      nas: {ip: 10.0.0.60, port: 2200, auth: op:nas ssh}\n" in yml.read_text()
+    assert "pw-concealed-secret" not in out + err + yml.read_text()
+
+
+def test_vault_item_fields_reads_1password_the_same_way(serve, yml, op_items):
+    s = serve()
+    r = s.call("vault.item_fields", {"provider": "op", "item": "nas ssh"})["result"]
+    assert r == {"provider": "op", "item": "nas ssh", "address": "10.0.0.60", "port": 2200, "user": "admin"}
+    s.close()
+    assert "pw-" not in json.dumps(s.responses)
+
+
 def test_group_completes_group_names(capsys, yml, monkeypatch):
     monkeypatch.setenv("ROSTER_CONFIG", str(yml))
     assert main(["__complete", "bash", ":", "roster", "add", "nas", "--group"]) == 0

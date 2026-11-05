@@ -93,7 +93,7 @@ def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
           f"`{run} vault reveal <name>` in their own shell.", "",
           "## Rules",
           "- Never read, print or copy private keys (`~/.ssh/`) and never try to retrieve passwords "
-          f"(don't run `bw`, `{run} vault bw` (or `{run} bw`), `op` or any other password-manager command "
+          f"(don't run `bw`, `{run} vault bw` (or `{run} bw`), `op`, `{run} vault op` or any other password-manager command "
           "yourself).",
           "- If `run` says a password manager is locked or signed out, tell the user what it said; they "
           "unlock it in the shell they start Claude from (e.g. `export BW_SESSION=$(bw unlock --raw)` "

@@ -575,7 +575,7 @@ def delete_item(provider, item_id):
 def login_fields(provider, spec, interactive=True):
     """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
     None when the item has none. Only a provider that can read them without the password reaching roster has this
-    (bw's `bw get uri` / `bw get username`); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
+    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
     asks, not even for a master password."""
     fn = _vault_op(provider, "login_fields")
     if not fn:
