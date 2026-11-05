@@ -315,7 +315,7 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 - **Footer:** 34px, with a tabular Host count and keycap hints (move, open, close). Warnings in the footer use Signal Yellow.
 
 ### Status bar
-A tmux-like line on Chrome Graphite: `● backend  ■ this Box  ● esx-02  N Hosts  path`, with hints and mode at the right. The Session on screen is named with its node in Iosevka, in the text colour. Hints that name a command are also its buttons. The `●` is an apricot node, the `■` is the Sea Glass Box square, and data is in Iosevka. Pending changes is a quiet Signal Yellow segment with a hollow node: you can click it, but it isn't a button that shouts.
+A tmux-like line on Chrome Graphite: `● backend  ■ this Box  ● esx-02  N Hosts  path`, with hints and mode at the right. The Session on screen is named with its node in Iosevka, in the text colour. Hints that name a command are also its buttons. The `●` is an apricot node, the `■` is the Sea Glass Box square, and data is in Iosevka. Pending changes is a quiet Signal Yellow segment with a hollow node: you can click it, but it isn't a button that shouts. It's one line that never wraps: when room runs out, the hints drop out whole (last first), then the path goes down to its first folder and file name (`~/…/roster.yml`) and then isn't drawn, then the backend's label, then this Box's name, each down to six characters, and the Session on screen last (Q209, Q230).
 
 ### Badges
 - **Unreviewed:** 13px Signal Yellow text with a 45%-yellow 1px border, 4px radius and 5px side padding.

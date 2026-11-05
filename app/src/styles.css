@@ -314,34 +314,52 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   color: var(--muted); font-size: var(--text-xs); white-space: nowrap; overflow: hidden;
 }
 .statusbar > * { flex: none; }
-.statusbar .backend { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the path first (it only gets the room left over), then the
-   hints, then the Box's name. The Backend, the Host count and the mode never do. Each cut value
-   has its whole text in a tooltip. */
+/* Long values give way in order: the hints (whole, last first), then the path (down to
+   "~/…/roster.yml", then not drawn), then the Backend's label, then this Box's name, and the Session on
+   screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
+   count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
+   way only once the one before it is at its least (factors 1e5 apart: a step's share of
+   the overflow stays under a layout unit). Each cut value has its whole text in a tooltip. */
 .statusbar-cut { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.statusbar .box { flex: 0 1 auto; min-width: 6ch; display: inline-flex; align-items: center; gap: 6px; }
+/* Each keeps 6 characters, or its whole text when shorter (--keep, set from its length in App.tsx,
+   so "Fake" gets no empty room after it), beside its 6 px mark and the 6 px gap. In Iosevka, so
+   ch is a character. */
+.statusbar :is(.backend, .box, .session-seg) { min-width: calc(var(--keep, 6ch) + 12px); font-family: var(--font-mono); }
+.statusbar .backend { flex: 0 1e5 auto; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.statusbar .box { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; }
 /* This Box (decision Q57): a small square in the second tone, the logo's Box at the foot of the R.
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
 .statusbar .box .statusbar-cut { min-width: 0; }
-/* The path takes only the room left over, and goes rather than showing a stub ("/ho…"): under
-   eight characters' room it isn't drawn (its whole text stays in the tooltip). */
-.statusbar .path { flex: 1 1 0; min-width: 0; container-type: inline-size; }
-.statusbar .path-text { display: flex; min-width: 0; white-space: nowrap; }
-.statusbar .path-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The path keeps room for its least (below) ahead of the hints, then gives way before the Backend;
+   it goes rather than showing a stub ("/ho…"). */
+.statusbar .path {
+  flex: 1 1e10 var(--keep, 8ch); min-width: 0; height: var(--statusbar-h); overflow: hidden;
+  display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start;
+}
+/* The path is whole down to its first folder, "…/" and its file name (--keep, from App.tsx), or
+   not drawn at all: below that it wraps to the line the box hides (the zero-width first item lets
+   it wrap even though it's alone), as the hints do. Its tooltip always has it whole. */
+.statusbar .path::before { content: ""; width: 0; height: var(--statusbar-h); }
+.statusbar .path-text { flex: 1 1 auto; min-width: calc(var(--keep, 8ch) - 1px); display: flex; white-space: nowrap; }
+/* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
+   cut from their start ("~/…ventory/roster.yml"), as .empty-path is: an rtl box with ltr text. */
 .statusbar .path-base { flex: none; }
-@container (max-width: 8ch) { .statusbar .path-text { visibility: hidden; } }
+/* The folders between give way, down to "…/"; the first folder and the file name never. */
+.statusbar .path-head { flex: none; }
+.statusbar .path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.statusbar .path-dir > span { direction: ltr; unicode-bidi: isolate; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
-.statusbar .session-seg { flex: 0 0.2 auto; min-width: 6ch; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
+.statusbar .session-seg { flex: 0 1e-5 auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-family: var(--font-mono); }
 /* What the status line names is data (taste.md's paste rule): the Backend, this Box, the Host
    count and the Inventory's path are in Iosevka, as in a tmux line. The words around them are Inter. */
 .statusbar .backend .statusbar-cut, .statusbar .box .statusbar-cut, .statusbar .count, .statusbar .path { font-family: var(--font-mono); }
 /* The hints and the mode, at the right end whatever the layout shows before them. */
-.statusbar-right { margin-left: auto; flex: 0 1000 auto; min-width: 0; display: flex; align-items: center; gap: 16px; }
+.statusbar-right { margin-left: auto; flex: 0 1e15 auto; min-width: 0; display: flex; align-items: center; gap: 16px; }
 .statusbar-hints {
   flex: 0 1000 auto; min-width: 0; height: var(--statusbar-h); overflow: hidden;
   display: flex; flex-wrap: wrap; align-content: flex-start; align-items: center;
@@ -350,6 +368,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    hidden second line whole, even the first one, instead of being cut after its keycaps (N3). */
 .statusbar-hints::before { content: ""; width: 0; height: var(--statusbar-h); }
 .statusbar .hint { flex: none; display: inline-flex; align-items: center; gap: 5px; height: var(--statusbar-h); }
+/* A hint that wrapped off the line (FitLine) isn't there at all: not drawn, not read. */
+.statusbar .hint[data-off] { visibility: hidden; }
 .statusbar .hint + .hint { margin-left: 16px; }
 /* A hint that names a command is also its button, for the mouse: the same words, quiet until the
    pointer is on it (taste.md: chrome recedes). */
