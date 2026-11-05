@@ -2,8 +2,10 @@
 // focus goes to the menu and the arrows start on an item; opened from the keyboard (the Menu key,
 // Shift+F10), on the first item. ↑/↓ wrap, Home/End, a letter goes to the next item starting with
 // it, Enter or Space runs one, Esc closes and gives focus back where it was, and Tab, a press
-// outside it, a scroll, a resize or the window losing focus close it. It's kept inside the window:
-// at the pointer, or under the row, flipped to the other side where there's no room.
+// outside it, a scroll, a resize or the window losing focus close it. It's kept inside the Sidebar
+// pane (round 21: near the foot it lay over the status bar): at the pointer, or under the row, the
+// tree scrolled up for it or the menu flipped above the row where there's no room. It's at least
+// as wide as its row and never wider than the Sidebar.
 //
 // Motion (the animate skill, taste.md "motion confirms"): opened by the pointer it fades in from
 // 0.97 at the pointer over 120 ms (strong ease-out), so the click visibly opened it; from a key it
@@ -14,8 +16,16 @@ import { Keys } from "../ui/Keys";
 import type { MenuEntry } from "./hostMenu";
 import type { CommandLine } from "../keymap";
 
-/** How far from the window's edges the menu keeps. */
+/** How far from the pane's top and foot the menu keeps. */
 const MARGIN = 4;
+
+/** A box in the window's coordinates: where a menu may go. */
+export interface Bounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
 
 export interface RowMenuProps {
   /** The Host's name: the menu's name. */
@@ -40,26 +50,48 @@ export function commandHint(command: string, subject: string, what = "NAME"): st
   const at = subject === "" ? -1 : command.indexOf(` ${subject}`);
   const end = at + subject.length + 1;
   const ends = at >= 0 && (command.length === end || command[end] === " ");
-  if (!ends) return `:${command}`;
+  // A `new` asks for the new thing's name (round 21: "New Folder" showed no shape at all).
+  if (!ends) return `:${command}${/(^| )new$/.test(command) ? " NAME" : ""}`;
   const more = command.slice(end).trim() === "" ? "" : " NAME";
   return `:${command.slice(0, at)} ${what}${more}`;
 }
 
-/** Where the menu goes: at the point, moved (or flipped) to stay in the window. */
+/** The hint a menu item shows when no key is bound, or null. A Plugin's item that runs one of its
+ * command lines (`plugins run folders folder new`) shows that line, as it would be typed (round 21:
+ * the Folders heading's lone "New Folder" showed nothing); one that calls a function has no `:`
+ * form. */
+export function menuHint(command: string, subject: string, what = "NAME"): string | null {
+  const own = /^plugins run \S+ (.+)$/.exec(command);
+  if (own?.[1]) return commandHint(own[1], subject, what);
+  if (command === "plugins" || command.startsWith("plugins ")) return null;
+  return commandHint(command, subject, what);
+}
+
+/** Where the menu goes: at the point, moved (or flipped) to stay in `area` (the Sidebar pane):
+ * inside its left and right edges, and `MARGIN` clear of its top and foot. */
 export function placeMenu(
   point: { x: number; y: number; flipY?: number },
   size: { width: number; height: number },
-  view: { width: number; height: number },
+  area: Bounds,
 ): { left: number; top: number } {
   let left = point.x;
-  if (left + size.width > view.width - MARGIN)
-    left = view.width - MARGIN - size.width;
+  if (left + size.width > area.right) left = area.right - size.width;
+  const foot = area.bottom - MARGIN;
   let top = point.y;
-  if (top + size.height > view.height - MARGIN)
-    top = (point.flipY ?? point.y) - size.height;
-  if (top + size.height > view.height - MARGIN)
-    top = view.height - MARGIN - size.height;
-  return { left: Math.max(MARGIN, left), top: Math.max(MARGIN, top) };
+  if (top + size.height > foot) top = (point.flipY ?? point.y) - size.height;
+  if (top + size.height > foot) top = foot - size.height;
+  return {
+    left: Math.max(area.left, left),
+    top: Math.max(area.top + MARGIN, top),
+  };
+}
+
+/** The Sidebar pane `row` is in, else the window. */
+function paneOf(row: Element | null): Bounds {
+  const pane = row?.closest(".sidebar")?.getBoundingClientRect();
+  return pane && pane.height > 0
+    ? { left: pane.left, top: pane.top, right: pane.right, bottom: pane.bottom }
+    : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
 }
 
 /** The nearest ancestor of `el` that scrolls vertically. */
@@ -73,8 +105,9 @@ function scrollerOf(el: Element | null): HTMLElement | null {
 }
 
 /** How far a row's scroller should scroll (up to `room`, what's left below) so a menu `height`
- * tall fits under the row in a window `view` tall, or 0 when it fits, can't be made to, or would
- * push the row out of the scroller's top (`rowTop` - the scroll < `scrollerTop`). */
+ * tall fits under the row above `view` (the pane's foot), or 0 when it fits, can't be made to, or
+ * would push the row out of the scroller's top (`rowTop` - the scroll < `scrollerTop`, which is
+ * below the scroller's top fade). */
 export function scrollForMenu(
   row: { top: number; bottom: number },
   height: number,
@@ -87,16 +120,19 @@ export function scrollForMenu(
   return need;
 }
 
-/** Scrolls `row`'s scroller so a menu `height` tall opens under it, where that can be done. */
-function roomBelow(row: Element | null, height: number) {
+/** Scrolls `row`'s scroller so a menu `height` tall opens under it, above `foot`, where that can
+ * be done. */
+function roomBelow(row: Element | null, height: number, foot: number) {
   const scroller = scrollerOf(row);
   if (!row || !scroller) return;
+  // The scroller's top fade (its scroll padding): the row stays clear of it.
+  const fade = parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
   const by = scrollForMenu(
     row.getBoundingClientRect(),
     height,
-    window.innerHeight,
+    foot,
     scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
-    scroller.getBoundingClientRect().top,
+    scroller.getBoundingClientRect().top + fade,
   );
   if (by > 0) scroller.scrollTop += by;
 }
@@ -183,22 +219,35 @@ export function RowMenu({
     const el = ref.current;
     if (!el) return;
     back.current = document.activeElement;
-    // From a key, a row too near the window's foot scrolls up just enough for the menu to open
-    // under it (round 20: flipped above, its edge sliced a row mid-glyph). Only from a key: under
-    // the pointer the tree never moves (Q216).
-    if (keyboard) roomBelow(anchor(), el.offsetHeight);
+    // The Sidebar pane bounds it (round 21: near the foot it lay over the status bar and the
+    // details strip). Its width: at least its row's, so no sliver of the row under it shows beside
+    // it, and never past the Sidebar's edge (round 21: a Host's menu overhung it by 16 px, a
+    // heading's was narrower than its row).
+    const area = paneOf(anchor());
+    const row0 = anchor()?.getBoundingClientRect();
+    if (row0 && row0.width > 0) {
+      el.style.minWidth = `${Math.round(row0.width)}px`;
+      el.style.maxWidth = `${Math.floor(area.right - row0.left)}px`;
+    }
+    el.style.maxHeight = `${Math.max(0, Math.floor(area.bottom - area.top - 2 * MARGIN))}px`;
+    // From a key, a row too near the pane's foot scrolls up just enough for the menu to open under
+    // it (round 20: flipped above, its edge sliced a row mid-glyph). Only from a key: under the
+    // pointer the tree never moves (Q216).
+    if (keyboard) roomBelow(anchor(), el.offsetHeight, area.bottom);
     for (let e = anchor() ?? document.scrollingElement; e; e = e.parentElement)
       scrolledAt.current.set(e, [e.scrollTop, e.scrollLeft]);
     const rect = anchor()?.getBoundingClientRect();
-    const point =
-      at ??
-      (rect
-        ? { x: rect.left + 24, y: rect.bottom, flipY: rect.top }
-        : { x: MARGIN, y: MARGIN });
+    // It lines up with its row's edges (as wide as the row, it would otherwise be pushed in from
+    // the Sidebar's edge to sit 7 px off them); from the pointer it opens at the pointer's height.
+    const point = at
+      ? { x: rect ? rect.left : at.x, y: at.y }
+      : rect
+        ? { x: rect.left, y: rect.bottom, flipY: rect.top }
+        : { x: area.left, y: area.top + MARGIN };
     const placed = placeMenu(
       point,
       { width: el.offsetWidth, height: el.offsetHeight },
-      { width: window.innerWidth, height: window.innerHeight },
+      area,
     );
     const { left } = placed;
     let { top } = placed;
@@ -210,14 +259,14 @@ export function RowMenu({
     let extra = 0;
     if (top < point.y) {
       const snap = snapUp(top + height, height, edges);
-      if (snap.top >= MARGIN) {
+      if (snap.top >= area.top + MARGIN) {
         top = snap.top;
         extra = snap.extra;
       }
     } else {
       const foot = edges.filter((e) => e >= top + height - 0.5);
       const next = foot.length ? Math.min(...foot) : null;
-      if (next !== null && next <= window.innerHeight - MARGIN)
+      if (next !== null && next <= area.bottom - MARGIN)
         extra = next - top - height;
     }
     if (extra > 0.5) {
@@ -228,7 +277,8 @@ export function RowMenu({
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
     // Scale from the corner nearest the point it opened at.
-    el.style.transformOrigin = `${Math.max(0, point.x - left)}px ${Math.max(0, point.y - top)}px`;
+    const from = at ?? point;
+    el.style.transformOrigin = `${Math.max(0, from.x - left)}px ${Math.max(0, from.y - top)}px`;
     if (keyboard) items()[0]?.focus();
     else el.focus();
     // Gone with its row (a Host removed elsewhere): focus goes back too.
@@ -353,10 +403,10 @@ export function RowMenu({
             ) : (
               // No key bound: its command line, so the item still says how to reach it from the
               // keyboard (taste.md: every action has a key, or at least a `:` form).
-              // A Plugin's own action has no `:` form worth showing (its first word is "plugins").
-              !entry.command.startsWith("plugins") && (
+              // A Plugin's function has no `:` form worth showing; its command line has.
+              menuHint(entry.command, label, what) !== null && (
                 <span className="row-menu-cmd key-hint" aria-hidden="true">
-                  {commandHint(entry.command, label, what)}
+                  {menuHint(entry.command, label, what)}
                 </span>
               )
             )}

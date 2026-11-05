@@ -14,6 +14,11 @@ const COMMAND = /(^|[\s(“"'])(:[a-z][a-z0-9-]*(?: [a-z0-9](?:[\w#.:/-]*[\w#/-]
  * sentence's). A place in one ("folders.yml:3") is left as the sentence has it. */
 const FILE = /(^|[\s(“"'`])([\w-][\w.-]*\.(?:ya?ml|lua))(?![\w-]|:\d)/g;
 
+/** A roster.yml setting a message names with its value ("reviewed: true"): data, like the file
+ * it goes in (round 21: it was set in Inter beside an Iosevka roster.yml). Only a yes/no value, so
+ * a sentence's "Note: true…" can't be taken for one. */
+const SETTING = /(^|[\s(“"'])([a-z][a-z_]*: (?:true|false))(?![\w-])/g;
+
 /** What was typed, quoted back by a slip ("Not a command: blah.", "No help for zzqxj."): data
  * too (round 19), set in Iosevka with no quote marks. The word runs to the sentence's end. */
 const TYPED = /(^|[\s(])((?<=(?:Not a command:|No help for) )[^\s]+?)(?=[.,]?(?:\s|$))/g;
@@ -22,7 +27,7 @@ export interface MessagePart {
   text: string;
   /** Set in Iosevka as something you'd type: a command (":help commands") or what was typed. */
   command: boolean;
-  /** A file name ("roster.yml"). */
+  /** A file name ("roster.yml"), or a setting in one ("reviewed: true"). */
   file?: true;
 }
 
@@ -33,6 +38,7 @@ export function messageParts(text: string, files = false): MessagePart[] {
     ...[...text.matchAll(COMMAND)].map((m) => ({ m, file: false })),
     ...[...text.matchAll(TYPED)].map((m) => ({ m, file: false })),
     ...(files ? [...text.matchAll(FILE)].map((m) => ({ m, file: true })) : []),
+    ...(files ? [...text.matchAll(SETTING)].map((m) => ({ m, file: true })) : []),
   ]
     .map(({ m, file }) => ({ start: (m.index ?? 0) + (m[1]?.length ?? 0), text: m[2] ?? "", file }))
     .sort((a, b) => a.start - b.start);

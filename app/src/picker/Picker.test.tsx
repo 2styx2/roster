@@ -198,7 +198,7 @@ describe("Picker", () => {
     });
   });
 
-  it("lets a Host with no type give its type cell to its group, never its address cell (round 19)", () => {
+  it("keeps a Host with no type's group in its own column, cut as every row's is (round 21)", () => {
     render(
       <Picker
         hosts={{ ...list, hosts: [host("bare", { ip: "", type: "", group: "a-long-group-name" }), ...list.hosts] }}
@@ -209,11 +209,12 @@ describe("Picker", () => {
       />,
     );
     const bare = screen.getByRole("option", { name: /^bare/ });
-    expect(bare.querySelector(".host-group")).toHaveClass("wide");
+    // Round 19 widened it over the empty type cell, which showed a second cut length in the column.
+    expect(bare.querySelector(".host-group")).not.toHaveClass("wide");
+    expect(getComputedStyle(bare.querySelector(".host-group")!).gridColumnEnd).not.toBe("span 2");
     expect(bare.querySelector(".host-type")).toBeNull();
     // The empty address keeps its cell, so the group starts at its own column as on every row.
     expect(bare.querySelector(".host-ip")).not.toBeNull();
-    expect(screen.getByRole("option", { name: /^esxi-02/ }).querySelector(".host-group")).not.toHaveClass("wide");
   });
 
   it("closes with Esc, even from the list", async () => {

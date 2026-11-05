@@ -67,6 +67,57 @@ describe("a row menu near the window's foot (round 20)", () => {
   });
 });
 
+describe("a row menu stays in the Sidebar pane (round 21)", () => {
+  /** The tree in a Sidebar pane 32–776 (a status bar under it to 800), 285 wide. */
+  function inPane(n: number) {
+    const t = tree(n, 214, 562);
+    const nav = document.createElement("nav");
+    nav.className = "sidebar";
+    nav.getBoundingClientRect = () => new DOMRect(0, 32, 285, 744);
+    nav.append(t.scroller.parentElement!);
+    document.body.append(nav);
+    for (const r of t.rows) {
+      const box = r.getBoundingClientRect;
+      r.getBoundingClientRect = () => { const b = box(); return new DOMRect(6, b.top, 272, b.height); };
+    }
+    return t;
+  }
+
+  it("from a key, scrolls the tree so the menu ends 4 px above the status bar, not over it", () => {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(140);
+    const { scroller, rows } = inPane(40);
+    const row = rows[14]!; // 634–664: under it, 140 ends at 804
+    render(<RowMenu label="a" entries={entries} at={null} anchor={() => row} leader="␣" run={() => {}} close={() => {}} />);
+    expect(scroller.scrollTop).toBe(Math.ceil(664 + 140 + 4 - 776));
+    const menu = document.querySelector<HTMLElement>(".row-menu")!;
+    expect(parseFloat(menu.style.top) + 140).toBeLessThanOrEqual(772);
+  });
+
+  it("flips above its row when the tree can't scroll, never over the status bar", () => {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(140);
+    const { rows } = inPane(18); // 18 rows end at 754: nothing to scroll
+    const row = rows[16]!; // 694–724
+    render(<RowMenu label="a" entries={entries} at={null} anchor={() => row} leader="␣" run={() => {}} close={() => {}} />);
+    const menu = document.querySelector<HTMLElement>(".row-menu")!;
+    const top = parseFloat(menu.style.top);
+    const pad = parseFloat(menu.style.paddingTop || "0") + parseFloat(menu.style.paddingBottom || "0");
+    expect(top + 140 + pad).toBeLessThanOrEqual(694);
+    expect((top - 214) % ROW).toBe(0);
+  });
+
+  it("is at least as wide as its row and lines up with it, never past the Sidebar's edge", () => {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
+    const { rows } = inPane(10);
+    render(<RowMenu label="a" entries={entries} at={null} anchor={() => rows[1]!} leader="␣" run={() => {}} close={() => {}} />);
+    const menu = document.querySelector<HTMLElement>(".row-menu")!;
+    expect(menu.style.minWidth).toBe("272px");
+    expect(menu.style.maxWidth).toBe("279px");
+    expect(menu.style.left).toBe("6px");
+  });
+});
+
 describe("scrollForMenu and snapUp", () => {
   it("scrolls only when that's enough and the row stays in the scroller", () => {
     expect(scrollForMenu({ top: 100, bottom: 130 }, 140, 800, 500, 40)).toBe(0);

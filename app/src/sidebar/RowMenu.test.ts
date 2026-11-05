@@ -1,11 +1,11 @@
 // Where a Host row's menu goes (T166, Q156): at the pointer, kept inside the window, flipped above
 // the row when there's no room under it. jsdom lays nothing out, so the arithmetic is checked here.
 import { describe, expect, it } from "vitest";
-import { commandHint, placeMenu } from "./RowMenu";
+import { commandHint, menuHint, placeMenu } from "./RowMenu";
 import { hostMenu, type HostMenuOptions } from "./hostMenu";
 import type { SidebarRow } from "./Sidebar";
 
-const view = { width: 1000, height: 700 };
+const view = { left: 0, top: 0, right: 1000, bottom: 700 };
 const size = { width: 220, height: 300 };
 
 describe("placeMenu", () => {
@@ -14,7 +14,7 @@ describe("placeMenu", () => {
   });
 
   it("moves left and up to stay in the window", () => {
-    expect(placeMenu({ x: 990, y: 690 }, size, view)).toEqual({ left: 1000 - 4 - 220, top: 690 - 300 });
+    expect(placeMenu({ x: 990, y: 690 }, size, view)).toEqual({ left: 1000 - 220, top: 690 - 300 });
   });
 
   it("flips above the row when there's no room under it", () => {
@@ -22,7 +22,17 @@ describe("placeMenu", () => {
   });
 
   it("never goes past the top or left edge, even when the window is too small", () => {
-    expect(placeMenu({ x: 50, y: 50 }, { width: 2000, height: 2000 }, view)).toEqual({ left: 4, top: 4 });
+    expect(placeMenu({ x: 50, y: 50 }, { width: 2000, height: 2000 }, view)).toEqual({ left: 0, top: 4 });
+  });
+
+  it("stays in the Sidebar pane: inside its edges and 4 px clear of its top and foot (round 21)", () => {
+    const pane = { left: 0, top: 32, right: 285, bottom: 776 };
+    // Under a row whose foot is 656: 140 tall would end at 796, over the status bar (776–800).
+    expect(placeMenu({ x: 6, y: 656, flipY: 626 }, { width: 272, height: 140 }, pane)).toEqual({ left: 6, top: 486 });
+    // At the pointer near the pane's right edge: moved in so its right edge is the pane's.
+    expect(placeMenu({ x: 200, y: 100 }, { width: 272, height: 140 }, pane)).toEqual({ left: 13, top: 100 });
+    // Too tall for the pane: its top 4 px under the pane's.
+    expect(placeMenu({ x: 6, y: 300, flipY: 270 }, { width: 272, height: 900 }, pane).top).toBe(36);
   });
 });
 
@@ -72,7 +82,20 @@ describe("commandHint (round 18, round 19)", () => {
 
   it("shows the whole command when the name isn't in it, and never matches part of a word", () => {
     expect(commandHint("host add", "Inventory")).toBe(":host add");
-    expect(commandHint("group new", "")).toBe(":group new");
+    expect(commandHint("group new", "")).toBe(":group new NAME");
     expect(commandHint("check esx-02b", "esx-02", "HOST")).toBe(":check esx-02b");
+  });
+});
+
+describe("menuHint (round 21)", () => {
+  it("shows a Plugin's command line as it would be typed, with a new thing's NAME", () => {
+    expect(menuHint("plugins run folders folder new", "Folders")).toBe(":folder new NAME");
+    expect(menuHint("plugins run folders folder remove esx-02 Lab", "esx-02", "HOST")).toBe(":folder remove HOST NAME");
+  });
+
+  it("shows nothing for a Plugin's function, and roster's own commands as before", () => {
+    expect(menuHint("plugins call folders 3 %7B%7D", "Folders")).toBeNull();
+    expect(menuHint("plugins reload folders", "Folders")).toBeNull();
+    expect(menuHint("check esx-02", "esx-02", "HOST")).toBe(":check HOST");
   });
 });

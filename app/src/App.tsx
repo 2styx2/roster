@@ -842,6 +842,17 @@ function Workspace({
   /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
    * lit wherever a Host is listed (taste.md: the accent means live, Q204). */
   const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
+  // A Host goes on the idle pane's Recent list once its Session reaches a shell (round 21: one
+  // whose key question was cancelled, never logged in, was listed). Each attempt counts once.
+  const shelled = useRef(new Set<string>());
+  useEffect(() => {
+    for (const t of sessions.tabs) {
+      const at = `${t.id}:${t.attempt}`;
+      if (t.quick || !t.shell || shelled.current.has(at)) continue;
+      shelled.current.add(at);
+      store.update((s) => usedHost(s, t.host));
+    }
+  }, [sessions, store]);
   /** The idle pane's Recent list: the last Hosts opened that are still in the Inventory and
    * reviewed, at most six. */
   // With no history yet (a first launch), the map starts from the Inventory's first reviewed Hosts,
@@ -1941,9 +1952,8 @@ function Workspace({
       const current = tabs.snapshot().active;
       if (!(here && current !== null && tabs.reconnect(current, host)))
         tabs.open(host);
-      store.update((s) => usedHost(s, host));
     },
-    [tabs, store],
+    [tabs],
   );
 
   useEffect(() => {
@@ -4425,7 +4435,7 @@ function Workspace({
 export function notReviewedMessage(name: string, canReview: boolean): string {
   return canReview
     ? `${name} isn't reviewed yet, so it can't be opened. :review ${name} marks it reviewed.`
-    : `${name} isn't reviewed yet, so it can't be opened. Set reviewed: true for it in roster.yml (:help adding-hosts).`;
+    : `${name} isn't reviewed yet, so it can't be opened. Add reviewed: true to it in roster.yml (:help adding-hosts).`;
 }
 
 /** Service entries roster left out of their Hosts (a bad port, url or login type in roster.yml):

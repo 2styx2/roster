@@ -436,9 +436,14 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* More below: the scroller's last 24 px fade out, so a row the edge cuts reads as "more" rather
    than sliced (round 18: App mode's details foot halved the last row), and j/k keep the cursor
    row clear of the fade (scroll padding). A mask on the scroller's box, not a fill: it moves nothing. */
+/* More above: its first 24 px under the Sessions block fade the same way (round 21: a menu's
+   scroll left the FOLDERS heading sliced under that edge), and j/k keep clear of it too. The
+   hairline (the border, its first px) stays whole. */
 @media (min-height: 401px) {
-  .sb-rest { scroll-padding-bottom: 24px; }
-  .sb-rest:is([data-more="below"], [data-more="both"]) { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+  .sb-rest { scroll-padding-block: 24px; }
+  .sb-rest[data-more="below"] { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+  .sb-rest[data-more="above"] { mask-image: linear-gradient(to bottom, #000 1px, transparent 1px, #000 25px); }
+  .sb-rest[data-more="both"] { mask-image: linear-gradient(to bottom, #000 1px, transparent 1px, #000 25px, #000 calc(100% - 24px), transparent); }
 }
 /* A short window: the details foot gives way, so the tree keeps rows for the cursor (round 18: at
    480 × 320 the foot and Sessions' three rows left the tree 10 px and hid the cursor row). */
@@ -476,11 +481,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
-/* Sessions' count sits by its title: the right-hand column there holds the rows' numbers (Q215). */
-.sb-section[data-section="sessions"] .sb-count { margin-left: 4px; }
 /* A Session's number for ␣ 1–9, as a key (Q215, owner after round 10). */
 .sb-index { margin-left: auto; padding-left: 8px; flex: none; display: flex; }
-.sb-section[data-section="sessions"] .sb-count[data-above]::after { content: " · " attr(data-above) " above"; font-weight: 400; text-transform: none; letter-spacing: 0; }
+/* Sessions' count is right-aligned as the other headings' are (round 21; Q215 had it by the title,
+   which read as part of the label); how many are scrolled out of sight stays by the title, muted. */
+.sb-section[data-section="sessions"] .sb-heading h2[data-above]::after { content: " · " attr(data-above) " above"; font-weight: 400; text-transform: none; letter-spacing: 0; }
 /* With no Hosts there's nothing to drag into a Folder, so its hint waits. */
 .sb-rest:not(:has([data-section="inventory"] .sb-row)) [data-section="folders"] .sb-empty { display: none; }
 /* In a very short window the Folders hint gives way, so the Inventory keeps its rows. */
@@ -628,6 +633,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    heading's other buttons appear beside it and never move it. A plain, quiet button. */
 .sidebar .sb-action.pinned { display: grid; }
 .sb-row.has-actions.selected .sb-detail, .sb-row.has-actions.selected .sb-num, .sb-row.has-actions.selected .sb-index, .sb-row.has-actions.selected .sb-badge { display: none; }
+/* An ended Session's Reconnect (↻, round 20) has its own slot just left of the number column, so
+   every Session's number keeps one x (round 21: in flow at the row's end it pushed that row's
+   number 26 px left of the others'). Out of flow, so neither the number nor the selected row's
+   Close (which takes the number's place) moves it; the name stops short of it. */
+.sb-row > .sb-action.pinned { position: absolute; top: 0; bottom: 0; right: 35px; margin: auto 0; }
+.sb-row:has(> .sb-action.pinned) .sb-text { margin-right: 26px; }
+.sb-row.selected:has(> .sb-action.pinned) .sb-text { margin-right: 33px; }
 
 /* State nodes (ui/StateDot.tsx, decisions Q53, Q57, Q203 and Q204): the shape carries the state,
    colour only adds to it. Filled = key login, ring = password login, grey ring = ended, dashed ring
@@ -736,6 +748,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
   box-shadow: 0 8px 24px var(--shadow), 0 2px 8px var(--shadow); overflow-wrap: anywhere;
 }
+/* A command, file or setting in it is one thing you'd type, so it never breaks across lines
+   (round 21: "(:help / adding-hosts)"). */
+.sb-slip .message-cmd { white-space: nowrap; }
+/* The Host's name can be longer than the slip: it alone may break. */
+.sb-slip .sb-slip-name { white-space: normal; }
 @media (forced-colors: active) {
   .row-menu, .sb-slip { border-color: CanvasText; }
   .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
@@ -1072,8 +1089,6 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* Each keeps a word's room: the name gives way first (its whole text is in the footer when cut). */
 .picker-row > .host-group { min-width: min(12ch, max-content); }
 .picker-row > .host-type { min-width: min(7ch, max-content); }
-/* A Host with no type: its group takes the empty type cell too, from its own column's start. */
-.picker-row > .host-group.wide { grid-column: span 2; contain: inline-size; } /* sizes nothing: it only fills */
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
 .picker-row .host-cell > .badge { flex: none; }
