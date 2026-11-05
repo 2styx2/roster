@@ -11,13 +11,18 @@
 // hook; this file wires them together and draws the screen.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Latest } from "./app/latest";
+import { Overlays, type Overlay } from "./app/Overlays";
+import { PluginLayers } from "./app/PluginLayers";
+import { useBuiltins } from "./app/useBuiltins";
+import { useWorkspaceLife } from "./app/useWorkspaceLife";
+import { WindowFrame } from "./chrome/WindowFrame";
+import { useTabsConfig } from "./session/useTabsConfig";
+import { useWorkspaceTheme } from "./theme/useWorkspaceTheme";
+import { useMessages } from "./ui/useMessages";
 import { usePluginBridge, type PluginHandlers } from "./app/usePluginBridge";
-import { BackendCallError, type Backend, type Host, type VaultAccount } from "./backend/types";
+import { type Backend, type VaultAccount } from "./backend/types";
 import { useConnection } from "./backend/useConnection";
-import { publishChecked } from "./backend/afterTimeout";
-import { CommandLine } from "./cmdline/CommandLine";
-import { registerBuiltins } from "./commands/builtins";
-import { complete, runLine, type CommandContext, type Commands } from "./commands/table";
+import { runLine, type CommandContext, type Commands } from "./commands/table";
 import { layoutWarnings } from "./config/apply";
 import { ConfigToast } from "./config/ConfigToast";
 import { defaultConfig } from "./config/fixture";
@@ -26,26 +31,21 @@ import type { ConfigReport } from "./config/types";
 import { useConfigActions } from "./config/useConfigActions";
 import { useConfigReport } from "./config/useConfigReport";
 import { HostDetails } from "./details/HostDetails";
-import { resolveOpen, webServices, webUrl } from "./details/details";
-import { AddPanel } from "./edit/AddPanel";
-import { ChangesPanel, type ChangesStep } from "./edit/ChangesPanel";
-import { EditPanel } from "./edit/EditPanel";
-import { afterPull } from "./edit/pull";
+import { webServices } from "./details/details";
 import { CheckPanel } from "./errors/CheckPanel";
 import { RosterApi } from "./errors/rosterApi";
 import { useCheck } from "./errors/useCheck";
 import { ErrorScreen } from "./ErrorScreen";
-import { Finder } from "./finder/Finder";
-import type { FinderContext, FinderItem } from "./finder/sources";
+import type { FinderContext } from "./finder/sources";
 import { HelpView } from "./help/command";
 import { HelpPanel } from "./help/HelpPanel";
-import { itemTopic, lineTopic, optionTopic } from "./help/lookup";
+import { optionTopic } from "./help/lookup";
 import { topics } from "./help/pages";
 import { useHelp } from "./help/useHelp";
 import { ConfirmPanel } from "./inventory/ConfirmPanel";
 import { FirstRun } from "./inventory/FirstRun";
-import { addedMessage, discardedMessage, notReviewedMessage, publishedMessage, reviewedMessage, savedMessage, savedToVaultMessage, afterChange } from "./inventory/said";
-import { nothingPending } from "./inventory/store";
+import { inventoryActions, type Form } from "./inventory/actions";
+import { Forms } from "./inventory/Forms";
 import { useInventories } from "./inventory/useInventories";
 import { useInventory } from "./inventory/useInventory";
 import { BindingsPanel } from "./keyboard/BindingsPanel";
@@ -57,29 +57,22 @@ import { TypedPasswordsContext } from "./lock/forgetOnLock";
 import type { Clock } from "./lock/idle";
 import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
 import { useWorkspaceVault } from "./lock/useWorkspaceVault";
-import { NEWS_KEY, newsNote } from "./news/news";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
 import { closeTop, usePanelState, type Layer } from "./panel/stack";
 import { pickerTimer } from "./picker/timing";
-import { Picker } from "./picker/Picker";
 import { memoryPlatform } from "./platform/memory";
 import type { Platform } from "./platform/types";
-import { PackagesPanel, PluginConfirmPanel, PluginFloatPanel, PluginNotices, PluginProgressItems, PluginPrompt, PluginsPanel } from "./plugins/PluginsPanel";
-import { SavePanel } from "./quick/SavePanel";
-import { parseQuickTarget, type QuickTarget } from "./quick/target";
+import { PluginNotices, PluginProgressItems } from "./plugins/PluginsPanel";
+import { type QuickTarget } from "./quick/target";
 import { builtinRegistries, type Registries } from "./registries";
-import { INTEGRATE_SAYS } from "./session/integrate";
+import { sessionCommands } from "./session/commands";
 import { SessionPanes, TabStrip } from "./session/Sessions";
-import { PromptWatch } from "./session/prompt";
-import { XtermPromptScreen } from "./session/promptScreen";
-import { shellHooksOn } from "./session/shellHooks";
 import { Tabs } from "./session/tabs";
 import { hostMenu } from "./sidebar/hostMenu";
 import type { SidebarRow } from "./sidebar/model";
 import { Sidebar } from "./sidebar/Sidebar";
 import { useSidebarModel } from "./sidebar/useSidebarModel";
-import { usedHost } from "./state/appState";
 import { StateStore } from "./state/store";
 import { fontInUse } from "./terminal/fonts";
 import { defaultTerminalOptions } from "./terminal/options";
@@ -87,18 +80,15 @@ import { rendererLabel } from "./terminal/renderer";
 import { TerminalView, type TerminalViewComponent } from "./terminal/TerminalView";
 import { useTerminalEnv } from "./terminal/useTerminalEnv";
 import { defaultAppearance, type AppearanceOptions } from "./theme/theme";
-import { chosenAppearance, stateChoiceWins, ThemeChoice } from "./theme/picker";
-import { useTheme } from "./theme/useTheme";
 import { DemoBanner } from "./tutor/DemoBanner";
 import { resumeAt, tutorPage, type TutorEvent, type TutorialDef } from "./tutor/tutor";
 import { useDemo, type TutorLink } from "./tutor/useDemo";
 import { Logo } from "./chrome/Logo";
-import { TitleBar } from "./chrome/TitleBar";
-import { shownControls, Toolbar, type ToolbarContext } from "./chrome/toolbar";
+import { shownControls, type ToolbarContext } from "./chrome/toolbar";
 import { countOf, errorText } from "./ui/format";
-import { HintsChoice, HintsShown } from "./ui/hints";
+import { HintsShown } from "./ui/hints";
 import { Keys } from "./ui/Keys";
-import { MESSAGES_VIEW, MessageLog, MessagesChoice, lineAfter, logView, quiet, shownText, spokenText, type Message } from "./ui/messages";
+import { MESSAGES_VIEW, shownText, spokenText } from "./ui/messages";
 import { useFocusReturn } from "./ui/useFocusReturn";
 import { GraphMemory } from "./graph/memory";
 import { isShown, otherMode, placed, type Place } from "./view/layout";
@@ -108,12 +98,6 @@ import { useLayout } from "./view/useLayout";
 import { ViewPanel } from "./view/ViewContent";
 import { sectionsFor, ViewHost } from "./view/views";
 import { version as APP_VERSION } from "../package.json";
-
-/** An overlay with its own input, which takes the keys while it's open. */
-type Overlay = "picker" | "quick" | { cmdline: string; caret?: number } | { finder: string; query?: string } | null;
-
-/** The open form: one at a time (ticket 10's edit, 11's add, 15's save, the Pending changes). */
-type Form = { kind: "edit"; host: string } | { kind: "add"; group: string } | { kind: "save"; tab: number } | { kind: "changes"; step: ChangesStep };
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => undefined;
@@ -208,22 +192,7 @@ function Workspace({
   const appearance = derived?.appearance ?? appearanceProp;
   const terminalOptions = derived?.terminalOptions ?? defaultTerminalOptions;
 
-  // The message line, as Neovim's (ticket 111, decision Q115): init.lua's `ui.messages`, else
-  // `:messages`'s choice in the State, else quiet (routine confirmations and tips don't show).
-  // Every message goes into `:messages`'s history too, quiet ones included.
-  const [message, setMessageNow] = useState<Message>("");
-  const [messageLog] = useState(() => new MessageLog());
-  const [messagesChoice] = useState(() => new MessagesChoice(store));
-  messagesChoice.setConfig(config?.ui.messages ?? null);
-  // A quiet message from the background (a Plugin's notice, roster's own unasked one) keeps a line
-  // that shows, an error above all (decision Q162).
-  const say = useCallback(
-    (m: Message) => {
-      setMessageNow((now) => lineAfter(now, m, messagesChoice.all()));
-      messageLog.push(m);
-    },
-    [messageLog, messagesChoice],
-  );
+  const { message, say, log: messageLog, choice: messagesChoice } = useMessages(registries, store, config?.ui.messages ?? null);
 
   const commandList = useSyncExternalStore(registries.commands.subscribe, registries.commands.list);
   const bindingList = useSyncExternalStore(registries.keymap.subscribe, registries.keymap.list);
@@ -318,31 +287,7 @@ function Workspace({
     [config, configState.warnings, layoutsJudged, registries, sectionDefs, statusDefs, toolbarDefs],
   );
 
-  // The Theme (ticket 30, decision Q69): a preview in the `themes` finder, else the choice kept in
-  // the State while it wins (init.lua leaves the Theme to it, or still names the Theme it was made
-  // over), else init.lua's `theme`, else the Config's (`auto` follows the OS).
-  const [themeChoice] = useState(() => new ThemeChoice(store, registries.themes));
-  const preview = useSyncExternalStore(themeChoice.subscribe, themeChoice.previewing);
-  const configTheme = config && config.theme !== "auto" ? config.theme : null;
-  const configThemeAt = config?.lines.theme ?? null;
-  // The State's choice (a registered Theme's id); appState re-renders when it changes.
-  const stored = themeChoice.stored();
-  const storedOver = themeChoice.storedOver();
-  const chosen = useMemo(() => chosenAppearance(appearance, { configTheme, stored, storedOver, preview }), [appearance, configTheme, stored, storedOver, preview]);
-  const themeInEffect = stateChoiceWins({ configTheme, stored, storedOver }) ? stored : null;
-  const theme = useTheme(registries.themes, chosen, !suspended);
-  useLayoutEffect(() => {
-    themeChoice.setConfigTheme(configTheme, configThemeAt);
-    themeChoice.setActive(theme.id);
-  }, [themeChoice, configTheme, configThemeAt, theme.id]);
-  // The keycap hints (iteration 3 feedback): init.lua's `ui.hints`, else `:hints`'s choice in the
-  // State (appState re-renders when it changes), else shown.
-  const [hintsChoice] = useState(() => new HintsChoice(store));
-  hintsChoice.setConfig(config?.ui.hints ?? null);
-  const hintsShown = hintsChoice.shown();
-  useLayoutEffect(() => {
-    if (!suspended) document.documentElement.dataset.hints = hintsShown ? "on" : "off";
-  }, [hintsShown, suspended]);
+  const { theme, themeChoice, themeInEffect, hintsChoice, hintsShown } = useWorkspaceTheme(registries.themes, store, config, appearance, !suspended);
 
   const inventory = useInventory({
     backend,
@@ -357,7 +302,7 @@ function Workspace({
     pullFreshMinutes: options.pullFreshMinutes,
     clock,
   });
-  const { pending, pendingCount, plain, kept, gate } = inventory;
+  const { pendingCount, plain } = inventory;
   const check = useCheck({
     backend,
     registries,
@@ -433,41 +378,12 @@ function Workspace({
   const removing = usePanelState<{ host: string; group: string }>(focus);
   const signingOut = usePanelState<VaultAccount>(focus);
   const [details, setDetails] = useState<string | null>(null);
-  const editing = form.value?.kind === "edit" ? form.value.host : null;
 
-  // What Sessions work with: a password Host whose vault turns out locked (session.prepare code 14)
-  // brings up the lock screen, and the tab opens by itself once it's unlocked again; Plugins hear
-  // every Session's output; a new Host's key is asked about; shell hooks (ticket 121) and prompt
-  // fills (ticket 119), a nested ssh's (ticket 120) read at the shell's C mark against the
-  // Inventory as it is then.
-  const lockVault = vault.lock;
-  const asksAboutKeys = caps.has("hostKey");
-  const shellHooksInit = config?.terminal.shellHooks ?? null;
-  const canFill = caps.has("fill");
-  const canNestedFill = caps.has("nestedFill");
-  const [inventoryNow] = useState(() => new Latest<readonly Host[]>([]));
-  useLayoutEffect(() => inventoryNow.set(hosts?.hosts ?? []));
-  useEffect(() => {
-    tabs.configure({
-      onVaultLocked: () => void lockVault(),
-      outputTap: { output: (id, host, data, size) => plugins.output(id, host, data, size) },
-      asksAboutKeys,
-      shellHooks: {
-        on: (tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks),
-        screen: (size) => new XtermPromptScreen(size),
-      },
-      fillPrompts: canFill
-        ? {
-            userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
-            watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: inventoryNow.get, fill: canNestedFill }, nonce),
-          }
-        : null,
-    });
-    return () => tabs.configure({ outputTap: null });
-  }, [tabs, plugins, lockVault, asksAboutKeys, shellHooksInit, hostByName, canFill, canNestedFill, inventoryNow]);
+  const outputTap = useMemo(() => ({ output: plugins.output.bind(plugins) }), [plugins]);
+  useTabsConfig({ tabs, caps, config, hosts: hosts?.hosts ?? [], hostByName, lockVault: vault.lock, outputTap });
 
   const terminal = useTerminalEnv({ options: terminalOptions, theme, keymap, platform, viewMode, layout, say });
-  const sidebar = useSidebarModel({ registries, layout, sessions, hosts, hostByName, options, appState, store, caps, pending, addKeys: keyHint(keymap, "host add") });
+  const sidebar = useSidebarModel({ registries, layout, sessions, hosts, hostByName, options, appState, store, caps, pending: inventory.pending, addKeys: keyHint(keymap, "host add") });
   const staysInAppMode = (line: Line) => commands.get(line.split(" ")[0] ?? "")?.staysInAppMode ?? false;
   const unlocked = ready && !vault.locked;
   const keys = useAppKeys({
@@ -506,22 +422,6 @@ function Workspace({
   };
   const copy = (text: string) => platform.clipboard.writeText(text);
   const onScreenTab = sessions.tabs.find((t) => t.id === sessions.active);
-  const openHost = (host: string, here: boolean) => {
-    const current = tabs.snapshot().active;
-    if (!(here && current !== null && tabs.reconnect(current, host))) tabs.open(host);
-    store.update((s) => usedHost(s, host));
-  };
-  /** Hands a web service's URL to the default browser (ticket 18): http or https only, checked
-   * here and again in the Tauri shell. */
-  const openWeb = (host: string, service: string, url: string) => {
-    const checked = webUrl(url);
-    if (!checked) return say(`${host}'s ${service} has no http or https URL to open`);
-    if (!platform.openUrl) return say(`There's no browser to hand ${checked} to here`);
-    platform.openUrl(checked).then(
-      () => say(quiet(`Opened ${host}'s ${service} in the browser`, `Opened ${host}'s ${service} in the browser: ${checked}`)),
-      (e: unknown) => say(`Couldn't open ${checked}: ${errorText(e)}`),
-    );
-  };
   const openForm = (next: Form) => {
     if (next.kind === "changes") inventory.setPending((p) => p ?? { state: "loading" });
     form.open(next);
@@ -567,6 +467,35 @@ function Workspace({
     if (document.activeElement?.closest('[data-panel="keys"]')) focus.restore();
   }
   const selectedHost = () => sidebar.cursorRow()?.host ?? onScreenTab?.host ?? null;
+  const { openWeb, whyNoSave, ...session } = sessionCommands({
+    tabs,
+    sessions,
+    hostByName,
+    caps,
+    store,
+    platform,
+    say,
+    currentHost: () => details ?? selectedHost(),
+    openQuickPicker: () => {
+      if (overlay === null) focus.remember();
+      setOverlay("quick");
+    },
+  });
+  const inventoryCmds = inventoryActions({
+    backend,
+    info,
+    caps,
+    hosts,
+    hostByName,
+    groupNames,
+    inventory,
+    reloadHosts,
+    say,
+    selectedHost,
+    openForm,
+    askRemove: (h) => removing.open({ host: h.name, group: h.group }),
+    openCommandLine,
+  });
 
   // What commands act on. Rebuilt each render, so it always sees the current state.
   const ctx: CommandContext = {
@@ -575,45 +504,10 @@ function Workspace({
       if (overlay !== "picker") pickerTime.start();
       setOverlay("picker");
     },
-    connect: (name, here = false) => {
-      const host = hostByName.get(name);
-      if (!host && parseQuickTarget(name)) return ctx.quickConnect(name);
-      if (!host) return say(`No Host named ${name}`);
-      if (!host.reviewed) return say(notReviewedMessage(name, caps.has("add")));
-      openHost(name, here);
-    },
-    quickConnect: (text) => {
-      if (!caps.has("quickConnect")) return say(caps.needsNewer("quickConnect"));
-      if (text === null) {
-        if (overlay === null) focus.remember();
-        return setOverlay("quick");
-      }
-      const to = parseQuickTarget(text);
-      if (!to) return say(`${text} isn't a Quick Connect address: type user@address, or user@address:port`);
-      tabs.openQuick(to);
-    },
-    // A Host, or a web service in the default browser (ticket 18, decision Q71).
-    open: (arg) => {
-      const to = resolveOpen(arg, hostByName, details ?? selectedHost(), sessions.tabs.map((t) => t.host));
-      if (to.kind === "error") return say(to.message);
-      if (to.kind === "web") return openWeb(to.host, to.service, to.url);
-      const tab = sessions.tabs.find((t) => t.host === to.host);
-      if (tab) tabs.select(tab.id);
-      else ctx.connect(to.host);
-    },
-    reconnect: () => {
-      if (sessions.active !== null) tabs.reconnect(sessions.active);
-    },
+    ...session,
     checkHost: check.checkHost,
     checkBox: check.checkBox,
     stopCheck: check.stopOwn,
-    sessionOnScreen: () => (onScreenTab ? { host: onScreenTab.host, quick: Boolean(onScreenTab.quick) } : null),
-    selectRelative: (delta) => tabs.selectRelative(delta),
-    selectNth: (n) => tabs.selectNth(n),
-    close: (n) => {
-      const id = n === null ? sessions.active : (sessions.tabs[n - 1]?.id ?? null);
-      if (id !== null) tabs.close(id);
-    },
     toggleSidebar: () => toggle("sidebar"),
     toggleStatusBar: () => toggle(layout.bar),
     openCommandLine,
@@ -658,26 +552,7 @@ function Workspace({
     selectedHost,
     hostNames: () => hosts?.hosts.map((h) => h.name) ?? [],
     groupNames: () => groupNames,
-    inventory: (op) => {
-      if (!caps.has("live")) return say(caps.needsNewer("live"));
-      if (op.op === "remove") {
-        const h = hostByName.get(op.host);
-        if (!h) return say(`No Host named ${op.host}`);
-        return removing.open({ host: h.name, group: h.group });
-      }
-      if (op.op === "group-delete" && op.to === undefined) {
-        const members = hosts?.hosts.filter((h) => h.group === op.group) ?? [];
-        if (members.length > 0) {
-          // Where should they go? The command line asks, with the groups to complete.
-          if (groupNames.every((g) => g === op.group)) {
-            return say(`${op.group} has ${countOf(members.length, "Host")} and there's no other group for them: make one first (:group new)`);
-          }
-          openCommandLine(`group delete ${op.group} `);
-          return say(`${op.group} has ${countOf(members.length, "Host")}: name the group they move to (Tab completes), or Esc to keep it`);
-        }
-      }
-      void inventory.run(op);
-    },
+    ...inventoryCmds,
     say,
     viewMode: () => viewMode,
     setViewMode: (mode) => setViewMode(mode ?? otherMode(viewMode)),
@@ -704,85 +579,12 @@ function Workspace({
       if (!hostByName.has(host)) return say(`No Host named ${host}`);
       setDetails(host);
     },
-    edit: (name) => {
-      const host = name ?? selectedHost();
-      if (!host) return say("edit needs a Host name (no Host is selected)");
-      if (!hostByName.has(host)) return say(`No Host named ${host}`);
-      if (!caps.has("edit")) return say(caps.needsNewer("edit"));
-      openForm({ kind: "edit", host });
-    },
-    addHost: (inGroup) => {
-      if (!caps.has("add")) return say(caps.needsNewer("add"));
-      const at = selectedHost();
-      openForm({ kind: "add", group: inGroup ?? (at && hostByName.get(at)?.group) ?? Object.keys(hosts?.groups ?? {})[0] ?? "" });
-    },
-    integrate: () => {
-      if (!onScreenTab) return say("No Session to integrate: open one first.");
-      const label = onScreenTab.label;
-      void tabs.integrate(onScreenTab.id).then((r) => say(INTEGRATE_SAYS[r](label)));
-    },
     saveSession: () => {
-      if (!caps.has("saveToVault")) return say(caps.needsNewer("saveToVault"));
-      const tab = onScreenTab;
-      if (!tab?.save) return say("Nothing to save: tick Save to vault when you type a Session's password.");
-      if (tab.save.saved !== null) return say(`Already saved as ${tab.save.saved}.`);
-      if (!tab.save.loggedIn) return say(`${tab.host} hasn't logged in yet: roster saves the password only after it works.`);
-      openForm({ kind: "save", tab: tab.id });
-    },
-    fillPrompt: () => {
-      if (!canFill) return say(caps.needsNewer("fill"));
-      const id = sessions.active;
-      if (id === null) return say("No Session to fill");
-      tabs.fill(id).then(
-        (host) => say(quiet(`Filled ${host}'s password`)),
-        (e: unknown) => {
-          const fix = e instanceof BackendCallError ? e.data?.["fix"] : undefined;
-          say(typeof fix === "string" && fix ? `${errorText(e)} - ${fix}` : errorText(e));
-        },
-      );
-    },
-    review: (name, reviewed = true) => {
-      const verb = reviewed ? "review" : "unreview";
-      const host = name ?? selectedHost();
-      if (!host) return say(`${verb} needs a Host name (no Host is selected)`);
-      const h = hostByName.get(host);
-      if (!h) return say(`No Host named ${host}`);
-      if (!caps.has("add")) return say(caps.needsNewer("review", `:${verb}`));
-      if (!reviewed && !caps.has("unreview")) return say(caps.needsNewer("unreview"));
-      const already = reviewed ? `${host} is already reviewed.` : `${host} isn't reviewed.`;
-      if (h.reviewed === reviewed) return say(already);
-      backend.reviewHost(host, reviewed).then(
-        (r) => {
-          reloadHosts();
-          inventory.refreshPending();
-          say(r.changed ? reviewedMessage(host, reviewed, plain, kept, afterChange(r)) : already);
-        },
-        (e: unknown) => say(`Couldn't mark ${host} ${reviewed ? "reviewed" : "unreviewed"}: ${errorText(e)}`),
-      );
-    },
-    showChanges: (then) => {
-      if (!caps.has("edit")) return say(caps.needsNewer("changes"));
-      if (plain && info) return say(nothingPending(info.inventory));
-      if (then === "publish" && !caps.has("publish")) return say(caps.needsNewer("publish"));
-      inventory.refreshPending();
-      openForm({ kind: "changes", step: then ?? "diff" });
+      const why = whyNoSave(onScreenTab);
+      if (why !== null) return say(why);
+      if (onScreenTab) openForm({ kind: "save", tab: onScreenTab.id });
     },
     switchInventory: inventories.ask,
-    pull: () => {
-      if (!caps.has("edit")) return say(caps.needsNewer("pull"));
-      say(quiet("Pulling the infra repo…"));
-      gate.pull().then(
-        (r) =>
-          say(
-            !r.upstream
-              ? "This branch has no upstream: nothing to pull."
-              : r.updated
-                ? `Pulled ${countOf(r.commits, "commit")} from ${r.upstream}${afterPull(r)}.`
-                : `Up to date with ${r.upstream}.`,
-          ),
-        (e: unknown) => say(`Couldn't pull: ${errorText(e)}`),
-      );
-    },
     config: (what) => configActions.run[what](),
     openFinder: (source, query) => {
       if (!registries.finders.get(source)) return say(`No finder named ${source}`);
@@ -806,64 +608,16 @@ function Workspace({
       onScreen: () => (onScreenTab ? { session: onScreenTab.id, host: onScreenTab.quick ? null : onScreenTab.host } : null),
     }),
   );
-  const [panelOpeners] = useState(() => new Latest({ plugins: () => {}, packages: () => {}, tutorial: (def: TutorialDef) => void def }));
-  useLayoutEffect(() =>
-    panelOpeners.set({
-      plugins: () => pluginsPanel.open(true),
-      packages: () => packagesPanel.open(true),
-      tutorial: (def) => {
-        const anchor = tutor ? resumeAt(def, tutor.progress.done(def.id)) : undefined;
-        helpView.open({ page: tutorPage(def.id), ...(anchor ? { anchor } : {}) });
-      },
-    }),
-  );
-  useEffect(
-    () =>
-      registerBuiltins(registries, {
-        help: helpView,
-        theme: themeChoice,
-        hints: hintsChoice,
-        messages: { choice: messagesChoice, log: messageLog, open: () => viewHost.open(MESSAGES_VIEW) },
-        views: viewHost,
-        panels: panelLayout,
-        plugins: { manager: plugins, openPlugins: () => panelOpeners.get().plugins(), openPackages: () => panelOpeners.get().packages() },
-        // `:tutor` (ticket 55): starts a tutorial on the demo Inventory, or, on it, opens the page again.
-        tutor: tutor
-          ? {
-              start: (def) =>
-                tutor.demo
-                  ? def.id === tutor.demo.tutorial.id
-                    ? panelOpeners.get().tutorial(def)
-                    : tutor.demo.switchTo(def)
-                  : tutor.start?.(def, plugins.forDemo()),
-              quit: () => {
-                if (!tutor.demo) return false;
-                tutor.demo.leave();
-                return true;
-              },
-              reset: (def) => {
-                tutor.progress.reset(def.id);
-                if (tutor.demo?.tutorial.id === def.id) panelOpeners.get().tutorial(def);
-              },
-            }
-          : null,
-      }),
-    [registries, helpView, themeChoice, hintsChoice, messagesChoice, messageLog, viewHost, panelLayout, plugins, panelOpeners, tutor],
-  );
-  // `:messages`'s view: the new list goes in before the old one comes out, so an open one stays open.
-  const loggedMessages = useSyncExternalStore(messageLog.subscribe, messageLog.snapshot);
-  const [messagesView] = useState(() => new Latest<(() => void) | null>(null));
-  useEffect(() => {
-    const remove = registries.views.register(logView(loggedMessages));
-    messagesView.get()?.();
-    messagesView.set(remove);
-  }, [registries, loggedMessages, messagesView]);
-  useEffect(
-    () => () => {
-      messagesView.get()?.();
-      messagesView.set(null);
-    },
-    [registries, messagesView],
+  const messagesDeps = useMemo(() => ({ choice: messagesChoice, log: messageLog, open: () => viewHost.open(MESSAGES_VIEW) }), [messagesChoice, messageLog, viewHost]);
+  const openTutorial = (def: TutorialDef) => {
+    const anchor = tutor ? resumeAt(def, tutor.progress.done(def.id)) : undefined;
+    helpView.open({ page: tutorPage(def.id), ...(anchor ? { anchor } : {}) });
+  };
+  useBuiltins(
+    registries,
+    { help: helpView, theme: themeChoice, hints: hintsChoice, messages: messagesDeps, views: viewHost, panels: panelLayout, plugins },
+    tutor,
+    { plugins: () => pluginsPanel.open(true), packages: () => packagesPanel.open(true), tutorial: openTutorial },
   );
   const configPanel = config?.panel;
   const configViews = config?.views;
@@ -874,77 +628,24 @@ function Workspace({
     panelLayout.setDefaults(configPanel || configViews ? { width: configPanel?.width ?? null, views } : NO_DEFAULTS);
   }, [panelLayout, configPanel, configViews]);
 
-  // The State file, once: what changed before it was read (Hosts picked) is replayed over it; and
-  // what's new (ticket 47), said once after an upgrade when the workspace first shows.
-  const [newsLine, setNewsLine] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    void store.load().then(() => {
-      const { note, seen } = newsNote(store.snapshot(), appVersion);
-      if (store.get(NEWS_KEY) !== seen) store.set(NEWS_KEY, seen);
-      if (note && live) setNewsLine(note);
-    });
-    return () => {
-      live = false;
-    };
-  }, [store, appVersion]);
-  // The window's size and place go in the State; the Tauri shell restores them at the next start.
-  useEffect(() => platform.window?.watchGeometry((g) => store.set("window", g)), [platform, store]);
-  useEffect(() => {
-    if (!unlocked || !newsLine) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- saying it once the workspace shows is the effect
-    say(newsLine);
-    setNewsLine(null);
-  }, [unlocked, newsLine, say]);
-  // A fixture's Sessions open once the app is first unlocked, as if the user had opened them.
-  const [opened] = useState(() => new Latest(false));
-  useEffect(() => {
-    if (!unlocked || opened.get() || !openAtStart) return;
-    opened.set(true);
-    for (const host of openAtStart) tabs.open(host);
-  }, [unlocked, openAtStart, tabs, opened]);
-  // On the demo Inventory: the tutorial running is the demo's too (a Plugin's isn't registered in
-  // the demo's registries), and once the demo is up its page opens where you left off.
-  const demoTutorial = tutor?.demo?.tutorial ?? null;
-  useEffect(() => {
-    if (demoTutorial && registries.tutorials.get(demoTutorial.id) !== demoTutorial) return registries.tutorials.register(demoTutorial);
-  }, [registries, demoTutorial]);
-  useEffect(() => {
-    if (unlocked && demoTutorial) panelOpeners.get().tutorial(demoTutorial);
-  }, [unlocked, demoTutorial, panelOpeners]);
-  // Closing the app ends every Session.
-  useEffect(() => () => tabs.closeAll(), [tabs]);
-
-  // Where the keys go. A Plugin's prompt that came up behind the lock screen (a Package init.lua
-  // names, at start) keeps them, on its safe choice, so Esc answers it and a stray Enter installs
-  // nothing (ticket 56, decision Q87); this workspace's own prompt: the demo's never reaches for yours.
-  const [promptButton] = useState(() => new Latest<HTMLButtonElement | null>(null));
-  const keysHome = useCallback(() => focus.toMain(promptButton.get()), [promptButton, focus]);
-  useEffect(() => {
-    if (unlocked) keysHome();
-  }, [unlocked, keysHome]);
-  // With the last Session closed, the keys need somewhere to go.
   const noSessions = sessions.tabs.length === 0;
-  useEffect(() => {
-    if (noSessions && (document.activeElement === document.body || document.activeElement === null)) focus.toMain();
-  }, [noSessions, focus]);
-  // Back from the demo Inventory: the keys come back here.
-  const [wasSuspended] = useState(() => new Latest(suspended));
-  useEffect(() => {
-    if (wasSuspended.get() && !suspended) keysHome();
-    wasSuspended.set(suspended);
-  }, [suspended, wasSuspended, keysHome]);
-  // A Plugin's question (ticket 78) or float (ticket 91) takes the keys; answering or closing puts
-  // them back where they were. Before the panel's own effect focuses its button (layout effects
-  // run first), and only when a new one comes up.
-  const confirmId = pluginSnap.confirm?.id ?? null;
-  useLayoutEffect(() => {
-    if (confirmId !== null && !document.activeElement?.closest(".plugin-confirm")) focus.remember();
-  }, [confirmId, focus]);
-  const floatKey = pluginSnap.float ? `${pluginSnap.float.plugin}:${pluginSnap.float.title}` : null;
-  useLayoutEffect(() => {
-    if (floatKey !== null && !document.activeElement?.closest(".plugin-float")) focus.remember();
-  }, [floatKey, focus]);
+  const { setPromptButton } = useWorkspaceLife({
+    store,
+    platform,
+    registries,
+    tabs,
+    appVersion,
+    unlocked,
+    suspended,
+    noSessions,
+    openAtStart,
+    demoTutorial: tutor?.demo?.tutorial ?? null,
+    openTutorial,
+    focus,
+    pluginConfirm: pluginSnap.confirm?.id ?? null,
+    pluginFloat: pluginSnap.float ? `${pluginSnap.float.plugin}:${pluginSnap.float.title}` : null,
+    say,
+  });
 
   // The custom title bar (decision Q32) sits above every screen, the lock screen too, so the window
   // can always be moved and closed; the view mode's layout says whether it shows at all. The
@@ -960,27 +661,24 @@ function Workspace({
   const detailsHost = details === null ? undefined : hostByName.get(details);
   const toolbarCtx: ToolbarContext = { pendingCount, sidebarShown: sidebar.shown, quickConnect: caps.has("quickConnect"), detailsShown: detailsHost !== undefined, plain };
   const toolbarControls = unlocked && isShown(layout, "toolbar") ? shownControls(toolbarDefs, layout.controls, toolbarCtx) : [];
-  const toolbar = (side: "start" | "end") => (
-    <Toolbar controls={toolbarControls} ctx={toolbarCtx} keysFor={(command) => keyHint(keymap, command)} leader={options.leader} run={runFromUi} side={side} />
-  );
   const frame = (content: ReactNode) => (
     <TypedPasswordsContext.Provider value={typed}>
       <HintsShown value={hintsShown}>
         <RosterApi.Provider value={info ? caps.api : undefined}>
-          <div className="window">
-            {isShown(layout, "titlebar") && <TitleBar controls={platform.window} start={toolbar("start")} end={toolbar("end")} />}
-            {!isShown(layout, "titlebar") && toolbarControls.length > 0 && (
-              <div className="toolbar-bar" data-tauri-drag-region>
-                {toolbar("start")}
-                <div className="titlebar-fill" />
-                {toolbar("end")}
-              </div>
-            )}
-            {tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
-            <div className="window-body">{content}</div>
-            {report !== toastClosedFor && <ConfigToast error={report?.error ?? null} warnings={warnings} onClose={() => setToastClosedFor(report)} />}
-            <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
-          </div>
+          <WindowFrame
+            layout={layout}
+            controls={platform.window}
+            toolbar={{ controls: toolbarControls, ctx: toolbarCtx, keymap, leader: options.leader, run: runFromUi }}
+            banner={tutor?.demo && <DemoBanner tutorial={tutor.demo.tutorial} done={tutorCtx?.done(tutor.demo.tutorial.id) ?? null} onLeave={tutor.demo.leave} />}
+            over={
+              <>
+                {report !== toastClosedFor && <ConfigToast error={report?.error ?? null} warnings={warnings} onClose={() => setToastClosedFor(report)} />}
+                <PluginNotices notices={pluginSnap.notices} onClose={(id) => plugins.dismissNotice(id)} onAction={(id, i) => plugins.noticeAction(id, i)} />
+              </>
+            }
+          >
+            {content}
+          </WindowFrame>
         </RosterApi.Provider>
       </HintsShown>
     </TypedPasswordsContext.Provider>
@@ -1053,7 +751,6 @@ function Workspace({
       }
       return null;
     });
-  const finderSource = overlay !== null && typeof overlay === "object" && "finder" in overlay ? finderSources.find((s) => s.id === overlay.finder) : undefined;
   const panelKeys = keyHint(keymap, "panel");
   // Every docked panel and view goes in a frame: docked or full window, its width, its edge.
   const framed = (id: string, title: string, kind: string, node: ReactNode, extra: { side?: "left" | "right"; fallback?: PanelPlace } = {}) => (
@@ -1061,20 +758,34 @@ function Workspace({
       {node}
     </PanelFrame>
   );
-  const formDone = (said: Message) => {
-    form.close();
-    reloadHosts();
-    inventory.refreshPending();
-    say(said);
-  };
-  const closeFormAndRun = (line: Line) => {
-    form.close();
-    run(line);
-  };
   const actions = { run, copy };
-  const saveId = form.value?.kind === "save" ? form.value.tab : null;
-  const saveTab = sessions.tabs.find((t) => t.id === saveId) ?? null;
-  const editHost = editing === null ? undefined : hostByName.get(editing);
+  const overlayProps = {
+    overlay,
+    locked: vault.locked,
+    close: closeOverlay,
+    run,
+    commands,
+    keymap,
+    options,
+    caps,
+    hosts: conn.hosts,
+    recent: appState.recentHosts,
+    sessions,
+    completion: {
+      foldIds: sidebar.rows.filter((r) => r.foldable).map((r) => r.id),
+      groupNames,
+      inventoryNames: inventories.inventories?.inventories.map((i) => i.name) ?? [],
+      webServices: (name: string | null) => {
+        const h = hostByName.get(name ?? details ?? selectedHost() ?? "");
+        return h ? webServices(h) : [];
+      },
+    },
+    finders: finderSources,
+    finderCtx,
+    say,
+    helpFromLine: (line: string, caret: number, topic: string) => help.fromLine(line, caret, () => run(`help ${topic}`)),
+    openQuick: (to: QuickTarget) => tabs.openQuick(to),
+  };
 
   const shell = (
     <div className={`screen app ${appMode ? "mode-app" : "mode-terminal"}`} data-view={viewMode}>
@@ -1162,7 +873,7 @@ function Workspace({
               addressOf={(name) => hostByName.get(name)?.ip ?? null}
               canSave={caps.has("saveToVault") && vault.view.state === "unlocked"}
               saveKeys={keyHint(keymap, "save")}
-              canFill={canFill}
+              canFill={caps.has("fill")}
               fillKeys={keyHint(keymap, "fill")}
               reveal={reveal}
             />
@@ -1202,129 +913,26 @@ function Workspace({
           />
         )}
         {check.check && framed("check", "Check", "check", <CheckPanel check={check.check} rows={errorRows} actions={actions} onClose={check.close} onStop={check.stop} />)}
-        {editHost &&
-          framed(
-            "edit",
-            "Edit",
-            "edit",
-            <EditPanel
-              key={editHost.name}
-              backend={backend}
-              host={editHost}
-              pendingCount={pendingCount}
-              rows={errorRows}
-              actions={actions}
-              pull={gate}
-              onSaved={(update) => formDone(savedMessage(update, plain))}
-              onClose={form.close}
-              {...(caps.has("add") ? { onReview: (name: string) => closeFormAndRun(`review ${name}`) } : {})}
-              {...(caps.has("unreview") ? { onUnreview: (name: string) => closeFormAndRun(`host unreview ${name}`) } : {})}
-            />,
-          )}
-        {form.value?.kind === "add" &&
-          hosts &&
-          framed(
-            "add",
-            "Add a Host",
-            "add",
-            <AddPanel
-              backend={backend}
-              hosts={hosts}
-              group={form.value.group}
-              pendingCount={pendingCount}
-              rows={errorRows}
-              actions={actions}
-              pull={gate}
-              chooseTarget={configures}
-              fillFromItem={caps.has("itemFields")}
-              targetsVersion={targetsVersion}
-              onAdded={(r) => formDone(addedMessage(r, plain, kept))}
-              onClose={form.close}
-            />,
-          )}
-        {saveTab?.save &&
-          hosts &&
-          framed(
-            "save",
-            "Save to vault",
-            "save",
-            <SavePanel
-              key={saveTab.id}
-              plain={plain}
-              backend={backend}
-              hosts={hosts}
-              what={
-                saveTab.quick
-                  ? { quick: { id: saveTab.save.held, to: saveTab.quick.to, hostname: saveTab.save.hostname } }
-                  : { host: { held: saveTab.save.held, name: saveTab.host } }
-              }
-              group={Object.keys(hosts.groups)[0] ?? ""}
-              pendingCount={pendingCount}
-              rows={errorRows}
-              actions={actions}
-              pull={gate}
-              chooseTarget={configures}
-              targetsVersion={targetsVersion}
-              onSaved={(r) => {
-                tabs.saved(saveTab.id, r.host.name);
-                formDone(savedToVaultMessage(r, plain, kept));
-              }}
-              onClose={form.close}
-            />,
-          )}
-        {form.value?.kind === "changes" &&
-          pending &&
-          framed(
-            "changes",
-            "Pending changes",
-            "changes",
-            <ChangesPanel
-              key={form.value.step}
-              changes={pending}
-              step={form.value.step}
-              editKeys={keyHint(keymap, "edit")}
-              leader={options.leader}
-              canPublish={caps.has("publish")}
-              rows={errorRows}
-              actions={actions}
-              onDiscard={async () => {
-                try {
-                  say(discardedMessage(await backend.discardChanges()));
-                } catch (e) {
-                  say(`Couldn't discard: ${errorText(e)}`);
-                }
-                reloadHosts();
-                inventory.refreshPending();
-              }}
-              onPublish={async (text) => {
-                // After a timeout, publishChecked asks roster whether it was published, and says so.
-                const r = await publishChecked(backend, text);
-                reloadHosts();
-                inventory.refreshPending();
-                say(publishedMessage(r));
-                return r;
-              }}
-              onClose={form.close}
-            />,
-          )}
-        {removing.value && (
-          <ConfirmPanel
-            key={removing.value.host}
-            title={`Remove ${removing.value.host}?`}
-            body={
-              <>
-                <code>{removing.value.host}</code> leaves group {removing.value.group} in roster.yml,{" "}
-                {plain ? "saved straight away (roster keeps the file as it was in roster.yml.bak)." : "as a Pending change you can discard until it’s Published."} Its vault
-                item, if it has one, stays in the vault.
-              </>
-            }
-            action="Remove"
-            onConfirm={async () => {
-              const host = removing.value?.host ?? "";
-              await inventory.run({ op: "remove", host });
-              removing.close();
-            }}
-            onClose={removing.close}
+        {hosts && (
+          <Forms
+            form={form}
+            removing={removing}
+            backend={backend}
+            hosts={hosts}
+            hostByName={hostByName}
+            sessions={sessions}
+            tabs={tabs}
+            caps={caps}
+            inventory={inventory}
+            vaultTargets={{ choose: configures, version: targetsVersion }}
+            errorRows={errorRows}
+            actions={actions}
+            layout={panelLayout}
+            panelKeys={panelKeys}
+            editKeys={keyHint(keymap, "edit")}
+            leader={options.leader}
+            reloadHosts={reloadHosts}
+            say={say}
           />
         )}
         {inventories.question.value && (
@@ -1358,55 +966,17 @@ function Workspace({
             onClose={signingOut.close}
           />
         )}
-        {pluginSnap.prompts[0] && (
-          <PluginPrompt
-            key={`${pluginSnap.prompts[0].kind}:${pluginSnap.prompts[0].manifest.name}:${pluginSnap.prompts[0].package?.commit ?? ""}`}
-            prompt={pluginSnap.prompts[0]}
-            safe={(el) => promptButton.set(el)}
-            onAnswer={(allow) => {
-              const prompt = pluginSnap.prompts[0];
-              if (prompt) void plugins.answer(prompt, allow);
-              focus.restore();
-            }}
-          />
-        )}
-        {pluginsPanel.value &&
-          framed(
-            "plugins",
-            "Plugins",
-            "plugins",
-            <PluginsPanel
-              snapshot={pluginSnap}
-              onGrant={(name, perm, on) => void plugins.setGrant(name, perm, on)}
-              onClose={pluginsPanel.close}
-              onRefresh={() => void plugins.refreshRequests()}
-              onOpen={() => void plugins.refreshData()}
-              onRun={run}
-            />,
-          )}
-        {packagesPanel.value && framed("packages", "Packages", "packages", <PackagesPanel snapshot={pluginSnap} onClose={packagesPanel.close} onRun={run} />)}
-        {pluginSnap.confirm && (
-          <PluginConfirmPanel
-            key={pluginSnap.confirm.id}
-            confirm={pluginSnap.confirm}
-            onAnswer={(yes) => {
-              plugins.answerConfirm(yes);
-              focus.restore();
-            }}
-          />
-        )}
-        {pluginSnap.float && (
-          <PluginFloatPanel
-            key={pluginSnap.float.plugin}
-            float={pluginSnap.float}
-            onAction={(i) => plugins.floatAction(i)}
-            onLink={(i) => plugins.openLink(i)}
-            onClose={() => {
-              plugins.closeFloat();
-              focus.restore();
-            }}
-          />
-        )}
+        <PluginLayers
+          plugins={plugins}
+          snapshot={pluginSnap}
+          pluginsPanel={pluginsPanel}
+          packagesPanel={packagesPanel}
+          layout={panelLayout}
+          panelKeys={panelKeys}
+          safe={setPromptButton}
+          restoreFocus={focus.restore}
+          run={run}
+        />
         {keysPanel.value &&
           framed(
             "keys",
@@ -1439,46 +1009,7 @@ function Workspace({
             />,
           )}
       </div>
-      {overlay !== null && typeof overlay === "object" && "cmdline" in overlay && (
-        <CommandLine
-          key={overlay.cmdline}
-          initial={overlay.cmdline}
-          complete={(input) =>
-            complete(commands, input, hosts?.hosts.map((h) => h.name) ?? [], {
-              foldIds: sidebar.rows.filter((r) => r.foldable).map((r) => r.id),
-              sessions: sessions.tabs.map((t) => t.host),
-              groupNames,
-              inventoryNames: inventories.inventories?.inventories.map((i) => i.name) ?? [],
-              webServices: (name) => {
-                const h = hostByName.get(name ?? details ?? selectedHost() ?? "");
-                return h ? webServices(h) : [];
-              },
-            })
-          }
-          describe={(candidate) => {
-            // A command name: its label and key. A Session's number: its Host.
-            const [id = "", arg = ""] = candidate.split(" ");
-            const command = commands.get(id);
-            if (command && arg === "") return { label: command.label(), keys: keyHint(keymap, id) };
-            const tab = command?.arg === "number" ? sessions.tabs[Number(arg) - 1] : undefined;
-            return tab ? { label: tab.host, keys: null } : null;
-          }}
-          keys={keymap.cmdline}
-          leader={options.leader}
-          {...(overlay.caret !== undefined ? { caret: overlay.caret } : {})}
-          onHelp={(line, caret) => {
-            const topic = lineTopic(commands, line);
-            if (!topic) return say(`No command starts with ${line.trim().split(/\s+/)[0]}: Tab lists them`);
-            closeOverlay();
-            help.fromLine(line, caret, () => run(`help ${topic}`));
-          }}
-          onClose={closeOverlay}
-          onRun={(line) => {
-            closeOverlay();
-            run(line);
-          }}
-        />
-      )}
+      <Overlays at="line" {...overlayProps} />
       {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
           line as visually hidden text, so a screen reader still hears what changed. */}
       <div className={spokenMessage ? "message-line visually-hidden" : "message-line"} role="status">
@@ -1503,64 +1034,7 @@ function Workspace({
           leave {viewMode === "focus" ? "Focus" : "this mode"}
         </div>
       )}
-      {finderSource && finderCtx && !vault.locked && (
-        <Finder
-          key={finderSource.id}
-          source={finderSource}
-          {...(typeof overlay === "object" && overlay && "finder" in overlay && overlay.query ? { initialQuery: overlay.query } : {})}
-          ctx={finderCtx}
-          keymap={keymap}
-          vim={options.vim}
-          onClose={closeOverlay}
-          onChoose={(item: FinderItem) => {
-            closeOverlay();
-            run(item.command);
-          }}
-          onHelp={(item: FinderItem) => {
-            const topic = itemTopic(commands, finderSource, item);
-            closeOverlay();
-            run(topic ? `help ${topic}` : "help");
-          }}
-        />
-      )}
-      {(overlay === "picker" || overlay === "quick") && !vault.locked && (
-        <Picker
-          quickFirst={overlay === "quick"}
-          {...(caps.has("quickConnect")
-            ? {
-                onQuick: (to: QuickTarget) => {
-                  closeOverlay();
-                  tabs.openQuick(to);
-                },
-              }
-            : {})}
-          hosts={conn.hosts}
-          recent={appState.recentHosts}
-          vim={options.vim}
-          keymap={keymap}
-          onClose={closeOverlay}
-          onOpen={(host, how) => {
-            closeOverlay();
-            run(`${how?.here ? "here" : "connect"} ${host.name}`);
-          }}
-          onInfo={(host: Host) => {
-            closeOverlay();
-            run(`info ${host.name}`);
-          }}
-          onHelp={(topic: string) => {
-            closeOverlay();
-            run(`help ${topic}`);
-          }}
-          {...(caps.has("add")
-            ? {
-                onReview: (host: Host) => {
-                  closeOverlay();
-                  run(`review ${host.name}`);
-                },
-              }
-            : {})}
-        />
-      )}
+      <Overlays at="dialog" {...overlayProps} />
     </div>
   );
   const lockKey = keyHint(keymap, "lock");
