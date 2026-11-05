@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from ..hosts import NO_PASSWORD  # noqa: F401 (providers.NO_PASSWORD: what its callers read)
 from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
     AlreadyLoggedIn,
     ApiKeyRejected,
@@ -101,7 +102,6 @@ PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
 BOX_SETTINGS = {}         # name -> this Box's own settings, from the app's init.lua (`roster serve`'s vault.configure):
                           #   paths and choices only, never a secret. They win over roster.yml's.
 PROVIDER_STATE = {}       # name -> per-run scratch space (e.g. "already unlocked")
-NO_PASSWORD = ("agent", "key", "none")
 MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no session file, no BW_PASSWORD, no prompt
 JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr
 _secrets = {}
