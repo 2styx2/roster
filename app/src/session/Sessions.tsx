@@ -24,6 +24,8 @@ import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { useForgetOnLock } from "../lock/forgetOnLock";
+import { revealInCard } from "./reveal";
+import { slip, type Message } from "../ui/messages";
 
 /** Where a Session is on its way to a shell (issue #78): `starting` while roster prepares it and
  * ssh starts on this Box, `logging-in` once ssh runs and the Host hasn't answered yet, null once
@@ -238,6 +240,24 @@ export function ConnectCard({
     if (passwordField.current) passwordField.current.value = "";
   });
   const keysNote = useId();
+  // Which button Enter acts on now, so its ↵ shows there and nowhere else (round 21): the
+  // focused button; in Quick Connect, Trust also while the password field or the card itself has
+  // focus (Enter there submits). Elsewhere (the box, the help pointer) neither shows it.
+  const [enterOn, setEnterOn] = useState<"trust" | "cancel" | null>(null);
+  const noteFocus = (at: EventTarget | null) => {
+    const el = at instanceof Element ? at : null;
+    setEnterOn(
+      el === null
+        ? null
+        : el.closest(".key-cancel")
+          ? "cancel"
+          : el === trustButton.current ||
+              (checkedBox.current !== null &&
+                (el === passwordField.current || el === card.current))
+            ? "trust"
+            : null,
+    );
+  };
   // Whether to save the password once it logs in: a choice, not a secret, so plain state.
   const [save, setSave] = useState(false);
   // Quick Connect's key question: Enter connects only once the key is marked checked, so a
@@ -255,33 +275,16 @@ export function ConnectCard({
   const asksPassword =
     phase === "password" && prompt !== null && answers?.connect !== undefined;
   const asking = question || asksPassword;
-  // Scrolls Quick Connect's card just enough that the fingerprint's top and "I've checked this
-  // key" are in view together, clear of the sticky title, the footer and their 12 px fades
-  // (round 19: at 480×320 the box asked about a key scrolled out of sight).
+  // Scrolls Quick Connect's card so "I've checked this key" is whole between the title's and the
+  // footer's fades, with the fingerprint's top too when both fit (the box wins when they don't),
+  // and no line cut by either edge (round 21: round 20 read the pin from the stuck title's
+  // offsetTop, so from the password field the card never scrolled back and the box stayed under
+  // the title).
   const revealBox = () => {
     const c = card.current;
-    const print = c?.querySelector(".key-print");
-    const row = checkedBox.current?.closest("label");
-    if (!c || !print || !row) return;
-    const fade = FADE_PX;
-    const top =
-      (c.querySelector(".connect-title")?.getBoundingClientRect().bottom ??
-        c.getBoundingClientRect().top) + fade;
-    const bottom =
-      (c.querySelector(".key-actions")?.getBoundingClientRect().top ??
-        c.getBoundingClientRect().bottom) - fade;
-    const from = print.getBoundingClientRect().top;
-    const to = row.getBoundingClientRect().bottom;
-    let next = c.scrollTop;
-    if (from < top) next -= top - from;
-    else if (to > bottom) next += Math.min(to - bottom, from - top);
-    // Once it scrolls at all, at least as far as the title takes to pin (what lies above it: the
-    // map, in a tall window), so the title doesn't creep when the card scrolls on; and in whole
-    // pixels, so the sticky footer never lands half a pixel off.
-    const pin =
-      c.querySelector<HTMLElement>(".connect-title")?.offsetTop ?? 0;
-    if (next > 0 && next < pin) next = pin;
-    c.scrollTop = Math.round(next);
+    const row = checkedBox.current?.closest(".quick-checked-row");
+    if (!c || !row) return;
+    revealInCard(c, row, c.querySelector(".key-print"), FADE_PX);
   };
   // The question's edges say what's past them (round 20): the title's rule and fade only once
   // something is under it, the footer's fade only while more lies below it, so neither fades a
@@ -319,9 +322,10 @@ export function ConnectCard({
         // footer is always in view, so the card stays at its top (round 18: Cancel's scroll had
         // opened it 53 px down at 480×320, its first lines under the title).
         // Quick Connect's box is shown with the key it vouches for (round 19).
+        // Either way it lands whole between the fades, no line cut at an edge (round 21).
         if (target && target === checkedBox.current) revealBox();
-        else if (target && !target.closest(".key-actions"))
-          target.scrollIntoView?.({ block: "nearest" });
+        else if (target && card.current && !target.closest(".key-actions"))
+          revealInCard(card.current, target, null, FADE_PX);
       }
     if (asking) asked.current = true;
     else if (asked.current) {
@@ -454,17 +458,30 @@ export function ConnectCard({
                 e.preventDefault();
                 // A control in the pinned title or footer is always in view: focusing it never
                 // scrolls the card (round 20: Shift+Tab to Trust scrolled it 24 px, a line of
-                // the question half under the title). Any other control scrolls just enough,
-                // clear of both (scroll-padding), as Tab would.
+                // the question half under the title). Any other control scrolls just enough to
+                // sit whole between the fades, to a scroll where no line is cut by the title's
+                // rule or the footer's edge (round 21: Tab to `:help host-keys` left the box's
+                // row half under the title); the box brings the key with it.
+                next.focus({ preventScroll: true });
                 const pinned =
                   next.closest(".key-actions, .connect-title") !== null;
-                next.focus({ preventScroll: pinned });
+                if (next === checkedBox.current) revealBox();
+                else if (!pinned)
+                  revealInCard(e.currentTarget, next, null, FADE_PX);
               }
             }
           : undefined
       }
       tabIndex={asking ? -1 : undefined}
       onScroll={asking ? (e) => markScroll(e.currentTarget) : undefined}
+      onFocus={asking ? (e) => noteFocus(e.target) : undefined}
+      onBlur={
+        asking
+          ? (e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) noteFocus(null);
+            }
+          : undefined
+      }
     >
       {/* The map: this Box, the edge, the Host. The edge says how far the connection has got
           (`data-phase`): part-way while ssh starts, to the Host's ring while it logs in, and the
@@ -664,19 +681,23 @@ export function ConnectCard({
                 ref={trustButton}
               >
                 Trust and connect
-                {/* Always there, dim until the tick arms it, so ticking never resizes it (round 18). */}
-                <span
-                  className={`btn-keys${checkedKey ? "" : " key-dim"}`}
-                  aria-hidden="true"
-                >
-                  <Keys keys="Enter" />
+                {/* ↵ shows where Enter acts (round 21): here while Trust, the password field or
+                    the card has focus, dim until the tick arms it. Its room is always kept, so
+                    neither focus nor the tick resizes the button (round 18). */}
+                <span className="btn-keys" aria-hidden="true">
+                  <Keys
+                    keys="Enter"
+                    className={`key-enter${enterOn === "trust" ? " on" : ""}${checkedKey ? "" : " key-dim"}`}
+                  />
                 </span>
               </button>
-              <button type="button" onClick={() => answers.cancel()}>
+              <button
+                type="button"
+                className="key-cancel"
+                onClick={() => answers.cancel()}
+              >
                 Cancel
-                <span className="btn-keys" aria-hidden="true">
-                  <Keys keys="Escape" />
-                </span>
+                <CancelKeys enter={enterOn === "cancel"} />
               </button>
             </div>
           </form>
@@ -696,22 +717,26 @@ export function ConnectCard({
               ref={trustButton}
               onClick={() => answers.trust()}
             >
-              {/* The question opens on Cancel, so trusting is deliberate (Q222): Enter is dim on
-                  Trust until Tab brings focus to it, and keeps its room (round 18). */}
+              {/* The question opens on Cancel, so trusting is deliberate (Q222): ↵ shows on Trust
+                  only once Tab brings focus to it, on Cancel while it has focus (round 21: a dim
+                  ↵ on Trust read as the default while Enter cancelled), and keeps its room
+                  (round 18). */}
               Trust and connect
-              <span className="btn-keys key-dim key-on-focus" aria-hidden="true">
-                <Keys keys="Enter" />
+              <span className="btn-keys" aria-hidden="true">
+                <Keys
+                  keys="Enter"
+                  className={`key-enter${enterOn === "trust" ? " on" : ""}`}
+                />
               </span>
             </button>
             <button
               type="button"
+              className="key-cancel"
               ref={cancelButton}
               onClick={() => answers.cancel()}
             >
               Cancel
-              <span className="btn-keys" aria-hidden="true">
-                <Keys keys="Escape" />
-              </span>
+              <CancelKeys enter={enterOn === "cancel"} />
             </button>
           </div>
           {/* The keys are on the buttons; this line only speaks while the key is recorded. */}
@@ -743,6 +768,41 @@ export function ConnectCard({
         </p>
       )}
     </div>
+  );
+}
+
+type Exit = Extract<Tab["status"], { state: "ended" }>["exit"];
+
+/** An ended Session's pane note, in the Sidebar row's words (round 21): "ended" for a clean exit
+ * (code 0), "closed" for one closed here, and the code or the signal only when it says
+ * something went wrong. */
+export function endedWords(exit: Exit): string {
+  if (exit.closed) return "closed";
+  if (exit.code === 0) return "ended";
+  return exit.code === null ? "ended (signal)" : `ended (code ${exit.code})`;
+}
+
+/** Its tone: warn for a non-zero code or a signal; none (muted) for a clean exit or a close. A
+ * refused or failed Session shows its error panel instead, in the error colour. */
+export function endedTone(exit: Exit): "warn" | null {
+  return exit.closed || exit.code === 0 ? null : "warn";
+}
+
+/** What the message line says when a key question is cancelled: nothing reaches roster's
+ * known_hosts until Trust (`tabs.cancelKey` calls no Backend). */
+export function keyCancelled(host: string): string {
+  return `Didn't trust ${host}'s key; nothing was saved.`;
+}
+
+/** Cancel's keys on a key question: Esc always, and ↵ before it while Cancel has focus (Enter
+ * then cancels, as the question opens; round 21). The ↵ keeps its room when hidden, so focus
+ * never resizes the button. */
+function CancelKeys({ enter }: { enter: boolean }) {
+  return (
+    <span className="btn-keys" aria-hidden="true">
+      <Keys keys="Enter" className={`key-enter${enter ? " on" : ""}`} />
+      <Keys keys="Escape" />
+    </span>
   );
 }
 
@@ -955,6 +1015,8 @@ export interface SessionPanesProps {
   canFill?: boolean;
   /** The keys that fill it (`:fill`), if the keymap has them. */
   fillKeys?: string | null;
+  /** Says something on the message line (a key question cancelled, round 21). */
+  say?(message: Message): void;
 }
 
 export function SessionPanes({
@@ -974,6 +1036,7 @@ export function SessionPanes({
   reveal = null,
   canFill = false,
   fillKeys = null,
+  say,
 }: SessionPanesProps) {
   const actions: ProblemActions = { run, copy };
   return (
@@ -1024,7 +1087,15 @@ export function SessionPanes({
                 hostKey={s.state === "asking" ? s.key : null}
                 answers={{
                   trust: () => tabs.trustKey(tab.id),
-                  cancel: () => tabs.cancelKey(tab.id),
+                  cancel: () => {
+                    // Cancel on a key question closes the Session (or takes a reconnect back):
+                    // it says so, and that nothing was recorded, since nothing was (round 21:
+                    // it closed with no word). Calm, in the text colour.
+                    const keyQuestion = s.state === "asking" && s.key !== null;
+                    tabs.cancelKey(tab.id);
+                    if (keyQuestion)
+                      say?.(slip(keyCancelled(tab.quick?.to.address ?? tab.host)));
+                  },
                   connect: (password, save) =>
                     tab.quick
                       ? tabs.connectQuick(tab.id, password, save)
@@ -1081,8 +1152,11 @@ export function SessionPanes({
               </div>
             )}
             {s.state === "ended" && !s.problem && (
-              <div className="session-note ended">
-                <span>{statusText(tab)}</span>
+              <div
+                className="session-note ended"
+                data-tone={endedTone(s.exit) ?? undefined}
+              >
+                <span>{endedWords(s.exit)}</span>
                 {reconnectKeys && (
                   <span className="muted key-hint">
                     {" "}
