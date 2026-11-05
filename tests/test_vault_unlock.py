@@ -661,3 +661,60 @@ def test_check_box_with_a_bw_status_that_isnt_an_object_says_so(isolated, fakes,
     monkeypatch.setenv("FAKE_BW_STATUS_RAW", raw)
     c = bw_check(capsys, "check", "--box")
     assert c["level"] == "error" and c["message"].endswith(": couldn't read `bw status` output")
+
+
+# ---- T250 (#492; #488's review NITs)
+
+@posix_only
+def test_vault_unlock_refuses_your_own_link_to_dot_in_a_shared_folder(isolated, fakes, monkeypatch, capsys):
+    """NIT-1: `~/.config/roster -> .` makes ~/.config the folder the key goes in, so it's checked as that folder: a
+    sticky 1777 ~/.config is fine on the way down, never as the last folder."""
+    dot_config = session_path().parent.parent
+    dot_config.mkdir(parents=True, exist_ok=True)
+    session_path().parent.symlink_to(".")
+    dot_config.chmod(0o1777)
+    term = Terminal(monkeypatch)
+    try:
+        with pytest.raises(SystemExit, match=rf"\[202\] {dot_config} is writable by others"):
+            main(["vault", "unlock"])
+    finally:
+        dot_config.chmod(0o755)
+    assert term.passwords == 0 and not (dot_config / "bw-session").exists()
+
+
+@posix_only
+def test_your_own_link_to_dot_in_a_private_folder_is_fine(isolated, fakes, monkeypatch, capsys):
+    dot_config = session_path().parent.parent
+    dot_config.mkdir(parents=True, exist_ok=True)
+    dot_config.chmod(0o700)
+    session_path().parent.symlink_to(".")
+    Terminal(monkeypatch)
+    assert main(["vault", "unlock"]) == 0
+    assert (dot_config / "bw-session").read_text() == "fake-session-key\n"
+
+
+@posix_only
+def test_vault_lock_removes_the_file_in_the_folder_it_opened(isolated, fakes, monkeypatch, capsys, tmp_path):
+    """NIT-2: the file is removed through the open folder handle, as it was saved: a folder swapped after it was
+    opened loses nothing of its own."""
+    _saved()
+    d = session_path().parent
+    other = tmp_path / "other"
+    other.mkdir(mode=0o700)
+    (other / "bw-session").write_text("not yours to remove\n")
+    fd = bitwarden.open_session_dir()                    # opened, then swapped before the unlink
+    d.rename(tmp_path / "orig")
+    d.symlink_to(other)
+    monkeypatch.setattr(bitwarden, "open_session_dir", lambda create=False: fd)
+    assert bitwarden.remove_session_file() is True
+    assert not (tmp_path / "orig" / "bw-session").exists()
+    assert (other / "bw-session").read_text() == "not yours to remove\n"
+
+
+@posix_only
+def test_vault_lock_removes_the_file_in_a_folder_it_wont_save_in(isolated, fakes, capsys):
+    """A lock still removes the key from a folder roster refuses to keep one in."""
+    _saved()
+    session_path().parent.chmod(0o777)
+    assert main(["vault", "lock"]) == 0
+    assert not session_path().exists()
