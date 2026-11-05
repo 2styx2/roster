@@ -130,20 +130,14 @@ async fn open_url(url: String) -> Result<(), String> {
     blocking(move || roster_core::browser::open_url(&url)).await
 }
 
-/// What `:config` did: the file's path, and whether it was just made (ticket 32).
-#[derive(serde::Serialize)]
-struct ConfigOpened {
-    path: String,
-    created: bool,
-}
-
-/// `:config`: makes init.lua from the commented-out example if there's none (never overwriting
-/// one), then opens it with the Config's `editor`. `$EDITOR` runs in the Backend's WSL distro.
+/// `:config` (roster-core `config::edit`): makes init.lua from the commented-out example if
+/// there's none, then opens it with the Config's `editor`; `$EDITOR` runs in the Backend's WSL
+/// distro.
 #[tauri::command]
 async fn config_open(
     config: tauri::State<'_, ConfigState>,
     state: tauri::State<'_, Arc<BackendState>>,
-) -> Result<ConfigOpened, String> {
+) -> Result<config::Opened, String> {
     let Some(loader) = config.0.clone() else {
         return Err("there's no config folder: the environment names no home".into());
     };
@@ -151,22 +145,7 @@ async fn config_open(
         roster_core::detect::Target::Wsl { distro } => Some(distro.clone()),
         roster_core::detect::Target::Local => None,
     });
-    blocking(move || {
-        let ensured =
-            config::ensure_file(loader.dir()).map_err(|e| format!("can't create {}: {e}", loader.dir().display()))?;
-        let how = config::open_with(
-            loader.current().editor,
-            config::Os::current(),
-            &ensured.path,
-            distro.as_deref(),
-        )?;
-        config::open(&how).map_err(|e| format!("can't open {}: {e}", ensured.path.display()))?;
-        Ok(ConfigOpened {
-            path: ensured.path.display().to_string(),
-            created: ensured.created,
-        })
-    })
-    .await
+    blocking(move || config::edit(loader.dir(), loader.current().editor, distro.as_deref())).await
 }
 
 /// `:source` (and `:config reload`): reads init.lua again now, and tells every listener.

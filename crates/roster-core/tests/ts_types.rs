@@ -122,6 +122,7 @@ fn generated() -> String {
         decl::<SaveTo>(&cfg),
         decl::<KeePassXc>(&cfg),
         decl::<PackageSpec>(&cfg),
+        decl::<Opened>(&cfg),
         // `:config import-terminal` (wt.rs).
         decl::<Preview>(&cfg),
         decl::<DiffLine>(&cfg),

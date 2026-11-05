@@ -4,13 +4,14 @@
 // Windows Terminal import's; this file names them for the app. The frontend never runs Lua; it
 // gets this object at start (`config_load`) and again after every save (`config-changed`).
 // docs/app/config.md documents each option as it's written in init.lua.
-import type { ConfigReport, ImportPreview, Previewed } from "./core.gen";
+import type { ConfigOpened, ConfigReport, ImportPreview, Previewed } from "./core.gen";
 
 export type {
   Config,
   ConfigError,
   ConfigKey,
   ConfigLocation,
+  ConfigOpened,
   ConfigReport,
   DeprecatedUse,
   DiffLine,
@@ -22,14 +23,6 @@ export type {
   ThemeDef,
   VaultConfig,
 } from "./core.gen";
-
-/** What `:config` did (ticket 32). */
-export interface ConfigOpened {
-  /** init.lua's full path. */
-  path: string;
-  /** The file was just made, from the example with every option commented out. */
-  created: boolean;
-}
 
 /** Where the app gets the Config: the core in Tauri; tests push their own. */
 export interface ConfigSource {

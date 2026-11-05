@@ -628,6 +628,17 @@ export type PackageSpec = {
 };
 
 /**
+ * What `:config` did (ticket 32): init.lua's full path, and whether it was just made.
+ */
+export type ConfigOpened = {
+  path: string,
+  /**
+   * It was just made, from the example with every option commented out.
+   */
+  created: boolean,
+};
+
+/**
  * What `:config import-terminal` would do, before it does it.
  */
 export type ImportPreview = {

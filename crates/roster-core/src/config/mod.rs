@@ -19,7 +19,7 @@ pub(crate) mod store;
 mod watch;
 
 pub use crate::platform::Os;
-pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};
+pub use editor::{Ensured, OpenWith, Opened, WindowsOpen, edit, ensure_file, open, open_with, starter, windows_open};
 pub use schema::*;
 #[cfg(feature = "test-hooks")]
 pub use watch::{HeldClock, watch_held};
