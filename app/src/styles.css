@@ -1862,6 +1862,9 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
 .finder-row.host-row > .finder-label { flex: 0 0 min(var(--finder-host-w, 45%), 45%); max-width: none; min-width: 0; }
 .finder-row.host-row:not(.unreviewed) .finder-name { color: var(--text); }
 .finder-row.host-row > .finder-type { width: var(--finder-type-w, auto); }
+/* Its path cut from the front (layOutHosts picks the form: "… › Lab › Rack 2", then "Rack 2"), so
+   the folder it's in stays; only that last part is ever cut, at its end. */
+.finder-cut[data-off] { display: none; }
 .finder-row.host-row > .finder-addr {
   margin-left: 0; flex: none; width: var(--finder-addr-w, auto); min-width: 0; text-align: left; font-variant-numeric: tabular-nums;
 }

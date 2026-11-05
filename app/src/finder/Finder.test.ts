@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { footTag, footerCount, layOutHosts, layOutNames, layOutTitles, withData } from "./Finder";
+import { footTag, footerCount, layOutHosts, layOutNames, layOutTitles, pathForms, withData } from "./Finder";
 
 describe("the finder footer's count", () => {
   it("says how many there are before a query, and how many matched after (round 18)", () => {
@@ -98,6 +98,13 @@ describe("a Host row's columns (round 22)", () => {
     expect(ul.style.getPropertyValue("--finder-host-w")).toBe("400px");
     expect(ul.style.getPropertyValue("--finder-addr-w")).toBe("120px");
     expect(ul.style.getPropertyValue("--finder-type-w")).toBe("56px");
+  });
+});
+
+describe("a Host row's path is cut from the front (round 22)", () => {
+  it("gives way its first parts, then shows the last part alone", () => {
+    expect(pathForms("Folders › Lab › Rack 2")).toEqual(["Folders › Lab › Rack 2", "… › Lab › Rack 2", "… › Rack 2", "Rack 2"]);
+    expect(pathForms("subnet-1")).toEqual(["subnet-1"]);
   });
 });
 

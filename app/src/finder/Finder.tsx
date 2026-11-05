@@ -109,6 +109,27 @@ export function layOutHosts(list: HTMLElement) {
   list.style.setProperty("--finder-host-w", `${Math.ceil(inView || all)}px`);
   list.style.setProperty("--finder-addr-w", `${Math.ceil(addr)}px`);
   list.style.setProperty("--finder-type-w", `${Math.ceil(type)}px`);
+  // Each Host row's path in the longest of its forms that fits (pathForms).
+  for (const path of list.querySelectorAll<HTMLElement>(".finder-row.host-row > .finder-path")) {
+    const forms = [...path.querySelectorAll<HTMLElement>(":scope > .finder-cut")];
+    forms.forEach((f, i) => (i === 0 ? f.removeAttribute("data-off") : f.setAttribute("data-off", "")));
+    // No layout (jsdom), or it fits whole: the whole path.
+    if (path.clientWidth === 0) continue;
+    for (let i = 1; i < forms.length && path.scrollWidth > path.clientWidth + 1; i++) {
+      forms[i - 1]?.setAttribute("data-off", "");
+      forms[i]?.removeAttribute("data-off");
+    }
+  }
+}
+
+/** A Host's place in the tree, cut from the front (round 22: an end cut left "Folders › Buil…",
+ * which says nothing): the whole path, then its first parts given way one by one for "… › ", down
+ * to "… › LAST", then the last part alone (the "… › " is room its own name needs more), which CSS
+ * cuts at its end only if even that doesn't fit. The tooltip has it whole. */
+export function pathForms(path: string): string[] {
+  const parts = path.split(" › ");
+  if (parts.length < 2) return [path];
+  return [path, ...parts.slice(1).map((_, i) => `… › ${parts.slice(i + 1).join(" › ")}`), parts[parts.length - 1] as string];
 }
 
 /** Where a prose finder's middle column starts (round 19): one x for the whole list, the widest
@@ -404,7 +425,16 @@ export function Finder({
                   {item.detail}
                 </span>
               )}
-              {item.path && (
+              {item.path && item.host !== undefined && (
+                <span className="finder-path" title={item.path} dir="auto">
+                  {pathForms(item.path).map((form, i) => (
+                    <span key={form} className="finder-cut" data-off={i === 0 ? undefined : ""}>
+                      {form}
+                    </span>
+                  ))}
+                </span>
+              )}
+              {item.path && item.host === undefined && (
                 <span
                   className={`finder-path${source.prose && DATA_NAME.test(item.path) ? " data" : ""}`}
                   title={item.path}
@@ -413,8 +443,9 @@ export function Finder({
                   {item.path}
                 </span>
               )}
-              {item.type && (
-                <span className="finder-type" title={item.type}>
+              {/* A Host row draws its type cell empty too, so every path ends at one x. */}
+              {(item.type || item.host !== undefined) && (
+                <span className="finder-type" title={item.type || undefined}>
                   {item.type}
                 </span>
               )}

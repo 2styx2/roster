@@ -59,7 +59,11 @@ function cutWithoutTooltip(): string[] {
   const bad: string[] = [];
   for (const selector of cutSelectors()) {
     for (const el of document.querySelectorAll(selector)) {
-      const text = el.textContent?.trim() ?? "";
+      // What's drawn: a form given way (`data-off`, e.g. a Host path's front cuts) isn't.
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let drawn = "";
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) if (!n.parentElement?.closest("[data-off]")) drawn += n.textContent;
+      const text = drawn.trim();
       // Never shown: the Picker's sizer row only measures its columns.
       if (!text || el.closest('[aria-hidden="true"]')) continue;
       const title = el.closest("[title]")?.getAttribute("title") ?? "";
