@@ -237,11 +237,7 @@ groups:
 - **The Mesh is Ed25519 only for now.** A key Host whose `key_type:` isn't `ed25519` is left out of the Mesh (note 200), as a Windows Host is: a meshed group or a Link naming it isn't an error, and `roster mesh --dry-run`, `mesh status` and `check` list it under "left out". A password Host stays in. So a top-level or `defaults:` type other than `ed25519` takes every key Host out of the Mesh: `roster setup` then leaves the Mesh as it is and warns, and only an explicit `roster mesh` takes their Mesh entries off ([The Mesh](mesh.md#hosts-with-another-key-type)). Reach such a Host from the Box.
 - **ECDSA or RSA?** Both pass FIPS. ECDSA P-384 is short and fast, and every FIPS-mode OpenSSH takes it; pick `rsa` only for a Host that takes nothing else.
 
-**Changing a type for good, cleanly.** Set `key_type:` in `roster.yml`, then run `roster setup --rotate` (`--host NAME` for one Host or group): the new type's key goes on, is proven there, and every other line of this Box's goes, the old key file too once no Host needs it ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)).
-
-## Rotating the Box key
-
-`roster setup --rotate` replaces this Box's key on every Host it set up: a new key, proven on each Host before the old one's line goes, then the old private key deleted. A Host it can't reach stays pending, with both keys, until you run it again; `roster check` says `Box key rotation pending on N Hosts` until then. `roster check --box` warns once the key is older than `key_max_age:` (365 days unless set). See [Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate).
+**Changing a type for good, cleanly:** set `key_type:`, then run `roster setup --rotate`: the new type's key goes on and every other line of this Box's goes ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)).
 
 ## Limits to know about
 

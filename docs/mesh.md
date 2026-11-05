@@ -110,7 +110,7 @@ from="10.0.0.2",no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA… roster
 
 **Removing.** Taking a Host out of `roster.yml`, a Link, or `mesh: true` removes exactly this Box's tagged entries for it on the next apply, and a Host that is no longer a source loses its Mesh files (the key, known hosts, config, the two `Include` lines, `ROSTER.md` and the import line). A Host taken out of `roster.yml` altogether can't be reached any more, so its own Mesh files stay there; `roster mesh` says so.
 
-**Rotating.** `roster mesh --rotate HOST` makes a new key on HOST and replaces its line on every peer, in the same run. `--dry-run` shows it first. That's a Mesh key; this Box's own key is the Box key, which `roster setup --rotate` replaces ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)). The two never touch each other's lines, and never run at once: each holds the Inventory's lock. While a Box key rotation is pending on a Host, the ssh config offers it both Box keys, so `roster mesh` still reaches it.
+**Rotating.** `roster mesh --rotate HOST` makes a new key on HOST and replaces its line on every peer, in the same run. `--dry-run` shows it first. This Box's own key is another key: `roster setup --rotate` replaces it ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)); neither touches the other's lines.
 
 `roster setup` applies the Mesh after setting up the Box when `roster.yml` has one (not with `--only`, since the Mesh covers every Host). `roster sync` says `mesh out of date` when `roster.yml` changed the Mesh since the last complete apply on this Box; nothing applies it by itself.
 
