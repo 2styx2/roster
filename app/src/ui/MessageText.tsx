@@ -14,18 +14,24 @@ const COMMAND = /(^|[\s(“"'])(:[a-z][a-z0-9-]*(?: [a-z0-9](?:[\w#.:/-]*[\w#/-]
  * sentence's). A place in one ("folders.yml:3") is left as the sentence has it. */
 const FILE = /(^|[\s(“"'`])([\w-][\w.-]*\.(?:ya?ml|lua))(?![\w-]|:\d)/g;
 
+/** What was typed, quoted back by a slip ("Not a command: blah.", "No help for zzqxj."): data
+ * too (round 19), set in Iosevka with no quote marks. The word runs to the sentence's end. */
+const TYPED = /(^|[\s(])((?<=(?:Not a command:|No help for) )[^\s]+?)(?=[.,]?(?:\s|$))/g;
+
 export interface MessagePart {
   text: string;
-  /** A command (":help commands"). */
+  /** Set in Iosevka as something you'd type: a command (":help commands") or what was typed. */
   command: boolean;
   /** A file name ("roster.yml"). */
   file?: true;
 }
 
-/** `text` split into words and the commands it names (and with `files`, the files), in order. */
+/** `text` split into words, the commands it names and what it quotes back as typed (and with
+ * `files`, the files), in order. */
 export function messageParts(text: string, files = false): MessagePart[] {
   const found = [
     ...[...text.matchAll(COMMAND)].map((m) => ({ m, file: false })),
+    ...[...text.matchAll(TYPED)].map((m) => ({ m, file: false })),
     ...(files ? [...text.matchAll(FILE)].map((m) => ({ m, file: true })) : []),
   ]
     .map(({ m, file }) => ({ start: (m.index ?? 0) + (m[1]?.length ?? 0), text: m[2] ?? "", file }))

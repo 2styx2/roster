@@ -137,7 +137,7 @@ describe("Option names where configurable things show", () => {
       await user.hover(rowOf(label));
       return panel.querySelector(".panel-foot .keys-option")?.textContent;
     };
-    expect(await optionOf(/^Leader: take the keys back/)).toBe("leader");
+    expect(await optionOf(/^Leader: leave the terminal/)).toBe("leader");
     expect(await optionOf(/^Lock/)).toBe("keys.leader");
     expect(await optionOf(/^Copy/)).toBe("keys.terminal");
     await user.unhover(rowOf(/^Copy/));

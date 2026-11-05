@@ -259,13 +259,13 @@ describe("The Key bindings panel", () => {
       await user.hover(rowOf(label)!);
       return panel.querySelector(".panel-foot .keys-option")?.textContent;
     };
-    expect(keysOf(/Next completion/)).toMatch(/^Tab/);
-    expect(await optionOf(/Next completion/)).toBe("keys.cmdline");
+    expect(keysOf(/Complete, then cycle/)).toMatch(/^Tab/);
+    expect(await optionOf(/Complete, then cycle/)).toBe("keys.cmdline");
     expect(keysOf(/Previous completion/)).toMatch(/^Shift\+Tab/);
     expect(keysOf(/Accept the completion/)).toBe("Ctrl+y");
-    expect(keysOf(/Next result/)).toMatch(/Tab/);
-    expect(await optionOf(/Next result/)).toBe("keys.picker");
+    expect(keysOf(/Complete, then next result/)).toMatch(/Tab/);
+    expect(await optionOf(/Complete, then next result/)).toBe("keys.picker");
     expect(keysOf(/Previous result/)).toMatch(/Shift\+Tab/);
-    expect(keysOf(/Next result/, "init.lua")).toBe("Ctrl+j");
+    expect(keysOf(/Complete, then next result/, "init.lua")).toBe("Ctrl+j");
   });
 });

@@ -169,7 +169,7 @@ import { PluginManager, type DemoPlugins } from "./plugins/manager";
 import { ViewPanel } from "./view/ViewContent";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
-import { FitLine } from "./chrome/FitLine";
+import { FitBar } from "./chrome/FitBar";
 import { MessageText } from "./ui/MessageText";
 import { basePart, headPart } from "./chrome/path";
 import { PathText } from "./chrome/PathText";
@@ -3348,9 +3348,9 @@ function Workspace({
           )
         );
       case "hints":
-        // They drop out whole, last first, when the bar runs out of room (never cut mid-key).
+        // They drop out whole, last first, when the bar runs out of room (FitBar; never cut mid-key).
         return (
-          <FitLine key={id} className="statusbar-hints">
+          <span key={id} className="statusbar-hints">
             {stale.length > 0 && (
               <span
                 className="hint stale"
@@ -3394,7 +3394,7 @@ function Workspace({
                 </span>
               );
             })}
-          </FitLine>
+          </span>
         );
       case "mode":
         return (
@@ -3444,7 +3444,7 @@ function Workspace({
   ];
   const right = new Set(["hints", "mode"]);
   const statusBar = (
-    <footer key="statusbar" className="statusbar">
+    <FitBar key="statusbar" className="statusbar">
       {segments.filter((id) => !right.has(id)).map(segment)}
       <PluginProgressItems
         progress={pluginSnap.progress}
@@ -3453,7 +3453,7 @@ function Workspace({
       <span className="statusbar-right">
         {segments.filter((id) => right.has(id)).map(segment)}
       </span>
-    </footer>
+    </FitBar>
   );
 
   // Every docked panel and view goes in a frame: docked or full window, its width, its edge.

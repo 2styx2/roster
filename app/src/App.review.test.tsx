@@ -166,7 +166,7 @@ describe("S7: an empty Inventory says what to do", () => {
     const user = await ready();
     await user.keyboard(`${LEADER}f`);
     await user.keyboard("zzzz");
-    expect(screen.getByRole("dialog", { name: "Find a Host" })).toHaveTextContent("No Hosts match “zzzz”.");
+    expect(screen.getByRole("dialog", { name: "Find a Host" })).toHaveTextContent("No Hosts match zzzz.");
   });
 });
 

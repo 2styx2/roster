@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { footerCount, layOutNames } from "./Finder";
+import { createElement, Fragment } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { footerCount, layOutNames, layOutTitles, withData } from "./Finder";
 
 describe("the finder footer's count", () => {
   it("says how many there are before a query, and how many matched after (round 18)", () => {
@@ -38,5 +40,35 @@ describe("the finders' tab stops (round 18)", () => {
     layOutNames(ul);
     const bases = [...ul.children].map((li) => (li as HTMLElement).style.getPropertyValue("--finder-name-basis"));
     expect(bases).toEqual(["48px", "48px", "48px", "108px", "108px", "228px"]);
+  });
+});
+
+describe("a prose finder's one middle column (round 19)", () => {
+  it("starts every row's middle column at the widest title's end", () => {
+    const ul = document.createElement("ul");
+    for (const [w, path] of [[40, true], [180, true], [400, false], [90, true]] as const) {
+      const li = document.createElement("li");
+      li.className = "finder-row";
+      const label = document.createElement("span");
+      label.className = "finder-label";
+      const name = document.createElement("span");
+      Object.defineProperty(name, "scrollWidth", { value: w });
+      label.append(name);
+      li.append(label);
+      if (path) {
+        const p = document.createElement("span");
+        p.className = "finder-path";
+        li.append(p);
+      }
+      ul.append(li);
+    }
+    layOutTitles(ul);
+    // A row with no middle column (a page) doesn't count: nothing on it lines up.
+    expect(ul.style.getPropertyValue("--finder-title-w")).toBe("180px");
+  });
+
+  it("sets what's code in a description in Iosevka", () => {
+    const html = renderToStaticMarkup(createElement(Fragment, null, withData("Run roster sync: the config offers one key.", ["roster sync"])));
+    expect(html).toBe('Run <span class="data">roster sync</span>: the config offers one key.');
   });
 });

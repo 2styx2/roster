@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { chordOf, type Keymap } from "../keymap";
 import {
@@ -81,6 +82,41 @@ export function layOutNames(list: HTMLElement) {
   });
 }
 
+/** Where a prose finder's middle column starts (round 19): one x for the whole list, the widest
+ * title among the rows in view (CSS caps it at 42% of the row, and a title past it is cut, whole
+ * in its tooltip), so every description starts at the same place. Round 18's per-row tab stops
+ * put it at three to eight places once a query mixed titles. Sets --finder-title-w on the list. */
+export function layOutTitles(list: HTMLElement) {
+  const bottom = list.getBoundingClientRect().bottom;
+  let inView = 0;
+  let all = 0;
+  for (const row of list.querySelectorAll<HTMLElement>(".finder-row")) {
+    if (!row.querySelector(":scope > .finder-path")) continue;
+    let name = 0;
+    for (const part of row.querySelector(".finder-label")?.children ?? []) name += (part as HTMLElement).scrollWidth;
+    all = Math.max(all, name);
+    // In view (jsdom has no layout: every row is); with none in view, the whole list counts.
+    if (list.clientHeight === 0 || row.getBoundingClientRect().top < bottom) inView = Math.max(inView, name);
+  }
+  list.style.setProperty("--finder-title-w", `${Math.ceil(inView || all)}px`);
+}
+
+/** `text` with each of `codes` (in order, each where it's next found) in an Iosevka span. */
+export function withData(text: string, codes: readonly string[] | undefined): ReactNode {
+  if (!codes?.length) return text;
+  const out: ReactNode[] = [];
+  let at = 0;
+  for (const code of codes) {
+    const i = code ? text.indexOf(code, at) : -1;
+    if (i < 0) continue;
+    if (i > at) out.push(text.slice(at, i));
+    out.push(<span key={i} className="data">{code}</span>);
+    at = i + code.length;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return out;
+}
+
 export function Finder({
   source,
   ctx,
@@ -137,8 +173,8 @@ export function Finder({
   }, []);
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (list) layOutNames(list);
-  }, [shown, fontsReady]);
+    if (list) (source.prose ? layOutTitles : layOutNames)(list);
+  }, [shown, fontsReady, source.prose]);
 
 
   function choose(item: FinderItem | undefined) {
@@ -277,8 +313,8 @@ export function Finder({
             >
               {item.dot && <StateDot dot={item.dot} lit={item.lit} />}
               <span className="finder-label" title={item.label}>
-                <span className={`finder-name${source.prose && DATA_NAME.test(item.label) ? " data" : ""}`} dir="auto">
-                  {marked(item.label, query)}
+                <span className={`finder-name${source.prose && (item.dataLabel || DATA_NAME.test(item.label)) ? " data" : ""}`} dir="auto">
+                  {marked(item.label, query, source.prose)}
                 </span>
                 {item.mark && (
                   <>
@@ -295,7 +331,7 @@ export function Finder({
                   title={item.path}
                   dir="auto"
                 >
-                  {item.path}
+                  {source.prose ? withData(item.path, item.pathData) : item.path}
                 </span>
               )}
               {item.detail && (
@@ -318,9 +354,14 @@ export function Finder({
         />
         {shown.length === 0 && (
           <p className="picker-empty">
-            {query
-              ? `Nothing matches “${query}”.`
-              : (source.empty ?? "Nothing here yet.")}
+            {/* What was typed is data: Iosevka, no quote marks (round 19). */}
+            {query ? (
+              <>
+                Nothing matches <span className="data">{query.trim()}</span>.
+              </>
+            ) : (
+              (source.empty ?? "Nothing here yet.")
+            )}
           </p>
         )}
         <div className="picker-footer">
@@ -336,7 +377,12 @@ export function Finder({
             </span>
           )}
           <span className="picker-count" aria-hidden="true">
-            {footerCount(results.items.length, shown.length, query, source.noun)}
+            {footerCount(
+              results.items.length,
+              shown.length,
+              query,
+              typeof source.noun === "function" ? source.noun(results.items) : source.noun,
+            )}
           </span>
           {shown.length > 1 && (
             <span className="picker-hint key-hint">

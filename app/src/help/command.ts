@@ -218,11 +218,29 @@ export function helpFinder(view: HelpView): FinderSourceDef {
     items: (): FinderItem[] => {
       const ctx = view.context();
       if (!ctx) return [];
-      return topics(ctx).map((t) => ({
+      // An alias is titled as what it goes to, so the two would be twin rows (round 20): one row
+      // per topic, tagged with its alias (the shorter name you'd type: `host-keys`), matched by it.
+      const all = topics(ctx);
+      const same = (a: (typeof all)[number], b: (typeof all)[number]) =>
+        a.page === b.page && a.anchor === b.anchor && a.label === b.label && a.path === b.path;
+      const aliasOf = new Map<string, string>();
+      const folded = new Set<string>();
+      for (const a of all) {
+        if (a.kind !== "alias") continue;
+        const target = all.find((t) => t.kind !== "alias" && same(t, a));
+        if (target && !aliasOf.has(target.tag)) {
+          aliasOf.set(target.tag, a.tag);
+          folded.add(a.tag);
+        }
+      }
+      return all.filter((t) => !folded.has(t.tag)).map((t) => ({
         id: t.tag,
         label: t.label,
-        ...(t.label !== t.tag ? { detail: t.tag } : {}),
+        // An entry titled by its own tag (`E31`, `theme`): a name you'd type.
+        ...(t.anchor !== undefined && t.label === t.anchor ? { dataLabel: true } : {}),
+        ...(t.label !== (aliasOf.get(t.tag) ?? t.tag) ? { detail: aliasOf.get(t.tag) ?? t.tag } : {}),
         ...(t.path ? { path: t.path } : {}),
+        ...(t.codes ? { pathData: t.codes } : {}),
         command: `help ${t.tag}`,
       }));
     },

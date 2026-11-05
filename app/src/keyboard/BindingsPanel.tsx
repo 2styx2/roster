@@ -124,7 +124,7 @@ export function BindingsPanel({
           ))}
         </table>
         {shown.length === 0 && (
-          <p className="panel-empty">No bindings match “{query}”.</p>
+          <p className="panel-empty">No bindings match <span className="data">{query.trim()}</span>.</p>
         )}
       </div>
       {/* One line, always: the pointed binding's name in init.lua (ticket 32), or how to find it.

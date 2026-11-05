@@ -109,6 +109,13 @@ describe("Picker", () => {
     expect(html(marked("router", "zz"))).toBe("router");
   });
 
+  it("in a prose finder, underlines only terms found whole and two letters or more (round 19)", () => {
+    const html = (n: React.ReactNode) => renderToStaticMarkup(<>{n}</>);
+    expect(html(marked("Keep your Hosts in a Folder", "host key", true))).toBe("Keep your <mark>Host</mark>s in a Folder");
+    expect(html(marked("Trusting a new host key", "host key", true))).toBe("Trusting a new <mark>host</mark> <mark>key</mark>");
+    expect(html(marked("Themes", "t", true))).toBe("Themes");
+  });
+
   it("marks unreviewed Hosts and won't open them", async () => {
     const { user, onOpen } = setup();
     const row = rows().find((r) => r.dataset.host === "scan-99")!;

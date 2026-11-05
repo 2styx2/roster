@@ -122,7 +122,8 @@ export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[
   for (const pg of ctx.pages) {
     for (const [alias, to] of Object.entries(pg.aliases ?? {})) {
       const target = out.find((t) => t.tag === to);
-      if (target) add({ ...target, tag: alias, label: alias, path: target.label, kind: "alias" });
+      // Titled as what it goes to (round 19): the finder's title slot never holds a tag.
+      if (target) add({ ...target, tag: alias, kind: "alias" });
       else clashes.push({ tag: alias, page: pg.id, label: `${alias} → ${to}, which isn't a topic`, kind: "alias" });
     }
   }
@@ -706,7 +707,7 @@ function allPage(ctx: HelpContext): Block[] {
               head: [[text("Topic")], [text("What")]],
               rows: sorted(list).map((t) => [
                 [link(t.tag, [code(t.tag)])],
-                [text(t.anchor ? (t.path && t.path !== pageTitle(t.page) ? t.path : pageTitle(t.page)) : t.label)],
+                [text(t.anchor && t.kind !== "alias" ? (t.path && t.path !== pageTitle(t.page) ? t.path : pageTitle(t.page)) : t.label)],
               ]),
             },
           ]
