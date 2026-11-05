@@ -167,12 +167,16 @@ def ssh(cfg):
                          "set box_name: in roster.yml to a name no other Box uses, then run `roster setup` (on a Box "
                          "already set up, it re-tags this Box's key under the new name where it works; a same-named "
                          "Box whose key was taken runs `roster setup` again)", "E222"))
-    if any(h["enroll"] for h in hosts):
-        if cfg["key"].exists():
-            out.append(check("ssh", "ok", f"this Box's key: {cfg['key']}"))
+    from . import boxkeys
+    for key in boxkeys.in_use(cfg, hosts):          # one per key type its key Hosts use (T239)
+        what = "this Box's key" if key.type.name == boxkeys.DEFAULT else f"this Box's {key.type.name} key"
+        if key.key.exists():
+            out.append(check("ssh", "ok", f"{what}: {key.key}"))
         else:
-            out.append(check("ssh", "warn", f"this Box has no key yet ({cfg['key']}), so key Logins can't work",
-                             "run `roster setup`", "E12"))
+            kind = "" if key.type.name == boxkeys.DEFAULT else f"{key.type.name} "
+            out.append(check("ssh", "warn", f"this Box has no {kind}key yet ({key.key}), so key Logins "
+                                            f"{'' if not kind else 'with it '}can't work", "run `roster setup`",
+                             "E12"))
     if not known_hosts_file().exists():
         out.append(check("ssh", "warn", f"roster's known hosts ({known_hosts_file()}) isn't there yet",
                          "run `roster setup`; until then each Session asks before it trusts a Host's key", "E14"))

@@ -472,6 +472,8 @@
 ---@field reviewed boolean `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is.
 ---@field mesh? boolean `mesh:` as roster.yml sets it; `nil` if nothing does.
 ---@field os? string `os:` as roster.yml sets it: `"windows"` (setup, revoke and check run PowerShell there) or `"posix"`; `nil` if nothing does, which is posix.
+---@field key_type string The SSH key type its key Login uses (`key_type:`, resolved): `"ed25519"` (the default), `"ecdsa"` (P-384), `"ecdsa-256"`, `"ecdsa-521"`, `"rsa"` (3072 bits) or `"rsa-BITS"`. Only an `enroll` Host uses it.
+---@field key_file string This Box's private key file for `key_type` (a path, never the key itself).
 ---@field title string One line; `""` if unset.
 ---@field description string One line; `""` if unset.
 ---@field type string What it is (`esxi`, `linux`); `""` if unset.

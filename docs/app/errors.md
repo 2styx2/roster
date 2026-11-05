@@ -460,11 +460,14 @@ The app, started on a Box with no `roster.yml`, offers the same first three in p
 
 ## A Box's key
 
-`roster setup`'s re-tag after a rename and its key install (T226, #435, decision Q193).
+`roster setup`'s re-tag after a rename and its key install (T226, #435, decision Q193), and its key types (T239, #436, decision Q200).
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
 | 251 | 190 | `roster setup` on a renamed Box (`box_name:`, or the hostname, changed since its key went on its Hosts): a Host's key file has another key's line under the new name, so another Box already uses that name. One name is one owner, so this Box's setup (when it installs) and revoke would take that Box's line too: setup leaves that Host as it is (no re-tag, no install), counts it as failed, and the next setup tries it again | Host | "FAIL  nas-1: [190] another key's line there is tagged roster-managed:ws2: another Box already uses that name, …" | Give this Box a name no other Box uses (`box_name:`), or run `roster setup --force` to go ahead: the other Box's line then is this Box's to replace or revoke |
+| 261 | 199 | `roster check HOST`: the Host refused this Box's Ed25519 key, and its key exchange and host keys are all NIST ones (no curve25519, no Ed25519 host key): a FIPS-mode Host (an enterprise Linux with FIPS mode on, as most hardened ones are), whose sshd never takes Ed25519, so re-running `roster setup` changes nothing (T239) | Host | "[199] fips-01 refused this Box's Ed25519 key and offers only NIST algorithms (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes Ed25519" | Set `key_type: ecdsa` for it (or its group) in `roster.yml`, then `roster setup --host fips-01` ([FIPS Hosts](../adding-hosts.md#fips-hosts)) |
+| 262 | 200 (a note) | A Host whose `key_type:` isn't `ed25519` is in a meshed group or a Link (or is a Link's `via:`): the Mesh's keys are Ed25519 only for now, so it's left out, as a Windows Host is (160); the rest of the Mesh is set up. `roster mesh --dry-run`, `mesh status` and `check` list it under "left out" (T239) | `roster.yml` / Host | "fips-01 ([200] key_type: ecdsa: the Mesh's keys are Ed25519 only for now, which a FIPS-mode Host refuses, so it's left out …)" | Nothing to fix: reach it from the Box (`ssh fips-01`), or set `mesh: false` on it to keep it out without the note |
+| 263 | 201 | `roster setup`: the file a key type's key goes in already holds a key of another type (`~/.ssh/roster_ecdsa` holding an Ed25519 key, or `key_path:` naming a key of another type than the top-level `key_type:`), an RSA key with fewer bits than its type asks for, or a `.pub` that isn't its private key's (another key's `.pub` beside it), so roster made no key and installed nothing (T239) | Box | "[201] ~/.ssh/roster_ecdsa is an ssh-ed25519 key, not ecdsa (ecdsa-sha2-nistp384), which key_type: in roster.yml asks for …" | Move that file away (setup makes the new key there), or point `key_path:` at another file |
 
 ## See also
 

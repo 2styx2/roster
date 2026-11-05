@@ -72,7 +72,7 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 
 <!-- END generated:methods -->
 
-The objects these answer with are generated from their models (`src/roster/models.py`, `servemodels.py`; ticket T174): every value is resolved (what the Host doesn't set comes from its group, then `defaults:`), and no field ever holds a password: `auth` is a Login reference. A Host also carries any other key `roster.yml` gives it, its group or `defaults:`, as `roster.yml` has it, after these.
+The objects these answer with are generated from their models (`src/roster/models.py`, `servemodels.py`; ticket T174): every value is resolved (what the Host doesn't set comes from its group, then `defaults:`), and no field ever holds a password: `auth` is a Login reference. A Host also carries any other key `roster.yml` gives it, its group or `defaults:`, as `roster.yml` has it, after these. Since API 30 (T239) a Host has `key_type` and `key_file`: the SSH key type its key Login uses and this Box's key file for it (a path, never the key).
 
 <!-- BEGIN generated:models Host SshLogin Login Service ServiceProblem Group InventoryError -->
 
@@ -95,6 +95,8 @@ The objects these answer with are generated from their models (`src/roster/model
 | `mac` | `any` | Its MAC address; `""` if unset. |
 | `mesh` | `boolean \| null` | `mesh:` as roster.yml sets it; `null` if nothing does. |
 | `os` | `"windows" \| "posix" \| null` | `os:` as roster.yml sets it (defaults, group, Host): `windows` (setup, revoke and check run PowerShell there) or `posix`; `null` if nothing does, which is `posix`. |
+| `key_type` | `string` | The SSH key type its key Login uses (T239): `key_type:` as roster.yml sets it (Host, group, `defaults`, top level), canonical: `ed25519` (unset), `ecdsa` (P-384), `ecdsa-256`, `ecdsa-521`, `rsa` (3072 bits) or `rsa-BITS`. Only an `enroll: true` Host uses it. |
+| `key_file` | `string` | This Box's private key file for `key_type`, which roster's ssh config gives it as `IdentityFile` (a path on this Box; never the key itself). |
 | `ip` | `string` | Its address (an IP or a DNS name). |
 | `name` | `string` | Its name in the Inventory, unique. |
 | `group` | `string` | The group it's in. |
@@ -419,6 +421,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `196` | `roster vault op`: an op command that changes the vault or the account (`item create`, `item edit`, `item delete`, `item share`, `signin`, `signout`, `account add`, …) or writes a file here (`update`, `connect server create`, any `--out-file`/`-o`), without `--write`; op didn't run (T223). A CLI error, never a serve answer |
 | `197` | `roster vault op`: an op command roster vault op doesn't know (or an option among its words, or before it, that isn't one of op's valueless ones), or `--write` among op's arguments; op didn't run. A CLI error |
 | `198` | `roster vault op`: `op run`, `op plugin run`, `--session` or `--config` on op's command line, always refused; op didn't run. A CLI error |
+| `199` | `host.check`: the Host refused this Box's Ed25519 key and offers only NIST key exchange and host keys (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes Ed25519. The fix is `key_type: ecdsa` for it, then `roster setup --host NAME` (T239); without those signs a refused key is still `46` |
+| `200` | A note, not an error: a Host whose `key_type:` isn't `ed25519` is left out of the Mesh (its keys are Ed25519 only for now). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), as `160` is, never an error code (T239) |
+| `201` | `roster setup`: the file a key type's key goes in (`~/.ssh/roster_ecdsa`, or `key_path:`) holds a key of another type, an RSA key with fewer bits than its type, or a `.pub` that isn't its private key's, so roster made none and installed nothing. A CLI error (T239) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

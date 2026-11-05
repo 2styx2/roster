@@ -4350,6 +4350,8 @@ Every value is resolved: what the Host doesn't set comes from its group, then `d
 | `reviewed` | `boolean` | yes | `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is. |
 | `mesh` | `boolean` | no | `mesh:` as roster.yml sets it; `nil` if nothing does. |
 | `os` | `string` | no | `os:` as roster.yml sets it: `"windows"` (setup, revoke and check run PowerShell there) or `"posix"`; `nil` if nothing does, which is posix. |
+| `key_type` | `string` | yes | The SSH key type its key Login uses (`key_type:`, resolved): `"ed25519"` (the default), `"ecdsa"` (P-384), `"ecdsa-256"`, `"ecdsa-521"`, `"rsa"` (3072 bits) or `"rsa-BITS"`. Only an `enroll` Host uses it. |
+| `key_file` | `string` | yes | This Box's private key file for `key_type` (a path, never the key itself). |
 | `title` | `string` | yes | One line; `""` if unset. |
 | `description` | `string` | yes | One line; `""` if unset. |
 | `type` | `string` | yes | What it is (`esxi`, `linux`); `""` if unset. |

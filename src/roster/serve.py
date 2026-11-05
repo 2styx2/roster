@@ -125,7 +125,7 @@ from .sshops import (
     sync_fix,
 )
 
-API_VERSION = 29            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 30            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -901,7 +901,8 @@ def host_verify_login(state, params):
     # The vault only now, after the reload: roster.yml before the vault, always (LOCKS' order), or a write holding
     # roster.yml and waiting behind a vault.lock that waits for this request would never end.
     with claimed(state, [("vault", True)], "host.verify_login"):
-        result = diagnose.verify_login(new, state.cfg["key"], previous=h, limited=rate_limited(state))
+        # the Host's own key type's key (T239), as its ssh config gives it
+        result = diagnose.verify_login(new, Path(new["key_file"]), previous=h, limited=rate_limited(state))
     if result["ok"]:
         state.verified[login_key(new)] = (time.monotonic(), result.pop("host_key", None))
     return result

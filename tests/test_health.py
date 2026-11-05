@@ -142,7 +142,7 @@ def test_box_check_through_serve(serve, write_config, capsys, vault, ssh_log):
     synced(write_config, capsys, INVENTORY)
     s = serve()
     r = s.call("box.check")["result"]
-    assert r["api_version"] == 29 and r["roster_version"]
+    assert r["api_version"] == 30 and r["roster_version"]
     assert [c["section"] for c in r["checks"]] == sorted((c["section"] for c in r["checks"]), key=SECTIONS.index)
     assert {c["level"] for c in r["checks"]} <= {"ok", "warn", "error"}
     vault_checks = [c for c in r["checks"] if c["section"] == "vault"]

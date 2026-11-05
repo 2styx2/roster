@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from .common import NAME_RE, oneline
-from .config import GROUP_ONLY, OS_VALUES, first, host_os, load_config_text, resolve_ssh
+from .config import GROUP_ONLY, OS_VALUES, first, host_os, key_type, load_config_text, resolve_ssh
 from .errors import (
     GROUP_NOT_EMPTY,
     HOST_EXISTS,
@@ -387,7 +387,7 @@ def inherited(text, group):
     ssh = resolve_ssh("new", layers)
     out = {k: ssh[k] for k in SSH_KEYS} | {k: bool(first(layers, k, True)) for k in FLAGS}
     return out | {k: oneline(first(layers, k, "")) for k in TEXT} | {k: first(layers, k) for k in ("mesh", "mesh_dir")} \
-        | {"os": host_os("new", first(layers, "os"))}
+        | {"os": host_os("new", first(layers, "os"))} | {"key_type": key_type("new", first(layers, "key_type"))}
 
 
 def last_value(node):
@@ -769,7 +769,7 @@ def own_keys(text, group, name):
 # What a move writes on the Host to keep it. A Host with no mesh: (or mesh_dir:) anywhere has nothing to keep: it
 # takes the Mesh setting of the group it moves to, as any new member would (decision Q77). An unset os: is posix
 # (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198).
-PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", *TEXT)
+PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", "key_type", *TEXT)
 UNSET_JOINS = ("mesh", "mesh_dir")
 POSIX = "posix"
 
@@ -779,7 +779,7 @@ def pinned_move(text, was_host, name, group, mesh_dir=None):
     keeps beside its Hosts) would now inherit differently (its user, Login, flags, text, Mesh settings) written on
     the Host itself, so it comes out the same but for its group. Text only: nothing is loaded (check_moved checks
     the result). Returns (new text, the fields pinned)."""
-    old = current(was_host) | {"mesh_dir": mesh_dir}
+    old = current(was_host) | {"mesh_dir": mesh_dir, "key_type": was_host["key_type"]}
     was, will = inherited(text, was_host["group"]), inherited(text, group)
     old["os"], was["os"], will["os"] = (v or POSIX for v in (old["os"], was["os"], will["os"]))
     own = own_keys(text, was_host["group"], name)

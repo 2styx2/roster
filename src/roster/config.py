@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from . import boxkeys
 from .common import (
     KEY_TAG,
     KEY_TRAIL,
@@ -73,7 +74,8 @@ def locate_config(arg: Any, inv: str | None = None) -> Path:
         "--inventory file:PATH|repo:URL|ssh-config`), or pass -c PATH / set ROSTER_CONFIG")
 
 
-TOP_KEYS = {"bitwarden", "box_name", "claude_inline_limit", "defaults", "groups", "key_path", "links", "rate_limited",
+TOP_KEYS = {"bitwarden", "box_name", "claude_inline_limit", "defaults", "groups", "key_path", "key_type", "links",
+            "rate_limited",
             "provider_dirs", "providers", "resources", "web_login_names", "workers"}
 
 
@@ -127,6 +129,11 @@ def parse_inventory(text, path):
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
     hosts, groups, mesh_dirs, seen_as, sudo_refs = {}, {}, {}, {}, {}
+    box_type = key_type("key_type", raw.get("key_type")) or boxkeys.DEFAULT
+    key_type("defaults: key_type", (raw.get("defaults") or {}).get("key_type"))
+    for g, x in (raw.get("groups") or {}).items():
+        if isinstance(x, dict):
+            key_type(f"group {str(g)!r}: key_type", x.get("key_type"))
     for where, layer in (("defaults", raw.get("defaults") or {}),
                          *((f"group {g!r}", x or {}) for g, x in (raw.get("groups") or {}).items())):
         if isinstance(layer, dict) and "seen_as" in layer:
@@ -141,7 +148,8 @@ def parse_inventory(text, path):
             if not NAME_RE.match(hname):
                 die(f"bad host name {hname!r} (use letters, digits, . _ -)")
             if hname in hosts:
-                die(f"host {hname!r} is listed twice")
+                die(f"host {hname!r} is listed twice (in groups {hosts[hname]['group']!r} and {str(gname)!r}): a Host "
+                    "is in one group")
             m = {**defaults, **gset, **h, "name": hname, "group": str(gname)}
             if not m.get("ip"):
                 die(f"host {hname!r} has no ip")
@@ -170,6 +178,7 @@ def parse_inventory(text, path):
             if m["mesh"] is not None and not isinstance(m["mesh"], bool):
                 die(f"host {hname!r}: mesh: must be true or false")
             m["os"] = host_os(hname, first(layers, "os"))
+            m["key_type"] = key_type(f"host {hname!r}: key_type", first(layers, "key_type")) or box_type
             # The app sends this Host's shell its hook line (ticket 121); roster only checks it.
             if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
                 die(f"host {hname!r}: shell_hooks: must be true or false")
@@ -189,16 +198,21 @@ def parse_inventory(text, path):
     if not hosts and not blank_shape(raw):
         die(f"{path} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
-    key_path = str(raw.get("key_path") or "~/.ssh/roster_ed25519")
+    key_path = str(raw.get("key_path") or f"~/.ssh/{boxkeys.parse(box_type).file_name}")
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
         die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
     key = Path(os.path.expanduser(key_path))
+    for m in hosts.values():                # T239: each Host's key file, for its own key type (boxkeys)
+        m["key_file"] = str(boxkeys.key_file(key, box_type, m["key_type"]))
+        if m["key_type"] != box_type and Path(m["key_file"]) == key:
+            die(f"{path}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
+                f"(key_type: {m['key_type']}): point key_path at another file")
     # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
     # or spaces (T226, #435: sshd still reads it)
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}{KEY_TRAIL}"
     try:
         return Inventory.model_validate(
-            {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key,
+            {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key, "key_type": box_type,
              "pub": Path(str(key) + ".pub"), "workers": raw.get("workers") or 32,
              "inline_limit": raw.get("claude_inline_limit") or 60, "hosts": hosts, "groups": groups,
              "mesh_dirs": mesh_dirs, "seen_as": seen_as, "sudo": sudo_refs,
@@ -207,6 +221,17 @@ def parse_inventory(text, path):
              "rate_limited": rate_limited(raw.get("rate_limited"))})
     except ValidationError as e:
         die(f"{path}: {problem(e)}")
+
+
+def key_type(where, v):
+    """A `key_type:` (T239, decision Q200) as its canonical name (boxkeys), or None when nothing sets it. An unknown
+    one stops the load, naming WHERE and the allowed values."""
+    if v is None:
+        return None
+    try:
+        return boxkeys.parse(v).name
+    except ValueError as e:
+        die(f"{where}: {e}")
 
 
 OS_VALUES = ("windows", "posix")

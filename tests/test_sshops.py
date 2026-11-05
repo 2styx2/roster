@@ -7,6 +7,7 @@ import subprocess
 import pytest
 from conftest import posix_shell
 
+from roster import boxkeys
 from roster.config import load_config
 from roster.sshops import (
     add_key_script,
@@ -62,7 +63,7 @@ def test_remove_key_only_touches_this_box(tmp_path):
 def test_public_key_line_carries_box_tag(write_config):
     cfg = load_config(write_config("box_name: ws1\nkey_path: ~/k\ngroups: {a: {user: u, hosts: {h: 1.2.3.4}}}\n"))
     cfg["pub"].write_text("ssh-ed25519 AAAAxyz someone@else\n")
-    assert public_key_line(cfg) == "ssh-ed25519 AAAAxyz roster-managed:ws1"
+    assert public_key_line(boxkeys.box_key(cfg), cfg["tag"]) == "ssh-ed25519 AAAAxyz roster-managed:ws1"
 
 
 def test_ssh_config_written_and_included_once(isolated, write_config):
@@ -224,8 +225,13 @@ OLD_NAME_LINE = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster
 OTHER_BOX_SAME_OLD_NAME = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherBox+Key/x= roster-managed:old-pi"
 
 
+def box_cfg(key):
+    """What box_key_re reads of an Inventory: this Box's tag_re and its key (an Ed25519 one at KEY), no Hosts."""
+    return {"tag_re": TAG_RE, "key": key, "pub": key.parent / (key.name + ".pub"), "key_type": "ed25519", "hosts": {}}
+
+
 def renamed(tmp_path, *extra):
-    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")         # ssh-keygen -C wrote the tag the Box had then
     ak = tmp_path / ".ssh" / "authorized_keys"
     ak.parent.mkdir()
@@ -253,7 +259,7 @@ def test_add_key_retags_this_boxs_line_under_an_earlier_name(tmp_path):
 
 
 def test_box_key_re_is_the_tag_alone_without_a_public_key(tmp_path):
-    assert box_key_re({"tag_re": TAG_RE, "pub": tmp_path / "none.pub"}) == TAG_RE
+    assert box_key_re(box_cfg(tmp_path / "none")) == TAG_RE
 
 
 # #423's review M1: a Box key line someone hardened with options before it is still this Box's line (it ends in this
@@ -286,7 +292,7 @@ def test_retag_rewrites_only_this_boxs_lines_in_place_keeping_their_options(tmp_
 
 @posix_shell
 def test_retag_says_when_there_is_no_line_and_changes_nothing(tmp_path):
-    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")
     out = run_remote(retag_key_script(PUB, "admin"), tmp_path)        # no file at all
     assert "ROSTER_NONE" in out and not (tmp_path / ".ssh").exists()
@@ -300,7 +306,7 @@ def test_retag_says_when_there_is_no_line_and_changes_nothing(tmp_path):
 
 @posix_shell
 def test_retag_fails_when_grep_fails(tmp_path):
-    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")
     ak = tmp_path / ".ssh" / "authorized_keys"
     ak.parent.mkdir()
