@@ -158,11 +158,7 @@ fn roster_plugin_has_the_plugin_types_fields_and_errors_reach_pcall_as_strings()
 #[test]
 fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for (path, text) in [
-        (api::DOC_PATH, api::markdown()),
-        (api::STUBS_PATH, api::stubs()),
-        (api::JSON_PATH, api::json_text()),
-    ] {
+    for (path, text) in api::generated() {
         let committed = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         assert!(
             committed == text,

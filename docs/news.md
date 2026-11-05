@@ -22,6 +22,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **A Plugin action at the start never waits for roster to learn the app's own commands**: the app sends them with every load, call and event instead of once ahead (and retrying when that failed), so a Folders drop right after the start runs at once, and the "couldn't tell roster its own commands; trying again" message is gone.
 - **The app's fixes say `roster setup --host HOST`** (#461): the Fix for a refused key, an unknown host key or a changed one said `roster setup --only HOST`, which also sets up every Host whose group, type or product is called HOST. With a roster at API 29 or newer (v0.6.0 on) the Fix and its Copy button now say `--host HOST`, that Host alone; an older roster, which has no `--host`, still gets `--only`. The Mesh's details for a Link with no host key now point at the `roster setup` its Why names (serve says the flag its own roster takes).
 
 ### Security

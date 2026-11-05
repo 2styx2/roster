@@ -444,7 +444,7 @@ Nothing.
 - `roster.cmd: only while the user runs one of your actions, commands or finder items`: at load or in an event listener.
 - `roster.cmd: which command? …`: an empty line.
 - `roster.cmd: :NAME isn't one a Plugin may run (its own commands, and …)`: a command not in the list, another Plugin's, or one of yours named after one of roster's.
-- `roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands`: one of your commands, when the app couldn't tell roster which commands are its own (a call the user makes waits up to 5 s for that first).
+- `roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands`: one of your commands, when the app hasn't told roster which commands are its own (the app tells it with every load, call and event, so only a host it never told says this).
 - `roster.cmd: :NAME needs the P permission`: `:open` or `:connect` without `sessions.open`.
 - And [those of every function](#errors).
 

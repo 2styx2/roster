@@ -673,28 +673,30 @@ async fn plugin_demo_stop(demo: tauri::State<'_, DemoPlugins>, id: u64) -> Resul
 
 /// The folder a Plugin path means (decision Q82): `~/…`, absolute, or under the config dir.
 fn plugin_dir(config: &ConfigState, path: &str) -> Result<std::path::PathBuf, String> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from);
-    plugin::resolve_dir(path, config_dir(config).ok().as_deref(), home.as_deref())
+    plugin::resolve_dir(path, config_dir(config).ok().as_deref(), plugin::home_dir().as_deref())
 }
 
-/// Where a Plugin path leads: `builtin:NAME` (built in), `package:NAME` (a Package's clone, with
-/// its settings from init.lua; only one init.lua names), or a folder. The path given back is the
-/// one the frontend keeps.
+/// Where a Plugin path leads, with the settings it's handed (a Package's from init.lua; only one
+/// init.lua names) and the path the frontend keeps.
 fn plugin_source(
     config: &ConfigState,
     packages: &PackagesState,
     path: &str,
 ) -> Result<(plugin::Source, Value, String), String> {
-    if let Some(name) = path.strip_prefix("builtin:") {
-        return Ok((plugin::Source::Bundled(name.to_string()), Value::Null, path.to_string()));
+    match plugin::PluginPath::parse(path) {
+        plugin::PluginPath::Builtin(name) => {
+            Ok((plugin::Source::Bundled(name.to_string()), Value::Null, path.to_string()))
+        }
+        plugin::PluginPath::Package(name) => {
+            let (dir, settings) = packages_of(packages)?.loadable(&package_specs(config), name)?;
+            Ok((plugin::Source::Dir(dir), settings, path.to_string()))
+        }
+        plugin::PluginPath::Folder(text) => {
+            let dir = plugin_dir(config, text)?;
+            let shown = dir.display().to_string();
+            Ok((plugin::Source::Dir(dir), Value::Null, shown))
+        }
     }
-    if let Some(name) = path.strip_prefix("package:") {
-        let (dir, settings) = packages_of(packages)?.loadable(&package_specs(config), name)?;
-        return Ok((plugin::Source::Dir(dir), settings, path.to_string()));
-    }
-    let dir = plugin_dir(config, path)?;
-    let shown = dir.display().to_string();
-    Ok((plugin::Source::Dir(dir), Value::Null, shown))
 }
 
 /// `:plugins install PATH`, step 1: the manifest, for the permission prompt. Runs none of its code.
@@ -753,10 +755,14 @@ async fn plugin_load(
     path: String,
     grants: Vec<String>,
     settings: Option<Value>,
+    builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
 ) -> Result<Value, String> {
-    let grants: Vec<Permission> = grants.iter().filter_map(|g| Permission::parse(g).ok()).collect();
+    let (grants, refused) = Permission::parse_grants(&grants);
     let host = plugin_host(&plugins, &demo, on_demo)?;
+    if let Some(names) = builtins {
+        host.set_builtins(names);
+    }
     let (config, packages) = (config.inner().clone(), packages.inner().clone());
     blocking(move || {
         // The user's proxy for its requests to public names, from the Config in effect (decision
@@ -771,9 +777,9 @@ async fn plugin_load(
             handed = given;
         }
         let (manifest, reply) = host
-            .load_with_proxy(&source, &grants, &handed, proxy)
+            .load(&source, plugin::Load::new(&grants).config(handed).proxy(proxy))
             .map_err(|e| e.to_string())?;
-        Ok(json!({ "manifest": manifest, "dir": shown, "reply": reply }))
+        Ok(json!({ "manifest": manifest, "dir": shown, "reply": reply, "refused": refused }))
     })
     .await
 }
@@ -885,9 +891,13 @@ async fn plugin_call(
     args: Value,
     user: Option<bool>,
     carried: Option<bool>,
+    builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
 ) -> Result<plugin::Reply, String> {
     let host = plugin_host(&plugins, &demo, on_demo)?;
+    if let Some(names) = builtins {
+        host.set_builtins(names);
+    }
     // `user: false`: the app runs it on its own (a finder's items, a `:check`, a timer, a
     // question's cancel because another took its place, a command a carried run's `roster.cmd`
     // named), never the user's call. `carried`: the Plugin's own command its `roster.cmd` ran from
@@ -910,9 +920,13 @@ async fn plugin_event(
     demo: tauri::State<'_, DemoPlugins>,
     name: String,
     payload: Value,
+    builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
 ) -> Result<Vec<plugin::Reply>, String> {
     let host = plugin_host(&plugins, &demo, on_demo)?;
+    if let Some(names) = builtins {
+        host.set_builtins(names);
+    }
     blocking(move || Ok(host.event(plugin::Event { name, payload }))).await
 }
 
@@ -938,19 +952,6 @@ fn plugin_unload(
     on_demo: Option<u64>,
 ) -> bool {
     plugin_host(&plugins, &demo, on_demo).is_ok_and(|h| h.unload(&plugin))
-}
-
-/// The app's built-in commands (issue #184): none is a Plugin's own to run with `roster.cmd`. The
-/// app sends them when its Plugin host starts and again when one registers later.
-#[tauri::command]
-fn plugin_builtins(
-    plugins: tauri::State<'_, Arc<PluginHost>>,
-    demo: tauri::State<'_, DemoPlugins>,
-    names: Vec<String>,
-    on_demo: Option<u64>,
-) -> Result<(), String> {
-    plugin_host(&plugins, &demo, on_demo)?.set_builtins(names);
-    Ok(())
 }
 
 /// `plugin_proxy` from a Config (decision Q116); the Config's check refused a bad one, so a
@@ -1435,7 +1436,6 @@ pub fn run() {
             plugin_sessions,
             plugin_unload,
             plugin_forget,
-            plugin_builtins,
             plugin_demo_start,
             plugin_demo_stop,
             plugin_requests,

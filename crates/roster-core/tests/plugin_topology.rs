@@ -17,7 +17,7 @@ use common::unhurried;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{DemoHost, Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{DemoHost, Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -369,7 +369,10 @@ impl World {
         let before = self.serve.calls.lock().unwrap().len();
         let (_, mut reply) = self
             .host
-            .load_with(&Source::Dir(self.dir.clone()), &perms(grants), &config)
+            .load(
+                &Source::Dir(self.dir.clone()),
+                Load::new(&perms(grants)).config(config.clone()),
+            )
             .unwrap();
         ok(&reply);
         let first = reply

@@ -4,6 +4,7 @@
 //! the Plugin asks of the UI during a call comes back as that call's ops (data, never HTML); a
 //! Lua function inside them is kept here and sent as `{ "handler": N }`.
 
+use super::api::EVENTS;
 use super::folder::Storage;
 use super::network::{self, Answer, Net};
 use super::{Builtins, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
@@ -29,9 +30,9 @@ const OWN: &str = "roster.plugin.own";
 /// The `roster.api_version` from which taking away what the Plugin never added, or naming a key
 /// context that isn't one, is an error (ticket 145, decision Q134): a Plugin written for an older
 /// one keeps the quiet removals it was written against.
-const COMPLETE_API: u32 = 5;
+pub(crate) const COMPLETE_API: u32 = 5;
 /// Where a Plugin's key bindings work (`KeyContext`).
-const KEY_CONTEXTS: &[&str] = &["leader", "list", "list_vim"];
+pub(crate) const KEY_CONTEXTS: &[&str] = &["leader", "list", "list_vim"];
 /// How deep a copy of a Plugin's table goes: past this it's a loop, or nothing a UI needs.
 const MAX_COPY_DEPTH: usize = 64;
 /// The keys `roster.http.request` takes.
@@ -49,7 +50,7 @@ pub(crate) const MAX_SERVE_WAIT: Duration = Duration::from_secs(300);
 /// The most UI ops one call may produce.
 pub(crate) const MAX_OPS: usize = 1000;
 /// The most text `roster.clipboard.copy` takes.
-const MAX_COPY: usize = 64 * 1024;
+pub(crate) const MAX_COPY: usize = 64 * 1024;
 /// The most Lua functions a Plugin may have handed over at once.
 const MAX_HANDLERS: usize = 10_000;
 /// The most timers a Plugin may have waiting at once.
@@ -59,7 +60,7 @@ pub(crate) const MAX_TIMERS: usize = 100;
 pub(crate) const DEFER_MIN_MS: u64 = 50;
 pub(crate) const EVERY_MIN_MS: u64 = 1000;
 /// The longest a timer may wait (the most a browser's setTimeout takes).
-const TIMER_MAX_MS: f64 = 2_147_483_647.0;
+pub(crate) const TIMER_MAX_MS: f64 = 2_147_483_647.0;
 
 /// `pairs` for Plugins: number keys in order, then string keys in order, then the rest, so the
 /// same state makes the same ops in the same order (decision Q96). A table's `__pairs` still wins.
@@ -105,23 +106,6 @@ pairs = function(t)
 end
 "#;
 
-/// The events a Plugin can subscribe to, and the permissions that let it (any one of them, as a
-/// manifest writes it; none listed means every Plugin may).
-pub const EVENTS: &[(&str, &[&str])] = &[
-    ("lock", &[]),
-    ("unlock", &[]),
-    ("host_selected", &["inventory.read", "terminal.read"]),
-    ("session_open", &["inventory.read", "terminal.read"]),
-    ("session_exit", &["inventory.read", "terminal.read"]),
-    ("inventory_changed", &["inventory.read"]),
-    ("terminal_output", &["terminal.read"]),
-    ("command_done", &["terminal.read"]),
-    (
-        "job_progress",
-        &["serve:mesh.job", "serve:discover.status", "serve:host.check_job"],
-    ),
-];
-
 /// The kinds of serve's jobs a `job_progress` event can be about, and the permission that lets a
 /// Plugin hear one (decision Q112f): the method it would ask about that job with anyway, so the
 /// event tells it nothing a poll wouldn't. A Host's check (ticket 108) is heard with the read
@@ -135,14 +119,14 @@ pub const JOB_KINDS: &[(&str, &str)] = &[
 /// Whether a Plugin with `grants` may get `event`.
 pub(crate) fn may_hear(event: &str, grants: &BTreeSet<Permission>) -> Result<(), String> {
     let granted = |p: &str| grants.iter().any(|g| g.to_string() == p);
-    match EVENTS.iter().find(|(name, _)| *name == event) {
+    match EVENTS.iter().find(|e| e.name == event).map(|e| e.needs) {
         None => Err(format!(
             "there's no event {event:?} (there's {})",
-            EVENTS.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+            EVENTS.iter().map(|e| e.name).collect::<Vec<_>>().join(", ")
         )),
-        Some((_, [])) => Ok(()),
-        Some((_, needs)) if needs.iter().any(|p| granted(p)) => Ok(()),
-        Some((_, needs)) => Err(format!("the {event} event needs the {} permission", needs.join(" or "))),
+        Some([]) => Ok(()),
+        Some(needs) if needs.iter().any(|p| granted(p)) => Ok(()),
+        Some(needs) => Err(format!("the {event} event needs the {} permission", needs.join(" or "))),
     }
 }
 

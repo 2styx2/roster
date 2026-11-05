@@ -7,7 +7,6 @@ import type { FakePlugin } from "../backend/fakePlugins";
 import { builtinRegistries } from "../registries";
 import { PluginManager, STATE_KEY, type PluginUi } from "./manager";
 import { parseOp } from "./ops";
-import type { Message } from "../ui/messages";
 
 const ALERTS = "~/plugins/recent-alerts";
 const SIZE = { cols: 80, rows: 24 };
@@ -664,60 +663,22 @@ describe("a finder's prompt", () => {
 });
 
 describe("roster's own commands, to the core (issue #184)", () => {
-  it("are sent when the Plugins start and again when one registers later, never taken back", async () => {
+  it("go with every load, call and event, a built-in registered later among them, never taken back", async () => {
     const { manager, registries, backend } = setup();
-    const sent = vi.spyOn(backend, "pluginBuiltins");
+    const loads = vi.spyOn(backend, "pluginLoad");
+    const events = vi.spyOn(backend, "pluginEvent");
     await manager.start();
-    const first = sent.mock.calls.at(-1)?.[0] ?? [];
+    const first = loads.mock.calls.at(-1)?.[3] ?? [];
     expect(first).toContain("publish");
     expect(first).toContain("lock");
     expect(first).not.toContain("late");
-    // A built-in that registers later (App's `:tutor`, `:panel`, …) reaches the core too.
+    // A built-in that registers later (App's `:tutor`, `:panel`, …) goes with the next event.
     const remove = registries.commands.register({ id: "late", source: "builtin", area: "Other", label: () => "Late", run: () => undefined });
-    await vi.waitFor(() => expect(sent.mock.calls.at(-1)?.[0]).toContain("late"));
-    // Taken out again (an effect re-running), the core keeps refusing it.
-    const calls = sent.mock.calls.length;
+    await manager.event("lock");
+    expect(events.mock.calls.at(-1)?.[2]).toContain("late");
+    // Taken out again (an effect re-running), it still goes: the list only grows.
     remove();
-    registries.commands.register({ id: "probe-own", source: "probe", area: "Other", label: () => "", run: () => undefined });
-    expect(sent.mock.calls.length).toBe(calls);
-  });
-
-  it("a send that fails is said once, quietly, retried, and sent whole again before a Plugin loads", async () => {
-    vi.useFakeTimers();
-    try {
-      const said: Message[] = [];
-      const backend = fakeBackend({ hosts: makeHosts(3), plugins: { [ALERTS]: alerts() } });
-      const state: Record<string, unknown> = { [STATE_KEY]: [{ path: ALERTS, name: "recent-alerts", granted: [], asked: ["terminal.read"] }] };
-      const store = { get: (k: string) => state[k], set: (k: string, v: unknown) => void (state[k] = v) };
-      const ui: PluginUi = { run: () => undefined, send: () => undefined, copy: async () => undefined, say: (m) => void said.push(m) };
-      const manager = new PluginManager(backend, builtinRegistries(), store, ui);
-      const real = backend.pluginBuiltins.bind(backend);
-      let down = true;
-      const sent = vi.spyOn(backend, "pluginBuiltins").mockImplementation((names) => (down ? Promise.reject(new Error("no such command")) : real(names)));
-      const loads = vi.spyOn(backend, "pluginLoad");
-      await manager.start();
-      // Every load tried the whole list again first; none got through.
-      expect(sent.mock.calls.length).toBeGreaterThan(loads.mock.calls.length);
-      for (const [i, load] of loads.mock.invocationCallOrder.entries()) {
-        expect(sent.mock.invocationCallOrder.some((c) => c < load && (i === 0 || c > (loads.mock.invocationCallOrder[i - 1] ?? 0)))).toBe(true);
-      }
-      expect(sent.mock.calls.every(([names]) => names.includes("publish") && names.includes("lock"))).toBe(true);
-      // Said once, quietly, and without the ids; unasked, so it keeps a line that shows (#349).
-      expect(said).toHaveLength(1);
-      expect(said[0]).toMatchObject({ kind: "quiet", background: true });
-      expect(JSON.stringify(said[0])).not.toContain("publish");
-      // Retried on its own, and once it's through, not again.
-      down = false;
-      const before = sent.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(sent.mock.calls.length).toBe(before + 1);
-      await vi.advanceTimersByTimeAsync(120_000);
-      expect(sent.mock.calls.length).toBe(before + 1);
-      await manager.reload("recent-alerts");
-      expect(sent.mock.calls.length).toBe(before + 1);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await manager.event("unlock");
+    expect(events.mock.calls.at(-1)?.[2]).toContain("late");
   });
 });

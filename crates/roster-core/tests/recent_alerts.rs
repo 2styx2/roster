@@ -13,7 +13,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -187,7 +187,10 @@ impl World {
 
     fn load(&self, grants: &[&str]) -> Reply {
         let (dir, config) = self.packages.loadable(&self.specs, NAME).unwrap();
-        let (_, reply) = self.host.load_with(&Source::Dir(dir), &perms(grants), &config).unwrap();
+        let (_, reply) = self
+            .host
+            .load(&Source::Dir(dir), Load::new(&perms(grants)).config(config.clone()))
+            .unwrap();
         reply
     }
 
@@ -1008,7 +1011,10 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
                     .collect();
                 vec![
                     w.host
-                        .load_with(&Source::Dir(dir.clone()), &perms(&grants), &step["config"])
+                        .load(
+                            &Source::Dir(dir.clone()),
+                            Load::new(&perms(&grants)).config(step["config"].clone()),
+                        )
                         .unwrap()
                         .1,
                 ]

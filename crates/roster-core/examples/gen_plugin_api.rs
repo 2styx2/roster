@@ -1,7 +1,7 @@
 //! Writes the Plugin API's reference, stubs and data from `roster_core::plugin::api` (ticket 70,
 //! decision Q89), like scripts/gen-serve-api.py does for serve's tables. From the repo's root:
 //!
-//!     cargo run -p roster-core --example gen_plugin_api            # rewrites the three files
+//!     cargo run -p roster-core --example gen_plugin_api            # rewrites the four files
 //!     cargo run -p roster-core --example gen_plugin_api -- --check # exits 1 if one is out of date
 //!
 //! crates/roster-core/tests/plugin_api.rs makes the same comparison, so a stale file fails the tests.
@@ -14,11 +14,7 @@ fn main() -> ExitCode {
     let check = std::env::args().any(|a| a == "--check");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut stale = false;
-    for (path, text) in [
-        (api::DOC_PATH, api::markdown()),
-        (api::STUBS_PATH, api::stubs()),
-        (api::JSON_PATH, api::json_text()),
-    ] {
+    for (path, text) in api::generated() {
         let file = root.join(path);
         if std::fs::read_to_string(&file).ok().as_deref() == Some(text.as_str()) {
             continue;

@@ -560,7 +560,7 @@ pub const FUNCTIONS: &[Function] = &[
             ),
             (
                 "roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands",
-                "one of your commands, when the app couldn't tell roster which commands are its own (a call the user makes waits up to 5 s for that first)",
+                "one of your commands, when the app hasn't told roster which commands are its own (the app tells it with every load, call and event, so only a host it never told says this)",
             ),
             (
                 "roster.cmd: :NAME needs the P permission",
@@ -5237,6 +5237,8 @@ fn cell(text: &str) -> String {
 pub const DOC_PATH: &str = "docs/plugin-api.md";
 pub const STUBS_PATH: &str = "examples/plugins/types/roster.lua";
 pub const JSON_PATH: &str = "crates/roster-core/tests/fixtures/plugin-api.json";
+/// [`runtime`] as TypeScript, for the app and its fake Backend (`as const`, so its names are types).
+pub const TS_PATH: &str = "app/src/plugins/core.gen.ts";
 pub const COMMAND: &str = "cargo run -p roster-core --example gen_plugin_api";
 
 fn functions_of(module: &str) -> impl Iterator<Item = &'static Function> + '_ {
@@ -5650,6 +5652,7 @@ pub fn json() -> Json {
         "commands": COMMANDS.iter().map(|c| json!({ "name": c.name, "permission": match c.needs { Needs::Permission(p) => json!(p), _ => Json::Null }, "doc": c.doc, "needs_text": c.needs.text() })).collect::<Vec<_>>(),
         "roster_only": ROSTER_ONLY,
         "serve_results": SERVE_RESULTS.iter().map(|r| json!({ "method": r.method, "result": r.result, "link": r.link })).collect::<Vec<_>>(),
+        "runtime": runtime(),
         "lua_doc": LUA_DOC,
         "errors_doc": ERRORS_DOC,
         "types": types,
@@ -5660,6 +5663,62 @@ pub fn json() -> Json {
 /// The JSON file's text, as committed.
 pub fn json_text() -> String {
     serde_json::to_string_pretty(&json()).expect("plain data") + "\n"
+}
+
+/// What the Plugin host itself decides, besides the API's declarations, that the app and its fake
+/// Backend must agree with: the events and who hears them, the limits a Plugin meets, the
+/// permissions' words, the built-in Plugins and the paths that name them.
+pub fn runtime() -> Json {
+    use super::{permission, runtime as rt};
+    json!({
+        "events": EVENTS.iter().map(|e| json!({ "name": e.name, "needs": e.needs })).collect::<Vec<_>>(),
+        "job_kinds": rt::JOB_KINDS.iter().map(|(k, p)| (k.to_string(), json!(p))).collect::<serde_json::Map<_, _>>(),
+        "key_contexts": rt::KEY_CONTEXTS,
+        "complete_api": rt::COMPLETE_API,
+        "limits": {
+            "max_serve_requests": rt::MAX_SERVE_REQUESTS,
+            "max_timers": rt::MAX_TIMERS,
+            "defer_min_ms": rt::DEFER_MIN_MS,
+            "every_min_ms": rt::EVERY_MIN_MS,
+            "timer_max_ms": rt::TIMER_MAX_MS,
+            "max_copy": rt::MAX_COPY,
+            "strikes": super::Limits::default().strikes,
+            "storage_file": super::folder::MAX_FILE,
+            "storage_total": super::folder::MAX_TOTAL,
+            "storage_files": super::folder::MAX_FILES,
+            "storage_name": super::folder::MAX_NAME,
+        },
+        "permissions": {
+            "words": permission::WORDS.iter().map(|w| (w.name.to_string(), json!({ "summary": w.summary, "risk": w.risk }))).collect::<serde_json::Map<_, _>>(),
+            "serve_summary": permission::SERVE_SUMMARY,
+            "serve_risk": permission::SERVE_RISK,
+            "serve_methods": permission::SERVE_METHODS,
+            "serve_prefixes": permission::SERVE_PREFIXES,
+            "serve_reads": permission::READS,
+        },
+        "bundled": super::BUNDLED.iter().map(|b| b.name).collect::<Vec<_>>(),
+        "builtin_prefix": super::BUILTIN_PREFIX,
+        "package_prefix": super::PACKAGE_PREFIX,
+    })
+}
+
+/// [`runtime`] as the TypeScript module the app imports ([`TS_PATH`]).
+pub fn ts_text() -> String {
+    let body = serde_json::to_string_pretty(&runtime()).expect("plain data");
+    format!(
+        "// What roster-core's Plugin host decides that the app and its fake Backend agree with (events,\n// limits, permissions' words, built-in Plugins). Written by `{COMMAND}`\n// from crates/roster-core/src/plugin: don't edit it here.\nexport const CORE = {body} as const;\n"
+    )
+}
+
+/// Every file the generator writes, with its text: the reference, the stubs, the data and the
+/// app's module.
+pub fn generated() -> [(&'static str, String); 4] {
+    [
+        (DOC_PATH, markdown()),
+        (STUBS_PATH, stubs()),
+        (JSON_PATH, json_text()),
+        (TS_PATH, ts_text()),
+    ]
 }
 
 #[cfg(test)]
@@ -5732,16 +5791,7 @@ mod tests {
     }
 
     #[test]
-    fn the_events_are_the_runtimes() {
-        let ours: Vec<(&str, Vec<String>)> = EVENTS
-            .iter()
-            .map(|e| (e.name, e.needs.iter().map(|p| p.to_string()).collect()))
-            .collect();
-        let runtime: Vec<(&str, Vec<String>)> = super::super::EVENTS
-            .iter()
-            .map(|(n, needs)| (*n, needs.iter().map(|p| p.to_string()).collect()))
-            .collect();
-        assert_eq!(ours, runtime, "api.rs's EVENTS and runtime.rs's disagree");
+    fn the_event_name_type_names_every_event() {
         let names: Vec<String> = EVENTS.iter().map(|e| format!("\"{}\"", e.name)).collect();
         assert_eq!(type_named("EventName").unwrap().alias, names.join("|"));
     }
