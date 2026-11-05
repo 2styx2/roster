@@ -928,11 +928,14 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* The name is the column you scan: it takes two parts of the spare room (at least 20 characters; the footer shows it whole when cut), the group one part (at least 10); the
      address up to 22, the group up to 18 and the type up to 10 take only what they need, and
      give way before it. */
-  grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) auto 24px 0;
+  grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) 0;
 }
+/* A badge column only while a shown row is unreviewed (round 16). */
+.picker-list.badged { grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) auto 0; }
 .picker-row {
+  position: relative;
   grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
-  align-items: center; min-height: 34px; padding: 8px 0; border-radius: var(--radius); color: var(--muted);
+  align-items: center; min-height: 40px; padding: 8px 0; border-radius: var(--radius); color: var(--muted);
 }
 .picker-row > :first-child { grid-column-start: 2; }
 .picker-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -953,12 +956,14 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
 .picker-row > .badge { justify-self: end; overflow: visible; }
-/* A Host's details (ticket 18): in the last column, so it never moves the row; shown on the
-   selected row only (Ctrl+I is its key), never on hover, as a Sidebar row's buttons (Q88). */
-.picker-row > .picker-info { grid-column: -3; }
+/* A Host's details (ticket 18): shown on the selected row only (Ctrl+I is its key), never on
+   hover, as a Sidebar row's buttons (Q88). It floats over that row's right end on the row's own
+   colour, so no row keeps a 24 px column for it (round 16). */
+.picker-row > .picker-info { position: absolute; right: 6px; top: 50%; translate: 0 -50%; }
+.picker-row.selected > .picker-info { background: var(--raised); box-shadow: -8px 0 8px var(--raised); }
 /* A narrow window keeps what you pick by: the node, the name and the address. */
 @media (max-width: 600px) {
-  .picker-list { grid-template-columns: 0 8px minmax(0, 1fr) fit-content(16ch) auto 24px 0; }
+  .picker-list, .picker-list.badged { grid-template-columns: 0 8px minmax(0, 1fr) fit-content(16ch) auto 0; }
   .picker-row > .host-group, .picker-row > .host-type { display: none; }
 }
 .picker-info {

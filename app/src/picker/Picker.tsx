@@ -374,7 +374,11 @@ export function Picker({
           />
         </div>
         <ul
-          className={`picker-list${rowCount <= 1 ? " few" : ""}`}
+          className={`picker-list${rowCount <= 1 ? " few" : ""}${
+            // The badge column takes room only while a shown row has one (round 16: sized from
+            // the whole Inventory, it kept ~90 px empty while names were cut).
+            shown.some(({ host }) => !host.reviewed) ? " badged" : ""
+          }`}
           role="listbox"
           id={listId}
           ref={listRef}
@@ -477,7 +481,9 @@ export function Picker({
             <span className="host-ip">{widest.ip}</span>
             <span className="host-group">{widest.group}</span>
             <span className="host-type">{widest.type}</span>
-            {widest.badge && <span className="badge">unreviewed</span>}
+            {widest.badge && shown.some(({ host }) => !host.reviewed) && (
+              <span className="badge">unreviewed</span>
+            )}
           </li>
         </ul>
         {rowCount === 0 && (
