@@ -176,7 +176,7 @@ export function viewsFinder(views: ViewRegistry): FinderSourceDef {
     id: "views",
     source: BUILTIN,
     title: "Open a view",
-    prompt: "Views ›",
+    prompt: "Views",
     empty: "No views yet: Plugins add them.",
     items: () =>
       views

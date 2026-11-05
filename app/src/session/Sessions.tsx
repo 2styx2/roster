@@ -343,9 +343,13 @@ export function ConnectCard({
                 e.stopPropagation();
                 answers?.cancel();
               } else if (e.key === "Enter" && e.target === e.currentTarget) {
+                // Enter on the card itself (focus lands there when its text is clicked) never
+                // trusts a key: a host-key question needs Trust and connect itself (Q203), and
+                // Quick Connect's needs "I've checked this key" ticked (Q206). A password
+                // prompt (no key in question) still connects.
                 e.preventDefault();
-                if (asksQuick || asksPassword) connectQuick();
-                else answers?.trust();
+                if (asksPassword) connectQuick();
+                else if (asksQuick && checkedKey) connectQuick();
               }
             }
           : undefined

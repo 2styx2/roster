@@ -42,6 +42,10 @@ describe("Quick Connect", () => {
     // Enter connects only once the key is marked checked (round 14): an unread key is never trusted.
     await user.keyboard(`${FAKE_HOST_PASSWORD}{Enter}`);
     expect(backend.quickConnects()).toEqual([]);
+    // Nor from the card itself (a click on its text focuses it): round 15's P0.
+    q.focus();
+    await user.keyboard("{Enter}");
+    expect(backend.quickConnects()).toEqual([]);
     await user.click(within(q).getByRole("checkbox", { name: "I've checked this key" }));
     await user.click(field);
     await user.keyboard("{Enter}");

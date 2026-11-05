@@ -1479,6 +1479,8 @@ button.primary .btn-keys .keycap { color: inherit; background: transparent; bord
    are one flex line each, stacked. (Round 2 made .picker-list a grid and laid every Finder row
    side by side; styles.test.ts pins this.) */
 .picker-list.finder-list { display: flex; flex-direction: column; }
+/* A selected row that wraps grows; rows never shrink into each other (round 15). */
+.picker-list.finder-list > .finder-row { flex-shrink: 0; }
 .finder-row {
   display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 7px 10px; border-radius: var(--radius);
   font: var(--text-md) var(--font-mono); color: var(--muted);
