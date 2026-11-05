@@ -690,15 +690,16 @@ function markOverflow(list: HTMLElement) {
   if (more) list.dataset.more = more;
   else delete list.dataset.more;
   // The Sessions list says on its heading how many are scrolled out of sight above (round 10: a
-  // held list showing only the newest read as if the others had closed).
-  const count = list.parentElement?.querySelector<HTMLElement>(
-    ":scope > .sb-heading .sb-count",
+  // held list showing only the newest read as if the others had closed), muted after the title;
+  // the count itself is right-aligned as the other headings' are (round 21).
+  const title = list.parentElement?.querySelector<HTMLElement>(
+    ":scope > .sb-heading h2",
   );
-  if (!count || !list.matches('[data-section="sessions"] > .sb-rows')) return;
+  if (!title || !list.matches('[data-section="sessions"] > .sb-rows')) return;
   const row = list.querySelector<HTMLElement>(".sb-row")?.offsetHeight || 1;
   const hidden = Math.round(list.scrollTop / row);
-  if (hidden > 0) count.dataset.above = String(hidden);
-  else delete count.dataset.above;
+  if (hidden > 0) title.dataset.above = String(hidden);
+  else delete title.dataset.above;
 }
 
 /** An IPv4 or IPv6 address, or a range (10.0.0.0/24). */
