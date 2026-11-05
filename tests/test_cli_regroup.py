@@ -5,6 +5,7 @@ one table (roster.aliases), rewritten before the parser sees the command line.""
 import json
 
 import pytest
+from conftest import WINDOWS
 
 from roster import aliases, clihelp
 from roster.cli import main
@@ -236,7 +237,7 @@ def test_the_first_vault_sync_syncs_and_counts_the_items(capsys, bw, tmp_path):
     assert ["sync", "--nointeraction"] in [json.loads(x) for x in (tmp_path / "argv.log").read_text().splitlines()]
     assert "bw" in out and "3 items" in out and "first sync" in out
     (f,) = snapshot_files()
-    assert f.stat().st_mode & 0o777 == 0o600
+    assert WINDOWS or f.stat().st_mode & 0o777 == 0o600          # Windows: the folder's ACL, as every private file
     snap = json.loads(f.read_text())
     assert snap["items"] == {"aaaa-1": "2026-10-01T10:00:00.000Z", "bbbb-2": "2026-10-02T10:00:00.000Z",
                              "dddd-4": "2026-10-03T10:00:00.000Z"}       # ids and revision dates, no name
