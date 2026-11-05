@@ -242,11 +242,14 @@ export class Tabs {
     if (!save) return;
     entry.tab = { ...entry.tab, save: null };
     entry.run.saveScan = "";
+    // One that doesn't reach serve is still forgotten there: at vault.lock, and 10 minutes after it
+    // was typed (docs/app/security.md).
     if (save.saved === null) void this.backend.forgetTyped(save.held).catch(() => {});
   }
 
   /** Tells serve to forget what it holds for a Session no tab will offer to save. */
   private forgetHeld(session: SessionHandle) {
+    // As dropSave: serve forgets it by itself at vault.lock or after 10 minutes.
     if (session.held !== undefined) void this.backend.forgetTyped(session.held).catch(() => {});
   }
 
@@ -538,6 +541,7 @@ export class Tabs {
           if (!current()) {
             // Closed or started again while it opened: nothing will ever save what serve holds for it.
             this.forgetHeld(session);
+            // A Session nobody shows any more: if closing fails, its exit is ignored all the same.
             void session.close().catch(() => {});
             return;
           }
@@ -560,6 +564,7 @@ export class Tabs {
             watch.conptyRules(session.fillUser ?? null);
             this.promptChanged(entry, watch);
           }
+          // A write that fails is a Session that's ending: its exit says why.
           for (const data of entry.pending.splice(0)) void session.write(data).catch(() => {});
           const quick = entry.tab.quick && { ...entry.tab.quick, id: session.quick ?? null };
           const held = session.held;
@@ -897,6 +902,7 @@ export class Tabs {
       watch.typed(data);
       this.promptChanged(entry, watch);
     }
+    // A write that fails is a Session that's ending: its exit says why.
     if (entry.session) void entry.session.write(data).catch(() => {});
     else if (entry.tab.status.state === "connecting") entry.pending.push(data);
   }
@@ -916,6 +922,7 @@ export class Tabs {
     entry.sentSize = { ...size };
     entry.run.watch?.resize(size);
     entry.run.hooks?.resize(size);
+    // A resize that fails is a Session that's ending; the next one is sent whole anyway.
     void session.resize(size).catch(() => {});
   }
 

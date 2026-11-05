@@ -224,7 +224,6 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     }
   }
 
-  // Keys.
   for (const k of c.keys) {
     const path = `keys.${snake(k.context)}.${k.keys}`;
     const keys = normalizeKeys(k.keys);
@@ -251,7 +250,6 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     warn(null, `leader = "${c.leader}": a Leader without Ctrl, Alt or Meta takes that key from every terminal`);
   }
 
-  // Folders.
   for (const f of c.folders) {
     const entry: FolderEntry = { id: f.name.toLowerCase(), source: CONFIG, name: f.name, hosts: f.hosts };
     disposers.push(registries.folders.register(entry));

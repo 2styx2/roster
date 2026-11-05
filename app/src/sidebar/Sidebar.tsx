@@ -30,6 +30,7 @@ import { RowActionGlyph } from "../ui/icons";
 import type { MenuEntry } from "./hostMenu";
 import { allRows, cursorIn, headingId, rowDomId, rowFacts, rowName, tagName, type OpenMenu, type RowAction, type SidebarRow, type SidebarSection } from "./model";
 import { RowMenu } from "./RowMenu";
+import { keepFocus } from "../ui/keepFocus";
 
 // Plugins' code still names these from here.
 export type { RowAction, SidebarRow } from "./model";
@@ -71,8 +72,6 @@ const SearchIcon = () => (
   </svg>
 );
 
-/** Keeps focus where it is (the terminal) when a row or button is clicked. */
-const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 
 

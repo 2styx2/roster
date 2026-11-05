@@ -12,6 +12,7 @@ import { RowActionGlyph } from "./icons";
 import { countOf } from "./format";
 import { Keys } from "./Keys";
 import { actionApplies, filterRows, MIN_CH, nextSort, sortRows, splitMiddle, windowOf, type Sort, type TableColumn, type TableModel, type TableRow } from "./table";
+import { keepFocus } from "./keepFocus";
 
 export interface DataTableProps {
   model: TableModel;
@@ -31,7 +32,6 @@ const OVERSCAN = 8;
 /** A row's height until one is measured. */
 const ROW_GUESS = 26;
 
-const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 function cellText(row: TableRow, c: TableColumn): string {
   const v = row.cells[c.id];
