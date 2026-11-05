@@ -22,7 +22,9 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     fails=0
     check() { if eval "$2"; then echo "  PASS $1"; else echo "  FAIL $1"; fails=$((fails + 1)); fi; }
     sudo mkdir -p /run/sshd && sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes
-    sudo sh -c '(service cron start || service crond start || crond || cron) >/dev/null 2>&1'
+    # Ubuntu's image has `service` (as a WSL box without systemd does); Fedora's has no init system at all, so
+    # install.sh starts crond itself there (#444)
+    if command -v service >/dev/null; then sudo service cron start >/dev/null 2>&1; fi
     git config --global user.email lab@example.com; git config --global user.name lab
     git config --global init.defaultBranch main
     mkdir -p /tmp/map/bin && cd /tmp/map || exit 1
@@ -43,6 +45,7 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     check "ssh lab-01 logs in with the key" '[[ $(shell "ssh -o BatchMode=yes lab-01 whoami") == target ]]'
     check "the Host has this box's key" '[[ $(host_keys) == 1 ]]'
     check "the cron job is there" 'crontab -l | grep -q bin/roster-pull'
+    check "the cron daemon runs" 'grep -qxE "crond?" /proc/[0-9]*/comm 2>/dev/null'
     check "man page installed" '[[ -f ~/.local/share/man/man1/roster.1 ]]'
     # Ubuntu's image is minimized: its man is a stand-in, the real one man.REAL
     check "man roster finds it" '[[ $(shell "m=man; [ -x /usr/bin/man.REAL ] && m=/usr/bin/man.REAL; \$m -w roster") == ~/.local/share/man/man1/roster.1 ]]'

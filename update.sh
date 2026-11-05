@@ -37,57 +37,21 @@ while (( $# )); do
 done
 PREFIX=${PREFIX/#\~/$HOME}
 
-# ---- look (as install.sh)
-
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
-else
-    B='' D='' R='' G='' Y='' C='' N=''
+# ---- what install.sh and update.sh share: the look, the questions, find_map and friends (install-lib.sh, beside this
+# script in a checkout and in the Release's roster-cli tarball)
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+if [[ ! -f $here/install-lib.sh ]]; then
+    echo "update.sh needs install-lib.sh beside it: run it in a roster checkout or in the unpacked roster-cli tarball" >&2
+    exit 2
 fi
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8*|*utf8*) FULL="█" EMPTY="░" OK="✔" BAD="✘" SKIP="–" ;;
-    *) FULL="#" EMPTY="-" OK="ok" BAD="x" SKIP="-" ;;
-esac
+# shellcheck source=install-lib.sh
+source "$here/install-lib.sh"
 
 STAGES=("roster source" "roster" "Team map" "Sync this box" "Tab completion")
 TOTAL=${#STAGES[@]}
 DONE=() SKIPPED=() FAILED=() target="" keep=0 new=""
 
-stage() {
-    local n=$1 w=30 fill bar="" i
-    fill=$(( n * w / TOTAL ))
-    for ((i = 0; i < w; i++)); do (( i < fill )) && bar+="$FULL" || bar+="$EMPTY"; done
-    printf '\n%s%s%s %s%d/%d%s  %s%s%s\n' "$C" "$bar" "$N" "$D" "$n" "$TOTAL" "$N" "$B" "${STAGES[n-1]}" "$N"
-    CUR="${STAGES[n-1]}"
-}
-ok()   { printf '  %s%s%s %s\n' "$G" "$OK" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
-bad()  { printf '  %s%s%s %s\n' "$R" "$BAD" "$N" "$*"; }
-info() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
-skip() { printf '  %s%s %s%s\n' "$D" "$SKIP" "$*" "$N"; SKIPPED+=("$CUR"); }
-done_stage() { DONE+=("$CUR"); }
-fail_stage() { FAILED+=("$CUR"); }
-listed() { local x=$1 e; shift; for e in "$@"; do [[ $e == "$x" ]] && return 0; done; return 1; }  # listed NAME LIST...
-
-TTY=/dev/tty
-( : < "$TTY" ) 2>/dev/null || TTY=/dev/stdin
-
-ask() {                         # ask "Question?" Y|N  -> 0 for yes
-    local q=$1 def=${2:-Y} hint reply
-    [[ $def == Y ]] && hint="Y/n" || hint="y/N"
-    if (( YES )); then
-        printf '  %s?%s %s %s[%s]%s %s\n' "$C" "$N" "$q" "$D" "$hint" "$N" "$([[ $def == Y ]] && echo yes || echo no)"
-        [[ $def == Y ]]; return
-    fi
-    while true; do
-        printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$hint" "$N"
-        read -r reply < "$TTY" || reply=""
-        case "${reply:-$def}" in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-        esac
-    done
-}
+version() { "${rbin:-roster}" --version 2>/dev/null | awk '{print $NF}'; }
 
 step() {                        # step "what" cmd...  - output to the log, shown when it fails
     local what=$1; shift
@@ -99,19 +63,8 @@ step() {                        # step "what" cmd...  - output to the log, shown
     return 1
 }
 
-have() { command -v "$1" >/dev/null 2>&1; }
-home() { printf '%s' "${1/#$HOME/\~}"; }
-version() { "${rbin:-roster}" --version 2>/dev/null | awk '{print $NF}'; }
-
 # ---- the roster source: is this checkout the roster you mean to install? (#408: a `main` never pulled, at v0.1.0,
 # installed 0.1.0 over 0.5.0 without a word)
-
-checkout_version() {            # checkout_version DIR [REF] -> the version in pyproject.toml (at REF, else on disk)
-    if [[ -n ${2:-} ]]; then git -C "$1" show "$2:pyproject.toml" 2>/dev/null; else cat "$1/pyproject.toml"; fi |
-        sed -n 's/^version = "\(.*\)"/\1/p' | head -1
-}
-
-older() { [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1) == "$1" ]]; }   # older A B: A < B
 
 plural() { (( $1 == 1 )) && echo "$1 $2" || echo "$1 ${2}s"; }
 
@@ -174,7 +127,7 @@ check_source() {                # check_source DIR: fetch, offer a fast-forward,
     fi
     # the newest Release tag this clone has seen (vX.Y.Z, not a pre-release)
     newest=$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags" | sort -V | tail -1)
-    version=$(checkout_version "$src" "$target")
+    version=$(version_in "$src" "$target")
     if [[ -n $newest && -n $version ]] && older "$version" "${newest#v}"; then
         warn "this checkout is roster $version, older than the newest Release it can see ($newest): git switch to main and pull, or git checkout $newest"
     fi
@@ -185,61 +138,10 @@ installed() {                   # installed SRC BINDIR: the last word, what rost
     local from v
     from=$(describe_source "$1" "${target:-HEAD}"); from="$(home "$1")${from:+ ($from)}"
     if (( keep )); then printf '%sKept roster %s%s (not the older %s from %s)\n' "$B" "$before" "$N" "$new" "$from"
-    elif (( DRY )); then info "dry run: a real run installs roster $(checkout_version "$1" "$target") from $from"
+    elif (( DRY )); then info "dry run: a real run installs roster $(version_in "$1" "$target") from $from"
     elif v=$("$2/roster" --version 2>/dev/null | awk '{print $NF}') && [[ -n $v ]]; then
         printf '%sInstalled roster %s%s from %s\n' "$B" "$v" "$N" "$from"
     else bad "no roster in $(home "$2") answers --version"; fi
-}
-
-describe_source() {             # describe_source DIR [REF] -> "branch main, commit abc1234, v0.5.0"
-    local d=$1 at=${2:-HEAD} branch tag
-    git -C "$d" rev-parse -q --verify "$at" >/dev/null 2>&1 || return 0
-    branch=$(git -C "$d" symbolic-ref -q --short HEAD)
-    tag=$(git -C "$d" describe --tags "$at" 2>/dev/null)
-    printf '%s, commit %s%s' "${branch:+branch $branch}" "$(git -C "$d" rev-parse --short "$at")" "${tag:+, $tag}" |
-        sed 's/^, //'
-}
-
-git_net() {                     # git_net DIR ARGS...: git that talks to a remote, and can't hang (as install.sh)
-    local d=$1 e=(GIT_TERMINAL_PROMPT=0) t=(); shift
-    if [[ -z ${GIT_SSH_COMMAND:-} ]] && ! git -C "$d" config --get core.sshCommand >/dev/null 2>&1; then
-        e+=("GIT_SSH_COMMAND=ssh -o BatchMode=yes")
-    fi
-    have timeout && t=(timeout 30)
-    env "${e[@]}" ${t[@]+"${t[@]}"} git -C "$d" "$@"
-}
-
-chose() { grep -qx "$1" "$CHOICES" 2>/dev/null; }
-choose() { (( DRY )) || chose "$1" || { mkdir -p "$(dirname "$CHOICES")" && echo "$1" >> "$CHOICES"; }; }
-
-find_map() {                    # the Inventory this box uses -> MAP (empty: none) and MAP_FROM; the same in
-    # install.sh and update.sh (Q184): $ROSTER_CONFIG, the line install.sh wrote, the active named Inventory,
-    # ~/.config/roster/roster.yml (roster finds those by itself), then ~/infra/roster.yml (it doesn't, without
-    # ROSTER_CONFIG). Only a file that's there: a team repo's or a plain one, blank included (T212)
-    local f v
-    MAP="" MAP_FROM=""
-    if [[ -n ${ROSTER_CONFIG:-} && -f ${ROSTER_CONFIG:-} ]]; then MAP=$ROSTER_CONFIG MAP_FROM=env; return; fi
-    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
-        v=$(grep -F "$MARK" "$f" 2>/dev/null | sed -n 's/^export ROSTER_CONFIG="\(.*\)".*/\1/p' | tail -1)
-        v=${v//\$HOME/$HOME}
-        if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=rc; return; fi
-    done
-    # the active named Inventory (`roster inv`, T212: a plain file of your own is as much a map as the team's repo)
-    # shellcheck disable=SC2016  # Python, not shell, in the single quotes
-    v=$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); a = d.get("active")
-print(next((x["path"] for x in d.get("inventories", []) if x.get("name") == a), ""))' \
-        "$HOME/.config/roster/inventories.json" 2>/dev/null)       # roster's own folder (common.user_config_dir)
-    if [[ -n $v && -f $v ]]; then MAP=$v MAP_FROM=named; return; fi
-    if [[ -f $HOME/.config/roster/roster.yml ]]; then MAP=$HOME/.config/roster/roster.yml MAP_FROM=config; return; fi
-    if [[ -f $HOME/infra/roster.yml ]]; then MAP=$HOME/infra/roster.yml MAP_FROM=infra; fi
-}
-
-installed_roster() {            # the roster command this box has: on PATH (PREFIX/bin first), else where uv put it
-    local p
-    p=$(command -v roster 2>/dev/null) && [[ -n $p ]] && { echo "$p"; return 0; }
-    have uv || return 1
-    p=$(uv tool list --show-paths 2>/dev/null | sed -n 's/^- roster (\(.*\))$/\1/p' | head -1)
-    [[ -n $p && -x $p ]] && echo "$p"
 }
 
 (( DRY )) || mkdir -p "$(dirname "$LOG")"
@@ -268,7 +170,7 @@ check_source "$src"
 stage 2
 bindir=${PREFIX:+$PREFIX/bin}; bindir=${bindir:-$(dirname "$rbin")}
 # never an older roster over a newer one without a yes (#408): a checkout at an old tag, behind and kept as it is
-new=$(checkout_version "$src" "$target")
+new=$(version_in "$src" "$target")
 if [[ -n $new && -n $before ]] && older "$new" "$before" && (( ! ALLOW_DOWNGRADE )) &&
         ! ask "Install roster $new from this checkout over the newer $before this box has?" N; then
     keep=1
@@ -324,13 +226,7 @@ stage 5
 if (( ! COMPLETION )) || chose no-completion; then
     skip "left off (you said no: delete no-completion from $(home "$CHOICES") to have it turned on)"
 else
-    # install-lib.sh's step, shared with install.sh (this checkout has it beside this script)
-    # shellcheck source=install-lib.sh
-    if [[ -f $src/install-lib.sh ]] && source "$src/install-lib.sh"; then turn_on_completion
-    else
-        warn "no install-lib.sh beside update.sh: Tab completion left as it is"
-        info "to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc (roster help --completion zsh, fish or powershell for those)"
-    fi
+    turn_on_completion          # install-lib.sh's step, shared with install.sh
     done_stage
 fi
 # The cron job install.sh sets up: it installs cron itself, so a box without the job is install.sh's to finish
@@ -341,15 +237,7 @@ fi
 
 # ---- summary
 
-printf '\n%sSummary%s\n' "$B" "$N"
-for s in "${STAGES[@]}"; do
-    if   listed "$s" ${FAILED[@]+"${FAILED[@]}"};   then bad "$s"
-    elif listed "$s" ${SKIPPED[@]+"${SKIPPED[@]}"}; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
-    elif listed "$s" ${DONE[@]+"${DONE[@]}"};       then ok "$s"
-    else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
-    fi
-done
-printf '\n'
+summary
 installed "$src" "$bindir"
 (( ${#FAILED[@]} )) && { info "Some stages failed - details in $LOG. Re-running this is safe."; exit 1; }
 exit 0
