@@ -16,6 +16,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`:tutor topology` teaches reach** (#233): the tutorial's demo Inventory has a small, made-up Mesh now, so the Topology tutor's third lesson, "Who reaches whom", lights up what a Host reaches on the map and reads its details: `demo-01` reaches 3 Hosts directly, and `demo-05` is Mesh pending because it didn't answer the last apply. Nothing on the demo connects anywhere. A Plugin's tutorial can use the same Mesh: on the demo, roster serve answers `mesh.status` too (plain, `grouped` and `brief`, as real serve does).
 
+### Security
+
+**CLI**
+
+- **A usage error never repeats what you typed** (#460): a vault session token typed in the wrong place (`roster --session TOKEN vault op -- whoami`) used to come back on stderr as `invalid choice: 'TOKEN'`, and so did a value in an unknown option (`--session=TOKEN`), an ambiguous one, a number roster couldn't read, a flag that takes none, an unknown `roster help` topic or an `init --inventory` value that isn't one of its forms (a clone URL with a token in it). Now no value you typed is repeated (only roster's own names), whatever argparse's wording around it: the error names the place (`argument COMMAND`, `argument --port`) and what it takes, or the nearest command (`roster hots`: did you mean `hosts`?), and says the value is "not repeated", in `--json` errors too. `--session` typed at roster says that vault bw and vault op take the session from their environment. It still exits 2.
+
 ## v0.6.0
 
 ### New
