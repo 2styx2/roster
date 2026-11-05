@@ -6,7 +6,7 @@ The app has its own docs inside it, the way Neovim's `:help` does (ticket 37, de
 
 | Keys or command | What it does |
 |---|---|
-| `␣ ?`, `:help` | The topic finder: every page and every entry on one, fuzzy-matched. Enter opens it |
+| `␣ ?`, `:help` | The topic finder: every page and every entry on one, fuzzy-matched. Each row reads title, page, tag: an entry's title says what it is after its name (`E31 · Pick Bitwarden cloud…`), the page is always the page it's on, and the tag (what you'd type after `:help`) is left out where the title already is it; a long tag is cut in its middle, its end kept. With two words or more, a title holding them as one phrase ranks first, then one holding them all. Enter opens it |
 | `:help TOPIC` | Opens TOPIC: a page (`:help options`), an option (`:help terminal.size`), a command (`:help :connect`, or `:help connect`), an error (`:help E13`), a Theme (`:help themes#nord`), a guide's heading (`:help config#the-sandbox`) or another name for one (`:help roster.yml`, `:help init.lua`). A topic that isn't exact opens the best fuzzy match. Tab completes topics |
 | `:help TOPIC /TEXT` | Opens TOPIC and searches the page for TEXT, from the topic on |
 | `:helpgrep TEXT` | Searches the text of every page (see [Searching every page](#searching-every-page)) |
