@@ -285,3 +285,102 @@ def test_a_missing_config_path_is_shown_when_it_looks_like_one(capsys, tmp_path,
     assert f"{want} not found" in _run(capsys, ["-c", typed, "hosts"])
     assert json.dumps(str(want))[1:-1] in _run(capsys, ["-c", typed, "hosts", "--json"])   # a Windows path's \ is \\
     assert str(want) in _run(capsys, ["-c", typed, "inv", "which"])
+
+
+# #487 item 2 (#484 L3): a JWT-shaped token (an op Connect token, eyJ….….…) has dots, so it read as a file name.
+JWT = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJFeDRtcGxlIn0.Ex4mpleS1gNaTuRe0000"     # made up
+
+
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["inv", "which"]])
+@pytest.mark.parametrize("typed", [JWT, f"sub/{JWT}"], ids=["jwt", "jwt-in-a-folder"])
+def test_a_jwt_typed_as_a_config_path_is_not_repeated(capsys, tmp_path, monkeypatch, command, typed):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sub").mkdir()
+    out = _run(capsys, ["-c", typed, *command])
+    assert not [x for x in _slices(JWT) if x in out], out
+    assert "(not repeated)" in out, out
+
+
+@pytest.mark.parametrize("typed", ["a-long-name-for-the-lab-inventory.yml", "a-long-name-for-the-lab-inventory.yaml",
+                                   "a-long-name-for-the-lab-inventory.yml.example", "../lab/roster.yml",
+                                   "../lab/production-lab", "../lab/a-long-name-for-the-lab-inventory.yml"])
+def test_a_long_yml_name_is_still_shown(capsys, tmp_path, monkeypatch, typed):
+    (tmp_path / "cwd").mkdir()
+    monkeypatch.chdir(tmp_path / "cwd")
+    want = (tmp_path / "cwd" / typed).resolve()
+    if typed.startswith(".."):
+        (tmp_path / "lab").mkdir()
+    assert f"{want} not found" in _run(capsys, ["-c", typed, "hosts"])
+
+
+# A bw key is base64 with / in it: its last part is often short, so the whole value counts too (#489 M1).
+BW_KEY_88 = "q2Xv0b9ZtM4n1KpYwLe7Rj3sUaGh5CdF8iNoTzBx6QEy/rVmJlPcSgIuHkDf0aZ9e+N/yA2qXw1oLmK7pRtUvB=="
+BW_KEY_SHORT_PARTS = "q2Xv0b9ZtM4n1KpYwLe7/Rj3sUaGh5CdF8iNoTz/Bx6QEyrVmJlPcSgIu/HkDf0aZ9e+NyA2qXw1oL/mK7pRtUvB=="
+TOKEN_SHAPES = [pytest.param(OP_SESSION, OP_SESSION, id="op"), pytest.param(JWT, JWT, id="jwt"),
+                pytest.param(BW_KEY_88, BW_KEY_88, id="bw-key"),
+                pytest.param(BW_KEY_SHORT_PARTS, BW_KEY_SHORT_PARTS, id="bw-key-short-parts"),
+                pytest.param(f"{OP_SESSION}/roster.yml", OP_SESSION, id="token-as-a-folder"),
+                pytest.param(f"inv/{OP_SESSION}", OP_SESSION, id="token-after-a-real-folder"),
+                pytest.param(f"../{OP_SESSION}", OP_SESSION, id="token-after-dot-dot")]
+
+
+@pytest.mark.parametrize(("typed", "token"), TOKEN_SHAPES)
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["inv", "which"]])
+def test_every_token_shape_typed_as_a_config_path_is_hidden(capsys, tmp_path, monkeypatch, typed, token, command):
+    (tmp_path / "cwd" / "inv").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "cwd")
+    out = _run(capsys, ["-c", typed, *command])
+    assert not [x for x in _slices(token) if x in out], out
+    assert "(not repeated)" in out, out
+
+
+def test_init_names_the_folder_for_git_through_shown_path(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    out = _run(capsys, ["-c", "lab/roster.yml", "init", "--blank"])
+    assert f"git -C {tmp_path / 'lab'} init" in out, out
+
+
+# #487 item 1 (#484 L2b): `roster -cTOKEN init` wrote a file named after the token and printed its name.
+@pytest.mark.parametrize(("typed", "token"), TOKEN_SHAPES)
+@pytest.mark.parametrize("init", [["init"], ["init", "--blank"], ["init", "--inventory", "blank"]])
+def test_init_refuses_a_token_typed_as_its_config_path(capsys, tmp_path, monkeypatch, typed, token, init):
+    (tmp_path / "cwd" / "inv").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "cwd")
+    before = set(tmp_path.rglob("*"))
+    out = _run(capsys, ["-c", typed, *init])
+    assert not [x for x in _slices(token) if x in out], out
+    assert "looks like a token" in out and "(not repeated)" in out, out
+    assert set(tmp_path.rglob("*")) == before                      # nothing written, no file named after it
+
+
+def test_init_never_repeats_a_token_named_file_that_is_there(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / OP_SESSION).write_text("groups: {}\n")              # an older roster's -cTOKEN init made it
+    out = _run(capsys, [f"-c{OP_SESSION}", "init", "--blank"])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert (tmp_path / OP_SESSION).read_text() == "groups: {}\n"
+
+
+def test_init_says_the_path_it_wrote(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    out = _run(capsys, ["-c", "lab/roster.yml", "init", "--blank"])
+    assert f"wrote {tmp_path / 'lab' / 'roster.yml'}, a blank Inventory" in out, out
+
+
+# #487 item 5 (#484 N1): `--inv NAME` with an unknown name printed it.
+@pytest.mark.parametrize("argv", [lambda t: ["--inv", t, "hosts"], lambda t: ["--inv", t, "hosts", "--json"],
+                                  lambda t: ["inv", "use", t]], ids=["inv", "inv-json", "inv-use"])
+@pytest.mark.parametrize("token", [OP_SESSION, BW_KEY_88, BW_KEY_SHORT_PARTS], ids=["op", "bw-key", "bw-key-short-parts"])
+def test_an_unknown_token_shaped_inventory_name_is_not_repeated(capsys, tmp_path, monkeypatch, argv, token):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    out = _run(capsys, argv(token))
+    assert not [x for x in _slices(token) if x in out], out
+    assert "no Inventory named that (not repeated)" in out, out
+
+
+def test_an_unknown_inventory_name_that_is_a_name_is_shown(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert "no Inventory named 'hom'" in _run(capsys, ["--inv", "hom", "hosts"])

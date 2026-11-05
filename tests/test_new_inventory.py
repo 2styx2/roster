@@ -68,7 +68,7 @@ def test_init_blank_writes_a_short_file_that_loads(isolated, capsys, flag):
     cfg = load_config(path)
     assert cfg["hosts"] == {} and list(cfg["groups"]) == ["servers"]
     assert "roster discover" in text and "#" in text.split("hosts:")[1]     # a Host to copy, commented out
-    assert "optional" in out and "git -C . init" in out                    # offered, never required
+    assert "optional" in out and f"git -C {isolated['work'].resolve()} init" in out                   # offered, never required
 
 
 def test_a_file_already_there_is_kept(isolated, capsys):

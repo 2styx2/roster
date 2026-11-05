@@ -2,11 +2,13 @@
 The stand-in keepassxc-cli (tests/fakes) keeps its "database" as JSON at the .kdbx path."""
 
 import json
+import subprocess
 
 import pytest
 from conftest import WINDOWS
 
 from roster import providers
+from roster.common import kill_tree
 from roster.providers import get_secret, setup_providers
 
 MASTER = "c0rrect-h0rse"                # the database's master password: never in argv, output or an error
@@ -183,13 +185,39 @@ def test_a_refused_create_or_delete_never_echoes_a_password(kdbx, monkeypatch):
         providers.delete_item("kp", "esx ssh")
 
 
+def stops_answering_at_the_fake_s_word(monkeypatch):
+    """`keepassxc-cli add` times out exactly when the stand-in says it has got where it hangs (FAKE_KP_ADD_HANG:
+    saved; FAKE_KP_ADD_STALL: nothing saved), never on a clock: a 1 s limit timed out on Windows CI before the
+    stand-in had even started (#487 item 6). Every other call runs as roster runs it, with its usual time."""
+    real = providers.run
+
+    def run(args, timeout=None, input=None, **kw):
+        if "add" not in args:
+            return real(args, timeout=timeout, input=input, **kw)
+        kw = {k: v for k, v in kw.items() if k not in ("stdin", "stdout")}
+        with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              **kw) as p:
+            assert p.stdin and p.stdout
+            p.stdin.write(input)
+            p.stdin.close()
+            said = p.stdout.readline()                  # blocks until the stand-in gets there (or exits)
+            kill_tree(p)
+            p.stdout.close()
+            p.wait()
+        assert "fake: hanging" in said, said
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(providers, "run", run)
+
+
 def test_a_create_that_timed_out_counts_if_the_entry_is_there(kdbx, monkeypatch):
     providers.unlock("kp", MASTER)
-    monkeypatch.setattr(providers, "time_left", lambda timeout, floor=1: 1)     # keepassxc-cli gets 1 s
-    monkeypatch.setenv("FAKE_KP_ADD_HANG", "5")                                 # saved, then no answer
+    stops_answering_at_the_fake_s_word(monkeypatch)
+    monkeypatch.setenv("FAKE_KP_ADD_HANG", "1")                                 # saved, then no answer
     assert providers.create_item("kp", name="box ssh", password=NEW_PW)["id"] == "box ssh"
+    assert get_secret("kp:box ssh", "g") == NEW_PW
     monkeypatch.delenv("FAKE_KP_ADD_HANG")
-    monkeypatch.setenv("FAKE_KP_ADD_STALL", "5")                                # no answer, nothing saved
+    monkeypatch.setenv("FAKE_KP_ADD_STALL", "1")                                # no answer, nothing saved
     with pytest.raises(providers.WriteFailed, match="nothing was saved"):
         providers.create_item("kp", name="nas2 ssh", password=NEW_PW)
     assert "nas2 ssh" not in entries(kdbx)
