@@ -310,6 +310,7 @@ def test_esxi_keeps_its_key_on_a_datastore_and_takes_keys_in_etc_ssh(net):
 @pytest.mark.skipif(WINDOWS, reason="NTFS has no mode bits to keep")
 def test_a_new_authorized_keys_on_esxi_gets_the_sticky_bit_so_it_survives_a_reboot(net):
     net.cfg_path.write_text(CONFIG.replace("esx-02: { ip: 10.0.0.12, user: root }", "esx-02: { ip: 10.0.0.12, user: ops }"))
+    (net.host("esx-02") / "login").write_text("ops\n")           # the login it is there (#445)
     mesh.run(net.cfg(), apply=True)
     ak = net.host("esx-02") / "etc/ssh/keys-ops/authorized_keys"
     assert "roster-mesh:orion-2" in ak.read_text()
@@ -356,6 +357,31 @@ def test_an_esxi_without_a_suitable_datastore_is_pending_without_mesh_dir(net):
     no_datastore(net)
     r = mesh.run(net.cfg(), apply=True)
     assert "no datastore" in r["pending"]["esx-02"]
+
+
+def test_an_esxi_whose_user_isnt_the_login_is_skipped_and_left_as_it_was(net, capsys):
+    """#445 (Q193 (a), #442's review L1): ESXi's sshd reads /etc/ssh/keys-LOGIN/, LOGIN as the Host names the account
+    (`id -un`): when roster.yml's user: isn't that, the Mesh would write a folder sshd doesn't read, so the Host is
+    skipped, said in its own line, and nothing is written there."""
+    (net.host("esx-02") / "login").write_text("Root\n")          # what `id -un` says there
+    before = {k: v for k, v in net.snapshot().items() if k.startswith("esx-02/")}
+    assert main(["mesh"]) == 1
+    out = capsys.readouterr().out
+    assert ("  esx-02: this login is Root on ESXi, not root (its user: in roster.yml), and ESXi's sshd reads its "
+            "keys-Root folder: nothing was changed (set user: as the Host names it)") in out
+    assert {k: v for k, v in net.snapshot().items() if k.startswith("esx-02/")} == before
+    assert not any("roster-mesh:esx-02" in x for p in HOSTS for x in net.mesh_lines(p))
+    assert any("roster-mesh:orion-2" in x for x in net.mesh_lines("orion-3"))   # the rest of the Mesh goes ahead
+
+
+def test_cut_on_an_esxi_whose_user_isnt_the_login_leaves_it_as_it_was(net, capsys):
+    """#445: cut (and --remove-leftovers) on that Host change nothing either: it stays pending, said."""
+    mesh.run(net.cfg(), apply=True)
+    (net.host("esx-02") / "login").write_text("Root\n")
+    before = net.ak("esx-02")
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 1
+    assert "this login is Root on ESXi, not root" in capsys.readouterr().out
+    assert net.ak("esx-02") == before
 
 
 def test_mesh_dir_puts_an_esxi_sources_files_where_it_says(net):

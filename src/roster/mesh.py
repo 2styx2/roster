@@ -188,6 +188,9 @@ def ere(name):
 
 # Where things live: Linux keeps the Mesh's files in ~/.ssh/roster-mesh; ESXi's home and /etc are rebuilt at every
 # boot, so there they go on a datastore (kept), and authorized_keys is ESXi's own /etc/ssh/keys-USER/ (kept).
+# USER is the Login's user ($U), as sshd's %u: on a Host that names the login otherwise (`id -un`: another case, a
+# directory account's form) every Mesh script stops before it reads or writes anything there, said in its ERROR line
+# (that Host is pending), as setup/re-tag/revoke refuse it (#442's review L1, #445).
 # A Host's mesh_dir: ($MD) overrides where the files go, on either; roster then only touches them there if they're
 # its own (mine: a Mesh key's public half, or a config roster wrote).
 WHERE = r"""
@@ -212,6 +215,8 @@ ours_by() { [ -z "$1" ] || [ "$1" = "$OWNER" ] || case " $PREV " in *" $1 "*) tr
 whose_words() { if [ "$1" = - ]; then echo "an older roster's (no Box named in them), which this Box has no record of writing"; else echo "another Box's or Inventory's ($1)"; fi; }
 if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then
   ESXI=1; AK=/etc/ssh/keys-$U/authorized_keys; R=; P=$MD
+  L=$(id -un 2>/dev/null) || L=
+  [ "$L" = "$U" ] || { echo "ERROR this login is ${L:-unknown} on ESXi, not $U (its user: in roster.yml), and ESXi's sshd reads its keys-${L:-LOGIN} folder: nothing was changed (set user: as the Host names it)"; echo ROSTER_DONE; exit 0; }
   [ -z "$P" ] && for v in /vmfs/volumes/*; do [ -d "$v/.roster-mesh" ] && { P=$(cd "$v" && pwd -P)/.roster-mesh; break; }; done
   if [ -z "$P" ]; then
     for v in /vmfs/volumes/*; do
