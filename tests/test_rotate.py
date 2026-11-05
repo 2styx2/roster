@@ -329,9 +329,7 @@ def test_setup_rotate_never_rotates_a_mesh_key_nor_renames_the_box(lab, capsys, 
     lab.down("db-01")
     assert main(["setup", "--rotate"]) == 1
     assert (isolated["home"] / ".config" / "roster" / "key-rotation").exists()
-    assert "db-01" not in (isolated["home"] / ".config" / "roster" / "mesh.json").read_text() or \
-        (isolated["home"] / ".config" / "roster" / "mesh.json").read_text() == mesh_json
-    assert "rotation" not in (isolated["home"] / ".config" / "roster" / "mesh.json").read_text()
+    assert (isolated["home"] / ".config" / "roster" / "mesh.json").read_text() == mesh_json      # never in it
     lab.down("db-01", False)
     assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
     assert mesh_state(lab) == before
@@ -426,7 +424,8 @@ def age_checks(write_config, isolated, head="", days_old=None, stamped=True):
                    check=True)
     when = time.time() - (days_old or 0) * 86400
     os.utime(key, (when, when))
-    f = isolated["home"] / ".config" / "roster" / "key-created"
+    from roster.common import key_created_file
+    f = key_created_file()                      # %APPDATA%\roster on Windows
     f.unlink(missing_ok=True)
     if stamped:                                 # as roster records it when it makes the key
         boxkeys.stamp(key)
