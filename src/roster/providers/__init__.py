@@ -1,5 +1,6 @@
 """Password providers: registry, plugin loading, and the built-ins."""
 
+import contextlib
 import getpass
 import os
 import re
@@ -60,6 +61,19 @@ class SignOutFailed(SecretError):
 class VaultLocked(SecretError):
     """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK), or has nothing to unlock
     it with (no terminal to ask in, no password variable): 14, never 35 (#437)."""
+
+
+class SessionFileRefused(SecretError):
+    """A saved vault session's file is one roster won't write over (a link, another user's, not a plain file: the
+    rules of common.read_private_bytes, #411). Nothing was written (T241)."""
+
+
+class SessionFileFailed(SecretError):
+    """A saved vault session's file couldn't be written or removed (the system's reason in the message) (T241)."""
+
+
+class NoSession(SecretError):
+    """`roster vault unlock` / `vault lock` for a provider that keeps no session roster can save (T241)."""
 
 
 # What can go wrong signing in (`roster serve`'s vault.login). `step`: where the sign-in carries on (the provider
@@ -197,6 +211,8 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                      out then (one more CLI call each, for op and kp)
 #             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
+#             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box (T241,
+#                              bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -205,6 +221,7 @@ BOX_SETTINGS = {}         # name -> this Box's own settings, from the app's init
 PROVIDER_STATE = {}       # name -> per-run scratch space (e.g. "already unlocked")
 NO_PASSWORD = ("agent", "key", "none")
 MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no session file, no BW_PASSWORD, no prompt
+JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr (T241)
 _secrets = {}
 _secret_lock = threading.Lock()
 
@@ -235,6 +252,52 @@ def split_field(spec, default="password"):
     return item.strip(), field.strip() or default
 
 
+class _Tty:
+    """The controlling terminal, open on FD: write() shows text on it, readline() reads what's typed there (a line in
+    the terminal's canonical mode; "" at end of input)."""
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    def write(self, text):
+        os.write(self.fd, text.encode("utf-8", "replace"))
+
+    def readline(self):
+        line = b""
+        while not line.endswith(b"\n") and (chunk := os.read(self.fd, 1024)):
+            line += chunk
+        return line.decode("utf-8", "replace")
+
+
+class _WinTty:
+    """Windows' console through stdin and stderr, used only when both are the console."""
+
+    def write(self, text):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+    def readline(self):
+        return sys.stdin.readline()
+
+
+@contextlib.contextmanager
+def open_tty():
+    """The terminal a question goes to, as getpass's: /dev/tty on Linux and macOS; on Windows the console, when stdin
+    and stderr are both it. None when there's none (no controlling terminal, or a Windows stream redirected)."""
+    if os.name == "nt":
+        yield _WinTty() if sys.stdin.isatty() and sys.stderr.isatty() else None
+        return
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | getattr(os, "O_NOCTTY", 0))
+    except OSError:
+        yield None
+        return
+    try:
+        yield _Tty(fd)
+    finally:
+        os.close(fd)
+
+
 class Ctx:
     """What a provider gets besides its SPEC."""
 
@@ -252,6 +315,18 @@ class Ctx:
         if not self.interactive:
             raise SecretError(f"needs input ({prompt.strip().rstrip(':')}) but there's no terminal to ask in")
         return getpass.getpass(f"  {prompt}")
+
+    def confirm(self, prompt):
+        """A yes/no question asked and answered on the controlling terminal (open_tty), as getpass asks the password,
+        so a redirected stderr never hides it (#480 review, LOW-1): True only for y or yes (Enter is No). False,
+        without asking, with no terminal (stdin or controlling) or with --json."""
+        if not self.interactive or JSON_OUTPUT:
+            return False
+        with open_tty() as tty:
+            if tty is None:
+                return False
+            tty.write(f"  {prompt}")
+            return tty.readline().strip().lower() in ("y", "yes")
 
     def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1, discard=False):
         """Run a helper command, capturing output. A missing tool becomes a friendly error.
@@ -301,6 +376,11 @@ def errtext(r, limit=160, stdout=True):
     lines = [line for line in (r.stderr + "\n" + (r.stdout if stdout else "")).splitlines()
              if line.strip() and not line.startswith(("(node", "(Use "))]
     return " ".join(lines)[:limit]
+
+
+def json_output():
+    """For providers: does this command print --json (no note line on stderr, no question)?"""
+    return JSON_OUTPUT
 
 
 def manual_unlock():
@@ -379,6 +459,15 @@ def vault_account(name):
     if fn:
         return fn(Ctx(name, None))
     return vault_status(name), None
+
+
+def saved_session(name):
+    """(state, why) of provider NAME's saved session (T241: "none", "working", "expired", or "ignored" and why), or
+    None when it keeps none or this is `roster serve`, which never reads the bw-session file (MANUAL_UNLOCK, Q203)."""
+    fn = _vault_op(name, "saved_session")
+    if not fn or MANUAL_UNLOCK:
+        return None
+    return fn(Ctx(name, None))
 
 
 ASK = object()              # status_result's server: not known yet, so login_info asks the CLI

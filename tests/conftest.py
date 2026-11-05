@@ -146,6 +146,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)         # an in-process serve test sets it
     from roster.providers import bitwarden
     monkeypatch.setitem(bitwarden._session, "key", None)           # bw's session key, held outside os.environ
+    monkeypatch.setitem(bitwarden._offered, "done", False)         # T241: "keep it unlocked?" asked once a run
+    monkeypatch.setattr(providers, "JSON_OUTPUT", False)           # a --json command sets it
     from roster import common
     monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
     monkeypatch.setattr(common, "_config_path", None)              # and its roster.yml

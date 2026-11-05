@@ -52,7 +52,7 @@ def test_hosts_name_takes_a_host_or_a_resource(capsys, config):
 
 
 def test_vault_reveal_takes_only_resources(capsys, config):
-    assert complete(capsys, "vault", "") == ["bw", "op", "reveal", "status", "sync"]
+    assert complete(capsys, "vault", "") == ["bw", "lock", "op", "reveal", "status", "sync", "unlock"]
     assert complete(capsys, "vault", "reveal", "") == ["lab-guest"]
 
 
