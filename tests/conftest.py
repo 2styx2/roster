@@ -17,6 +17,25 @@ REAL_PATH = os.environ.get("PATH", "")       # before any test put the stand-ins
 posix_shell = pytest.mark.skipif(WINDOWS, reason="runs a POSIX shell script; native Windows has no sh")
 
 
+def pytest_addoption(parser):
+    parser.addoption("--shard", metavar="K/N", default=None,
+                     help="run every Nth collected test, from the Kth on (CI's Windows jobs, decision Q196)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """--shard K/N keeps every Nth test, so each shard gets a slice of every file and the slow ones (test_mesh.py)
+    spread evenly. The same in every xdist worker: the order is collection order."""
+    shard = config.getoption("--shard")
+    if not shard:
+        return
+    k, n = (int(x) for x in shard.split("/"))
+    if not 1 <= k <= n:
+        raise pytest.UsageError(f"--shard {shard}: K must be 1 to N")
+    kept = items[k - 1::n]
+    config.hook.pytest_deselected(items=[i for j, i in enumerate(items) if j % n != k - 1])
+    items[:] = kept
+
+
 def source_copy(tmp_path):
     """The files install.sh and update.sh read, in a folder of their own that isn't a git clone: they must never run
     git (a fetch, a pull) on the checkout running the tests."""

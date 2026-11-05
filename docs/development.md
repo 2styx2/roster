@@ -3,7 +3,8 @@
 ```bash
 uv sync                  # creates .venv with dev tools
 uv run pytest            # no network or SSH server needed; temp folders are deleted when each test ends (below)
-uv run pytest tests/test_mesh.py -n 4   # the slow Mesh suite on 4 workers (pytest-xdist), as CI's Windows job runs it
+uv run pytest -n auto    # on every core (pytest-xdist), as CI runs it; every test is safe beside others
+uv run pytest --shard 2/3 -n 4   # every 3rd test from the 2nd: one of CI's three Windows shards
 uv run ruff check src tests scripts app/scripts   # with flake8-bandit's security rules (S)
 uv run pyright           # the type checker: basic over src/roster/, strict for the modules listed in pyproject.toml
 uv build                 # wheel + sdist in dist/
@@ -97,7 +98,24 @@ The Plugin API (the `roster` Lua module) is declared once, in `crates/roster-cor
 
 Tests never leave folders in the temp dir (ticket 109: once 37k of them filled /tmp). A roster-core test takes its folder from `common::temp("what")` (`crates/roster-core/tests/common/mod.rs`, a `tempfile::TempDir` that reads as a `Path`), which deletes it when the test ends, failing or not; a helper that makes one returns that guard (or something holding it), never a bare path, and nothing builds a path under `std::env::temp_dir()` itself (`tests/temp_cleanup.rs` checks both). A pytest test uses `tmp_path`; anything else it, serve or a program it runs makes with `tempfile` or in `$TMPDIR` lands in a folder of the test's own that `conftest.py` deletes afterwards. CI runs `cargo test` in a fresh temp dir and fails if a `roster-core-*` folder is left in it. To try that locally: `mkdir -p ~/scratch-tmp && TMPDIR=~/scratch-tmp cargo test; ls -A ~/scratch-tmp`.
 
-The app's checks are in [app/README.md](../app/README.md#development) (`npm run check` in `app/`, `cargo test` at the root). CI runs both halves on every pull request (`.github/workflows/ci.yml`); [CONTRIBUTING.md](../CONTRIBUTING.md) has the branch model. Besides Linux, it runs pytest on Windows, as two jobs side by side: the Mesh suite on 4 workers (its stand-in Hosts run under Git for Windows' slow-forking `sh`, which took the one job to 15-19 min), and the rest one at a time, since many of those time how soon serve answers. A test that hangs fails after 120 s anywhere (pytest-timeout, `pyproject.toml`). It also runs roster-core's `cargo test` on Windows (`Core tests (Windows)`): the core's `cfg(windows)` code, such as the junctions in a Plugin's "stays inside its folder" rule, only runs there. That job tests the core only (the Tauri crate is built by the Windows release build), keeps its own Rust cache, and runs `tests/fake_serve.py` with the Python it installs. It also builds the frontend and checks its JS and CSS against their budget (`scripts/check-bundle-size.py`, [performance.md](app/performance.md#bundle-size)).
+The app's checks are in [app/README.md](../app/README.md#development) (`npm run check` in `app/`, `cargo test` at the root). CI (`.github/workflows/ci.yml`) runs both halves; [CONTRIBUTING.md](../CONTRIBUTING.md) has the branch model. pytest runs on every core (pytest-xdist, `-n auto`), so a test must pass beside others: its own HOME and temp folder (`conftest.py`'s `isolated`), no fixed port, and no tight time limit on how soon something happens that a busy machine misses. Besides Linux, it runs pytest on Windows, in three shards side by side (`--shard K/3`, every third test, each on 4 workers): there each stand-in Host command starts Python and Git for Windows' slow-forking `sh`, so the suite takes about 47 minutes of test time. A test that hangs fails after 120 s anywhere (pytest-timeout, `pyproject.toml`). It also runs roster-core's `cargo test` on Windows (`Core tests (Windows)`): the core's `cfg(windows)` code, such as the junctions in a Plugin's "stays inside its folder" rule, only runs there. That job tests the core only (the Tauri crate is built by the Windows release build), keeps its own Rust cache, and runs `tests/fake_serve.py` with the Python it installs. It also builds the frontend and checks its JS and CSS against their budget (`scripts/check-bundle-size.py`, [performance.md](app/performance.md#bundle-size)).
+
+### What CI runs when
+
+A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) and a run by hand run every job, with pytest on Python 3.10, 3.12 and 3.13. A pull request runs a PR-sized set (decision Q196): Python 3.12 only, and only the jobs its changed files need. The `Changes` job works that out (`scripts/ci_changes.py`, tested in `tests/test_ci_changes.py`); the halves read each other's files, so a path runs every job that reads it:
+
+| A pull request that touches | runs |
+|---|---|
+| `src/`, `tests/`, `pyproject.toml`, `uv.lock` (the CLI) | pytest on Linux and on Windows, the wheel build |
+| `app/` (the frontend) | the frontend, Rust and pytest on Linux (`tests/` checks `app/src` files) |
+| `crates/`, `Cargo.toml`, `Cargo.lock`, `app/src-tauri/`, `app/package*.json` | the frontend, Rust, pytest on Linux, and the Windows and Linux release builds |
+| `plugins/` | the frontend and Rust |
+| `docs/`, `examples/`, a `*.md` at the root | the frontend, Rust and pytest on Linux (each checks the docs) |
+| `tests/vectors/` | pytest on Linux and Windows, the frontend and Rust |
+| `.github/workflows/release.yml` | the release builds (and release.yml's own dry run, [releasing.md](releasing.md)) |
+| `.github/workflows/ci.yml`, `scripts/`, or anything else | everything |
+
+`CLI lint` (ruff, pyright, one version) and the lua-language-server check always run: they take seconds. The release builds, `App Windows release build` and `App Linux release build`, run on a pull request only when it touches what they build; every push to `dev` runs them. A pull request's older run is cancelled when a newer push comes; a push to `main` or `dev` runs to the end. The Rust jobs restore the cache `dev`'s last run saved and don't save their own, so pull requests don't push `dev`'s cache out of the 10 GB GitHub keeps. The last job, `CI`, always reports: green when every job that ran passed, red when one failed or was cancelled, so branch protection can require that one name.
 
 ## Languages and types
 
