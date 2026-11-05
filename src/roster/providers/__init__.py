@@ -24,6 +24,7 @@ from .problems import (  # noqa: F401 (what a provider or plugin raises: provide
     LoginError,
     MethodUnsupported,
     NoField,
+    NoItemFields,
     NoSession,
     NotLoggedIn,
     NotSignedIn,
@@ -107,10 +108,20 @@ _secrets = {}
 _secret_lock = threading.Lock()
 
 
+LOOKUP_FLOOR = 7            # s for each look-up after a create timed out (did it get there?), even past serve's deadline
+
+
+def bad_name(name):
+    """Why NAME can't be a provider's name, or None."""
+    if not re.match(r"^[a-z0-9_-]+$", name):
+        return f"provider name {name!r} must be lowercase letters, digits, _ or -"
+    return None
+
+
 def register(name, help="", tool=""):
     """Decorator for provider functions:  @register("vault", help="...", tool="vault")"""
-    if not re.match(r"^[a-z0-9_-]+$", name):
-        raise ValueError(f"provider name {name!r} must be lowercase letters, digits, _ or -")
+    if why := bad_name(name):
+        raise ValueError(why)
 
     def deco(fn):
         PROVIDERS[name] = {"get": fn, "help": help, "tool": tool,
@@ -550,12 +561,12 @@ def delete_item(provider, item_id):
 def login_fields(provider, spec, interactive=True):
     """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
     None when the item has none. Only a provider that can read them without the password reaching roster has this
-    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
-    asks, not even for a master password."""
+    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is NoItemFields.
+    INTERACTIVE=False (`roster add -y`): never asks, not even for a master password."""
     fn = _vault_op(provider, "login_fields")
     if not fn:
-        raise Unsupported(f"provider '{provider}' can't give an item's address and username without roster reading "
-                          "its password too, so roster doesn't ask it")
+        raise NoItemFields(f"provider '{provider}' can't give an item's address and username without roster reading "
+                           "its password too, so roster doesn't ask it", provider)
     name, _ = split_field(spec)
     if not name:
         raise SecretError(f"{provider}: needs an item name or id")
@@ -672,8 +683,8 @@ def setup_providers(cfg):
             die(f"providers.{name} in roster.yml must be a mapping")
         PROVIDER_SETTINGS[name] = {**conf, "_base": base}     # _base: where relative paths in it start
         if conf.get("command"):
-            if not re.match(r"^[a-z0-9_-]+$", name):
-                die(f"provider name {name!r} must be lowercase letters, digits, _ or -")
+            if why := bad_name(name):
+                die(why)
             add_template_provider(name, conf)
 
 

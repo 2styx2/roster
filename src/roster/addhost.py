@@ -22,7 +22,6 @@ from .errors import (
     ADDRESS_TAKEN,
     ITEM_NOT_FOUND,
     LOOKUP_FAILED,
-    NO_ITEM_FIELDS,
     NO_PROVIDER,
     SEVERAL_ITEMS,
     Problem,
@@ -97,9 +96,6 @@ def vault_fields(auth, interactive=True):
                                    "up on this box", {"provider": name}, fix="see `roster vault status`")
     try:
         found = providers.login_fields(name, spec, interactive)
-    except providers.Unsupported as e:
-        raise Problem(NO_ITEM_FIELDS, str(e), {"provider": name},
-                      fix="give the address and user yourself (roster add: --ip and --user)") from None
     except providers.ItemNotFound as e:
         raise Problem(ITEM_NOT_FOUND, f"no vault item matches '{e.item}'", {"near": e.near},
                       fix="check the item's name in the vault, or use its id") from None
@@ -107,9 +103,7 @@ def vault_fields(auth, interactive=True):
         raise Problem(SEVERAL_ITEMS, str(e), {"matches": e.matches},
                       fix="put its id in auth: (bw:ID, op:ID), or rename the extra items in the vault") from None
     except providers.SecretError as e:
-        if type(e) is providers.SecretError:
-            raise Problem(LOOKUP_FAILED, str(e), fix="see the message; `roster check --auth` tests every Login") from None
-        raise vault_problem(e) from None
+        raise vault_problem(e, LOOKUP_FAILED, fix="see the message; `roster check --auth` tests every Login") from None
     out = {}
     host, port, note = uri_address(found.get("uri") or "")
     if host:

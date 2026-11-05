@@ -251,12 +251,14 @@ class Problem(Exception):
 
 class Exit(SystemExit):
     """A die(): roster refusing on the command line, as the Problem it is. Python prints its text, `error: MESSAGE`
-    (`error: [CODE] MESSAGE` when TAG and the code isn't PLAIN), and exits 1; serve and --json answer with the
-    Problem."""
+    (`error: [CODE] MESSAGE` when TAG and the code isn't PLAIN; with FULL, ` (DETAILS) - FIX` after it, for a
+    library's Problem whose message doesn't say them), and exits 1; serve and --json answer with the Problem."""
 
-    def __init__(self, problem, tag=True):
+    def __init__(self, problem, tag=True, full=False):
         shown = f"[{problem.code}] " if tag and problem.code not in PLAIN else ""
-        super().__init__(f"error: {shown}{problem.message}")
+        more = ((f" ({problem.details})" if problem.details else "") + (f" - {problem.fix}" if problem.fix else "")
+                if full else "")
+        super().__init__(f"error: {shown}{problem.message}{more}")
         self.problem = problem
 
 
@@ -278,12 +280,13 @@ def problem_of(e: BaseException) -> "Problem":
     return Problem(INTERNAL_ERROR, f"{type(e).__name__}: {e}")
 
 
-def vault_problem(e):
-    """A provider's SecretError as a Problem: its own code, data and fix (providers/problems.py), else 3. Shared by
-    the CLI and serve, so the vault's state carries no fix only one of them could act on (serve adds the lock
-    screen's: sign_out_error)."""
-    return Problem(getattr(e, "code", None) or ROSTER_ERROR, str(e), getattr(e, "data", None),
-                   fix=getattr(e, "fix", None))
+def vault_problem(e, unknown=ROSTER_ERROR, fix=None):
+    """A provider's SecretError as a Problem: its own code, data and fix (providers/problems.py); a kind with no code
+    of its own takes UNKNOWN (where it happened: 3, a lookup's 35) and FIX. Shared by the CLI and serve, so the
+    vault's state carries no fix only one of them could act on (serve adds the lock screen's: sign_out_error)."""
+    code = getattr(e, "code", None)
+    return Problem(code or unknown, str(e), getattr(e, "data", None),
+                   fix=getattr(e, "fix", None) or (None if code else fix))
 
 
 SIGN_IN_FIXES = {

@@ -7,6 +7,7 @@ import sys
 
 from ..common import WINDOWS, NotPrivate, find_program, read_private_bytes, say, user_config_dir
 from . import (
+    LOOKUP_FLOOR,
     PROVIDERS,
     ItemExists,
     ItemNotFound,
@@ -32,6 +33,9 @@ from . import (
     register,
     resolve_target,
     split_field,
+)
+from .bw_items_filter import (
+    CAP as LIST_CAP,  # bytes of `bw list items` the filter reads; more is refused, not cut short
 )
 
 # ---- built-in: Bitwarden
@@ -693,8 +697,7 @@ def _bw_item(ctx, ref):
                 return item
             raise SecretError(f"`bw get item` failed: {err}")
         matches = [_bw_summary(i) for i in (exact or listed)]
-        raise SeveralItems(f"several Bitwarden items match '{ref}' - use the item's id instead "
-                           "(the Bitwarden app shows it)", ref, matches, exact=bool(exact))
+        raise SeveralItems(SEVERAL.format(ref), ref, matches, exact=bool(exact))
     if "Not found" in err:
         near = near_names(ref, [i["name"] for i in _bw_list(ctx)])
         raise ItemNotFound(f"no Bitwarden item matches '{ref}'", ref, near)
@@ -912,9 +915,6 @@ def _refused_collection(ctx, made, target, ours=True):
     raise _read_only(target, f"; '{name}' was taken back out")
 
 
-LOOKUP_FLOOR = 7            # s for each of the sync and the list after a create timed out, even past serve's deadline
-
-
 def _bw_lookup(ctx, name):
     """The filter's rows (Q191, T229) for the items named exactly NAME, synced from the server first. Raises
     SecretError if bw can't say."""
@@ -990,7 +990,6 @@ def _bw_login_fields(name, ctx):
 # only the filter's lines: {id, name, uris, username, revised} per login item. bw's stderr is read as for any bw call.
 
 FILTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bw_items_filter.py")
-LIST_CAP = 64 * 1024 * 1024            # bytes of `bw list items` the filter reads; more is refused, not cut short
 ROW_KEYS = {"id", "name", "uris", "username", "revised"}
 
 

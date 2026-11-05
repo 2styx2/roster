@@ -54,7 +54,7 @@ def check_value(field, v):
         raise ValueError(f"{field} must be a string")
     if "\n" in v or "\r" in v:
         raise ValueError(f"{field} must be one line")
-    v = " ".join(v.split())                 # as roster.yml's loader reads text (oneline)
+    v = oneline(v)                          # as roster.yml's loader reads text
     if field in ("ip", "user") and (not v or re.search(r"\s", v)):
         raise ValueError(f"{field} can't be empty or contain spaces")
     return v

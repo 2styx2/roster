@@ -278,6 +278,8 @@ def cmd_discover(args):
     JSON document (discover.plan's numbers and discover.status's Found records) and say()'s lines are dropped."""
     from .config import inventory_problem
     from .errors import TOO_MANY_ADDRESSES, Problem
+    if args.ports is None:
+        args.ports = DEFAULT_SCAN_PORTS
     nets = []
     for t in args.targets:
         try:

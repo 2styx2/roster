@@ -48,6 +48,17 @@ class Unsupported(SecretError):
     code = errors.UNSUPPORTED
 
 
+class NoItemFields(Unsupported):
+    """The provider can't give an item's address and username without its password reaching roster (Q190)."""
+
+    code = errors.NO_ITEM_FIELDS
+    fix = "give the address and user yourself (roster add: --ip and --user)"
+
+    def __init__(self, message, provider):
+        super().__init__(message)
+        self.data = {"provider": provider}
+
+
 class NotSignedIn(SecretError):
     """vault.logout: the CLI isn't signed in to an account, so there's none to sign out of."""
 

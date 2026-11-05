@@ -173,18 +173,19 @@ def ensure_key(key: BoxKey, tag: str) -> None:
         if key.type.name != "ed25519":
             have = (key.pub.read_text().split() or ["nothing"])[0]
             if have != key.type.public_word:
-                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is an {have} key, not {key.type.name} "
-                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}")
+                die(f"{key.key} is an {have} key, not {key.type.name} "
+                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}",
+                    code=KEY_TYPE_MISMATCH)
             bits = rsa_bits(key.pub) if key.type.algorithm == "rsa" else None
             if bits is not None and key.type.bits is not None and bits < key.type.bits:     # #471's review LOW-2
-                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
-                    f"key_type: {key.type.name} asks for: {fix}")
+                die(f"{key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
+                    f"key_type: {key.type.name} asks for: {fix}", code=KEY_TYPE_MISMATCH)
         # #471's review (NIT): a .pub that isn't this key's would go on the Hosts and never log in. Checked only when
         # ssh-keygen can read the key without a passphrase (a key of the user's own may have one, as before)
         have_words, words = derived(key.key), public_words(key.pub)
         if have_words is not None and have_words != words:
-            die(f"[{KEY_TYPE_MISMATCH}] {key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
-                f"{fix}")
+            die(f"{key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
+                f"{fix}", code=KEY_TYPE_MISMATCH)
         say(f"key          {key.key} ({key.type.name}, existing)")
         return
     try:

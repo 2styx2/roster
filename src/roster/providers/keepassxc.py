@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..common import find_program
 from . import (
+    LOOKUP_FLOOR,
     PROVIDERS,
     ItemExists,
     ItemNotFound,
@@ -262,9 +263,6 @@ def _create(item, ctx):
         raise WriteFailed(f"{NAME} didn't create '{name}': {err or f'exit {r.returncode}'}"
                           + (f" (is there a group '{group}'?)" if group and "Could not create entry" in err else ""))
     return {"id": path, "name": name, "target": target}
-
-
-LOOKUP_FLOOR = 7            # s for the look-up after a create timed out, even past serve's deadline
 
 
 def _created_anyway(ctx, name, path):

@@ -350,6 +350,12 @@ def die(msg: str, code: int = ROSTER_ERROR, fix: str | None = None, data: dict[s
     raise Exit(Problem(code, msg, data, fix=fix), tag)
 
 
+def refuse(problem: Problem, tag: bool = True) -> NoReturn:
+    """Refuse with a library's PROBLEM: `error: [CODE] MESSAGE (DETAILS) - FIX` on stderr (no `[CODE] ` unless TAG)
+    and exit 1; serve and --json answer with the Problem as it is."""
+    raise Exit(problem, tag, full=True)
+
+
 # ---------------------------------------------------------------- what looks like a token, not a name
 
 _TOKEN_SHAPED = re.compile(r"[A-Za-z0-9+/=_-]{24,}")          # a whole value: a bw key, with its / and +

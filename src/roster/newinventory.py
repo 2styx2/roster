@@ -389,11 +389,11 @@ def host_line(name, h):
         fields["auth"] = "agent"
     line = f"      {scalar(name)}: {{" + ", ".join(f"{k}: {scalar(v)}" for k, v in fields.items()) + "}"
     if h.get("identityfile"):
-        line += f"     # IdentityFile {oneline(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
+        line += f"     # IdentityFile {no_controls(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
     return line
 
 
-def oneline(text):
+def no_controls(text):
     """TEXT with every control character (a newline above all) taken out, for a comment."""
     return re.sub(r"[\x00-\x1f\x7f]", "", text)
 

@@ -32,33 +32,34 @@ def bw_command(argv, write):
     """The bw command ARGV runs (None for bw's bare options, `--help` or `--version`), or die() saying why it may not
     run. Nothing after the command is ever repeated: it may hold a password."""
     if any(a == "--session" or a.startswith("--session=") for a in argv):
-        die(f"[{BW_REFUSED}] roster vault bw won't put a session key on bw's command line, where other programs can read "
-            "it: roster passes this Box's session in bw's environment (drop --session)")
+        die("roster vault bw won't put a session key on bw's command line, where other programs can read "
+            "it: roster passes this Box's session in bw's environment (drop --session)", code=BW_REFUSED)
     if "--write" in argv:
-        die(f"[{BW_NOT_ALLOWED}] --write is roster's, not bw's: put it before bw's command "
-            "(roster vault bw --write -- edit item ...)")
+        die("--write is roster's, not bw's: put it before bw's command "
+            "(roster vault bw --write -- edit item ...)", code=BW_NOT_ALLOWED)
     cmd = next((a for a in argv if not a.startswith("-")), None)
     if any(a not in BW_FLAGS for a in argv[:argv.index(cmd) if cmd else len(argv)]):
-        die(f"[{BW_NOT_ALLOWED}] roster vault bw takes only these bw options before the command: "
-            f"{', '.join(sorted(BW_FLAGS))}")
+        die(f"roster vault bw takes only these bw options before the command: "
+            f"{', '.join(sorted(BW_FLAGS))}", code=BW_NOT_ALLOWED)
     rest = argv[argv.index(cmd) + 1:] if cmd else []
     writes_file = any(a == "--output" or a.startswith("--output=") for a in argv) or \
         (cmd == "get" and any(a.lower() == "attachment" for a in rest))  # bw lowercases it, options may go first
     if (cmd is None or cmd in BW_READ) and not writes_file:
         return cmd
     if cmd == "serve":
-        die(f"[{BW_REFUSED}] roster vault bw won't run bw serve: it would hand the unlocked vault to every program on this "
-            "Box that can reach its port. Run bw serve yourself if you need it")
+        die("roster vault bw won't run bw serve: it would hand the unlocked vault to every program on this "
+            "Box that can reach its port. Run bw serve yourself if you need it", code=BW_REFUSED)
     if cmd in BW_WRITE or cmd in BW_ACCOUNT or writes_file:
         if not write:
             what = "acts on the vault's account" if cmd in BW_ACCOUNT else \
                 "writes the whole vault out" if cmd == "export" else \
                 "writes a file on this Box" if cmd == "receive" or writes_file else "changes the vault"
-            die(f"[{BW_NEEDS_WRITE}] bw {cmd} {what}, and roster vault bw is read-only unless you say so: "
-                f"roster vault bw --write -- {cmd} ...")
+            die(f"bw {cmd} {what}, and roster vault bw is read-only unless you say so: "
+                f"roster vault bw --write -- {cmd} ...", code=BW_NEEDS_WRITE)
         return cmd
-    die(f"[{BW_NOT_ALLOWED}] roster vault bw runs only the bw commands it knows (the first word isn't one of them, and "
-        f"isn't repeated here): {', '.join(sorted(BW_READ))}; with --write, {', '.join(sorted(BW_WRITE | BW_ACCOUNT))}")
+    die(f"roster vault bw runs only the bw commands it knows (the first word isn't one of them, and "
+        f"isn't repeated here): {', '.join(sorted(BW_READ))}; with --write, {', '.join(sorted(BW_WRITE | BW_ACCOUNT))}",
+        code=BW_NOT_ALLOWED)
 
 
 
@@ -106,18 +107,19 @@ def op_command(argv, write):
     for a in argv:
         flag = a.split("=", 1)[0]
         if flag == "--session":
-            die(f"[{OP_REFUSED}] roster vault op won't put a session token on op's command line, where other programs "
-                "can read it: op takes your sign-in from its environment (drop --session)")
+            die("roster vault op won't put a session token on op's command line, where other programs "
+                "can read it: op takes your sign-in from its environment (drop --session)", code=OP_REFUSED)
         if flag == "--config":
-            die(f"[{OP_REFUSED}] roster vault op won't point op at another configuration folder (--config): it holds "
-                "op's accounts and sign-ins. Drop --config, or run op yourself")
+            die("roster vault op won't point op at another configuration folder (--config): it holds "
+                "op's accounts and sign-ins. Drop --config, or run op yourself", code=OP_REFUSED)
     if "--write" in argv:
-        die(f"[{OP_NOT_ALLOWED}] --write is roster's, not op's: put it before op's command "
-            "(roster vault op --write -- item edit ...)")
+        die("--write is roster's, not op's: put it before op's command "
+            "(roster vault op --write -- item edit ...)", code=OP_NOT_ALLOWED)
     start = next((i for i, a in enumerate(argv) if not a.startswith("-")), len(argv))
     if any(a not in OP_FLAGS for a in argv[:start]):
-        die(f"[{OP_NOT_ALLOWED}] roster vault op takes only these op options before the command: "
-            f"{', '.join(sorted(OP_FLAGS))}; put the others (--account, --format, --vault, ...) after it")
+        die(f"roster vault op takes only these op options before the command: "
+            f"{', '.join(sorted(OP_FLAGS))}; put the others (--account, --format, --vault, ...) after it",
+            code=OP_NOT_ALLOWED)
     words = []
     for a in argv[start:]:
         if a.startswith("-"):
@@ -125,30 +127,31 @@ def op_command(argv, write):
         if not re.fullmatch(r"[a-z-]+", a):            # "item get" as one argument: op would take it as one word
             if " ".join(words) in OP_COMMANDS:          # past the command, an argument may hold anything
                 break
-            die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows, one word per argument "
-                "(a word here has a space or another character op's commands don't, and isn't repeated)")
+            die("roster vault op runs only the op commands it knows, one word per argument "
+                "(a word here has a space or another character op's commands don't, and isn't repeated)",
+                code=OP_NOT_ALLOWED)
         if " ".join([*words, a]) not in OP_COMMANDS | OP_GROUPS:
             break
         words.append(a)
     cmd = " ".join(words) or None
     rest = argv[start + len(words):]
     if cmd in OP_GROUPS and not all(a in ("-h", "--help") for a in rest):    # alone, a group prints its help
-        die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows, written out in full before any "
-            f"option (op {' '.join(words)} ... isn't one of them, and isn't repeated here)")
+        die(f"roster vault op runs only the op commands it knows, written out in full before any "
+            f"option (op {' '.join(words)} ... isn't one of them, and isn't repeated here)", code=OP_NOT_ALLOWED)
     if cmd is None and start < len(argv):
-        die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows (the first word isn't one of "
+        die(f"roster vault op runs only the op commands it knows (the first word isn't one of "
             f"them, and isn't repeated here): {', '.join(sorted(OP_READ))}; with --write, "
-            f"{', '.join(sorted(OP_WRITE | OP_ACCOUNT))}")
+            f"{', '.join(sorted(OP_WRITE | OP_ACCOUNT))}", code=OP_NOT_ALLOWED)
     writes_file = any(op_writes_file(a) for a in rest)
     if cmd in OP_NEVER:
-        die(f"[{OP_REFUSED}] roster vault op won't run op {cmd}: it starts another program with op's sign-in and your "
-            "secrets in its environment. Run op yourself if you need it")
+        die(f"roster vault op won't run op {cmd}: it starts another program with op's sign-in and your "
+            "secrets in its environment. Run op yourself if you need it", code=OP_REFUSED)
     if (cmd is None or cmd in OP_READ or cmd in OP_GROUPS) and not writes_file:
         return cmd
     if not write:
         what = "acts on the account" if cmd in OP_ACCOUNT else \
             "writes a file on this Box" if writes_file or cmd in ("update", "connect server create") else \
             "changes the vault or the account"
-        die(f"[{OP_NEEDS_WRITE}] op {cmd} {what}, and roster vault op is read-only unless you say so: "
-            f"roster vault op --write -- {cmd} ...")
+        die(f"op {cmd} {what}, and roster vault op is read-only unless you say so: "
+            f"roster vault op --write -- {cmd} ...", code=OP_NEEDS_WRITE)
     return cmd

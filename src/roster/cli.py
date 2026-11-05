@@ -39,6 +39,7 @@ from .common import (
     never_look_in_the_current_folder,
     not_reviewed,
     program_argv,
+    refuse,
     replace_file,
     run_instead,
     say,
@@ -93,13 +94,13 @@ def cmd_init(args):
             made = newinventory.create(path, how, value)
             say_made(made, value)
     except Problem as e:
-        die(f"{e.message}" + (f" ({e.details})" if e.details else "") + (f" - {e.fix}" if e.fix else ""))
+        refuse(e, tag=False)
     if args.name:
         from . import named
         try:
             newinventory.name_new(path, args.name)
         except Problem as e:
-            die(f"{e.message} - {e.fix}")
+            refuse(e, tag=False)
         say(f"named {args.name}: {named.path_of(args.name)} (`roster --inv {args.name} setup` sets this Box up "
             f"for it; `roster inv use {args.name}` makes it the active one)")
     return 0
@@ -175,7 +176,7 @@ def locked(what, contexts=None):
     try:
         held.__enter__()
     except Problem as e:
-        die(e.message)
+        raise Exit(e, tag=False) from None     # busy's message has its [205]
     try:
         yield
     finally:
@@ -642,7 +643,7 @@ def cmd_mesh(cfg, args):
     try:
         r = mesh.run(cfg, apply=not args.dry_run, rotate=args.rotate or (), say=say)
     except Problem as e:
-        die(e.message)
+        raise Exit(e, tag=False) from None
     show_mesh(r)
     if args.dry_run:
         say("dry run: nothing was changed")
@@ -1071,9 +1072,9 @@ def run_windows(h, command, sudo):
     from . import winhost
     from .errors import RUN_SUDO_WINDOWS
     if sudo:
-        die(f"[{RUN_SUDO_WINDOWS}] {h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
+        die(f"{h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
             "ran. Log in as an account in Administrators (its ssh session is already elevated) and run it without "
-            "--sudo")
+            "--sudo", code=RUN_SUDO_WINDOWS)
     try:
         if h["enroll"]:
             refuse_left_out(h)
@@ -1158,7 +1159,7 @@ def check_ssh_takes(script):
     try:
         program_argv(["ssh", "-o", "BatchMode=yes", "host", script])
     except ValueError as e:
-        die(f"[{SSH_REFUSES_SCRIPT}] {e} - nothing was revoked: put OpenSSH's ssh.exe first on PATH")
+        die(f"{e} - nothing was revoked: put OpenSSH's ssh.exe first on PATH", code=SSH_REFUSES_SCRIPT)
 
 
 def cmd_revoke(cfg, args):
@@ -1323,7 +1324,7 @@ def cmd_add(cfg, args):
         try:
             found = addhost.vault_fields(args.auth, interactive=asking)
         except Problem as e:
-            die(shown(e))
+            refuse(e)
         if found.get("note"):
             say(f"from vault   {found['note']} ({args.auth})")
         vault = {"ip": found.get("address"), "user": found.get("user"),
@@ -1366,13 +1367,13 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
     try:
         fields = {k: edit.check_new(k, v) for k, v in wanted.items() if v is not None}
     except ValueError as e:
-        die(f"[{edit.INVALID_HOST}] {e}")
+        die(str(e), code=edit.INVALID_HOST)
     where = f"group '{group}'"
     try:
         r = addhost.add(path, group, name, fields, dry_run=dry_run, new_address=True,
                         on_write=lambda done: written(name, where, path, group, done))
     except Problem as e:
-        die(shown(e))
+        refuse(e)
     if dry_run:
         new = " (a new group)" if r["new_group"] else ""
         say(f"would add    {name} to {where}{new} in {path} (--dry-run: nothing written):")
@@ -1418,12 +1419,7 @@ def set_up(name, path):
 
 def needs(flag, why):
     from .errors import NEEDS_FLAG
-    die(f"[{NEEDS_FLAG}] {why}: give {flag}")
-
-
-def shown(e):
-    return f"[{e.code}] {e.message}" + (f" ({e.details})" if e.details else "") + \
-        (f" - {e.fix}" if e.fix else "")
+    die(f"{why}: give {flag}", code=NEEDS_FLAG)
 
 
 # ---------------------------------------------------------------- `roster add --from-vault` (fromvault.py lists)
@@ -1436,10 +1432,7 @@ def cmd_from_vault(cfg, args):
     try:
         found = fromvault.listing(path, sync=not args.no_sync)
     except Problem as e:
-        if args.json:
-            jsonout.fail(e.code, e.message, e.fix)
-            return 1
-        die(shown(e))
+        refuse(e)                               # with --json, main says it as the JSON error
     for s in found["synced"]:
         before = fromvault.ago(s["previous"])
         say(f"synced       {s['provider']} (the previous sync was {before})" if before else
