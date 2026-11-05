@@ -1079,9 +1079,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* Quick Connect (ticket 14): a box that isn't in the Inventory, offered first while the query reads
    as user@address[:port]. The address is data (Iosevka); the words around it are the app's. */
 /* Its node is Quick Connect's glyph (the title bar's: this Box's square, an edge, an open ring),
-   14px, set so its ring is centred where every row's node is (16px in) and the words start where
-   the names do (round 19). */
-.picker-row.quick-row { grid-template-columns: 14px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px 8px 5px; }
+   14px, set so its ring is centred where every row's node is (16px in: 6 + 14 × 11.2/16) and the
+   words start where the names do (round 19, round 20's larger ring). */
+.picker-row.quick-row { grid-template-columns: 14px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px 8px 6px; }
 .picker-row .quick-node { display: flex; color: var(--muted); }
 .picker-row.quick-row > :first-child { grid-column-start: auto; }
 .picker-row .quick-label { font-size: var(--text-sm); }
