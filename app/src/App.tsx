@@ -154,8 +154,10 @@ import {
   allRows,
   firstStop,
   moveCursor,
+  ROW_SLIP_MS,
   Sidebar,
   type OpenMenu,
+  type RowSlipData,
   type SidebarRow,
 } from "./sidebar/Sidebar";
 import { hostMenu } from "./sidebar/hostMenu";
@@ -699,6 +701,8 @@ function Workspace({
   // (round 19: kept selected, its name in the text colour read as another live Session); App mode
   // starts there again (`lastStop`, Q232 a).
   const [selected, setSelectedNow] = useState<string | null>(null);
+  /** The row last clicked in the Sidebar, at once (the state above updates after the click's run). */
+  const sidebarPicked = useRef<string | null>(null);
   const [lastStop, setLastStop] = useState<string | null>(null);
   const setSelected = useCallback((id: string | null) => {
     setSelectedNow(id);
@@ -793,8 +797,31 @@ function Workspace({
   messagesChoice.setConfig(config?.ui.messages ?? null);
   // A quiet message from the background (a Plugin's notice from a timer, an event or a request's
   // answer, or roster's own unasked one) keeps a line that shows, an error above all (decision Q162).
+  // Round 20: what a Sidebar row's own command says went wrong ("esx-02 isn't reviewed yet…", a
+  // Folder's or a group's change refused) is said under that row, where you were looking, not at the
+  // foot of the pane. `rowRun` is the row whose command ran last from the Sidebar (a click, its
+  // button or menu, Enter in App mode), for a few seconds; a plain message (an error or an answer)
+  // that names the row goes to its slip, and still into `:messages`.
+  const rowRun = useRef<{ row: string; at: number } | null>(null);
+  const rowsRef = useRef<readonly SidebarRow[]>([]);
+  const [rowSlip, setRowSlip] = useState<RowSlipData | null>(null);
   const setMessage = useCallback(
     (m: Message) => {
+      const from = rowRun.current;
+      const row =
+        typeof m === "string" && from && Date.now() - from.at < ROW_SLIP_MS
+          ? rowsRef.current.find((r) => r.id === from.row)
+          : undefined;
+      const name =
+        typeof m === "string" && row
+          ? [row.host, row.label].find((n) => n !== undefined && m.includes(n))
+          : undefined;
+      if (typeof m === "string" && row && name !== undefined) {
+        rowRun.current = null;
+        setRowSlip({ row: row.id, text: m, ...(row.host === name ? { name } : {}) });
+        messageLog.push(m);
+        return;
+      }
       setMessageNow((now) => lineAfter(now, m, messagesChoice.all()));
       messageLog.push(m);
     },
@@ -1336,6 +1363,7 @@ function Workspace({
     ],
   );
   const rows = useMemo(() => allRows(sections), [sections]);
+  rowsRef.current = rows;
   const sidebarAt = layout.pieces.find((p) => p.id === "sidebar")?.at;
   const sidebarSide = sidebarAt === "right" ? "right" : "left";
   const sidebarShown = isShown(layout, "sidebar") && sections.length > 0;
@@ -1948,8 +1976,8 @@ function Workspace({
   }, [unlockedOnce, openAtStart, tabs]);
   useEffect(() => {
     if (!unlockedOnce || !newsLine) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- saying it once the workspace shows is the effect
     setMessage(newsLine);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- saying it once the workspace shows is the effect
     setNewsLine(null);
   }, [unlockedOnce, newsLine, setMessage]);
 
@@ -2279,8 +2307,12 @@ function Workspace({
       if (tab) tabs.select(tab.id);
       else ctx.connect(to.host);
     },
-    reconnect: () => {
-      if (sessions.active !== null) tabs.reconnect(sessions.active);
+    reconnect: (n = null) => {
+      const id =
+        n === null ? sessions.active : (sessions.tabs[n - 1]?.id ?? null);
+      if (id === null) return;
+      if (id !== sessions.active) tabs.select(id);
+      tabs.reconnect(id);
     },
     check: (name) => {
       if (name === null) return checkBox();
@@ -2473,6 +2505,7 @@ function Workspace({
       if (move !== "choose") return moveTo(moveCursor(rows, cursor, move));
       const row = rows.find((r) => r.id === cursor);
       if (row) setLastStop(row.id);
+      if (row) rowRun.current = { row: row.id, at: Date.now() };
       // Enter on a group, Folder or heading folds it and stays in the Sidebar.
       setMode(
         row && staysInAppMode(row.command)
@@ -3507,13 +3540,22 @@ function Workspace({
             side={sidebarSide}
             cursor={appMode ? cursor : null}
             selected={appMode ? cursor : selected}
-            onSelect={setSelected}
+            onSelect={(id) => {
+              sidebarPicked.current = id;
+              setSelected(id);
+            }}
             leaderHint={options.leader}
             findKeys={hintFor(keymap, "find")}
             run={(line) => {
               setMode(terminalMode);
+              // The row it's for: the one just clicked (or whose menu is open), else the cursor's.
+              const row = rowMenu?.row ?? sidebarPicked.current ?? cursor;
+              rowRun.current = row === null ? null : { row, at: Date.now() };
+              setRowSlip(null);
               run(line);
             }}
+            slip={rowSlip}
+            onSlipDone={() => setRowSlip(null)}
             treeRef={setTree}
             menu={rowMenu}
             onMenu={setRowMenu}

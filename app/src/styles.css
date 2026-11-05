@@ -579,6 +579,9 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    "root@10.0.0…" beside "new host key"). */
 .sb-section[data-section="sessions"] .sb-row:has(.dot) .sb-text > .sb-name { min-width: min(18ch, max-content); }
 .sb-section[data-section="sessions"] .sb-note { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
+/* An ended or refused Session's note is one short word ("ended", "failed", "closed") and is what
+   the row is there to say, so the name gives way to it (round 20: "end…" beside a long name). */
+.sb-section[data-section="sessions"] .sb-row:has(.dot.ended) .sb-note { flex: none; }
 .sb-num {
   margin-left: auto; padding-left: 8px; flex: none;
   color: var(--muted); font: var(--text-xs) var(--font-mono); font-variant-numeric: tabular-nums;
@@ -717,12 +720,24 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 @media (hover: hover) and (pointer: fine) {
   .sidebar .row-menu-item:hover:not(:focus) { background: var(--hover); }
 }
-/* Where the menu's groups split: a rule you can see, 4px above and below, so the one larger gap
+/* Where the menu's groups split: a rule you can see, 6px above and below, so the one larger gap
    reads as a split and not as a slip (round 19: --line on the panel was 1.05:1 in Roster dark,
-   invisible). The menu's own border's tone. */
-.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-strong); }
+   invisible). The menu's own border's tone. Round 20: 4px put it right under the focused item's
+   accent outline, where it read as part of that ring in Roster dark; 6px clears a 2px ring with
+   room to spare. */
+.row-menu-sep { height: 1px; margin: 6px; background: var(--line-strong); }
+/* A row's own command went wrong (round 20, H9): its message under the row, where you were
+   looking, not at the foot of the pane. The row menu's surface (it floats over the rows below, so
+   the tree never moves), the message line's words: Inter, with commands and files in Iosevka. In
+   the text colour, as a slip: calm, not an alarm (taste.md). */
+.sb-slip {
+  position: fixed; z-index: var(--z-over-full); max-width: min(360px, calc(100vw - 8px));
+  padding: 6px 10px; font-size: var(--text-sm); line-height: 1.45; color: var(--text);
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  box-shadow: 0 8px 24px var(--shadow), 0 2px 8px var(--shadow); overflow-wrap: anywhere;
+}
 @media (forced-colors: active) {
-  .row-menu { border-color: CanvasText; }
+  .row-menu, .sb-slip { border-color: CanvasText; }
   .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
   .row-menu-sep { background: CanvasText; }
 }
@@ -1078,9 +1093,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* Quick Connect (ticket 14): a box that isn't in the Inventory, offered first while the query reads
    as user@address[:port]. The address is data (Iosevka); the words around it are the app's. */
 /* Its node is Quick Connect's glyph (the title bar's: this Box's square, an edge, an open ring),
-   14px, set so its ring is centred where every row's node is (16px in) and the words start where
-   the names do (round 19). */
-.picker-row.quick-row { grid-template-columns: 14px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px 8px 5px; }
+   14px, set so its ring is centred where every row's node is (16px in: 6 + 14 × 11.2/16) and the
+   words start where the names do (round 19, round 20's larger ring). */
+.picker-row.quick-row { grid-template-columns: 14px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px 8px 6px; }
 .picker-row .quick-node { display: flex; color: var(--muted); }
 .picker-row.quick-row > :first-child { grid-column-start: auto; }
 .picker-row .quick-label { font-size: var(--text-sm); }

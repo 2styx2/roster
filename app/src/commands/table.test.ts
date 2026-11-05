@@ -17,7 +17,7 @@ function recorder(mode: ViewMode = "standard") {
     openPicker: () => calls.push("picker"),
     connect: (h, here) => calls.push(`connect ${h}${here ? " here" : ""}`),
     quickConnect: (t) => calls.push(`quick ${t ?? "picker"}`),
-    reconnect: () => calls.push("reconnect"),
+    reconnect: (n) => calls.push(n == null ? "reconnect" : `reconnect ${n}`),
     check: (h) => calls.push(`check ${h ?? "current"}`),
     selectRelative: (d) => calls.push(`relative ${d}`),
     selectNth: (n) => calls.push(`nth ${n}`),
@@ -187,6 +187,7 @@ describe("runLine", () => {
     runLine(ctx, "lock");
     runLine(ctx, "here hub2");
     runLine(ctx, "reconnect");
+    runLine(ctx, "reconnect 9");
     expect(calls).toEqual([
       "connect esxi-02",
       "nth 3",
@@ -197,6 +198,7 @@ describe("runLine", () => {
       "lock",
       "connect hub2 here",
       "reconnect",
+      "reconnect 9",
     ]);
   });
 

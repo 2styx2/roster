@@ -152,12 +152,15 @@ const PATHS: Record<ToolbarIcon, React.ReactNode> = {
   ),
   add: <path d="M8 3v10M3 8h10" />,
   // This Box's square, an edge, and a dashed node: a box that isn't on the map (yet).
+  // Round 20: the ring dominates (8.2 across, the square 3.2 and solid, the edge between), so at
+  // 14 px the three parts read as Box → Host, not as ⚯ (two like rings joined: "glasses").
   quick: (
     <>
-      <rect x="1.75" y="6" width="4" height="4" rx="0.8" />
-      <path d="M6.5 8h3" />
-      {/* The connecting node: an open ring, its gap at the upper right (round 9: dashed read as "oo"). */}
-      <path d="M14.599 7.145A2.5 2.5 0 1 1 13.105 5.651" />
+      <rect x="1" y="6.4" width="3.2" height="3.2" rx="0.5" fill="currentColor" stroke="none" />
+      <path d="M4.85 8h1.6" />
+      {/* The connecting node: an open ring, its 50° gap at the upper right (Q221 a; round 9:
+          dashed read as "oo"). Centre (11.2, 8), radius 4.1. */}
+      <path d="M15.053 6.598A4.1 4.1 0 1 1 12.602 4.147" />
     </>
   ),
   // Two lines, the second changed: a diff.

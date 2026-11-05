@@ -90,7 +90,8 @@ describe("Sessions", () => {
     await openFromPicker(user, reviewed[0]!.name);
     await within(output()).findByText(/Connected to/);
     await user.keyboard("exit{Enter}");
-    expect(await within(sidebar()).findByRole("treeitem", { name: /ended \(code 0\)/ })).toBeInTheDocument();
+    // The Sidebar's row says it in one word (round 20); the pane says the code.
+    expect(await within(sidebar()).findByRole("treeitem", { name: new RegExp(`^${reviewed[0]!.name}, ended$`) })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: `Session ${reviewed[0]!.name}` })).toHaveTextContent("ended (code 0)");
   });
 
@@ -115,7 +116,9 @@ describe("Sessions", () => {
     await openFromPicker(user, reviewed[0]!.name);
     await within(output()).findByText(/Connected to/);
     await user.keyboard("exit{Enter}");
-    await user.click(await screen.findByRole("button", { name: /reconnect/i }));
+    // The pane's button (the Sidebar's row has its own, "Reconnect NAME", round 20).
+    const pane = await screen.findByRole("group", { name: `Session ${reviewed[0]!.name}` });
+    await user.click(await within(pane).findByRole("button", { name: /reconnect/i }));
     await waitFor(() => expect(output().textContent).toMatch(/reconnecting.*Connected to/s));
     expect(screen.queryByRole("button", { name: /reconnect/i })).toBeNull();
   });

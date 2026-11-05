@@ -101,7 +101,7 @@ describe("Row state in words, not only colour (M3)", () => {
     await within(output()).findByText(/Connected to linux-1-000/);
     await user.keyboard("exit{Enter}");
     const sessions = within(tree()).getByRole("group", { name: "Sessions" });
-    expect(await within(sessions).findByRole("treeitem", { name: "linux-1-000, ended (code 0)" })).toBeInTheDocument();
+    expect(await within(sessions).findByRole("treeitem", { name: "linux-1-000, ended" })).toBeInTheDocument();
   });
 
   it("draws each state as a node of its own shape", async () => {

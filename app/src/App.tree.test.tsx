@@ -44,7 +44,8 @@ describe("The Inventory section", () => {
     const host = within(inventory()).getByRole("treeitem", { name: /^switch-4-003/ });
     expect(host).toHaveTextContent(/unreviewed/);
     await user.click(host);
-    expect(screen.getByRole("status")).toHaveTextContent(/switch-4-003 isn't reviewed yet/);
+    // Said under the row it's about (round 20), not at the foot of the pane.
+    expect(screen.getByRole("alert")).toHaveTextContent(/switch-4-003 isn't reviewed yet/);
     expect(screen.queryByLabelText("terminal output")).toBeNull();
   });
 });
@@ -217,7 +218,7 @@ describe("Folders", () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}:folder add switch-4-003 Lab{Enter}`);
     await user.click(within(folders()).getByRole("treeitem", { name: /^switch-4-003/ }));
-    expect(screen.getByRole("status")).toHaveTextContent(/isn't reviewed yet/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/isn't reviewed yet/);
     await user.keyboard(`${LEADER}:folder add linux-1-000 Lab{Enter}`);
     await user.click(within(folders()).getByRole("treeitem", { name: /^linux-1-000/ }));
     await within(output()).findByText(/Connected to linux-1-000/);
