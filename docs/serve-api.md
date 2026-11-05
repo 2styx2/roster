@@ -312,7 +312,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 | `30` | The Host's ssh user is discover's placeholder `CHANGE-ME`: "no SSH user for esx (user: CHANGE-ME in roster.yml)" |
 | `31` | The Login's provider isn't set up on this box: "keeper's ssh Login uses 'keeper:', which isn't set up on this box". `data.provider` |
 | `32` | No vault item by that name: "no vault item named 'esx shh' (ssh Login of esx) - did you mean: 'esx ssh'". `data.near` lists similar item names (names only) |
-| `33` | Several vault items match: "2 vault items are named 'esx ssh' (ssh Login of esx): ...". `data.matches` is `[{name, revised, uris}]`: names and URIs, never a value (`revised`, the last-edited date, is `null` for Bitwarden and KeePassXC: Bitwarden's items are listed through Q191's filter, which gives no date) |
+| `33` | Several vault items match: "2 vault items are named 'esx ssh' (ssh Login of esx): ...". `data.matches` is `[{name, revised, uris}]`: names and URIs, never a value (`revised`, the last-edited date, is `null` for Bitwarden and KeePassXC: Bitwarden's items are listed through Q191's filter, which gives no date). When some of the Bitwarden items that match aren't logins, the message says "N vault items match 'ITEM' (...), some of them aren't logins" and `matches` holds the login ones only (Q191 (p)) |
 | `34` | The item has no password, or no such `#FIELD`: "vault item 'esx ssh' has no password (ssh Login of esx)". `data.field` |
 | `35` | The provider failed some other way; the message is the provider's |
 | `36` | askpass: the Host asked something roster won't answer (an expired password, an OTP); the prompt is in the message |

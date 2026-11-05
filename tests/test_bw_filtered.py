@@ -43,8 +43,24 @@ def vault(fakes, tmp_path, monkeypatch):
             raise AssertionError(f"roster's process ran `bw list items` itself: {args}")
         return real(args, *a, **kw)
     monkeypatch.setattr(providers, "run", run)
+    import subprocess
+
+    from roster.providers import bitwarden
+    real_popen, producers = subprocess.Popen, []
+
+    def popen(args, *a, **kw):                  # however it's started, `bw list items` must feed the filter's stdin
+        if producers:
+            p = producers.pop()
+            if not (kw.get("stdin") is p.stdout and bitwarden.FILTER in [str(x) for x in args]):
+                itself.append(p.args)
+        proc = real_popen(args, *a, **kw)
+        if isinstance(args, (list, tuple)) and "list" in args and "items" in args:
+            producers.append(proc)
+        return proc
+    monkeypatch.setattr(subprocess, "Popen", popen)
     providers.unlock("bw", "hunter2")
     yield f
+    itself.extend(p.args for p in producers)
     assert not itself, itself
 
 
@@ -141,14 +157,11 @@ def test_a_create_whose_answer_is_lost_finds_the_item_through_the_filter(vault, 
 
 
 @pytest.mark.parametrize("answer", [unreadable, timed_out])
-def test_a_lost_answer_still_tells_a_collection_from_a_refused_one(orgs, monkeypatch, capsys, answer):
+def test_a_lost_answer_still_finds_the_item_in_its_collection(orgs, monkeypatch, capsys, answer):
     bw_answers(monkeypatch, answer)
     made = providers.create_item("bw", name="box ssh", password=NEW_PW, save_to=INFRA)
     assert made["target"]["label"] == "My Team / Infra logins" and "box ssh" in names(orgs)
-    with pytest.raises(providers.ReadOnlyTarget, match="taken back out") as e:
-        providers.create_item("bw", name="nas-02 ssh", password=NEW_PW, save_to=AUDIT)
-    assert "nas-02 ssh" not in names(orgs)
-    clean(made, str(e.value), capsys.readouterr())
+    clean(made, capsys.readouterr())
 
 
 def test_a_create_that_timed_out_and_saved_nothing_says_so(vault, monkeypatch, capsys):
@@ -190,3 +203,96 @@ def test_bw_list_items_runs_only_through_the_filter():
             if callee in ("_bw", "ctx.run") and "list" in words[:2]:
                 assert fn.name == "_bw_listed", fn.name
     assert where == [("_bw_rows", "ctx.run_filtered")]
+    for node in ast.walk(tree):                 # every bw call goes through Ctx: no subprocess, no common.run of its own
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            assert not {a.name for a in node.names} & {"subprocess", "run", "run_filtered", "Popen"}, ast.unparse(node)
+            assert getattr(node, "module", None) != "subprocess", ast.unparse(node)
+        if isinstance(node, ast.Name):
+            assert node.id not in ("subprocess", "run", "run_filtered", "Popen"), node.id
+        if isinstance(node, ast.Attribute) and node.attr in ("system", "popen", "spawnv", "spawnl", "execv", "Popen"):
+            raise AssertionError(ast.unparse(node))
+
+
+# ---- the filter keeps login items only, so several matches fail closed unless every one bw found is a login row
+# (#446's review, M1): bw's "More than one result" names each matching item's id, of any type.
+
+def note(id_, name):
+    return {"id": id_, "type": 2, "name": name, "notes": "notes-SECRET", "secureNote": {"type": 0},
+            "fields": [{"name": "pw", "value": "field-SECRET"}]}
+
+
+def use(vault, *items):
+    vault.write_text(json.dumps(list(items)))
+
+
+def test_a_login_with_a_notes_name_is_never_picked_over_it(vault, capsys):
+    use(vault, note("ffff-6666", "db"), item("aaaa-1111", "db", "pw-SECRET-one"))
+    for ref in ("bw:db", "bw:db#pw"):
+        with pytest.raises(providers.SeveralItems) as e:
+            get_secret(ref, "g")
+        assert e.value.total == 2 and not e.value.exact
+        assert "2 Bitwarden items match 'db', some of them aren't logins" in str(e.value)
+        clean(str(e.value), e.value.matches, capsys.readouterr())
+
+
+def test_several_matches_some_not_logins_are_counted_as_bw_found_them(vault, capsys):
+    from roster import errors
+    use(vault, note("ffff-6666", "db"), item("aaaa-1111", "db prod", "pw-SECRET-one", "ssh://10.0.0.6"))
+    with pytest.raises(providers.SeveralItems) as e:
+        get_secret("bw:db", "g")
+    msg = errors.login_problem(e.value, {"name": "db-01"}).message
+    assert msg == ("2 vault items match 'db' (ssh Login of db-01), some of them aren't logins: "
+                   "'db prod' (ssh://10.0.0.6)")
+    use(vault, note("ffff-6666", "db"), note("ffff-7777", "db old"))
+    with pytest.raises(providers.SeveralItems) as e:
+        get_secret("bw:db", "g")
+    assert e.value.matches == [] and e.value.total == 2
+    msg = errors.login_problem(e.value, {"name": "db-01"}).message
+    assert msg == "2 vault items match 'db' (ssh Login of db-01), some of them aren't logins"
+    clean(msg, capsys.readouterr())
+
+
+# ---- a lost create answer (#446's review, L1): exactly one row by that name, or roster says it can't tell
+
+def test_a_lost_answer_with_two_items_by_that_name_says_so(vault, monkeypatch, capsys):
+    from roster.providers import bitwarden
+    real = bitwarden._bw
+
+    def fake(ctx, *args, **kw):                 # the create runs, someone else's item by that name appears too
+        r = real(ctx, *args, **kw)
+        if args[:2] == ("create", "item"):
+            vault.write_text(json.dumps(json.loads(vault.read_text()) + [item("zzzz-9999", "box ssh", "pw-SECRET-two")]))
+            r.stdout = "not JSON"
+        return r
+    monkeypatch.setattr(bitwarden, "_bw", fake)
+    with pytest.raises(providers.WriteFailed, match="2 items are named 'box ssh'") as e:
+        providers.create_item("bw", name="box ssh", password=NEW_PW)
+    assert names(vault).count("box ssh") == 2
+    clean(str(e.value), capsys.readouterr())
+
+
+def test_a_lost_answer_and_a_failed_listing_says_roster_couldnt_check(vault, monkeypatch, capsys):
+    bw_answers(monkeypatch, unreadable)
+    from roster.providers import bitwarden
+    real_rows = bitwarden._bw_rows
+    calls = []
+
+    def rows(ctx, *args, **kw):
+        calls.append(args)
+        if len(calls) > 1:
+            raise providers.SecretError("`bw list items` failed: Vault is locked.")
+        return real_rows(ctx, *args, **kw)
+    monkeypatch.setattr(bitwarden, "_bw_rows", rows)
+    with pytest.raises(providers.WriteFailed, match="couldn't check") as e:
+        providers.create_item("bw", name="box ssh", password=NEW_PW)
+    assert "isn't in the vault" not in str(e.value)
+    clean(str(e.value), capsys.readouterr())
+
+
+@pytest.mark.parametrize("answer", [unreadable, timed_out])
+def test_an_item_found_by_name_outside_the_collection_is_never_deleted(orgs, monkeypatch, capsys, answer):
+    bw_answers(monkeypatch, answer)
+    with pytest.raises(providers.ReadOnlyTarget, match="check it in the vault") as e:
+        providers.create_item("bw", name="nas-02 ssh", password=NEW_PW, save_to=AUDIT)
+    assert "nas-02 ssh" in names(orgs)          # roster can't be sure it made it: it's said, never deleted
+    clean(str(e.value), capsys.readouterr())

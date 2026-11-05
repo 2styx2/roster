@@ -276,7 +276,13 @@ def login_problem(e, h, what="ssh"):
         listed = "; ".join(f"'{m['name']}'" + (f" ({about})" if (about := ", ".join(
             ([f"edited {m['revised']}"] if m.get("revised") else []) + list(m["uris"]))) else "")
             for m in e.matches)
-        return Problem(SEVERAL_ITEMS, f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}",
+        total = getattr(e, "total", None)
+        if total:                               # bw found more than its login rows show (Q191 (p))
+            head = f"{total} vault items match '{e.item}' ({where}), some of them aren't logins"
+            text = head + (f": {listed}" if listed else "")
+        else:
+            text = f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}"
+        return Problem(SEVERAL_ITEMS, text,
                        {"matches": e.matches},
                        fix="delete or rename the extra items in the vault, or use the item's id in auth:")
     if isinstance(e, providers.NoField):
