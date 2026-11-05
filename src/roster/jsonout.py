@@ -93,3 +93,4 @@ def fail(code: int, message: str, fix: str | None = None) -> None:
     """An error on stderr: {"version", "error": {code, message, fix}}. code is errors.py's (serve's) number."""
     from .jsondocs import Error, ErrorDoc
     emit(ErrorDoc(error=Error(code=code, message=redact_error(message), fix=fix)), sys.stderr)
+# T237 probe: a CLI-only change, to time CI (throwaway, never merged)
