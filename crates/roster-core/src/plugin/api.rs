@@ -5667,7 +5667,8 @@ pub fn json_text() -> String {
 
 /// What the Plugin host itself decides, besides the API's declarations, that the app and its fake
 /// Backend must agree with: the events and who hears them, the limits a Plugin meets, the
-/// permissions' words, the built-in Plugins and the paths that name them.
+/// permissions' words, the ops and their fields ([`super::op`]), the built-in Plugins and the
+/// paths that name them.
 pub fn runtime() -> Json {
     use super::{permission, runtime as rt};
     json!({
@@ -5682,6 +5683,7 @@ pub fn runtime() -> Json {
             "every_min_ms": rt::EVERY_MIN_MS,
             "timer_max_ms": rt::TIMER_MAX_MS,
             "max_copy": rt::MAX_COPY,
+            "max_ops": rt::MAX_OPS,
             "strikes": super::Limits::default().strikes,
             "storage_file": super::folder::MAX_FILE,
             "storage_total": super::folder::MAX_TOTAL,
@@ -5696,6 +5698,8 @@ pub fn runtime() -> Json {
             "serve_prefixes": permission::SERVE_PREFIXES,
             "serve_reads": permission::READS,
         },
+        "ops": super::op::KINDS.iter().map(|(kind, fields)| json!({ "op": kind, "fields": fields })).collect::<Vec<_>>(),
+        "removable": super::op::Removable::ALL.iter().map(|r| r.name()).collect::<Vec<_>>(),
         "bundled": super::BUNDLED.iter().map(|b| b.name).collect::<Vec<_>>(),
         "builtin_prefix": super::BUILTIN_PREFIX,
         "package_prefix": super::PACKAGE_PREFIX,

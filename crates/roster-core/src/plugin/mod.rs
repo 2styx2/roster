@@ -29,6 +29,7 @@ pub mod demo;
 pub mod fair;
 pub mod folder;
 pub mod network;
+pub mod op;
 pub mod permission;
 pub(crate) mod runtime;
 

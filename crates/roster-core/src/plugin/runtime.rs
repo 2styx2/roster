@@ -7,6 +7,7 @@
 use super::api::EVENTS;
 use super::folder::Storage;
 use super::network::{self, Answer, Net};
+use super::op::{self, Op, Removable};
 use super::{Builtins, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
 use crate::config::lua::{self, Budget, Clock};
 use crate::config::{Os, ThemeDef};
@@ -776,19 +777,24 @@ fn add_timer(lua: &Lua, shared: &Shared, what: &str, ms: f64, f: Function, every
     shared.timers.borrow_mut().insert(id, every);
     push(
         shared,
-        json!({ "op": "timer", "id": id.to_string(), "ms": ms, "every": every, "run": { "handler": id } }),
+        Op::Timer {
+            id: id.to_string(),
+            ms,
+            every,
+            run: json!({ "handler": id }),
+        },
     )?;
     Ok(id)
 }
 
-fn push(shared: &Shared, op: Json) -> mlua::Result<()> {
+fn push(shared: &Shared, op: Op) -> mlua::Result<()> {
     let mut ops = shared.ops.borrow_mut();
     if ops.len() >= MAX_OPS {
         return Err(mlua::Error::runtime(format!(
             "more than {MAX_OPS} UI changes in one go"
         )));
     }
-    ops.push(op);
+    ops.push(serde_json::to_value(op).map_err(mlua::Error::external)?);
     Ok(())
 }
 
@@ -1389,14 +1395,13 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 "roster.commands.add: `run` must be a function or a command line",
             ));
         };
-        let mut op = json!({ "op": "command", "name": name, "desc": desc, "run": run });
         // `complete` (api 3): a function the app calls as the user types, never a user's call.
-        match spec.get("complete") {
-            None => {}
+        let complete = match spec.get("complete") {
+            None => None,
             Some(c) => match c.get("handler").and_then(Json::as_u64) {
                 Some(id) => {
                     s.quiet.borrow_mut().insert(id);
-                    op["complete"] = c.clone();
+                    Some(c.clone())
                 }
                 None => {
                     return Err(mlua::Error::runtime(
@@ -1404,10 +1409,19 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                     ));
                 }
             },
-        }
+        };
+        let run = run.clone();
         s.commands.borrow_mut().insert(name.clone());
         own_put(lua, s, "command", &name, copy(lua, &given)?)?;
-        push(s, op)
+        push(
+            s,
+            Op::Command {
+                name,
+                desc,
+                run,
+                complete,
+            },
+        )
     });
     func!(commands, "remove", |lua, s, name: String| {
         let what = "roster.commands.remove";
@@ -1415,7 +1429,13 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         must_have(lua, s, what, "commands", "command", "command", &name)?;
         s.commands.borrow_mut().remove(&name);
         own_put(lua, s, "command", &name, Value::Nil)?;
-        push(s, json!({ "op": "remove", "kind": "command", "id": name }))
+        push(
+            s,
+            Op::Remove {
+                kind: Removable::Command,
+                id: name,
+            },
+        )
     });
     reads(lua, &commands, "commands", "command")?;
     roster.raw_set("commands", commands)?;
@@ -1452,10 +1472,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                     Value::String(lua.create_string(a)?),
                 )?;
             }
-            push(
-                s,
-                json!({ "op": "key", "context": context, "keys": keys, "action": action }),
-            )
+            push(s, Op::Key { context, keys, action })
         }
     );
     // Takes the Plugin's own binding off (api 3); `set(…, false)` did the same before it.
@@ -1465,7 +1482,11 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         }
         push(
             s,
-            json!({ "op": "key", "context": context, "keys": keys, "action": false }),
+            Op::Key {
+                context,
+                keys,
+                action: Json::Bool(false),
+            },
         )
     });
     // Its own bindings (api 5), as init.lua's `roster.keymap` reads the Config's.
@@ -1493,7 +1514,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             .map_err(|e| mlua::Error::runtime(format!("roster.themes.define {id:?}: {e}")))?;
         let def = serde_json::to_value(def).map_err(mlua::Error::external)?;
         own_put(lua, s, "theme", &id, copy(lua, &given)?)?;
-        push(s, json!({ "op": "theme", "id": id, "theme": def }))
+        push(s, Op::Theme { id, theme: def })
     });
     func!(themes, "remove", |lua, s, id: String| {
         let what = "roster.themes.remove";
@@ -1508,23 +1529,30 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             )?;
         }
         own_put(lua, s, "theme", &id, Value::Nil)?;
-        push(s, json!({ "op": "remove", "kind": "theme", "id": id }))
+        push(
+            s,
+            Op::Remove {
+                kind: Removable::Theme,
+                id,
+            },
+        )
     });
     reads(lua, &themes, "themes", "theme")?;
     roster.raw_set("themes", themes)?;
 
     // UI pieces the core draws: a Sidebar section, a status segment, a finder source, a help
     // page, a `:check` section, a tutorial (`:tutor`), a toolbar control, a progress (ticket 78). `set` adds or replaces one; `remove` takes it away.
-    for (module, kind, noun) in [
-        ("sidebar", "section", "Sidebar section"),
-        ("status", "status", "status segment"),
-        ("finders", "finder", "finder"),
-        ("help", "help", "help page"),
-        ("health", "health", "`:check` section"),
-        ("tutor", "tutor", "tutorial"),
-        ("toolbar", "toolbar", "toolbar control"),
-        ("progress", "progress", "progress"),
+    for (module, piece, noun) in [
+        ("sidebar", Removable::Section, "Sidebar section"),
+        ("status", Removable::Status, "status segment"),
+        ("finders", Removable::Finder, "finder"),
+        ("help", Removable::Help, "help page"),
+        ("health", Removable::Health, "`:check` section"),
+        ("tutor", Removable::Tutor, "tutorial"),
+        ("toolbar", Removable::Toolbar, "toolbar control"),
+        ("progress", Removable::Progress, "progress"),
     ] {
+        let kind = piece.name();
         let t = lua.create_table()?;
         let what = format!("roster.{module}.set");
         func!(t, "set", |lua, s, (id, spec): (String, Table)| {
@@ -1542,19 +1570,15 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             if let Some(id) = unasked.and_then(|f| f.get("handler")).and_then(Json::as_u64) {
                 s.quiet.borrow_mut().insert(id);
             }
-            let mut op = Map::new();
-            op.insert("op".into(), kind.into());
             own_put(lua, s, kind, &id, copy(lua, &given)?)?;
-            op.insert("id".into(), id.into());
-            op.insert("spec".into(), spec);
-            push(s, Json::Object(op))
+            push(s, op::set(piece, id, spec))
         });
         let removing = format!("roster.{module}.remove");
         func!(t, "remove", |lua, s, id: String| {
             check_id(&removing, &id)?;
             must_have(lua, s, &removing, module, noun, kind, &id)?;
             own_put(lua, s, kind, &id, Value::Nil)?;
-            push(s, json!({ "op": "remove", "kind": kind, "id": id }))
+            push(s, Op::Remove { kind: piece, id })
         });
         reads(lua, &t, module, kind)?;
         roster.raw_set(module, t)?;
@@ -1566,7 +1590,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         let health: Table = roster.raw_get("health")?;
         func!(health, "answer", |_lua, s, (check, lines): (u64, Value)| {
             let checks = plain(s, "roster.health.answer: lines", &lines)?;
-            push(s, json!({ "op": "health_answer", "check": check, "checks": checks }))
+            push(s, Op::HealthAnswer { check, checks })
         });
     }
 
@@ -1582,12 +1606,12 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 Some(t) => own_put(lua, s, "badge", &host, Value::String(lua.create_string(t)?))?,
                 None => unbadge(lua, s, "roster.badges.set", &host)?,
             }
-            push(s, json!({ "op": "badge", "host": host, "text": text }))
+            push(s, Op::Badge { host, text })
         }
     );
     func!(badges, "remove", |lua, s, host: String| {
         unbadge(lua, s, "roster.badges.remove", &host)?;
-        push(s, json!({ "op": "badge", "host": host, "text": null }))
+        push(s, Op::Badge { host, text: None })
     });
     func!(badges, "get", |lua, _s, host: String| { own_get(lua, "badge", &host) });
     func!(badges, "has", |lua, _s, host: String| {
@@ -1602,10 +1626,10 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     let float = lua.create_table()?;
     func!(float, "open", |lua, s, spec: Table| {
         let spec = data(lua, s, "roster.float.open", &Value::Table(spec), "float")?;
-        push(s, json!({ "op": "float", "spec": spec }))
+        push(s, Op::Float { spec })
     });
     func!(float, "close", |_lua, s, (): ()| {
-        push(s, json!({ "op": "float", "spec": null }))
+        push(s, Op::Float { spec: Json::Null })
     });
     roster.raw_set("float", float)?;
 
@@ -1632,7 +1656,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             table.insert("actions".into(), actions);
         }
         own_put(lua, s, "view", &id, Value::Boolean(true))?;
-        push(s, json!({ "op": "view", "id": id, "spec": spec }))
+        push(s, Op::View { id, spec })
     });
     func!(views, "update", |lua, s, (id, changes): (String, Table)| {
         check_id("roster.views.update", &id)?;
@@ -1663,7 +1687,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 changes = json!({ "actions": actions });
             }
         }
-        push(s, json!({ "op": "view_update", "id": id, "changes": changes }))
+        push(s, Op::ViewUpdate { id, changes })
     });
     func!(views, "open", |lua, s, (id, opts): (String, Value)| {
         check_id("roster.views.open", &id)?;
@@ -1673,7 +1697,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 "roster.views.open: only while the user runs one of your actions, commands or finder items",
             ));
         }
-        let mut op = json!({ "op": "view_open", "id": id });
+        let mut select = None;
         // At a node of its graph or a row of its table (T99, api 4).
         let opts = match opts {
             Value::Nil => None,
@@ -1687,7 +1711,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         if let Some(opts) = opts {
             match opts.raw_get::<Value>("select")? {
                 Value::Nil => {}
-                Value::String(v) => op["select"] = Json::String(v.to_string_lossy().to_string()),
+                Value::String(v) => select = Some(v.to_string_lossy().to_string()),
                 _ => {
                     return Err(mlua::Error::runtime(
                         "roster.views.open: select is the id of a node or row (a string)",
@@ -1695,12 +1719,12 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 }
             }
         }
-        push(s, op)
+        push(s, Op::ViewOpen { id, select })
     });
     func!(views, "close", |lua, s, id: String| {
         check_id("roster.views.close", &id)?;
         must_have(lua, s, "roster.views.close", "views", "view", "view", &id)?;
-        push(s, json!({ "op": "view_close", "id": id }))
+        push(s, Op::ViewClose { id })
     });
     func!(views, "remove", |lua, s, id: String| {
         check_id("roster.views.remove", &id)?;
@@ -1708,7 +1732,13 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         let (owner, actions) = (format!("view:{id}"), format!("view:{id}:actions"));
         drop_owners(lua, s, |k| k == owner || k == actions)?;
         own_put(lua, s, "view", &id, Value::Nil)?;
-        push(s, json!({ "op": "remove", "kind": "view", "id": id }))
+        push(
+            s,
+            Op::Remove {
+                kind: Removable::View,
+                id,
+            },
+        )
     });
     // Which views it has (api 5). A view's `get` waits for the core to keep each view as its
     // updates leave it (a follow-up of ticket 145).
@@ -1743,7 +1773,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                     Json::Null
                 }
             };
-            push(s, json!({ "op": "details", "id": id, "host": host, "spec": spec }))
+            push(s, Op::Details { id, host, spec })
         }
     );
     func!(details, "remove", |lua, s, id: String| {
@@ -1763,7 +1793,13 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         for host in hosts {
             own_put(lua, s, &kind, &host, Value::Nil)?;
         }
-        push(s, json!({ "op": "remove", "kind": "details", "id": id }))
+        push(
+            s,
+            Op::Remove {
+                kind: Removable::Details,
+                id,
+            },
+        )
     });
     // Its sections (api 5): one Host's, whether it has one (on a Host, or on any), and which.
     func!(details, "get", |lua, _s, (id, host): (String, String)| {
@@ -1805,7 +1841,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 "roster.clipboard.copy: the text is over {MAX_COPY} bytes"
             )));
         }
-        push(s, json!({ "op": "copy", "text": text }))
+        push(s, Op::Copy { text })
     });
     roster.raw_set("clipboard", clipboard)?;
 
@@ -1820,7 +1856,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 "roster.confirm: `run` must be a function: what happens when the user confirms",
             ));
         }
-        push(s, json!({ "op": "confirm", "spec": spec }))
+        push(s, Op::Confirm { spec })
     });
 
     // A command line, as typed after `:` (ticket 78): the Plugin's own commands and the few of
@@ -1846,10 +1882,14 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         }
         // Made in a run that carries the user's call already (issue #183): the app runs the
         // Plugin's own command it names as the app's call, so a chain stops after one hop.
-        if s.carried.get() {
-            return push(s, json!({ "op": "cmd", "line": line, "user": false }));
-        }
-        push(s, json!({ "op": "cmd", "line": line }))
+        let user = s.carried.get().then_some(false);
+        push(
+            s,
+            Op::Cmd {
+                line: line.into(),
+                user,
+            },
+        )
     });
 
     // A line on the message line, as roster's own commands answer (api 3): only in a call the
@@ -1861,11 +1901,8 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         |_lua, s, (text, opts): (mlua::LuaString, Option<Table>)| {
             user_only(s, "roster.echo")?;
             let text = text.to_string_lossy();
-            let mut op = json!({ "op": "echo", "text": text });
-            if quiet_opt(opts.as_ref(), "roster.echo")? == Some(true) {
-                op["quiet"] = Json::Bool(true);
-            }
-            push(s, op)
+            let quiet = (quiet_opt(opts.as_ref(), "roster.echo")? == Some(true)).then_some(true);
+            push(s, Op::Echo { text, quiet })
         }
     );
 
@@ -1886,7 +1923,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
                 "roster.cmdline: {word:?} isn't one of your commands (a line such as \"alerts \")"
             )));
         }
-        push(s, json!({ "op": "cmdline", "text": text }))
+        push(s, Op::Cmdline { text })
     });
 
     func!(roster, "notify", |_lua,
@@ -1909,28 +1946,30 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             Some(ref t) => {
                 let v: Value = t.raw_get("actions")?;
                 if v.is_nil() {
-                    Json::Null
+                    None
                 } else {
-                    plain(s, "roster.notify: actions", &v).map_err(|e| {
+                    Some(plain(s, "roster.notify: actions", &v).map_err(|e| {
                         mlua::Error::runtime(format!(
                             "{} (a notice's action runs a command line, not a function)",
                             lua::error_text(&e)
                         ))
-                    })?
+                    })?)
                 }
             }
-            None => Json::Null,
+            None => None,
         };
-        let mut op = json!({ "op": "notify", "text": text, "level": level });
-        if !actions.is_null() {
-            op["actions"] = actions;
-        }
         // Whether an info notice follows `ui.messages` (api 4, ticket 117): the app decides,
         // so only what the Plugin said is passed on.
-        if let Some(q) = quiet_opt(opts.as_ref(), "roster.notify")? {
-            op["quiet"] = Json::Bool(q);
-        }
-        push(s, op)
+        let quiet = quiet_opt(opts.as_ref(), "roster.notify")?;
+        push(
+            s,
+            Op::Notify {
+                text,
+                level,
+                actions: actions.filter(|a| !a.is_null()),
+                quiet,
+            },
+        )
     });
 
     // Timers: the app keeps the clock and runs the function in the Plugin when it's time.
@@ -1953,7 +1992,13 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
             return Ok(());
         }
         take_timer(lua, s, id)?;
-        push(s, json!({ "op": "remove", "kind": "timer", "id": id.to_string() }))
+        push(
+            s,
+            Op::Remove {
+                kind: Removable::Timer,
+                id: id.to_string(),
+            },
+        )
     });
 
     // Whether a permission was granted: one that can't be (`network`, a serve method that
@@ -2085,7 +2130,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         |_lua, s, (session, line): (u64, Option<mlua::LuaString>)| {
             user_only(s, "roster.sessions.show")?;
             let line = line.map(|l| l.to_string_lossy());
-            push(s, json!({ "op": "session_show", "session": session, "line": line }))
+            push(s, Op::SessionShow { session, line })
         }
     );
     // The Sessions open now (decision Q127): the sum of what `session_open` and `session_exit`
@@ -2110,7 +2155,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     if g.contains(&Permission::SessionsOpen) {
         func!(sessions, "open", |_lua, s, host: String| {
             need(s, &Permission::SessionsOpen, "roster.sessions.open")?;
-            push(s, json!({ "op": "open", "host": host }))
+            push(s, Op::Open { host })
         });
     }
     roster.raw_set("sessions", sessions)?;
@@ -2118,7 +2163,7 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
         let terminal = lua.create_table()?;
         func!(terminal, "send", |_lua, s, (session, text): (u64, String)| {
             need(s, &Permission::TerminalWrite, "roster.terminal.send")?;
-            push(s, json!({ "op": "send", "session": session, "text": text }))
+            push(s, Op::Send { session, text })
         });
         roster.raw_set("terminal", terminal)?;
     }

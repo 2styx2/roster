@@ -3568,6 +3568,7 @@
       "defer_min_ms": 50,
       "every_min_ms": 1000,
       "max_copy": 65536,
+      "max_ops": 1000,
       "max_serve_requests": 8,
       "max_timers": 100,
       "storage_file": 1048576,
@@ -3577,6 +3578,220 @@
       "strikes": 3,
       "timer_max_ms": 2147483647.0
     },
+    "ops": [
+      {
+        "fields": [
+          "name",
+          "desc",
+          "run",
+          "complete?"
+        ],
+        "op": "command"
+      },
+      {
+        "fields": [
+          "context",
+          "keys",
+          "action"
+        ],
+        "op": "key"
+      },
+      {
+        "fields": [
+          "id",
+          "theme"
+        ],
+        "op": "theme"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "section"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "status"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "finder"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "help"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "health"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "tutor"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "toolbar"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "progress"
+      },
+      {
+        "fields": [
+          "check",
+          "checks"
+        ],
+        "op": "health_answer"
+      },
+      {
+        "fields": [
+          "host",
+          "text"
+        ],
+        "op": "badge"
+      },
+      {
+        "fields": [
+          "spec"
+        ],
+        "op": "float"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "view"
+      },
+      {
+        "fields": [
+          "id",
+          "changes"
+        ],
+        "op": "view_update"
+      },
+      {
+        "fields": [
+          "id",
+          "select?"
+        ],
+        "op": "view_open"
+      },
+      {
+        "fields": [
+          "id"
+        ],
+        "op": "view_close"
+      },
+      {
+        "fields": [
+          "id",
+          "host",
+          "spec"
+        ],
+        "op": "details"
+      },
+      {
+        "fields": [
+          "text"
+        ],
+        "op": "copy"
+      },
+      {
+        "fields": [
+          "spec"
+        ],
+        "op": "confirm"
+      },
+      {
+        "fields": [
+          "line",
+          "user?"
+        ],
+        "op": "cmd"
+      },
+      {
+        "fields": [
+          "text",
+          "quiet?"
+        ],
+        "op": "echo"
+      },
+      {
+        "fields": [
+          "text"
+        ],
+        "op": "cmdline"
+      },
+      {
+        "fields": [
+          "text",
+          "level",
+          "actions?",
+          "quiet?"
+        ],
+        "op": "notify"
+      },
+      {
+        "fields": [
+          "session",
+          "line"
+        ],
+        "op": "session_show"
+      },
+      {
+        "fields": [
+          "host"
+        ],
+        "op": "open"
+      },
+      {
+        "fields": [
+          "session",
+          "text"
+        ],
+        "op": "send"
+      },
+      {
+        "fields": [
+          "id",
+          "ms",
+          "every",
+          "run"
+        ],
+        "op": "timer"
+      },
+      {
+        "fields": [
+          "kind",
+          "id"
+        ],
+        "op": "remove"
+      }
+    ],
     "package_prefix": "package:",
     "permissions": {
       "serve_methods": [
@@ -3641,7 +3856,22 @@
           "summary": "Type into your Sessions"
         }
       }
-    }
+    },
+    "removable": [
+      "command",
+      "theme",
+      "section",
+      "status",
+      "finder",
+      "help",
+      "health",
+      "tutor",
+      "view",
+      "details",
+      "timer",
+      "toolbar",
+      "progress"
+    ]
   },
   "serve_results": [
     {

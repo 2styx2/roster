@@ -33,6 +33,7 @@ import { BUILTIN } from "../registry";
 import type { SidebarRow } from "../sidebar/Sidebar";
 import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { lineRefused } from "./cmd";
+import { CORE } from "./core.gen";
 import { CommittedLines, lastLines, OUTPUT_MAX, type Run as OutputRun, type ScreenSize } from "./committed";
 import {
   MAX_TABLE_ROWS,
@@ -115,8 +116,10 @@ export interface DemoPlugins {
   packages: PackageStatus[];
 }
 
+const BUILTIN_PREFIX = CORE.builtin_prefix;
 /** The built-in features written as Plugins: always installed, granted what they ask until revoked. */
-export const BUILTIN_PLUGINS = ["builtin:hosts", "builtin:folders"] as const;
+export const BUILTIN_PLUGINS: readonly string[] = CORE.bundled.map((name) => `${BUILTIN_PREFIX}${name}`);
+const builtinName = (path: string) => (path.startsWith(BUILTIN_PREFIX) ? path.slice(BUILTIN_PREFIX.length) : null);
 
 export const STATE_KEY = "plugins";
 /** The State's Packages whose install the user cancelled, or that `:plugins remove` took out: not
@@ -241,12 +244,13 @@ type PluginBackend = Pick<
 >;
 
 /** A Package's Plugin path, and back. */
-export const PACKAGE_PREFIX = "package:";
+export const PACKAGE_PREFIX = CORE.package_prefix;
 const packageName = (path: string) => (path.startsWith(PACKAGE_PREFIX) ? path.slice(PACKAGE_PREFIX.length) : null);
 
 
 /** Contexts a Plugin may bind keys in: after the Leader and in the Sidebar, never the terminal. */
-const KEY_CONTEXTS: Record<string, KeymapContext> = { leader: "leader", list: "list", list_vim: "listVim" };
+const KEY_CONTEXTS: Readonly<Record<(typeof CORE.key_contexts)[number], KeymapContext>> = { leader: "leader", list: "list", list_vim: "listVim" };
+const keyContext = (name: string): KeymapContext | undefined => (Object.hasOwn(KEY_CONTEXTS, name) ? KEY_CONTEXTS[name as keyof typeof KEY_CONTEXTS] : undefined);
 
 const MAX_USES = 8;
 const MAX_NOTICES = 4;
@@ -403,12 +407,12 @@ export class PluginManager {
     this.stopBuiltins = this.registries.commands.subscribe(() => void this.builtins());
     const list = this.installed();
     for (const path of BUILTIN_PLUGINS) {
-      const name = path.slice("builtin:".length);
+      const name = builtinName(path) ?? path;
       const entry = list.find((e) => e.path === path);
       await this.loadPath(path, entry ? entry.granted : null, name);
     }
     // Packages load in syncPackages, once the core has their clones.
-    for (const entry of list.filter((e) => !e.path.startsWith("builtin:") && packageName(e.path) === null)) {
+    for (const entry of list.filter((e) => builtinName(e.path) === null && packageName(e.path) === null)) {
       try {
         const { manifest } = await this.backend.pluginManifest(entry.path);
         const asking = manifest.permissions.map((p) => p.name).filter((p) => !entry.asked.includes(p));
@@ -907,7 +911,7 @@ export class PluginManager {
   /** Loads built-in Plugin `name` again if its settings changed (init.lua's Folders did). */
   async reloadBuiltin(name: string): Promise<void> {
     if (!this.started || !this.loaded.has(name)) return;
-    const path = `builtin:${name}`;
+    const path = `${BUILTIN_PREFIX}${name}`;
     const settings = (await this.ui.builtinSettings?.(name).catch(() => null)) ?? null;
     if (this.builtinConfig.get(name) === JSON.stringify(settings)) return;
     const entry = this.installed().find((e) => e.path === path);
@@ -971,7 +975,7 @@ export class PluginManager {
     let result;
     try {
       // A built-in Plugin is granted everything it asks for until a permission is revoked.
-      const builtin = path.startsWith("builtin:") ? path.slice("builtin:".length) : null;
+      const builtin = builtinName(path);
       const settings = builtin === null ? null : ((await this.ui.builtinSettings?.(builtin).catch(() => null)) ?? null);
       if (builtin !== null) this.builtinConfig.set(builtin, JSON.stringify(settings));
       // The list of open Sessions sent last is in the core first: the Plugin may read it at load.
@@ -1185,7 +1189,7 @@ export class PluginManager {
         return this.put(l, `command:${op.name}`, r.commands.register(def));
       }
       case "key": {
-        const context = KEY_CONTEXTS[op.context];
+        const context = keyContext(op.context);
         if (!context) return refuse(`keys go after the Leader or in the Sidebar (leader, list, list_vim), not ${op.context}`);
         const id = bindingId(context, op.keys);
         if (op.action !== false && this.taken(r.keymap, id, plugin)) {
@@ -1735,17 +1739,16 @@ export class PluginManager {
   }
 
   private changed() {
-    const builtin = (path: string) => path.startsWith("builtin:");
     const names = new Set([...this.known.keys(), ...this.problems.keys(), ...this.waiting.keys(), ...this.installed().map((e) => e.name)]);
     const installed = this.installed();
     const plugins = [...names].sort().map((name): PluginStatus => {
       const l = this.known.get(name);
       const entry = installed.find((e) => e.name === name);
-      const path = l?.path ?? entry?.path ?? this.waiting.get(name)?.path ?? `builtin:${name}`;
+      const path = l?.path ?? entry?.path ?? this.waiting.get(name)?.path ?? `${BUILTIN_PREFIX}${name}`;
       return {
         name,
         path,
-        builtin: builtin(path),
+        builtin: builtinName(path) !== null,
         manifest: l?.manifest ?? this.waiting.get(name)?.manifest ?? null,
         granted: l?.granted ?? entry?.granted ?? [],
         problem: this.problems.get(name) ?? null,
