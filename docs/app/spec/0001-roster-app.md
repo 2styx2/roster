@@ -189,7 +189,7 @@ We build it in iterations. Each one is tested by hand before the next starts:
 ### Host details and web services
 
 78. As the user, I want a toggleable side panel with the host tree grouped like the Inventory, folded with `h`/`l`, so that I can browse when I don't know what I'm looking for.
-79. As the user, I want a Host detail panel showing what `roster info` shows (address, type, product, description, services, which Vault item each Login uses, enroll and reviewed), so that I can understand a box without the CLI.
+79. As the user, I want a Host detail panel showing what `roster hosts HOST` shows (address, type, product, description, services, which Vault item each Login uses, enroll and reviewed), so that I can understand a box without the CLI.
 80. As the user, I want to open any of a Host's web services in my default browser from the detail panel or a command, so that I can reach web UIs as fast as shells.
 
 ## Implementation Decisions

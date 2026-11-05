@@ -30,8 +30,8 @@ Your function gets (spec, ctx) and returns the password as a string:
                        subprocess.run with output captured; a missing tool becomes a SecretError
 
 roster calls it only when a password is actually needed, caches the result in memory for
-the run, and never writes it anywhere. Check your plugin with:  roster providers
-and then:  roster auth-check
+the run, and never writes it anywhere. Check your plugin with:  roster vault status
+and then:  roster check --auth
 """
 
 

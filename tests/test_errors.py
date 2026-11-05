@@ -70,7 +70,7 @@ def test_prepare_login_with_a_provider_this_box_doesnt_have(pw_serve):
     err = pw_serve.call("session.prepare", {"host": "keeper"})["error"]
     assert err["code"] == 31
     assert err["message"] == "keeper's ssh Login uses 'keeper:', which isn't set up on this box"
-    assert "roster providers" in err["data"]["fix"]
+    assert "roster vault status" in err["data"]["fix"]
 
 
 def test_prepare_host_whose_user_is_the_placeholder(pw_serve):

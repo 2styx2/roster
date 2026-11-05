@@ -157,7 +157,7 @@ def test_auth_check_lists_service_refs_without_values(capsys, write_config, monk
     for var in ("PLANT_PW", "MB_PW", "ORION3_PW", "ORION3_SSH_PW", "ORION3_WEB_PW", "PLAIN_MB_PW"):
         monkeypatch.setenv(var, f"TOPSECRET-{var}")
     write_config(ORION3)
-    rc, out = run(capsys, "auth-check")
+    rc, out = run(capsys, "check", "--auth")
     assert rc == 0
     assert "env:ORION3_WEB_PW" in out and "for: https (orion3)" in out
     assert "env:ORION3_SSH_PW" in out and "for: ssh (orion3)" in out
@@ -168,7 +168,7 @@ def test_auth_check_lists_service_refs_without_values(capsys, write_config, monk
 def test_info_shows_credential_sources(capsys, write_config, monkeypatch):
     monkeypatch.setenv("ORION3_WEB_PW", "TOPSECRET")
     write_config(ORION3)
-    rc, out = run(capsys, "info", "orion3")
+    rc, out = run(capsys, "hosts", "orion3")
     assert rc == 0 and "TOPSECRET" not in out
     assert "ssh login    sshuser, auth env:ORION3_SSH_PW" in out
     lines = out.splitlines()

@@ -1,5 +1,5 @@
-"""Shell completion (T214, decision Q183): `roster completion SHELL` prints a thin script for bash, zsh, fish or
-PowerShell, and on every Tab the script runs the hidden helper
+"""Shell completion (T214, decision Q183): `roster help --completion SHELL` (was `roster completion SHELL`) prints a
+thin script for bash, zsh, fish or PowerShell, and on every Tab the script runs the hidden helper
 
     roster __complete SHELL :CURRENT WORD...
 
@@ -27,12 +27,16 @@ SHELLS = ("bash", "zsh", "fish", "powershell")
 # what an argument's values are: the names in roster.yml (and the Inventory list) it takes
 HOSTS, GROUPS, RESOURCES, INVENTORIES, FILES, DIRS = "hosts", "groups", "resources", "inventories", "files", "dirs"
 ONLY = "only"              # a comma-separated LIST of the other kinds (--only)
+COMMANDS = "commands"      # roster's own commands (`help COMMAND`)
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def values(action: argparse.Action, *kinds: str) -> argparse.Action:
-    """Tag ACTION (an add_argument result) with the KINDs of name it takes, for completion; returns it."""
+def values(action: argparse.Action, *kinds: str, new_after: tuple[str, ...] = ()) -> argparse.Action:
+    """Tag ACTION (an add_argument result) with the KINDs of name it takes, for completion; returns it. NEW_AFTER: the
+    words (an action, `inv add`) after which it's a new name, so it completes nothing: an existing name would only
+    invite a clash (#420)."""
     vars(action)["complete"] = kinds
+    vars(action)["new_after"] = new_after
     return action
 
 
@@ -102,11 +106,19 @@ def walk(parser: argparse.ArgumentParser, words: list[str], current: str) -> "li
         return options(parser, current, root)
     commands, helps = subcommands(parser)
     if commands and positional == 0:
-        return [(n, helps.get(n, "")) for n in commands]
+        return [(n, helps.get(n, "")) for n in commands if not (level == 0 and n in internal())]
     action, first = positional_at(parser, positional)
-    if action is None or (not first and action.nargs == "+") or taken[-1:] == ["add"]:
-        return []               # `inv add NAME`: a new name, so the existing ones would only invite a clash (#420)
+    if action is None or (not first and action.nargs in ("+", "*")):
+        return []               # `hosts NAME...`: the later words are fuzzy search words
+    if taken[-1:] and taken[-1] in getattr(action, "new_after", ()):
+        return []
     return names(action, current, root)
+
+
+def internal() -> list[str]:
+    """The commands the app or ssh runs (serve, askpass): they work, but a Tab doesn't offer them."""
+    from .clihelp import INTERNAL
+    return INTERNAL
 
 
 def subcommands(parser: argparse.ArgumentParser) -> "tuple[dict[str, argparse.ArgumentParser], dict[str, str]]":
@@ -156,6 +168,10 @@ def names(action: argparse.Action, current: str, root: dict[str, str | None]) ->
         return ":dirs"
     if not kinds:
         return []
+    if COMMANDS in kinds:
+        from .cli import build_parser
+        commands, helps = subcommands(build_parser())
+        return [(n, helps.get(n, "")) for n in commands if n not in internal()]
     found: list[tuple[str, str]] = []
     if INVENTORIES in kinds:
         found += [(n, "Inventory") for n in inventory_names()]
@@ -207,7 +223,7 @@ def inventory_names() -> list[str]:
 
 # ---- the scripts: each only hands the words to the helper and shows what it prints
 
-BASH = r"""# roster's bash completion (roster completion bash). Every Tab asks `roster __complete` what fits.
+BASH = r"""# roster's bash completion (roster help --completion bash). Every Tab asks `roster __complete` what fits.
 _roster() {
     local cur=${COMP_WORDS[COMP_CWORD]} IFS=$'\n' out
     [[ $cur == =* || ${COMP_WORDS[COMP_CWORD-1]} == = ]] && return 0     # --opt=VALUE: bash splits it at the =
@@ -222,7 +238,7 @@ complete -F _roster roster
 """
 
 ZSH = r"""#compdef roster
-# roster's zsh completion (roster completion zsh). Every Tab asks `roster __complete` what fits.
+# roster's zsh completion (roster help --completion zsh). Every Tab asks `roster __complete` what fits.
 _roster() {
     local out line
     local -a names descs
@@ -244,7 +260,7 @@ else
 fi
 """
 
-FISH = r"""# roster's fish completion (roster completion fish). Every Tab asks `roster __complete` what fits.
+FISH = r"""# roster's fish completion (roster help --completion fish). Every Tab asks `roster __complete` what fits.
 function __roster_complete
     set -l out (command roster __complete fish ":"(commandline -ct) (commandline -opc) 2>/dev/null)
     switch "$out"
@@ -259,7 +275,7 @@ end
 complete -c roster -f -a '(__roster_complete)'
 """
 
-POWERSHELL = r"""# roster's PowerShell completion (roster completion powershell). Every Tab asks `roster __complete` what fits.
+POWERSHELL = r"""# roster's PowerShell completion (roster help --completion powershell). Every Tab asks `roster __complete` what fits.
 Register-ArgumentCompleter -Native -CommandName roster -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
     $words = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition } |
@@ -277,6 +293,7 @@ Register-ArgumentCompleter -Native -CommandName roster -ScriptBlock {
 SCRIPTS = {"bash": BASH, "zsh": ZSH, "fish": FISH, "powershell": POWERSHELL}
 
 
-def cmd_completion(args: argparse.Namespace) -> int:
-    sys.stdout.write(SCRIPTS[args.shell])
+def cmd_completion(shell: str) -> int:
+    """`roster help --completion SHELL` (and its old name, `roster completion SHELL`)."""
+    sys.stdout.write(SCRIPTS[shell])
     return 0

@@ -4,8 +4,8 @@
 way to list only names. So roster never reads that output itself: bw's stdout is connected straight to this script's
 stdin (an OS pipe between the two child processes), and roster reads only what this script prints.
 
-What it prints, one JSON object a line, for each login item (type 1): {"id", "name", "uris", "username"}, nothing
-else; a URI without its `user:password@`. A value of the wrong type is left out (an empty name, no URIs, no username). It writes nothing anywhere else:
+What it prints, one JSON object a line, for each login item (type 1): {"id", "name", "uris", "username", "revised"}
+(revised: the item's revision date, for `roster vault sync`, Q194), nothing else; a URI without its `user:password@`. A value of the wrong type is left out (an empty name, no URIs, no username). It writes nothing anywhere else:
 no file, no log, and on stderr only one of two fixed lines, never anything it read:
   exit 2  "not a list of items"   (not JSON, not a list, not UTF-8)
   exit 3  "too many items"        (over the cap: the first argument, in bytes; default CAP)
@@ -40,9 +40,10 @@ def keep(item):
     uris = login.get("uris")
     uris = [no_userinfo(u["uri"]) for u in uris if isinstance(u, dict) and isinstance(u.get("uri"), str)] \
         if isinstance(uris, list) else []
-    name, username, item_id = item.get("name"), login.get("username"), item.get("id")
+    name, username, item_id, revised = item.get("name"), login.get("username"), item.get("id"), item.get("revisionDate")
     return {"id": item_id if isinstance(item_id, str) else "", "name": name if isinstance(name, str) else "",
-            "uris": uris, "username": username if isinstance(username, str) else None}
+            "uris": uris, "username": username if isinstance(username, str) else None,
+            "revised": revised if isinstance(revised, str) else None}
 
 
 def main(argv):

@@ -355,7 +355,7 @@ def test_install_clones_the_team_map_it_is_given(tmp_path):
     assert "StrictHostKeyChecking=accept-new" in r.stdout     # a fresh box hasn't seen the git host's key
 
 
-COMPLETION_LINE = 'command -v roster >/dev/null 2>&1 && eval "$(roster completion bash)"   # roster: completion'
+COMPLETION_LINE = 'command -v roster >/dev/null 2>&1 && eval "$(roster help --completion bash)"   # roster: completion'
 
 
 def install_box(tmp_path, login_shell="/bin/bash"):
@@ -394,7 +394,7 @@ def test_install_writes_fish_s_completion_file(tmp_path):
     home, env = install_box(tmp_path, login_shell="/usr/bin/fish")
     install(env, tmp_path)
     fish = home / ".config/fish/completions/roster.fish"
-    assert fish.read_text().splitlines()[1:] == ["roster completion fish | source"]
+    assert fish.read_text().splitlines()[1:] == ["roster help --completion fish | source"]
     assert not (home / ".bashrc").exists() or "# roster: completion" not in (home / ".bashrc").read_text()
 
 
@@ -414,7 +414,7 @@ def test_install_no_completion_leaves_the_shell_alone(tmp_path):
     (home / ".bashrc").write_text("# mine\n")
     r = install(env, tmp_path, "--no-completion")
     assert "# roster: completion" not in (home / ".bashrc").read_text()
-    assert "roster completion bash" in r.stdout                  # says how to turn it on by hand
+    assert "roster help --completion bash" in r.stdout                  # says how to turn it on by hand
 
 
 @posix_shell
@@ -428,11 +428,11 @@ def test_install_dry_run_says_where_completion_would_go(tmp_path):
 def test_install_and_update_turn_completion_on_with_one_shared_step():
     """#414: one Tab-completion step, in install-lib.sh beside the scripts, shipped wherever they are."""
     lib = (ROOT / INSTALL_LIB).read_text(encoding="utf-8")
-    assert "roster completion fish | source" in lib
+    assert "roster help --completion fish | source" in lib
     for script in (INSTALL_SH, UPDATE_SH):
         text = script.read_text(encoding="utf-8")
         assert INSTALL_LIB in text and "turn_on_completion" in text
-        assert "roster completion fish | source" not in text and "fish/completions/roster.fish" not in text
+        assert "roster help --completion fish | source" not in text and "fish/completions/roster.fish" not in text
     tarball = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in tarball      # the Release's roster-cli tarball
     assert f"install.sh update.sh uninstall.sh {INSTALL_LIB}" in (ROOT / "scripts/test-install.sh").read_text(encoding="utf-8")
@@ -444,7 +444,7 @@ def test_install_without_its_shared_step_beside_it_says_how_to_turn_completion_o
     src = source_copy(tmp_path)
     (src / INSTALL_LIB).unlink()
     r = run(src / "install.sh", env, "--prefix", str(tmp_path / "opt"))
-    assert "roster completion bash" in r.stdout, r.stdout + r.stderr
+    assert "roster help --completion bash" in r.stdout, r.stdout + r.stderr
     assert "# roster: completion" not in ((home / ".bashrc").read_text() if (home / ".bashrc").exists() else "")
 
 
@@ -456,7 +456,7 @@ def test_uninstall_removes_tab_completion(box):
     fish = home / ".config/fish/completions/roster.fish"
     fish.parent.mkdir(parents=True)
     fish.write_text("# roster: completion (install.sh wrote this file; uninstall.sh removes it)\n"
-                    "roster completion fish | source\n")
+                    "roster help --completion fish | source\n")
     mine = home / ".config/fish/completions/other.fish"
     mine.write_text("complete -c other\n")
     run(UNINSTALL_SH, env)
@@ -890,6 +890,28 @@ def test_update_turns_on_tab_completion_on_a_box_from_before_it(stale):
     assert (Path(env["HOME"]) / ".bashrc").read_text().count("# roster: completion") == 1
     script("update.sh", checkout, env, prefix)
     assert (Path(env["HOME"]) / ".bashrc").read_text().count("# roster: completion") == 1     # once
+
+
+@posix_shell
+def test_update_rewrites_roster_s_own_old_completion_line_to_the_new_form(stale):
+    """T222: `roster completion SHELL` is `roster help --completion SHELL` now; update.sh rewrites only the marked line
+    install.sh wrote (and fish's file roster wrote), leaving a user's own line naming it alone."""
+    upstream, checkout, env, prefix = stale
+    env = {**env, "SHELL": "/bin/bash"}
+    installed(prefix, "0.5.0", env)
+    home = Path(env["HOME"])
+    old = 'command -v roster >/dev/null 2>&1 && eval "$(roster completion bash)"   # roster: completion'
+    mine = '# my own: eval "$(roster completion bash)"'
+    (home / ".bashrc").write_text(f"{mine}\n{old}\n")
+    fish = home / ".config/fish/completions/roster.fish"
+    fish.parent.mkdir(parents=True)
+    fish.write_text("# roster: completion (install.sh wrote this file; uninstall.sh removes it)\n"
+                    "roster completion fish | source\n")
+    r = script("update.sh", checkout, env, prefix)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (home / ".bashrc").read_text() == f"{mine}\n{COMPLETION_LINE}\n"
+    assert fish.read_text().splitlines()[1:] == ["roster help --completion fish | source"]
+    assert "new form" in r.stdout
 
 
 @posix_shell

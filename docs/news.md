@@ -15,6 +15,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **`roster add`: one Host you already know, in one command** (#427): `roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab` writes it reviewed, through the same code as the app's add-Host form: only its lines added, a team repo's Pending change or a plain file saved in place. A name or address another Host has is refused, naming it. `--from-vault` takes the address and user from the vault item's URI and username, never its password (Bitwarden); it syncs this Box straight after, as `discover --write` does; `--setup` then runs setup and check for it; `--dry-run` shows the lines; it asks in a terminal for what's missing, and `-y` never asks. `roster serve` gets `vault.item_fields` (API 29) for the form to do the same later. See [Adding one Host](cli-reference.md#adding-one-host-roster-add).
 - **`roster add --from-vault`: the vault items that aren't in `roster.yml` yet** (#428): with no NAME, it syncs the vault, lists the login items no Login names (the ones new since the last run marked; `--all` every one), and in a terminal walks through adding each one [Y/n/edit/skip], prefilled from the item (`nas-01 ssh` with URI `ssh://10.0.0.50:2200` and username `admin` becomes `nas-01`, `10.0.0.50` port 2200, user `admin`), through the same path as `roster add NAME`, then offers setup for that Host. Bitwarden, 1Password and KeePassXC; never a password (Bitwarden's listing goes through a filter process roster never reads past, decision Q191). `--json` prints the list, `--mark-seen` marks them seen, `--no-sync` skips the sync, `-y` only lists. A locked vault says how to unlock it, never asks. `roster check --box` shows the count from the last run. See [Vault items not in roster.yml](cli-reference.md#vault-items-not-in-rosteryml-roster-add---from-vault).
 - **`install.sh` starts you with an Inventory** (#401): with none in the folder it offers the same four ways, a blank one by default (so `--yes` alone makes one, where it used to leave you with none), then `git init` as an option. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` still works). One already there is kept, or a new one is added beside it as a named Inventory.
+- **`roster vault sync`: what changed in the vault since the last sync** (#430): the vault isn't watched, so roster sees an item added or changed elsewhere only after a sync. `roster vault sync` syncs each vault `roster.yml` uses that keeps a local copy (Bitwarden's `bw sync`; 1Password and the others need none, and it says so), then names the items added and changed and counts the ones removed, from a snapshot of item ids and revision dates in `~/.config/roster/vault-sync/` (0600). Never a password. `roster vault status` says when each vault last synced.
+- **`roster help`** (#430): the overview; `roster help COMMAND` a command's options and examples (`roster help vault bw`), `--man` the manual, `--completion SHELL` Tab completion.
 
 **App**
 
@@ -32,6 +34,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **A `roster.yml` with no Hosts loads** (#401): a blank Inventory before its first Host, or the last Host removed, is no longer an error.
 - **No `roster.yml` found** says how to make one: `roster init --blank`, or the other `--inventory` ways.
+- **14 commands to remember** (#430): `init`, `add`, `discover`, `hosts`, `check`, `setup`, `revoke`, `sync`, `run`, `web`, `mesh`, `inv`, `vault` and `help`; everything else is an action or a flag of one of them. `roster check --auth` (was `auth-check`), `roster hosts NAME` (was `info`), `roster hosts --resources` (was `resources`), `roster vault status` (was `providers`; it also shows each vault's state, as `check --box` does, and its last sync), `roster vault reveal NAME` (was `reveal`), `roster vault bw -- ARGS` (was `bw`, the same read-only rules), `roster help --man` (was `man`), `roster help --completion SHELL` (was `completion`), `roster mesh leftovers [--remove]` (was `mesh --find-leftovers`/`--remove-leftovers`). `serve` and `askpass` are run by the app and ssh, so the overview and Tab completion leave them out. Tab completion, the man page, the docs and every fix text name the new forms; `install.sh` writes the new completion line, and `./update.sh` rewrites roster's own old one.
+- **Clearer one-line help** (#430): `init` says it only makes a new file (to add Hosts, `add` or `discover`), `setup` that it installs the key on the Hosts not ready yet and syncs (run it again after adding Hosts), `sync` that it touches no Host, `check` one line for each form, `discover --write` that it adds unreviewed Hosts, `vault reveal` that it's for people.
 
 **App**
 
@@ -61,6 +65,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **A Host whose `ip:` is a name gets its network's rate-limiter hint** (#420): when `roster check` gets no answer, the address the name resolved to is matched against `rate_limited:`, so a name in a listed network says to wait a few minutes, and one outside them gets no rate-limiter hint, as an address does.
 - **`roster inv add NAME <Tab>` offers nothing** (#420): a new name goes there, so the existing Inventories' names are no longer suggested.
 
+### Deprecated
+
+**CLI**
+
+- **The old command names** (#430): `auth-check`, `info`, `resources`, `providers`, `reveal`, `bw`, `man`, `completion`, and `mesh --find-leftovers`/`--remove-leftovers` still work, hidden, and each prints one line on stderr naming its new form (nothing with `--json`; `roster completion`, run by the rc line at every shell start, says nothing). Change scripts and cron jobs to the new forms: [Deprecated names](deprecated.md#deprecated-in-06).
+
 ## v0.5.1
 
 ### New
@@ -89,7 +99,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **An unanswered sign-in ends after 10 minutes** (#389), stopping `bw login` and forgetting the master password.
 - **The askpass channel checks who connects on macOS** (#390), as on Linux.
 - **`roster web` deletes an expired kept login** (#395).
-- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a Host's password, and what roster can and can't see.
+- **`roster bw` is read-only unless you add `--write`** (#387): commands that change the vault (`create`, `edit`, `delete`, `move`, `restore`, `import`, …), `export`, `receive`, `get attachment`, any `--output` (read-only now means no file written either), and the account's (`login`, `logout`, `unlock`, `lock`, `config`) need `roster bw --write …` (error 164); a command roster doesn't know is refused (165), as are `bw serve` and a `--session` on the command line (166). `login` and `unlock` may now ask for the master password (bw asks, not roster). No 1Password variable (`OP_*`) in your shell reaches bw. roster still never reads what bw prints, and a refusal never repeats bw's arguments. See [`roster bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a Host's password, and what roster can and can't see.
 
 **App**
 

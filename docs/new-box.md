@@ -29,12 +29,12 @@ You need three things:
 git clone git@github.com:2styx2/roster.git
 cd roster
 uv tool install .          # puts `roster` in ~/.local/bin
-roster man --install       # puts its man page in ~/.local/share/man/man1, next to it
+roster help --man --install  # puts its man page in ~/.local/share/man/man1, next to it
 roster --help              # if not found: export PATH="$HOME/.local/bin:$PATH"
 man roster                 # the manual
 ```
 
-Tab completion (`roster ho<Tab>` is `roster hosts`, `roster run <Tab>` lists your Hosts): add `eval "$(roster completion bash)"` to `~/.bashrc` (`zsh` in `~/.zshrc`; for fish, `roster completion fish > ~/.config/fish/completions/roster.fish`). `install.sh` does this without asking; `--no-completion` leaves it off. See [Tab completion](cli-reference.md#tab-completion).
+Tab completion (`roster ho<Tab>` is `roster hosts`, `roster run <Tab>` lists your Hosts): add `eval "$(roster help --completion bash)"` to `~/.bashrc` (`zsh` in `~/.zshrc`; for fish, `roster help --completion fish > ~/.config/fish/completions/roster.fish`). `install.sh` does this without asking; `--no-completion` leaves it off. See [Tab completion](cli-reference.md#tab-completion).
 
 No git access on that box? Use `git archive --format=zip -o roster.zip HEAD` on a box that has it, copy the zip over, unzip it, and run `uv tool install .` inside.
 
@@ -77,18 +77,18 @@ mkdir -p ~/.config/roster
 (umask 077; bw unlock --raw > ~/.config/roster/bw-session)
 ```
 
-roster only uses the session file if it's yours alone: a plain file (not a symlink or a hard link), owned by you, that only you can read (mode 600); otherwise it warns and ignores it. Only the file itself is checked, not the folders it's in, so keep `~/.config/roster` your own. On Windows the same holds through the file's owner and permissions: owned by you (or Administrators), and nobody but you, SYSTEM and Administrators may open it, as a file in your own `%APPDATA%` is. When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a password, what roster can and can't see).
+roster only uses the session file if it's yours alone: a plain file (not a symlink or a hard link), owned by you, that only you can read (mode 600); otherwise it warns and ignores it. Only the file itself is checked, not the folders it's in, so keep `~/.config/roster` your own. On Windows the same holds through the file's owner and permissions: owned by you (or Administrators), and nobody but you, SYSTEM and Administrators may open it, as a file in your own `%APPDATA%` is. When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster vault bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster vault bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a password, what roster can and can't see).
 
 **1Password:** use the desktop app integration, `eval $(op signin)`, or `OP_SERVICE_ACCOUNT_TOKEN` on a headless box.
 
 ## 5. Check that every credential can be found
 
 ```bash
-roster providers           # the password manager you use should say [tool found]
-roster auth-check          # every vault reference should say "ok"; nothing secret is printed
+roster vault status        # the password manager you use should say [tool found]
+roster check --auth        # every vault reference should say "ok"; nothing secret is printed
 ```
 
-`auth-check` only checks that a value exists. The next step checks it against the hosts.
+`roster check --auth` only checks that a value exists. The next step checks it against the hosts.
 
 ## 6. Run setup
 

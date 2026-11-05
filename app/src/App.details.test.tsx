@@ -33,7 +33,7 @@ const facts = (host: string) =>
   );
 
 describe("Host details", () => {
-  it("are closed until asked for; :info HOST shows what roster info shows", async () => {
+  it("are closed until asked for; :info HOST shows what roster hosts HOST shows", async () => {
     const { user } = await ready();
     expect(panel("nas-4-007")).toBeNull();
     await user.keyboard(`${LEADER}:info nas-4-007{Enter}`);

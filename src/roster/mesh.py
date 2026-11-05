@@ -152,7 +152,7 @@ def load_state():
     applied: digest of the last complete apply, known: whether this Box has any Mesh record (this Inventory's or
     another's)}. Only bookkeeping: the Mesh itself comes from roster.yml. known is False on a new Box, or one where
     roster was removed and installed again without `roster mesh cut --all` first (T193): the Hosts may hold Mesh
-    entries this Box knows nothing of, and `roster mesh --find-leftovers` looks for them."""
+    entries this Box knows nothing of, and `roster mesh leftovers` looks for them."""
     f = state_file()
     try:
         data = json.loads(f.read_text())
@@ -163,7 +163,7 @@ def load_state():
             # whose tags this Box's Mesh entries carry (owner_of; T199): None from a roster before that (untagged)
             "owner": data.get("owner") if f.exists() else None, "recorded": f.exists(),
             # another Inventory's Mesh state here: a roster-mesh line roster.yml doesn't name could be that
-            # Inventory's (Q172 (b)), so --remove-leftovers refuses (others_here)
+            # Inventory's (Q172 (b)), so mesh leftovers --remove refuses (others_here)
             "known": f.exists() or any(f.parent.glob("mesh*.json"))}
 
 
@@ -207,7 +207,7 @@ mdwhose() {  # mdwhose FILE: the owner the Mesh's ROSTER.md names, or -
 }
 # ours_by OWNER: this run may change or remove what OWNER wrote: nothing there, this Box's (and Inventory's) own, or
 # one of PREV's: what this Box wrote before (an older roster's, -, or under an earlier owner) where its record proves
-# it wrote, and an older roster's for --remove-leftovers and cut --all (asked first)
+# it wrote, and an older roster's for mesh leftovers --remove and cut --all (asked first)
 ours_by() { [ -z "$1" ] || [ "$1" = "$OWNER" ] || case " $PREV " in *" $1 "*) true;; *) false;; esac; }
 whose_words() { if [ "$1" = - ]; then echo "an older roster's (no Box named in them), which this Box has no record of writing"; else echo "another Box's or Inventory's ($1)"; fi; }
 if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then
@@ -467,7 +467,7 @@ def with_mesh_dirs(cfg):
 def owner_of(cfg):
     """Whose Mesh a run writes (T199, #379): this Box, as its key's tag names it (roster-managed:BOX), and BOX/NAME
     for a named Inventory. It goes in every authorized_keys line (roster-mesh:SOURCE@OWNER) and the Mesh files'
-    headers, so one Box's (or Inventory's) apply, cut or --remove-leftovers never takes another's."""
+    headers, so one Box's (or Inventory's) apply, cut or mesh leftovers --remove never takes another's."""
     inv = current_inventory()
     return f"{cfg['box']}/{inv}" if inv else str(cfg["box"])
 
@@ -493,7 +493,7 @@ def earlier_owner(cfg, st):
 def preamble(h, mode, own, prev=()):
     """OWN: whose Mesh this run writes (owner_of). PREV: owners whose Mesh entries count as this run's too: what this
     Box wrote before (earlier_owner) where its record proves it wrote on the Host, or an older roster's (-) for
-    --remove-leftovers and cut --all, asked first."""
+    mesh leftovers --remove and cut --all, asked first."""
     return (f"NAME={q(h['name'])}\nU={q(h['ssh']['user'])}\nMODE={mode}\nMARK={q(MARK)}\n"
             f"MD={q(h.get('mesh_dir') or '')}\nOWNER={q(own)}\nOWNER_RE={q(ere(own))}\nPREV={q(' '.join(prev))}\n"
             f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE)
@@ -897,12 +897,12 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                 out.setdefault("warnings", []).append(
                     f"{name}: a roster-mesh:{src} line with no Box in its tag still lets the replaced key in "
                     f"(from={frm or '?'}): it isn't the line this Box writes, so roster left it; remove it with "
-                    "roster mesh --remove-leftovers, or rotate from the Box that wrote it")
+                    "roster mesh leftovers --remove, or rotate from the Box that wrote it")
             elif src not in said:
                 said.add(src)
                 out.setdefault("warnings", []).append(
                     f"{name}: a roster-mesh:{src} line with no Box in its tag isn't the one this Box writes (another "
-                    "Box's, or other options), so roster left it: roster mesh --find-leftovers lists it")
+                    "Box's, or other options), so roster left it: roster mesh leftovers lists it")
         if not apply:       # T217: the source's key changed since (another Box rotated or cut it): it still gets in
             for x in report(lines, "OLDLINE "):
                 src, key, frm = (x.split(" ", 2) + ["", ""])[:3]
@@ -1101,8 +1101,8 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
             if lines and "UNTAGGED" in lines:
                 out.setdefault("warnings", []).append(
                     f"{n}: a roster-mesh:{'…' if n == name else name} line with no Box in its tag is still there: an "
-                    f"older roster's, and this Box has no record of writing on {n} (roster mesh --find-leftovers "
-                    "shows it; --remove-leftovers takes it off)")
+                    f"older roster's, and this Box has no record of writing on {n} (roster mesh leftovers "
+                    "shows it; mesh leftovers --remove takes it off)")
             progress(i, len(todo), n)
     st = load_state()
     if pending:
@@ -1199,7 +1199,7 @@ def others_here():
 
 
 def find_leftovers(cfg, say=None):
-    """`roster mesh --find-leftovers`: on every key, reviewed Host of roster.yml, once each, one at a time, the Mesh
+    """`roster mesh leftovers`: on every key, reviewed Host of roster.yml, once each, one at a time, the Mesh
     entries this roster.yml doesn't ask for, found by roster's own tag and mark (read-only): this Box's (and
     Inventory's), and an older roster's (no Box in the tag; also for a source asked for, beside this Box's own line:
     #384), never
@@ -1252,7 +1252,7 @@ def find_leftovers(cfg, say=None):
 
 
 def leftover_words(found):
-    """What --find-leftovers found on one Host, as words."""
+    """What mesh leftovers found on one Host, as words."""
     words = [f"key from {src} (from={frm or '?'})" + (", with no Box in its tag" if old else "")
              for src, frm, old in found.get("lines", [])]
     words += [f"Mesh key and files in {d}" for d in found.get("files", [])]

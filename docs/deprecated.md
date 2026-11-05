@@ -4,6 +4,25 @@ Old names that still work, and what replaces each one, newest Release first. Use
 
 An old name stays for at least one minor Release after the one that deprecates it: deprecated in 0.1, it works through 0.2 at least. When `init.lua` sets a deprecated option, roster still applies it under its new name and warns, naming the replacement and the row here.
 
+## Deprecated in 0.6
+
+### CLI
+
+The first CLI renames (T222, #430, decision Q194): roster's commands are 14 now, everything else an action or a flag of one of them. Each old name still works, hidden from `roster --help`, the man page and Tab completion, and prints one line on stderr naming its new form (nothing with `--json`, so stderr stays JSON). `roster completion` says nothing: the line `install.sh` wrote in your shell's startup file runs it at every shell start, and `./update.sh` rewrites that line to the new form. Scripts and cron jobs: change to the new form before the old one is removed.
+
+| Old | New | Notes |
+|---|---|---|
+| `roster auth-check [--only LIST] [--json]` | `roster check --auth [--only LIST] [--json]` | All checking is under `check`. The same rows and JSON |
+| `roster info NAME` | `roster hosts NAME` | Everything about one Host or resource, fuzzy words included; the same JSON |
+| `roster resources [--only LIST] [--find TEXT]` | `roster hosts --resources [...]` | `roster hosts` lists Hosts and resources as before; `--resources` narrows it to resources, with `--only` taking resource names, types or groups |
+| `roster providers [--json]` | `roster vault status [--json]` | Also each vault's state (as `check --box`'s Vault section) and when `roster vault sync` last synced it; the JSON gains `vault` and `last_sync` |
+| `roster reveal NAME [--wifi]` | `roster vault reveal NAME [--wifi]` | For people, not Claude, as before |
+| `roster bw [--write] ARGS` | `roster vault bw [--write] -- ARGS` | The raw Bitwarden CLI, with the same read-only rules (decision Q178). `--write` goes before the `--`. For what changed in the vault, `roster vault sync` |
+| `roster man [--install [--prefix DIR]]` | `roster help --man [--install [--prefix DIR]]` | |
+| `roster completion SHELL` | `roster help --completion SHELL` | Silent under its old name (see above) |
+| `roster mesh --find-leftovers` | `roster mesh leftovers` | Like `mesh status` and `mesh cut` |
+| `roster mesh --remove-leftovers [-y]` | `roster mesh leftovers --remove [-y]` | |
+
 ## Deprecated in 0.4
 
 ### Plugin API

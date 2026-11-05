@@ -102,8 +102,8 @@ A host's `user` + `auth` are its default login for everything on it. An `ssh:` b
 - A service uses its own `user`/`auth` if it sets them, otherwise the host's default login.
 - `ssh:` and `services:` work at host, group and `defaults:` level. Service entries with the same name merge field by field, so a group can define `modbus: { port: 502, user: mb }` and one host can override just its `auth`.
 - A service accepts `port`, `url`, `scheme`, `user`, `auth`, `verify` and `login` (below). `web: "https://..."` still works and becomes a service named `web`.
-- **One bad service entry doesn't stop the Inventory loading.** A service roster can't use (a bad port or url, an unknown setting or `login:` type, no port or url) is left out, and its Host stays with the rest of its services. `roster hosts`, `roster check` and `roster auth-check` print a warning on stderr for each one, naming the Host and the service, what's wrong and the fix; `roster info HOST` lists them under `problems`, and `roster web HOST SERVICE` on that service stops with the same words. Mistakes that aren't about one service (bad YAML, a Host listed twice, a Host without an ip or user, a bad SSH port, `services:` that isn't a mapping) still stop the load.
-- `roster info HOST` shows each service's login as a reference (`webadmin, auth bw:orion3 web (own login)`), never the password. `roster auth-check` tests every reference in use, service ones included.
+- **One bad service entry doesn't stop the Inventory loading.** A service roster can't use (a bad port or url, an unknown setting or `login:` type, no port or url) is left out, and its Host stays with the rest of its services. `roster hosts`, `roster check` and `roster check --auth` print a warning on stderr for each one, naming the Host and the service, what's wrong and the fix; `roster hosts HOST` lists them under `problems`, and `roster web HOST SERVICE` on that service stops with the same words. Mistakes that aren't about one service (bad YAML, a Host listed twice, a Host without an ip or user, a bad SSH port, `services:` that isn't a mapping) still stop the load.
+- `roster hosts HOST` shows each service's login as a reference (`webadmin, auth bw:orion3 web (own login)`), never the password. `roster check --auth` tests every reference in use, service ones included.
 
 ### Web APIs with stored logins: `roster web`
 
@@ -124,7 +124,7 @@ A host's `user` + `auth` are its default login for everything on it. An `ssh:` b
         lab-hub2: { ip: 10.0.5.20, services: { web: { url: "https://10.0.5.20", login: appliance } } }
   ```
 
-  `login: appliance` then works exactly like `login: hub`. Everything roster shows (`roster info`, `roster serve`'s Hosts, error messages) gives the type it resolved to (`hub`), so the behaviour is never in doubt; your own word stays in `roster.yml`, and edits made through `roster serve` leave it as it is. A name has to map to one of roster's types and can't be one of them, or the file doesn't load (the message names the key). A service whose `login:` is neither is left out with a warning, like any bad service entry.
+  `login: appliance` then works exactly like `login: hub`. Everything roster shows (`roster hosts HOST`, `roster serve`'s Hosts, error messages) gives the type it resolved to (`hub`), so the behaviour is never in doubt; your own word stays in `roster.yml`, and edits made through `roster serve` leave it as it is. A name has to map to one of roster's types and can't be one of them, or the file doesn't load (the message names the key). A service whose `login:` is neither is left out with a warning, like any bad service entry.
 - Only paths are accepted, and redirects are reported, not followed, so the credentials never go anywhere but the service's own address.
 - The password, the token and the Authorization header are never printed. If a response happens to contain the password, it is masked.
 - `verify: false` on the service (or `-k`) accepts a self-signed certificate.
@@ -155,9 +155,9 @@ Every resource has the same fields, plus the fixed fields of its type. Anything 
 | `account` | `url` (required) | Website, portal or SaaS logins |
 | `secret` | none | API keys, license keys, PSKs |
 
-- `roster resources` lists them (`--only NAME,TYPE,GROUP`, `--find TEXT`), and `roster info NAME` shows every field. Both show where the secret comes from, never the secret itself.
-- `roster reveal NAME` prints the secret, for a person to type in. `roster reveal NAME --wifi` prints a `WIFI:T:WPA;S:…;P:…;;` string instead; pipe it to `qrencode -t ansiutf8` and phones can join by scanning it.
-- `roster auth-check` checks resource references too, and ROSTER.md lists resources for Claude. Claude is told never to run `reveal` and to send the user to it instead.
+- `roster hosts --resources` lists them (`--only NAME,TYPE,GROUP`, `--find TEXT`), and `roster hosts NAME` shows every field. Both show where the secret comes from, never the secret itself.
+- `roster vault reveal NAME` prints the secret, for a person to type in. `roster vault reveal NAME --wifi` prints a `WIFI:T:WPA;S:…;P:…;;` string instead; pipe it to `qrencode -t ansiutf8` and phones can join by scanning it.
+- `roster check --auth` checks resource references too, and ROSTER.md lists resources for Claude. Claude is told never to run `roster vault reveal` and to send the user to it instead.
 - Old roster versions ignore `resources:`, so you can add it to a shared map before every box has upgraded.
 
 ## Password providers
@@ -176,7 +176,9 @@ Every resource has the same fields, plus the fixed fields of its type. Anything 
 
 **Naming vault items:** name each item `<roster host name> <what it opens>` (`orion3 ssh`, `esxi-02 ssh+web`, `shared hub web`, `wifi lab-guest`), and put the address in the item's URI field. The full convention is in [docs/adding-hosts.md](adding-hosts.md#2-add-the-logins-to-the-vault).
 
-**Bitwarden:** run `bw login` (or `roster bw --write login`) once; [`roster bw`](#roster-bw) has the first-time setup, changing a password, and what roster can and can't see. A locked vault is unlocked once per run, using a master password prompt, `BW_PASSWORD`, or an existing `BW_SESSION`. For headless boxes, set `BW_CLIENTID`/`BW_CLIENTSECRET`.
+**The vault isn't watched:** roster sees an item added or changed elsewhere only after a sync. `roster vault sync` is the way: it syncs each vault that keeps a local copy and says what changed ([The vault isn't watched](#the-vault-isnt-watched-roster-vault-sync)); `roster vault status` lists the providers here, their state and when each last synced.
+
+**Bitwarden:** run `bw login` (or `roster vault bw --write -- login`) once; [`roster vault bw`](#roster-vault-bw) has the first-time setup, changing a password, and what roster can and can't see. A locked vault is unlocked once per run, using a master password prompt, `BW_PASSWORD`, or an existing `BW_SESSION`. For headless boxes, set `BW_CLIENTID`/`BW_CLIENTSECRET`.
 
 **Where "Save to vault" puts new items** (ticket 35) is a setting, so every Box of a team behaves the same:
 
@@ -255,11 +257,11 @@ Add it as nas-01  10.0.0.50 port 2200, user admin? [Y/n/edit/skip]
 - **Which vaults:** each vault `roster.yml` uses (any `auth:` in it: Hosts, groups, `defaults:`, services, `sudo:`, resources) that can list its items without roster reading a password: Bitwarden (`bw`), 1Password (`op`) and KeePassXC (`kp`). Others (`pass`, a `providers:` command, a plugin) are said and skipped; none at all is 188.
 - **Synced first:** Bitwarden's vault is synced (`bw sync`) so an item saved a minute ago is there, and roster says how long ago the sync before it was. `--no-sync` skips it.
 - **Which items:** login items no `auth:` names by its exact name or id (any case), or for KeePassXC its path or title. New ones are those no earlier run marked seen; `--all` lists every one. Each row suggests a Host: the name from the item's name (`nas-01 ssh` and `nas-01 ssh+web` give `nas-01`; another name has what a name can't hold made `-`), the address and SSH port from its URI (as `--from-vault` reads one, above), the user from its username, and the Login: `bw:NAME`, or `bw:ID` when two items share the name.
-- **Never a password.** Bitwarden's CLI has no listing without secrets, so roster pipes `bw list items` straight into its own small filter process, which passes on only each item's id, name, URIs (without a `user:password@` in them) and username; roster never reads what bw prints (decision Q191). 1Password: `op item list`, then `op item get ID --fields label=username` (never `--reveal`) for an item not in `roster.yml`. KeePassXC: `keepassxc-cli ls -R -f`, the entry paths only (its `show` resolves placeholders such as `{PASSWORD}` in a URL or user name, so roster doesn't run it): the walk asks a KeePassXC item's address and user. An item name with a control or escape character is shown and written by its id.
+- **Never a password.** Bitwarden's CLI has no listing without secrets, so roster pipes `bw list items` straight into its own small filter process, which passes on only each item's id, name, URIs (without a `user:password@` in them), username and revision date; roster never reads what bw prints (decision Q191). 1Password: `op item list`, then `op item get ID --fields label=username` (never `--reveal`) for an item not in `roster.yml`. KeePassXC: `keepassxc-cli ls -R -f`, the entry paths only (its `show` resolves placeholders such as `{PASSWORD}` in a URL or user name, so roster doesn't run it): the walk asks a KeePassXC item's address and user. An item name with a control or escape character is shown and written by its id.
 - **The walk** (a terminal, without `-y` or `--json`): `Y` (or Enter) adds the item as shown, through the same checks, write and sync as `roster add NAME` (it asks the group and `enroll` as there; `--group` answers the first for every item), then asks whether to set that Host up now (setup for it alone, then `roster check`; `--setup` does it without asking). `edit` asks the name, address and user first; an item with no username (every KeePassXC one) is asked its user (Enter keeps the group's). `n` adds nothing and marks it seen; `skip` leaves it for next time. An add that's refused is said, and the walk goes on; roster add then exits 1. The end of input stops it. `--dry-run` shows each add without writing.
 - **A list:** with `-y`, or without a terminal, it only lists (never adds); `--json` prints `{version, items, unmapped, new}` ([Machine-readable output](#machine-readable-output)).
 - **Seen:** what a walk added or you answered `n` to is remembered as seen, per Inventory, in roster's config folder (`vault-seen/`, mode 0600: the items' ids and names only). `--mark-seen` marks every item listed. A list, `-y` and `--json` mark nothing, so a script can ask again.
-- **Locked:** it never asks for a master password, not even in a terminal: a locked vault is 14, with how to unlock it (`roster bw --write unlock`, or the [session file](new-box.md)). KeePassXC has no session to reuse, so give the address and user yourself there (`roster add NAME --ip ADDR --user USER --auth kp:ENTRY`).
+- **Locked:** it never asks for a master password, not even in a terminal: a locked vault is 14, with how to unlock it (`roster vault bw --write -- unlock`, or the [session file](new-box.md)). KeePassXC has no session to reuse, so give the address and user yourself there (`roster add NAME --ip ADDR --user USER --auth kp:ENTRY`).
 - **`roster check --box`** shows the count from the last run (`3 vault items aren't in roster.yml; roster add --from-vault`) without asking the vault.
 
 ## Discover
@@ -283,7 +285,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 
 ## Commands
 
-`roster -v` (or `--version`) prints roster's version. `roster` on its own (or `roster --help`) exits 0 and lists these in groups (Start here, Every day, Inventory and access, Tools, and the two the app runs) with the commands you'll type most. `roster COMMAND --help` shows a command's options and examples, each one checked against the parser by a test. A mistyped command or option gets the nearest real one (`roster hots`: did you mean `hosts`?), and a usage error names the `--help` to read.
+`roster -v` (or `--version`) prints roster's version. `roster` on its own (or `roster help`, or `roster --help`) exits 0 and lists the 14 commands you type, in groups (Start here, Every day, Inventory and access, Vault and help), with the command lines you'll type most. Everything else is an action or a flag of one of them. `roster help COMMAND` (or `roster COMMAND --help`) shows a command's options and examples, each one checked against the parser by a test. A mistyped command or option gets the nearest real one (`roster hots`: did you mean `hosts`?), and a usage error names the `--help` to read. `serve` and `askpass` are run by the app and by ssh, not by hand: they work, but the overview and Tab completion leave them out. Older names still work for now; see [Old command names](#old-command-names).
 
 | Command | What it does |
 |---|---|
@@ -293,27 +295,25 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
 | `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--dry-run`). After a rename, it re-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless `--force` |
 | `sync` | Rewrite the SSH config and Claude files after editing `roster.yml` |
-| `check [HOST]` | Reachability of SSH (a login running `exit 0`, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without `--only`); on an `os: windows` Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)) |
-| `hosts [--find TEXT] [--all] [--long]` | The hosts and resources you can use: name, IP, user, logins (`ssh (key), web (admin), api`, `wifi`) and title. Unreviewed scanned hosts are hidden unless you pass `--all`, `--find` or `--only`. `--long` shows the full table (type, product, web URL, scan description) |
-| `info NAME` | Everything about one host or resource; fuzzy names work (`roster info core switch`) |
-| `resources [--find TEXT]` | List or search Wi-Fi networks, accounts and secrets that aren't hosts |
-| `reveal NAME [--wifi]` | Print a resource's secret for a person to use (`--wifi`: a QR-ready `WIFI:` string) |
+| `check [HOST \| --box \| --auth]` | `check`: can this Box reach every Host? `check HOST`: why a Session to one would fail, step by step. `check --box`: this Box's own health, connecting nowhere. `check --auth`: every Login's password source answers. In detail: reachability of SSH (a login running `exit 0`, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without `--only`); on an `os: windows` Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)). With `--auth` (was `auth-check`): test every password source in use (SSH, services and resources), connecting to no Host and printing nothing secret; `--only` narrows it, and it takes no HOST or `--box` |
+| `hosts [NAME…] [--resources] [--find TEXT] [--all] [--long]` | The Hosts and resources in `roster.yml` that you can use: name, IP, user, logins (`ssh (key), web (admin), api`, `wifi`) and title. Unreviewed scanned hosts are hidden unless you pass `--all`, `--find` or `--only`. `--long` shows the full table (type, product, web URL, scan description). `hosts NAME` (was `info`): everything about one Host or resource; fuzzy names work (`roster hosts core switch`), and it takes none of the list's flags. `hosts --resources` (was `resources`): only the Wi-Fi networks, accounts and secrets that aren't Hosts, with `--only` taking resource names, types or groups and `--find` searching every field |
 | `run [--sudo] HOST -- CMD` | Run a command; password-only hosts get their password from the provider. `--sudo` runs it as root, handing sudo the login's password (never shown). On an `os: windows` Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; `--sudo` there is refused (159). See [Windows Hosts](adding-hosts.md#windows-hosts) |
 | `web HOST [SERVICE] METHOD PATH` | HTTP request to a host's web service, logged in with its stored credentials (`-d BODY`, `-H 'Name: value'`, `-k`) |
-| `bw [--write] BW_ARGS…` | The Bitwarden CLI with this box's vault session from `~/.config/roster/bw-session` (never prompts, except `login` and `unlock`), e.g. `roster bw list items --search web-01`. Read-only unless `--write`: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See [`roster bw`](#roster-bw) |
-| `providers` | Available providers, whether their tools are installed, unknown ones in use |
-| `auth-check` | Test every password source in use (SSH, services and resources) without printing anything secret |
 | `revoke [--all]` | Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any `box_name:`, and says so: `roster setup` for that Inventory puts it back, or use `--all`); it names this box's files to delete (with `~/.config/roster/key-name*`, the name setup recorded for its key's lines) only once every Host of this `roster.yml` has lost the key (never with `--only`, and never another `roster.yml`'s `config.d/roster`), and exits 1 when a Host was skipped or none was reached. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
-| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `mesh cut --all [-y]` takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves `roster.yml` as it is (before removing roster: [Uninstalling roster](mesh.md#uninstalling-roster)); `mesh --find-leftovers` lists the Mesh entries on every Host that this `roster.yml` doesn't ask for, changing nothing, and `mesh --remove-leftovers [-y]` removes them after a question (an older roster's may be another Box's: [Whose Mesh it is](mesh.md#whose-mesh-it-is)); `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
+| `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `mesh cut --all [-y]` takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves `roster.yml` as it is (before removing roster: [Uninstalling roster](mesh.md#uninstalling-roster)); `mesh leftovers` (was `--find-leftovers`) lists the Mesh entries on every Host that this `roster.yml` doesn't ask for, changing nothing, and `mesh leftovers --remove [-y]` (was `--remove-leftovers`) removes them after a question (an older roster's may be another Box's: [Whose Mesh it is](mesh.md#whose-mesh-it-is)); `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
 | `inv list\|add NAME PATH\|use NAME\|remove NAME\|which` | Named Inventories, one of them active: list them (`*` marks the active one), name one, make one the active one, forget one (its file stays), or print the `roster.yml` roster uses. See [Named Inventories](#named-inventories) |
-| `serve` | The JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
-| `askpass PROMPT` | The `SSH_ASKPASS` helper for a `serve` password Session. ssh runs it, not you |
-| `man [--install [--prefix DIR]]` | Show the `roster(1)` man page. `--install` copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you |
-| `completion bash\|zsh\|fish\|powershell` | Print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `info`, `web`, `mesh cut`), groups (`--only`, `discover --group`, `add --group`), resources (`reveal`, `info`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
+| `vault` | roster's own views of the vault, one action each (below); plain `roster vault` lists them. One home per provider: `vault bw` is Bitwarden's own CLI |
+| `vault status [--json]` | (Was `providers`.) The password providers here (built-in, plugins, `roster.yml`'s), whether their tools are installed and which groups use them, unknown ones in use (exit 1), then each vault's state (installed, logged in, locked or unlocked: the same checks as [`roster check --box`](#roster-check---box)'s Vault section, one source) and when `roster vault sync` last synced each one that syncs ("last synced 3 h ago", or "never synced by roster") |
+| `vault sync` | Sync every vault `roster.yml`'s Logins use that keeps a local copy (Bitwarden: `bw sync`; 1Password and the others ask their server or file each time, so it says they need none), then say what changed since the last sync: the items added and changed by name, the removed ones by count. Never a password: see [The vault isn't watched](#the-vault-isnt-watched-roster-vault-sync). Exits 1 if a sync failed |
+| `vault reveal NAME [--wifi]` | (Was `reveal`.) Print a resource's secret for a person to type in, not for Claude (`--wifi`: a QR-ready `WIFI:` string) |
+| `vault bw [--write] -- BW_ARGS…` | (Was `bw`.) The Bitwarden CLI itself with this box's vault session from `~/.config/roster/bw-session` (never prompts, except `login` and `unlock`), e.g. `roster vault bw -- list items --search web-01`. Read-only unless `--write`: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See [`roster vault bw`](#roster-vault-bw) |
+| `help [COMMAND…] [--man [--install [--prefix DIR]]] [--completion SHELL]` | `roster help`: the overview. `roster help COMMAND` (`help vault bw`): that command's options and examples, as `--help`. `--man` (was `man`): show the `roster(1)` man page; with `--install` it copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you. `--completion bash\|zsh\|fish\|powershell` (was `completion`): print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their actions and options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `hosts`, `web`, `mesh cut`), groups (`--only`, `discover --group`, `add --group`), resources (`vault reveal`, `hosts`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
+| `serve` | Internal, run by the app: the JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
+| `askpass PROMPT` | Internal, run by ssh: the `SSH_ASKPASS` helper for a `serve` password Session |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`.
 
-`--json` on `hosts`, `add --from-vault`, `info`, `resources`, `check`, `discover` (its preview), `mesh status`, `mesh --dry-run`, `providers` and `auth-check` prints the same data as JSON for scripts and tools, never a secret: see [Machine-readable output](#machine-readable-output).
+`--json` on `hosts` (and `hosts NAME`, `hosts --resources`), `add --from-vault`, `check` (and `check HOST`, `check --box`, `check --auth`), `discover` (its preview), `mesh status`, `mesh --dry-run` and `vault status` prints the same data as JSON for scripts and tools, never a secret: see [Machine-readable output](#machine-readable-output).
 
 Config lookup order: `-c PATH`, then `--inv NAME`, then `$ROSTER_CONFIG`, then `./roster.yml`, then the active named Inventory, then `~/.config/roster/roster.yml`. `--inv NAME` (before the command: `roster --inv home sync`) runs one command against the named Inventory NAME.
 
@@ -372,9 +372,9 @@ Vault
 1 warning, no errors
 ```
 
-### `roster bw`
+### `roster vault bw`
 
-`roster bw [--write] [--] BW_ARGS…` runs the Bitwarden CLI with this Box's unlocked vault, so a script, another terminal or a Claude session doesn't have to unlock it again. The session comes from `~/.config/roster/bw-session` (used only if it's yours alone: not a symlink, owned by you, only you can read it) or a `BW_SESSION` in your shell, and goes to `bw` in its environment, never on its command line. bw's input and output are your terminal's: roster never reads, keeps or logs what bw prints. It adds `--nointeraction`, so bw never waits for an answer, except for `login` and `unlock`, which ask for the master password themselves. It exits with bw's status (decision Q178).
+`roster vault bw [--write] -- BW_ARGS…` (was `roster bw`, which still works) runs the Bitwarden CLI with this Box's unlocked vault, so a script, another terminal or a Claude session doesn't have to unlock it again. The session comes from `~/.config/roster/bw-session` (used only if it's yours alone: not a symlink, owned by you, only you can read it) or a `BW_SESSION` in your shell, and goes to `bw` in its environment, never on its command line. bw's input and output are your terminal's: roster never reads, keeps or logs what bw prints. It adds `--nointeraction`, so bw never waits for an answer, except for `login` and `unlock`, which ask for the master password themselves. It exits with bw's status (decision Q178).
 
 **Read-only unless you say so.** Read-only means bw changes nothing in the vault and writes no file on this Box. roster checks bw's command against a list and refuses anything else before bw starts:
 
@@ -386,40 +386,68 @@ Vault
 | `serve` | never: it would hand the unlocked vault to every program on this Box that reaches its port (error 166). Run `bw serve` yourself if you need it |
 | anything else (a newer bw's command, a typo) | never (error 165): the list fails closed |
 
-`--write` is roster's, so it goes before bw's command (`roster bw --write edit item …`, or among bw's options before it); after the command it's refused (165) rather than guessed at. bw's own options before its command (`--pretty`, `--raw`, `--response`, `--quiet`, `--cleanexit`, `--nointeraction`, `--version`) run, as in `roster bw --pretty list items`; any other option there is refused (165). `roster bw --help` is roster's help, `roster bw -- --help` bw's. `--session` is refused anywhere (166): roster passes the session in bw's environment, and on a command line other programs can read it. `roster bw -- --help edit` still needs `--write`; `roster bw help edit` doesn't. A refusal names bw's command only when it's one roster knows, and never repeats bw's arguments. roster's `--nointeraction` goes before any `--` among them, so it's always bw's option. On Windows `bw.exe` and npm's `bw.cmd` both work, with the batch file's limits ([On Windows](#on-windows)).
+`--write` is roster's, so it goes before bw's command (`roster vault bw --write -- edit item …`, or among bw's options before it, ahead of the `--`); after the command it's refused (165) rather than guessed at. bw's own options before its command (`--pretty`, `--raw`, `--response`, `--quiet`, `--cleanexit`, `--nointeraction`, `--version`) run, as in `roster vault bw -- --pretty list items`; any other option there is refused (165). `roster vault bw --help` is roster's help, `roster vault bw -- --help` bw's. `--session` is refused anywhere (166): roster passes the session in bw's environment, and on a command line other programs can read it. `roster vault bw -- --help edit` still needs `--write`; `roster vault bw -- help edit` doesn't. A refusal names bw's command only when it's one roster knows, and never repeats bw's arguments. roster's `--nointeraction` goes before any `--` among them, so it's always bw's option. On Windows `bw.exe` and npm's `bw.cmd` both work, with the batch file's limits ([On Windows](#on-windows)).
 
 **First-time setup on a Box:**
 
 ```bash
-roster bw --write login                      # once; bw asks for your email and master password itself
+roster vault bw --write -- login             # once; bw asks for your email and master password itself
 mkdir -p ~/.config/roster
 (umask 077; bw unlock --raw > ~/.config/roster/bw-session)   # or: export BW_SESSION=$(bw unlock --raw)
 chmod 600 ~/.config/roster/bw-session         # umask doesn't tighten a file that was already there
-roster bw status                             # "unlocked"
+roster vault bw -- status                    # "unlocked"
 roster setup
 ```
 
-On a headless Box, sign in with an API key instead: `export BW_CLIENTID=… BW_CLIENTSECRET=…; roster bw --write login --apikey`. `roster bw --write lock` (or `logout`) ends the session; the file goes stale with it.
+On a headless Box, sign in with an API key instead: `export BW_CLIENTID=… BW_CLIENTSECRET=…; roster vault bw --write -- login --apikey`. `roster vault bw --write -- lock` (or `logout`) ends the session; the file goes stale with it.
 
 **Changing a Host's password:** change it on the Host first, then the vault item roster looks up (its `auth: "bw:esx-02 ssh"`). The Bitwarden app or web vault does it by hand. From a terminal, keep the new password off every command line: type it into a variable only `jq` gets, and let bw read the item on its stdin.
 
 ```bash
-id=$(roster bw get item "esx-02 ssh" | jq -r .id)
+id=$(roster vault bw -- get item "esx-02 ssh" | jq -r .id)
 read -rs NEWPW                               # type the new password; nothing is echoed
-roster bw get item "$id" | NEWPW="$NEWPW" jq '.login.password = env.NEWPW' | roster bw encode \
-  | roster bw --write edit item "$id"
+roster vault bw -- get item "$id" | NEWPW="$NEWPW" jq '.login.password = env.NEWPW' | roster vault bw -- encode \
+  | roster vault bw --write -- edit item "$id"
 unset NEWPW
 roster check esx-02                          # the stored Login works again
 ```
 
-Other Boxes get it at their next unlock (roster runs `bw sync` then) or with `roster bw sync`.
+Other Boxes get it at their next unlock (roster runs `bw sync` then) or with `roster vault bw -- sync`.
 
 **What roster can and can't see:**
 
 - **It sees** the arguments you give it, to check bw's command (it never prints, logs or keeps them), the session key it passes to bw, and bw's exit status.
-- **It never sees** what bw prints (a password from `get`, an item's JSON, the key from `unlock --raw`), what you type at bw's prompts (the master password at `login` and `unlock` goes straight to bw), or what you pipe into bw. Nothing is captured, so nothing can end up in roster's logs or errors. (Outside `roster bw`: [`roster add --from-vault`](#vault-items-not-in-rosteryml-roster-add---from-vault) pipes `bw list items` into roster's own filter process and reads only each item's id, name, URIs and username. Resolving a `bw:` Login that matches several items or none, and saving a new item, still read `bw list items` in roster itself, for now.)
+- **It never sees** what bw prints (a password from `get`, an item's JSON, the key from `unlock --raw`), what you type at bw's prompts (the master password at `login` and `unlock` goes straight to bw), or what you pipe into bw. Nothing is captured, so nothing can end up in roster's logs or errors. (Outside `roster vault bw`: [`roster add --from-vault`](#vault-items-not-in-rosteryml-roster-add---from-vault) pipes `bw list items` into roster's own filter process and reads only each item's id, name, URIs, username and revision date (as `roster vault sync` does). Resolving a `bw:` Login that matches several items or none, and saving a new item, still read `bw list items` in roster itself, for now.)
 - **The session reaches only bw:** never a command line, never another program (no 1Password variable in your shell, `OP_SESSION_*`, `OP_SERVICE_ACCOUNT_TOKEN` or any other `OP_*`, is passed to bw either).
-- **What roster can't protect:** whoever runs `roster bw get` reads its output, a Claude session included; read-only doesn't mean nothing secret. bw's arguments are on its command line, where other programs on this Box can read them (`ps`), so never put a password there: pipe it in, as above.
+- **What roster can't protect:** whoever runs `roster vault bw -- get` reads its output, a Claude session included; read-only doesn't mean nothing secret. bw's arguments are on its command line, where other programs on this Box can read them (`ps`), so never put a password there: pipe it in, as above.
+
+### The vault isn't watched: `roster vault sync`
+
+roster doesn't watch the vault. An item added or changed in the Bitwarden app, the web vault or on another Box reaches this Box's copy only at a sync, so roster sees it only after one: `roster vault sync` is the way. It syncs every vault `roster.yml`'s Logins use that keeps a local copy (Bitwarden's `bw sync`; 1Password, KeePassXC and a `providers:` command read their server or file each time, so it says they need none), then says what changed since the last `roster vault sync`:
+
+```text
+$ roster vault sync
+  ok    bw: synced; since the last sync, 1 added: nas-02 ssh; 1 changed: esx-02 ssh; 2 removed
+```
+
+Added and changed items are named, removed ones only counted. To tell, it keeps a snapshot per vault in `~/.config/roster/vault-sync/PROVIDER.json` (0600): each login item's id and revision date and when it was taken, never a name, password or any other value. The items come from the same listing as [`roster add --from-vault`](#vault-items-not-in-rosteryml-roster-add---from-vault), which never reads a password. The first sync only counts the items; a sync that fails leaves the snapshot as it was and exits 1. `roster vault status` says when each vault last synced ("last synced 3 h ago; run `roster vault sync` for what changed"), from the snapshot, without asking the vault. `roster vault bw -- sync` still runs bw's own sync, the raw passthrough, without the report; `roster add --from-vault` syncs first by itself.
+
+### Old command names
+
+The 14 commands came from regrouping older ones (decision Q194). Each old name still works, hidden from `roster --help`, the man page and Tab completion, and says its new form once on stderr; `roster completion`, which an older rc line runs at every shell start, says nothing. With `--json` it says nothing either, so stderr stays JSON. They go away in a later Release ([Deprecated names](deprecated.md#deprecated-in-06)).
+
+| Old | New |
+|---|---|
+| `roster auth-check [--only LIST]` | `roster check --auth [--only LIST]` |
+| `roster info NAME` | `roster hosts NAME` |
+| `roster resources` | `roster hosts --resources` |
+| `roster providers` | `roster vault status` |
+| `roster reveal NAME` | `roster vault reveal NAME` |
+| `roster bw ARGS` | `roster vault bw -- ARGS` |
+| `roster man [--install]` | `roster help --man [--install]` |
+| `roster completion SHELL` | `roster help --completion SHELL` |
+| `roster mesh --find-leftovers` | `roster mesh leftovers` |
+| `roster mesh --remove-leftovers` | `roster mesh leftovers --remove` |
 
 ## A plain file or a team repo
 
@@ -465,9 +493,9 @@ roster inv use home                          # home is the active one now
 
 ## Machine-readable output
 
-The read commands take `--json`, for scripts, other tools and Claude: `hosts` (with `--only`, `--find`, `--all`), `add --from-vault` (no NAME: the list), `info NAME`, `resources`, `check`, `check HOST`, `check --box`, `discover` (its preview, without `--write`), `mesh status`, `mesh --dry-run` (the plan), `providers` and `auth-check`. The CLI is roster's interface for other apps; `roster serve` is the desktop app's own backend, not a public API. With `--json`, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take `--json`, for scripts, other tools and Claude: `hosts` (with `--only`, `--find`, `--all`), `add --from-vault` (no NAME: the list), `hosts NAME`, `hosts --resources`, `check`, `check HOST`, `check --box`, `check --auth`, `discover` (its preview, without `--write`), `mesh status`, `mesh --dry-run` (the plan) and `vault status`. The CLI is roster's interface for other apps; `roster serve` is the desktop app's own backend, not a public API. With `--json`, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 
-- **Never a secret.** Logins are references: the provider and the item (`bw:esx-02 ssh`, `op:Lab/esx-02`, `prompt`, `agent`). A `cmd:` or `env:` reference says how a secret is fetched, and a password pasted into a `cmd:` line would show, so each one is cut to its kind (`cmd:`, `env:`) everywhere in the output, error messages and check messages included, the way Plugins get them: a `cmd:` one to the end of its line, an `env:` one its variable's name, wherever one starts a text or follows a space, a quote or one of `=:,({[`. An error message keeps a trailing `(code N)`. The cases both implementations are tested against are in `tests/vectors/redaction.json`. `auth-check --json` fetches every secret it tests and says only whether it was found. `reveal` has no `--json`: it's for a person.
+- **Never a secret.** Logins are references: the provider and the item (`bw:esx-02 ssh`, `op:Lab/esx-02`, `prompt`, `agent`). A `cmd:` or `env:` reference says how a secret is fetched, and a password pasted into a `cmd:` line would show, so each one is cut to its kind (`cmd:`, `env:`) everywhere in the output, error messages and check messages included, the way Plugins get them: a `cmd:` one to the end of its line, an `env:` one its variable's name, wherever one starts a text or follows a space, a quote or one of `=:,({[`. An error message keeps a trailing `(code N)`. The cases both implementations are tested against are in `tests/vectors/redaction.json`. `check --auth --json` fetches every secret it tests and says only whether it was found. `vault reveal` has no `--json`: it's for a person.
 - **One shape.** A Host, a group and a resource are the objects `roster serve` answers with (`hosts.list`, `host.get`; [the serve API](serve-api.md) lists their fields): every field `roster.yml` resolves to, with `ssh: {user, port, auth}`, `login: {user, auth}`, `services` by name, and `problems`, the service entries left out (the warnings the table prints on stderr).
 - **A version.** `version` is the first field of every document, errors included. It is `1` now.
 - **Errors** go to stderr as `{"version": 1, "error": {"code", "message", "fix"}}`, with nothing on stdout. The codes are `roster serve`'s: `1` `roster.yml` wasn't found or doesn't load (`fix` says where), `2` no Host or resource by that name, `3` any other refusal. Wrong arguments are code `3` too, with exit status 2. A refusal serve has its own code for keeps it: `121` too many addresses for `discover`, `110` a `--rotate` Host that isn't a Mesh source.
@@ -477,8 +505,8 @@ The read commands take `--json`, for scripts, other tools and Claude: `hosts` (w
 |---|---|
 | `add --from-vault --json` | `{version, items: [{provider, id, name, auth, new, host?, address?, port?, user?, note?}], unmapped, new}`: the new items (every one with `--all`) no Login names, the Host each suggests and the Login to write; `unmapped` and `new` count them all. Never a value. Errors: `14` locked, `187` the listing failed, `188` no vault to list |
 | `hosts --json` | `{version, hosts: [Host], resources: [resource], groups: {name: {title, description}}, hidden}`. Hosts and resources in `roster.yml` order, filtered as the table is; `hidden` counts the unreviewed Hosts left out (`--all` shows them). Exit 1 when `--find` matches nothing |
-| `info NAME --json` | `{version, host: Host, group}` or `{version, resource: resource, group}`; `group` is `{name, title, description}`, or `null` for a resource with none |
-| `resources --json` | `{version, resources: [resource]}`. Exit 1 when `--only` or `--find` matches nothing |
+| `hosts NAME --json` | `{version, host: Host, group}` or `{version, resource: resource, group}`; `group` is `{name, title, description}`, or `null` for a resource with none |
+| `hosts --resources --json` | `{version, resources: [resource]}`. Exit 1 when `--only` or `--find` matches nothing |
 | `check --json` | `{version, hosts: [{name, ok, ssh, checks}], mesh, ok}`: `checks` is `{ssh: bool, SERVICE: bool, ...}`, `ssh` says what was tested (`login` with this Box's key, `port` for a password-only Host). `mesh` is the drift (the plan `roster mesh --dry-run` would show), or `null` with no Mesh or with `--only`. Exit 1 unless `ok` |
 | `check HOST --json` | `{version, host, ok, steps: [{step, status, message, code?, fix?, details?, data?}]}`, as `host.check`: `status` is `ok`, `fail` or `skipped`. An unknown Host is a failed `inventory` step (code 2), not an error. Exit 1 unless `ok` |
 | `check --box --json` | `{version, checks: [{section, level, message, fix?, topic?}], ok}`, as `box.check`: `level` is `ok`, `warn` or `error`. Exit 1 if one is an `error` |
@@ -487,8 +515,8 @@ The read commands take `--json`, for scripts, other tools and Claude: `hosts` (w
 | `inv which --json` | `{version, path, name, exists}`: the `roster.yml` roster uses and its name among the named Inventories (`null` if it isn't one). Exit 1 if it isn't there |
 | `mesh status --json` | `{version, links, excluded, reach, members, pending, cut_pending, out_of_date}`, as `mesh.status` |
 | `mesh --dry-run --json` | `{version, applied: false, links, hosts: [{host, changes, status, error?}], excluded, reach, pending, already, warnings}`, as `mesh.plan`: it connects to the Hosts, one at a time, and changes nothing. Exit 1 if a Host is `pending` (didn't answer). `--json` goes with `status` and `--dry-run` only, never with an apply or `cut` |
-| `providers --json` | `{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok}`: `tool` is the CLI it runs (`null` for none, and `installed` `null` with it), `used_by` the groups whose Logins use it, `unknown` the providers `roster.yml` names that aren't set up. Exit 1 if there's one |
-| `auth-check --json` | `{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}`: one row per Login reference and group; `status` is `ok` (a value was found; it isn't tested against a Host), `fail` (with `error`) or `ask` (`prompt`). Exit 1 if one failed |
+| `vault status --json` | `{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok, vault: [{section, level, message, fix?, topic?}], last_sync: {provider: time}}`: `vault` is the Vault section of `check --box --json`, `last_sync` when `roster vault sync` last synced each provider that syncs (`null`: never); `tool` is the CLI it runs (`null` for none, and `installed` `null` with it), `used_by` the groups whose Logins use it, `unknown` the providers `roster.yml` names that aren't set up. Exit 1 if there's one |
+| `check --auth --json` | `{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}`: one row per Login reference and group; `status` is `ok` (a value was found; it isn't tested against a Host), `fail` (with `error`) or `ask` (`prompt`). Exit 1 if one failed |
 
 Wrapped and cut short here (`...`); roster prints each document on one line:
 
@@ -501,7 +529,7 @@ $ roster hosts --only esx-02 --json
 $ roster check esx-02 --json
 {"version": 1, "host": "esx-02", "ok": false, "steps": [{"step": "inventory", "status": "ok", "message": "root@10.0.0.5:22 (password login)"},
   ..., {"step": "tcp", "status": "fail", "code": 42, "message": "...", "fix": "..."}, ...]}
-$ roster info nope --json
+$ roster hosts nope --json
 {"version": 1, "error": {"code": 2, "message": "unknown host or resource 'nope'", "fix": null}}   (on stderr, exit 1)
 ```
 
@@ -511,12 +539,12 @@ $ roster info nope --json
 
 | Shell | Line |
 |---|---|
-| bash (`~/.bashrc`) | `eval "$(roster completion bash)"` |
-| zsh (`~/.zshrc`, after `compinit`) | `eval "$(roster completion zsh)"` |
-| fish | `roster completion fish > ~/.config/fish/completions/roster.fish` (once) |
-| PowerShell (`$PROFILE`) | `roster completion powershell \| Out-String \| Invoke-Expression` |
+| bash (`~/.bashrc`) | `eval "$(roster help --completion bash)"` |
+| zsh (`~/.zshrc`, after `compinit`) | `eval "$(roster help --completion zsh)"` |
+| fish | `roster help --completion fish > ~/.config/fish/completions/roster.fish` (once) |
+| PowerShell (`$PROFILE`) | `roster help --completion powershell \| Out-String \| Invoke-Expression` |
 
-Each script is short: on every Tab it asks roster (`roster __complete`, hidden) what fits, and roster answers from its own command list, so a new command or option completes without a new script. Names come from the local `roster.yml` (the one `-c` or `--inv` on that line picks, else the usual lookup) and the named Inventories' list, read as plain YAML: no network, no vault, nothing written. A missing or broken `roster.yml` completes no names, and no error is shown. A path (`-c`, `inv add NAME PATH`) is the shell's own file completion, and the new name in `inv add NAME` completes nothing (an existing one would only clash).
+Each script is short: on every Tab it asks roster (`roster __complete`, hidden) what fits, and roster answers from its own command list, so a new command or option completes without a new script. Names come from the local `roster.yml` (the one `-c` or `--inv` on that line picks, else the usual lookup) and the named Inventories' list, read as plain YAML: no network, no vault, nothing written. A missing or broken `roster.yml` completes no names, and no error is shown. A path (`-c`, `inv add NAME PATH`) is the shell's own file completion, and the new name in `inv add NAME` completes nothing (an existing one would only clash). Only the commands you type are offered: not `serve` or `askpass`, and not the [old names](#old-command-names). An rc line from an older `install.sh` (`roster completion bash`) still works, silently; `./update.sh` rewrites roster's own marked line to `roster help --completion bash`.
 
 ## Files
 
@@ -529,6 +557,7 @@ Each script is short: on every Tab it asks roster (`roster __complete`, hidden) 
 | `~/.ssh/roster_known_hosts` | Host keys recorded on first contact (a named Inventory's: `~/.ssh/roster_known_hosts-NAME`) |
 | `~/.ssh/config.d/roster` | The SSH config entries `roster setup` and `roster sync` write (a named Inventory's: `~/.ssh/roster-inventories/NAME`) |
 | `~/.ssh/config.d/roster.inventories` | With named Inventories: what `~/.ssh/config` includes, every Inventory's Hosts with the active one's first (a name an earlier one has is left out) |
+| `~/.config/roster/vault-sync/PROVIDER.json` | What `roster vault sync` compares against (0600): each login item's id and revision date and when it was taken, never a name or value ([The vault isn't watched](#the-vault-isnt-watched-roster-vault-sync)) |
 | `~/.config/roster/inventories.json` | The named Inventories and which one is active (`roster inv`) |
 | `ROSTER.md`, `CLAUDE.md`, `.claude/settings.json` | What Claude reads, written next to `roster.yml` by `setup` and `sync` |
 | `~/.config/roster/mesh.json` | What `roster mesh` couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box (a named Inventory's: `~/.config/roster/mesh-NAME.json`) |
@@ -568,7 +597,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 | `2` | Wrong arguments |
 | `130` | Interrupted with Ctrl+C |
 
-With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster bw` with `bw`'s. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `--find-leftovers`/`--remove-leftovers` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
+With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, and `roster vault bw` with `bw`'s. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `--find-leftovers`/`--remove-leftovers` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
 
 ## Examples
 
@@ -577,14 +606,14 @@ roster init                              # write a commented roster.yml to start
 roster init --blank                      # ... or a short, empty one (--inventory ssh-config: your ~/.ssh/config's Hosts)
 roster setup --dry-run                   # which hosts would get this box's key
 roster hosts --find esx                  # search names, titles, types, addresses
-roster info esx-02                       # everything about one host
+roster hosts esx-02                      # everything about one host
 roster check esx-02                      # why a Session to esx-02 would or wouldn't open
 roster check --box                       # this Box's health: roster.yml, ssh, vault, infra repo
 roster run esx-02 -- uptime              # run a command with the stored login
 roster web esx-02 GET /api/status        # an HTTP request, logged in
 roster add nas-01 --ip 10.0.5.50 --auth bw:nas-01 --setup   # one Host you know, then set it up
 roster discover 10.0.5.0/24              # scan a network, preview only
-roster reveal lab-guest --wifi | qrencode -t ansiutf8
+roster vault reveal lab-guest --wifi | qrencode -t ansiutf8
 ```
 
 ## How Claude uses it
@@ -598,11 +627,11 @@ roster reveal lab-guest --wifi | qrencode -t ansiutf8
   - leave unreviewed hosts alone,
   - run `roster check NAME --json` when a host doesn't respond, and report which step fails.
 
-  It also tells Claude to use `--json` (`roster hosts --json`, `roster info NAME --json`, `roster check HOST --json`) when it needs to read roster's data rather than show it.
+  It also tells Claude to use `--json` (`roster hosts --json`, `roster hosts NAME --json`, `roster check HOST --json`) when it needs to read roster's data rather than show it.
 - **`CLAUDE.md`** gets an `@ROSTER.md` line added, and its existing content is kept.
 - **`.claude/settings.json`** gets deny rules for reading and editing `~/.ssh`. These are a guardrail, not a wall.
 
-For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster bw …` runs other `bw` commands with it, read-only unless `--write` ([`roster bw`](#roster-bw)). roster ignores the file, with a warning, unless it's yours alone: a plain file, not a symlink, owned by you, that only you can read. `bw lock` ends the session, and the file goes stale with it.
+For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster vault bw …` runs other `bw` commands with it, read-only unless `--write` ([`roster vault bw`](#roster-vault-bw)). roster ignores the file, with a warning, unless it's yours alone: a plain file, not a symlink, owned by you, that only you can read. `bw lock` ends the session, and the file goes stale with it.
 
 For password-only gear, start Claude from a shell where your password manager is unlocked, for example `export BW_SESSION=$(bw unlock --raw)`. `roster run` can then fetch the password without Claude ever seeing it.
 

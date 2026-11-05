@@ -1,4 +1,4 @@
-"""Shell completion (T214): `roster completion SHELL` prints a thin script for that shell, and the script asks the hidden
+"""Shell completion (T214): `roster help --completion SHELL` prints a thin script for that shell, and the script asks the hidden
 helper `roster __complete SHELL :CURRENT WORD...` what fits. The helper reads only the local roster.yml and the named
 Inventories' list: no network, no vault, and a missing or broken file completes nothing."""
 
@@ -46,13 +46,26 @@ def test_a_host_argument_completes_host_names(capsys, config):
     assert complete(capsys, "check", "") == ["db-01", "web-01", "web-02"]
 
 
-def test_info_takes_a_host_or_a_resource(capsys, config):
-    assert complete(capsys, "info", "") == ["db-01", "lab-guest", "web-01", "web-02"]
-    assert complete(capsys, "info", "web-01", "") == []        # the other words are fuzzy search words
+def test_hosts_name_takes_a_host_or_a_resource(capsys, config):
+    assert complete(capsys, "hosts", "") == ["db-01", "lab-guest", "web-01", "web-02"]
+    assert complete(capsys, "hosts", "web-01", "") == []        # the other words are fuzzy search words
 
 
-def test_reveal_takes_only_resources(capsys, config):
-    assert complete(capsys, "reveal", "") == ["lab-guest"]
+def test_vault_reveal_takes_only_resources(capsys, config):
+    assert complete(capsys, "vault", "") == ["bw", "reveal", "status", "sync"]
+    assert complete(capsys, "vault", "reveal", "") == ["lab-guest"]
+
+
+def test_the_internal_commands_and_the_old_names_are_not_offered(capsys):
+    offered = complete(capsys, "")
+    assert "serve" not in offered and "askpass" not in offered
+    assert not {"info", "bw", "providers", "auth-check", "man", "completion", "resources", "reveal"} & set(offered)
+    assert len(offered) == 14
+
+
+def test_help_completes_the_commands(capsys):
+    assert complete(capsys, "help", "va") == ["vault"]
+    assert complete(capsys, "help", "--completion", "") == ["bash", "fish", "powershell", "zsh"]
 
 
 def test_only_completes_the_last_name_of_a_comma_list(capsys, config):
@@ -62,7 +75,7 @@ def test_only_completes_the_last_name_of_a_comma_list(capsys, config):
 
 
 def test_mesh_completes_its_actions_then_a_host(capsys, config):
-    assert complete(capsys, "mesh", "") == ["cut", "status"]
+    assert complete(capsys, "mesh", "") == ["cut", "leftovers", "status"]
     assert complete(capsys, "mesh", "cut", "d") == ["db-01"]
     assert complete(capsys, "mesh", "--rotate", "d") == ["db-01"]
 
@@ -70,7 +83,7 @@ def test_mesh_completes_its_actions_then_a_host(capsys, config):
 def test_options_complete_after_a_dash(capsys):
     assert complete(capsys, "hosts", "--l") == ["--long"]
     assert "--config" in complete(capsys, "--c")
-    assert complete(capsys, "completion", "") == ["bash", "fish", "powershell", "zsh"]
+    assert complete(capsys, "help", "--completion", "") == ["bash", "fish", "powershell", "zsh"]
 
 
 def test_a_command_before_its_options_and_after_roster_s_own(capsys, config, tmp_path):
@@ -84,12 +97,12 @@ def test_a_command_before_its_options_and_after_roster_s_own(capsys, config, tmp
 def test_nothing_after_double_dash_or_for_free_text(capsys, config):
     assert complete(capsys, "run", "web-01", "--", "") == []
     assert complete(capsys, "hosts", "--find", "") == []
-    assert complete(capsys, "bw", "") == []
+    assert complete(capsys, "vault", "bw", "") == []
 
 
 def test_paths_are_left_to_the_shell(capsys):
     assert complete(capsys, "-c", "") == [":files"]
-    assert complete(capsys, "man", "--prefix", "") == [":dirs"]
+    assert complete(capsys, "help", "--man", "--prefix", "") == [":dirs"]
 
 
 def test_inventory_names_complete(capsys, tmp_path):
@@ -140,7 +153,7 @@ def test_a_malformed_call_prints_nothing(capsys):
 
 
 def test_the_other_shells_get_descriptions(capsys):
-    assert complete(capsys, "ho", sh="fish") == ["hosts\tlist hosts"]
+    assert complete(capsys, "ho", sh="fish")[0].startswith("hosts\tlist the Hosts and resources")
     assert complete(capsys, "hosts", "--lo", sh="zsh")[0].startswith("--long\tfull table")
 
 
@@ -181,11 +194,11 @@ def shell_env(config, tmp_path):
     return {**os.environ, "PATH": f"{shim(tmp_path)}{os.pathsep}{os.environ['PATH']}"}
 
 
-def test_roster_completion_prints_the_script_for_a_shell(capsys):
-    assert main(["completion", "bash"]) == 0
+def test_roster_help_completion_prints_the_script_for_a_shell(capsys):
+    assert main(["help", "--completion", "bash"]) == 0
     assert "complete -F _roster roster" in capsys.readouterr().out
     with pytest.raises(SystemExit):
-        main(["completion", "tcsh"])
+        main(["help", "--completion", "tcsh"])
 
 
 def run_shell(argv, env, tmp_path, **kw):
@@ -237,7 +250,7 @@ def test_fish_completes_a_command_and_a_host(shell_env, tmp_path):
         r = run_shell(["fish", "--no-config", "-c", f"source ./roster.fish; complete -C '{line}'"], shell_env, tmp_path)
         assert r.returncode == 0, r.stderr
         return r.stdout.splitlines()
-    assert fish("roster ho") == ["hosts\tlist hosts"]
+    assert [x.split("\t")[0] for x in fish("roster ho")] == ["hosts"]
     assert [x.split("\t")[0] for x in fish("roster run web")] == ["web-01", "web-02"]
 
 

@@ -125,29 +125,29 @@ def test_hosts_json_filters(write_config, capsys):
 
 def test_info_json_is_the_host_and_its_group(write_config, capsys):
     write_config(INVENTORY)
-    rc, doc, _ = run(capsys, "info", "lab", "box")             # fuzzy words, as without --json
+    rc, doc, _ = run(capsys, "hosts", "lab", "box")             # fuzzy words, as without --json
     assert rc == 0 and doc["host"]["name"] == "box" and "resource" not in doc
     assert doc["group"] == {"name": "lab", "title": "The lab", "description": ""}
-    rc, doc, _ = run(capsys, "info", "guest")
+    rc, doc, _ = run(capsys, "hosts", "guest")
     assert rc == 0 and doc["resource"]["ssid"] == "Guest" and doc["resource"]["auth"] == "env:"
     assert doc["group"]["name"] == "lab"
 
 
 def test_resources_json(write_config, capsys):
     write_config(INVENTORY)
-    rc, doc, _ = run(capsys, "resources")
+    rc, doc, _ = run(capsys, "hosts", "--resources")
     assert rc == 0 and [r["name"] for r in doc["resources"]] == ["guest"]
-    rc, doc, _ = run(capsys, "resources", "--find", "nothing")
+    rc, doc, _ = run(capsys, "hosts", "--resources", "--find", "nothing")
     assert rc == 1 and doc["resources"] == []
     write_config("groups: {lab: {user: ops, hosts: {box: {ip: 10.0.0.5}}}}\n")
-    assert run(capsys, "resources")[:2] == (0, {"version": JSON_VERSION, "resources": []})
+    assert run(capsys, "hosts", "--resources")[:2] == (0, {"version": JSON_VERSION, "resources": []})
 
 
 # ---------------------------------------------------------------- errors: JSON on stderr, nothing on stdout
 
 def test_an_unknown_host_is_a_json_error_on_stderr(write_config, capsys):
     write_config(INVENTORY)
-    rc, doc, err = run(capsys, "info", "nope")
+    rc, doc, err = run(capsys, "hosts", "nope")
     assert rc == 1 and doc is None
     e = json.loads(err)
     assert e["version"] == JSON_VERSION and e["error"]["code"] == 2 and "unknown host" in e["error"]["message"]
@@ -177,7 +177,7 @@ def test_a_usage_error_is_json_with_exit_2(write_config, capsys):
 def test_reveal_has_no_json(write_config, capsys):
     write_config(INVENTORY)
     with pytest.raises(SystemExit) as e:
-        main(["reveal", "guest", "--json"])
+        main(["vault", "reveal", "guest", "--json"])
     out, _ = capsys.readouterr()
     assert e.value.code == 2 and out == ""
 
@@ -250,7 +250,7 @@ def test_mesh_status_json(local, capsys):
 
 
 def test_providers_json(local, capsys):
-    rc, doc, _ = run(capsys, "providers")
+    rc, doc, _ = run(capsys, "vault", "status")
     assert rc == 0 and doc["unknown"] == [] and doc["ok"] is True
     by_name = {p["name"]: p for p in doc["providers"]}
     assert by_name["cmd"]["used_by"] == ["lab"] and by_name["env"]["used_by"] == ["lab"]
@@ -260,7 +260,7 @@ def test_providers_json(local, capsys):
 
 
 def test_auth_check_json(local, capsys):
-    rc, doc, _ = run(capsys, "auth-check")
+    rc, doc, _ = run(capsys, "check", "--auth")
     assert rc == 0 and doc["ok"] is True
     assert {(x["group"], x["auth"], x["status"]) for x in doc["logins"]} == {("lab", "cmd:", "ok"),
                                                                             ("lab", "env:", "ok")}
@@ -270,7 +270,7 @@ def test_auth_check_json(local, capsys):
 
 def test_auth_check_json_says_which_failed(local, capsys, monkeypatch):
     monkeypatch.delenv("LAB_PW")
-    rc, doc, _ = run(capsys, "auth-check")
+    rc, doc, _ = run(capsys, "check", "--auth")
     failed = [x for x in doc["logins"] if x["status"] == "fail"]
     assert rc == 1 and doc["ok"] is False and [x["auth"] for x in failed] == ["env:"] and failed[0]["error"]
 
@@ -321,10 +321,10 @@ def test_no_secret_value_ever_appears_in_json_output(write_config, fakes, monkey
     assert main(["sync"]) == 0
     capsys.readouterr()
     commands = [["hosts", "--all"], ["hosts", "--long"], ["resources"], ["providers"], ["auth-check"], ["check"],
-                ["check", "--box"], ["mesh", "status"], ["mesh", "--dry-run"], ["info", "nope"], ["check", "nope"],
+                ["check", "--box"], ["mesh", "status"], ["mesh", "--dry-run"], ["hosts", "nope"], ["check", "nope"],
                 ["discover", "10.0.0.0/29", "--ports", "443"], ["discover", "10.0.0.0/8"]]
     for name in ["by-bw", "by-op", "by-env", "by-cmd", "guest", "portal"]:
-        commands.append(["info", name])
+        commands.append(["hosts", name])
     for name in ["by-bw", "by-op", "by-env", "by-cmd"]:
         commands.append(["check", name])
     seen = []

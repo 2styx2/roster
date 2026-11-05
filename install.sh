@@ -437,7 +437,7 @@ if (( ${#missing[@]} )); then
 else
     done_stage
 fi
-if ! have man; then warn "man not installed (optional: for man roster; roster man shows the page without it)"; fi
+if ! have man; then warn "man not installed (optional: for man roster; roster help --man shows the page without it)"; fi
 if ! have jq || ! have nmap || ! have man; then
     opt=(); have jq || opt+=(jq); have nmap || opt+=(nmap)
     if ! have man && ! have brew; then opt+=(man-db); fi       # macOS has man; man-db is its name elsewhere
@@ -497,15 +497,15 @@ if (( keep )) || step "install the man page (man roster)" sh -c 'mkdir -p "$(dir
     fi
     if (( DRY )) || ! have man; then :
     elif [[ $(PATH="$bindir:$USER_PATH" MANPATH="${MANPATH:-}" "$manbin" -w roster 2>/dev/null) == "$page"* ]]; then
-        if (( minimized )); then warn "this system is minimized: man shows no page until you run sudo unminimize (roster man works now)"
+        if (( minimized )); then warn "this system is minimized: man shows no page until you run sudo unminimize (roster help --man works now)"
         else ok "man roster finds it"; fi
     elif (( minimized )); then
-        warn "this system is minimized: for man roster, install man-db and run sudo unminimize (roster man works now)"
+        warn "this system is minimized: for man roster, install man-db and run sudo unminimize (roster help --man works now)"
     else
         warn "man doesn't look in ${mandir/#$HOME/\~} by itself: stage 6 adds it to MANPATH"; NEED_MANPATH=1
     fi
 else
-    warn "no man page; roster man shows it"
+    warn "no man page; roster help --man shows it"
 fi
 case ":$USER_PATH:" in
     *":$bindir:"*) ;;
@@ -696,8 +696,8 @@ fi
 (( COMPLETION )) || choose no-completion          # update.sh leaves it off too
 if (( ! COMPLETION )) || chose no-completion; then
     (( COMPLETION )) || info "--no-completion: kept in ${CHOICES/#$HOME/\~} (delete the line to have it turned on)"
-    info "no Tab completion (to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc;"
-    info "roster completion zsh, fish or powershell for those)"
+    info "no Tab completion (to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc;"
+    info "roster help --completion zsh, fish or powershell for those)"
 else
     lib=""
     for f in "$here/install-lib.sh" "$src/install-lib.sh"; do [[ -f $f ]] && { lib=$f; break; }; done
@@ -705,7 +705,7 @@ else
     if [[ -n $lib ]] && source "$lib"; then turn_on_completion
     else
         warn "no install-lib.sh beside install.sh: Tab completion left off"
-        info "to turn it on: eval \"\$(roster completion bash)\" in ~/.bashrc (roster completion zsh, fish or powershell for those)"
+        info "to turn it on: eval \"\$(roster help --completion bash)\" in ~/.bashrc (roster help --completion zsh, fish or powershell for those)"
     fi
 fi
 
@@ -753,10 +753,10 @@ if [[ -z $CFG ]] || ! have roster; then
 else
     [[ -f $SESSION_FILE ]] && export BW_SESSION="${BW_SESSION:-$(cat "$SESSION_FILE")}"
     cd "$(dirname "$CFG")" 2>/dev/null || (( DRY )) || exit 1      # a dry run made no folder
-    if ask "Check that every vault reference in roster.yml can be found (roster auth-check)?" Y; then
-        if (( DRY )); then info "would run: roster auth-check"
+    if ask "Check that every vault reference in roster.yml can be found (roster check --auth)?" Y; then
+        if (( DRY )); then info "would run: roster check --auth"
         else
-            out=$(roster auth-check 2>&1)
+            out=$(roster check --auth 2>&1)
             fails=$(grep -c '^  FAIL' <<<"$out")
             oks=$(grep -c '^  ok' <<<"$out")
             reasons=$(grep -A1 '^  FAIL' <<<"$out" | grep -v '^  FAIL\|^--' | sed 's/^ *//' | sort -u)

@@ -103,27 +103,27 @@ def test_list_filters(capsys, lab):
 
 
 def test_info_shows_every_field(capsys, lab):
-    assert main(["info", "guest-wifi"]) == 0
+    assert main(["hosts", "guest-wifi"]) == 0
     out = capsys.readouterr().out
     for label in ("name", "type", "title", "description", "group", "user", "auth", "SSID", "security", "hidden"):
         assert any(line.startswith(f"{label} ") for line in out.splitlines()), label
-    assert "lab (Lab)" in out and "roster reveal guest-wifi" in out and SECRET not in out
+    assert "lab (Lab)" in out and "roster vault reveal guest-wifi" in out and SECRET not in out
 
 
 def test_info_finds_resources_by_words_and_hosts_still_work(capsys, lab):
-    assert main(["info", "portal"]) == 0 and "vendor-portal" in capsys.readouterr().out
-    assert main(["info", "box"]) == 0 and "10.0.0.1" in capsys.readouterr().out
+    assert main(["hosts", "portal"]) == 0 and "vendor-portal" in capsys.readouterr().out
+    assert main(["hosts", "box"]) == 0 and "10.0.0.1" in capsys.readouterr().out
 
 
 def test_reveal(capsys, lab):
-    assert main(["reveal", "guest-wifi"]) == 0
+    assert main(["vault", "reveal", "guest-wifi"]) == 0
     assert capsys.readouterr().out == SECRET + "\n"
-    main(["reveal", "guest-wifi", "--wifi"])
+    main(["vault", "reveal", "guest-wifi", "--wifi"])
     assert capsys.readouterr().out == "WIFI:T:WPA;S:Lab-Guest;P:guest\\;pass\\:word;;\n"
     with pytest.raises(SystemExit, match="is a account, not wifi"):
-        main(["reveal", "vendor-portal", "--wifi"])
+        main(["vault", "reveal", "vendor-portal", "--wifi"])
     with pytest.raises(SystemExit, match="unknown resource 'box'"):
-        main(["reveal", "box"])
+        main(["vault", "reveal", "box"])
 
 
 def test_wifi_uri_open_and_hidden(write_config):
@@ -141,5 +141,5 @@ def test_roster_md_lists_resources_without_values(isolated, lab):
     write_claude_files(load_config(isolated["work"] / "roster.yml"))
     md = (isolated["work"] / "ROSTER.md").read_text()
     assert "## Resources" in md and "| guest-wifi | wifi | lab | SSID Lab-Guest, security wpa2 |" in md
-    assert "Never run `roster reveal` yourself" in md or "reveal` yourself" in md
+    assert "Never run `roster vault reveal` yourself" in md or "reveal` yourself" in md
     assert SECRET not in md and "key-123" not in md

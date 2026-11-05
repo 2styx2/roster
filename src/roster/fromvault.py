@@ -26,7 +26,7 @@ from . import addhost, providers
 from .common import NAME_RE, NotPrivate, die, read_private, replace_file, say, user_config_dir
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
-UNLOCK = {"bw": "roster bw --write unlock (then export BW_SESSION=... as it says), or put the session in "
+UNLOCK = {"bw": "roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put the session in "
                 "~/.config/roster/bw-session: (umask 077; bw unlock --raw > ~/.config/roster/bw-session)",
           "kp": "KeePassXC has no session roster can reuse: give the address and user yourself (roster add NAME "
                 "--ip ADDR --user USER --auth kp:ENTRY), or unlock it in the app",
@@ -156,7 +156,7 @@ def problem(provider, e):
                                      "its master password", fix=UNLOCK.get(provider, "unlock it, then run it again"))
     if isinstance(e, providers.Unsupported):
         return Problem(NO_LISTABLE_VAULT, str(e))
-    return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster auth-check tests the vault")
+    return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster check --auth tests the vault")
 
 
 def plain(text):

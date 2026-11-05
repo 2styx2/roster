@@ -1,4 +1,4 @@
-"""roster(1): the man page, generated from the parser and docs/cli-reference.md, and `roster man`."""
+"""roster(1): the man page, generated from the parser and docs/cli-reference.md, and `roster help --man`."""
 
 import os
 import shutil
@@ -22,7 +22,7 @@ def all_options(parser):
     for a in parser._actions:
         if a.option_strings and a.dest != "help":
             yield "", a.option_strings[-1]
-    for name, sub in manpage.subcommands(parser).items():
+    for name, sub in manpage.commands(parser).items():
         yield name, name
         for a in sub._actions:
             if a.option_strings and a.dest != "help":
@@ -45,14 +45,14 @@ def test_page_names_every_command_and_option():
 
 def test_every_option_says_what_it_does():
     parser = build_parser()
-    silent = [f"{name} {a.option_strings or a.dest}" for name, sub in manpage.subcommands(parser).items()
+    silent = [f"{name} {a.option_strings or a.dest}" for name, sub in manpage.commands(parser).items()
               for a in sub._actions if a.dest != "help" and not a.help]
     assert not silent
 
 
 def test_cli_reference_lists_exactly_the_parsers_commands():
     table = list(manpage.command_docs(REFERENCE.read_text()))
-    assert sorted(table) == sorted(manpage.subcommands(build_parser()))
+    assert sorted(table) == sorted(manpage.commands(build_parser()))
 
 
 def test_a_command_missing_from_cli_reference_stops_the_generator():
@@ -75,7 +75,7 @@ def test_groff_renders_it_without_warnings():
     assert r.returncode == 0 and r.stderr == ""
 
 
-# ---------------------------------------------------------------- `roster man --install`: next to the roster command
+# ---------------------------------------------------------------- `roster help --man --install`: next to the roster command
 
 @posix_shell
 def test_man_install_puts_the_page_next_to_the_roster_command(tmp_path, monkeypatch, capsys):
@@ -84,27 +84,27 @@ def test_man_install_puts_the_page_next_to_the_roster_command(tmp_path, monkeypa
     (bindir / "roster").write_text("#!/bin/sh\n")
     (bindir / "roster").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
-    assert main(["man", "--install"]) == 0
+    assert main(["help", "--man", "--install"]) == 0
     page = tmp_path / "prefix" / "share" / "man" / "man1" / "roster.1"
     assert page.read_text() == manpage.PAGE.read_text()
     assert str(page) in capsys.readouterr().out
 
 
 def test_man_install_into_a_given_prefix(tmp_path):
-    assert main(["man", "--install", "--prefix", str(tmp_path / "opt")]) == 0
+    assert main(["help", "--man", "--install", "--prefix", str(tmp_path / "opt")]) == 0
     assert (tmp_path / "opt" / "share" / "man" / "man1" / "roster.1").is_file()
 
 
 def test_man_install_without_roster_on_path_uses_the_users_local_prefix(isolated, monkeypatch):
     monkeypatch.setenv("PATH", str(isolated["work"]))      # nothing on it (Windows' lookup never asks shutil.which)
-    assert main(["man", "--install"]) == 0
+    assert main(["help", "--man", "--install"]) == 0
     assert (isolated["home"] / ".local" / "share" / "man" / "man1" / "roster.1").is_file()
 
 
 @pytest.mark.skipif(not shutil.which("man"), reason="man not installed")
 def test_man_finds_the_installed_page_through_path(tmp_path):
     """No MANPATH: man maps PREFIX/bin on PATH to PREFIX/share/man, as it does for ~/.local/bin."""
-    assert main(["man", "--install", "--prefix", str(tmp_path / "p")]) == 0
+    assert main(["help", "--man", "--install", "--prefix", str(tmp_path / "p")]) == 0
     (tmp_path / "p" / "bin").mkdir()
     env = {k: v for k, v in os.environ.items() if k != "MANPATH"}
     env["PATH"] = f"{tmp_path / 'p' / 'bin'}{os.pathsep}{env['PATH']}"
@@ -120,7 +120,7 @@ def test_the_wheel_carries_the_page_as_package_data_and_for_the_prefix(tmp_path)
                    capture_output=True)
     (wheel,) = tmp_path.glob("roster-*.whl")
     names = zipfile.ZipFile(wheel).namelist()
-    assert "roster/roster.1" in names                                    # `roster man` reads this
+    assert "roster/roster.1" in names                                    # `roster help --man` reads this
     assert any(n.endswith(".data/data/share/man/man1/roster.1") for n in names)    # pip into a prefix
 
 
@@ -146,7 +146,7 @@ def test_man_install_into_a_prefix_it_cant_write_says_what_to_do(tmp_path, capsy
     prefix.mkdir()
     prefix.chmod(0o555)
     try:
-        assert main(["man", "--install", "--prefix", str(prefix)]) != 0
+        assert main(["help", "--man", "--install", "--prefix", str(prefix)]) != 0
     finally:
         prefix.chmod(0o755)
     err = capsys.readouterr().err

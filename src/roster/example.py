@@ -21,7 +21,7 @@ EXAMPLE_CONFIG = """\
 # auth = how setup gets the password the FIRST time, to install this box's SSH key.
 #        After that the key is used and the password is never needed again
 #        (except for hosts with enroll: false, which always log in by password).
-#        The format is PROVIDER:WHAT. `roster providers` lists every provider you have.
+#        The format is PROVIDER:WHAT. `roster vault status` lists every provider you have.
 #   prompt                 ask once per group when you run setup
 #   agent                  no password; an SSH key you already have (ssh-agent) gets in
 #   env:VAR_NAME           an environment variable
@@ -146,7 +146,7 @@ groups:
 #                default wpa2), hidden (true/false)
 #   account      url (required) - a website, portal or SaaS login
 #   secret       nothing extra - an API key, license key, PSK
-# `roster resources` lists them, `roster reveal NAME` prints the secret for a person to use.
+# `roster hosts --resources` lists them, `roster vault reveal NAME` prints the secret for a person to use.
 resources:
   office-wifi:
     type: wifi

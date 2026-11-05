@@ -136,7 +136,7 @@ The left pane listing open Sessions, the user's Folders and the Inventory tree. 
 _Avoid_: tab strip, session manager, explorer
 
 **Host details**:
-The side panel, opposite the Sidebar, that shows what `roster info HOST` shows: address, type, product, description, services, the Vault item each Login uses (by name), enrolled and reviewed. A **web service** is one of a Host's services with an http or https URL; the panel and `:open SERVICE` open it in the default browser.
+The side panel, opposite the Sidebar, that shows what `roster hosts HOST` shows: address, type, product, description, services, the Vault item each Login uses (by name), enrolled and reviewed. A **web service** is one of a Host's services with an http or https URL; the panel and `:open SERVICE` open it in the default browser.
 _Avoid_: inspector, properties, host info (`:info` alone is the app's own info)
 
 **Folder**:

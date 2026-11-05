@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import __version__, boxsync, clihelp, jsonout, mesh
+from . import __version__, aliases, boxsync, clihelp, jsonout, mesh
 from .addhost import cmd_add
 from .claude import write_claude_files
 from .common import (
@@ -30,7 +30,7 @@ from .common import (
     ssh_config_file,
     tcp_ok,
 )
-from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
+from .completion import COMMANDS, DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
@@ -362,14 +362,14 @@ def mesh_cut_all(cfg, args):
 
 
 def mesh_leftovers(cfg, args):
-    """`roster mesh --find-leftovers` / `--remove-leftovers` (T193, #372's review B1): Mesh entries on the Hosts that
-    this roster.yml doesn't ask for: this Box's own, and an older roster's (no Box in the tag, T199), which may be
-    another Box's Mesh. Never automatic."""
+    """`roster mesh leftovers [--remove]` (was --find-leftovers / --remove-leftovers; T193, #372's review B1): Mesh
+    entries on the Hosts that this roster.yml doesn't ask for: this Box's own, and an older roster's (no Box in the
+    tag, T199), which may be another Box's Mesh. Never automatic."""
     r = mesh.find_leftovers(cfg, say=say)
     older = any(f.get("older") for f in r["hosts"].values())
-    if args.remove_leftovers and older and (others := mesh.others_here()):
+    if args.remove and older and (others := mesh.others_here()):
         die(f"another Inventory's Mesh state is on this Box ({', '.join(others)}), and an older roster's tag doesn't "
-            "say which Inventory a line is from, so --remove-leftovers could take that Inventory's Mesh: remove them "
+            "say which Inventory a line is from, so mesh leftovers --remove could take that Inventory's Mesh: remove them "
             "by hand, or `roster mesh cut --all` from each Inventory when uninstalling")
     for host, found in r["hosts"].items():
         say(f"{host}: {', '.join(mesh.leftover_words(found))}")
@@ -379,8 +379,8 @@ def mesh_leftovers(cfg, args):
         say("no Mesh entries this roster.yml doesn't ask for" + (" on the Hosts that answered" if r["pending"] else ""))
         return 1 if r["pending"] else 0
     say(f"\nMesh entries this roster.yml doesn't ask for, on {plural(len(r['hosts']), 'Host')}. {mesh.leftovers_whose(r)}.")
-    if not args.remove_leftovers:
-        say("`roster mesh --remove-leftovers` removes them, once you know they're leftovers (it asks first)")
+    if not args.remove:
+        say("`roster mesh leftovers --remove` removes them, once you know they're leftovers (it asks first)")
         return 1 if r["pending"] else 0
     if not args.yes:
         ans = input(f"Remove them from {plural(len(r['hosts']), 'Host')}? " + (
@@ -413,7 +413,7 @@ def cmd_mesh(cfg, args):
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
         if not mesh.load_state()["known"]:         # T193: new here, or roster removed and installed again
             say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "
-                "Box's); `roster mesh --find-leftovers` looks on every Host and changes nothing")
+                "Box's); `roster mesh leftovers` looks on every Host and changes nothing")
         return 0
     if args.action == "cut" and args.all:
         if args.target:
@@ -421,9 +421,9 @@ def cmd_mesh(cfg, args):
         return mesh_cut_all(cfg, args)
     if args.all:
         die("--all goes with cut: roster mesh cut --all")
-    if args.find_leftovers or args.remove_leftovers:
-        if args.action or args.target or args.dry_run or args.rotate:
-            die("--find-leftovers and --remove-leftovers go alone: roster mesh --find-leftovers")
+    if args.action == "leftovers":
+        if args.target or args.dry_run or args.rotate:
+            die("mesh leftovers takes no Host, --dry-run or --rotate: roster mesh leftovers [--remove] [-y]")
         return mesh_leftovers(cfg, args)
     if args.action == "cut":
         if not args.target:
@@ -764,14 +764,14 @@ def show_resource(cfg, r):
             g = cfg["groups"].get(v, {})
             v += f" ({g['title']})" if g.get("title") else ""
         say(f"{label:<12} {v if v != '' else '-'}")
-    say(f"{'secret':<12} " + (f"roster reveal {r['name']}" if r["auth"] else "none"))
+    say(f"{'secret':<12} " + (f"roster vault reveal {r['name']}" if r["auth"] else "none"))
     return 0
 
 
 def cmd_reveal(cfg, args):
     r = cfg["resources"].get(args.name)
     if not r:
-        die(f"unknown resource {args.name!r} (see `roster resources`)")
+        die(f"unknown resource {args.name!r} (see `roster hosts --resources`)")
     if args.wifi and r["type"] != "wifi":
         die(f"{r['name']} is a {r['type']}, not wifi")
     secret = ""
@@ -785,7 +785,8 @@ def cmd_reveal(cfg, args):
 
 
 def cmd_info(cfg, args):
-    h = find_host(cfg, args.host, resources=True)
+    """`roster hosts NAME` (was `roster info`)."""
+    h = find_host(cfg, args.name, resources=True)
     if args.json:
         g = cfg["groups"].get(h["group"], {})
         group = {"name": h["group"], "title": g.get("title", ""), "description": g.get("description", "")} \
@@ -1148,7 +1149,13 @@ def cmd_revoke_all(args):
 AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
 
 
-def cmd_providers(cfg, args):
+def cmd_vault_status(cfg, args):
+    """`roster vault status` (was `roster providers`): the providers here, their tools and which groups use them,
+    then each vault's state as `roster check --box`'s Vault section says it (health.vault, the one source) and when
+    `roster vault sync` last synced it."""
+    from . import health, vaultsync
+    checks = health.vault(cfg) if cfg else []
+    synced = {name: vaultsync.last_synced(name) for name in sorted(PROVIDERS) if PROVIDERS[name].get("sync")}
     used = {}
     for h in (cfg or {}).get("hosts", {}).values():
         for ref in {h["ssh"]["auth"], *(s["auth"] for s in h["services"].values())} - {None}:
@@ -1165,7 +1172,8 @@ def cmd_providers(cfg, args):
         rows.append({"name": "agent", "kind": "built-in", "help": AGENT_HELP, "tool": None, "installed": None,
                      "used_by": sorted(used.get("agent", ()))})
         from . import jsondocs
-        jsonout.emit(jsondocs.ProvidersDoc.model_validate({"providers": rows, "unknown": unknown, "ok": not unknown}))
+        jsonout.emit(jsondocs.ProvidersDoc.model_validate({"providers": rows, "unknown": unknown, "ok": not unknown,
+                                                           "vault": checks, "last_sync": synced}))
         return 1 if unknown else 0
     say("password providers (use as  auth: NAME:SPEC  in roster.yml):\n")
     for name in sorted(PROVIDERS):
@@ -1175,13 +1183,83 @@ def cmd_providers(cfg, args):
         groups = f"  - used by: {', '.join(sorted(used[name]))}" if name in used else ""
         say(f"  {name:<8} {p['kind']:<10} {p['help']}{installed}{groups}")
     say(f"  {'agent':<8} {'built-in':<10} {AGENT_HELP}")
+    if checks:
+        say("\nVault (as `roster check --box` says it)")
+        for c in checks:
+            say(f"  {c['level']:<5}  {c['message']}")
+            if c.get("fix"):
+                say(f"         fix: {c['fix']}")
+    uses = health.provider_uses(cfg) if cfg else {}
+    shown = [name for name in synced if name in uses]
+    if shown:
+        say("\nLast sync (the vault isn't watched: roster sees new or changed items after a sync)")
+    for name in shown:
+        when = synced[name]
+        say(f"  {name}: last synced {vaultsync.ago(when)}; run `roster vault sync` for what changed" if when else
+            f"  {name}: never synced by roster; run `roster vault sync`")
     if unknown:
         say(f"\nUNKNOWN providers used in roster.yml: {', '.join(unknown)}")
         return 1
     return 0
 
 
+def cmd_vault_sync(cfg, args):
+    """`roster vault sync`: each vault roster.yml uses that keeps a local copy, synced, and what changed since the last
+    sync (vaultsync): names and counts, never a value."""
+    from . import fromvault, vaultsync
+    used = sorted(p for p in fromvault.refs(cfg["path"]) if p in PROVIDERS and p not in ("env", "cmd", "prompt"))
+    if not used:
+        say("roster.yml's Logins use no vault: nothing to sync")
+        return 0
+    bad = 0
+    for p in used:
+        try:
+            r = vaultsync.sync(p, interactive=sys.stdin.isatty())
+        except RuntimeError as e:
+            bad += 1
+            say(f"  FAIL  {p}: {e}")
+            if p in fromvault.UNLOCK and isinstance(e, providers_locked()):
+                say(f"        fix: {fromvault.UNLOCK[p]}")
+            continue
+        if r is None:
+            say(f"  ok    {p}: keeps no local copy (it asks its own server or file each time), nothing to sync")
+        elif r["count"] is None:
+            say(f"  ok    {p}: synced")
+        elif r["first"]:
+            say(f"  ok    {p}: synced, {plural(r['count'], 'item')}; first sync, so changes are counted from now on")
+        elif not (r["added"] or r["changed"] or r["removed"]):
+            say(f"  ok    {p}: synced, no change since the last sync")
+        else:
+            parts = [f"{len(r[k])} {k}: {', '.join(r[k])}" for k in ("added", "changed") if r[k]]
+            parts += [f"{r['removed']} removed"] if r["removed"] else []
+            say(f"  ok    {p}: synced; since the last sync, {'; '.join(parts)}")
+    return 1 if bad else 0
+
+
+def providers_locked():
+    from .providers import NotLoggedIn, VaultLocked
+    return (VaultLocked, NotLoggedIn)
+
+
+def cmd_help(parser, args):
+    """`roster help [COMMAND]`, `--man [--install]` (was `roster man`), `--completion SHELL` (was `roster completion`)."""
+    if (args.install or args.prefix) and not args.man:
+        parser.error("--install and --prefix go with --man: roster help --man --install")
+    picked = [f for f, on in (("COMMAND", args.topic), ("--man", args.man), ("--completion", args.completion)) if on]
+    if len(picked) > 1:
+        parser.error(f"roster help takes one of COMMAND, --man and --completion, not {' and '.join(picked)}")
+    if args.completion:
+        from .completion import cmd_completion
+        return cmd_completion(args.completion)
+    if args.man:
+        from .manpage import cmd_man
+        return cmd_man(args)
+    sys.stdout.write(command_parser(parser, args.topic).format_help())
+    return 0
+
+
 def cmd_auth_check(cfg, args):
+    """`roster check --auth` (was `roster auth-check`)."""
     uses = {}                                    # (ref, group) -> [(service, host, user)]
     hosts, resources = selected(cfg, args.only, resources=True)
     if not args.json:
@@ -1213,7 +1291,7 @@ def cmd_auth_check(cfg, args):
 
 
 def auth_check_json(uses):
-    """`roster auth-check --json`: one row per (Login reference, group), never the value it found."""
+    """`roster check --auth --json`: one row per (Login reference, group), never the value it found."""
     rows = []
     for ref, group in sorted(uses, key=lambda t: (t[1], str(t[0]))):
         by_svc = {}
@@ -1243,7 +1321,7 @@ def used_for(uses):
     return ", ".join(f"{svc} ({hs[0] if len(hs) == 1 else f'{len(hs)} hosts'})" for svc, hs in by_svc.items())
 
 
-# `roster bw` (T202, decision Q178): which bw commands run, as a fail-closed allowlist. A command in none of these sets
+# `roster vault bw` (T202, decision Q178): which bw commands run, as a fail-closed allowlist. A command in none of these sets
 # (one a newer bw adds, a typo) is refused, never assumed safe.
 # Read-only means no change to the vault and no file written on this Box: `get attachment` and any `--output` write
 # one, and `receive` writes what a Send from anyone's URL holds, so they need --write.
@@ -1261,14 +1339,14 @@ def bw_command(argv, write):
     run. Nothing after the command is ever repeated: it may hold a password."""
     from .errors import BW_NEEDS_WRITE, BW_NOT_ALLOWED, BW_REFUSED
     if any(a == "--session" or a.startswith("--session=") for a in argv):
-        die(f"[{BW_REFUSED}] roster bw won't put a session key on bw's command line, where other programs can read "
+        die(f"[{BW_REFUSED}] roster vault bw won't put a session key on bw's command line, where other programs can read "
             "it: roster passes this Box's session in bw's environment (drop --session)")
     if "--write" in argv:
         die(f"[{BW_NOT_ALLOWED}] --write is roster's, not bw's: put it before bw's command "
-            "(roster bw --write edit item ...)")
+            "(roster vault bw --write -- edit item ...)")
     cmd = next((a for a in argv if not a.startswith("-")), None)
     if any(a not in BW_FLAGS for a in argv[:argv.index(cmd) if cmd else len(argv)]):
-        die(f"[{BW_NOT_ALLOWED}] roster bw takes only these bw options before the command: "
+        die(f"[{BW_NOT_ALLOWED}] roster vault bw takes only these bw options before the command: "
             f"{', '.join(sorted(BW_FLAGS))}")
     rest = argv[argv.index(cmd) + 1:] if cmd else []
     writes_file = any(a == "--output" or a.startswith("--output=") for a in argv) or \
@@ -1276,17 +1354,17 @@ def bw_command(argv, write):
     if (cmd is None or cmd in BW_READ) and not writes_file:
         return cmd
     if cmd == "serve":
-        die(f"[{BW_REFUSED}] roster bw won't run bw serve: it would hand the unlocked vault to every program on this "
+        die(f"[{BW_REFUSED}] roster vault bw won't run bw serve: it would hand the unlocked vault to every program on this "
             "Box that can reach its port. Run bw serve yourself if you need it")
     if cmd in BW_WRITE or cmd in BW_ACCOUNT or writes_file:
         if not write:
             what = "acts on the vault's account" if cmd in BW_ACCOUNT else \
                 "writes the whole vault out" if cmd == "export" else \
                 "writes a file on this Box" if cmd == "receive" or writes_file else "changes the vault"
-            die(f"[{BW_NEEDS_WRITE}] bw {cmd} {what}, and roster bw is read-only unless you say so: "
-                f"roster bw --write {cmd} ...")
+            die(f"[{BW_NEEDS_WRITE}] bw {cmd} {what}, and roster vault bw is read-only unless you say so: "
+                f"roster vault bw --write -- {cmd} ...")
         return cmd
-    die(f"[{BW_NOT_ALLOWED}] roster bw runs only the bw commands it knows (the first word isn't one of them, and "
+    die(f"[{BW_NOT_ALLOWED}] roster vault bw runs only the bw commands it knows (the first word isn't one of them, and "
         f"isn't repeated here): {', '.join(sorted(BW_READ))}; with --write, {', '.join(sorted(BW_WRITE | BW_ACCOUNT))}")
 
 
@@ -1298,7 +1376,7 @@ def cmd_bw(args):
     from .providers.bitwarden import load_session_file, session_key
     argv = args.args[1:] if args.args[:1] == ["--"] else list(args.args)
     if not argv:
-        die("usage: roster bw [--write] [--] <bw arguments>   e.g.  roster bw list items --search web-01")
+        die("usage: roster vault bw [--write] -- <bw arguments>   e.g.  roster vault bw -- list items --search web-01")
     cmd = bw_command(argv, args.write)
     load_session_file()
     if "--nointeraction" not in argv and cmd not in BW_PROMPTS:  # before a `--`, after which it'd be an argument
@@ -1393,8 +1471,11 @@ def main(argv=None):
     if argv[:1] == ["__complete"]:       # the shell's Tab (completion.py): never an error, never a usage message
         from . import completion
         return completion.main(argv[1:])
+    argv, alias = aliases.rewrite(argv)  # an old name (roster info, roster bw): its new form, said once on stderr
     words = argv[:argv.index("--")] if "--" in argv else argv
     Parser.json_errors = "--json" in words
+    if alias and not alias.silent and not Parser.json_errors:      # with --json, stderr is a JSON error or nothing
+        print(aliases.warning(alias), file=sys.stderr, flush=True)
     try:
         return _main(argv) or 0
     except Problem as e:                 # inventory() raises one with --json: the error as JSON on stderr
@@ -1425,7 +1506,7 @@ class Parser(argparse.ArgumentParser):
     commands_text = ""
 
     def error(self, message):
-        # a value typed onto a flag that takes none (`roster bw --write=VALUE`) may be a password: never repeat it
+        # a value typed onto a flag that takes none (`roster vault bw --write=VALUE`) may be a password: never repeat it
         message = re.sub(r"ignored explicit argument '.*'", "ignored explicit argument (not repeated)", message)
         message = clihelp.suggest(message, self.all_options())
         if Parser.json_errors:
@@ -1468,8 +1549,9 @@ def build_parser():
     only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
     as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
                "Machine-readable output in docs/cli-reference.md)"}
-    s = sub.add_parser("init", help="write an example roster.yml, or a new Inventory: blank, a copy, the team's repo, "
-                       "or Hosts from ~/.ssh/config")
+    s = sub.add_parser("init", help="write a new roster.yml: the commented example, a blank one, a copy, the team's "
+                       "repo or the Hosts in ~/.ssh/config. It only makes a new file: to add Hosts to yours, use add or "
+                       "discover")
     how = s.add_mutually_exclusive_group()
     how.add_argument("--blank", action="store_true", help="a short roster.yml with an empty group, instead of the "
                      "commented example (same as --inventory blank)")
@@ -1478,37 +1560,34 @@ def build_parser():
                      "ssh-config[:PATH] (Hosts from ~/.ssh/config, or PATH: HostName, User, Port, IdentityFile)")
     s.add_argument("--name", metavar="NAME", help="name the new Inventory too (`roster inv add NAME PATH`), e.g. "
                    "beside one you keep")
-    s = sub.add_parser("setup", help="one-time setup of this box")
+    s = sub.add_parser("setup", help="install this Box's key on the Hosts that aren't set up yet and record their host "
+                       "keys, then sync; run it again after adding Hosts")
     values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
     s.add_argument("--force", action="store_true", help="on a renamed Box, go ahead on a Host where another Box's "
                    "key line has the new name (its line is then this Box's to replace or revoke)")
-    sub.add_parser("sync", help="rewrite ssh config and Claude files from roster.yml")
-    s = sub.add_parser("check", help="test reachability; with HOST, why a Session to it would fail, step by step; "
-                       "with --box, this Box's health")
+    sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
+    s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
+                       "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
+                       "source answers")
     values(s.add_argument("host", nargs="?", help="diagnose this one Host: inventory, ssh config, vault, DNS, port, "
                    "host key, login (one connection)"), HOSTS)
     s.add_argument("--box", action="store_true", help="check this Box instead, without connecting anywhere: "
                    "roster.yml, ssh and its config, vault CLIs, askpass, the infra repo")
+    s.add_argument("--auth", action="store_true", help="test each Login's password source (SSH, services, "
+                   "resources) instead, connecting to no Host and printing nothing secret")
     values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--json", **as_json)
-    s = sub.add_parser("hosts", help="list hosts")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    s = sub.add_parser("hosts", help="list the Hosts and resources in roster.yml; hosts NAME: everything about one; "
+                       "hosts --resources: only the resources")
+    values(s.add_argument("name", nargs="*", metavar="NAME", help="show everything about this one Host or resource; "
+                          "fuzzy words work"), HOSTS, RESOURCES)
+    s.add_argument("--resources", action="store_true", help="list only the resources (Wi-Fi networks, accounts and "
+                   "secrets with no address); --only then takes resource names, types or groups, --find every field")
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS, RESOURCES)
     s.add_argument("--find", metavar="TEXT", help="search name, title, description, type, product, group, ip")
     s.add_argument("--all", action="store_true", help="include unreviewed (scanned) hosts")
     s.add_argument("--long", action="store_true", help="full table: type, product, web URL, description")
-    s.add_argument("--json", **as_json)
-    s = sub.add_parser("resources", help="list Wi-Fi networks, accounts and secrets that aren't hosts")
-    values(s.add_argument("--only", metavar="LIST", help="resource names, types or groups"), ONLY, RESOURCES,
-           GROUPS)
-    s.add_argument("--find", metavar="TEXT", help="search every field")
-    s.add_argument("--json", **as_json)
-    s = sub.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) - for people, not Claude")
-    values(s.add_argument("name", help="the resource"), RESOURCES)
-    s.add_argument("--wifi", action="store_true", help="print a WIFI:... string for a QR code instead")
-    s = sub.add_parser("info", help="show everything about one host or resource")
-    values(s.add_argument("host", nargs="+", metavar="NAME", help="a host or resource; fuzzy words work"), HOSTS,
-           RESOURCES)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("run", help="run a command on a host")
     s.add_argument("--sudo", action="store_true",
@@ -1552,9 +1631,11 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
     s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
                    "error naming its flag")
-    s = sub.add_parser("discover", help="scan networks (nmap if installed) and add what's found to roster.yml")
+    s = sub.add_parser("discover", help="scan networks (nmap if installed) for Hosts; --write adds the new ones to "
+                       "roster.yml, unreviewed")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")
-    s.add_argument("--write", action="store_true", help="add new hosts to roster.yml (default: preview only)")
+    s.add_argument("--write", action="store_true", help="add the new Hosts it finds to roster.yml, unreviewed, for you "
+                   "to name and review (default: preview only)")
     values(s.add_argument("--group", metavar="NAME", help="group name for new hosts (default: discovered-YYYYMMDD)"),
            GROUPS)
     s.add_argument("--ports", default=DEFAULT_SCAN_PORTS, help="TCP ports to scan (default: common server, "
@@ -1567,17 +1648,6 @@ def build_parser():
                    help="built-in scanner connect timeout (default: 0.5)")
     s.add_argument("--force", action="store_true", help="allow scanning more than 4096 addresses")
     s.add_argument("--json", **as_json)
-    s = sub.add_parser("bw", help="run the Bitwarden CLI with this box's vault session (bw-session file); "
-                       "read-only unless --write")
-    s.add_argument("--write", action="store_true",
-                   help="allow bw commands that change the vault, write a file here or act on the account "
-                        "(create, edit, delete, export, receive, --output, login, logout, unlock, lock, config, ...)")
-    s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw")
-    s = sub.add_parser("providers", help="list password providers (built-in, plugins, roster.yml)")
-    s.add_argument("--json", **as_json)
-    s = sub.add_parser("auth-check", help="test each group's password source, print nothing secret")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
-    s.add_argument("--json", **as_json)
     s = sub.add_parser("web", help="HTTP request to a host's web service, logged in with its stored credentials")
     values(s.add_argument("request", nargs="+", metavar="HOST [SERVICE] METHOD PATH",
                           help="e.g. esxi GET /folder  or  orion3 https GET /api/status"), HOSTS)
@@ -1587,19 +1657,19 @@ def build_parser():
     s.add_argument("--timeout", type=float, default=30, metavar="SECONDS",
                    help="how long to wait for the answer (default: 30)")
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
-    s.add_argument("action", nargs="?", choices=["cut", "status"],
-                   help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections)")
+    s.add_argument("action", nargs="?", choices=["cut", "status", "leftovers"],
+                   help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections); "
+                        "leftovers: look on every Host, once, for Mesh entries this roster.yml doesn't ask for (this "
+                        "Box's, or an older roster's with no Box in the tag); changes nothing without --remove")
     values(s.add_argument("target", nargs="?", metavar="HOST", help="with cut: the Host to cut out"), HOSTS)
     s.add_argument("--dry-run", action="store_true", help="show the plan; change nothing on any Host")
     values(s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)"),
            HOSTS)
-    s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
+    s.add_argument("-y", "--yes", action="store_true", help="with cut or leftovers --remove: don't ask first")
     s.add_argument("--all", action="store_true", help="with cut: every Mesh entry off every Host, roster.yml "
                    "unchanged (before removing roster from this Box)")
-    s.add_argument("--find-leftovers", action="store_true", help="look on every Host, once, for Mesh entries this "
-                   "roster.yml doesn't ask for (this Box's, or an older roster's with no Box in the tag); changes nothing")
-    s.add_argument("--remove-leftovers", action="store_true", help="the same, then remove them after a question "
-                   "(-y doesn't ask): an older roster's may be another Box's Mesh")
+    s.add_argument("--remove", action="store_true", help="with leftovers: then remove them after a question (-y "
+                   "doesn't ask): an older roster's may be another Box's Mesh")
     s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
@@ -1613,29 +1683,72 @@ def build_parser():
                    help="list (the active one marked *), add NAME PATH, use NAME (make it the active one), "
                         "remove NAME (forget the name; the file stays), which (print the roster.yml roster uses)")
     values(s.add_argument("name", nargs="?", metavar="NAME", help="the Inventory's name: letters, digits, . _ -"),
-           INVENTORIES)
+           INVENTORIES, new_after=("add",))
     values(s.add_argument("path", nargs="?", metavar="PATH", help="with add: its roster.yml"), FILES)
     s.add_argument("--json", **as_json)
+    s = sub.add_parser("vault", help="roster's own views of the vault: status, sync, reveal NAME, and bw -- ARGS (the "
+                       "Bitwarden CLI itself)")
+    vault = s.add_subparsers(dest="vault_cmd", metavar="ACTION", title="actions", prog="roster vault",
+                             help="what to do with the vault (plain `roster vault` lists them)")
+    s = vault.add_parser("status", help="the password providers here (built-in, plugins, roster.yml), whether their "
+                         "tools are installed, unknown ones in use, each vault's state (logged in, locked) and when it "
+                         "last synced")
+    s.add_argument("--json", **as_json)
+    vault.add_parser("sync", help="sync every vault that keeps a local copy (Bitwarden: bw sync), then say which "
+                     "items were added, changed or removed since the last sync: names and counts, never a secret")
+    s = vault.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) for a person to type in, "
+                         "not for Claude")
+    values(s.add_argument("name", help="the resource"), RESOURCES)
+    s.add_argument("--wifi", action="store_true", help="print a WIFI:... string for a QR code instead")
+    s = vault.add_parser("bw", help="run the Bitwarden CLI itself with this Box's vault session (bw-session file), "
+                         "read-only unless --write; roster never reads what it prints")
+    s.add_argument("--write", action="store_true",
+                   help="allow bw commands that change the vault, write a file here or act on the account "
+                        "(create, edit, delete, export, receive, --output, login, logout, unlock, lock, config, ...)")
+    s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw, after --")
+    s = sub.add_parser("help", help="this overview; help COMMAND: a command's options and examples; --man: the "
+                       "manual; --completion SHELL: Tab completion")
+    values(s.add_argument("topic", nargs="*", metavar="COMMAND", help="the command (and its action: vault bw) to show "
+                          "the help of"), COMMANDS)
+    s.add_argument("--man", action="store_true", help="show the roster(1) man page")
+    s.add_argument("--install", action="store_true", help="with --man: copy it to PREFIX/share/man/man1/, next to "
+                   "PREFIX/bin/roster (~/.local for uv tool install), where `man roster` finds it")
+    values(s.add_argument("--prefix", metavar="DIR", help="with --man --install: install into DIR/share/man/man1/ "
+                          "instead"), DIRS)
+    s.add_argument("--completion", choices=SHELLS, metavar="SHELL", help="print Tab completion for bash, zsh, fish "
+                   "or powershell (install.sh turns it on)")
+    # run by the app or by ssh, not by hand: kept out of the overview (clihelp.INTERNAL)
     sub.add_parser("serve", help="JSON-RPC API on stdin/stdout for the desktop app (see docs/serve-api.md)")
     s = sub.add_parser("askpass", help="SSH_ASKPASS helper for a `roster serve` password Session (ssh runs it)")
     s.add_argument("prompt", nargs="?", default="", help="the prompt ssh shows")
-    s = sub.add_parser("man", help="show the roster(1) man page, or install it where `man roster` finds it")
-    s.add_argument("--install", action="store_true",
-                   help="copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv tool install)")
-    values(s.add_argument("--prefix", metavar="DIR", help="with --install: install into DIR/share/man/man1/ instead"),
-           DIRS)
-    s = sub.add_parser("completion", help="print Tab completion for bash, zsh, fish or PowerShell (install.sh "
-                       "turns it on)")
-    s.add_argument("shell", choices=SHELLS, help="the shell to print it for")
-    # each command's --help opens with its one-line help as a sentence and ends with examples (clihelp)
-    helps = {a.dest: a.help or "" for a in sub._choices_actions}
-    for name, s in sub.choices.items():
-        s.description = clihelp.description(helps[name])
-        s.epilog = clihelp.examples_text(name) or None
-        s.formatter_class = clihelp.Formatter
+    helps = describe(sub)
     p.commands_text = clihelp.overview(helps)
     p.epilog = clihelp.more()
     return p
+
+
+def describe(sub, prefix=""):
+    """Each command's --help opens with its one-line help as a sentence and ends with examples (clihelp), a command
+    with actions of its own (vault) too. Returns {name: one-line help}."""
+    helps = {a.dest: a.help or "" for a in sub._choices_actions}
+    for name, s in sub.choices.items():
+        s.description = clihelp.description(helps[name])
+        s.epilog = clihelp.examples_text(f"{prefix}{name}") or None
+        s.formatter_class = clihelp.Formatter
+        for a in s._actions:
+            if isinstance(a, argparse._SubParsersAction):
+                describe(a, f"{prefix}{name} ")
+    return helps
+
+
+def command_parser(parser, words):
+    """The parser of `roster WORDS...` (`vault bw`), or a usage error naming the word that isn't a command."""
+    for i, w in enumerate(words):
+        found = next((a.choices for a in parser._actions if isinstance(a, argparse._SubParsersAction)), {})
+        if w not in found:
+            parser.error(f"no help for {' '.join(words[:i + 1])!r}: `roster help` lists the commands")
+        parser = found[w]
+    return parser
 
 
 def inventory(args):
@@ -1656,7 +1769,8 @@ def inventory(args):
 def _main(argv=None):
     parser = build_parser()
     args, extra = parser.parse_known_args(argv)
-    if extra and args.cmd == "bw":       # options before bw's command are bw's: its allowlist judges them, unrepeated
+    is_bw = args.cmd == "vault" and args.vault_cmd == "bw"
+    if extra and is_bw:                  # options before bw's command are bw's: its allowlist judges them, unrepeated
         args.args = [*extra, *args.args]
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
@@ -1670,22 +1784,32 @@ def _main(argv=None):
 
     if args.cmd == "init":
         return cmd_init(args)
-    if args.cmd == "completion":
-        from .completion import cmd_completion
-        return cmd_completion(args)
-    if args.cmd == "man":
-        from .manpage import cmd_man
-        return cmd_man(args)
+    if args.cmd == "help":
+        return cmd_help(parser, args)
+    if args.cmd == "vault" and args.vault_cmd is None:     # plain `roster vault`: its actions
+        sys.stdout.write(command_parser(parser, ["vault"]).format_help())
+        return 0
     if args.cmd == "discover":
         if args.json and args.write:
             build_parser().error("--json goes with discover's preview, not --write: drop one of them")
         return cmd_discover(args)
-    if args.cmd == "bw":
+    if is_bw:
         return cmd_bw(args)
     if args.cmd == "inv":
         return cmd_inv(args)
     if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
         build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
+    if args.cmd == "mesh" and args.remove and args.action != "leftovers":
+        build_parser().error("--remove goes with leftovers: roster mesh leftovers --remove")
+    if args.cmd == "hosts" and args.name:
+        listed = [f for f, on in (("--resources", args.resources), ("--find", args.find), ("--all", args.all),
+                                  ("--long", args.long), ("--only", args.only)) if on]
+        if listed:
+            build_parser().error(f"hosts NAME shows one Host or resource: {', '.join(listed)} go{'es' if len(listed) == 1 else ''} "
+                                 "with the list (drop NAME or the flag)")
+    if args.cmd == "check" and args.auth and (args.box or args.host):
+        build_parser().error("check --auth tests the Logins' password sources: it takes no HOST or --box (--only "
+                             "narrows it)")
     if args.cmd == "add" and args.name is None and not args.from_vault:
         build_parser().error("roster add needs NAME, the new Host's name")
     if args.cmd == "add" and args.name is not None:
@@ -1707,15 +1831,22 @@ def _main(argv=None):
     if args.cmd == "serve":
         from .serve import serve
         return serve(args.config, args.inv)  # loads roster.yml itself, so a bad one becomes an API error
-    if args.cmd == "providers":
+    if args.cmd == "vault" and args.vault_cmd == "status":
         try:
             cfg = load_config(find_config(args.config, args.inv))
         except SystemExit:
             cfg = None                              # no roster.yml yet: still list what's available
         setup_providers(cfg)
-        return cmd_providers(cfg, args)
+        return cmd_vault_status(cfg, args)
     cfg = inventory(args)
     setup_providers(cfg)
-    return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "info": cmd_info,
-            "run": cmd_run, "revoke": cmd_revoke, "resources": cmd_resources, "reveal": cmd_reveal, "auth-check": cmd_auth_check, "web": cmd_web,
-            "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)
+    if args.cmd == "vault":
+        return {"reveal": cmd_reveal, "sync": cmd_vault_sync}[args.vault_cmd](cfg, args)
+    if args.cmd == "check" and args.auth:
+        return cmd_auth_check(cfg, args)
+    if args.cmd == "hosts" and args.name:
+        return cmd_info(cfg, args)
+    if args.cmd == "hosts" and args.resources:
+        return cmd_resources(cfg, args)
+    return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "run": cmd_run,
+            "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)

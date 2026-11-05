@@ -233,7 +233,7 @@ def provider_check(name, n):
     used = f"{count(n, 'Login')}"
     if name not in PROVIDERS:
         return check("vault", "error", f"'{name}:' is used by {used} but isn't a provider on this Box",
-                     "see `roster providers` for the ones there are, then fix auth: in roster.yml", "E5")
+                     "see `roster vault status` for the ones there are, then fix auth: in roster.yml", "E5")
     tool = PROVIDERS[name].get("tool") or ""
     try:
         status, account = providers.vault_account(name)

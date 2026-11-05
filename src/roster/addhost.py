@@ -97,7 +97,7 @@ def vault_fields(auth, interactive=True):
     name = name.strip()
     if not spec.strip() or name not in providers.PROVIDERS:
         raise Problem(NO_PROVIDER, f"{auth!r} isn't a vault item reference (bw:ITEM, op:ITEM, ...) of a provider set "
-                                   "up on this box", {"provider": name}, fix="see `roster providers`")
+                                   "up on this box", {"provider": name}, fix="see `roster vault status`")
     try:
         found = providers.login_fields(name, spec, interactive)
     except providers.Unsupported as e:
@@ -111,7 +111,7 @@ def vault_fields(auth, interactive=True):
                       fix="put its id in auth: (bw:ID), or rename the extra items in the vault") from None
     except providers.SecretError as e:
         if type(e) is providers.SecretError:
-            raise Problem(LOOKUP_FAILED, str(e), fix="see the message; `roster auth-check` tests every Login") from None
+            raise Problem(LOOKUP_FAILED, str(e), fix="see the message; `roster check --auth` tests every Login") from None
         raise vault_problem(e) from None
     out = {}
     host, port, note = uri_address(found.get("uri") or "")

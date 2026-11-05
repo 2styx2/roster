@@ -2966,7 +2966,7 @@ export function servicesLeftOut(list: HostList): string | null {
   if (!first) return null;
   if (all.length === 1) {
     const why = first.message.replace(/^service '[^']*': /, "");
-    return `roster.yml loaded, but left out ${first.host}'s service ${first.service}: ${why} (roster info ${first.host} says how to fix it)`;
+    return `roster.yml loaded, but left out ${first.host}'s service ${first.service}: ${why} (roster hosts ${first.host} says how to fix it)`;
   }
   const names = all.slice(0, 3).map((p) => `${p.host}'s ${p.service}`);
   const more = all.length > 3 ? `, and ${all.length - 3} more` : "";

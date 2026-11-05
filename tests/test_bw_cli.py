@@ -1,4 +1,4 @@
-"""`roster bw`: bw with this Box's session, read-only unless --write, a fail-closed allowlist (T202, #387, Q178)."""
+"""`roster vault bw` (was `roster vault bw`): bw with this Box's session, read-only unless --write, a fail-closed allowlist (T202, #387, Q178)."""
 import json
 
 import pytest
@@ -23,7 +23,7 @@ def bw(isolated, fakes, monkeypatch, tmp_path):
 
 def refused(*argv):
     with pytest.raises(SystemExit) as e:
-        main(["bw", *argv])
+        main(["vault", "bw", *argv])
     return str(e.value.code)
 
 
@@ -37,7 +37,7 @@ def test_a_read_only_command_runs_with_the_session_in_its_env_only(bw, capfd, mo
     env_log = tmp_path / "env.log"
     monkeypatch.setenv("FAKE_BW_ENV_LOG", str(env_log))
     monkeypatch.setenv("OP_SESSION_team", "op-session-xyzzy")   # a 1Password sign-in never goes to bw (#388)
-    assert main(["bw", "list", "items", "--search", "Orion"]) == 0
+    assert main(["vault", "bw", "list", "items", "--search", "Orion"]) == 0
     assert "Orion servers" in capfd.readouterr().out             # bw wrote to the terminal itself
     (argv,) = bw()
     assert argv == ["list", "items", "--search", "Orion", "--nointeraction"]
@@ -50,7 +50,7 @@ def test_a_read_only_command_runs_with_the_session_in_its_env_only(bw, capfd, mo
                                   ["--write", "--", "delete", "item", "11111111-aaaa"],
                                   ["--write", "export", "--format", "json"]])
 def test_write_lets_a_vault_changing_command_run(bw, argv):
-    main(["bw", *argv])
+    main(["vault", "bw", *argv])
     assert bw() == [[a for a in argv if a not in ("--write", "--")] + ["--nointeraction"]]
 
 
@@ -63,12 +63,12 @@ def test_account_commands_need_write_too(bw, cmd):
 @pytest.mark.parametrize("cmd", ["login", "unlock"])
 def test_login_and_unlock_may_ask_for_the_master_password(bw, cmd, monkeypatch):
     monkeypatch.setattr("sys.stdin", open(__file__))   # no terminal: the fake's prompt gets a line and gives up
-    main(["bw", "--write", cmd])
+    main(["vault", "bw", "--write", cmd])
     assert bw() == [[cmd]]
 
 
 def test_lock_runs_non_interactively(bw):
-    assert main(["bw", "--write", "lock"]) == 0 and bw() == [["lock", "--nointeraction"]]
+    assert main(["vault", "bw", "--write", "lock"]) == 0 and bw() == [["lock", "--nointeraction"]]
 
 
 def test_an_unknown_command_is_refused_and_not_repeated(bw):
@@ -79,7 +79,7 @@ def test_an_unknown_command_is_refused_and_not_repeated(bw):
 @pytest.mark.parametrize("argv", [["--", "--pretty", "list", "items"], ["--", "--raw", "--quiet", "status"],
                                   ["--", "--help"], ["--", "--version"], ["help", "edit"], ["generate", "-ulns"]])
 def test_bw_options_before_a_read_only_command_run(bw, argv):
-    main(["bw", *argv])
+    main(["vault", "bw", *argv])
     assert len(bw()) == 1
 
 
@@ -110,8 +110,8 @@ def test_write_after_bws_command_is_refused(bw):
 
 
 def test_write_alone_still_needs_bw_arguments(bw):
-    with pytest.raises(SystemExit, match="usage: roster bw"):
-        main(["bw", "--write"])
+    with pytest.raises(SystemExit, match="usage: roster vault bw"):
+        main(["vault", "bw", "--write"])
 
 
 def test_a_batch_file_bw_is_refused_cmd_specials_without_repeating_them(bw, monkeypatch):
@@ -136,20 +136,20 @@ def test_writing_a_local_file_needs_write(bw, argv):
 
 
 def test_write_lets_receive_and_output_run(bw):
-    main(["bw", "--write", "get", "item", "11111111-aaaa", "--output", "out.json"])
-    main(["bw", "--write", "receive", "https://send.example.com/#abc"])
+    main(["vault", "bw", "--write", "get", "item", "11111111-aaaa", "--output", "out.json"])
+    main(["vault", "bw", "--write", "receive", "https://send.example.com/#abc"])
     assert [a[0] for a in bw()] == ["get", "receive"]
 
 
 def test_an_unknown_option_before_the_command_is_not_repeated_by_the_parser(bw, capfd):
     with pytest.raises(SystemExit) as e:
-        main(["bw", f"--password={SECRET}", "list", "items"])
+        main(["vault", "bw", f"--password={SECRET}", "list", "items"])
     out = capfd.readouterr()
     assert "[165]" in str(e.value.code) and SECRET not in str(e.value.code) + out.out + out.err and bw() == []
 
 
 def test_bws_options_before_the_command_need_no_double_dash(bw):
-    assert main(["bw", "--raw", "status"]) == 0 and bw() == [["--raw", "status", "--nointeraction"]]
+    assert main(["vault", "bw", "--raw", "status"]) == 0 and bw() == [["--raw", "status", "--nointeraction"]]
 
 
 def test_another_command_still_gets_the_parsers_error(isolated, capfd):
@@ -163,7 +163,7 @@ def test_no_1password_variable_reaches_bw(bw, monkeypatch, tmp_path):
     monkeypatch.setenv("FAKE_BW_ENV_LOG", str(env_log))
     for name in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_TOKEN", "OP_CONNECT_HOST", "OP_SESSION_team"):
         monkeypatch.setenv(name, "op-credential-xyzzy")
-    main(["bw", "status"])
+    main(["vault", "bw", "status"])
     assert not any(n.upper().startswith("OP_") for n in json.loads(env_log.read_text()))
 
 
@@ -175,12 +175,12 @@ def test_no_session_means_no_bw_session_in_bws_env(isolated, fakes, monkeypatch,
     f.chmod(0o644)                                     # others can read it: ignored
     env_log = tmp_path / "env.log"
     monkeypatch.setenv("FAKE_BW_ENV_LOG", str(env_log))
-    main(["bw", "status"])
+    main(["vault", "bw", "status"])
     assert "BW_SESSION" not in json.loads(env_log.read_text())
 
 
 def test_nointeraction_goes_before_a_double_dash_in_bws_arguments(bw):
-    main(["bw", "get", "item", "--", "-odd-name"])
+    main(["vault", "bw", "get", "item", "--", "-odd-name"])
     assert bw() == [["get", "item", "--nointeraction", "--", "-odd-name"]]
 
 
@@ -197,6 +197,6 @@ def test_get_attachment_needs_write_in_any_case_and_order(bw, argv):
 @pytest.mark.parametrize("argv", [[f"--write={SECRET}", "list"], [f"-h{SECRET}"]])
 def test_a_value_on_roster_bws_own_options_is_not_repeated(bw, capfd, argv):
     with pytest.raises(SystemExit):
-        main(["bw", *argv])
+        main(["vault", "bw", *argv])
     out = capfd.readouterr()
     assert SECRET not in out.out + out.err and bw() == []
