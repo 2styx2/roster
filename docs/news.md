@@ -22,6 +22,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **A usage error never repeats what you typed** (#460): a vault session token typed in the wrong place (`roster --session TOKEN vault op -- whoami`) used to come back on stderr as `invalid choice: 'TOKEN'`, and so did a value in an unknown option (`--session=TOKEN`), an ambiguous one, a number roster couldn't read, a flag that takes none, an unknown `roster help` topic or an `init --inventory` value that isn't one of its forms (a clone URL with a token in it). Now no value you typed is repeated (only roster's own names), whatever argparse's wording around it: the error names the place (`argument COMMAND`, `argument --port`) and what it takes, or the nearest command (`roster hots`: did you mean `hosts`?), and says the value is "not repeated", in `--json` errors too. `--session` typed at roster says that vault bw and vault op take the session from their environment. It still exits 2.
 
+### Fixed
+
+**App**
+
+- **The Topology map takes the keys back, and `/` starts a new search** (#475): with a Session opened from the map beside it, `:topology` (or `:view topology`, or the map's key) hands the keys back to the map, so a `/` typed next searches the map instead of going to the shell; asking for any open view again does the same. `/` on a map opens its search empty, as the Picker does, so typing a new name no longer adds to the last one.
+
 ## v0.6.0
 
 ### New
