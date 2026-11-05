@@ -159,7 +159,7 @@ describe("Picker", () => {
       const onAdd = vi.fn();
       const { user } = setup({ onQuick: vi.fn(), onAdd, addKeys: "␣ +" });
       await user.keyboard("zzzz");
-      expect(next()).toHaveTextContent(/Add a Host.*, or type user@address to connect to a box that isn't in the Inventory\./);
+      expect(next()).toHaveTextContent(/Add a Host.*, or type user@address to connect to a machine that isn't in the Inventory\./);
       expect(next()?.querySelector("code")).toHaveTextContent(/^user@address$/);
       expect(next()?.querySelector(".keycap")).not.toBeNull();
       await user.click(screen.getByRole("button", { name: "Add a Host" }));

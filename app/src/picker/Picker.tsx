@@ -20,7 +20,7 @@ import {
   type PickerAction,
 } from "../keymap";
 import { Announce } from "../ui/Announce";
-import { addressCut, countOf, formatCount } from "../ui/format";
+import { addressCut, countOf, fitMiddle, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
 import { ToolbarIconSvg } from "../chrome/toolbar";
 import { prefixFill } from "../ui/completion";
@@ -167,6 +167,64 @@ function HostNode({
   );
 }
 
+/** How wide the group column is, and its font, as laid out now (null until measured, and in
+ * a test's DOM, which lays nothing out: the cell's own end ellipsis is then the fallback). */
+interface GroupFit {
+  /** The group column's width; `wide`, a type-less row's group cell (group and type columns). */
+  width: number;
+  wide: number;
+  measure: (s: string) => number;
+}
+
+let canvas: CanvasRenderingContext2D | null | undefined;
+/** Measures text in `font` (a canvas: no layout per row). */
+function textMeasure(font: string): ((s: string) => number) | null {
+  // A test's DOM has no canvas (and says so on every call): it keeps the cell's end ellipsis.
+  if (canvas === undefined)
+    canvas = /jsdom/.test(navigator.userAgent) ? null : document.createElement("canvas").getContext("2d");
+  if (!canvas) return null;
+  const ctx = canvas;
+  const cache = new Map<string, number>();
+  return (s) => {
+    let w = cache.get(s);
+    if (w === undefined) {
+      ctx.font = font;
+      w = ctx.measureText(s).width;
+      cache.set(s, w);
+    }
+    return w;
+  };
+}
+
+/** Reads the group column off the hidden sizer row (a DOM read, kept out of the component). */
+function readGroupFit(list: HTMLElement | null): Omit<GroupFit, "measure"> & { font: string } | null {
+  const cell = list?.querySelector<HTMLElement>(".picker-sizer .host-group");
+  const type = list?.querySelector<HTMLElement>(".picker-sizer .host-type");
+  if (!list || !cell || !type || cell.clientWidth === 0) return null;
+  const cs = getComputedStyle(cell);
+  const gap = parseFloat(getComputedStyle(list).columnGap) || 0;
+  return {
+    width: cell.getBoundingClientRect().width,
+    wide: cell.getBoundingClientRect().width + gap + type.getBoundingClientRect().width,
+    font: `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`,
+  };
+}
+
+/** A group, cut in its middle to fit its column (round 20, amends Q223 b): its start, one "…" and
+ * its last whole parts, so "fieldwork-east-ridge-building-4-s1" and "…-s2" don't both read
+ * "fieldwork-east-ridge-b…". One cut, measured, never the column's end cut on top. The cell's
+ * tooltip has it whole, and so does a screen reader. */
+function GroupText({ group, fit, wide }: { group: string; fit: GroupFit | null; wide: boolean }) {
+  const shown = fit ? fitMiddle(group, (wide ? fit.wide : fit.width) - 0.5, fit.measure) : group;
+  if (shown === group) return <>{group}</>;
+  return (
+    <>
+      <span aria-hidden="true">{shown}</span>
+      <span className="visually-hidden">{group}</span>
+    </>
+  );
+}
+
 /** The first key bound to `action`, for the footer's hints. */
 const keyFor = (table: KeyTable<PickerAction>, action: PickerAction) =>
   Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null;
@@ -199,6 +257,32 @@ export function Picker({
   useLayoutEffect(() => markCut(listRef.current, stripRef.current));
   // The list keeps the height it opened at, so the panel never shrinks as a query narrows it.
   useLayoutEffect(() => holdHeight(listRef.current), []);
+  // The group column's width and font, measured again when the Picker is resized.
+  const [groupFit, setGroupFit] = useState<GroupFit | null>(null);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    let font = "";
+    const read = () => {
+      const now = readGroupFit(list);
+      if (!now) return;
+      setGroupFit((was) => {
+        if (was && was.width === now.width && was.wide === now.wide && now.font === font) return was;
+        const measure = textMeasure(now.font);
+        font = now.font;
+        return measure ? { width: now.width, wide: now.wide, measure } : null;
+      });
+    };
+    read();
+    // Iosevka and Inter may still be loading: measure again once they're in.
+    void document.fonts?.ready.then(() => {
+      font = "";
+      read();
+    });
+    if (typeof ResizeObserver === "undefined" || !list) return;
+    const ro = new ResizeObserver(read);
+    ro.observe(list);
+    return () => ro.disconnect();
+  }, []);
 
   const results = useMemo(
     () => searchHosts(hosts, query, recent),
@@ -474,8 +558,7 @@ export function Picker({
                 className={`host-group${host.type ? "" : " wide"}`}
                 title={host.group}
               >
-                {/* Cut once, at its end, by the column (round 12: a middle cut then an end cut read "fieldwork…-…"). */}
-                {host.group}
+                <GroupText group={host.group} fit={groupFit} wide={!host.type} />
               </span>
               {host.type && (
                 <span className="host-type" title={host.type}>
@@ -531,7 +614,7 @@ export function Picker({
                     {onQuick && (
                       <>
                         {onAdd ? "" : "Type "}
-                        <code>user@address</code> to connect to a box that isn't in the Inventory.
+                        <code>user@address</code> to connect to a machine that isn't in the Inventory.
                       </>
                     )}
                   </>
