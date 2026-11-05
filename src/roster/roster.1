@@ -441,7 +441,7 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 .IP \(bu 2
 \fBA version.\fR \fBversion\fR is the first field of every document, errors included. It is \fB1\fR now.
 .IP \(bu 2
-\fBErrors\fR go to stderr as \fB{"version": 1, "error": {"code", "message", "fix"}}\fR, with nothing on stdout. The codes are \fBroster serve\fR\&'s: \fB1\fR \fBroster.yml\fR wasn't found or doesn't load (\fBfix\fR says where), \fB2\fR no Host or resource by that name, \fB3\fR any other refusal. Wrong arguments are code \fB3\fR too, with exit status 2. A refusal serve has its own code for keeps it: \fB121\fR too many addresses for \fBdiscover\fR, \fB110\fR a \fB\-\-rotate\fR Host that isn't a Mesh source.
+\fBErrors\fR go to stderr as \fB{"version": 1, "error": {"code", "message", "fix"}}\fR, with nothing on stdout. The codes are \fBroster serve\fR\&'s: \fB1\fR \fBroster.yml\fR wasn't found or doesn't load (\fBfix\fR says where), \fB2\fR no Host or resource by that name, \fB3\fR any other refusal. Wrong arguments are code \fB3\fR too, with exit status 2. A refusal serve has its own code for keeps it: \fB121\fR too many addresses for \fBdiscover\fR, \fB110\fR a \fB\-\-rotate\fR Host that isn't a Mesh source, \fB140\fR an \fB\-\-inv\fR that isn't a named Inventory, and one printed as \fBerror: [N] ...\fR without \fB\-\-json\fR is code \fBN\fR, its message without the \fB[N]\fR\&.
 .IP \(bu 2
 \fBWhat's a breaking change:\fR removing or renaming a field, changing its type or what it means, or changing an exit status. Those come with a new \fBversion\fR and a line under \fBBreaking\fR in What's new. A new field or a new command with \fB\-\-json\fR isn't one, so read the fields you need and ignore the rest.
 .TP

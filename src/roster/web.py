@@ -17,6 +17,7 @@ from xml.sax.saxutils import unescape as xml_unescape
 
 from .common import die
 from .config import refuse_broken
+from .errors import UNKNOWN_HOST
 from .providers import get_secret
 
 METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
@@ -373,7 +374,7 @@ def cmd_web(cfg, args):
     host, service, method, path = words if len(words) == 4 else (words[0], None, *words[1:])
     h = cfg["hosts"].get(host)
     if not h:
-        die(f"unknown host {host!r} (see `roster hosts`)")
+        die(f"unknown host {host!r} (see `roster hosts`)", code=UNKNOWN_HOST)
     status, reason, ctype, body = request(h, service, method, path, args.data, args.header or (),
                                           args.insecure, args.timeout)
     print(f"HTTP {status} {reason}" + (f"  [{ctype}]" if ctype else ""), file=sys.stderr, flush=True)

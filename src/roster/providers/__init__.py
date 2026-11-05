@@ -9,9 +9,40 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any
 
 from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
+    AlreadyLoggedIn,
+    ApiKeyRejected,
+    BadServer,
+    BrowserLoginFailed,
+    CantWrite,
+    CliMissing,
+    CodeRejected,
+    ItemExists,
+    ItemNotFound,
+    LoginError,
+    MethodUnsupported,
+    NoField,
+    NoSession,
+    NotLoggedIn,
+    NotSignedIn,
+    RateLimited,
+    ReadOnlyTarget,
+    SecretError,
+    ServerUnreachable,
+    SessionFileFailed,
+    SessionFileRefused,
+    SeveralItems,
+    SignOutFailed,
+    TimedOut,
+    UnknownTarget,
+    Unsupported,
+    VaultLocked,
+    WriteFailed,
+    WrongLogin,
+    WrongPassword,
+)
 
 # ---------------------------------------------------------------- password providers
 #
@@ -22,156 +53,6 @@ from ..common import die, filter_env, program_argv, run, run_filtered, say, time
 #     - a Python plugin in ~/.config/roster/providers/ or a providers/ folder next to roster.yml
 #       (see examples/providers/pass_store.py for a complete example).
 # Every provider runs lazily, only when a password is actually needed, and values stay in memory.
-
-class SecretError(RuntimeError):
-    """Raise this from a provider with a message that's safe to show (never the secret itself)."""
-
-
-# Kinds of SecretError a caller (`roster serve`) can tell apart. Providers and plugins raise these where they fit.
-class TimedOut(SecretError):
-    """A helper command didn't finish in time (it was stopped): what it was doing may or may not have happened."""
-
-
-class WrongPassword(SecretError):
-    """The master password didn't unlock the vault."""
-
-    step: dict[str, Any] | None = None  # vault.login: the step the sign-in carries on at (sign_in_problem), when it does
-
-
-class NotLoggedIn(SecretError):
-    """The vault CLI isn't logged in on this box; the message says what to run."""
-
-
-class CliMissing(SecretError):
-    """The provider's command isn't installed."""
-
-
-class Unsupported(SecretError):
-    """The provider has no master password to unlock with."""
-
-
-class NotSignedIn(SecretError):
-    """vault.logout: the CLI isn't signed in to an account, so there's none to sign out of."""
-
-
-class SignOutFailed(SecretError):
-    """vault.logout: the CLI refused to log out; the message has its words."""
-
-
-class VaultLocked(SecretError):
-    """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK), or has nothing to unlock
-    it with (no terminal to ask in, no password variable): 14, never 35 (#437)."""
-
-
-class SessionFileRefused(SecretError):
-    """A saved vault session's file is one roster won't write over (a link, another user's, not a plain file: the
-    rules of common.read_private_bytes, #411). Nothing was written (T241)."""
-
-
-class SessionFileFailed(SecretError):
-    """A saved vault session's file couldn't be written or removed (the system's reason in the message) (T241)."""
-
-
-class NoSession(SecretError):
-    """`roster vault unlock` / `vault lock` for a provider that keeps no session roster can save (T241)."""
-
-
-# What can go wrong signing in (`roster serve`'s vault.login). `step`: where the sign-in carries on (the provider
-# restarted it, e.g. after a wrong code), or None when it's over. Messages are roster's; never a secret.
-class LoginError(SecretError):
-    """A sign-in failed some other way; the message has the provider's own words."""
-
-    def __init__(self, message, step=None):
-        super().__init__(message)
-        self.step = step
-
-
-class CodeRejected(LoginError):
-    """The two-step or new-device code was wrong or expired."""
-
-
-class MethodUnsupported(LoginError):
-    """The account's only two-step methods (or its SSO decryption) are ones the provider's CLI can't do."""
-
-
-class RateLimited(LoginError):
-    """The server refused: too many attempts."""
-
-
-class ServerUnreachable(LoginError):
-    """The vault's server didn't answer (network, wrong address, TLS)."""
-
-
-class AlreadyLoggedIn(LoginError):
-    """The CLI is already logged in on this box: unlock instead."""
-
-
-class BrowserLoginFailed(LoginError):
-    """SSO in the browser failed or didn't finish in time."""
-
-
-class BadServer(LoginError):
-    """The server address given isn't one."""
-
-
-class ApiKeyRejected(LoginError):
-    """The API key (client id / secret) wasn't accepted, or is an organization key."""
-
-
-class WrongLogin(LoginError):
-    """The email or master password wasn't accepted (WrongPassword's sign-in twin)."""
-
-
-# What can be wrong with the item a Login names. They carry item NAMES (and dates, URIs), never a value.
-class ItemNotFound(SecretError):
-    """No item by that name. near: names of similar items, closest first."""
-
-    def __init__(self, message, item, near=()):
-        super().__init__(message)
-        self.item, self.near = item, list(near)
-
-
-class SeveralItems(SecretError):
-    """More than one item matches. matches: [{name, revised, uris}]; exact: they all have that exact name. total:
-    how many items match when that's more than MATCHES shows (Bitwarden: some of them aren't logins), else None."""
-
-    def __init__(self, message, item, matches, exact, total=None):
-        super().__init__(message)
-        self.item, self.matches, self.exact, self.total = item, matches, exact, total
-
-
-class NoField(SecretError):
-    """The item exists but has no value in the field the Login asks for ("password", or a #FIELD)."""
-
-    def __init__(self, message, item, field):
-        super().__init__(message)
-        self.item, self.field = item, field
-
-
-# Writing Vault items (ticket 13: "Save to vault", Q43's verified adds). Names only, never a value.
-class CantWrite(SecretError):
-    """The provider can only read Logins: it can't create or delete Vault items."""
-
-
-class ItemExists(SecretError):
-    """An item by exactly that name is already there. matches: [{name, revised, uris}]."""
-
-    def __init__(self, message, item, matches):
-        super().__init__(message)
-        self.item, self.matches = item, matches
-
-
-class WriteFailed(SecretError):
-    """The provider's CLI refused the create or delete; the message has its words (minus any value)."""
-
-
-# Where a Vault item goes (ticket 35): the personal vault, an organization's collection, a KeePassXC group.
-class UnknownTarget(SecretError):
-    """The place to save to isn't there (or isn't one this provider has); the message names the setting to fix."""
-
-
-class ReadOnlyTarget(SecretError):
-    """The account may only read the collection it was asked to save to."""
 
 
 def near_names(name, names, n=5):

@@ -7,7 +7,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlparse
 
 from . import (
@@ -45,10 +45,19 @@ from .common import (
     tcp_ok,
     typed_token,
 )
-from .config import HIDDEN_PATH, access_label, find_config, load_config, matches, selected, shown_path
+from .config import (
+    HIDDEN_PATH,
+    access_label,
+    find_config,
+    inventory_problem,
+    load_config,
+    matches,
+    selected,
+    shown_path,
+)
 from .context import Context, current, ssh_index_file
 from .discover import cmd_discover
-from .errors import KEY_FILE, ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
+from .errors import KEY_FILE, ROSTER_ERROR, UNKNOWN_HOST, Exit, Problem, problem_of
 from .example import EXAMPLE_CONFIG
 from .hosts import PLACEHOLDER_USER, is_windows, placeholder_user
 from .keyline import key_ere
@@ -191,7 +200,7 @@ def setup_run(cfg, only, host, dry_run, override, force):
     # `--host NAME` (#437, Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
     # (a group, type or product by that name)
     if host is not None and host not in cfg["hosts"]:
-        die(f"unknown host {host!r} (see `roster hosts`)")
+        die(f"unknown host {host!r} (see `roster hosts`)", code=UNKNOWN_HOST)
     hosts = [cfg["hosts"][host]] if host is not None else selected(cfg, only)
     narrowed = bool(only or host)           # part of roster.yml: no Mesh, no key-name record
     waiting = [h for h in hosts if not h["reviewed"]]
@@ -362,7 +371,7 @@ def cmd_rotate(cfg, args):
             scope = {n for n, h in cfg["hosts"].items() if h["group"] == args.host}
         else:
             die(f"unknown host or group {args.host!r} (see `roster hosts`): setup --rotate --host takes a Host or a "
-                "group")
+                "group", code=UNKNOWN_HOST)
     if args.key_type:
         try:
             kt = boxkeys.parse(args.key_type).name
@@ -596,7 +605,7 @@ def cmd_mesh(cfg, args):
         if not args.target:
             die("usage: roster mesh cut HOST, or roster mesh cut --all")
         if args.target not in cfg["hosts"]:
-            die(f"unknown host {args.target!r} (see `roster hosts`)")
+            die(f"unknown host {args.target!r} (see `roster hosts`)", code=UNKNOWN_HOST)
         if not args.yes:
             ans = input(f"Cut {args.target} out of the Mesh now, on every Host at once? [y/N] ")
             if ans.strip().lower() != "y":
@@ -915,7 +924,7 @@ def find_host(cfg, words, resources=False):
     if not h:
         found = [x["name"] for x in found]
         what = "host or resource" if resources else "host"
-        die(f"unknown {what} {name!r}" + (f" - did you mean: {', '.join(found[:10])}" if found else ""))
+        die(f"unknown {what} {name!r}" + (f" - did you mean: {', '.join(found[:10])}" if found else ""), code=UNKNOWN_HOST)
     return h
 
 
@@ -1030,7 +1039,7 @@ def login_label(s):
 def cmd_run(cfg, args):
     h = cfg["hosts"].get(args.host)
     if not h:
-        die(f"unknown host {args.host!r} (see `roster hosts`)")
+        die(f"unknown host {args.host!r} (see `roster hosts`)", code=UNKNOWN_HOST)
     words = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not words:
         die("nothing to run: roster run HOST -- COMMAND")
@@ -1644,20 +1653,18 @@ def vault_session_provider(args, need_bw=True):
     from .errors import NO_SESSION
     name = args.provider or "bw"
     if name != "bw":
-        die(f"[{NO_SESSION}] " + NO_SESSION_WHY.get(name, f"'{name}' has no session roster can keep: roster vault "
-                                                            f"{args.vault_cmd} is for Bitwarden (bw)"))
+        die(NO_SESSION_WHY.get(name, f"'{name}' has no session roster can keep: roster vault {args.vault_cmd} is for "
+                                     "Bitwarden (bw)"), code=NO_SESSION)
     if need_bw and not find_program("bw"):
         die("bw (the Bitwarden CLI) isn't installed")
     return name
 
 
-def session_problem(e):
-    """A SecretError from vault unlock/lock as die()'s text: its errors.py code first (serve's numbers)."""
-    from . import errors
-    from .providers import SessionFileFailed, SessionFileRefused
-    code = errors.SESSION_FILE_REFUSED if isinstance(e, SessionFileRefused) else \
-        errors.SESSION_FILE_FAILED if isinstance(e, SessionFileFailed) else errors.vault_problem(e).code
-    return f"[{code}] {e}"
+def session_problem(e, also="") -> NoReturn:
+    """A SecretError from vault unlock/lock as die(): its code shown first (serve's numbers), ALSO after it."""
+    from .errors import vault_problem
+    p = vault_problem(e)
+    die(p.message + also, code=p.code)
 
 
 def cmd_vault_unlock(args):
@@ -1665,30 +1672,23 @@ def cmd_vault_unlock(args):
     the bw-session file (bitwarden.save_session_file: atomic, 0600, never over a link or someone else's file), so
     every roster run on this Box uses it until `roster vault lock`, `bw lock` or the roster app's lock. Never prints
     the key."""
-    from .providers import Ctx, NotLoggedIn, SecretError
+    from .providers import Ctx, SecretError
     from .providers import bitwarden as bwp
     vault_session_provider(args)
     if not sys.stdin.isatty():
         die("roster vault unlock needs a terminal to ask for the master password")
-    ctx = Ctx("bw", None)
     try:
-        bwp.check_session_file()                        # refused before the password is asked
-        if bwp.saved_session(ctx)[0] == "working":
-            say(f"already unlocked: the saved session in {bwp.session_file()} works until {bwp.UNTIL}")
-            return 0
-        status = bwp._bw_status(ctx)                    # with your shell's BW_SESSION, if it has one
-        if status == "unauthenticated":
-            raise NotLoggedIn(bwp.NOT_LOGGED_IN)
-        if status == "unlocked" and bwp.session_key():  # #480 review, LOW-2: a new unlock would lock it (and the app)
-            bwp.save_session_file(bwp.session_key())
-            say(f"saved your shell's working BW_SESSION in {bwp.session_file()} (no new unlock, so the roster app and "
-                f"other bw sessions stay unlocked): other roster runs on this Box use it until {bwp.UNTIL}. Any "
-                "program running as you can use it to read the vault until then")
-            return 0
-        key = bwp._bw_ask_unlock(ctx)
-        bwp.save_session_file(key)
+        how = bwp.unlock_to_session_file(Ctx("bw", None))
     except SecretError as e:
-        die(session_problem(e))
+        session_problem(e)
+    if how == "already":
+        say(f"already unlocked: the saved session in {bwp.session_file()} works until {bwp.UNTIL}")
+        return 0
+    if how == "adopted":
+        say(f"saved your shell's working BW_SESSION in {bwp.session_file()} (no new unlock, so the roster app and "
+            f"other bw sessions stay unlocked): other roster runs on this Box use it until {bwp.UNTIL}. Any "
+            "program running as you can use it to read the vault until then")
+        return 0
     say(f"unlocked until {bwp.UNTIL}: saved in {bwp.session_file()}, so other roster runs on this Box don't ask. "
         "Any program running as you can use it to read the vault until then. bw keeps one unlock at a time, so this "
         "one locked the roster app and any other bw session on this Box")
@@ -1717,7 +1717,7 @@ def cmd_vault_lock(args):
     try:
         removed = bwp.remove_session_file()
     except SecretError as e:
-        die(session_problem(e) + (f"; {problem}" if problem else ""))
+        session_problem(e, f"; {problem}" if problem else "")
     say(f"removed {bwp.session_file()}" if removed else "no saved session to remove")
     if problem:
         die(problem)
@@ -1945,14 +1945,14 @@ def main(argv=None):
         return _main(argv) or 0
     except Problem as e:                 # inventory() raises one with --json: the error as JSON on stderr
         if not Parser.json_errors:
-            die(e.message)               # a clean error, as die's (the Box-wide lock's 205 from the Mesh, T240)
+            raise Exit(e, tag=False) from None     # a clean error, as die's (the Box-wide lock's 205 from the Mesh)
         jsonout.fail(e.code, e.message, e.fix)
         return 1
     except SystemExit as e:
         if not (Parser.json_errors and isinstance(e.code, str)):
             raise
-        message = e.code.removeprefix("error: ")
-        jsonout.fail(UNKNOWN_HOST if message.startswith("unknown host") else ROSTER_ERROR, message)
+        p = problem_of(e)
+        jsonout.fail(p.code, p.message, p.fix)
         return 1
     except KeyboardInterrupt:
         return 130
@@ -1974,10 +1974,8 @@ def inventory(args):
     except SystemExit as e:
         if not getattr(args, "json", False):
             raise
-        message = str(e.code).removeprefix("error: ")
-        if message.startswith("no Inventory named "):
-            raise Problem(UNKNOWN_INVENTORY, message, fix="`roster inv list` lists them") from None
-        raise inventory_problem(str(e.code).removeprefix("error: "), path) from None
+        p = problem_of(e)                           # an unknown --inv is 140; anything else, a roster.yml that won't load
+        raise (p if p.code != ROSTER_ERROR else inventory_problem(p.message, path)) from None
 
 
 def _main(argv=None):

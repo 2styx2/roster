@@ -637,7 +637,7 @@ def test_publish_stays_within_its_deadline(box, monkeypatch):
 
     from roster import serve as rpc
     hanging_hook(box, "pre-receive", accept=False)
-    monkeypatch.setitem(rpc.DEADLINES, "changes.publish", 2)
+    monkeypatch.setattr(rpc.METHODS["changes.publish"], "deadline", 2)
     box.yml.write_text(box.yml.read_text().replace("title: ESX", "title: mine"))
     state = rpc.State(str(box.yml))
     start = time.monotonic()

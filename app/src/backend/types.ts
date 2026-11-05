@@ -4,6 +4,16 @@
 // (2 adds `host.check` and the Login/askpass/network codes 30-48: `:check` needs it).
 import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
 import type { QuickTarget } from "../quick/target";
+import {
+  CHECK_STEPS,
+  Code,
+  FORMS,
+  LOGIN_FIELDS as SERVE_LOGIN_FIELDS,
+  NO_PASSWORD_AUTHS,
+  SINCE,
+  VAULT_STATUSES,
+  VERIFY_STEPS,
+} from "./serveContract";
 
 // The core's own shapes, generated from its Rust types (config/core.gen.ts).
 export type { BackendProblem, BackendProblemKind, CheckStarted } from "../config/core.gen";
@@ -140,10 +150,10 @@ export class BackendCallError extends Error {
 }
 
 /** The first `api_version` with `host.check`. */
-export const CHECK_API_VERSION = 2;
+export const CHECK_API_VERSION = SINCE["host.check"];
 
 /** `host.check`'s steps, in the order roster runs them. */
-export const CHECK_STEPS = ["inventory", "ssh-config", "provider", "vault-item", "dns", "tcp", "host-key", "auth"] as const;
+export { CHECK_STEPS };
 export type CheckStepName = (typeof CHECK_STEPS)[number];
 
 export interface CheckStep {
@@ -165,7 +175,7 @@ export interface HostCheck {
 }
 
 /** The first `api_version` with `box.check`: `:check` with no Host (ticket 49). */
-export const BOX_CHECK_API_VERSION = 16;
+export const BOX_CHECK_API_VERSION = SINCE["box.check"];
 
 /** How a health check came out (`box.check`), as Neovim's `:checkhealth` says them. */
 export type HealthLevel = "ok" | "warn" | "error";
@@ -189,10 +199,10 @@ export interface BoxCheck {
 }
 
 /** The first `api_version` with `inventory.pull`, `host.verify_login`, `host.update` and `changes.*` (ticket 10). */
-export const EDIT_API_VERSION = 5;
+export const EDIT_API_VERSION = SINCE["host.update"];
 
 /** The first `api_version` with `changes.publish` and `changes.diff`'s `message` (ticket 12). */
-export const PUBLISH_API_VERSION = 7;
+export const PUBLISH_API_VERSION = SINCE["changes.publish"];
 
 /** The Host fields the edit form changes (`host.update`'s `changes`). */
 export interface HostFields {
@@ -208,10 +218,10 @@ export interface HostFields {
 export type HostChanges = Partial<HostFields>;
 
 /** Changing these needs a test login that just succeeded (`host.verify_login`, decision Q43). */
-export const LOGIN_FIELDS = ["ip", "user", "port", "auth"] as const satisfies readonly (keyof HostFields)[];
+export const LOGIN_FIELDS = SERVE_LOGIN_FIELDS satisfies readonly (keyof HostFields)[];
 
 /** `host.verify_login`'s steps, in order. */
-export const VERIFY_STEPS = ["user", "provider", "vault-item", "dns", "tcp", "host-key", "auth"] as const;
+export { VERIFY_STEPS };
 
 /** `roster sync` for this Box after a change roster wrote (its ssh config and Claude files; T150):
  * `ok: false` says why, and the change stands. Left out by an older roster, which didn't sync. */
@@ -301,14 +311,14 @@ export interface PublishResult {
 /** The first `api_version` with the Live Inventory (ticket 28): `host.remove`, `host.rename`,
  * `host.move`, `group.new|rename|delete`, `inventory.reload` (`:source`), `inventory.watch` and the
  * `inventory.changed` notification, and `hosts.list`'s `error`. */
-export const LIVE_API_VERSION = 8;
+export const LIVE_API_VERSION = SINCE["inventory.watch"];
 
 /** roster's codes for the Live Inventory (ticket 28). A bad name is 80, an unknown Host 2. */
 export const LiveError = {
-  nameTaken: 100,
-  unknownGroup: 101,
-  groupNotEmpty: 102,
-  wouldChange: 103,
+  nameTaken: Code.NAME_TAKEN,
+  unknownGroup: Code.UNKNOWN_GROUP,
+  groupNotEmpty: Code.GROUP_NOT_EMPTY,
+  wouldChange: Code.WOULD_CHANGE,
 } as const;
 
 /** `inventory.reload` (`:source`): roster.yml read again now; `error` while it doesn't load (the
@@ -332,30 +342,30 @@ export interface InventoryChanged {
 
 /** roster's codes for publishing (ticket 12; docs/app/errors.md rows 46-52). A failed fetch is 73. */
 export const PublishError = {
-  nothingPending: 90,
-  otherChanges: 91,
-  remoteMoved: 92,
-  unpushed: 93,
-  noUpstream: 94,
-  commitFailed: 95,
-  pushFailed: 96,
+  nothingPending: Code.NOTHING_TO_PUBLISH,
+  otherChanges: Code.OTHER_CHANGES,
+  remoteMoved: Code.REMOTE_MOVED,
+  unpushed: Code.UNPUSHED,
+  noUpstream: Code.NO_UPSTREAM,
+  commitFailed: Code.COMMIT_FAILED,
+  pushFailed: Code.PUSH_FAILED,
 } as const;
 
 /** roster's codes for editing the Inventory (ticket 10; docs/app/errors.md rows 38-43). */
 export const EditError = {
-  notARepo: 70,
-  dirty: 71,
-  diverged: 72,
-  pullFailed: 73,
-  invalidEdit: 74,
-  notVerified: 75,
+  notARepo: Code.NOT_A_REPO,
+  dirty: Code.DIRTY,
+  diverged: Code.DIVERGED,
+  pullFailed: Code.PULL_FAILED,
+  invalidEdit: Code.INVALID_EDIT,
+  notVerified: Code.NOT_VERIFIED,
 } as const;
 
 /** The first `api_version` with `host.add`, `host.scan_key` and `host.review` (ticket 11). */
-export const ADD_API_VERSION = 6;
+export const ADD_API_VERSION = SINCE["host.add"];
 
 /** The first `api_version` whose `host.review` takes `reviewed: false` (un-review; issue #78). */
-export const UNREVIEW_API_VERSION = 9;
+export const UNREVIEW_API_VERSION: number = FORMS["host.review"][1];
 
 /** `host.add`'s params. A Login is either `auth` (an existing vault item, `bw:<host> ssh`) or
  * `password` (typed into the form, saved as `item` after the test login). Without one the Host
@@ -405,12 +415,12 @@ export interface ScannedKey {
 /** roster's codes for adding a Host (ticket 11). A failed test login answers with its step's own
  * code (40-48, 30-35) and `data.steps`. */
 export const AddError = {
-  invalidHost: 80,
-  hostExists: 81,
+  invalidHost: Code.INVALID_HOST,
+  hostExists: Code.HOST_EXISTS,
 } as const;
 
 /** The first `api_version` with `vault.configure`: init.lua's vault settings reach roster (tickets 35, 41). */
-export const VAULT_CONFIG_API_VERSION = 10;
+export const VAULT_CONFIG_API_VERSION = SINCE["vault.configure"];
 
 /** `vault.configure`'s params: this Box's vault settings from init.lua, as roster takes them.
  * Paths and choices only, never a secret. A key left out is roster.yml's again. */
@@ -455,7 +465,7 @@ export interface SaveTargets {
 }
 
 /** The first `api_version` with `vault.item_fields` (T220): the add-Host form's "Fill from this item" (#437). */
-export const ITEM_FIELDS_API_VERSION = 29;
+export const ITEM_FIELDS_API_VERSION = SINCE["vault.item_fields"];
 
 /** The first `api_version` whose roster has `roster setup --host NAME`, that Host alone (#437, Q198).
  * T227 added the flag with no API bump of its own, at API 29, and v0.6.0 is the first release with
@@ -475,12 +485,12 @@ export interface VaultItemFields {
 
 /** roster's codes for where to save (ticket 35). */
 export const SaveToError = {
-  unknownTarget: 64,
-  readOnlyTarget: 65,
+  unknownTarget: Code.UNKNOWN_TARGET,
+  readOnlyTarget: Code.READ_ONLY_TARGET,
 } as const;
 
 /** Where a vault provider stands (`vault.status`). */
-export type VaultStatusWord = "locked" | "unlocked" | "not-logged-in" | "missing-cli" | "unsupported";
+export type VaultStatusWord = (typeof VAULT_STATUSES)[number];
 
 export interface ProviderStatus {
   provider: string;
@@ -503,24 +513,24 @@ export interface VaultAccount {
 }
 
 /** The first `api_version` with `vault.logout` and `vault.status`'s `account` (ticket 42). */
-export const SIGN_OUT_API_VERSION = 14;
+export const SIGN_OUT_API_VERSION = SINCE["vault.logout"];
 
 /** The first `api_version` with the Mesh's methods (ticket 39): `mesh.plan`, `mesh.apply`,
  * `mesh.cut`, `mesh.status`, and a Host's `mesh`. The app's controls for them are T50's Plugin. */
-export const MESH_API_VERSION = 15;
+export const MESH_API_VERSION = SINCE["mesh.plan"];
 
 /** serve API 20 (ticket 101, decision Q112): serve answers requests concurrently, its jobs push
  * `job.progress`, and `host.get` takes `settled`. */
-export const JOBS_API_VERSION = 20;
+export const JOBS_API_VERSION = SINCE["jobs.list"];
 /** serve API 21 (ticket 108): a Host's check is a job, with `job.progress` and in `jobs.list`. */
-export const CHECK_JOBS_API_VERSION = 21;
+export const CHECK_JOBS_API_VERSION = SINCE["host.check_job"];
 
 /** serve API 27 (ticket 115): named Inventories, `inventories.list` and `inventories.use`. */
-export const INVENTORIES_API_VERSION = 27;
+export const INVENTORIES_API_VERSION = SINCE["inventories.list"];
 
 /** serve API 28 (T212): `inventory.info`'s `store` (a plain file or a team repo), and
  * `inventory.create`, the first-run dialog's call when there's no Inventory. */
-export const STORE_API_VERSION = 28;
+export const STORE_API_VERSION = SINCE["inventory.create"];
 
 /** The first-run dialog's three ways (T212): a blank roster.yml, a copy of one, or a clone. */
 export type NewInventoryHow = "blank" | "file" | "repo";
@@ -547,9 +557,9 @@ export interface NewInventory {
 /** `inventory.create`'s refusals (errors.md rows 230-232): one there already, a file that isn't a
  * roster.yml, a clone that failed. */
 export const NewInventoryError = {
-  there: 170,
-  notAnInventory: 171,
-  cloneFailed: 172,
+  there: Code.INVENTORY_THERE,
+  notAnInventory: Code.NOT_AN_INVENTORY,
+  cloneFailed: Code.CLONE_FAILED,
 } as const;
 
 /** One named Inventory (`inventories.list`): its name, its `roster.yml`, whether it's the active
@@ -580,9 +590,9 @@ export interface InventoryUsed {
 /** roster's codes for `inventories.list` and `inventories.use`. */
 export const InventoriesError = {
   /** No named Inventory by that name; `data.names` has the ones there are. */
-  unknown: 140,
+  unknown: Code.UNKNOWN_INVENTORY,
   /** roster's list of named Inventories (`inventories.json`) doesn't load. */
-  unreadable: 143,
+  unreadable: Code.INVENTORIES_UNREADABLE,
 } as const;
 
 /** serve's `job.progress` notification: a job started, moved on or ended. Never its result. */
@@ -599,7 +609,7 @@ export type JobProgress = {
 };
 
 /** roster's code for the Mesh (ticket 39): `rotate` names a Host that isn't a Mesh source. */
-export const MeshError = { notASource: 110, busy: 111 } as const;
+export const MeshError = { notASource: Code.NOT_A_SOURCE, busy: Code.MESH_BUSY } as const;
 
 /** One Link of the Mesh: `from` reaches `to` (as `to`'s own user). `status` only in a plan or apply. */
 export interface MeshLink {
@@ -714,29 +724,29 @@ export type SignInAnswer = { method: number } | { code: string } | { password: s
 /** roster's `vault.login` error codes (10, 12 and 13 are VaultError's). A 50 (and a 10 at the
  * master-password step) carries `data.step`: the sign-in goes on there. */
 export const SignInError = {
-  codeRejected: 50,
-  methodUnsupported: 51,
-  rateLimited: 52,
-  serverUnreachable: 53,
-  alreadyLoggedIn: 54,
-  noSignIn: 55,
-  ssoFailed: 56,
-  badServer: 57,
-  apiKeyRejected: 58,
-  failed: 59,
+  codeRejected: Code.CODE_REJECTED,
+  methodUnsupported: Code.METHOD_UNSUPPORTED,
+  rateLimited: Code.RATE_LIMITED,
+  serverUnreachable: Code.SERVER_UNREACHABLE,
+  alreadyLoggedIn: Code.ALREADY_LOGGED_IN,
+  noSignIn: Code.NO_SIGN_IN,
+  ssoFailed: Code.SSO_FAILED,
+  badServer: Code.BAD_SERVER,
+  apiKeyRejected: Code.API_KEY_REJECTED,
+  failed: Code.SIGN_IN_FAILED,
 } as const;
 
 /** roster's `vault.*` error codes (BackendCallError.code). */
 export const VaultError = {
-  wrongPassword: 10,
-  notLoggedIn: 11,
-  cliMissing: 12,
-  unsupported: 13,
-  locked: 14,
+  wrongPassword: Code.WRONG_PASSWORD,
+  notLoggedIn: Code.NOT_LOGGED_IN,
+  cliMissing: Code.CLI_MISSING,
+  unsupported: Code.UNSUPPORTED,
+  locked: Code.VAULT_LOCKED,
   /** `vault.logout` (API 14): the CLI isn't signed in, so there's no account to sign out of. */
-  alreadySignedOut: 15,
+  alreadySignedOut: Code.ALREADY_SIGNED_OUT,
   /** `vault.logout`: the CLI refused to log out (its words in the message); secrets were forgotten anyway. */
-  signOutFailed: 16,
+  signOutFailed: Code.SIGN_OUT_FAILED,
 } as const;
 
 /** A terminal size in character cells. */
@@ -798,32 +808,32 @@ export interface SessionHandle {
 /** `session.prepare`'s error codes (docs/serve-api.md): the message is roster's, ready to show.
  * Every code has its row in src/errors/catalog.ts (docs/app/errors.md). */
 export const SessionRefusal = {
-  inventory: 1,
-  unknownHost: 2,
-  notReviewed: 20,
-  notSetUp: 21,
-  noAskpass: 22,
-  noUser: 30,
-  noProvider: 31,
-  itemNotFound: 32,
-  severalItems: 33,
-  noField: 34,
-  lookupFailed: 35,
+  inventory: Code.INVENTORY_ERROR,
+  unknownHost: Code.UNKNOWN_HOST,
+  notReviewed: Code.NOT_REVIEWED,
+  notSetUp: Code.NOT_SET_UP,
+  noAskpass: Code.NO_ASKPASS,
+  noUser: Code.NO_USER,
+  noProvider: Code.NO_PROVIDER,
+  itemNotFound: Code.ITEM_NOT_FOUND,
+  severalItems: Code.SEVERAL_ITEMS,
+  noField: Code.NO_FIELD,
+  lookupFailed: Code.LOOKUP_FAILED,
   /** A password Host's vault: CLI not logged in, not installed, or locked (the VaultError codes). */
   vaultNotLoggedIn: VaultError.notLoggedIn,
   vaultCliMissing: VaultError.cliMissing,
   vaultLocked: VaultError.locked,
   /** No host key recorded for the Host (API 11, ticket 36): the app asks before it connects.
    * `data`: its `address` and `port`. */
-  hostKeyUnknown: 44,
+  hostKeyUnknown: Code.HOST_KEY_UNKNOWN,
   /** The Host's Login is `auth: prompt` (API 13, ticket 16): the app asks for the password.
    * `data`: its `user`, `address` and `port`. */
-  passwordNeeded: 39,
+  passwordNeeded: Code.PASSWORD_NEEDED,
 } as const;
 
 /** The first `api_version` whose Sessions check host keys strictly and ask first (ticket 36, Q60):
  * `session.prepare`'s 44, `host.scan_key {host}`, `host.trust_key`. */
-export const HOST_KEY_API_VERSION = 11;
+export const HOST_KEY_API_VERSION = SINCE["host.trust_key"];
 
 /** `host.scan_key {host}` (API 11, ticket 36): the key a Host offers, to ask about. */
 export interface HostKeyScan extends ScannedKey {
@@ -836,7 +846,7 @@ export interface HostKeyTrust extends Omit<HostKeyScan, "recorded"> {
 }
 
 /** The first `api_version` with Quick Connect (ticket 14): `quick.prepare`. */
-export const QUICK_CONNECT_API_VERSION = 12;
+export const QUICK_CONNECT_API_VERSION = SINCE["quick.prepare"];
 
 /** A Quick Connect's box and the fingerprint the user was shown (`scanKey`): what `quick.prepare`
  * takes besides the password. */
@@ -844,16 +854,16 @@ export interface QuickConnect extends QuickTarget {
   fingerprint: string;
 }
 
-/** Login references with no password behind them: roster's providers.NO_PASSWORD, kept in step by
- * tests/test_prompt_fill.py. (`prompt` has none saved either, but it's a provider of its own.) */
-export const NO_PASSWORD_AUTHS = ["agent", "key", "none"] as const;
+/** Login references with no password behind them: roster's providers.NO_PASSWORD. (`prompt` has
+ * none saved either, but it's a provider of its own.) */
+export { NO_PASSWORD_AUTHS };
 
 /** The first `api_version` with `session.fill` (ticket 119): filling a password prompt. */
-export const FILL_API_VERSION = 25;
+export const FILL_API_VERSION = SINCE["session.fill"];
 
 /** The first `api_version` with `session.fill`'s `hop` (ticket 120): filling a nested ssh's
  * prompt, or that Host's sudo, with that Host's Login. */
-export const NESTED_FILL_API_VERSION = 26;
+export const NESTED_FILL_API_VERSION: number = FORMS["session.fill"][1];
 
 /** The Inventory Host a nested ssh went to and what roster resolved it to (`session.fill`'s
  * `hop`). Never a password. */
@@ -871,14 +881,14 @@ export interface NestedHost {
 /** `session.fill`'s codes (docs/serve-api.md): rows 143 and 144 in docs/app/errors.md. */
 export const FillRefusal = {
   /** The prompt isn't one roster fills, or asks for another Host or account. */
-  refused: 130,
+  refused: Code.FILL_REFUSED,
   /** The Login that would answer has no saved password. */
-  nothingToFill: 131,
+  nothingToFill: Code.NOTHING_TO_FILL,
 } as const;
 
 /** The first `api_version` with "Save to vault" after a Session's own login (tickets 15, 16):
  * `quick.prepare`'s `save`, `quick.save`, `vault.forget_typed` and `session.logged_in`. */
-export const SAVE_TO_VAULT_API_VERSION = 13;
+export const SAVE_TO_VAULT_API_VERSION = SINCE["quick.save"];
 
 /** `quick.save`'s params: the Quick Connect (serve's id) and the Host it becomes. The password
  * isn't here: serve holds it, and saves it only after that Session logged in with it (Q43). */
@@ -925,17 +935,17 @@ export interface SaveLogin {
  * and host.add's (80, 81). */
 export const SaveLoginError = {
   /** The Session hasn't logged in with the typed password (yet, or the box refused it). */
-  notLoggedIn: 66,
+  notLoggedIn: Code.LOGIN_NOT_SEEN,
   /** No typed password held for it: saved already, or forgotten (ended, locked, 10 minutes). */
-  nothingHeld: 67,
+  nothingHeld: Code.NOTHING_HELD,
 } as const;
 
 /** `host.trust_key`'s refusals besides 40-42 (couldn't fetch the key): nothing is recorded. */
 export const HostKeyError = {
   /** Another key is recorded for the address (Q44): never trusted from the app. */
-  changed: 43,
+  changed: Code.HOST_KEY_CHANGED,
   /** The Host offers another key than the one the user was asked about. */
-  changedWhileAsked: 23,
+  changedWhileAsked: Code.HOST_KEY_CHANGED_WHILE_ASKED,
 } as const;
 
 export interface Backend {

@@ -93,6 +93,18 @@ def shown_path(path) -> str | None:
     return None
 
 
+def inventory_problem(message, path=None):
+    """roster.yml at PATH didn't load (catalog row 1), as a Problem. data: path (or None) and, for a YAML error, the
+    line it's at."""
+    from .errors import INVENTORY_ERROR, PATH_NOT_REPEATED, Problem
+    m = re.search(r"line (\d+)", message)
+    shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated (#484 M1)
+    data = {"path": (shown or PATH_NOT_REPEATED) if path else None} | ({"line": int(m.group(1))} if m else {})
+    where = (shown or f"the roster.yml at {HIDDEN_PATH}" if path else "roster.yml") + (f" at line {data['line']}" if m else "")
+    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
+                                                     "`roster init --blank` (`roster init --help`: the others)")
+
+
 def load_inventory(path):
     """roster.yml at PATH as an Inventory (models.py): what new code reads (decision Q113)."""
     shown = shown_path(path)

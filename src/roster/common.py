@@ -11,9 +11,10 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, NoReturn, cast
+from typing import IO, Any, NoReturn, cast
 
 from .context import WINDOWS, current, ssh_dir, user_config_dir  # noqa: F401 (others import these from here)
+from .errors import ROSTER_ERROR, Exit, Problem, die_message  # noqa: F401 (die_message: common's callers use it)
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 
@@ -355,14 +356,11 @@ def roster_command():
     return f"{shlex.quote(sys.executable)} -m roster"     # e.g. inside a uv venv that isn't on PATH
 
 
-def die(msg: str) -> NoReturn:
-    sys.exit(f"error: {msg}")
-
-
-def die_message(e):
-    """The text of a die() (SystemExit("error: ...")), without the prefix."""
-    msg = str(e.code) if e.code is not None else "exited"
-    return msg.removeprefix("error: ")
+def die(msg: str, code: int = ROSTER_ERROR, fix: str | None = None, data: dict[str, Any] | None = None,
+        tag: bool = True) -> NoReturn:
+    """Refuse: `error: MSG` on stderr and exit 1 (`error: [CODE] MSG` for a CODE of its own, unless not TAG:
+    errors.Exit). serve and --json answer with CODE, MSG, FIX and DATA."""
+    raise Exit(Problem(code, msg, data, fix=fix), tag)
 
 
 # ---------------------------------------------------------------- what looks like a token, not a name

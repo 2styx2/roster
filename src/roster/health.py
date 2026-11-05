@@ -10,7 +10,7 @@ from typing import Any, NamedTuple, cast
 
 from . import __version__, boxkeys, changes, named, providers, rotation, store
 from .common import find_program
-from .config import load_config
+from .config import inventory_problem, load_config
 from .context import Context, current, ssh_index_file
 from .errors import (
     KEY_TOO_OLD,
@@ -20,7 +20,6 @@ from .errors import (
     SAME_HOST_NAME,
     SAME_MACHINE,
     Problem,
-    inventory_problem,
 )
 from .hosts import placeholder_user
 from .providers import PROVIDERS

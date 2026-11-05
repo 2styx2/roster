@@ -514,7 +514,7 @@ def check_save_to(h, typed):
     if name not in PROVIDERS:
         raise unknown_provider(h, f"{name}:")
     if not providers.can_write(name):
-        raise errors.write_problem(providers.CantWrite(
+        raise errors.vault_problem(providers.CantWrite(
             f"provider '{name}' can't save to the vault - roster only reads its Logins; create the item in the "
             "password manager itself, then pick it as the Login"))
     check_provider({**h, "ssh": {**h["ssh"], "auth": f"{name}:{typed['item']}"}})

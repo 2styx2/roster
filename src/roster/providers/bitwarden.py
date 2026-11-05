@@ -493,6 +493,24 @@ def _bw_ask_unlock(ctx):
     return r.stdout.strip()
 
 
+def unlock_to_session_file(ctx):
+    """`roster vault unlock`'s work: a session key in the bw-session file, asking for the master password only when
+    there's no working one. Returns how: "already" (the saved one works), "adopted" (the shell's unlocked BW_SESSION
+    saved, with no new unlock, so the app and other bw sessions stay unlocked: #480 review, LOW-2) or "unlocked".
+    Raises SecretError (a refused file before the password is asked)."""
+    check_session_file()
+    if saved_session(ctx)[0] == "working":
+        return "already"
+    status = _bw_status(ctx)                    # with the shell's BW_SESSION, if it has one
+    if status == "unauthenticated":
+        raise NotLoggedIn(NOT_LOGGED_IN)
+    if status == "unlocked" and session_key():
+        save_session_file(session_key())
+        return "adopted"
+    save_session_file(_bw_ask_unlock(ctx))
+    return "unlocked"
+
+
 def _bw_status_json(ctx):
     """`bw status` as a dict: status, and (when it says) userEmail and serverUrl (None for bitwarden.com). SecretError
     when it isn't a JSON object (#486: valid JSON of another kind was an AttributeError in `check --box`)."""

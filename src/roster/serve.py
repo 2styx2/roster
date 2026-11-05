@@ -5,13 +5,15 @@ hands a password Session's ssh its password.
 It answers with the Host, group and resource objects roster.yml loads into (models.py); hosts.list's and host.get's
 params and results are models in servemodels.py (T174, Q113), and the others move there as tickets touch them.
 Logins come back as references (bw:ITEM), never as values. Requests are handled concurrently (API 20, decision Q112):
-a pool of workers, two more for the quick reads (QUICK), and a lock per resource each method claims (LOCKS), so
-answers can come back in another order than asked. Background work (a Mesh run, a scan) is a job (jobs.py).
+a pool of workers, two more for the quick reads, and a lock per resource each method claims, so answers can come
+back in another order than asked. Background work (a Mesh run, a scan) is a job (jobs.py).
 
-Add a method by writing a function (state, params) -> result and listing it in METHODS. Its docstring's
+Add a method by writing a function (state, params) -> result and registering it with @method(NAME, ...), which
+says how serve runs it (its deadline, locks, lane, what a cancel stops, whether it holds a secret). Its docstring's
 `Params:`, `Result:`, `Errors:` and `Since:` fields are its row in docs/serve-api.md: name it in one of that
-doc's `<!-- BEGIN generated:methods ... -->` markers and run `uv run python scripts/gen-serve-api.py`
-(scripts/gen-serve-api.py has the format; tests/test_serve_api_doc.py fails until the doc matches).
+doc's `<!-- BEGIN generated:methods ... -->` markers and run `uv run python scripts/gen-serve-api.py`, which also
+writes the contract the app and the Rust core read (docs/serve-contract.json, app/src/backend/serveContract.ts).
+tests/test_serve_api_doc.py fails until the generated files match.
 """
 
 import hashlib
@@ -27,6 +29,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +54,6 @@ from .common import (
     current_inventory,
     deadline,
     deadline_at,
-    die_message,
     failure_text,
     find_program,
     known_hosts_label,
@@ -60,58 +62,47 @@ from .common import (
     ssh_config_file,
     ssh_path,
 )
-from .config import find_config, load_config, load_inventory, locate_config
-from .errors import (  # noqa: F401 (the codes are part of serve's API)
+from .config import find_config, inventory_problem, load_config, load_inventory, locate_config
+from .errors import (
     ALREADY_SIGNED_OUT,
     BUSY,
     CANCELLED,
     CANT_ADD,
-    CANT_WRITE,
-    CLI_MISSING,
-    GROUP_NOT_EMPTY,
-    HOST_EXISTS,
     HOST_KEY_CHANGED_WHILE_ASKED,
     HOST_KEY_UNKNOWN,
+    INTERNAL_ERROR,
     INVALID_EDIT,
-    INVALID_HOST,
+    INVALID_PARAMS,
+    INVALID_REQUEST,
     INVENTORIES_UNREADABLE,
-    INVENTORY_ERROR,
     INVENTORY_THERE,
-    ITEM_EXISTS,
     LOGIN_NOT_SEEN,
     MESH_BUSY,
+    METHOD_NOT_FOUND,
     NAME_TAKEN,
     NO_ASKPASS,
     NO_CHECK,
     NO_SCAN,
     NO_SIGN_IN,
-    NOT_A_SOURCE,
     NOT_CREATED_HERE,
-    NOT_LOGGED_IN,
     NOT_REVIEWED,
     NOT_SET_UP,
     NOT_VERIFIED,
     NOTHING_HELD,
+    PARSE_ERROR,
     PASSWORD_NEEDED,
-    READ_ONLY_TARGET,
     ROSTER_ERROR,
     SCAN_RUNNING,
     SIGN_OUT_FAILED,
     TOO_MANY_ADDRESSES,
-    UNKNOWN_GROUP,
     UNKNOWN_HOST,
     UNKNOWN_INVENTORY,
-    UNKNOWN_TARGET,
     UNSUPPORTED,
-    VAULT_LOCKED,
-    WOULD_CHANGE,
-    WRITE_FAILED,
-    WRONG_PASSWORD,
     Problem,
-    inventory_problem,
+    die_message,
+    problem_of,
     sign_in_problem,
     vault_problem,
-    write_problem,
 )
 from .providers import PROVIDERS, setup_providers
 from .servemodels import HostGetParams, HostsListResult, InventoryError, NoParams, dump
@@ -127,23 +118,90 @@ from .sshops import (
 
 API_VERSION = 30            # bump when a method or result changes in a way the app has to know about
 
-# JSON-RPC's own error codes
-PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
-# roster's own codes are in errors.py: stable, the app switches on them; the message is ready to show
-RpcError = Problem
-
 
 def busy_error(resource, who, subject=None):
     """Code 4: RESOURCE (a key of NAMES) was held by WHO (a method, or None) past this request's wait, and nothing
     was done. SUBJECT says what was busy, when it's narrower than the resource (a provider's items)."""
-    return RpcError(BUSY, f"{subject or NAMES[resource]} is busy" + (f": {who} is still running" if who else "")
+    return Problem(BUSY, f"{subject or NAMES[resource]} is busy" + (f": {who} is still running" if who else "")
                     + " - nothing was done", {"busy": NAMES[resource], "method": who},
                     fix="try again once it has finished")
 
 
 def closing_error():
     """serve's stdin closed: nothing new starts (code 3)."""
-    return RpcError(ROSTER_ERROR, "roster serve is closing")
+    return Problem(ROSTER_ERROR, "roster serve is closing")
+
+
+# ---------------------------------------------------------------- the methods (decision Q112)
+
+# What a method claims, in this order (never the other way round, so two requests can't wait for each other):
+# "inventory" (roster.yml, its repo, the loaded Inventory: every write, for its whole request) and "vault" (shared:
+# it looks a secret up, makes an item, or mints an askpass token; alone: it unlocks, signs in, configures). A method
+# that claims nothing reads what's in memory, or does its own locking (a reload, a job's write, host.verify_login's
+# vault after its reload, vault.lock's and vault.logout's wait: they forget first and are never refused; host.check's
+# job, which shares the vault, not the request waiting for it).
+Claims = list[tuple[str, bool]]
+WRITES_INVENTORY: Claims = [("inventory", False)]
+SHARES_VAULT: Claims = [("vault", True)]
+HOLDS_VAULT: Claims = [("vault", False)]
+
+
+@dataclass
+class Method:
+    """How serve runs one method: FN(state, params) -> its result, FN's docstring its row in docs/serve-api.md.
+
+    deadline: s for the whole request, None for none of its own. The app waits longer for each (roster-core's
+        CALL_SECS, which a core test holds to this plus AFTER_DEADLINE through docs/serve-contract.json)
+    locks: what it claims (Claims, in the order above), or fn(params) -> Claims for a method whose params decide
+    lane: "general" (the pool), "quick" (a read of what's in memory, on workers of its own, so it never waits behind
+        a long request; a request whose params make it claim a lock goes to the pool), "unlock" (a worker of its own,
+        never queued behind busy ones: Q112 (r)) or "now" (answered on the reading thread, ahead of every worker)
+    cancel: what `$/cancel` stops: "waiting" (only while it's queued or waiting for its locks), "running" (also once
+        it runs: it registers on_cancel, its job's stop) or "never"
+    sensitive: it handles a password: an unexpected exception is answered "SENSITIVE failed: <its type>" (doing() can
+        say more), and never logged, so no text that might hold the password gets out
+    waits_for_unlocks: it waits for the vault.unlock requests sent before it (after_unlocks)
+    """
+
+    fn: Callable[[Any, dict[str, Any]], Any]
+    deadline: float | None = None
+    locks: Claims | Callable[[dict[str, Any]], Claims] = field(default_factory=list)
+    lane: str = "general"
+    cancel: str = "waiting"
+    sensitive: str | None = None
+    waits_for_unlocks: bool = False
+
+    def claims(self, params):
+        return self.locks(params) if callable(self.locks) else self.locks
+
+
+METHODS: dict[str, Method] = {}
+# A few steps still run once a deadline is past (a 1 s floor each, up to 15 s to check what a step that timed out
+# did: changes.CHECK_TIMEOUT, bitwarden's lookup after a create; and UNDO_TIME to take a new Vault item back out), so
+# the app waits at least the deadline plus this: serve always answers before the app gives up, and the answer says
+# what happened. A method with no deadline: the app's 60 s.
+AFTER_DEADLINE = 40
+UNDO_TIME = 15              # s: taking a new Vault item back out gets this much, even past the deadline
+_doing = threading.local()      # what the sensitive method this thread answers is doing, in its own words
+
+
+def method(name, **how):
+    """Register a serve method: `@method("host.get", lane="quick")` over its function (Method has the rest)."""
+    def register(fn):
+        METHODS[name] = Method(fn, **how)
+        return fn
+    return register
+
+
+def doing(what):
+    """A sensitive method says what it's doing now (WHAT: "deleting from bw"), for the error an unexpected exception
+    becomes: "WHAT failed: <its type>"."""
+    _doing.what = what
+
+
+def settled_waits(params):
+    """host.get's claims: `settled: true` waits for a write under way, as another write would."""
+    return WRITES_INVENTORY if params.get("settled") is True else []
 
 
 class State:
@@ -157,8 +215,8 @@ class State:
         self.auto = False                   # inventory.watch: apply outside edits as they're saved
         self.watcher = None                 # the Watcher thread, once inventory.watch started it
         self.notify: Callable[[str, Any], None] | None = None    # fn(method, params): a JSON-RPC notification to the app (serve() sets it)
-        # roster.yml, its repo and the loaded Inventory: every write holds it for its whole request, a reload for
-        # itself (LOCKS). Reentrant for its holder, so a write may reload.
+        # roster.yml, its repo and the loaded Inventory: every write holds it for its whole request (its method's locks),
+        # a reload for itself. Reentrant for its holder, so a write may reload.
         self.lock = Lock("roster.yml")
         self.vault = Lock("the vault")      # unlocking and locking alone; looking up, saving, minting tokens shared
         self.unlocked = set()               # providers vault.unlock opened (vault.lock locks them again)
@@ -210,7 +268,7 @@ class State:
         """roster.yml loaded again, for an edit: refuses (code 1) when the file as it is now doesn't load, even
         though the last good Inventory is still shown. It waits for a write under way at most what's left of the
         request's deadline (LOCK_WAIT without one): then 4, as a write's own claim would be."""
-        with claimed(self, [("inventory", False)], "a reload"):
+        with claimed(self, WRITES_INVENTORY, "a reload"):
             self.reload()
             p = self.problem()
             if p:
@@ -251,6 +309,7 @@ def broken(state):
 
 # ---------------------------------------------------------------- methods
 
+@method("inventory.info", lane="quick")
 def inventory_info(state, params):
     """Which roster.yml, on which box, and which roster and serve API answer: the app's first call.
 
@@ -269,6 +328,7 @@ def inventory_info(state, params):
             "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True).view(), **versions()}
 
 
+@method("hosts.list", lane="quick")
 def hosts_list(state, params):
     """Every Host and group. While roster.yml doesn't load (an outside edit), the last good ones, and `error`.
 
@@ -285,6 +345,7 @@ def hosts_list(state, params):
                                 error=None if error is None else InventoryError.model_validate(error)))
 
 
+@method("host.get", locks=settled_waits, lane="quick")
 def host_get(state, params):
     """One Host by its exact name (the app picks from hosts.list; no fuzzy matching here).
 
@@ -299,27 +360,23 @@ def host_get(state, params):
     Since: API 20
     """
     p = HostGetParams.parse(params)
-    if p.settled:
-        with claimed(state, [("inventory", False)], "host.get"):
-            state.inventory()
-            h = state.inv.hosts.get(p.name)
-    else:
-        state.inventory()
-        h = state.inv.hosts.get(p.name)
+    state.inventory()
+    h = state.inv.hosts.get(p.name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {p.name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {p.name!r}")
     return dump(h)
 
 
 def text_param(params, key):
     v = params.get(key)
     if not isinstance(v, str) or not v:
-        raise RpcError(INVALID_PARAMS, f"params.{key} must be a non-empty string")
+        raise Problem(INVALID_PARAMS, f"params.{key} must be a non-empty string")
     return v
 
 
 # ---------------------------------------------------------------- sessions (ticket 05; ADR 0002)
 
+@method("session.prepare", locks=SHARES_VAULT)
 def session_prepare(state, params):
     """What the app runs in a PTY to open a Session: the system ssh, never a secret.
     It uses the ssh-config alias `roster setup`/`sync` writes (Host NAME), so the key, user, port,
@@ -345,22 +402,22 @@ def session_prepare(state, params):
     name = text_param(params, "host")
     h = state.inventory()["hosts"].get(name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     if not h["reviewed"]:
-        raise RpcError(NOT_REVIEWED, not_reviewed(h))
+        raise Problem(NOT_REVIEWED, not_reviewed(h))
     diagnose.check_user(h)
     ssh = find_program("ssh")         # absolute: the app spawns it with `wsl.exe --exec`, where PATH is thin
     if ssh is None:
-        raise RpcError(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
+        raise Problem(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
     if not in_ssh_config(h["name"]):
         why = left_out(h["name"])
         if why:
-            raise RpcError(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
+            raise Problem(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
                                                 "active one (`roster inv use`)")
         why = not_reached(h["name"])
         if why:                         # another roster.yml's, or this Inventory isn't synced here
-            raise RpcError(NOT_SET_UP, why, fix=sync_fix())
-        raise RpcError(NOT_SET_UP, f"{h['name']} isn't in this box's ssh config ({ssh_config_file()}) - "
+            raise Problem(NOT_SET_UP, why, fix=sync_fix())
+        raise Problem(NOT_SET_UP, f"{h['name']} isn't in this box's ssh config ({ssh_config_file()}) - "
                                    "run `roster sync`, or `roster setup` if this box isn't set up yet")
     # What the Session connects to (API 25): the core sends it back with a prompt fill, so a Host edited since isn't
     # filled into this Session (session.fill).
@@ -368,7 +425,7 @@ def session_prepare(state, params):
     if not h["enroll"] and prompted(h):
         return prompt_session(state, h, ssh, params) | login
     if params.get("password") is not None or params.get("save") is not None:
-        raise RpcError(INVALID_PARAMS, f"params.password and params.save are only for a Host whose Login is auth: "
+        raise Problem(INVALID_PARAMS, f"params.password and params.save are only for a Host whose Login is auth: "
                                        f"prompt; {h['name']}'s password comes from its Login")
     if not h["enroll"] and diagnose.password_login(h):
         return password_session(state, h, ssh) | login
@@ -377,6 +434,7 @@ def session_prepare(state, params):
             "host": h["name"], "auth": "key"} | login
 
 
+@method("session.fill", locks=SHARES_VAULT)
 def session_fill(state, params):
     """The password for a prompt a Host Session shows (sudo's, or a nested ssh to the Host itself; ticket 119,
     decision Q129), for the app's core to type into that Session's PTY, and for nothing else: this is the one
@@ -407,15 +465,15 @@ def session_fill(state, params):
     address, user = text_param(params, "address"), text_param(params, "user")
     port, prompt = params.get("port"), params.get("prompt")
     if isinstance(port, bool) or not isinstance(port, int):
-        raise RpcError(INVALID_PARAMS, "params.port must be a number")
+        raise Problem(INVALID_PARAMS, "params.port must be a number")
     if not isinstance(prompt, str):
-        raise RpcError(INVALID_PARAMS, "params.prompt must be a string")
+        raise Problem(INVALID_PARAMS, "params.prompt must be a string")
     cfg = state.inventory()
     h = cfg["hosts"].get(name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     if not h["reviewed"]:
-        raise RpcError(NOT_REVIEWED, not_reviewed(h))
+        raise Problem(NOT_REVIEWED, not_reviewed(h))
     diagnose.check_user(h)
     fill.same_login(h, address, port, user)
     if params.get("hop") is not None:
@@ -431,16 +489,16 @@ def nested_host(cfg, hop):
     """The Inventory Host a nested ssh went to (session.fill's `hop`), if it's reviewed and still has the address,
     port and user the app resolved the ssh to."""
     if not isinstance(hop, dict):
-        raise RpcError(INVALID_PARAMS, "params.hop must be an object")
+        raise Problem(INVALID_PARAMS, "params.hop must be an object")
     name, address, user = (text_param(hop, k) for k in ("host", "address", "user"))
     port = hop.get("port")
     if isinstance(port, bool) or not isinstance(port, int):
-        raise RpcError(INVALID_PARAMS, "params.hop.port must be a number")
+        raise Problem(INVALID_PARAMS, "params.hop.port must be a number")
     h = cfg["hosts"].get(name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     if not h["reviewed"]:
-        raise RpcError(NOT_REVIEWED, not_reviewed(h))
+        raise Problem(NOT_REVIEWED, not_reviewed(h))
     diagnose.check_user(h)
     fill.same_login(h, address, port, user, nested=True)
     return h
@@ -450,7 +508,7 @@ def known_key(h):
     """Refuse (44, with the address to ask about) a Session to a Host roster has recorded no host key for. It comes
     after every other check, so the app only asks about a key when trusting it is all that's left to do."""
     if not recorded_host_keys(h):
-        raise RpcError(HOST_KEY_UNKNOWN, f"roster hasn't seen {h['name']}'s host key before",
+        raise Problem(HOST_KEY_UNKNOWN, f"roster hasn't seen {h['name']}'s host key before",
                        {"address": h["ip"], "port": h["ssh"]["port"]},
                        fix="compare its fingerprint with the Host's console or owner, then trust it when the app "
                            f"asks, or run `roster setup --host {h['name']}`")
@@ -480,9 +538,9 @@ def need_askpass(state, what="password sessions"):
     """Refuse (22) a password Session this process can't give its password to: no askpass channel (roster used
     in-process), or one whose helper isn't installed (Windows)."""
     if state.askpass is None:
-        raise RpcError(NO_ASKPASS, f"the askpass channel isn't open in this process - {what} need `roster serve`")
+        raise Problem(NO_ASKPASS, f"the askpass channel isn't open in this process - {what} need `roster serve`")
     if state.askpass.problem:
-        raise RpcError(NO_ASKPASS, state.askpass.problem)
+        raise Problem(NO_ASKPASS, state.askpass.problem)
 
 
 def prompted(h):
@@ -501,12 +559,12 @@ def prompt_session(state, h, ssh, params):
     known_key(h)
     password = params.get("password")
     if password is None:
-        raise RpcError(PASSWORD_NEEDED, f"{h['name']}'s Login is auth: prompt - type its password",
+        raise Problem(PASSWORD_NEEDED, f"{h['name']}'s Login is auth: prompt - type its password",
                        {"user": h["ssh"]["user"], "address": h["ip"], "port": h["ssh"]["port"]},
                        fix="type the password when the app asks; tick Save to vault to keep it in the vault "
                            "once it has logged in")
     if not isinstance(password, str) or not password:
-        raise RpcError(INVALID_PARAMS, "params.password must be a non-empty string")
+        raise Problem(INVALID_PARAMS, "params.password must be a non-empty string")
     save = save_param(params, password)
     if save:
         saving_provider(state, params)
@@ -527,6 +585,7 @@ def prompt_session(state, h, ssh, params):
 askpass_lookup = diagnose.askpass_lookup
 
 
+@method("host.check", deadline=45, cancel="running")
 def host_check(state, params):
     """`roster check HOST` for the app: the diagnostic steps in order, stopping at the first failure (see
     diagnose.check_host). The password login, if it gets that far, goes through serve's askpass channel. It runs as a
@@ -563,7 +622,7 @@ def host_check(state, params):
         raise cancelled("host.check")
     job.wait()                      # its thread is done with it
     if job.error is not None:
-        raise RpcError(job.error["code"], job.error["message"], job.error.get("data"))
+        raise Problem(job.error["code"], job.error["message"], job.error.get("data"))
     return job.result
 
 
@@ -584,7 +643,7 @@ def check_job(state, name):
                 yield
             finally:
                 state.vault.release()
-        with deadline(DEADLINES["host.check"]):
+        with deadline(METHODS["host.check"].deadline):
             return diagnose.check_host(name, state.inventory, state.askpass, progress=job.progress,
                                        halted=job.halted, vault=vault)
     try:
@@ -602,6 +661,7 @@ def stop_checks(state):
         job.stop()
 
 
+@method("host.check_job", lane="quick")
 def host_check_job(state, params):
     """A Host check's job (`host.check {background: true}`): where it is, and its result once it's over. Never
     connects.
@@ -615,7 +675,7 @@ def host_check_job(state, params):
     jid = text_param(params, "job")
     job = state.jobs.get("check", jid)
     if job is None:
-        raise RpcError(NO_CHECK, f"no check {jid} in this roster serve (or a newer check of its Host replaced it)",
+        raise Problem(NO_CHECK, f"no check {jid} in this roster serve (or a newer check of its Host replaced it)",
                        fix="check the Host again")
     out = job.view()
     if out["state"] in ("done", "stopped"):
@@ -623,6 +683,7 @@ def host_check_job(state, params):
     return out
 
 
+@method("box.check", deadline=45)
 def box_check(state, params):
     """`roster check --box` for the app (ticket 49): this Box's health, every check local (health.check_box). It reads
     roster.yml as it is now (without applying it: that's the watcher's or :source's to do), so a file that doesn't
@@ -642,6 +703,7 @@ def box_check(state, params):
     return {"checks": checks, "ok": not any(c["level"] == "error" for c in checks), **versions()}
 
 
+@method("inventories.list")
 def inventories_list(state, params):
     """The named Inventories (ticket 115): which is active, and which file this serve runs on, so the app can show
     where you are and offer the others. Switching is inventories.use, then restarting serve.
@@ -656,12 +718,13 @@ def inventories_list(state, params):
     try:
         inv = inventories.load()
     except SystemExit as e:
-        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+        raise Problem(INVENTORIES_UNREADABLE, die_message(e),
                        fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
     path = state.path.expanduser().resolve() if state.path else None
     return {**inv.view(), "name": current_inventory(), "path": str(path) if path else None}
 
 
+@method("inventories.use")
 def inventories_use(state, params):
     """Make the named Inventory `name` the active one (`roster inv use`). This serve keeps running on the one it
     started with: the app restarts serve (as for a new `backend`), which then finds the active one. Nothing else
@@ -674,21 +737,22 @@ def inventories_use(state, params):
     """
     name = params.get("name")
     if not isinstance(name, str) or not name:
-        raise RpcError(INVALID_PARAMS, "params.name: the named Inventory to make the active one")
+        raise Problem(INVALID_PARAMS, "params.name: the named Inventory to make the active one")
     try:
         inv = inventories.load()
     except SystemExit as e:
-        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+        raise Problem(INVENTORIES_UNREADABLE, die_message(e),
                        fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
     chosen = inv.get(name)
     if chosen is None:
         names = [x.name for x in inv.inventories]
-        raise RpcError(UNKNOWN_INVENTORY, f"no Inventory named '{name}'", {"names": names},
+        raise Problem(UNKNOWN_INVENTORY, f"no Inventory named '{name}'", {"names": names},
                        fix="pick one of " + (", ".join(names) or "none: `roster inv add NAME PATH` names one"))
     inventories.use(name)
     return {"active": name, "path": str(chosen.path), "restart": True}
 
 
+@method("inventory.create", deadline=75, cancel="running")
 def inventory_create(state, params):
     """A new Inventory, for the app's first run when this serve found none (T212, decision Q182): one of
     `roster init --inventory`'s ways, written by serve (ADR 0001: the app never writes roster.yml). It goes to
@@ -709,42 +773,42 @@ def inventory_create(state, params):
     """
     from . import newinventory
     if state.path is not None:
-        raise RpcError(INVENTORY_THERE, f"this roster serve runs on {state.path} already, so it makes no other "
+        raise Problem(INVENTORY_THERE, f"this roster serve runs on {state.path} already, so it makes no other "
                                         "Inventory", {"path": str(state.path)},
                        fix="`roster init --inventory ... --name NAME` in a terminal makes another one beside it")
     how = params.get("how")
     if how not in ("blank", "file", "repo"):
-        raise RpcError(INVALID_PARAMS, "params.how must be blank, file or repo")
+        raise Problem(INVALID_PARAMS, "params.how must be blank, file or repo")
     folder = params.get("folder")
     if not isinstance(folder, str) or not folder.strip():
-        raise RpcError(INVALID_PARAMS, "params.folder: the folder for roster.yml")
+        raise Problem(INVALID_PARAMS, "params.folder: the folder for roster.yml")
     given = params.get("source") if isinstance(params.get("source"), str) else ""
     if re.search(r"[\x00-\x1f\x7f\"']", folder + given):     # they go into messages, inventories.json, the ssh config
-        raise RpcError(INVALID_PARAMS, "params.folder and params.source can't hold a quote or a control character")
+        raise Problem(INVALID_PARAMS, "params.folder and params.source can't hold a quote or a control character")
     folder = Path(folder.strip()).expanduser()
     if not folder.is_absolute():
-        raise RpcError(INVALID_PARAMS, "params.folder must be a full path (or ~/...): this serve's own folder "
+        raise Problem(INVALID_PARAMS, "params.folder must be a full path (or ~/...): this serve's own folder "
                                        "isn't one you chose")
     source = params.get("source")
     if how != "blank":
         if not isinstance(source, str) or not source.strip():
-            raise RpcError(INVALID_PARAMS, f"params.source: the {'roster.yml to copy' if how == 'file' else 'git URL'}")
+            raise Problem(INVALID_PARAMS, f"params.source: the {'roster.yml to copy' if how == 'file' else 'git URL'}")
         source = source.strip()
         try:
             newinventory.parse_how(f"{how}:{source}")
         except ValueError as e:
-            raise RpcError(INVALID_PARAMS, f"params.source: {e}") from None
+            raise Problem(INVALID_PARAMS, f"params.source: {e}") from None
     name = params.get("name") or folder.name
     if not isinstance(name, str) or inventories.name_problem(name):
-        raise RpcError(INVALID_PARAMS, f"params.name: {inventories.name_problem(str(name))}")
+        raise Problem(INVALID_PARAMS, f"params.name: {inventories.name_problem(str(name))}")
     try:
         inv = inventories.load()
     except SystemExit as e:
-        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+        raise Problem(INVENTORIES_UNREADABLE, die_message(e),
                        fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
     taken = [x.name for x in inv.inventories if inventories.same_name(x.name, name)]
     if taken:                                       # the field to change, for the app's form (#417 L4)
-        raise RpcError(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
+        raise Problem(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
                        {"field": "name", "name": taken[0]},
                        fix="give it another name, or pick another folder (its name names the Inventory); "
                            f"`roster inv remove {taken[0]}` forgets the other one")
@@ -753,14 +817,14 @@ def inventory_create(state, params):
     on_cancel(stop.set)                             # the app's Cancel: a clone under way stops (#417 L5)
     with state.lock, first_run_lock():              # one at a time on this Box, whichever serve (#417 L3)
         if state.path is not None:                  # another create got here first
-            raise RpcError(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
+            raise Problem(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
         made = newinventory.create(target, how, source, interactive=False, stop=stop)
         state.path = made.path.resolve()            # this serve makes no other
         try:
             inventories.add(name, made.path)
             inventories.use(name)
         except SystemExit as e:
-            raise RpcError(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
+            raise Problem(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
                            {"path": str(made.path)}, fix=f"`roster inv add NAME {made.path}` in a terminal") from None
     hosts = len(load_config(made.path)["hosts"])
     return {"path": str(made.path.resolve()), "name": inventories.canonical(name), "how": how, "hosts": hosts,
@@ -788,11 +852,11 @@ def first_run_lock():
             except OSError:
                 old = True
             if not old:
-                raise RpcError(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
+                raise Problem(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
                                {"lock": str(lock)}, fix="wait for it, then Retry") from None
             lock.unlink(missing_ok=True)
     else:
-        raise RpcError(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
+        raise Problem(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
                        {"lock": str(lock)}, fix="wait for it, then Retry")
     try:
         os.write(fd, f"{os.getpid()}\n".encode())
@@ -802,26 +866,13 @@ def first_run_lock():
         except SystemExit:
             found = None
         if found is not None and Path(found).exists():
-            raise RpcError(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
+            raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
                            fix="Retry: roster starts on it")
         yield
     finally:
         lock.unlink(missing_ok=True)
 
 
-METHODS = {
-    "inventory.info": inventory_info,
-    "inventories.list": inventories_list,
-    "inventories.use": inventories_use,
-    "inventory.create": inventory_create,
-    "box.check": box_check,
-    "hosts.list": hosts_list,
-    "host.get": host_get,
-    "session.prepare": session_prepare,
-    "session.fill": session_fill,
-    "host.check": host_check,
-    "host.check_job": host_check_job,
-}
 
 
 # ---------------------------------------------------------------- editing: Pending changes (ticket 10)
@@ -836,6 +887,7 @@ def inventory_path(state):
     return state.path
 
 
+@method("inventory.pull", deadline=45, locks=WRITES_INVENTORY)
 def inventory_pull(state, params):
     """Fast-forward the infra repo before an edit (changes.pull), then load roster.yml again.
 
@@ -863,11 +915,11 @@ def edit_params(params):
     """params.changes, checked: {field: value} for edit.EDITABLE fields only."""
     fields = params.get("changes")
     if not isinstance(fields, dict) or not fields:
-        raise RpcError(INVALID_PARAMS, f"params.changes must be an object of {', '.join(edit.EDITABLE)}")
+        raise Problem(INVALID_PARAMS, f"params.changes must be an object of {', '.join(edit.EDITABLE)}")
     try:
         return {k: edit.check_value(k, v) for k, v in fields.items()}
     except ValueError as e:
-        raise RpcError(INVALID_PARAMS, f"params.changes: {e}") from None
+        raise Problem(INVALID_PARAMS, f"params.changes: {e}") from None
 
 
 def edited_host(state, params):
@@ -875,7 +927,7 @@ def edited_host(state, params):
     name = text_param(params, "host")
     h = state.fresh()["hosts"].get(name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     now = edit.current(h)
     wanted = {k: v for k, v in edit_params(params).items() if now[k] != v}
     after = {**now, **wanted}
@@ -887,6 +939,7 @@ def login_key(h):
     return (h["name"], h["ip"], h["ssh"]["user"], h["ssh"]["port"], h["ssh"]["auth"], h["enroll"])
 
 
+@method("host.verify_login", deadline=45)
 def host_verify_login(state, params):
     """A test login to the Host as params.changes would leave it (diagnose.verify_login): exactly one attempt.
     Success lets host.update make exactly that change for the next VERIFIED_FOR seconds.
@@ -898,9 +951,9 @@ def host_verify_login(state, params):
     Since: API 5
     """
     h, new, _ = edited_host(state, params)
-    # The vault only now, after the reload: roster.yml before the vault, always (LOCKS' order), or a write holding
+    # The vault only now, after the reload: roster.yml before the vault, always (the claims' order), or a write holding
     # roster.yml and waiting behind a vault.lock that waits for this request would never end.
-    with claimed(state, [("vault", True)], "host.verify_login"):
+    with claimed(state, SHARES_VAULT, "host.verify_login"):
         # the Host's own key type's key (T239), as its ssh config gives it
         result = diagnose.verify_login(new, Path(new["key_file"]), previous=h, limited=rate_limited(state))
     if result["ok"]:
@@ -908,6 +961,7 @@ def host_verify_login(state, params):
     return result
 
 
+@method("host.update", locks=WRITES_INVENTORY)
 def host_update(state, params):
     """Edit one Host in roster.yml, keeping everything else byte for byte (edit.edited), as a Pending change.
     A change to its address, user or Login needs a host.verify_login of exactly those values first.
@@ -928,7 +982,7 @@ def host_update(state, params):
     if set(wanted) & set(edit.LOGIN_FIELDS):
         at, pin = state.verified.get(key, (None, None))
         if at is None or time.monotonic() - at > VERIFIED_FOR:
-            raise RpcError(NOT_VERIFIED, f"{h['name']}'s new address, user or Login hasn't passed a test login",
+            raise Problem(NOT_VERIFIED, f"{h['name']}'s new address, user or Login hasn't passed a test login",
                            fix="test the login (host.verify_login) with these values, then save again")
     repo = store.at(state.path)
     old_text, new_text, _ = edit.edited(repo.path, h["name"], wanted)
@@ -946,6 +1000,7 @@ def host_update(state, params):
             "warnings": warnings, "sync": sync_box(state)}
 
 
+@method("changes.diff", locks=WRITES_INVENTORY)
 def changes_diff(state, params):
     """The Pending changes: roster.yml's uncommitted diff, by Host and group, and what Publish would commit.
 
@@ -964,6 +1019,7 @@ def changes_diff(state, params):
     return store.at(inventory_path(state)).diff()
 
 
+@method("changes.discard", locks=WRITES_INVENTORY)
 def changes_discard(state, params):
     """Throw the Pending changes away: roster.yml back as the last commit has it, then load it again.
 
@@ -983,6 +1039,7 @@ def changes_discard(state, params):
     return result
 
 
+@method("changes.publish", deadline=110, locks=WRITES_INVENTORY)
 def changes_publish(state, params):
     """Commit and push the Pending changes (changes.publish), then `roster sync`, so this Box's ssh config
     follows what it just published. A failed sync doesn't undo the Publish: it's reported in result.sync.
@@ -1000,7 +1057,7 @@ def changes_publish(state, params):
     """
     message = params.get("message")
     if message is not None and not isinstance(message, str):
-        raise RpcError(INVALID_PARAMS, "params.message must be a string")
+        raise Problem(INVALID_PARAMS, "params.message must be a string")
     result = store.at(inventory_path(state)).publish(message)
     state.reload()
     result["sync"] = sync_box(state)
@@ -1032,7 +1089,7 @@ def add_fields(params):
     try:
         return {f: edit.check_new(f, params[p]) for p, f in ADD_PARAMS.items() if params.get(p) is not None}
     except ValueError as e:
-        raise RpcError(INVALID_PARAMS, f"params: {e}") from None
+        raise Problem(INVALID_PARAMS, f"params: {e}") from None
 
 
 def save_to_param(params):
@@ -1043,7 +1100,7 @@ def save_to_param(params):
     try:
         return providers.check_save_to(value)
     except ValueError as e:
-        raise RpcError(INVALID_PARAMS, f"params.save_to {e}") from None
+        raise Problem(INVALID_PARAMS, f"params.save_to {e}") from None
 
 
 def typed_login(state, params, name):
@@ -1052,14 +1109,15 @@ def typed_login(state, params, name):
     if password is None:
         return None
     if not isinstance(password, str) or not password:
-        raise RpcError(INVALID_PARAMS, "params.password must be a non-empty string")
+        raise Problem(INVALID_PARAMS, "params.password must be a non-empty string")
     if params.get("auth") is not None:
-        raise RpcError(INVALID_PARAMS, "give params.auth (an existing vault item) or params.password (a new one), "
+        raise Problem(INVALID_PARAMS, "give params.auth (an existing vault item) or params.password (a new one), "
                                        "not both")
     return {"password": password, "provider": vault_provider(state, params), "item": item_param(params, name),
             "save_to": save_to_param(params)}
 
 
+@method("host.scan_key")
 def host_scan_key(state, params):
     """The host key at an address, to show the user before host.add's first login there (diagnose.scan_key).
     With params.host instead, a Host's (its address and port): the key a Session asks about (ticket 36).
@@ -1081,7 +1139,7 @@ def host_scan_key(state, params):
         return {"host": h["name"], "address": h["ip"], "port": h["ssh"]["port"], **diagnose.scan_key(h, rate_limited(state))}
     fields = add_fields({"address": params.get("address"), "port": params.get("port")})
     if "ip" not in fields:
-        raise RpcError(INVALID_PARAMS, "params.address must be a non-empty string")
+        raise Problem(INVALID_PARAMS, "params.address must be a non-empty string")
     port = fields.get("port", 22)
     h = {"name": params.get("name") or fields["ip"], "ip": fields["ip"], "ssh": {"port": port}}
     return {"address": fields["ip"], "port": port, **diagnose.scan_key(h, rate_limited(state))}
@@ -1092,10 +1150,11 @@ def known_host(state, params):
     name = text_param(params, "host")
     h = state.inventory()["hosts"].get(name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     return h
 
 
+@method("host.trust_key")
 def host_trust_key(state, params):
     """Record the host key the user was shown (host.scan_key {host}) and trusted, so the Session can open (ticket
     36, decision Q60). It fetches the key again first and records it only if the Host still offers exactly that
@@ -1124,7 +1183,7 @@ def asked_fingerprint(params):
     """params.fingerprint: the key the user was shown (host.scan_key) and answered about."""
     asked = params.get("fingerprint")
     if not isinstance(asked, str) or not asked.startswith("SHA256:"):
-        raise RpcError(INVALID_PARAMS, "params.fingerprint must be the SHA256:... fingerprint the user was shown")
+        raise Problem(INVALID_PARAMS, "params.fingerprint must be the SHA256:... fingerprint the user was shown")
     return asked
 
 
@@ -1133,7 +1192,7 @@ def still_offered(asked, key, label, outcome, who, again):
     roster was asking, so OUTCOME (nothing recorded or started); the fix names the WHO to ask and how to ask AGAIN."""
     offered = fingerprint(key)
     if offered != asked:
-        raise RpcError(HOST_KEY_CHANGED_WHILE_ASKED, f"{label}'s host key changed while roster was asking - {outcome}",
+        raise Problem(HOST_KEY_CHANGED_WHILE_ASKED, f"{label}'s host key changed while roster was asking - {outcome}",
                        {"asked": asked, "offered": offered},
                        fix=f"don't trust it blindly: compare the new fingerprint with the {who}'s console or owner, "
                            f"then {again} to see it",
@@ -1157,15 +1216,16 @@ def quick_target(params):
     """(user, address, port) from quick.prepare's params, checked: nothing ssh could read as an option."""
     user, address, port = params.get("user"), params.get("address"), params.get("port", 22)
     if not isinstance(user, str) or not QUICK_USER.fullmatch(user):
-        raise RpcError(INVALID_PARAMS, "params.user must be a user name (letters, digits, '.', '_', '-'; not "
+        raise Problem(INVALID_PARAMS, "params.user must be a user name (letters, digits, '.', '_', '-'; not "
                                        "starting with '-')")
     if not edit.good_address(address):          # the rule host.add and `roster add` write by (Q190)
-        raise RpcError(INVALID_PARAMS, "params.address must be a host name or an IP address")
+        raise Problem(INVALID_PARAMS, "params.address must be a host name or an IP address")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        raise RpcError(INVALID_PARAMS, "params.port must be a number from 1 to 65535")
+        raise Problem(INVALID_PARAMS, "params.port must be a number from 1 to 65535")
     return user, address, port
 
 
+@method("quick.prepare", locks=SHARES_VAULT)
 def quick_prepare(state, params):
     """What the app runs in a PTY for a Quick Connect: ssh to user@address:port, checking the host key strictly
     against the one the user was shown (params.fingerprint, from host.scan_key). With params.password the Session
@@ -1191,16 +1251,16 @@ def quick_prepare(state, params):
     asked = asked_fingerprint(params)
     password = params.get("password")
     if password is not None and (not isinstance(password, str) or not password):
-        raise RpcError(INVALID_PARAMS, "params.password must be a non-empty string, or left out to log in with "
+        raise Problem(INVALID_PARAMS, "params.password must be a non-empty string, or left out to log in with "
                                        "this box's keys")
     save = save_param(params, password)
     if save:
         saving_provider(state, params)
     ssh = find_program("ssh")
     if ssh is None:
-        raise RpcError(NOT_SET_UP, "there's no ssh on this box's PATH - install OpenSSH's client")
+        raise Problem(NOT_SET_UP, "there's no ssh on this box's PATH - install OpenSSH's client")
     if state.askpass is None:
-        raise RpcError(NO_ASKPASS, "the askpass channel isn't open in this process - Quick Connect needs "
+        raise Problem(NO_ASKPASS, "the askpass channel isn't open in this process - Quick Connect needs "
                                    "`roster serve`")
     if password is not None:
         need_askpass(state, "Quick Connects with a password")
@@ -1274,9 +1334,9 @@ class Held:
 def save_param(params, password):
     save = params.get("save", False)
     if not isinstance(save, bool):
-        raise RpcError(INVALID_PARAMS, "params.save must be true or false")
+        raise Problem(INVALID_PARAMS, "params.save must be true or false")
     if save and password is None:
-        raise RpcError(INVALID_PARAMS, "params.save needs params.password: only a typed password can be saved")
+        raise Problem(INVALID_PARAMS, "params.save needs params.password: only a typed password can be saved")
     return save
 
 
@@ -1285,7 +1345,7 @@ def saving_provider(state, params):
     Session starts: it must be one that can save (61)."""
     name = vault_provider(state, params)
     if not providers.can_write(name):
-        raise write_problem(providers.CantWrite(
+        raise vault_problem(providers.CantWrite(
             f"provider '{name}' can't save to the vault - roster only reads its Logins; connect without Save to "
             "vault and create the item in the password manager itself"))
     return name
@@ -1346,11 +1406,11 @@ def logged_in_with(state, hid, kind):
         held = state.held.get(hid) if isinstance(hid, str) else None
         password = held.typed.password if held is not None else None
     if held is None or held.kind != kind:
-        raise RpcError(NOTHING_HELD, "there's no typed password to save for that Session: it was saved already, or "
+        raise Problem(NOTHING_HELD, "there's no typed password to save for that Session: it was saved already, or "
                                      "forgotten (the Session ended, the vault was locked, or 10 minutes passed)",
                        fix="connect again with Save to vault ticked")
     if not held.logged_in:
-        raise RpcError(LOGIN_NOT_SEEN, f"{held.label} hasn't logged in with that password - roster saves it only "
+        raise Problem(LOGIN_NOT_SEEN, f"{held.label} hasn't logged in with that password - roster saves it only "
                                        "after the login succeeded",
                        fix="wait until the Session has logged in; if the box refused the password, nothing is saved")
     return held, password
@@ -1368,6 +1428,7 @@ def forget_held(state, hid=None):
     return found
 
 
+@method("vault.forget_typed", lane="quick")
 def vault_forget_typed(state, params):
     """Forget the typed password held for a Session's "Save to vault" (the Session ended, or the offer was turned
     down). Never fails.
@@ -1379,17 +1440,6 @@ def vault_forget_typed(state, params):
     """
     hid = text_param(params, "held")
     return {"forgotten": forget_held(state, hid)}
-
-
-def holding_a_secret(what, method, state, params):
-    """Run a method that handles a password: an unexpected exception becomes 'WHAT failed: <its type>', so the
-    generic handler never logs text that might hold the password."""
-    try:
-        return method(state, params)
-    except (RpcError, SystemExit):
-        raise
-    except Exception as e:
-        raise RpcError(INTERNAL_ERROR, f"{what} failed: {type(e).__name__}") from None
 
 
 def save_held(state, repo, hid, password, item, change, what):
@@ -1436,24 +1486,25 @@ def item_writes(provider, floor=0.0):
 
 def make_item(provider, item, password, user, address, port, save_to):
     """The Vault item for a password that just logged in: the user in its username field, ssh://address[:port] in
-    its URI field. Raises the write_problem (60-65, 14) when the vault refuses."""
+    its URI field. Raises the vault_problem (60-65, 14) when the vault refuses."""
     uri = f"ssh://{address}" + ("" if port == 22 else f":{port}")
     try:
         with item_writes(provider):
             made = providers.create_item(provider, name=item, password=password, username=user, uri=uri,
                                          save_to=save_to)
     except providers.SecretError as e:
-        raise write_problem(e) from None
+        raise vault_problem(e) from None
     return {"provider": provider, **made}
 
 
 def item_param(params, name):
     item = params.get("item") or f"{name} ssh"
     if not isinstance(item, str) or not item.strip() or "\n" in item or ":" in item:
-        raise RpcError(INVALID_PARAMS, "params.item must be one line, without ':' (e.g. 'esx-02 ssh')")
+        raise Problem(INVALID_PARAMS, "params.item must be one line, without ':' (e.g. 'esx-02 ssh')")
     return " ".join(item.split())
 
 
+@method("quick.save", deadline=45, locks=WRITES_INVENTORY + SHARES_VAULT, sensitive="saving the Quick Connect")
 def quick_save(state, params):
     """Save a Quick Connect that logged in (ticket 15, Q43): its typed password as the Vault item `<name> ssh`, then
     the box as the Host NAME in GROUP (reviewed, enroll: false, its Login that item) as a Pending change, then the
@@ -1470,10 +1521,6 @@ def quick_save(state, params):
     Errors: 80, 81, 74, 60-62, 64, 65, 14, 66, 67
     Since: API 13
     """
-    return holding_a_secret("saving the Quick Connect", save_quick, state, params)
-
-
-def save_quick(state, params):
     hid = text_param(params, "quick")
     name, group = text_param(params, "name"), text_param(params, "group")
     item = item_param(params, name)
@@ -1489,7 +1536,7 @@ def save_quick(state, params):
     try:
         fields = {f: edit.check_new(f, v) if f != "reviewed" else v for f, v in fields.items()}
     except ValueError as e:
-        raise RpcError(INVALID_PARAMS, f"params: {e}") from None
+        raise Problem(INVALID_PARAMS, f"params: {e}") from None
     state.fresh()
     repo = store.at(state.path)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name and group, before the vault
@@ -1508,6 +1555,7 @@ def save_quick(state, params):
             "warnings": warnings, "sync": sync_box(state)}
 
 
+@method("host.save_login", deadline=45, locks=WRITES_INVENTORY + SHARES_VAULT, sensitive="saving the Login")
 def host_save_login(state, params):
     """Save an `auth: prompt` Host's typed password once its Session logged in with it (ticket 16, Q43): the Vault
     item `<host> ssh`, then the Host's Login pointed at it, as a Pending change (comments and every other byte kept).
@@ -1524,10 +1572,6 @@ def host_save_login(state, params):
     Errors: 75, 66, 67, 60-65, 14
     Since: API 13
     """
-    return holding_a_secret("saving the Login", save_login, state, params)
-
-
-def save_login(state, params):
     hid = text_param(params, "held")
     held, password = logged_in_with(state, hid, "host")
     name = held.target["host"]
@@ -1536,7 +1580,7 @@ def save_login(state, params):
     provider = saving_provider(state, params)
     h = state.fresh()["hosts"].get(name)
     if h is None or login_key(h) != held.target["login"]:
-        raise RpcError(NOT_VERIFIED, f"{name} changed since its Session logged in (its address, user, port or "
+        raise Problem(NOT_VERIFIED, f"{name} changed since its Session logged in (its address, user, port or "
                                      "Login) - nothing was saved",
                        fix=f"open a new Session to {name} and save from there")
     wanted = {"auth": f"{provider}:{item}"}
@@ -1564,6 +1608,7 @@ def ssh_value(path):
     return f'"{path}"' if re.search(r"\s", path) else path
 
 
+@method("host.add", deadline=100, locks=WRITES_INVENTORY + SHARES_VAULT, sensitive="adding the Host")
 def host_add(state, params):
     """Add a Host to roster.yml as a Pending change (addhost.add, the one `roster add` uses: T220, Q190). With a Login (an existing vault item in auth, or
     a password typed into the form) it's a verified add (Q43): the test login first; then, for a typed password,
@@ -1581,17 +1626,13 @@ def host_add(state, params):
     Errors: 80, 81, 74, 61, 11, 12, 14, 30-35, 40-48, 60, 62, 64, 65
     Since: API 6
     """
-    return holding_a_secret("adding the Host", add_host, state, params)
-
-
-def add_host(state, params):
     name, group = text_param(params, "name"), text_param(params, "group")
     fields = add_fields(params)
     if "ip" not in fields:
-        raise RpcError(INVALID_PARAMS, "params.address must be a non-empty string")
+        raise Problem(INVALID_PARAMS, "params.address must be a non-empty string")
     host_key = params.get("host_key")
     if host_key is not None and not isinstance(host_key, str):
-        raise RpcError(INVALID_PARAMS, "params.host_key must be a fingerprint (SHA256:...)")
+        raise Problem(INVALID_PARAMS, "params.host_key must be a fingerprint (SHA256:...)")
     typed = typed_login(state, params, name)
     if typed:
         fields["auth"] = f"{typed['provider']}:{typed['item']}"
@@ -1609,17 +1650,11 @@ def add_host(state, params):
     made = None
     if typed:
         password, typed["password"] = typed["password"], None
-        port = h["ssh"]["port"]
-        uri = f"ssh://{h['ip']}" + ("" if port == 22 else f":{port}")
         try:
-            with item_writes(typed["provider"]):
-                made = providers.create_item(typed["provider"], name=typed["item"], password=password,
-                                             username=h["ssh"]["user"], uri=uri, save_to=typed["save_to"])
-        except providers.SecretError as e:
-            raise write_problem(e) from None
+            made = make_item(typed["provider"], typed["item"], password, h["ssh"]["user"], h["ip"], h["ssh"]["port"],
+                             typed["save_to"])
         finally:
             del password
-        made = {"provider": typed["provider"], **made}
     warnings = []
 
     def after():                                # the Host is in roster.yml now: what follows can't un-add it
@@ -1679,25 +1714,29 @@ def take_back(made, e):
                    {**(e.data or {}), "undone": made}, details=e.details)
 
 
+@method("host.review", locks=WRITES_INVENTORY)
 def host_review(state, params):
     """Mark a Host reviewed (reviewed: true on the Host itself, nothing else changes), as a Pending change.
     With reviewed: false (API 9), mark it unreviewed again: a review made by mistake has a way back.
 
-    Params: `{host, reviewed?}`
+    Params: `{host}`
     Result: `{changed, host, backup, sync?}`: `reviewed: true` set on that Host and nothing else (`changed: false` if
-        it already was). `reviewed: false` (API 9) un-reviews it, for a review made by mistake: where the Host's
-        own `reviewed: true` sits over an unreviewed group or defaults, its line is taken out again, so the text
-        goes back to what it was. `sync` (T150): the `roster sync` after a change, as `host.add`'s
+        it already was). `sync` (T150): the `roster sync` after a change, as `host.add`'s
     Errors: 2, 70, 74
     Since: API 6
+    Params: `{host, reviewed: false}`
+    Result: as above: it un-reviews the Host, for a review made by mistake. Where the Host's own `reviewed: true`
+        sits over an unreviewed group or defaults, its line is taken out again, so the text goes back to what it was
+    Errors: 2, 70, 74
+    Since: API 9
     """
     name = text_param(params, "host")
     wanted = params.get("reviewed", True)
     if not isinstance(wanted, bool):
-        raise RpcError(INVALID_PARAMS, "params.reviewed must be true or false")
+        raise Problem(INVALID_PARAMS, "params.reviewed must be true or false")
     h = state.fresh()["hosts"].get(name)
     if h is None:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     if h["reviewed"] == wanted:
         return {"changed": False, "host": h, "backup": None}
     repo = store.at(state.path)
@@ -1725,7 +1764,7 @@ def write_edit(state, old_text, new_text):
 def name_param(params, key):
     v = params.get(key)
     if not isinstance(v, str) or not v.strip():
-        raise RpcError(INVALID_PARAMS, f"params.{key} must be a non-empty string")
+        raise Problem(INVALID_PARAMS, f"params.{key} must be a non-empty string")
     return v.strip()
 
 
@@ -1735,6 +1774,7 @@ def live_repo(state):
     return store.at(state.path)
 
 
+@method("host.remove", locks=WRITES_INVENTORY)
 def host_remove(state, params):
     """Take a Host out of roster.yml (its entry's lines), as a Pending change. Never touches the vault: its vault
     item, if any, stays where it is.
@@ -1752,6 +1792,7 @@ def host_remove(state, params):
     return {"removed": name, "group": h["group"], **written}
 
 
+@method("host.rename", locks=WRITES_INVENTORY)
 def host_rename(state, params):
     """Rename a Host (its key in roster.yml, nothing else), as a Pending change. Its vault item keeps its name.
 
@@ -1770,6 +1811,7 @@ def host_rename(state, params):
     return {"changed": True, "host": state.inventory()["hosts"][to], **written}
 
 
+@method("host.move", locks=WRITES_INVENTORY)
 def host_move(state, params):
     """Move a Host to the end of another group, as a Pending change. What it inherited from its old group and
     wouldn't from the new one is written on the Host, so it stays the same Host (`pinned` names those fields).
@@ -1792,6 +1834,7 @@ def host_move(state, params):
     return {"changed": True, "host": state.inventory()["hosts"][name], "pinned": pinned, **written}
 
 
+@method("group.new", locks=WRITES_INVENTORY)
 def group_new(state, params):
     """Add an empty group after the last one (`NAME:` with `hosts: {}`), as a Pending change.
 
@@ -1803,13 +1846,14 @@ def group_new(state, params):
     name = name_param(params, "name")
     title = params.get("title") or ""
     if not isinstance(title, str) or "\n" in title:
-        raise RpcError(INVALID_PARAMS, "params.title must be one line")
+        raise Problem(INVALID_PARAMS, "params.title must be one line")
     repo = live_repo(state)
     old_text, new_text = edit.group_added(repo.path, name, title)
     written = write_edit(state, old_text, new_text)
     return {"group": name, **written}
 
 
+@method("group.rename", locks=WRITES_INVENTORY)
 def group_rename(state, params):
     """Rename a group (its key in roster.yml); its Hosts go with it. A Pending change.
 
@@ -1828,6 +1872,7 @@ def group_rename(state, params):
     return {"changed": True, "group": to, **written}
 
 
+@method("group.delete", locks=WRITES_INVENTORY)
 def group_delete(state, params):
     """Delete a group. One that still has Hosts is refused (102, data.hosts) unless `to` names the group they move
     to first (as host.move moves them). A Pending change.
@@ -1851,6 +1896,7 @@ def group_delete(state, params):
 
 # ---------------------------------------------------------------- reloading: `:source` and auto_reload (Q58)
 
+@method("inventory.reload", locks=WRITES_INVENTORY)
 def inventory_reload(state, params):
     """`:source` for roster.yml: load it again now. A file that doesn't load keeps the last good Inventory, and
     `error` says why ({message, path, line?, fix}); `changed`: the file differs from what was loaded before.
@@ -1929,6 +1975,7 @@ class Watcher(threading.Thread):
             notify("inventory.changed", params)
 
 
+@method("inventory.watch", lane="quick")
 def inventory_watch(state, params):
     """Start watching roster.yml for outside edits (once), and say whether to apply them (auto, the Config's
     auto_reload) or only report them. Without a notification channel (in-process use) it can't watch.
@@ -1940,7 +1987,7 @@ def inventory_watch(state, params):
     """
     auto = params.get("auto", False)
     if not isinstance(auto, bool):
-        raise RpcError(INVALID_PARAMS, "params.auto must be true or false")
+        raise Problem(INVALID_PARAMS, "params.auto must be true or false")
     state.auto = auto
     if state.notify is None or state.path is None:
         return {"watching": False, "auto": auto}
@@ -1951,46 +1998,20 @@ def inventory_watch(state, params):
     return {"watching": True, "auto": auto, "path": str(state.path)}
 
 
-METHODS["host.remove"] = host_remove
-METHODS["host.rename"] = host_rename
-METHODS["host.move"] = host_move
-METHODS["group.new"] = group_new
-METHODS["group.rename"] = group_rename
-METHODS["group.delete"] = group_delete
-METHODS["inventory.reload"] = inventory_reload
-METHODS["inventory.watch"] = inventory_watch
-METHODS["host.scan_key"] = host_scan_key
-METHODS["host.trust_key"] = host_trust_key
-METHODS["quick.prepare"] = quick_prepare
-METHODS["quick.save"] = quick_save
-METHODS["host.save_login"] = host_save_login
-METHODS["vault.forget_typed"] = vault_forget_typed
-METHODS["host.add"] = host_add
-METHODS["host.review"] = host_review
-METHODS["inventory.pull"] = inventory_pull
-METHODS["host.verify_login"] = host_verify_login
-METHODS["host.update"] = host_update
-METHODS["changes.diff"] = changes_diff
-METHODS["changes.discard"] = changes_discard
-METHODS["changes.publish"] = changes_publish
 
 
 # ---------------------------------------------------------------- vault: the lock screen
 
-STATUS_WORDS = {"unauthenticated": "not-logged-in", "missing": "missing-cli"}   # providers' word -> the API's
-
-
-secret_error = vault_problem          # a provider's SecretError as the error to answer with (safe to show)
-
-
-referenced_providers = health.referenced_providers
+# providers' word for where a vault stands -> the API's (vault.status's `status`; the app's VaultStatusWord)
+STATUS_WORDS = {"locked": "locked", "unlocked": "unlocked", "unauthenticated": "not-logged-in", "missing": "missing-cli",
+               "unsupported": "unsupported"}
 
 
 def provider_status(name):
     try:
         status, account = providers.vault_account(name)
     except providers.SecretError as e:
-        raise secret_error(e) from None
+        raise vault_problem(e) from None
     return status_result(name, status, account)
 
 
@@ -2015,6 +2036,7 @@ def main_vault(names):
     return next((n for n in names if PROVIDERS[n].get("unlock")), None)
 
 
+@method("vault.status", locks=SHARES_VAULT, waits_for_unlocks=True)
 def vault_status(state, params):
     """The vault to unlock (main_vault) and where every provider the Inventory uses stands.
 
@@ -2023,7 +2045,7 @@ def vault_status(state, params):
         status, message?, sign_in?, account?, can_sign_out}, ...]}`
     Since: API 1
     """
-    names = referenced_providers(state.inventory())
+    names = health.referenced_providers(state.inventory())
     lockable = main_vault(names)
     main = provider_status(lockable) if lockable else {"provider": None, "status": "unsupported",
                                                        "can_write": False, "can_sign_out": False}
@@ -2049,14 +2071,15 @@ def vault_provider(state, params):
     """params.provider, or the Inventory's vault (vault.status's "provider")."""
     name = params.get("provider")
     if name is None:
-        name = main_vault(referenced_providers(state.inventory()))     # no status call: that'd be a `bw` run
+        name = main_vault(health.referenced_providers(state.inventory()))     # no status call: that'd be a `bw` run
         if name is None:
-            raise RpcError(UNSUPPORTED, "no Host Login uses a vault with a master password")
+            raise Problem(UNSUPPORTED, "no Host Login uses a vault with a master password")
     if not isinstance(name, str) or name not in PROVIDERS:
-        raise RpcError(INVALID_PARAMS, f"params.provider must be one of: {', '.join(sorted(PROVIDERS))}")
+        raise Problem(INVALID_PARAMS, f"params.provider must be one of: {', '.join(sorted(PROVIDERS))}")
     return name
 
 
+@method("vault.unlock", locks=HOLDS_VAULT, lane="unlock", sensitive="unlocking the vault")
 def vault_unlock(state, params):
     """Unlock with the master password. It goes to the provider through an environment variable; the
     session key stays in this process's memory and is never written to the bw-session file.
@@ -2068,12 +2091,11 @@ def vault_unlock(state, params):
     """
     password = text_param(params, "password")
     name = vault_provider(state, params)
+    doing(f"unlocking {name}")
     try:
         providers.unlock(name, password)
     except providers.SecretError as e:
-        raise secret_error(e) from None
-    except Exception as e:                      # never let the generic handler log text that might hold it
-        raise RpcError(INTERNAL_ERROR, f"unlocking {name} failed: {type(e).__name__}") from None
+        raise vault_problem(e) from None
     state.unlocked.add(name)
     return {"provider": name, "status": "unlocked", "can_write": providers.can_write(name)}   # no second `bw status`
 
@@ -2091,6 +2113,7 @@ ON_VAULT_LOCK.append(forget_held)
 ON_VAULT_LOCK.append(stop_checks)
 
 
+@method("vault.lock", cancel="never")
 def vault_lock(state, params):
     """Forget every cached secret and session key, and run each provider's own lock: the ones vault.unlock
     opened and the ones the Inventory uses. Memory is cleared even if a provider's lock fails. It forgets first and
@@ -2124,7 +2147,7 @@ def forgotten_for_good(state, signing_out=None, then=None):
 def forget_everything(state, signing_out=None):
     """vault.lock's work: end a sign-in, run every ON_VAULT_LOCK hook, and lock every provider (SIGNING_OUT's only
     in memory: its CLI is about to log out). Returns the providers it locked."""
-    names = set(state.unlocked) | (set(referenced_providers(state.cfg)) if state.cfg else set())
+    names = set(state.unlocked) | (set(health.referenced_providers(state.cfg)) if state.cfg else set())
     end_sign_in(state)
     for forget in ON_VAULT_LOCK:
         forget(state)
@@ -2137,6 +2160,7 @@ def forget_everything(state, signing_out=None):
     return names
 
 
+@method("vault.logout", cancel="never")
 def vault_logout(state, params):
     """Sign the vault CLI out of its account, so another can sign in (ticket 42). Everything vault.lock forgets is
     forgotten first (askpass tokens, held typed passwords, session keys, a sign-in in progress), then the CLI logs
@@ -2150,11 +2174,11 @@ def vault_logout(state, params):
     """
     name = vault_provider(state, params)
     if not providers.can_sign_out(name):
-        raise secret_error(providers.no_account(name))
+        raise vault_problem(providers.no_account(name))
     try:
         _, account = providers.vault_account(name)
     except providers.SecretError as e:
-        raise secret_error(e) from None
+        raise vault_problem(e) from None
 
     def sign_out():
         try:
@@ -2173,15 +2197,11 @@ SIGN_OUT_FIXES = {ALREADY_SIGNED_OUT: "sign in from the lock screen",
 
 def sign_out_error(e):
     """A failed `bw logout` as vault.logout's error, with the app's fix (the CLI's vault_problem has none)."""
-    problem = secret_error(e)
+    problem = vault_problem(e)
     fix = SIGN_OUT_FIXES.get(problem.code)
     return Problem(problem.code, problem.message, problem.data, fix=fix) if fix else problem
 
 
-METHODS["vault.status"] = vault_status
-METHODS["vault.unlock"] = vault_unlock
-METHODS["vault.lock"] = vault_lock
-METHODS["vault.logout"] = vault_logout
 
 
 # ---------------------------------------------------------------- vault.configure: this Box's settings (ticket 41)
@@ -2195,9 +2215,9 @@ BOX_PATHS = {"kp": ("database", "key_file")}
 
 def box_path(value, field):
     if not isinstance(value, str) or not value.strip():
-        raise RpcError(INVALID_PARAMS, f"params.{field} must be a path")
+        raise Problem(INVALID_PARAMS, f"params.{field} must be a path")
     if not os.path.isabs(os.path.expanduser(value)):
-        raise RpcError(INVALID_PARAMS, f"params.{field} must be an absolute path or start with ~ (a path on the "
+        raise Problem(INVALID_PARAMS, f"params.{field} must be an absolute path or start with ~ (a path on the "
                                        f"Box roster runs on): {value!r}")
     return value
 
@@ -2211,7 +2231,7 @@ def box_settings(params):
     def take(setting, check, *args):
         try:
             return check(*args)
-        except RpcError as e:
+        except Problem as e:
             refused.append({"setting": setting, "message": e.message})
             return None
     save_to = take("save_to", save_to_param, params)
@@ -2224,13 +2244,13 @@ def box_settings(params):
         if name == "save_to":
             continue
         if name not in BOX_PATHS:
-            raise RpcError(INVALID_PARAMS, f"params.{name} isn't a setting roster takes from init.lua (it takes: "
+            raise Problem(INVALID_PARAMS, f"params.{name} isn't a setting roster takes from init.lua (it takes: "
                                            f"save_to, {', '.join(sorted(BOX_PATHS))})")
         if not isinstance(given, dict):
-            raise RpcError(INVALID_PARAMS, f"params.{name} must be an object")
+            raise Problem(INVALID_PARAMS, f"params.{name} must be an object")
         for key, value in given.items():
             if key not in BOX_PATHS[name]:
-                raise RpcError(INVALID_PARAMS, f"params.{name}.{key} isn't a setting roster takes from init.lua "
+                raise Problem(INVALID_PARAMS, f"params.{name}.{key} isn't a setting roster takes from init.lua "
                                                f"(it takes: {', '.join(BOX_PATHS[name])})")
             setting = f"{name}.{key}"
             path = None if value is None else take(setting, box_path, value, setting)
@@ -2239,6 +2259,7 @@ def box_settings(params):
     return box, refused
 
 
+@method("vault.configure", locks=HOLDS_VAULT)
 def vault_configure(state, params):
     """This Box's vault settings from the app's init.lua, replacing the last ones (a key left out is roster.yml's
     again). A KeePassXC database or key file that changed forgets the master password held for the old one:
@@ -2256,13 +2277,13 @@ def vault_configure(state, params):
     return {"configured": True, "locked": locked, "refused": refused}
 
 
-METHODS["vault.configure"] = vault_configure
 
 
 # ---------------------------------------------------------------- vault.create_item: "Save to vault" (ticket 13)
 # Q43's order is verify, create the Vault item, add the Pending change; if the add fails, vault.undo_create takes
 # the item back out. It only deletes items this serve created, so it can't be pointed at anything else.
 
+@method("vault.create_item", deadline=45, locks=SHARES_VAULT, sensitive="saving to the vault")
 def vault_create_item(state, params):
     """Create a login Vault item: name, username, password, and the address in its URI field. Refuses a name
     that's already there (code 60). The password goes to the provider on stdin; it's never answered back.
@@ -2275,22 +2296,20 @@ def vault_create_item(state, params):
     name, password = text_param(params, "name"), text_param(params, "password")
     extra = {k: params.get(k) or "" for k in ("username", "uri")}
     if not all(isinstance(v, str) for v in extra.values()):
-        raise RpcError(INVALID_PARAMS, "params.username and params.uri must be strings")
+        raise Problem(INVALID_PARAMS, "params.username and params.uri must be strings")
     provider = vault_provider(state, params)
     save_to = save_to_param(params)
+    doing(f"saving to {provider}")
     try:
         with item_writes(provider):
             made = providers.create_item(provider, name=name, password=password, save_to=save_to, **extra)
-    except RpcError:
-        raise
     except providers.SecretError as e:
-        raise write_problem(e) from None
-    except Exception as e:                      # never let the generic handler log text that might hold it
-        raise RpcError(INTERNAL_ERROR, f"saving to {provider} failed: {type(e).__name__}") from None
+        raise vault_problem(e) from None
     state.created[made["id"]] = provider
     return {"provider": provider, **made}
 
 
+@method("vault.undo_create", locks=SHARES_VAULT, sensitive="deleting from the vault")
 def vault_undo_create(state, params):
     """Delete an item vault.create_item made in this serve (Q43's undo). Bitwarden moves it to the trash.
 
@@ -2302,24 +2321,21 @@ def vault_undo_create(state, params):
     item_id = text_param(params, "id")
     provider = state.created.pop(item_id, None)     # taken at once: two undos at once delete it once
     if provider is None:
-        raise RpcError(NOT_CREATED_HERE, f"item {item_id} wasn't created by this roster serve (or is already "
+        raise Problem(NOT_CREATED_HERE, f"item {item_id} wasn't created by this roster serve (or is already "
                        "undone) - roster only takes back the items it just saved")
+    doing(f"deleting from {provider}")
     try:
         with item_writes(provider, UNDO_TIME):
             providers.delete_item(provider, item_id)
     except BaseException as e:
         state.created[item_id] = provider       # not known to be deleted: it can be undone again
-        if isinstance(e, RpcError):
-            raise
         if isinstance(e, providers.SecretError):
-            raise write_problem(e) from None
-        if not isinstance(e, Exception):
-            raise
-        # never let the generic handler log text that might hold a secret
-        raise RpcError(INTERNAL_ERROR, f"deleting from {provider} failed: {type(e).__name__}") from None
+            raise vault_problem(e) from None
+        raise
     return {"provider": provider, "id": item_id}
 
 
+@method("vault.targets", locks=SHARES_VAULT)
 def vault_targets(state, params):
     """Where "Save to vault" can put an item (ticket 35): the personal vault and every collection of the organizations
     you're in (Bitwarden), or the top level and every group (KeePassXC), and the default. A default that doesn't
@@ -2336,12 +2352,13 @@ def vault_targets(state, params):
     try:
         found = providers.save_targets(provider)
     except providers.SecretError as e:
-        raise write_problem(e) from None
-    problem = found["problem"] and write_problem(found["problem"])
+        raise vault_problem(e) from None
+    problem = found["problem"] and vault_problem(found["problem"])
     return {"provider": provider, **found,
             "problem": problem and {"code": problem.code, "message": problem.message, "fix": (problem.data or {}).get("fix")}}
 
 
+@method("vault.item_fields", locks=SHARES_VAULT)
 def vault_item_fields(state, params):
     """What a vault item says about its Host (T220, Q190), for an add-Host form's "fill from a vault item": the
     address and SSH port from its URI, the user from its username (addhost.vault_fields, as `roster add
@@ -2359,16 +2376,12 @@ def vault_item_fields(state, params):
     provider = vault_provider(state, params)
     item = params.get("item")
     if not isinstance(item, str) or not item.strip() or "\n" in item or "#" in item or item.strip().startswith("-"):
-        raise RpcError(INVALID_PARAMS, "params.item must be a vault item's name or id: one line, no '#', not "
+        raise Problem(INVALID_PARAMS, "params.item must be a vault item's name or id: one line, no '#', not "
                                        "starting with '-'")
     item = item.strip()
     return {"provider": provider, "item": item, **addhost.vault_fields(f"{provider}:{item}")}
 
 
-METHODS["vault.item_fields"] = vault_item_fields
-METHODS["vault.create_item"] = vault_create_item
-METHODS["vault.undo_create"] = vault_undo_create
-METHODS["vault.targets"] = vault_targets
 
 
 # ---------------------------------------------------------------- vault.login: signing in (ticket 31)
@@ -2426,17 +2439,19 @@ def sign_in_step(state, login, fn):
             end_sign_in(state)
         raise sign_in_problem(e, login.id) from None
     except (KeyError, TypeError, ValueError) as e:      # an answer that doesn't fit the step: the step stays
-        raise RpcError(INVALID_PARAMS, f"vault.login: {e}" if isinstance(e, ValueError) else
+        raise Problem(INVALID_PARAMS, f"vault.login: {e}" if isinstance(e, ValueError) else
                        "vault.login: params don't fit the step") from None
-    except Exception as e:                      # never let the generic handler log text that might hold a secret
+    except Exception:
         end_sign_in(state)
-        raise RpcError(INTERNAL_ERROR, f"signing in to {login.provider} failed: {type(e).__name__}") from None
+        doing(f"signing in to {login.provider}")
+        raise
     if step["step"] == "done":
         state.unlocked.add(login.provider)
         end_sign_in(state)
     return {**step, "login": login.id}
 
 
+@method("vault.login", locks=HOLDS_VAULT, sensitive="signing in")
 def vault_login(state, params):
     """Sign the vault CLI in on this box, a step at a time (docs/serve-api.md "Signing in: vault.login").
     action "start" (the default) begins a new one, "answer" answers the current step, "cancel" stops it.
@@ -2470,26 +2485,26 @@ def vault_login(state, params):
     if action == "answer":
         login = state.login
         if login is None or params.get("login") != login.id:
-            raise RpcError(NO_SIGN_IN, "no sign-in in progress (it finished, was cancelled or timed out) - "
+            raise Problem(NO_SIGN_IN, "no sign-in in progress (it finished, was cancelled or timed out) - "
                                        "start again", fix="start the sign-in again")
         if time.monotonic() - login.flow.touched > SIGN_IN_IDLE:
             end_sign_in(state)
-            raise RpcError(NO_SIGN_IN, f"the sign-in timed out ({SIGN_IN_IDLE // 60} minutes without an answer) "
+            raise Problem(NO_SIGN_IN, f"the sign-in timed out ({SIGN_IN_IDLE // 60} minutes without an answer) "
                                        "- start again", fix="start the sign-in again")
         key = ANSWERS.get(login.flow.step["step"])
         if key:
             text_param(params, key)
         return sign_in_step(state, login, lambda: login.flow.answer(params))
     if action != "start":
-        raise RpcError(INVALID_PARAMS, "params.action must be start, answer or cancel")
+        raise Problem(INVALID_PARAMS, "params.action must be start, answer or cancel")
     method = params.get("method", "password")
     if method not in SIGN_IN_METHODS:
-        raise RpcError(INVALID_PARAMS, f"params.method must be one of: {', '.join(SIGN_IN_METHODS)}")
+        raise Problem(INVALID_PARAMS, f"params.method must be one of: {', '.join(SIGN_IN_METHODS)}")
     for key in SIGN_IN_METHODS[method]:
         text_param(params, key)
     for key in ("server", "identifier"):
         if params.get(key) is not None and not isinstance(params[key], str):
-            raise RpcError(INVALID_PARAMS, f"params.{key} must be a string")
+            raise Problem(INVALID_PARAMS, f"params.{key} must be a string")
     end_sign_in(state)
     name = vault_provider(state, params)
     try:
@@ -2516,7 +2531,6 @@ def closing(state, login):
         raise closing_error()
 
 
-METHODS["vault.login"] = vault_login
 
 
 # ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
@@ -2525,21 +2539,21 @@ METHODS["vault.login"] = vault_login
 def rotate_param(params):
     v = params.get("rotate", [])
     if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
-        raise RpcError(INVALID_PARAMS, "params.rotate must be a list of Host names")
+        raise Problem(INVALID_PARAMS, "params.rotate must be a list of Host names")
     return v
 
 
 def background_param(params):
     v = params.get("background", False)
     if not isinstance(v, bool):
-        raise RpcError(INVALID_PARAMS, "params.background must be true or false")
+        raise Problem(INVALID_PARAMS, "params.background must be true or false")
     return v
 
 
 def brief_param(params):
     v = params.get("brief", False)
     if not isinstance(v, bool):
-        raise RpcError(INVALID_PARAMS, "params.brief must be true or false")
+        raise Problem(INVALID_PARAMS, "params.brief must be true or false")
     return v
 
 
@@ -2561,7 +2575,7 @@ def mesh_view(job, brief=False):
 
 
 def busy_mesh(job):
-    return RpcError(MESH_BUSY, f"a Mesh {job.action} is still running (job {job.job}): wait for it, or stop it",
+    return Problem(MESH_BUSY, f"a Mesh {job.action} is still running (job {job.job}): wait for it, or stop it",
                     {"job": job.job, "action": job.action})
 
 
@@ -2590,7 +2604,7 @@ def start_mesh_job(state, action, total, work, host=None, background=True):
         on_cancel(job.stop)                     # $/cancel stops it at its next Host, as mesh.stop would
         job.wait()
         if job.error is not None:
-            raise RpcError(job.error["code"], job.error["message"], job.error.get("data"))
+            raise Problem(job.error["code"], job.error["message"], job.error.get("data"))
         return job.result
     return {"job": job.job, "action": action, "total": total, **({"host": host} if host else {})}
 
@@ -2609,6 +2623,7 @@ def mesh_run(state, params, apply):
                           background=background)
 
 
+@method("mesh.plan", deadline=240, cancel="running")
 def mesh_plan(state, params):
     """The Mesh roster.yml asks for against what the Hosts hold now: read-only, one connection at a time.
 
@@ -2621,6 +2636,7 @@ def mesh_plan(state, params):
     return mesh_run(state, params, apply=False)
 
 
+@method("mesh.apply", deadline=240, cancel="running")
 def mesh_apply(state, params):
     """Make the Mesh what roster.yml says, one connection at a time; Hosts that don't answer stay pending.
 
@@ -2633,6 +2649,7 @@ def mesh_apply(state, params):
     return mesh_run(state, params, apply=True)
 
 
+@method("mesh.cut", deadline=60, cancel="running")
 def mesh_cut(state, params):
     """Take a Host out of the Mesh now, on every Host at once (mesh.cut), then write mesh: false for it as a
     Pending change (mesh.write_cut). `pending`: Hosts that didn't confirm, warned about until they're done.
@@ -2654,17 +2671,17 @@ def mesh_cut(state, params):
     mesh_idle(state)
     cfg = state.fresh()
     if name not in cfg["hosts"]:
-        raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
+        raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
 
     def work(job):
         result = mesh.cut(cfg, name, cfg["workers"], progress=job.progress, stopped=job.halted.is_set)
         try:                                    # roster.yml's lock, as any other write, waited for only so long
-            with claimed(state, [("inventory", False)], "mesh.cut"):
+            with claimed(state, WRITES_INVENTORY, "mesh.cut"):
                 result["change"] = mesh.write_cut(state.fresh(), name)
                 state.reload()
                 if result["change"]["written"]:
                     result["change"]["sync"] = sync_box(state)
-        except RpcError as e:
+        except Problem as e:
             if e.code != BUSY:
                 raise
             result["change"] = {"written": False, "error": e.message,
@@ -2673,6 +2690,7 @@ def mesh_cut(state, params):
     return start_mesh_job(state, "cut", len(mesh.cut_hosts(cfg, name)), work, host=name, background=background)
 
 
+@method("mesh.job", lane="quick")
 def mesh_job(state, params):
     """How the latest Mesh job is getting on: polled by the Mesh controls Plugin, never connects.
 
@@ -2691,6 +2709,7 @@ def mesh_job(state, params):
     return mesh_view(job, brief=brief_param(params))
 
 
+@method("mesh.stop", lane="quick")
 def mesh_stop(state, params):
     """Stop a Mesh job before its next Host: the Hosts not yet visited are pending, and the next run finishes them.
 
@@ -2700,10 +2719,11 @@ def mesh_stop(state, params):
     """
     want = params.get("job")
     if not isinstance(want, int) or isinstance(want, bool):
-        raise RpcError(INVALID_PARAMS, "params.job must be a job's number (mesh.job)")
+        raise Problem(INVALID_PARAMS, "params.job must be a job's number (mesh.job)")
     return {"job": want, "stopping": state.jobs.stop("mesh", want)}
 
 
+@method("mesh.status", lane="quick")
 def mesh_status(state, params):
     """No connections: who reaches whom, what's pending, and whether the Mesh is out of date on this Box.
 
@@ -2720,21 +2740,15 @@ def mesh_status(state, params):
     Errors: -32602
     Since: API 15
     """
-    grouped = (params or {}).get("grouped", False) if isinstance(params, dict) else False
+    grouped = params.get("grouped", False)
     if not isinstance(grouped, bool):
-        raise RpcError(INVALID_PARAMS, "params.grouped must be true or false")
+        raise Problem(INVALID_PARAMS, "params.grouped must be true or false")
     if grouped and brief_param(params):
-        raise RpcError(INVALID_PARAMS, "params.grouped and params.brief don't go together")
+        raise Problem(INVALID_PARAMS, "params.grouped and params.brief don't go together")
     out = mesh.status(state.inventory(), grouped=grouped)
     return mesh.brief(out) if brief_param(params) else out
 
 
-METHODS["mesh.plan"] = mesh_plan
-METHODS["mesh.apply"] = mesh_apply
-METHODS["mesh.cut"] = mesh_cut
-METHODS["mesh.status"] = mesh_status
-METHODS["mesh.job"] = mesh_job
-METHODS["mesh.stop"] = mesh_stop
 
 
 # ---------------------------------------------------------------- Discover (ticket 44, decisions Q80 and Q100)
@@ -2747,17 +2761,17 @@ def scan_params(params):
     """(targets, how many addresses, ports) from params, checked: -32602 for a bad one, 121 for too many."""
     force = params.get("force", False)
     if not isinstance(force, bool):
-        raise RpcError(INVALID_PARAMS, "params.force must be true or false")
+        raise Problem(INVALID_PARAMS, "params.force must be true or false")
     try:
         targets, count = discover.check_targets(params.get("targets"), force)
         ports = discover.check_ports(params.get("ports"))
     except discover.TooMany as e:
-        raise RpcError(TOO_MANY_ADDRESSES, f"that's {e.count:,} addresses; a scan visits at most {e.limit:,}"
+        raise Problem(TOO_MANY_ADDRESSES, f"that's {e.count:,} addresses; a scan visits at most {e.limit:,}"
                        + ("" if force else " without force"),
                        {"addresses": e.count, "limit": discover.LIMIT, "max": discover.MAX},
                        fix="scan a smaller range, or confirm the larger scan (force)") from None
     except ValueError as e:
-        raise RpcError(INVALID_PARAMS, f"params: {e}") from None
+        raise Problem(INVALID_PARAMS, f"params: {e}") from None
     return targets, count, ports
 
 
@@ -2766,12 +2780,13 @@ def the_scan(state, params):
     sid = params.get("scan")
     scan = state.scan
     if scan is None or (sid is not None and sid != scan.sid):
-        raise RpcError(NO_SCAN, "no scan has started in this roster serve" if scan is None
+        raise Problem(NO_SCAN, "no scan has started in this roster serve" if scan is None
                        else f"no scan {sid!r} here: the latest is {scan.sid}",
                        fix="start one with discover.start")
     return scan
 
 
+@method("discover.plan", lane="quick")
 def discover_plan(state, params):
     """What a scan of `targets` would visit, and with what. Starts nothing, connects nowhere.
 
@@ -2789,6 +2804,7 @@ def discover_plan(state, params):
             "limit": discover.LIMIT, "max": discover.MAX}
 
 
+@method("discover.start")
 def discover_start(state, params):
     """Start scanning `targets` from this Box, in the background: it answers at once. One scan at a time.
 
@@ -2807,13 +2823,13 @@ def discover_start(state, params):
             scan.on_progress = job.progress
             scan.run()
             if scan.error:
-                raise jobs.Failed(ROSTER_ERROR, scan.error)
+                raise Problem(ROSTER_ERROR, scan.error)
             return {"count": len(scan.found)}
         try:
             state.jobs.start("discover", "scan", work, total=scan.total, job=scan.sid, on_stop=scan.stop)
         except jobs.Busy:
             going = state.scan
-            raise RpcError(SCAN_RUNNING, f"a scan of {', '.join(going.targets)} is going already",
+            raise Problem(SCAN_RUNNING, f"a scan of {', '.join(going.targets)} is going already",
                            {"scan": going.sid}, fix="wait for it, or stop it first (discover.stop)") from None
         except jobs.Closed:
             raise closing_error() from None
@@ -2822,6 +2838,7 @@ def discover_start(state, params):
     return scan.status()
 
 
+@method("discover.status", lane="quick")
 def discover_status(state, params):
     """How far the scan has got, and what it has found.
 
@@ -2838,10 +2855,11 @@ def discover_status(state, params):
     """
     since = params.get("since", 0)
     if not isinstance(since, int) or isinstance(since, bool) or since < 0:
-        raise RpcError(INVALID_PARAMS, "params.since must be a count (0 or more)")
+        raise Problem(INVALID_PARAMS, "params.since must be a count (0 or more)")
     return the_scan(state, params).status(since)
 
 
+@method("discover.stop", lane="quick")
 def discover_stop(state, params):
     """Stop the scan: what it found so far stays.
 
@@ -2855,6 +2873,7 @@ def discover_stop(state, params):
     return {"scan": scan.sid, "stopping": state.jobs.stop("discover", scan.sid)}
 
 
+@method("discover.add", locks=WRITES_INVENTORY)
 def discover_add(state, params):
     """Add Hosts the scan found to roster.yml in a new group, unreviewed, as a Pending change (as `roster discover
     --write` writes them, with the names `discover.status` showed). Nothing else changes.
@@ -2867,70 +2886,51 @@ def discover_add(state, params):
     scan = the_scan(state, {"scan": text_param(params, "scan")})
     addresses = params.get("addresses")
     if not isinstance(addresses, list) or not addresses or not all(isinstance(a, str) and a for a in addresses):
-        raise RpcError(INVALID_PARAMS, "params.addresses must be a list of the addresses to add")
+        raise Problem(INVALID_PARAMS, "params.addresses must be a list of the addresses to add")
     group = params.get("group")
     if group is not None:
         group = name_param(params, "group")
         if not edit.NAME_RE.match(group):
-            raise RpcError(INVALID_PARAMS, f"bad group name {group!r} (use letters, digits, . _ -)")
+            raise Problem(INVALID_PARAMS, f"bad group name {group!r} (use letters, digits, . _ -)")
     repo = live_repo(state)
     cfg = state.cfg
     try:
         picked = scan.picked(addresses)
     except ValueError as e:
         bad = e.args[0]
-        raise RpcError(CANT_ADD, f"{', '.join(bad)}: not found by this scan, or in the Inventory already",
+        raise Problem(CANT_ADD, f"{', '.join(bad)}: not found by this scan, or in the Inventory already",
                        {"addresses": bad}, fix="pick from the scan's new Hosts") from None
     ips = {h["ip"] for h in cfg["hosts"].values()}
     there = [r["address"] for _, r in picked if r["address"] in ips]
     if there:
-        raise RpcError(CANT_ADD, f"{', '.join(there)}: in the Inventory already", {"addresses": there},
+        raise Problem(CANT_ADD, f"{', '.join(there)}: in the Inventory already", {"addresses": there},
                        fix="pick from the scan's new Hosts")
     today = scan.today
     if group is None:
         group = discover.unique(f"discovered-{today.replace('-', '')}", set(cfg["groups"]) | set(cfg["hosts"]))
     elif group in cfg["groups"] or group in cfg["hosts"]:
         kind = "group" if group in cfg["groups"] else "Host"
-        raise RpcError(NAME_TAKEN, f"{group} is a {kind}'s name already", {"kind": kind},
+        raise Problem(NAME_TAKEN, f"{group} is a {kind}'s name already", {"kind": kind},
                        fix="name a new group")
     old_text = edit.read_text(repo.path)
     try:
         new_text, added = discover.added_text(old_text, group, picked, scan.targets, today, set(cfg["hosts"]))
     except SystemExit as e:
-        raise RpcError(INVALID_EDIT, die_message(e)) from None
+        raise Problem(INVALID_EDIT, die_message(e)) from None
     after = edit.load_text(repo.path, new_text)
     names = [a["name"] for a in added]
     if any(after["hosts"].get(n) != cfg["hosts"].get(n) for n in cfg["hosts"]) or \
             any(n not in after["hosts"] or after["hosts"][n]["group"] != group for n in names):
-        raise RpcError(INVALID_EDIT, "the result loads differently than asked: nothing was written")
+        raise Problem(INVALID_EDIT, "the result loads differently than asked: nothing was written")
     written = write_edit(state, old_text, new_text)
     scan.mark_added({a["address"]: a["name"] for a in added})
     return {"group": group, "added": added, **written}
 
 
-METHODS["discover.plan"] = discover_plan
-METHODS["discover.start"] = discover_start
-METHODS["discover.status"] = discover_status
-METHODS["discover.stop"] = discover_stop
-METHODS["discover.add"] = discover_add
-
-
-# ---------------------------------------------------------------- the loop
-
-# Each long method's overall deadline (s). The app waits longer for each (app/src-tauri/src/lib.rs CALL_SECS),
-# at least the deadline plus AFTER_DEADLINE: a few steps still run once it's past (a 1 s floor each, up to 15 s
-# to check what a step that timed out did: changes.CHECK_TIMEOUT, bitwarden's lookup after a create; and UNDO_TIME
-# to take a new Vault item back out). So serve
-# always answers before the app gives up, and the answer says what happened. Other methods: the app's 60 s.
-DEADLINES = {"inventory.create": 75, "host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
-             "host.verify_login": 45, "vault.create_item": 45, "quick.save": 45,
-             "host.save_login": 45, "box.check": 45, "mesh.plan": 240, "mesh.apply": 240, "mesh.cut": 60}
-AFTER_DEADLINE = 40
-UNDO_TIME = 15              # s: taking a new Vault item back out gets this much, even past the deadline
-
 
 # ---------------------------------------------------------------- jobs (ticket 101, decision Q112)
 
+@method("jobs.list", lane="quick")
 def jobs_list(state, params):
     """The background jobs: each kind's latest, running or not (a Mesh run, a scan; each Host's latest check). Never connects.
 
@@ -2944,6 +2944,7 @@ def jobs_list(state, params):
     return {"jobs": state.jobs.list()}
 
 
+@method("jobs.stop", lane="quick")
 def jobs_stop(state, params):
     """Stop a job, as `mesh.stop` or `discover.stop` would, or a Host's check at its next step.
 
@@ -2955,12 +2956,10 @@ def jobs_stop(state, params):
     kind = text_param(params, "kind")
     job = params.get("job")
     if not isinstance(job, (int, str)) or isinstance(job, bool):
-        raise RpcError(INVALID_PARAMS, "params.job must be a job's id (jobs.list)")
+        raise Problem(INVALID_PARAMS, "params.job must be a job's id (jobs.list)")
     return {"kind": kind, "job": job, "stopping": state.jobs.stop(kind, job)}
 
 
-METHODS["jobs.list"] = jobs_list
-METHODS["jobs.stop"] = jobs_stop
 
 
 # ---------------------------------------------------------------- locks (ticket 101, decision Q112)
@@ -3038,25 +3037,6 @@ class Lock:
         self.release()
 
 
-# What each method claims, in this order (never the other way round, so two requests can't wait for each other):
-# "inventory" (roster.yml, its repo, the loaded Inventory: every write, for its whole request) and "vault" (shared:
-# it looks a secret up, makes an item, or mints an askpass token; alone: it unlocks, signs in, configures). A method
-# not listed claims nothing: it reads what's in memory, or does its own locking (a reload, a job's write,
-# host.verify_login's vault after its reload, vault.lock's wait).
-LOCKS = {
-    **{m: [("inventory", False)] for m in (
-        "host.update", "host.remove", "host.rename", "host.move", "host.review", "group.new", "group.rename",
-        "group.delete", "discover.add", "changes.diff", "changes.discard", "changes.publish", "inventory.pull",
-        "inventory.reload")},
-    **{m: [("inventory", False), ("vault", True)] for m in ("host.add", "quick.save", "host.save_login")},
-    **{m: [("vault", True)] for m in (
-        "session.prepare", "session.fill", "quick.prepare", "vault.status", "vault.targets", "vault.item_fields",
-        "vault.create_item",
-        "vault.undo_create")},
-    # vault.lock and vault.logout aren't here: they forget first and then wait, never refused (vault_lock); nor is
-    # host.check: its job shares the vault (check_job), not the request waiting for it
-    **{m: [("vault", False)] for m in ("vault.unlock", "vault.login", "vault.configure")},
-}
 LOCK_WAIT = 50              # s: the longest a method without a deadline waits for a lock (the app waits 60 s)
 NAMES = {"inventory": "roster.yml", "vault": "the vault"}
 
@@ -3090,13 +3070,10 @@ class claimed:
 # ---------------------------------------------------------------- cancelling a request (ticket 108, decision Q112 (p))
 # `$/cancel {id}` (the core sends it when it gives up waiting) stops a request that hasn't done anything yet: still
 # queued, or waiting for a lock or for an unlock asked before it. It's answered "cancelled" (5) and nothing was done.
-# Once a request runs, only the waiting forms of jobs stop (their job stops at its next step, as jobs.stop would);
-# anything else runs to its end, so nothing is half-written, and the app's check after a timeout sees what it did.
-# Locking is never cancelled (Q112 (k)).
+# Once a request runs, only a method with cancel="running" stops (the waiting forms of jobs: their job stops at its
+# next step, as jobs.stop would); anything else runs to its end, so nothing is half-written, and the app's check after
+# a timeout sees what it did. Locking is never cancelled (Q112 (k)).
 
-NEVER_CANCELLED = {"vault.lock", "vault.logout", "$/cancel"}
-CANCEL_RUNNING = {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}     # each registers on_cancel(its job's stop)
-UNLOCK_LANE = {"vault.unlock"}  # a worker of its own: never queued behind 8 busy ones (Q112 (r))
 _request = threading.local()    # the Request this worker thread is answering
 MOVED = threading.Condition()   # notified when a request ends or is cancelled (vault.status waits on it)
 
@@ -3113,8 +3090,8 @@ class Request:
         self.finished = threading.Event()   # answered, or cancelled before it started
         self.lock = threading.Lock()
         self.stop = None                    # on_cancel's fn, once a running request registered one
-        self.asked = False                  # a cancel came while it ran (and it's in CANCEL_RUNNING)
-        self.after = []                     # vault.status: the unlocks asked before it, to wait for
+        self.asked = False                  # a cancel came while it ran (its method's cancel is "running")
+        self.after = []                     # waits_for_unlocks: the unlocks asked before it, to wait for
 
 
 def current_request():
@@ -3128,11 +3105,11 @@ def waiting_cancel():
 
 
 def cancelled(method):
-    return RpcError(CANCELLED, f"{method} was cancelled before it did anything")
+    return Problem(CANCELLED, f"{method} was cancelled before it did anything")
 
 
 def on_cancel(fn):
-    """A running request in CANCEL_RUNNING says how it stops: FN() (a job's stop). Run at once if a cancel came
+    """A running request whose method's cancel is "running" says how it stops: FN() (a job's stop). Run at once if a cancel came
     before this."""
     r = current_request()
     if r is None:
@@ -3145,7 +3122,8 @@ def on_cancel(fn):
 
 
 def started_running():
-    """The request this thread answers has its locks: from now on a cancel doesn't stop it (unless CANCEL_RUNNING).
+    """The request this thread answers has its locks: from now on a cancel doesn't stop it (unless its method's
+    cancel is "running").
     Cancelled while waiting: 5, and nothing was done."""
     r = current_request()
     if r is None:
@@ -3157,7 +3135,7 @@ def started_running():
 
 
 def after_unlocks(state, method):
-    """vault.status waits for the unlocks asked before it, queued or running, so it never answers "locked" with an
+    """A method that waits_for_unlocks (vault.status) waits for the unlocks asked before it, queued or running, so it never answers "locked" with an
     unlock still on its way (the app's check after a timed-out unlock). At most what's left of its deadline
     (LOCK_WAIT): then 4. A cancelled one is over at once."""
     r = current_request()
@@ -3175,6 +3153,7 @@ def after_unlocks(state, method):
             MOVED.wait(left)
 
 
+@method("$/cancel", lane="now", cancel="never")
 def cancel_request(state, params):
     """Cancel a request sent earlier, by its `id` (ticket 108). Sent as a notification (no `id` of its own), as the
     app's core does when it gives up waiting, it gets no answer. It's answered at once, ahead of every worker. A
@@ -3190,29 +3169,29 @@ def cancel_request(state, params):
     """
     rid = params.get("id")
     if not isinstance(rid, (int, str)) or isinstance(rid, bool):
-        raise RpcError(INVALID_PARAMS, "params.id must be the id of a request sent earlier")
+        raise Problem(INVALID_PARAMS, "params.id must be the id of a request sent earlier")
     server = getattr(state, "server", None)
     if server is None:
         return {"id": rid, "cancelled": False, "was": None}
     return server.cancel(rid)
 
 
-METHODS["$/cancel"] = cancel_request
-
-
 # ---------------------------------------------------------------- the loop
 
 WORKERS = 8                 # requests answered at once (the core lets the Plugins have 4 of them)
 QUICK_WORKERS = 2           # and for the quick reads, which never wait for a lock a long request holds
-QUICK = {"inventory.info", "hosts.list", "host.get", "mesh.status", "mesh.job", "mesh.stop", "discover.plan",
-         "discover.status", "discover.stop", "jobs.list", "jobs.stop", "inventory.watch", "vault.forget_typed",
-         "host.check_job"}
 
 
-def quick(req):
-    """Whether REQ is a quick read: it touches only memory and takes no lock a long request holds."""
+def lane(req):
+    """Which workers answer REQ: its method's lane, but the pool for a quick read whose params make it claim a lock
+    (a quick read never waits behind a long request)."""
+    spec = METHODS.get(str(req.get("method"))) if isinstance(req, dict) else None
+    if spec is None:
+        return "general"
     params = req.get("params")
-    return req.get("method") in QUICK and not (isinstance(params, dict) and params.get("settled") is True)
+    if spec.lane == "quick" and spec.claims(params if isinstance(params, dict) else {}):
+        return "general"
+    return spec.lane
 
 
 def handle(state, line):
@@ -3220,7 +3199,7 @@ def handle(state, line):
     try:
         req = json.loads(line)
     except ValueError as e:
-        return error_response(None, RpcError(PARSE_ERROR, f"not valid JSON: {e}"))
+        return error_response(None, Problem(PARSE_ERROR, f"not valid JSON: {e}"))
     return respond(state, req)
 
 
@@ -3228,39 +3207,36 @@ def respond(state, req):
     """One parsed request -> the response object, or None for a notification."""
     if not isinstance(req, dict) or req.get("jsonrpc") != "2.0" or not isinstance(req.get("method"), str):
         rid = req.get("id") if isinstance(req, dict) else None
-        return error_response(rid, RpcError(INVALID_REQUEST, "expected a JSON-RPC 2.0 request object"))
+        return error_response(rid, Problem(INVALID_REQUEST, "expected a JSON-RPC 2.0 request object"))
     rid, notification = req.get("id"), "id" not in req
     method = req["method"]
+    spec = METHODS.get(method)
+    _doing.what = spec and spec.sensitive
     try:
-        fn = METHODS.get(method)
-        if fn is None:
-            raise RpcError(METHOD_NOT_FOUND, f"unknown method {method!r}")
+        if spec is None:
+            raise Problem(METHOD_NOT_FOUND, f"unknown method {method!r}")
         params = req.get("params", {})
         if not isinstance(params, dict):
-            raise RpcError(INVALID_PARAMS, "params must be an object")
-        with deadline(DEADLINES.get(method)):
-            if method == "vault.status":
+            raise Problem(INVALID_PARAMS, "params must be an object")
+        with deadline(spec.deadline):
+            if spec.waits_for_unlocks:
                 after_unlocks(state, method)
-            with claimed(state, LOCKS.get(method, []), method):
+            with claimed(state, spec.claims(params), method):
                 started_running()
-                result = {"jsonrpc": "2.0", "id": rid, "result": fn(state, params)}
-    except RpcError as e:
-        result = error_response(rid, e)
-    except SystemExit as e:                     # a die() inside roster: its message is the answer
-        result = error_response(rid, RpcError(ROSTER_ERROR, die_message(e)))
+                result = {"jsonrpc": "2.0", "id": rid, "result": spec.fn(state, params)}
+    except (Problem, SystemExit) as e:          # a die() inside roster: its message (and code) is the answer
+        result = error_response(rid, problem_of(e))
     except Exception as e:
-        print(f"serve: {method} failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-        result = error_response(rid, RpcError(INTERNAL_ERROR, f"{type(e).__name__}: {e}"))
+        if _doing.what:                         # never its words: they might hold the password
+            result = error_response(rid, Problem(INTERNAL_ERROR, f"{_doing.what} failed: {type(e).__name__}"))
+        else:
+            print(f"serve: {method} failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            result = error_response(rid, problem_of(e))
     return None if notification else result
 
 
 def error_response(rid, e):
-    err = {"code": e.code, "message": e.message}
-    if e.data is not None:
-        err["data"] = e.data
-    if getattr(e, "details", None):         # the raw words (git's, ssh's) for the app's "Details"
-        err["data"] = {**err.get("data", {}), "details": e.details}
-    return {"jsonrpc": "2.0", "id": rid, "error": err}
+    return {"jsonrpc": "2.0", "id": rid, "error": e.as_error()}
 
 
 def log_line(msg):
@@ -3308,28 +3284,26 @@ class Server:
         try:
             req = json.loads(line)
         except ValueError as e:
-            self.send(error_response(None, RpcError(PARSE_ERROR, f"not valid JSON: {e}")))
+            self.send(error_response(None, Problem(PARSE_ERROR, f"not valid JSON: {e}")))
             return
-        if isinstance(req, dict) and req.get("method") == "$/cancel":
-            response = respond(self.state, req)     # at once: it only looks at what's queued and running
+        where = lane(req)
+        if where == "now":
+            response = respond(self.state, req)     # at once: $/cancel only looks at what's queued and running
             if response is not None:
                 self.send(response)
             return
         record = Request(req)
+        spec = METHODS.get(record.method or "")
         with self.table:
             if isinstance(req, dict) and "id" in req:
                 self.requests[request_key(req["id"])] = record
-            if record.method == "vault.status":     # the unlocks asked before it: it waits for them
+            if spec is not None and spec.waits_for_unlocks:
                 record.after = [r for r in self.requests.values()
-                                if r.method in UNLOCK_LANE and not r.finished.is_set()]
+                                if r.method in METHODS and METHODS[r.method].lane == "unlock"
+                                and not r.finished.is_set()]
         with self.busy:
             self.running += 1
-        if record.method in UNLOCK_LANE:
-            pool = self.unlock_lane
-        elif isinstance(req, dict) and quick(req):
-            pool = self.quick
-        else:
-            pool = self.general
+        pool = {"unlock": self.unlock_lane, "quick": self.quick}.get(where, self.general)
         pool.queue.put(lambda: self.run(record))
 
     def run(self, record):
@@ -3377,13 +3351,14 @@ class Server:
         stop = None
         with record.lock:
             was = record.phase
-            if record.method in NEVER_CANCELLED:
+            how = METHODS[record.method].cancel if record.method in METHODS else "waiting"
+            if how == "never":
                 done = False
             elif was in ("queued", "waiting"):
                 record.cancelled.set()
                 done = True
             else:
-                done = record.method in CANCEL_RUNNING
+                done = how == "running"
                 if done:
                     record.asked, stop = True, record.stop
         if done and was != "running":
