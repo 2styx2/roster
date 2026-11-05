@@ -133,9 +133,11 @@ def same_file(a: str | Path, b: str | Path) -> bool:
 
 
 def unknown(name: str, inv: Inventories | None = None) -> NoReturn:
+    from .config import token_shaped
     inv = inv or load()
     have = ", ".join(x.name for x in inv.inventories) or "none yet"
-    die(f"no Inventory named '{name}' (named: {have}) - `roster inv list` lists them, `roster inv add NAME PATH` "
+    shown = "that (not repeated)" if token_shaped(name) else f"'{name}'"     # a token typed after --inv (#484 N1)
+    die(f"no Inventory named {shown} (named: {have}) - `roster inv list` lists them, `roster inv add NAME PATH` "
         "names one")
 
 
