@@ -2179,6 +2179,7 @@ OTHER_BOXS_KEY = "ssh-ed25519 AAAAother+Box/key= roster-managed:box"
 def renamed_box(net, isolated):
     """This Box's key (AAAAbox, made as `box`), now named box2; nas-1 also holds another Box's key named box."""
     (isolated["home"] / ".ssh/roster_ed25519").write_text("private\n")
+    (isolated["home"] / ".ssh/roster_ed25519").chmod(0o600)      # this user's alone (T245: boxkeys.vouched)
     (isolated["home"] / ".ssh/roster_ed25519.pub").write_text("ssh-ed25519 AAAAbox roster-managed:box\n")
     add_line(net, "nas-1", OTHER_BOXS_KEY)
     net.cfg_path.write_text(CONFIG.replace("box_name: box\n", "box_name: box2\n"))

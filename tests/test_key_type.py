@@ -481,3 +481,128 @@ def test_setup_applies_the_mesh_with_a_member_whose_key_type_isnt_ed25519(write_
     main(["setup"])
     assert applied == [1, 1]
     assert "NOT applied" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- T245 (#478 item 9, #471's review LOW-6)
+
+def test_a_key_type_roster_yml_names_widens_the_match_only_with_this_boxs_own_private_key(write_config, isolated):
+    """LOW-6: a planted roster_rsa.pub (no private key, or not this Box's) never widens what revoke, re-tag and check
+    take, even when roster.yml uses rsa; the Box's own key at key_path still counts with a passphrase on it (Q200
+    (c): ssh-keygen -y can't read it then)."""
+    import subprocess
+
+    from roster.sshops import box_key_re, key_ere
+    cfg = load_config(write_config(FIPS_YML))
+    ssh = isolated["home"] / ".ssh"
+    ssh.mkdir()
+    (ssh / "roster_rsa.pub").write_text("ssh-rsa AAAAotherbox roster-managed:ws9\n")
+    assert "AAAAotherbox" not in box_key_re(cfg)
+    (ssh / "roster_rsa").write_text("")
+    (ssh / "roster_rsa").chmod(0o600)
+    assert "AAAAotherbox" not in box_key_re(cfg)
+    rsa = keypair(ssh / "roster_rsa")
+    (ssh / "roster_rsa").chmod(0o600)
+    assert key_ere(rsa[0], rsa[1]) in box_key_re(cfg)
+    (ssh / "roster_rsa").chmod(0o644)                          # others may read it: not this Box's alone
+    assert key_ere(rsa[0], rsa[1]) not in box_key_re(cfg)
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "secret", "-C", "roster-managed:ws1",
+                    "-f", str(ssh / "roster_ed25519")], check=True)
+    own = (ssh / "roster_ed25519.pub").read_text().split()
+    assert key_ere(own[0], own[1]) in box_key_re(cfg)
+
+
+# ---------------------------------------------------------------- T245 (#478 items 4, 7, 12): the types on each Host
+
+def test_a_line_setup_key_type_left_goes_at_the_next_setup_where_the_key_works(lab, capsys):
+    """Item 7: setup --key-type's line used to stay until revoke (a later setup finds the key working and never
+    visits). The record of the types installed says it's there: check warns (219), setup takes it off."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    assert main(["setup", "--host", "fips-01", "--key-type", "rsa"]) == 0
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ssh-rsa"]
+    assert main(["sync"]) == 0
+    capsys.readouterr()
+    assert main(["check"]) == 1
+    assert ("warning: [219] fips-01 still holds this Box's rsa key line besides its ecdsa one"
+            in capsys.readouterr().out)
+    assert main(["setup", "--dry-run"]) == 0
+    assert "would take this Box's rsa key line off fips-01" in capsys.readouterr().out
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ssh-rsa"]
+    assert main(["setup"]) == 0
+    assert "ok    fips-01 (took this Box's rsa key line off)" in capsys.readouterr().out
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384"] and works("fips-01")
+    assert main(["check"]) == 0, capsys.readouterr().out
+
+
+def test_key_type_tries_dont_pile_up(lab, capsys):
+    """Item 12 (#471's NIT-3): each --key-type try keeps roster.yml's type's line and takes the try before off."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    assert main(["setup", "--host", "fips-01", "--key-type", "rsa"]) == 0
+    assert main(["setup", "--host", "fips-01", "--key-type", "ecdsa-256"]) == 0
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ecdsa-sha2-nistp256"]
+    assert main(["sync"]) == 0 and works("fips-01")
+
+
+def test_check_says_when_roster_yml_changed_a_hosts_type_since_its_setup(lab, capsys):
+    """Item 4: the type last installed on each Host, against roster.yml's key_type."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    lab.write(", key_type: rsa")
+    capsys.readouterr()
+    assert main(["check", "--json"]) == 1
+    import json
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["key_type_drift"]["fips-01"].startswith(
+        "[219] fips-01 holds this Box's ecdsa key, and roster.yml says key_type: rsa")
+    assert main(["setup"]) == 0
+    assert lab.kinds("fips-01") == ["ssh-rsa"]
+    assert main(["revoke", "-y"]) == 0
+    from roster import boxkeys
+    assert boxkeys.installed() == {}
+
+
+@pytest.mark.parametrize(("fips", "kex"), [(True, "ecdh-sha2-nistp256"), (False, "curve25519-sha256")])
+def test_paramikos_kex_log_line_still_names_the_agreed_key_exchange(fips, kex):
+    """T245 (#478 item 8): the FIPS hint (199) reads the agreed kex from paramiko's debug log (`Kex: NAME`). If a
+    paramiko upgrade changes that line, the hint quietly falls back to 46: this test says so first."""
+    import socket
+
+    from roster.sshops import handshake
+    sshd = nist_only_sshd(fips)
+    try:
+        with socket.create_connection(("127.0.0.1", sshd.port), timeout=10) as sock:
+            _, agreed = handshake(sock, ["ecdsa-sha2-nistp256"])
+    finally:
+        sshd.close()
+    assert agreed.startswith(kex), f"paramiko's Kex: log line changed (got {agreed!r})"
+
+
+# ---------------------------------------------------------------- T245 (#478 item 3): templates without key_path
+
+def test_the_templates_leave_key_path_out_so_a_later_key_type_just_works(write_config, isolated, tmp_path):
+    import re
+
+    from roster import newinventory
+    from roster.discover import write_discovered
+    from roster.example import EXAMPLE_CONFIG
+    written = tmp_path / "discovered.yml"
+    write_discovered(written, "lab", [], None, False, "2026-01-01")
+    for text in (newinventory.BLANK, EXAMPLE_CONFIG, written.read_text()):
+        assert not re.search(r"^key_path:", text, re.M)
+    cfg = load_config(write_config("key_type: ecdsa\n" + newinventory.BLANK.replace(
+        "      # web-01: {ip: 10.0.0.5, user: admin}", "      web-01: {ip: 10.0.0.5, user: admin}")))
+    assert cfg["key"] == isolated["home"] / ".ssh" / "roster_ecdsa"
+
+
+def test_201_on_a_key_path_naming_the_ed25519_key_says_to_remove_key_path(write_config, isolated):
+    from roster import boxkeys
+    from roster.sshops import ensure_key
+    cfg = load_config(write_config("key_path: ~/.ssh/roster_ed25519\nkey_type: ecdsa\n" + FIPS_YML))
+    keypair(isolated["home"] / ".ssh" / "roster_ed25519", "ed25519", None)
+    with pytest.raises(SystemExit, match=r"\[201\] .* remove key_path from roster.yml \(roster then keeps this key at "
+                                         r".*roster_ecdsa\) or point it at another file"):
+        ensure_key(boxkeys.box_key(cfg), cfg["tag"])

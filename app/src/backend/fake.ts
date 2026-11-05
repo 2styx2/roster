@@ -454,6 +454,9 @@ export function makeHosts(n: number): HostList {
       reviewed: i % 7 !== 3,
       enroll: i % 3 !== 0,
       ssh: { user: "admin", port: 22, auth: i % 3 === 0 ? `bw:${type}-${i} ssh` : "key" },
+      // serve API 30 (T239): every Host's key type and file; a few FIPS-mode ones on ECDSA
+      key_type: i % 10 === 4 ? "ecdsa" : "ed25519",
+      key_file: i % 10 === 4 ? "/home/admin/.ssh/roster_ecdsa" : "/home/admin/.ssh/roster_ed25519",
       ...servicesFor(type, `${type}-${subnet}-${String(i).padStart(3, "0")}`, `10.19.${subnet}.${(i % 250) + 2}`),
     };
   });
