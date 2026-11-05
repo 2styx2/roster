@@ -1650,17 +1650,11 @@ def host_add(state, params):
     made = None
     if typed:
         password, typed["password"] = typed["password"], None
-        port = h["ssh"]["port"]
-        uri = f"ssh://{h['ip']}" + ("" if port == 22 else f":{port}")
         try:
-            with item_writes(typed["provider"]):
-                made = providers.create_item(typed["provider"], name=typed["item"], password=password,
-                                             username=h["ssh"]["user"], uri=uri, save_to=typed["save_to"])
-        except providers.SecretError as e:
-            raise vault_problem(e) from None
+            made = make_item(typed["provider"], typed["item"], password, h["ssh"]["user"], h["ip"], h["ssh"]["port"],
+                             typed["save_to"])
         finally:
             del password
-        made = {"provider": typed["provider"], **made}
     warnings = []
 
     def after():                                # the Host is in roster.yml now: what follows can't un-add it
@@ -2746,7 +2740,7 @@ def mesh_status(state, params):
     Errors: -32602
     Since: API 15
     """
-    grouped = (params or {}).get("grouped", False) if isinstance(params, dict) else False
+    grouped = params.get("grouped", False)
     if not isinstance(grouped, bool):
         raise Problem(INVALID_PARAMS, "params.grouped must be true or false")
     if grouped and brief_param(params):
