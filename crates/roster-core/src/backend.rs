@@ -793,39 +793,20 @@ fn classify(e: CallError, shown: &str) -> BackendError {
 }
 
 /// A fill's refusal as the app hears it (tickets 119, 120, 137). One that typed nothing at all
-/// (the Session's output doesn't end with the prompt) carries [`FILL_REFUSED`], as serve's own
-/// refusals do, so the app offers the prompt again; serve's come back as they are; one that typed
-/// the probe (an echo, a key sent meanwhile) has no code, so the prompt stays spent. None of them
-/// holds the secret.
+/// ([`FillError::retry_fix`]) carries [`FILL_REFUSED`], as serve's own refusals do, so the app
+/// offers the prompt again; serve's come back as they are; one that typed the probe has no code,
+/// so the prompt stays spent. None of them holds the secret.
 pub fn fill_refusal(e: FillError<CallError>) -> CallError {
-    match e {
-        FillError::Lookup(e) => e,
-        FillError::NotPrinted => CallError::Rpc {
-            code: FILL_REFUSED,
-            message: FillError::<CallError>::NotPrinted.to_string(),
-            data: Some(json!({ "fix": "press the key again while the prompt is at the cursor" })),
-        },
-        // Nothing was typed (ticket 162): offered again once the app sees where the Session is.
-        FillError::NotInHop => CallError::Rpc {
-            code: FILL_REFUSED,
-            message: FillError::<CallError>::NotInHop.to_string(),
-            data: Some(json!({ "fix": "press the key again once roster shows where the Session is" })),
-        },
-        // Nothing was looked up or typed; a reset starts the screen over (the last pass on #318).
-        e @ FillError::LostTrack { .. } => CallError::Rpc {
+    if let FillError::Lookup(e) = e {
+        return e;
+    }
+    match e.retry_fix() {
+        Some(fix) => CallError::Rpc {
             code: FILL_REFUSED,
             message: e.to_string(),
-            data: Some(json!({ "fix": "run `reset` in the Session, then press the key again at the prompt" })),
+            data: Some(json!({ "fix": fix })),
         },
-        // Nothing was typed: the prompt stays offered (the review of #299, #3).
-        e @ FillError::Changed { .. } => CallError::Rpc {
-            code: FILL_REFUSED,
-            message: e.to_string(),
-            data: Some(json!({ "fix": "press the key again once the Session's screen is still" })),
-        },
-        other => CallError::Io {
-            message: other.to_string(),
-        },
+        None => CallError::Io { message: e.to_string() },
     }
 }
 
