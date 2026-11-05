@@ -24,7 +24,7 @@ env:
 jobs:
   frontend:
     name: Frontend budgets (Vitest, ROSTER_PERF=1)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: app
@@ -43,7 +43,7 @@ jobs:
 
   core:
     name: Core budgets (cargo test --ignored)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
