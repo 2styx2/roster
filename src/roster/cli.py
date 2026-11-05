@@ -198,6 +198,8 @@ def setup_run(cfg, args):
                 "key_type: on them, their group or defaults in roster.yml and run roster setup")
         cfg, hosts = key_type_for_run(cfg, hosts, override)
     say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
+    if not args.dry_run:                # a swap a rotation was stopped in the middle of, finished (#482's MED-2)
+        rotation.repair_all(cfg, say)
     # T239: one key per key type the Hosts use (this Box's own when none), each made on first need
     keys = boxkeys.in_use(cfg, hosts) or [boxkeys.box_key(cfg)]
     for key in keys:
@@ -305,6 +307,10 @@ def setup_run(cfg, args):
     if waiting := rotation.pending(cfg):
         say(f"Box key rotation pending on {plural(len(waiting), 'Host')} ({', '.join(sorted(waiting))}): the old Box "
             "key is still on them; `roster setup --rotate` finishes it")
+        return 1
+    if found := rotation.problems(cfg):
+        for message, fix in found:
+            say(f"warning: {message} ({fix})")
         return 1
     return 1 if failed else 0
 
@@ -641,10 +647,11 @@ def cmd_check(cfg, args):
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         waiting = rotation_waiting(cfg, wanted)
-        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting
+        found = [message for message, _ in rotation.problems(cfg)]
+        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found
         from . import jsondocs
         jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "rotation_pending": waiting,
-                                                       "ok": ok}))
+                                                       "rotation_problems": found, "ok": ok}))
         return 0 if ok else 1
     bad = 0
     width = max((len(h["name"]) for h in hosts), default=0)
@@ -673,6 +680,9 @@ def cmd_check(cfg, args):
         from .errors import ROTATION_PENDING
         say(f"\nwarning: [{ROTATION_PENDING}] Box key rotation pending on {plural(len(waiting), 'Host')}: "
             f"{', '.join(waiting)} (the old Box key is still on them; `roster setup --rotate` finishes it)")
+        bad += 1
+    for message, fix in rotation.problems(cfg):         # #482's review LOW-1, LOW-2, MED-1
+        say(f"warning: {message} ({fix})")
         bad += 1
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
@@ -1202,10 +1212,15 @@ def revoke_run(cfg, args):
         if ans.strip().lower() != "y":
             return 1
     bad = 0
+    gone = []
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, mine), hosts), strict=True):
             bad += why is not None
             revoke_line("", h, why)
+            if why is None:
+                gone.append(h["name"])
+    # #482's review LOW-3: a Host without this Box's key holds no old key either; with every one done, no record
+    rotation.forget(gone, everything=not bad and len(hosts) == len(keyed) and not args.only)
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
     # T194 (#371): the files go only once every Host this file names has lost the key; with any skipped, failed or
     # left to --only, deleting the key would leave it on those for good
@@ -1303,6 +1318,8 @@ def cmd_revoke_all(args):
         for (label, h, _), why in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)
+            if why is None:                 # #482's review LOW-3, each Inventory's record
+                rotation.forget([h["name"]], next(n for lb, n, _ in targets if lb == label))
     files = []
     for _, cfg, _ in plan:
         files += key_files(cfg)

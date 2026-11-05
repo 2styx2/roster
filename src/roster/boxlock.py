@@ -100,8 +100,7 @@ def _take(path: Path, what: str, wait: float) -> None:
                 _held[key] = (me, mine[1] + 1, mine[2])
                 return
             if not mine:
-                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                f = open(path, "a+", encoding="utf-8")      # never truncated before it's ours: it names the holder
+                f = _open(path)                 # never truncated before it's ours: it names the holder
                 if _try_lock(f):
                     f.seek(0)
                     f.truncate()
@@ -113,6 +112,28 @@ def _take(path: Path, what: str, wait: float) -> None:
         if time.monotonic() >= deadline:
             raise busy(path)
         time.sleep(POLL)
+
+
+def _open(path: Path):
+    """The lock file, opened without following a link (#482's review LOW-5: never truncate what a link points at):
+    O_NOFOLLOW on POSIX, a link refused before opening on Windows; anything but a plain file is refused (a Problem)."""
+    import stat
+
+    from .errors import ROSTER_ERROR
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    refuse = Problem(ROSTER_ERROR, f"{path}, roster's lock file, isn't a plain file (a link, or another kind): "
+                     "nothing was changed", fix=f"remove {path} (roster makes it again)")
+    if os.name == "nt" and (path.is_symlink() or (path.exists() and not path.is_file())):
+        raise refuse
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+                     | getattr(os, "O_BINARY", 0), 0o600)
+    except OSError:
+        raise refuse from None
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise refuse
+    return os.fdopen(fd, "r+", encoding="utf-8", newline="\n")
 
 
 def _release(key: str) -> None:

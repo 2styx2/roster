@@ -23,6 +23,7 @@ DEFAULT = "ed25519"
 # key_max_age:'s default (T240, decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
 # private authentication key ("no more than one or two years", §5.3.6 item 4; Table 1: 1 to 2 years)
 MAX_AGE = "365d"
+MAX_AGE_LIMIT = 3650        # days: the most key_max_age: takes (10 years); `off` is how to turn the warning off
 RSA_MIN, RSA_MAX = 3072, 16384
 CURVES = (256, 384, 521)
 ALLOWED = (f"ed25519, ecdsa (P-384), ecdsa-256, ecdsa-384, ecdsa-521, rsa (3072 bits) or rsa-BITS with BITS "
@@ -247,10 +248,13 @@ def parse_age(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         days = value
     else:
-        m = re.fullmatch(r"(\d+)\s*([dwy]?)", value.strip().lower()) if isinstance(value, str) else None
+        # ASCII digits only (#482's review: `\d` takes any script's digits)
+        m = re.fullmatch(r"([0-9]{1,6})\s*([dwy]?)", value.strip().lower(), re.ASCII) if isinstance(value, str) else None
         if m is None:
             raise ValueError(f"{value!r} isn't an age: write days as 365d (or 52w, 1y), or off")
         days = int(m[1]) * {"": 1, "d": 1, "w": 7, "y": 365}[m[2]]
     if days < 1:
         raise ValueError(f"{value!r} isn't an age: at least 1d (or off)")
+    if days > MAX_AGE_LIMIT:    # a huge age would turn the warning off without saying so: that's `off`
+        raise ValueError(f"{value!r} is more than roster takes: at most 10y (3650d); write off to turn it off")
     return days

@@ -27,7 +27,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +45,6 @@ from .common import (
     ssh_path,
 )
 from .config import is_windows
-from .errors import NEW_KEY_REFUSED
 
 
 def new_of(key: Path) -> Path:
@@ -82,10 +81,6 @@ class Slot:
             return self.key
         return old_of(self.key) if old_of(self.key).exists() else None
 
-    @property
-    def under_way(self) -> bool:
-        return new_of(self.key).exists() or old_of(self.key).exists()
-
 
 @dataclass(frozen=True, eq=False)
 class Member:
@@ -105,24 +100,67 @@ class Member:
         return self.name if self.inv == current_inventory() else f"{self.inv or '(unnamed)'}: {self.name}"
 
 
-# ---------------------------------------------------------------- the pending record
+# ---------------------------------------------------------------- the record
 
-def load(inv: Any = CURRENT) -> dict[str, str]:
-    """The Hosts (name: why) of the Inventory INV the Box key rotation hasn't finished on: empty when none."""
-    try:
-        data = json.loads(rotation_file(inv).read_text(encoding="utf-8"))
-        pending = data.get("pending") if isinstance(data, dict) else None
-        return {str(k): str(v) for k, v in pending.items()} if isinstance(pending, dict) else {}
-    except (OSError, ValueError):
-        return {}
+class Unreadable(RuntimeError):
+    """The record is there but can't be read (#482's review LOW-1): roster can't tell which Hosts still hold the old
+    key, so it fails closed (check says so, the ssh config offers every Host both keys, setup --rotate stops)."""
 
 
-def save(pending: dict[str, str], inv: Any = CURRENT) -> None:
+@dataclass
+class Record:
+    """What the rotation of one Inventory has done (common.rotation_file): PENDING, the Hosts it hasn't finished on
+    (name: why); KEYS, each key file it's rotating (its path: {type, old, new}, old and new as `TYPE BASE64`, the
+    public keys it started from and made), written before anything else so a KEY.new or KEY.old is known as the
+    rotation's own, never just by its name (#482's review MED-1); REFUSED, the Hosts that refused the new key, which
+    hold back the swap until each proves it."""
+
+    pending: dict[str, str] = field(default_factory=dict)
+    keys: dict[str, dict[str, Any]] = field(default_factory=dict)
+    refused: list[str] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not (self.pending or self.keys or self.refused)
+
+
+def read(inv: Any = CURRENT) -> Record:
+    """INV's record: an empty one when there's no file; Unreadable when there's one roster can't read."""
     f = rotation_file(inv)
-    if not pending:
+    try:
+        text = f.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return Record()
+    except (OSError, UnicodeDecodeError) as e:
+        raise Unreadable(f"{f} can't be read ({e})") from None
+    try:
+        data = json.loads(text)
+        pending, keys, refused = data["pending"], data.get("keys", {}), data.get("refused", [])
+        if not (isinstance(pending, dict) and isinstance(keys, dict) and isinstance(refused, list)
+                and all(isinstance(v, dict) for v in keys.values())):
+            raise ValueError("not roster's shape")
+    except (ValueError, TypeError, KeyError) as e:
+        raise Unreadable(f"{f} can't be read (it isn't the record roster writes: {e})") from None
+    return Record({str(k): str(v) for k, v in pending.items()}, {str(k): dict(v) for k, v in keys.items()},
+                  [str(x) for x in refused])
+
+
+def write(rec: Record, inv: Any = CURRENT) -> None:
+    f = rotation_file(inv)
+    if rec.empty:
         f.unlink(missing_ok=True)
         return
-    replace_file(f, json.dumps({"pending": dict(sorted(pending.items()))}, indent=1) + "\n", 0o600)
+    replace_file(f, json.dumps({"pending": dict(sorted(rec.pending.items())), "keys": rec.keys,
+                                "refused": sorted(set(rec.refused))}, indent=1) + "\n", 0o600)
+
+
+def load(inv: Any = CURRENT) -> dict[str, str]:
+    """The Hosts (name: why) of the Inventory INV the rotation hasn't finished on; empty when none (or unreadable:
+    problems() says so)."""
+    try:
+        return read(inv).pending
+    except Unreadable:
+        return {}
 
 
 def pending(cfg: dict[str, Any]) -> dict[str, str]:
@@ -130,13 +168,78 @@ def pending(cfg: dict[str, Any]) -> dict[str, str]:
     return {n: why for n, why in load().items() if n in cfg["hosts"]}
 
 
+def forget(names, inv: Any = CURRENT, everything: bool = False) -> None:
+    """revoke took this Box's key off NAMES (#482's review LOW-3): they hold neither key now. EVERYTHING: every Host
+    of the Inventory lost it, so the record goes (the key files are revoke's to name for deletion)."""
+    try:
+        rec = read(inv)
+    except Unreadable:
+        if everything:
+            rotation_file(inv).unlink(missing_ok=True)
+        return
+    if everything:
+        write(Record(), inv)
+        return
+    for n in names:
+        rec.pending.pop(n, None)
+    rec.refused = [n for n in rec.refused if n not in set(names)]
+    write(rec, inv)
+
+
+ALL = object()     # identity_files: every Host (the record can't be read, or a kept old key has no record)
+
+
+def config_waiting(cfg: dict[str, Any]) -> Any:
+    """The Hosts whose ssh config block offers the old key too: the pending ones, or ALL when roster can't tell
+    (an unreadable record, or a kept KEY.old with no record of its rotation: fail closed, #482's LOW-1)."""
+    try:
+        rec = read()
+    except Unreadable:
+        return ALL
+    for key in {Path(h["key_file"]) for h in cfg["hosts"].values() if h["enroll"]}:
+        if old_of(key).exists() and str(key) not in rec.keys:
+            return ALL
+    return set(rec.pending)
+
+
 def identity_files(h: dict[str, Any], waiting: Any = ()) -> list[str]:
-    """The key files the ssh config offers Host H, in order: its key, then (when H is in WAITING, the pending
-    record, and the old key is kept as .old) the old one, so a Host not switched yet still logs in."""
+    """The key files the ssh config offers Host H, in order: its key, then (when H is in WAITING, or WAITING is ALL,
+    and the old key is kept as .old, this user's with its own .pub) the old one, so a Host not switched yet still
+    logs in."""
     key = Path(h["key_file"])
     out = [h["key_file"]]
-    if h["name"] in waiting and not new_of(key).exists() and old_of(key).exists():
-        out.append(str(old_of(key)))
+    old = old_of(key)
+    if (waiting is ALL or h["name"] in waiting) and not new_of(key).exists() and old.exists() \
+            and boxkeys.owned(old) and boxkeys.matches(old):
+        out.append(str(old))
+    return out
+
+
+def problems(cfg: dict[str, Any]) -> list[tuple[str, str]]:
+    """What's wrong with this Inventory's rotation state besides pending Hosts, as (message, fix): an unreadable
+    record (LOW-1), and a KEY.new or KEY.old with no Host pending or no record of its rotation (LOW-2, MED-1).
+    Read-only: check, check --box and setup report them."""
+    from .errors import ROTATION_PENDING
+    out: list[tuple[str, str]] = []
+    try:
+        rec = read()
+    except Unreadable as e:
+        return [(f"[{ROTATION_PENDING}] the Box key rotation's record {e}: roster can't tell which Hosts still hold "
+                 "the old Box key, so this Box's ssh config offers every Host both keys",
+                 "run `roster setup --rotate`, which says what to do; restore the file if you have it")]
+    keys = sorted({Path(h["key_file"]) for h in cfg["hosts"].values() if h["enroll"]} | {cfg["key"]})
+    held = [n for n in rec.pending if n in cfg["hosts"]]
+    for key in keys:
+        for f in (new_of(key), old_of(key)):
+            if not (f.exists() or pub_of(f).exists()):
+                continue
+            if str(key) not in rec.keys:
+                out.append((f"[{ROTATION_PENDING}] {f} is there, but no Box key rotation of roster's made it",
+                            "move it away: roster never uses or deletes a key file it didn't make"))
+            elif not held:
+                out.append((f"[{ROTATION_PENDING}] {f} (the Box key rotation's {'new' if f == new_of(key) else 'old'}"
+                            " key) is still on this Box with no Host of this Inventory pending",
+                            "run `roster setup --rotate`: it finishes the rotation and deletes the old key"))
     return out
 
 
@@ -299,13 +402,15 @@ def copy_private(src: Path, dst: Path) -> None:
         f.write(src.read_bytes())
 
 
-def swap(slot: Slot, keep_old: bool) -> None:
-    """The new key into SLOT's file. KEEP_OLD: the old one stays as KEY.old (a Host still holds only its line);
-    else the old private key is gone with the rename (and any older .old with it)."""
+def swap(slot: Slot, entry: dict[str, Any], keep_old: bool) -> None:
+    """The new key into SLOT's file. KEEP_OLD: the old one stays as KEY.old (a Host still holds only its line), its
+    .pub derived from KEY.old itself (#482's review MED-2: never a copy of KEY.pub); else the old private key is gone
+    with the rename. A run killed between the two renames is finished by repair()."""
     key = slot.key
     if keep_old:
         copy_private(key, old_of(key))
-        shutil.copyfile(pub_of(key), pub_of(old_of(key)))
+        old = boxkeys.derived(old_of(key)) or (entry.get("old") or "").split()
+        replace_file(pub_of(old_of(key)), " ".join([*old[:2], entry.get("comment") or ""]).strip() + "\n", 0o644)
     os.replace(pub_of(new_of(key)), pub_of(key))
     os.replace(new_of(key), key)
     boxkeys.stamp(key)
@@ -321,8 +426,9 @@ def delete_old(slot: Slot) -> None:
 
 
 def old_lines_re(m: Member, groups, new_words: list[str]) -> str:
-    """This Box's key lines on M that aren't its new key's: each of this Box's public keys (every type's, and each
-    slot's .old) but the new one, with a roster-managed tag of any Box name. Never a roster-mesh: line."""
+    """This Box's key lines on M that aren't its new key's: each of this Box's public keys but the new one, only those
+    boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), with
+    a roster-managed tag of any Box name. Never a roster-mesh: line."""
     from .sshops import key_ere
     found: list[list[str]] = []
     for _, c in groups:
@@ -330,11 +436,7 @@ def old_lines_re(m: Member, groups, new_words: list[str]) -> str:
             w = words(key.pub)
             if w:
                 found.append(w)
-    for f in (pub_of(m.slot.key), pub_of(old_of(m.slot.key))):
-        w = words(f)
-        if w:
-            found.append(w)
-    alts = dict.fromkeys(key_ere(*w) for w in found if w != new_words)
+    alts = dict.fromkeys(key_ere(*w[:2]) for w in found if w[:2] != new_words[:2])
     return "|".join(alts)
 
 
@@ -349,37 +451,105 @@ def old_keys(m: Member, groups) -> list[Path]:
     return out
 
 
+# ---------------------------------------------------------------- checking the key files against the record
+
+def own_pair(f: Path, want: Any) -> bool:
+    """F is this user's alone, its .pub is its own, and (WANT: `TYPE BASE64`) that's the key the record names."""
+    if not (f.exists() and boxkeys.owned(f) and boxkeys.matches(f)):
+        return False
+    return want is None or (words(pub_of(f)) or [])[:2] == str(want).split()[:2]
+
+
+def repair(key: Path, entry: dict[str, Any] | None, say=None) -> bool:
+    """A swap killed between its two renames (#482's review MED-2), finished: KEY.pub is the new key's already and
+    KEY.new (the new private key) has no .pub, so KEY.new goes to KEY; or KEY is the new private key already and
+    KEY.new.pub is left, so it goes to KEY.pub. Only when the record names that new key. True when it did one."""
+    new = (entry or {}).get("new")
+    if not new:
+        return False
+    want = str(new).split()[:2]
+    nk = new_of(key)
+    if nk.exists() and not pub_of(nk).exists() and (words(pub_of(key)) or [])[:2] == want \
+            and (boxkeys.derived(nk) or [])[:2] == want and boxkeys.owned(nk):
+        os.replace(nk, key)
+    elif pub_of(nk).exists() and not nk.exists() and (boxkeys.derived(key) or [])[:2] == want:
+        os.replace(pub_of(nk), pub_of(key))
+    else:
+        return False
+    boxkeys.stamp(key)
+    if say:
+        say(f"rotation     finished a swap a run was stopped in the middle of: {key} is the new key")
+    return True
+
+
+def check_files(key: Path, entry: dict[str, Any] | None) -> None:
+    """Stop (naming the file) unless KEY.new and KEY.old are what the record says this rotation made (#482's review
+    MED-1): never take a file just by its name, never use, swap in or delete one roster didn't make."""
+    stray = ": move it away (roster never uses or deletes a key file it didn't make), then run roster setup --rotate"
+    for f in (new_of(key), old_of(key)):
+        there = f.exists() or pub_of(f).exists()
+        if there and entry is None:
+            die(f"{f} is there, but no Box key rotation of roster's made it (its record has no rotation of {key})"
+                + stray)
+        if not there:
+            continue
+        want = (entry or {}).get("new" if f == new_of(key) else "old")
+        if not own_pair(f, want):
+            die(f"{f} isn't the key the Box key rotation made (not this user's alone, its .pub isn't its own, or it "
+                f"isn't the key the rotation's record names)" + stray)
+
+
 # ---------------------------------------------------------------- the run
 
-def plan(cfg: dict[str, Any], scope: set[str] | None):
-    """(groups, members to do, slots to rotate, starting): what a run does. SCOPE: the Host names this run may reach
-    (None: every one); the rest stay pending."""
-    groups = group(cfg)
-    everyone = members(groups)
-    waiting = {inv: load(inv) for inv, _ in groups}
-    busy = {m.slot.key: m.slot for m in everyone if m.slot.under_way}
-    starting = not busy and not any(waiting.values())
-    if starting:
-        chosen = [m for m in everyone if scope is None or (m.inv == current_inventory() and m.name in scope)]
-        slots = {m.slot.key: m.slot for m in chosen}
-        todo = [m for m in everyone if m.slot.key in slots]
-    else:
-        slots = busy
-        todo = [m for m in everyone if m.name in waiting.get(m.inv, {})
-                or (m.slot.key in busy and not any(waiting.values()))]
-        for m in todo:
-            slots.setdefault(m.slot.key, m.slot)
-    return groups, todo, slots, starting
+def read_all(groups) -> dict[str | None, Record]:
+    out = {}
+    for inv, _ in groups:
+        try:
+            out[inv] = read(inv)
+        except Unreadable as e:
+            die(f"the Box key rotation's record {e}, so roster can't tell which Hosts still hold the old key or which "
+                "key files are the rotation's. Restore it if you can; otherwise move it away, and the key files "
+                "beside the key ending .new and .old with it, then run roster setup --rotate (a Host that holds only "
+                "the old key's line then needs `roster setup --host NAME`, with its Login's password)")
+    return out
+
+
+def repair_all(cfg: dict[str, Any], say=None) -> None:
+    """Plain setup's first step (#482's MED-2): finish a swap a rotation was stopped in the middle of."""
+    try:
+        rec = read()
+    except Unreadable:
+        return
+    for key, entry in rec.keys.items():
+        repair(Path(key), entry, say)
 
 
 def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = False, say=print) -> dict[str, Any]:
     """`roster setup --rotate`: see the module's text. Returns {done: [label], pending: {label: why}, failed: {label:
     why}, notes: {label: note}, groups: [(inv, cfg)]}."""
-    groups, todo, slots, starting = plan(cfg, scope)
+    from .errors import NEW_KEY_REFUSED
+    groups = group(cfg)
+    recs = read_all(groups)
+    everyone = members(groups)
+    entries: dict[str, dict[str, Any]] = {}
+    for r in recs.values():
+        entries.update(r.keys)
+    for key in sorted({m.slot.key for m in everyone} | {c["key"] for _, c in groups}):
+        if not dry_run:
+            repair(key, entries.get(str(key)), say)
+        check_files(key, entries.get(str(key)))
+    starting = all(r.empty for r in recs.values())
     others = [inv for inv, _ in groups[1:]]
     if others:
         say(f"shared key   the named Inventor{'y' if len(others) == 1 else 'ies'} {', '.join(map(str, others))} use "
             f"this Box's key too: their Hosts are rotated in this run as well, before any old line goes")
+    if starting:
+        chosen = [m for m in everyone if scope is None or (m.inv == current_inventory() and m.name in scope)]
+        slots = {m.slot.key: m.slot for m in chosen}
+        todo = [m for m in everyone if m.slot.key in slots]
+    else:
+        slots = {m.slot.key: m.slot for m in everyone if str(m.slot.key) in entries}
+        todo = [m for m in everyone if m.name in recs[m.inv].pending and str(m.slot.key) in entries]
     fresh = {k for k, slot in slots.items() if starting and not slot.key.exists()}
     if fresh and not any(old_keys(m, groups) for m in todo if m.slot.key in fresh):
         die(f"this Box has no key at {', '.join(map(str, sorted(fresh)))} yet, nor any other to log in with, so "
@@ -387,13 +557,15 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
     if not todo:
         if starting:
             say("rotation     no Box key rotation to do: no key Host here")
-        elif not dry_run:   # the Hosts it was pending on left roster.yml: nothing holds the old key for them now
-            say("rotation     the Hosts the Box key rotation was pending on aren't in roster.yml now: it's done")
-            for inv, _ in groups:
-                save({}, inv)
+        elif not dry_run:   # no Host of roster.yml holds the old key now (the pending ones left it): it's done
+            say("rotation     no Host the Box key rotation was pending on is in roster.yml now: finishing it")
             for slot in slots.values():
-                if slot.swapped:
-                    delete_old(slot)
+                if not slot.swapped:    # never made the key: the new one (the record's own) goes, the key stays
+                    for f in (new_of(slot.key), pub_of(new_of(slot.key))):
+                        f.unlink(missing_ok=True)
+                delete_old(slot)
+            for inv, _ in groups:
+                write(Record(), inv)
             sync(groups, say)
         return {"done": [], "pending": {}, "failed": {}, "notes": {}, "groups": groups}
     now = [m for m in todo if scope is None or (m.inv == current_inventory() and m.name in scope)]
@@ -408,26 +580,40 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         say("dry run: nothing was changed")
         return {"done": [], "pending": {}, "failed": {}, "notes": {}, "groups": groups}
 
-    waiting = {inv: load(inv) for inv, _ in groups}
+    def save_all():
+        for inv, _ in groups:
+            recs[inv].keys = {k: v for k, v in entries.items() if Path(k) in slots}
+            write(recs[inv], inv)
+
     if starting:
+        # the record first (MED-1): which key files this rotation makes .new and .old of, before either exists
+        for key, slot in slots.items():
+            old = words(pub_of(key)) if key.exists() else None
+            entries[str(key)] = {"type": slot.type.name, "old": " ".join(old[:2]) if old else None, "new": None,
+                                 "comment": comment(slot, cfg)}
+        for m in todo:
+            recs[m.inv].pending[m.name] = "the new Box key isn't on it yet"
+        for m in later:
+            recs[m.inv].pending[m.name] = "not in this run (--host)"
+        save_all()
         from .sshops import ensure_key
         for key, slot in slots.items():
             if key in fresh:     # a type its Hosts didn't use yet (key_type: changed): its first key is the new one
                 ensure_key(boxkeys.BoxKey(slot.type, key), cfg["tag"])
             else:
                 make_new(slot, cfg, say)
-        for m in todo:
-            waiting[m.inv][m.name] = "the new Box key isn't on it yet"
-        for m in later:
-            waiting[m.inv][m.name] = "not in this run (--host)"
-    for inv, _ in groups:
-        save(waiting[inv], inv)
+            entries[str(key)]["new"] = " ".join((words(pub_of(slot.new)) or [])[:2]) or None
+        save_all()
+    for key, slot in slots.items():     # a run stopped right after making it: the record learns the new key now
+        if not entries[str(key)].get("new") and own_pair(slot.new, None):
+            entries[str(key)]["new"] = " ".join((words(pub_of(slot.new)) or [])[:2])
+            save_all()
 
     conn = Connect()
     failed: dict[Member, str] = {}
     proven: list[Member] = []
     try:
-        news = {key: w for key, s in slots.items() if (w := words(pub_of(s.new)))}
+        news = {key: str(entries[str(key)]["new"]).split() for key in slots}
         for m in now:                            # pass 1: the new line on, and proven, Host by Host
             new = m.slot.new
             if not starting and conn.logs_in(m, new)[0]:
@@ -438,17 +624,17 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             this = key_ere(*line.split()[:2])
             keys = old_keys(m, groups)
             if not keys:
-                waiting[m.inv][m.name] = ("no old key of this Box's is left to log in with: `roster setup --host "
-                                          f"{m.name}` installs the new one with its Login's password")
+                recs[m.inv].pending[m.name] = ("no old key of this Box's is left to log in with: `roster setup --host "
+                                               f"{m.name}` installs the new one with its Login's password")
                 continue
             try:
                 conn.script(m, keys, add_key_script(line, this, m.h["ssh"]["user"]), "add", this, pub=line)
             except Unreached as e:
-                waiting[m.inv][m.name] = f"not reached with the old key: {e}"
+                recs[m.inv].pending[m.name] = f"not reached with the old key: {e}"
                 say(f"  pending  {m.label}: not reached with the old key: {e}")
                 continue
             except RuntimeError as e:
-                failed[m] = f"couldn't add the new key's line: {e}"
+                failed[m] = f"[{NEW_KEY_REFUSED}] couldn't add the new key's line: {e}"
                 continue
             ok, why = conn.logs_in(m, new)
             if not ok:
@@ -456,35 +642,45 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
                              f"({why}); the old key's line stays there")
                 continue
             proven.append(m)
+        for m in proven:
+            recs[m.inv].refused = [n for n in recs[m.inv].refused if n != m.name]
         for m, why in failed.items():
-            waiting[m.inv][m.name] = why
+            recs[m.inv].pending[m.name] = why
+            recs[m.inv].refused.append(m.name)
             say(f"  FAIL     {m.label}: {why}")
-        if failed:
-            say(f"rotation     stopped: {len(failed)} Host{'' if len(failed) == 1 else 's'} refused the new key, so no "
-                "old key line was taken off anywhere and the old key stays this Box's key (fix those, then run "
-                "roster setup --rotate again)")
-            for inv, _ in groups:
-                save(waiting[inv], inv)
-            return {"done": [], "pending": labels(waiting, groups), "failed": {m.label: w for m, w in failed.items()},
+        # a Host that refused it, this run or an earlier one, and isn't proven now holds the swap back
+        unproven = [m for m in todo if m.name in recs[m.inv].refused and m not in proven
+                    and not entries[str(m.slot.key)].get("swapped")]
+        if failed or unproven:
+            names = ", ".join(m.label for m in (list(failed) or unproven))
+            say(f"rotation     stopped: {names} refused the new key{'' if failed else ' (an earlier run)'} and "
+                "hasn't proven it since, so no old key line was taken off anywhere and the old key stays this Box's "
+                "key (fix that, then run roster setup --rotate again)")
+            save_all()
+            return {"done": [], "pending": labels(recs, groups),
+                    "failed": {m.label: w for m, w in failed.items()} or
+                              {m.label: recs[m.inv].pending.get(m.name, "refused the new key") for m in unproven},
                     "notes": {}, "groups": groups}
 
         # every Host reached proved the new key: it becomes the key, the old kept while a Host still needs it
-        for slot in slots.values():
+        for key, slot in slots.items():
             if not slot.swapped:
-                swap(slot, keep_old=True)
+                swap(slot, entries[str(key)], keep_old=True)
+            entries[str(key)]["swapped"] = True
+        save_all()
         sync(groups, say)
         done, notes = [], {}
         for m in proven:                         # pass 2: the old lines off, over the new key
             from .sshops import remove_key_script
-            ere = old_lines_re(m, groups, words(pub_of(m.slot.key)) or [])
+            ere = old_lines_re(m, groups, news[m.slot.key])
             try:
                 taken = conn.script(m, [m.slot.key], remove_key_script(ere, m.h["ssh"]["user"]), "remove", ere) \
                     if ere else []
             except (Unreached, RuntimeError) as e:
-                waiting[m.inv][m.name] = f"the new key works, but the old key's line couldn't be taken off: {e}"
-                say(f"  FAIL     {m.label}: {waiting[m.inv][m.name]}")
+                recs[m.inv].pending[m.name] = f"the new key works, but the old key's line couldn't be taken off: {e}"
+                say(f"  FAIL     {m.label}: {recs[m.inv].pending[m.name]}")
                 continue
-            waiting[m.inv].pop(m.name, None)
+            recs[m.inv].pending.pop(m.name, None)
             done.append(m)
             say(f"  ok       {m.label}")
             if not taken:
@@ -495,21 +691,21 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
                 say(f"  note     {m.label}: {notes[m.label]}")
     finally:
         conn.close()
-    for inv, _ in groups:
-        save(waiting[inv], inv)
-    held = {m.slot.key for m in todo if m.name in waiting[m.inv]}
-    for slot in slots.values():                 # no Host still needs it: the old private key goes
-        if slot.key not in held:
+    held = {m.slot.key for m in todo if m.name in recs[m.inv].pending}
+    for key, slot in list(slots.items()):       # no Host still needs it: the old private key goes, and its entry
+        if key not in held:
             delete_old(slot)
+            del slots[key]
+    save_all()
     sync(groups, say)
-    return {"done": [m.label for m in done], "pending": labels(waiting, groups), "failed": {}, "notes": notes,
+    return {"done": [m.label for m in done], "pending": labels(recs, groups), "failed": {}, "notes": notes,
             "groups": groups}
 
 
-def labels(waiting, groups) -> dict[str, str]:
+def labels(recs, groups) -> dict[str, str]:
     here = current_inventory()
     return {(n if inv == here else f"{inv or '(unnamed)'}: {n}"): why for inv, _ in groups
-            for n, why in sorted(waiting[inv].items())}
+            for n, why in sorted(recs[inv].pending.items())}
 
 
 def sync(groups, say) -> None:

@@ -324,7 +324,7 @@ def test_setup_rotate_never_rotates_a_mesh_key_nor_renames_the_box(lab, capsys, 
     assert any(k.endswith(":ak") and v for k, v in before.items())     # the Mesh is there
     comment = lab.key.with_name("roster_ed25519.pub").read_text().split()[2]
     name_file = isolated["home"] / ".config" / "roster" / "key-name"
-    name = name_file.read_text() if name_file.exists() else None
+    name_file.write_text("ws1\n")                               # as a setup after a rename leaves it
     mesh_json = (isolated["home"] / ".config" / "roster" / "mesh.json").read_text()
     lab.down("db-01")
     assert main(["setup", "--rotate"]) == 1
@@ -334,7 +334,7 @@ def test_setup_rotate_never_rotates_a_mesh_key_nor_renames_the_box(lab, capsys, 
     assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
     assert mesh_state(lab) == before
     assert lab.key.with_name("roster_ed25519.pub").read_text().split()[2] == comment
-    assert (name_file.read_text() if name_file.exists() else None) == name
+    assert name_file.read_text() == "ws1\n"                     # never rewritten
     capsys.readouterr()
     assert main(["mesh", "--dry-run"]) == 0
     out = capsys.readouterr().out
@@ -377,11 +377,19 @@ def test_mesh_rotate_leaves_box_lines(lab, capsys):
 
 
 @meshed
-def test_revoke_mid_rotation_takes_the_old_and_the_new_box_lines_and_leaves_mesh_lines(lab, capsys):
-    """7."""
+def test_revoke_mid_rotation_takes_the_old_and_the_new_box_lines_and_leaves_mesh_lines(lab, capsys, tmp_path,
+                                                                                         monkeypatch):
+    """7: web-02's cleanup failed (it holds the old and the new line), db-01 was down (only the old one)."""
+    tools = tmp_path / "host-tools"
+    tools.mkdir()
+    (tools / "mv").write_text(MV_FAILS)
+    (tools / "mv").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(tools))
     lab.down("db-01")
     (lab.hosts / "web-02" / "cleanup-fails").touch()
     assert main(["setup", "--rotate"]) == 1
+    assert len(lab.keys("web-02")) == 2 and len(lab.keys("db-01")) == 1     # really both, really only the old
+    (lab.hosts / "web-02" / "cleanup-fails").unlink()          # its key file is writable again for revoke
     lab.down("db-01", False)
     mesh_before = mesh_state(lab)
     assert main(["revoke", "-y"]) == 0, capsys.readouterr().out
@@ -478,3 +486,222 @@ def test_named_inventories_sharing_the_key_file_rotate_all_together(lab, capsys,
     assert lab.keys("db-01") == [new_pub]
     assert lab.lines("db-01")[0].endswith(" roster-managed:ws1-home")      # its own Inventory's box_name:
     assert not lab.key.with_name("roster_ed25519.old").exists()
+
+
+# ---------------------------------------------------------------- #482's review (security): state and files
+
+def test_a_stray_old_file_is_refused_never_taken_for_a_rotation_or_deleted(lab, capsys):
+    """MED-1: a KEY.old no rotation of roster's made (a hand-made backup) never makes a run look finished."""
+    stray = lab.key.with_name("roster_ed25519.old")
+    stray.write_text("my own backup\n")
+    stray.chmod(0o600)
+    before, old_pub = lab.key.read_bytes(), pub_key(lab.key)
+    with pytest.raises(SystemExit, match=r"roster_ed25519\.old is there, but no Box key rotation of roster's made it"):
+        main(["setup", "--rotate"])
+    assert stray.read_text() == "my own backup\n" and lab.key.read_bytes() == before
+    assert all(lab.keys(n) == [old_pub] for n in ("web-01", "web-02", "db-01"))
+    assert main(["check"]) == 1
+    assert "roster_ed25519.old" in capsys.readouterr().out
+
+
+def test_a_stray_new_file_is_refused_never_put_on_the_hosts(lab, capsys):
+    """MED-1: a KEY.new roster didn't make never goes on a Host or becomes the Box key."""
+    planted = lab.key.with_name("roster_ed25519.new")
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "someone@else", "-f", str(planted)],
+                   check=True)
+    old_pub = pub_key(lab.key)
+    with pytest.raises(SystemExit, match=r"roster_ed25519\.new is there, but no Box key rotation of roster's made it"):
+        main(["setup", "--rotate"])
+    assert pub_key(lab.key) == old_pub and planted.exists()
+    assert all(lab.keys(n) == [old_pub] for n in ("web-01", "web-02", "db-01"))
+
+
+def test_a_kept_old_key_whose_pub_was_swapped_is_refused(lab, capsys, isolated):
+    """LOW-4 (and MED-1): KEY.old.pub replaced (another Box's public key) mid-rotation: the finishing run refuses
+    rather than taking that other Box's line and leaving the real old one."""
+    other = isolated["home"].parent / "other-box"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "roster-managed:ws2", "-f", str(other)],
+                   check=True)
+    other_line = other.with_name("other-box.pub").read_text().strip()
+    ak = lab.hosts / "db-01" / "home/.ssh/authorized_keys"
+    ak.write_text(ak.read_text() + other_line + "\n")
+    old_pub = pub_key(lab.key)
+    lab.down("db-01")
+    assert main(["setup", "--rotate"]) == 1
+    lab.key.with_name("roster_ed25519.old.pub").write_text(other_line + "\n")
+    lab.down("db-01", False)
+    with pytest.raises(SystemExit, match=r"roster_ed25519\.old"):
+        main(["setup", "--rotate"])
+    assert other_line in ak.read_text() and old_pub in ak.read_text()
+
+
+def test_old_lines_come_only_from_checked_keys(lab, isolated):
+    """LOW-4: the removal pattern reads no .pub beside the key raw: only the keys all_keys vouches for."""
+    from roster import rotation
+    from roster.config import load_config, locate_config
+    cfg = load_config(locate_config(None))
+    stray = lab.key.with_name("roster_ed25519.old.pub")
+    stray.write_text("ssh-ed25519 AAAAstray roster-managed:ws2\n")             # no private key beside it
+    m = rotation.members([(None, cfg)])[0]
+    assert "AAAAstray" not in rotation.old_lines_re(m, [(None, cfg)], ["ssh-ed25519", "AAAAnew"])
+
+
+def test_a_crash_between_the_swaps_two_renames_is_finished_by_the_next_run(lab, capsys, monkeypatch):
+    """MED-2: killed after KEY.new.pub -> KEY.pub and before KEY.new -> KEY: the next run (setup --rotate, or plain
+    setup) finishes the swap, and KEY.old.pub is derived from KEY.old itself."""
+    import os
+
+    from roster import boxkeys, rotation
+    real = os.replace
+
+    def killed(a, b):
+        if str(b) == str(lab.key) and str(a).endswith(".new"):
+            raise KeyboardInterrupt("killed between the renames")
+        return real(a, b)
+    lab.down("db-01")
+    monkeypatch.setattr(rotation.os, "replace", killed)
+    assert main(["setup", "--rotate"]) == 130                    # killed (main's Ctrl-C exit)
+    monkeypatch.setattr(rotation.os, "replace", real)
+    nk = lab.key.with_name("roster_ed25519.new")
+    assert nk.exists() and not nk.with_name(nk.name + ".pub").exists()      # the half-renamed state
+    new_pub = pub_key(lab.key)                                  # KEY.pub is the new key's already
+    assert main(["setup"]) == 1, capsys.readouterr().out         # never 201: the swap is finished first
+    assert pub_key(lab.key) == new_pub and boxkeys.matches(lab.key)
+    assert boxkeys.matches(lab.key.with_name("roster_ed25519.old"))
+    lab.down("db-01", False)
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    assert all(lab.keys(n) == [new_pub] for n in ("web-01", "web-02", "db-01"))
+    assert sorted(p.name for p in lab.key.parent.glob("roster_ed25519*")) == ["roster_ed25519", "roster_ed25519.pub"]
+
+
+@pytest.mark.parametrize("where", ["sync-after-swap", "prove-on-web-01", "cleanup-on-web-01", "make-new"])
+def test_every_other_crash_point_recovers_on_a_rerun(lab, capsys, where, monkeypatch):
+    from roster import rotation
+    old_pub = pub_key(lab.key)
+    real_script, real_logs, real_make = rotation.Connect.script, rotation.Connect.logs_in, rotation.make_new
+
+    def boom(*a, **k):
+        raise KeyboardInterrupt(where)
+    with monkeypatch.context() as mp:
+        if where == "sync-after-swap":
+            mp.setattr(rotation, "sync", boom)
+        elif where == "prove-on-web-01":
+            mp.setattr(rotation.Connect, "logs_in", lambda self, m, key: boom() if m.name == "web-01"
+                       else real_logs(self, m, key))
+        elif where == "cleanup-on-web-01":
+            mp.setattr(rotation.Connect, "script", lambda self, m, keys, posix, mode, tag_re, pub="": boom()
+                       if mode == "remove" and m.name == "web-01" else real_script(self, m, keys, posix, mode, tag_re,
+                                                                                  pub))
+        else:
+            def make(slot, cfg, say):
+                real_make(slot, cfg, say)
+                boom()
+            mp.setattr(rotation, "make_new", make)
+        assert main(["setup", "--rotate"]) == 130          # killed (main's Ctrl-C exit)
+    for n in ("web-01", "web-02", "db-01"):           # never locked out: a key the ssh config offers logs in
+        assert any(k.exists() and lab.logs_in(n, k) for k in (lab.key, lab.key.with_name("roster_ed25519.old"))), n
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    new_pub = pub_key(lab.key)
+    assert new_pub != old_pub and all(lab.keys(n) == [new_pub] for n in ("web-01", "web-02", "db-01"))
+    assert sorted(p.name for p in lab.key.parent.glob("roster_ed25519*")) == ["roster_ed25519", "roster_ed25519.pub"]
+
+
+def test_an_unreadable_record_fails_closed(lab, capsys, isolated):
+    """LOW-1: a malformed record never silences the report, and sync keeps offering the old key."""
+    lab.down("db-01")
+    assert main(["setup", "--rotate"]) == 1
+    from roster.common import rotation_file
+    rotation_file().write_text("{not json")
+    capsys.readouterr()
+    assert main(["check"]) == 1
+    assert "can't be read" in capsys.readouterr().out
+    assert main(["sync"]) == 0
+    old = str(lab.key.with_name("roster_ed25519.old"))
+    assert identity_files(isolated, "db-01") == [str(lab.key), old]
+    assert identity_files(isolated, "web-01") == [str(lab.key), old]          # every Host of that key: can't tell
+
+
+def test_a_kept_old_key_with_no_host_pending_is_reported_and_finished(lab, capsys):
+    """LOW-2: the pending Host left roster.yml: check and check --box name the retired key, and setup --rotate
+    deletes it."""
+    lab.down("db-01")
+    assert main(["setup", "--rotate"]) == 1
+    lab.write(LAB_YML.replace("      db-01: 10.0.0.6\n", ""))
+    capsys.readouterr()
+    assert main(["check", "--box"]) == 0
+    out = capsys.readouterr().out
+    assert "roster_ed25519.old" in out and "roster setup --rotate" in out
+    assert main(["check"]) == 1
+    assert "roster_ed25519.old" in capsys.readouterr().out
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    assert not lab.key.with_name("roster_ed25519.old").exists()
+    assert main(["check"]) == 0
+
+
+def test_revoke_mid_rotation_with_both_lines_on_each_host_clears_the_record(lab, capsys):
+    """LOW-3 and item 7's pre-swap case: after a 208 stop every Host holds the old and the new line; revoke takes
+    both, and the record goes with them, so check isn't left saying the old key is on them."""
+    from roster.common import rotation_file
+    (lab.hosts / "web-02" / "refuse").write_text("*.new\n")
+    assert main(["setup", "--rotate"]) == 1
+    assert all(len(lab.keys(n)) == 2 for n in ("web-01", "db-01"))
+    capsys.readouterr()
+    assert main(["revoke", "-y"]) == 0, capsys.readouterr().out
+    assert "roster_ed25519.new" in capsys.readouterr().out
+    assert all(lab.lines(n) == [] for n in ("web-01", "web-02", "db-01"))
+    assert not rotation_file().exists()
+
+
+def test_a_narrowed_rerun_never_swaps_while_a_host_that_refused_is_unproven(lab, capsys):
+    """After a 208 stop, `--host web-01` alone doesn't make the new key the Box key: web-02 refused it."""
+    (lab.hosts / "web-02" / "refuse").write_text("*.new\n")
+    old_pub = pub_key(lab.key)
+    assert main(["setup", "--rotate"]) == 1
+    capsys.readouterr()
+    assert main(["setup", "--rotate", "--host", "web-01"]) == 1
+    assert "web-02 refused the new key" in capsys.readouterr().out
+    assert pub_key(lab.key) == old_pub and lab.key.with_name("roster_ed25519.new").exists()
+    assert old_pub in lab.keys("web-01")
+
+
+def test_a_lock_file_that_is_a_symlink_is_refused_and_its_target_untouched(lab, isolated, tmp_path):
+    """LOW-5."""
+    from roster.common import lock_file
+    victim = tmp_path / "victim"
+    victim.write_text("precious\n")
+    lock_file().unlink(missing_ok=True)
+    lock_file().symlink_to(victim)
+    with pytest.raises(SystemExit, match="isn't a plain file"):
+        main(["setup"])
+    assert victim.read_text() == "precious\n"
+
+
+def test_the_lock_holds_across_processes_and_a_dead_ones_is_free(isolated, tmp_path, monkeypatch):
+    """LOW-6: the lock itself, on every OS (Windows' msvcrt.locking too): a second process's lock refuses this one
+    (205), and once that process is killed (no release), the lock is free at once."""
+    import os
+
+    from roster import boxlock
+    from roster.errors import Problem
+    monkeypatch.setattr(boxlock, "WAIT", 0.3)
+    p = subprocess.Popen([sys.executable, "-c", HOLDER, str(tmp_path / "never")], stdout=subprocess.PIPE, text=True,
+                         env=dict(os.environ))
+    try:
+        assert p.stdout is not None and p.stdout.readline().strip() == "held"
+        with pytest.raises(Problem, match=rf"\[205\] another roster run \(setup --rotate, pid {p.pid}\)"):
+            with boxlock.held("setup"):
+                pass
+    finally:
+        p.kill()
+        p.wait(timeout=10)
+    with boxlock.held("setup"):
+        with boxlock.held("mesh"):                      # re-entrant in one thread
+            pass
+
+
+@pytest.mark.parametrize("bad", ["11y", "3651d", "99999999999y", "١٢d"])
+def test_key_max_age_is_ascii_and_at_most_ten_years(write_config, bad):
+    from roster.config import load_config
+    with pytest.raises(SystemExit, match="key_max_age: .*(isn't an age|at most 10y)"):
+        load_config(write_config(f"key_max_age: {bad}\n" + LAB_YML))

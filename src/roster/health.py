@@ -218,9 +218,11 @@ def rotation_pending(cfg):
     from .errors import ROTATION_PENDING
     from .rotation import pending
     waiting = pending(cfg)
+    from .rotation import problems  # #482's review LOW-1, LOW-2: an unreadable record, a kept old key
+    out = [check("ssh", "warn", message, fix, "E268") for message, fix in problems(cfg)]
     if not waiting:
-        return []
-    return [check("ssh", "warn", f"[{ROTATION_PENDING}] Box key rotation pending on {count(len(waiting), 'Host')}: "
+        return out
+    return out + [check("ssh", "warn", f"[{ROTATION_PENDING}] Box key rotation pending on {count(len(waiting), 'Host')}: "
                                  f"{names(waiting)} (the old Box key is still on them)",
                   "run `roster setup --rotate` again once they answer: it finishes them", "E268")]
 
