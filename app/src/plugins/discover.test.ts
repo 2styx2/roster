@@ -10,7 +10,7 @@ import { makeHosts } from "../backend/fake";
 import { discoverPlugin, fakeDiscoverServe, smallNet } from "../backend/fakeDiscover";
 import { fakePluginHost } from "../backend/fakePlugins";
 import { BackendCallError, type PluginReply } from "../backend/types";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 import transcript from "./discover.transcript.json";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };

@@ -4,10 +4,11 @@
 // - which Plugins are installed and what each was granted, kept in the State (`plugins`), and the
 //   install and update prompts (`install`, `answer`): nothing loads with a permission the user
 //   wasn't asked about;
-// - turning a Plugin's ops into registry entries with the Plugin's name as their source, so the
-//   core draws them in roster's style and unloading takes them all away (`unregisterSource`);
-// - running what a Plugin handed over (`plugins call NAME N`), and sending it events, among them
-//   the Sessions' output for the Plugins granted terminal.read;
+// - applying a Plugin's ops (opRegistry.ts): registry entries with the Plugin's name as their
+//   source, so the core draws them in roster's style and unloading takes them all away
+//   (`unregisterSource`), and what shown.ts keeps (notices, the float, the question, progress);
+// - running what a Plugin handed over (`plugins call NAME N`), with roster's own commands, and
+//   sending it events, among them the Sessions' output for terminal.read (outputFeed.ts);
 // - errors: a toast naming the Plugin, file and line, and its UI taken away once it's disabled.
 //
 // - Packages (ticket 24): Plugins from git repos that init.lua names. The core clones and pins them
@@ -18,43 +19,23 @@
 //   old version.
 //
 // `:plugins` (the command and panel), `:packages` and the prompts are drawn by PluginsPanel.tsx.
-import type { Backend, Host, OpenSession, PackageStatus, PackageUpdate, PluginErrorInfo, PluginEventName, PluginCaller, PluginManifest, PluginData, PluginReply, SiteRequests } from "../backend/types";
-import { themeOf } from "../config/apply";
-import type { CommandContext, CommandDef } from "../commands/table";
-import { sectionFinder, type FinderItem, type FinderSourceDef } from "../finder/sources";
-import { hostRow } from "../sidebar/sections";
-import { parseMarkdown } from "../help/markdown";
-import { pluginTutorial } from "../tutor/plugin";
-import { DEFAULT_TUTORIAL, tutorPage } from "../tutor/tutor";
-import { HEALTH_LATER_MS, SECTION_WAIT_MS } from "../health/health";
-import { bindingId, type KeymapContext } from "../keymap";
+import type { Backend, OpenSession, PackageStatus, PackageUpdate, PluginErrorInfo, PluginEventName, PluginCaller, PluginManifest, PluginData, PluginReply, SiteRequests } from "../backend/types";
+import type { CommandContext } from "../commands/table";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
-import type { SidebarRow } from "../sidebar/Sidebar";
+import { HEALTH_LATER_MS } from "../health/health";
 import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { lineRefused } from "./cmd";
-import { CommittedLines, lastLines, OUTPUT_MAX, type Run as OutputRun, type ScreenSize } from "./committed";
-import {
-  MAX_TABLE_ROWS,
-  parseFinderItems,
-  parseHealthChecks,
-  parseOp,
-  type PluginConfirm,
-  type PluginContent,
-  type PluginFinderItem,
-  type PluginFloat,
-  type PluginOp,
-  type PluginProgress,
-  type PluginRow,
-  type PluginRowAction,
-  type PluginView,
-  type Run,
-} from "./ops";
-import { mergeRows, type TableRow } from "../ui/table";
-import { detailsId, type Content, type GraphModel } from "../view/views";
-import { mergeGraph, type GraphNode } from "../graph/model";
-import { MAX_CLUSTERS, MAX_EDGES, MAX_NODES, type PluginGraph } from "./graphOps";
+import { CORE } from "./core.gen";
+import type { ScreenSize } from "./committed";
+import { parseHealthChecks, type PluginFloat, type Run } from "./ops";
+import { applyOp, parseOp, type HandlerContext, type Loaded, type OpCall, type OpHost } from "./opRegistry";
+import { OutputFeed } from "./outputFeed";
+import { Shown, type Notice, type PendingConfirm, type RunningProgress } from "./shown";
 import { backgroundQuiet, quiet, type Message } from "../ui/messages";
+
+export type { HandlerContext } from "./opRegistry";
+export type { Notice, PendingConfirm, RunningProgress } from "./shown";
 
 /** What the manager asks of the app. */
 export interface PluginUi {
@@ -94,11 +75,8 @@ export interface PluginUi {
   demo?: boolean;
 }
 
-/** What a Plugin's function is told about what ran it (api 3, `HandlerContext`). */
-export type HandlerContext = Record<string, string | number | null>;
-
 /** A Plugin as the State keeps it. */
-export interface Installed {
+interface Installed {
   /** The folder (or `builtin:NAME`). */
   path: string;
   name: string;
@@ -115,13 +93,15 @@ export interface DemoPlugins {
   packages: PackageStatus[];
 }
 
+const BUILTIN_PREFIX = CORE.builtin_prefix;
 /** The built-in features written as Plugins: always installed, granted what they ask until revoked. */
-export const BUILTIN_PLUGINS = ["builtin:hosts", "builtin:folders"] as const;
+const BUILTIN_PLUGINS: readonly string[] = CORE.bundled.map((name) => `${BUILTIN_PREFIX}${name}`);
+const builtinName = (path: string) => (path.startsWith(BUILTIN_PREFIX) ? path.slice(BUILTIN_PREFIX.length) : null);
 
 export const STATE_KEY = "plugins";
 /** The State's Packages whose install the user cancelled, or that `:plugins remove` took out: not
  * asked again while init.lua names the same repo and folder for them (issues #111, #213). */
-export const DECLINED_KEY = "packagesDeclined";
+const DECLINED_KEY = "packagesDeclined";
 
 /** A cancelled Package install as the State keeps it: its name, and the repo and folder it was
  * from, so another repo or folder under the same name is other code and asks. */
@@ -142,7 +122,7 @@ function parseDeclined(v: unknown): Declined[] {
 }
 
 /** One thing a Plugin did, for `:plugins`' recent use. */
-export interface Use {
+interface Use {
   at: number;
   what: string;
 }
@@ -178,22 +158,6 @@ export interface Prompt {
   package?: { name: string; url: string; dir: string | null; commit: string | null; update?: PackageUpdate };
 }
 
-/** A Plugin's message for the toast: its error, or what it asked to say. */
-export interface Notice {
-  id: number;
-  plugin: string;
-  level: "info" | "warn" | "error";
-  text: string;
-  /** Buttons (ticket 91): each runs a command line for its Plugin, on the user's click. */
-  actions?: readonly { label: string; command: string }[];
-}
-
-/** A Plugin's question, waiting for the user's answer (ticket 78). */
-export type PendingConfirm = PluginConfirm & { plugin: string; id: number };
-
-/** Something long a Plugin is doing (ticket 78). `stopping` once the user cancelled it. */
-export type RunningProgress = PluginProgress & { plugin: string; id: string; stopping: boolean };
-
 export interface Snapshot {
   plugins: readonly PluginStatus[];
   /** The Packages init.lua names, as the core last described them (`:packages`). */
@@ -214,7 +178,7 @@ export interface Snapshot {
 }
 
 /** What the State store gives the manager. */
-export interface PluginStore {
+interface PluginStore {
   get(key: string): unknown;
   set(key: string, value: unknown): void;
 }
@@ -229,7 +193,6 @@ type PluginBackend = Pick<
   | "pluginSessions"
   | "pluginUnload"
   | "pluginForget"
-  | "pluginBuiltins"
   | "pluginRequests"
   | "pluginData"
   | "packagesSync"
@@ -242,29 +205,14 @@ type PluginBackend = Pick<
 >;
 
 /** A Package's Plugin path, and back. */
-export const PACKAGE_PREFIX = "package:";
+export const PACKAGE_PREFIX = CORE.package_prefix;
 const packageName = (path: string) => (path.startsWith(PACKAGE_PREFIX) ? path.slice(PACKAGE_PREFIX.length) : null);
 
 
-/** Contexts a Plugin may bind keys in: after the Leader and in the Sidebar, never the terminal. */
-const KEY_CONTEXTS: Record<string, KeymapContext> = { leader: "leader", list: "list", list_vim: "listVim" };
-
 const MAX_USES = 8;
-const MAX_NOTICES = 4;
-/** How often the Sessions' output goes to the Plugins that read it, and how much at once. */
-const OUTPUT_EVERY_MS = 200;
-/** How long a call the user made waits for the core to take roster's own commands, the first time
- * (issue #241): a Folders drop's `roster.cmd("folder add …")` is refused until then. It tries
- * again every second meanwhile; past this the call runs and the core refuses the line as ever. */
-export const BUILTINS_WAIT_MS = 5_000;
-const BUILTINS_TRY_MS = 1_000;
-/** What the core says refusing a Plugin's own command line before it has the list (runtime.rs). */
-const NOT_YET = "can't run yet: the app hasn't told roster its own commands";
-/** At most this many calls wait at once; another runs at once (and is refused the same way). */
-export const BUILTINS_HELD_MAX = 8;
 
 /** The Installed entries in the State (untrusted): anything malformed is dropped. */
-export function parseInstalled(json: unknown): Installed[] {
+function parseInstalled(json: unknown): Installed[] {
   if (!Array.isArray(json)) return [];
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
   return json.flatMap((e): Installed[] => {
@@ -275,35 +223,10 @@ export function parseInstalled(json: unknown): Installed[] {
   });
 }
 
-export const describeError = (e: PluginErrorInfo) =>
+const describeError = (e: PluginErrorInfo) =>
   `${e.plugin}: ${e.file ? `${e.file}${e.line === null ? "" : `:${e.line}`}: ` : ""}${e.message}`;
 
-/** Up to three key sequences like `keys` (the same keys before its last) that nothing in
- * `context` binds, and that hide no binding nor are hidden by one: what to suggest instead. */
-export function freeKeys(bindings: readonly { context: string; keys: string; source: string; action: string | null }[], context: string, keys: string, plugin: string): string[] {
-  const parts = keys.split(" ");
-  const prefix = parts.slice(0, -1).join(" ");
-  const bound = bindings.filter((b) => b.context === context && b.source !== plugin && b.action !== null).map((b) => b.keys);
-  const clashes = (k: string) => bound.some((b) => b === k || b.startsWith(`${k} `) || k.startsWith(`${b} `));
-  return [..."abcdefghijklmnopqrstuvwxyz"]
-    .map((c) => (prefix ? `${prefix} ${c}` : c))
-    .filter((k) => !clashes(k))
-    .slice(0, 3);
-}
-
-interface Loaded {
-  manifest: PluginManifest;
-  path: string;
-  granted: string[];
-  /** The events it listens for, as the core last said (#223: a reply's `listens`). */
-  listens: Set<string>;
-  disposers: Map<string, () => void>;
-  /** Its views as last set and updated, so an update changes some rows in place. */
-  views?: Map<string, PluginView>;
-}
-
 export class PluginManager {
-  /** The Plugins running now. */
   private readonly loaded = new Map<string, Loaded>();
   /** Every Plugin loaded since the start, running or not: what `:plugins` lists. */
   private readonly known = new Map<string, Omit<Loaded, "disposers" | "listens">>();
@@ -323,12 +246,7 @@ export class PluginManager {
   private requests: Record<string, SiteRequests[]> = {};
   private data: Record<string, PluginData> = {};
   private prompts: Prompt[] = [];
-  private notices: Notice[] = [];
-  private float: Snapshot["float"] = null;
-  private confirm: PendingConfirm | null = null;
-  private confirmId = 0;
-  private readonly progress = new Map<string, RunningProgress>();
-  private noticeId = 0;
+  private readonly shown = new Shown();
   private snap: Snapshot = { plugins: [], packages: [], prompts: [], notices: [], float: null, confirm: null, progress: [], declined: [], settled: false };
   private settled = false;
   private packages: PackageStatus[] = [];
@@ -338,33 +256,16 @@ export class PluginManager {
   /** Package work runs one at a time (a sync, an update, a clean). */
   private packageWork: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
-  /** Each Session's lines as its terminal commits them (committed.ts), for terminal.read. */
-  private readonly screens = new Map<number, { host: string | null; lines: CommittedLines; done: Promise<void> }>();
-  private outputTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The flush running, if any: the next waits for it (a Session's events stay in order). */
-  private flushing: Promise<void> = Promise.resolve();
+  private readonly feed = new OutputFeed((name, payload) => this.send(name, payload), {
+    reads: () => this.readsTerminal(),
+    done: () => this.hearsDone(),
+  });
   /** The last list of open Sessions sent to the core, once it's there. */
   private sessionsSent: Promise<unknown> = Promise.resolve();
   private started = false;
-  /** Every built-in command id seen so far (issue #184): it only grows, so a built-in an effect
-   * takes out and puts back is never a Plugin's own in between. */
+  /** Every built-in command id seen so far (issue #184), sent with each load, call and event: it
+   * only grows, so a built-in an effect takes out and puts back is never a Plugin's own in between. */
   private readonly builtinsSeen = new Set<string>();
-  /** The list the core has taken, as sent (sorted, one per line): null until a send succeeds (an
-   * empty list is a real send). */
-  private builtinsHeld: string | null = null;
-  /** The last send: each waits for the one before, so the core gets them in order. */
-  private builtinsSending: Promise<void> = Promise.resolve();
-  /** Sends that failed in a row, and the retry waiting. */
-  private builtinsFailed = 0;
-  private builtinsRetry: ReturnType<typeof setTimeout> | null = null;
-  /** Whether the core has taken a list once, and the user's calls waiting until it has (issue #241). */
-  private builtinsTaken = false;
-  private builtinsWaiting = 0;
-  /** What the held calls wait on: settled when the core takes a list (by any send) or the manager
-   * stops. Null while none waits. */
-  private builtinsReady: { promise: Promise<void>; settle: () => void } | null = null;
-  /** Whether the held calls' own tries are under way (one loop, one send at a time, for all). */
-  private builtinsTrying = false;
   private stopBuiltins: (() => void) | null = null;
   /** Stopped for good (`stop`): nothing loads, no event or call reaches the core. */
   private stopped = false;
@@ -378,13 +279,51 @@ export class PluginManager {
   private readonly laterChecks = new Map<string, (checks: unknown) => void>();
   private lastCheck = 0;
 
+  /** What applying an op reaches of the manager (opRegistry.ts). */
+  private readonly host: OpHost;
+
   constructor(
     private readonly backend: PluginBackend,
     private readonly registries: Registries,
     private readonly store: PluginStore,
     private readonly ui: PluginUi,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.host = {
+      registries,
+      ui,
+      shown: this.shown,
+      notify: (...args) => this.notify(...args),
+      line: (plugin, run, context) => this.line(plugin, run, context),
+      runFor: (plugin, run, context, user) => this.runFor(plugin, run, context, user),
+      runLine: (plugin, line) => this.runLine(plugin, line),
+      call: (plugin, handler, args, what, user) => this.call(plugin, handler, args, what, user),
+      current: (plugin) => this.loaded.get(plugin),
+      healthCheck: (plugin, id, handler) => this.healthCheck(plugin, id, handler),
+      answerCheck: (plugin, check, checks) => this.laterChecks.get(`${plugin}:${check}`)?.(checks),
+      runCommand: (plugin, name, run) => {
+        const running = `${plugin} ${name}`;
+        this.runningCommands.add(running);
+        try {
+          // Run by the Plugin's own `roster.cmd`, it's the user's call carried, or the app's.
+          run(this.lineCaller?.plugin === plugin ? this.lineCaller.by : true);
+        } finally {
+          this.runningCommands.delete(running);
+        }
+      },
+      runCmdLine: (plugin, by, line) => {
+        const outer = this.lineCaller;
+        this.lineCaller = { plugin, by };
+        try {
+          this.runLine(plugin, line);
+        } finally {
+          this.lineCaller = outer;
+        }
+      },
+      complete: (plugin, command, handler, arg) => this.complete(plugin, command, handler, arg),
+      cursor: (plugin, ctx) => this.cursor(plugin, ctx),
+    };
+  }
 
   subscribe = (l: () => void): (() => void) => {
     this.listeners.add(l);
@@ -425,18 +364,16 @@ export class PluginManager {
   private async startNow(): Promise<void> {
     if (this.started || this.stopped) return;
     this.started = true;
-    // roster's own commands, before any Plugin runs and whenever one registers later (App's
-    // effects register some after this): none is a Plugin's own to run (issue #184).
-    this.stopBuiltins = this.registries.commands.subscribe(() => void this.sendBuiltins());
-    await this.sendBuiltins();
+    // App's effects register some of roster's own commands after this.
+    this.stopBuiltins = this.registries.commands.subscribe(() => void this.builtins());
     const list = this.installed();
     for (const path of BUILTIN_PLUGINS) {
-      const name = path.slice("builtin:".length);
+      const name = builtinName(path) ?? path;
       const entry = list.find((e) => e.path === path);
       await this.loadPath(path, entry ? entry.granted : null, name);
     }
     // Packages load in syncPackages, once the core has their clones.
-    for (const entry of list.filter((e) => !e.path.startsWith("builtin:") && packageName(e.path) === null)) {
+    for (const entry of list.filter((e) => builtinName(e.path) === null && packageName(e.path) === null)) {
       try {
         const { manifest } = await this.backend.pluginManifest(entry.path);
         const asking = manifest.permissions.map((p) => p.name).filter((p) => !entry.asked.includes(p));
@@ -789,12 +726,8 @@ export class PluginManager {
    * command its `roster.cmd` ran from the user's call, that call one hop on). */
   async call(plugin: string, handler: number, args: unknown = {}, what: string | null = "ran an action", user: PluginCaller = true): Promise<unknown> {
     if (!this.loaded.has(plugin)) return undefined;
-    // Only the user's own call: a carried one is a hop from a call that has waited already.
-    if (user === true) await this.waitForBuiltins();
-    if (!this.loaded.has(plugin)) return undefined;
     if (what !== null) this.used(plugin, what);
-    const reply = await this.backend.pluginCall(plugin, handler, args, user).catch((e: unknown) => this.lost(plugin, e));
-    this.builtinsLost(reply);
+    const reply = await this.backend.pluginCall(plugin, handler, args, user, this.builtins()).catch((e: unknown) => this.lost(plugin, e));
     this.apply(reply, { background: user === false });
     return reply.result;
   }
@@ -813,13 +746,7 @@ export class PluginManager {
   /** Tells the Plugins that listen. A Session that ended sends what it had first. */
   async event(name: PluginEventName, payload: Record<string, unknown> = {}): Promise<void> {
     if (this.stopped) return;
-    if (name === "session_exit" && typeof payload.session === "number") {
-      const session = payload.session;
-      const flushed = this.flushing.then(() => this.flushSession(session));
-      this.flushing = flushed.catch(() => {});
-      await flushed.catch(() => {});
-      this.sessionGone(session);
-    }
+    if (name === "session_exit" && typeof payload.session === "number") await this.feed.ended(payload.session);
     return this.send(name, payload);
   }
 
@@ -828,13 +755,15 @@ export class PluginManager {
    * knows them; a Session event sent after it waits for it, so a listener's list agrees. */
   sessions(open: OpenSession[]): void {
     if (this.stopped) return;
+    // A list the core didn't take is replaced whole by the next, so a failed send needs no retry;
+    // what follows it (a Session event, a load) still waits for it, and doesn't fail with it.
     this.sessionsSent = this.sessionsSent.then(() => this.backend.pluginSessions(open)).catch(() => {});
   }
 
   private async send(name: PluginEventName, payload: Record<string, unknown>): Promise<void> {
     if (name === "session_open" || name === "session_exit") await this.sessionsSent;
     if (this.loaded.size === 0) return;
-    const replies = await this.backend.pluginEvent(name, payload).catch(() => []);
+    const replies = await this.backend.pluginEvent(name, payload, this.builtins()).catch(() => []);
     for (const r of replies) {
       this.used(r.plugin, `heard ${name}`);
       this.apply(r, { background: true });
@@ -852,98 +781,62 @@ export class PluginManager {
     return [...this.loaded.values()].some((l) => l.granted.includes("terminal.read") && l.listens.has("command_done"));
   }
 
-  /** A Session's output (tabs' tap), with the size of its terminal: it goes through a terminal
-   * of its own, and the lines it commits go as `terminal_output` to the Plugins granted
-   * terminal.read, batched (ticket 79: from the terminal's buffer, not the raw stream). */
+  /** A Session's output (tabs' tap), with the size of its terminal: the lines it commits go as
+   * `terminal_output` to the Plugins granted terminal.read (outputFeed.ts). */
   output(session: number, host: string | null, data: Uint8Array, size: ScreenSize) {
-    if (!this.readsTerminal()) {
-      for (const id of [...this.screens.keys()]) this.sessionGone(id);
-      return;
-    }
-    let s = this.screens.get(session);
-    if (!s) {
-      s = { host, lines: new CommittedLines(size), done: Promise.resolve() };
-      this.screens.set(session, s);
-    }
-    s.host = host;
-    // In order: a resize lands between the output before it and after it.
-    const { lines } = s;
-    // Asked as each output comes, so a listener added meanwhile counts from the next command.
-    const wanted = this.hearsDone();
-    s.done = s.done.then(() => {
-      lines.collectDone(wanted);
-      lines.resize(size);
-      return lines.write(data);
-    });
-    if (!this.stopped) this.outputTimer ??= setTimeout(() => void this.flushOutput(), OUTPUT_EVERY_MS);
+    this.feed.output(session, host, data, size);
   }
 
-  /** Sends the lines committed so far (tests call it rather than wait). Flushes run one after
-   * another, so a Session's events never interleave. */
+  /** Sends the lines committed so far (tests call it rather than wait). */
   flushOutput(): Promise<void> {
-    if (this.outputTimer) clearTimeout(this.outputTimer);
-    this.outputTimer = null;
-    const run = this.flushing.then(() => Promise.all([...this.screens.keys()].map((id) => this.flushSession(id)))).then(() => {});
-    this.flushing = run.catch(() => {});
-    return run;
-  }
-
-  /** Sends what Session `session` committed: each run of lines of one kind as a
-   * `terminal_output`, then the commands that ended in it (ticket 94: a marked shell's). */
-  private async flushSession(session: number): Promise<void> {
-    const s = this.screens.get(session);
-    if (!s) return;
-    await s.done;
-    const runs = s.lines.takeRuns();
-    const done = s.lines.takeDone();
-    // Too much at once: the last whole lines that fit, in all the runs together.
-    let room = OUTPUT_MAX;
-    const kept: OutputRun[] = [];
-    for (let i = runs.length - 1; i >= 0 && room > 0; i--) {
-      const r = runs[i] as OutputRun;
-      const text = lastLines(r.text, room);
-      if (text) kept.unshift({ text, kind: r.kind });
-      room -= r.text.length;
-    }
-    for (const r of kept) await this.send("terminal_output", { session, host: s.host, text: r.text, kind: r.kind });
-    for (const d of done) await this.send("command_done", { session, host: s.host, ...d });
+    return this.feed.flush();
   }
 
   /** A Session that ended takes its terminal with it. */
   sessionGone(session: number) {
-    this.screens.get(session)?.lines.dispose();
-    this.screens.delete(session);
+    this.feed.gone(session);
   }
 
   /** A notice's button (ticket 91): the user's click runs its command line, as `roster.cmd` would
    * (so `view ID` may open the Plugin's view), and the notice goes. */
   noticeAction(id: number, index: number) {
-    const n = this.notices.find((x) => x.id === id);
-    const a = n?.actions?.[index];
-    if (!n || !a) return;
-    this.dismissNotice(id);
-    this.runLine(n.plugin, a.command);
+    const a = this.shown.notices.find((x) => x.id === id)?.actions?.[index];
+    if (!a) return;
+    const n = this.shown.dismissNotice(id);
+    this.changed();
+    if (n) this.runLine(n.plugin, a.command);
   }
 
   dismissNotice(id: number) {
-    this.notices = this.notices.filter((n) => n.id !== id);
+    this.shown.dismissNotice(id);
     this.changed();
   }
 
   closeFloat() {
-    if (!this.float) return;
-    this.float = null;
+    if (!this.shown.float) return;
+    this.shown.float = null;
     this.changed();
   }
 
   /** Loads built-in Plugin `name` again if its settings changed (init.lua's Folders did). */
   async reloadBuiltin(name: string): Promise<void> {
     if (!this.started || !this.loaded.has(name)) return;
-    const path = `builtin:${name}`;
-    const settings = (await this.ui.builtinSettings?.(name).catch(() => null)) ?? null;
+    const path = `${BUILTIN_PREFIX}${name}`;
+    const settings = await this.builtinSettings(name);
     if (this.builtinConfig.get(name) === JSON.stringify(settings)) return;
     const entry = this.installed().find((e) => e.path === path);
     await this.loadPath(path, entry ? entry.granted : null, name);
+  }
+
+  /** The settings built-in Plugin `name` gets, or null: one the app can't read is said, and the
+   * Plugin loads without them rather than not at all. */
+  private async builtinSettings(name: string): Promise<Record<string, unknown> | null> {
+    try {
+      return (await this.ui.builtinSettings?.(name)) ?? null;
+    } catch (e) {
+      this.notify(name, "warn", `${name}: loads without its settings: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
   }
 
   /** What `:tutor`'s demo loads (ticket 66, decision Q123): the Plugins running now, each with what
@@ -962,18 +855,12 @@ export class PluginManager {
     this.stopped = true;
     this.stopBuiltins?.();
     this.stopBuiltins = null;
-    if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
-    this.builtinsRetry = null;
-    this.builtinsSettled();
     for (const [name, l] of [...this.loaded]) {
       for (const d of l.disposers.values()) d();
       this.loaded.delete(name);
       this.forgetUi(name);
     }
-    if (this.outputTimer) clearTimeout(this.outputTimer);
-    this.outputTimer = null;
-    for (const s of this.screens.values()) s.lines.dispose();
-    this.screens.clear();
+    this.feed.stop();
     this.changed();
   }
 
@@ -982,102 +869,10 @@ export class PluginManager {
     return this.snap.plugins.map((p) => p.name);
   }
 
-  /** Tells the core every built-in command seen, unless it has that list already. A send that
-   * fails is said once (quietly), retried after 1 s, 2 s, … up to 30 s apart, and tried again before
-   * each Plugin loads; until one gets through the core refuses every Plugin's own command line too
-   * (runtime.rs), and the app checks every line itself. A call the user makes meanwhile waits for it
-   * a moment first (`waitForBuiltins`, issue #241). */
-  private sendBuiltins(forWaiters = false): Promise<void> {
+  /** roster's own commands, every one seen so far, sorted. */
+  private builtins(): string[] {
     for (const c of this.registries.commands.list()) if (c.source === BUILTIN) this.builtinsSeen.add(c.id);
-    this.builtinsSending = this.builtinsSending.then(() => this.sendBuiltinsNow(forWaiters));
-    return this.builtinsSending;
-  }
-
-  /** Before a call the user made: until the core has taken roster's own commands once, it refuses
-   * every Plugin's own command line (`:NAME can't run yet`, runtime.rs), so a Folders drop would
-   * fail (issue #241). The call waits for the list instead: every held call waits on one promise,
-   * settled when any send gets through, so they run in the order they were made. Each waits at
-   * most BUILTINS_WAIT_MS (a timer, so neither a send that never answers nor the clock moving holds
-   * it longer), and at most BUILTINS_HELD_MAX wait at once; then it runs as ever and the core still
-   * refuses the line. Nothing is let through: the core's rule doesn't change, only when the call
-   * reaches it. */
-  private async waitForBuiltins(): Promise<void> {
-    if (this.builtinsTaken || this.stopped || this.builtinsWaiting >= BUILTINS_HELD_MAX) return;
-    this.builtinsWaiting++;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      if (!this.builtinsReady) {
-        let settle: () => void = () => undefined;
-        const promise = new Promise<void>((r) => {
-          settle = r;
-        });
-        this.builtinsReady = { promise, settle };
-      }
-      const ready = this.builtinsReady.promise;
-      void this.tryForWaiters();
-      await Promise.race([ready, new Promise<void>((r) => (timer = setTimeout(r, BUILTINS_WAIT_MS)))]);
-    } finally {
-      clearTimeout(timer);
-      this.builtinsWaiting--;
-    }
-  }
-
-  /** Lets the held calls go: the core took a list, or the manager stopped. */
-  private builtinsSettled(): void {
-    this.builtinsReady?.settle();
-    this.builtinsReady = null;
-  }
-
-  /** While calls are held: a send at once, then every second, for all of them, one at a time
-   * after any send under way. A failure here isn't counted toward the app's own retries. */
-  private async tryForWaiters(): Promise<void> {
-    if (this.builtinsTrying) return;
-    this.builtinsTrying = true;
-    try {
-      while (this.builtinsWaiting > 0 && !this.builtinsTaken && !this.stopped) {
-        await this.sendBuiltins(true);
-        if (this.builtinsWaiting === 0 || this.builtinsTaken || this.stopped) break;
-        await new Promise((r) => setTimeout(r, BUILTINS_TRY_MS));
-      }
-    } finally {
-      this.builtinsTrying = false;
-    }
-  }
-
-  /** The core refused a Plugin's own command line because it hasn't the list, though it took one
-   * before (a core host built anew): it's sent again, and calls wait for it until it's taken. */
-  private builtinsLost(reply: PluginReply): void {
-    if (!this.builtinsTaken || !reply.error?.message.includes(NOT_YET)) return;
-    this.builtinsTaken = false;
-    this.builtinsHeld = null;
-    void this.sendBuiltins();
-  }
-
-  private async sendBuiltinsNow(forWaiters = false): Promise<void> {
-    const names = [...this.builtinsSeen].sort();
-    const list = names.join("\n");
-    if (this.stopped || list === this.builtinsHeld) return;
-    try {
-      await this.backend.pluginBuiltins(names);
-      this.builtinsHeld = list;
-      this.builtinsTaken = true;
-      this.builtinsFailed = 0;
-      if (this.builtinsRetry) clearTimeout(this.builtinsRetry);
-      this.builtinsRetry = null;
-      this.builtinsSettled();
-    } catch {
-      // The held calls' own tries leave the app's retries as they were (said once, backing off).
-      if (forWaiters && !this.stopped) return;
-      // Unasked (a built-in registering late, a core host built anew), so it keeps a line that
-      // shows, an error above all (decision Q162, #349).
-      if (this.builtinsFailed++ === 0) this.ui.say?.(backgroundQuiet("Plugins: couldn't tell roster its own commands; trying again"));
-      if (this.builtinsRetry || this.stopped) return;
-      const wait = Math.min(1000 * 2 ** (this.builtinsFailed - 1), 30_000);
-      this.builtinsRetry = setTimeout(() => {
-        this.builtinsRetry = null;
-        void this.sendBuiltins();
-      }, wait);
-    }
+    return [...this.builtinsSeen].sort();
   }
 
   // ---------------------------------------------------------------- loading
@@ -1095,17 +890,15 @@ export class PluginManager {
 
   private async loadNow(path: string, granted: string[] | null, name: string) {
     if (this.stopped) return;
-    // The core has the built-ins before this Plugin runs, or is asked again (issue #184).
-    await this.sendBuiltins();
     let result;
     try {
       // A built-in Plugin is granted everything it asks for until a permission is revoked.
-      const builtin = path.startsWith("builtin:") ? path.slice("builtin:".length) : null;
-      const settings = builtin === null ? null : ((await this.ui.builtinSettings?.(builtin).catch(() => null)) ?? null);
+      const builtin = builtinName(path);
+      const settings = builtin === null ? null : await this.builtinSettings(builtin);
       if (builtin !== null) this.builtinConfig.set(builtin, JSON.stringify(settings));
       // The list of open Sessions sent last is in the core first: the Plugin may read it at load.
       await this.sessionsSent;
-      result = await this.backend.pluginLoad(path, granted ?? ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"], settings);
+      result = await this.backend.pluginLoad(path, granted ?? ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"], settings, this.builtins());
     } catch (e) {
       await this.unload(name);
       this.problems.set(name, e instanceof Error ? e.message : String(e));
@@ -1122,6 +915,7 @@ export class PluginManager {
     this.loaded.set(manifest.name, { ...info, listens: new Set(), disposers: new Map() });
     this.problems.delete(manifest.name);
     this.apply(reply, { loading: true, background: true });
+    for (const why of result.refused ?? []) this.notify(manifest.name, "warn", `${manifest.name}: runs without a grant this version of roster doesn't take: ${why}`);
     this.changed();
   }
 
@@ -1155,23 +949,11 @@ export class PluginManager {
     const l = this.loaded.get(name);
     if (l && reply.listens) l.listens = new Set(reply.listens);
     if (l) {
-      let copying: Promise<boolean> | null = null;
+      const call: OpCall = { host: this.host, plugin: name, loaded: l, background, copying: null };
       for (const raw of reply.ops) {
         const op = parseOp(raw);
         if ("invalid" in op) this.notify(name, "warn", `${name}: ${op.invalid}`);
-        else if (op.op === "copy") {
-          const before: Promise<boolean> = copying ?? Promise.resolve(true);
-          const done = this.ui.copy(op.text).then(
-            () => true,
-            (e: unknown) => {
-              this.notify(name, "error", `${name}: couldn't copy to the clipboard: ${e instanceof Error ? e.message : String(e)}`);
-              return false;
-            },
-          );
-          copying = Promise.all([before, done]).then(([a, b]) => a && b);
-        } else if (op.op === "notify" && copying) {
-          void copying.then((ok) => ok && this.notify(name, op.level, `${name}: ${op.text}`, op.actions, op.quiet, background));
-        } else this.applyOp(l, name, op, background);
+        else applyOp(call, op);
       }
     }
     if (reply.error) {
@@ -1192,9 +974,7 @@ export class PluginManager {
   /** Takes everything `name` put up away: its registry entries, float, question and progress. */
   private forgetUi(name: string) {
     for (const r of Object.values(this.registries)) (r as { unregisterSource(s: string): void }).unregisterSource(name);
-    if (this.float?.plugin === name) this.float = null;
-    if (this.confirm?.plugin === name) this.confirm = null;
-    for (const [id, p] of this.progress) if (p.plugin === name) this.progress.delete(id);
+    this.shown.forget(name);
   }
 
   /** The command line that runs `run` for `plugin`. A Plugin's own line goes through
@@ -1226,9 +1006,8 @@ export class PluginManager {
 
   /** The user's answer to the question up: `run` on yes, `cancel` on no (ticket 78). */
   answerConfirm(yes: boolean) {
-    const c = this.confirm;
+    const c = this.shown.answer();
     if (!c) return;
-    this.confirm = null;
     this.changed();
     if (yes) this.runFor(c.plugin, c.run, { confirm: "yes" });
     else if (c.cancel) this.runFor(c.plugin, c.cancel, { confirm: "no" });
@@ -1236,12 +1015,13 @@ export class PluginManager {
 
   /** `:cancel [ID]`: stops a progress through its Plugin's `cancel`. Says what happened. */
   cancelProgress(id?: string): Message {
-    const list = [...this.progress.values()];
-    const p = id ? this.progress.get(id) : list.filter((x) => x.cancel && !x.stopping).at(-1);
+    const progress = this.shown.progress;
+    const list = [...progress.values()];
+    const p = id ? progress.get(id) : list.filter((x) => x.cancel && !x.stopping).at(-1);
     if (!p) return id ? `Nothing called ${id} is running: :cancel lists none` : "Nothing running can be cancelled";
     if (!p.cancel) return `${p.title} can't be stopped`;
     if (p.stopping) return `${p.title}: stopping already`;
-    this.progress.set(p.id, { ...p, stopping: true });
+    progress.set(p.id, { ...p, stopping: true });
     this.changed();
     this.runFor(p.plugin, p.cancel, { progress: p.id });
     // Quiet (ticket 117): the progress itself shows it's stopping.
@@ -1250,382 +1030,20 @@ export class PluginManager {
 
   /** The ids `:cancel` completes: what can be stopped now. */
   cancellable(): string[] {
-    return [...this.progress.values()].filter((p) => p.cancel && !p.stopping).map((p) => p.id);
+    return [...this.shown.progress.values()].filter((p) => p.cancel && !p.stopping).map((p) => p.id);
   }
 
   /** A float's button, by its place (ticket 78). */
   floatAction(index: number) {
-    const f = this.float;
+    const f = this.shown.float;
     const a = f?.actions[index];
     if (f && a) this.runFor(f.plugin, a.run, { action: index + 1 });
   }
 
   /** A float's link: the address was checked when it came (http or https). */
   openLink(index: number) {
-    const link = this.float?.links[index];
+    const link = this.shown.float?.links[index];
     if (link) this.ui.openUrl?.(link.url);
-  }
-
-  private put(l: Loaded, key: string, dispose: () => void) {
-    l.disposers.get(key)?.();
-    l.disposers.set(key, dispose);
-  }
-
-  private drop(l: Loaded, key: string) {
-    l.disposers.get(key)?.();
-    l.disposers.delete(key);
-  }
-
-  /** An id taken by another source (a built-in, init.lua, another Plugin) stays theirs. */
-  private taken(registry: { get(id: string): { source: string } | undefined }, id: string, plugin: string) {
-    const e = registry.get(id);
-    return e !== undefined && e.source !== plugin;
-  }
-
-  private applyOp(l: Loaded, plugin: string, op: PluginOp, background = false) {
-    const r = this.registries;
-    const refuse = (what: string) => this.notify(plugin, "warn", `${plugin}: ${what}`);
-    switch (op.op) {
-      case "command": {
-        if (op.name === "plugins" || this.taken(r.commands, op.name, plugin)) return refuse(`:${op.name} is taken (${r.commands.get(op.name)?.source ?? "roster"})`);
-        const run = op.run;
-        const def: CommandDef = {
-          id: op.name,
-          source: plugin,
-          area: plugin,
-          arg: "text",
-          optionalArg: true,
-          label: (a) => (a ? `${op.desc || op.name} ${a}` : op.desc || op.name),
-          run: (ctx, arg) => {
-            const args = (arg ?? "").trim();
-            const running = `${plugin} ${op.name}`;
-            this.runningCommands.add(running);
-            try {
-              // Run by the Plugin's own `roster.cmd`, it's the user's call carried, or the app's.
-              const by = this.lineCaller?.plugin === plugin ? this.lineCaller.by : true;
-              this.runFor(plugin, run, { args, words: args ? args.split(/\s+/) : [], ...this.cursor(plugin, ctx) } as unknown as HandlerContext, by);
-            } finally {
-              this.runningCommands.delete(running);
-            }
-          },
-          ...(op.complete ? { complete: this.completer(plugin, op.name, op.complete.handler) } : {}),
-        };
-        return this.put(l, `command:${op.name}`, r.commands.register(def));
-      }
-      case "key": {
-        const context = KEY_CONTEXTS[op.context];
-        if (!context) return refuse(`keys go after the Leader or in the Sidebar (leader, list, list_vim), not ${op.context}`);
-        const id = bindingId(context, op.keys);
-        if (op.action !== false && this.taken(r.keymap, id, plugin)) {
-          const by = r.keymap.get(id);
-          const shown = op.context === "leader" ? `␣ ${op.keys}` : `${op.keys} (${op.context})`;
-          const free = freeKeys(r.keymap.list(), context, op.keys, plugin);
-          const where = op.context === "leader" ? "after the Leader" : `in ${op.context}`;
-          return refuse(
-            `${shown} is taken (by ${by?.source ?? "roster"}${by?.action ? `: ${by.action}` : ""}).` +
-              (free.length ? ` Free ${where}: ${free.join(", ")}.` : "") +
-              " Choose another (:keys lists them all)",
-          );
-        }
-        // Nor may it start with a bound key, or be the start of one: either would hide the other.
-        const clash = r.keymap
-          .list()
-          .find((b) => b.context === context && b.source !== plugin && b.action !== null && (op.keys.startsWith(`${b.keys} `) || b.keys.startsWith(`${op.keys} `)));
-        if (clash) return refuse(`${op.keys} (${op.context}) would hide ${clash.keys}, bound by ${clash.source}`);
-        // `false` (keymap.del, api 3) takes the Plugin's own binding off; it never claims keys.
-        if (op.action === false) return this.drop(l, `key:${id}`);
-        // Its line goes through `plugins run`, as a button's does (ticket 88, Q98): `:keys` shows that.
-        const action = this.line(plugin, { command: op.action });
-        return this.put(l, `key:${id}`, r.keymap.register({ id, source: plugin, context, keys: op.keys, action }));
-      }
-      case "theme": {
-        if (this.taken(r.themes, op.id, plugin)) return refuse(`there's a Theme named ${op.id} already`);
-        const baseId = op.theme.base ?? (op.theme.appearance === "light" ? "roster-light" : "roster-dark");
-        const base = r.themes.get(baseId) ?? r.themes.get("roster-dark");
-        if (!base) return;
-        return this.put(l, `theme:${op.id}`, r.themes.register(themeOf(op.id, op.theme, base, plugin)));
-      }
-      case "section": {
-        if (this.taken(r.sidebar, op.id, plugin)) return refuse(`there's a Sidebar section named ${op.id} already`);
-        const actions = op.actions.map((a, i) => this.rowAction(plugin, a, { section: op.id, action: i + 1 }));
-        const drop = op.drop;
-        const build = ({ hostByName }: { hostByName: ReadonlyMap<string, Host> }) => {
-          const rows = op.rows.map((row) => this.row(plugin, op.id, row, hostByName));
-          return {
-            id: op.id,
-            title: op.title,
-            count: op.count ?? rows.length,
-            rows,
-            ...(op.empty ? { empty: op.empty } : {}),
-            ...(actions.length ? { actions } : {}),
-            ...(drop ? { drop: (host: string) => this.line(plugin, drop, { section: op.id, dropped: host }) } : {}),
-          };
-        };
-        return this.put(l, `section:${op.id}`, r.sidebar.register({ id: op.id, source: plugin, order: op.order, build }));
-      }
-      case "status": {
-        if (this.taken(r.status, op.id, plugin)) return refuse(`there's a status segment named ${op.id} already`);
-        return this.put(
-          l,
-          `status:${op.id}`,
-          r.status.register({
-            id: op.id,
-            source: plugin,
-            text: op.text,
-            ...(op.title ? { title: op.title } : {}),
-            ...(op.run ? { command: this.line(plugin, op.run, { segment: op.id }) } : {}),
-          }),
-        );
-      }
-      case "finder": {
-        if (this.taken(r.finders, op.id, plugin)) return refuse(`there's a finder named ${op.id} already`);
-        const key = `finder:${op.id}`;
-        const item = (i: PluginFinderItem): FinderItem => ({
-          id: i.id,
-          label: i.label,
-          ...(i.detail ? { detail: i.detail } : {}),
-          ...(i.path ? { path: i.path } : {}),
-          command: this.line(plugin, i.run, { finder: op.id, item: i.id }),
-        });
-        const register = (items: FinderItem[] | null, open?: () => void) => {
-          const def: FinderSourceDef = {
-            id: op.id,
-            source: plugin,
-            title: op.title,
-            prompt: op.prompt,
-            items: () => items ?? [],
-            ...(items === null ? { empty: "Loading…" } : {}),
-            ...(open ? { open } : {}),
-          };
-          const dispose = r.finders.register(def);
-          this.put(l, key, dispose);
-          return dispose;
-        };
-        if ("section" in op.items) {
-          // One of its own sections' rows (api 3), as roster's own `inventory` finder lists its.
-          const own = op.items.section;
-          const finder = sectionFinder(own, op.title, op.prompt, plugin);
-          const def: FinderSourceDef = { ...finder, items: (ctx) => (r.sidebar.get(own)?.source === plugin ? finder.items(ctx) : []) };
-          return this.put(l, key, r.finders.register(def));
-        }
-        if (!("handler" in op.items)) return void register(op.items.map(item));
-        // Its items come from a function: run each time the finder opens (ticket 79).
-        const handler = op.items.handler;
-        let current: () => void;
-        const open = () => {
-          const mine = current;
-          void this.call(plugin, handler, {}, `listed ${op.id}`, false).then((result) => {
-            // Replaced (or gone) meanwhile: what came back is for a finder that isn't there.
-            if (l.disposers.get(key) !== mine || this.loaded.get(plugin) !== l) return;
-            const items = parseFinderItems(result ?? [], `roster.finders.set ${op.id}`);
-            if ("invalid" in items) this.notify(plugin, "warn", `${plugin}: ${items.invalid}`);
-            current = register("invalid" in items ? [] : items.map(item), open);
-          });
-        };
-        current = register(null, open);
-        return;
-      }
-      case "timer": {
-        // The clock is here; the function runs in the Plugin. A repeating one waits again once
-        // a run has answered, so a slow run never piles up behind itself.
-        const key = `timer:${op.id}`;
-        let handle: ReturnType<typeof setTimeout> | null = null;
-        let live = true;
-        const fire = async () => {
-          handle = null;
-          // A deferred one is gone in the core as it runs.
-          if (!op.every) l.disposers.delete(key);
-          await this.call(plugin, op.run.handler, {}, null, false);
-          if (live && op.every && this.loaded.get(plugin) === l) handle = setTimeout(() => void fire(), op.ms);
-        };
-        handle = setTimeout(() => void fire(), op.ms);
-        return this.put(l, key, () => {
-          live = false;
-          if (handle) clearTimeout(handle);
-        });
-      }
-      case "help": {
-        if (this.taken(r.help, op.id, plugin)) return refuse(`there's a help page named ${op.id} already`);
-        const blocks = parseMarkdown(op.markdown);
-        return this.put(
-          l,
-          `help:${op.id}`,
-          r.help.register({ id: op.id, source: plugin, title: op.title, summary: op.summary, order: 1000, body: () => blocks }),
-        );
-      }
-      case "tutor": {
-        const page = tutorPage(op.id);
-        if (op.id === DEFAULT_TUTORIAL || this.taken(r.tutorials, op.id, plugin)) return refuse(`there's a tutorial named ${op.id} already`);
-        if (this.taken(r.help, page, plugin)) return refuse(`there's a help page named ${page} already`);
-        return this.put(l, `tutor:${op.id}`, r.tutorials.register(pluginTutorial(plugin, op)));
-      }
-      case "health": {
-        if (this.taken(r.health, op.id, plugin)) return refuse(`there's a :check section named ${op.id} already`);
-        const checks = op.checks.map((c) => ({ section: op.id, ...c }));
-        const check = op.check;
-        // With `check` (api 3, like vim.health), each `:check` calls the Plugin for its lines.
-        const run =
-          check === undefined
-            ? () => checks
-            : "command" in check
-              ? () => [{ section: op.id, level: "error" as const, message: "check must be a function" }]
-              : async () => this.healthCheck(plugin, op.id, check.handler);
-        // A check may answer later, from a request's answer: :check waits for it that long.
-        const wait = check === undefined ? undefined : HEALTH_LATER_MS + SECTION_WAIT_MS;
-        return this.put(l, `health:${op.id}`, r.health.register({ id: op.id, source: plugin, title: op.title, order: 500, checks: run, ...(wait ? { wait } : {}) }));
-      }
-      case "health_answer": {
-        // Only the Plugin whose run it is can answer it; one for a run that's over is dropped.
-        this.laterChecks.get(`${plugin}:${op.check}`)?.(op.checks);
-        return;
-      }
-      case "badge": {
-        const id = `${plugin}:${op.host}`;
-        if (op.text === null) return this.drop(l, `badge:${id}`);
-        return this.put(l, `badge:${id}`, r.badges.register({ id, source: plugin, host: op.host, text: op.text }));
-      }
-      case "float":
-        this.float = op.spec ? { ...op.spec, plugin } : this.float?.plugin === plugin ? null : this.float;
-        return;
-      case "notify":
-        return this.notify(plugin, op.level, `${plugin}: ${op.text}`, op.actions, op.quiet, background);
-      case "open":
-        return this.ui.run(`connect ${op.host}`);
-      case "send":
-        return this.ui.send(op.session, op.text);
-      case "copy":
-        return void this.ui.copy(op.text).catch(() => undefined);
-      case "confirm": {
-        // One question at a time: a newer one replaces it (another Plugin's hears its cancel).
-        const before = this.confirm;
-        this.confirm = { ...op.confirm, plugin, id: ++this.confirmId };
-        // The app's doing, not the user's answer: never the user's call for that Plugin.
-        if (before && before.plugin !== plugin && before.cancel) this.runFor(before.plugin, before.cancel, { confirm: "no" }, false);
-        return;
-      }
-      case "progress": {
-        const other = this.progress.get(op.id);
-        if (other && other.plugin !== plugin) return refuse(`there's a progress named ${op.id} already, from ${other.plugin}`);
-        // Setting it again after a cancel says it's still stopping until the Plugin says otherwise.
-        this.progress.set(op.id, { ...op.progress, plugin, id: op.id, stopping: false });
-        return;
-      }
-      case "toolbar": {
-        if (this.taken(r.toolbar, op.id, plugin)) return refuse(`there's a toolbar control named ${op.id} already`);
-        const c = op.control;
-        return this.put(
-          l,
-          `toolbar:${op.id}`,
-          r.toolbar.register({
-            id: op.id,
-            source: plugin,
-            label: () => c.label,
-            ...(c.icon ? { icon: c.icon } : {}),
-            ...(c.text || !c.icon ? { text: c.text ?? c.label } : {}),
-            command: this.line(plugin, c.run, { toolbar: op.id }),
-            side: "end",
-            byDefault: true,
-          }),
-        );
-      }
-      case "cmd": {
-        // One hop (issue #183): made in the user's own call, the Plugin's own command it names is
-        // that call carried; made in a carried run (`user: false`), it's the app's call.
-        const outer = this.lineCaller;
-        this.lineCaller = { plugin, by: op.user === false ? false : "carried" };
-        try {
-          return this.runLine(plugin, op.line);
-        } finally {
-          this.lineCaller = outer;
-        }
-      }
-      case "echo":
-        return this.ui.say ? this.ui.say(op.quiet ? quiet(op.text) : op.text) : this.notify(plugin, "info", `${plugin}: ${op.text}`);
-      case "cmdline": {
-        // Its own commands only (the core checks too): never a line for roster's or another's.
-        const word = op.text.trim().split(/\s+/)[0] ?? "";
-        if (r.commands.get(word)?.source !== plugin) return refuse(`roster.cmdline: ${word} isn't one of its commands`);
-        return this.ui.openCommandLine?.(op.text);
-      }
-      case "session_show":
-        if (this.ui.showSession && !this.ui.showSession(op.session, op.line)) return refuse(`there's no Session ${op.session} now: it has ended`);
-        return;
-      case "view": {
-        if (this.taken(r.views, op.id, plugin)) return refuse(`there's a view named ${op.id} already`);
-        (l.views ??= new Map()).set(op.id, op.view);
-        return this.putView(l, plugin, op.id, op.view);
-      }
-      case "view_update": {
-        const view = l.views?.get(op.id);
-        if (!view) return refuse(`roster.views.update: there's no view ${op.id} (roster.views.set it first)`);
-        const u = op.update;
-        // `remove` is a graph's nodes and clusters in a graph, else a table's rows.
-        const tableChange = u.rows.length > 0 || u.clear === true || (u.remove.length > 0 && !view.graph) || u.columns !== undefined || u.sort !== undefined || u.actions !== undefined;
-        if (tableChange && !view.table) return refuse(`roster.views.update ${op.id}: the view has no table to change`);
-        if (u.graph && !view.graph) return refuse(`roster.views.update ${op.id}: the view has no graph for nodes and edges`);
-        let graph = view.graph;
-        if (graph && (u.graph || u.remove.length)) {
-          const g = u.graph ?? { nodes: [], edges: [], clusters: [], removeEdges: [] };
-          const data = mergeGraph(graph.data, { ...g, remove: u.remove });
-          const over = graphOver(data);
-          if (over) return refuse(`roster.views.update ${op.id}: more than ${over}`);
-          graph = { ...graph, data, ...(g.filter ? { filter: g.filter } : {}) };
-        }
-        let table = view.table;
-        if (table && (u.rows.length || u.remove.length || u.clear)) {
-          const rows = mergeRows(u.clear ? [] : table.rows, u.rows, u.remove);
-          if (rows.length > MAX_TABLE_ROWS) return refuse(`roster.views.update ${op.id}: more than ${MAX_TABLE_ROWS.toLocaleString("en-US")} rows`);
-          table = { ...table, rows };
-        }
-        if (table && (u.columns || u.sort || u.actions)) {
-          const columns = u.columns ?? table.columns;
-          const sort = u.sort ?? (table.sort && columns.some((c) => c.id === table?.sort?.by) ? table.sort : null);
-          if (sort && !columns.some((c) => c.id === sort.by)) return refuse(`roster.views.update ${op.id}: sort names no column (${sort.by})`);
-          table = { ...table, columns, sort, ...(u.actions ? { actions: u.actions } : {}) };
-        }
-        const next: PluginView = {
-          ...view,
-          ...(u.title !== undefined ? { title: u.title } : {}),
-          ...(u.facts !== undefined ? { facts: u.facts } : {}),
-          ...(table ? { table } : {}),
-          ...(graph ? { graph } : {}),
-        };
-        if (u.text === "") delete next.text;
-        else if (u.text !== undefined) next.text = u.text;
-        l.views?.set(op.id, next);
-        return this.putView(l, plugin, op.id, next);
-      }
-      case "view_open":
-      case "view_close": {
-        if (r.views.get(op.id)?.source !== plugin) return refuse(`${op.op === "view_open" ? "roster.views.open" : "roster.views.close"}: there's no view ${op.id} of yours`);
-        if (op.op === "view_close") return this.ui.closeView?.(op.id);
-        if (op.select !== undefined && this.ui.openView) return this.ui.openView(op.id, op.select);
-        return this.ui.run(`view ${op.id}`);
-      }
-      case "details": {
-        const id = detailsId(op.id, op.host);
-        const other = r.details.list().find((e) => e.section === op.id && e.source !== plugin);
-        if (other) return refuse(`there's a Host-details section named ${op.id} already, from ${other.source}`);
-        if (op.section === null) return this.drop(l, `details:${id}`);
-        const content = this.content(plugin, { section: op.id, host: op.host }, op.section);
-        return this.put(
-          l,
-          `details:${id}`,
-          r.details.register({ id, source: plugin, section: op.id, host: op.host, title: op.section.title, order: op.section.order, content }),
-        );
-      }
-      case "remove":
-        if (op.kind === "view") l.views?.delete(op.id);
-        if (op.kind === "progress") {
-          if (this.progress.get(op.id)?.plugin === plugin) this.progress.delete(op.id);
-          return;
-        }
-        if (op.kind === "details") {
-          for (const key of [...l.disposers.keys()].filter((k) => k.startsWith(`details:${op.id}@`))) this.drop(l, key);
-          return;
-        }
-        return this.drop(l, `${op.kind}:${op.id}`);
-    }
   }
 
   /** Calls a `:check` section's `check` and gives its lines; what goes wrong is an ERROR line. */
@@ -1642,7 +1060,7 @@ export class PluginManager {
     });
     let result: unknown;
     try {
-      const reply = await this.backend.pluginCall(plugin, handler, { health: id, check: run, ...this.onScreen(plugin) }, false).catch((e: unknown) => this.lost(plugin, e));
+      const reply = await this.backend.pluginCall(plugin, handler, { health: id, check: run, ...this.onScreen(plugin) }, false, this.builtins()).catch((e: unknown) => this.lost(plugin, e));
       this.used(plugin, "ran its :check section");
       this.apply(reply);
       if (reply.error) return error(`check failed: ${describeError(reply.error)}`);
@@ -1659,107 +1077,6 @@ export class PluginManager {
     const parsed = parseHealthChecks(result, `roster.health.set ${id}: check`);
     if ("invalid" in parsed) return error(parsed.invalid);
     return parsed.map((c) => ({ section: id, ...c }));
-  }
-
-  private putView(l: Loaded, plugin: string, id: string, view: PluginView) {
-    const content = this.content(plugin, { view: id }, view);
-    if (view.graph) content.graph = this.graph(plugin, id, view.graph);
-    this.put(l, `view:${id}`, this.registries.views.register({ id, source: plugin, title: view.title, place: view.place, content }));
-  }
-
-  /** A view's or section's content, with what its table's rows and actions run. A function gets
-   * the row: `{ row, host, view | section }`. */
-  private content(plugin: string, where: { view?: string; section?: string; host?: string }, c: PluginContent): Content {
-    const go = (run: Run) => (row: TableRow) => {
-      const host = row.host ?? where.host;
-      this.runFor(plugin, run, { row: row.id, ...(host ? { host } : {}), ...(where.view ? { view: where.view } : {}), ...(where.section ? { section: where.section } : {}) });
-    };
-    const t = c.table;
-    // Without its own `open`, a row with a Host opens that Host, as a Sidebar row does.
-    const openHost = (row: TableRow) => {
-      if (row.host) this.ui.run(`open ${row.host}`);
-    };
-    // A heading's button gets the view or section (and its Host): `{ view }`, `{ section, host }`.
-    const head = c.actions.map((a) => ({ label: a.label, icon: a.icon, ...(a.key ? { key: a.key } : {}), run: () => this.runFor(plugin, a.run, { ...where }) }));
-    return {
-      ...(head.length ? { actions: head } : {}),
-      ...(c.text ? { text: c.text } : {}),
-      facts: c.facts,
-      ...(t
-        ? {
-            table: {
-              columns: t.columns,
-              rows: t.rows,
-              sort: t.sort,
-              ...(t.empty ? { empty: t.empty } : {}),
-              ...(t.open ? { open: go(t.open) } : t.rows.some((row) => row.host) ? { open: openHost } : {}),
-              actions: t.actions.map((a) => ({
-                label: a.label,
-                ...(a.key ? { key: a.key } : {}),
-                ...(a.icon ? { icon: a.icon } : {}),
-                ...(a.when ? { when: a.when } : {}),
-                run: go(a.run),
-              })),
-            },
-          }
-        : {}),
-    };
-  }
-
-  /** A view's graph, with what its `open` and actions run. A function gets the node:
-   * `{ node, host, view }`. */
-  private graph(plugin: string, view: string, g: PluginGraph): GraphModel {
-    // As a table's: a function gets the node with the handler context (the Session on screen when
-    // it may know); a command line goes through `:plugins run`.
-    const go = (run: Run) => (node: GraphNode) => this.runFor(plugin, run, { node: node.id, ...(node.host ? { host: node.host } : {}), view });
-    // Without its own `open`, a node with a Host opens that Host, as a table row does.
-    const openHost = (node: GraphNode) => {
-      if (node.host) this.ui.run(`open ${node.host}`);
-    };
-    return {
-      data: g.data,
-      ...(g.reach ? { reach: g.reach } : {}),
-      ...(g.filter ? { filter: g.filter } : {}),
-      ...(g.open ? { open: go(g.open) } : g.data.nodes.some((n) => n.host) ? { open: openHost } : {}),
-      actions: g.actions.map((a) => ({ label: a.label, ...(a.key ? { key: a.key } : {}), ...(a.icon ? { icon: a.icon } : {}), ...(a.when ? { when: a.when } : {}), run: go(a.run) })),
-    };
-  }
-
-  private row(plugin: string, section: string, row: PluginRow, hostByName: ReadonlyMap<string, Host>): SidebarRow {
-    const id = `${section}:${row.id}`;
-    const context = { section, row: row.id };
-    const own = row.actions.map((a, i) => this.rowAction(plugin, a, { ...context, action: i + 1 }));
-    const extra = {
-      ...(row.drop ? { drop: (host: string) => this.line(plugin, row.drop as Run, { ...context, dropped: host }) } : {}),
-      ...(row.dragOut ? { dragOut: this.line(plugin, row.dragOut, context) } : {}),
-      ...(row.host ? { drag: row.host } : {}),
-      ...(row.icon ? { icon: row.icon } : {}),
-    };
-    // Drawn as the Inventory draws the Host (api 3); the row's own actions go in its menu after the
-    // Host's (T166, Q156).
-    const host = row.kind === "host" && row.host ? hostByName.get(row.host) : undefined;
-    if (host) {
-      const base = hostRow(host, id, row.level ?? 0);
-      return { ...base, ...extra, ...(row.run ? { command: this.line(plugin, row.run, context) } : {}), actions: [...(base.actions ?? []), ...own] };
-    }
-    // A Host roster doesn't have: its own actions are in its menu too (T166, Q156).
-    const dot = row.kind === "host" && row.host ? { dot: "off" as const, menu: true } : {};
-    return {
-      ...dot,
-      ...extra,
-      ...(row.fold ? { foldable: true } : {}),
-      id,
-      label: row.label,
-      ...(row.detail ? { detail: row.detail } : {}),
-      ...(row.note ? { note: row.note } : {}),
-      ...(row.host ? { host: row.host } : {}),
-      ...(row.badge ? { badge: row.badge } : {}),
-      ...(row.count !== undefined ? { count: row.count } : {}),
-      ...(row.level !== undefined ? { level: row.level } : {}),
-      ...(row.title ? { title: row.title } : {}),
-      command: row.run ? this.line(plugin, row.run, context) : row.fold ? `togglefold ${id}` : row.host ? `open ${row.host}` : "",
-      actions: own,
-    };
   }
 
   /** What a Plugin's command hears of the Sidebar (api 3): the Host under the cursor (else on
@@ -1786,26 +1103,18 @@ export class PluginManager {
   /** A Plugin command's `complete` (api 3): the app's completion is synchronous, so it answers
    * with the last list the Plugin gave (kept to what still matches) and asks again; the answer
    * redraws the command line. */
-  private completer(plugin: string, command: string, handler: number) {
+  private complete(plugin: string, command: string, handler: number, arg: string): string[] {
     const key = `${plugin}\0${command}`;
-    return (arg: string): string[] => {
-      const last = this.completions.get(key);
-      if (!last || last.arg !== arg) {
-        void this.call(plugin, handler, arg, null, false).then((result) => {
-          const list = Array.isArray(result) ? result.filter((x): x is string => typeof x === "string").slice(0, 200) : [];
-          const before = this.completions.get(key);
-          this.completions.set(key, { arg, list });
-          if (JSON.stringify(before) !== JSON.stringify({ arg, list })) this.changed();
-        });
-        // Until it answers: the last list, kept to what still starts with what's typed.
-        return (last?.list ?? []).filter((c) => c.toLowerCase().startsWith(arg.toLowerCase()));
-      }
-      return last.list;
-    };
-  }
-
-  private rowAction(plugin: string, a: PluginRowAction, context: HandlerContext) {
-    return { label: a.label, icon: a.icon, command: this.line(plugin, a.run, context) };
+    const last = this.completions.get(key);
+    if (last && last.arg === arg) return last.list;
+    void this.call(plugin, handler, arg, null, false).then((result) => {
+      const list = Array.isArray(result) ? result.filter((x): x is string => typeof x === "string").slice(0, 200) : [];
+      const before = this.completions.get(key);
+      this.completions.set(key, { arg, list });
+      if (JSON.stringify(before) !== JSON.stringify({ arg, list })) this.changed();
+    });
+    // Until it answers: the last list, kept to what still starts with what's typed.
+    return (last?.list ?? []).filter((c) => c.toLowerCase().startsWith(arg.toLowerCase()));
   }
 
   /** A Plugin's name as a load failure names it: marked "(in the demo)" on `:tutor`'s demo (#233). */
@@ -1822,8 +1131,7 @@ export class PluginManager {
     const routine = level === "info" && (asked ?? actions.length === 0);
     if (routine && this.ui.say && this.ui.messagesAll?.() === false) return this.ui.say(background ? backgroundQuiet(text) : quiet(text));
     this.ui.log?.(text);
-    const notice: Notice = { id: ++this.noticeId, plugin, level, text, ...(actions.length ? { actions } : {}) };
-    this.notices = [...this.notices, notice].slice(-MAX_NOTICES);
+    this.shown.addNotice({ plugin, level, text, ...(actions.length ? { actions } : {}) });
     this.changed();
   }
 
@@ -1863,17 +1171,16 @@ export class PluginManager {
   }
 
   private changed() {
-    const builtin = (path: string) => path.startsWith("builtin:");
     const names = new Set([...this.known.keys(), ...this.problems.keys(), ...this.waiting.keys(), ...this.installed().map((e) => e.name)]);
     const installed = this.installed();
     const plugins = [...names].sort().map((name): PluginStatus => {
       const l = this.known.get(name);
       const entry = installed.find((e) => e.name === name);
-      const path = l?.path ?? entry?.path ?? this.waiting.get(name)?.path ?? `builtin:${name}`;
+      const path = l?.path ?? entry?.path ?? this.waiting.get(name)?.path ?? `${BUILTIN_PREFIX}${name}`;
       return {
         name,
         path,
-        builtin: builtin(path),
+        builtin: builtinName(path) !== null,
         manifest: l?.manifest ?? this.waiting.get(name)?.manifest ?? null,
         granted: l?.granted ?? entry?.granted ?? [],
         problem: this.problems.get(name) ?? null,
@@ -1887,10 +1194,10 @@ export class PluginManager {
       plugins,
       packages: this.packages,
       prompts: this.prompts,
-      notices: this.notices,
-      float: this.float,
-      confirm: this.confirm,
-      progress: [...this.progress.values()],
+      notices: this.shown.notices,
+      float: this.shown.float,
+      confirm: this.shown.confirm,
+      progress: [...this.shown.progress.values()],
       declined: this.packages.filter((p) => !p.pinned && this.isDeclined(p)).map((p) => p.name),
       settled: this.settled,
     };
@@ -1898,10 +1205,3 @@ export class PluginManager {
   }
 }
 
-/** What a graph holds more of than it may, or null. */
-function graphOver(g: { nodes: readonly unknown[]; edges: readonly unknown[]; clusters: readonly unknown[] }): string | null {
-  if (g.nodes.length > MAX_NODES) return `${MAX_NODES.toLocaleString("en-US")} nodes`;
-  if (g.edges.length > MAX_EDGES) return `${MAX_EDGES.toLocaleString("en-US")} edges`;
-  if (g.clusters.length > MAX_CLUSTERS) return `${MAX_CLUSTERS.toLocaleString("en-US")} clusters`;
-  return null;
-}

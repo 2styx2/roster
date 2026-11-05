@@ -48,17 +48,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-/// The most a request's body may be.
 pub const MAX_REQUEST_BODY: usize = 256 * 1024;
 /// The most a response's body may be; a longer one fails the request.
 pub const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 /// The longest a request may take in all, and the default.
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(30);
-/// The longest to wait for a connection.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// How many requests one Plugin may have in flight.
 pub const MAX_IN_FLIGHT: usize = 4;
-/// How many redirects a request follows.
 pub const MAX_REDIRECTS: usize = 5;
 /// How many of one Plugin's lookups through the proxy may be waiting on this computer's resolver
 /// at once, counting those a request already gave up on (the OS lookup runs on to its own end).
@@ -83,7 +79,6 @@ const CARRIED_ELSEWHERE: &[&str] = &[
 ];
 /// What roster calls itself, unless the Plugin says otherwise.
 const USER_AGENT: &str = concat!("roster/", env!("CARGO_PKG_VERSION"));
-/// The most headers a request may set.
 pub const MAX_HEADERS: usize = 50;
 /// Headers a Plugin may not set: they steer the connection, not the request.
 pub const FORBIDDEN_HEADERS: &[&str] = &[
@@ -100,7 +95,6 @@ pub const FORBIDDEN_HEADERS: &[&str] = &[
     "proxy-authenticate",
     "proxy-connection",
 ];
-/// The methods a request may use.
 pub const METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
 /// One site a Plugin may reach, as `network:SITE` names it.
@@ -762,7 +756,6 @@ pub struct Setup {
 pub struct SiteCount {
     /// The site as its permission names it (`api.example.com`, `private:nas.lan`).
     pub site: String,
-    /// Requests sent.
     pub requests: u64,
     /// Of those, the ones that got no answer (an HTTP error status is an answer).
     pub failed: u64,

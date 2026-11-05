@@ -183,20 +183,18 @@ describe("a fake Plugin's roster.cmd and roster's own commands (issue #184)", ()
     },
   };
 
-  it("runs its own command only once the app has said its built-ins, and none has the name, as the core does", async () => {
+  it("runs its own command unless a built-in the call carries has the name, as the core does", async () => {
     const host = fakePluginHost({ probe }, () => []);
-    const loaded = await host.pluginLoad("probe", []);
+    const loaded = await host.pluginLoad("probe", [], null, []);
     const tryIt = (loaded.reply.ops as { op: string; name?: string; run?: { handler: number } }[]).find((o) => o.op === "command" && o.name === "try")?.run?.handler ?? 0;
-    const said = async (line: string) => {
-      const r = await host.pluginCall("probe", tryIt, { args: line, words: [line] }, true);
+    const said = async (line: string, builtins: string[]) => {
+      const r = await host.pluginCall("probe", tryIt, { args: line, words: [line] }, true, builtins);
       return (r.ops.find((o) => (o as { op: string }).op === "notify") as { text: string } | undefined)?.text;
     };
-    // Before the app has said: none of its own, and the ones that change trust or writes as ever.
-    expect(await said("mine")).toBe("roster.cmd: :mine can't run yet: the app hasn't told roster its own commands");
-    expect(await said("publish")).toMatch(/isn't one a Plugin may run/);
-    await host.pluginBuiltins(["late"]);
-    expect(await said("late")).toMatch(/isn't one a Plugin may run/);
-    expect(await said("mine")).toBe("ran");
+    expect(await said("mine", [])).toBe("ran");
+    expect(await said("publish", [])).toMatch(/isn't one a Plugin may run/);
+    expect(await said("late", ["late"])).toMatch(/isn't one a Plugin may run/);
+    expect(await said("mine", ["late"])).toBe("ran");
   });
 });
 

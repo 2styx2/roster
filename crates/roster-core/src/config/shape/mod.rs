@@ -305,7 +305,7 @@ pub const BUNDLED_THEMES: &[&str] = &[
 // ---------------------------------------------------------------- the `roster` table
 
 /// A name in init.lua's `roster` table (config/lua.rs `roster_api`). A Plugin's `roster` is
-/// another table, declared in plugin/api.rs.
+/// another table, declared in plugin/api/.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiItem {
     /// `roster.keymap.set`.

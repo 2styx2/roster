@@ -833,6 +833,29 @@ fn an_install_path_is_home_absolute_or_under_the_config_dir() {
 }
 
 #[test]
+fn a_plugin_path_is_built_in_a_package_or_a_folder() {
+    use roster_core::plugin::PluginPath;
+    assert_eq!(PluginPath::parse("builtin:hosts"), PluginPath::Builtin("hosts"));
+    assert_eq!(
+        PluginPath::parse("package:recent-alerts"),
+        PluginPath::Package("recent-alerts")
+    );
+    assert_eq!(PluginPath::parse("~/plugins/x"), PluginPath::Folder("~/plugins/x"));
+    assert_eq!(
+        PluginPath::parse("plugins/builtin:x"),
+        PluginPath::Folder("plugins/builtin:x")
+    );
+}
+
+#[test]
+fn a_kept_grant_this_version_refuses_is_reported_not_granted() {
+    let (grants, refused) = Permission::parse_grants(&["inventory.read".into(), "serve:vault.unlock".into()]);
+    assert_eq!(grants, vec![Permission::InventoryRead]);
+    assert_eq!(refused.len(), 1);
+    assert!(refused[0].starts_with("serve:vault.unlock: "), "{refused:?}");
+}
+
+#[test]
 fn the_host_count_is_a_built_in_plugin_on_the_public_api() {
     let (host, serve) = host();
     let (m, reply) = host

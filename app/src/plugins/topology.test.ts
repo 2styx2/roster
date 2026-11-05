@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { fakePluginHost } from "../backend/fakePlugins";
 import { topologyPlugin } from "../backend/fakeTopology";
 import type { Host, PluginEventName, PluginReply } from "../backend/types";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 import transcript from "./topology.transcript.json";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };

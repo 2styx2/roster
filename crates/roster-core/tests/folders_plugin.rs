@@ -5,7 +5,7 @@
 
 mod common;
 
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -41,7 +41,10 @@ fn read() -> Vec<Permission> {
 
 fn load(h: &PluginHost, config: Value) -> Reply {
     let (_, reply) = h
-        .load_with(&Source::Bundled("folders".into()), &read(), &config)
+        .load(
+            &Source::Bundled("folders".into()),
+            Load::new(&read()).config(config.clone()),
+        )
         .unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
     reply
@@ -350,7 +353,7 @@ fn revoked_it_still_works_without_checking_names() {
     let d = data("revoked");
     let h = host(&d);
     let (_, first) = h
-        .load_with(&Source::Bundled("folders".into()), &[], &json!({}))
+        .load(&Source::Bundled("folders".into()), Load::new(&[][..]).config(json!({})))
         .unwrap();
     assert!(first.error.is_none(), "{:?}", first.error);
     assert_eq!(

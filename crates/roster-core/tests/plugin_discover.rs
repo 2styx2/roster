@@ -13,7 +13,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -250,7 +250,10 @@ impl World {
     fn load(&self, grants: &[&str]) -> Reply {
         let (_, reply) = self
             .host
-            .load_with(&Source::Dir(self.dir.clone()), &perms(grants), &self.config)
+            .load(
+                &Source::Dir(self.dir.clone()),
+                Load::new(&perms(grants)).config(self.config.clone()),
+            )
             .unwrap();
         self.settled(reply)
     }

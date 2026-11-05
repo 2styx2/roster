@@ -10,7 +10,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{API_VERSION, Limits, PluginHost, Serve, Source};
+use roster_core::plugin::{API_VERSION, Limits, Load, PluginHost, Serve, Source};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -134,7 +134,10 @@ fn every_first_party_plugin_installs_as_a_package_from_its_folder_and_loads() {
         );
         let host = PluginHost::new(Arc::new(NoServe), Limits::default());
         let (_, reply) = host
-            .load_with(&Source::Dir(dir), &manifest.permissions, &config)
+            .load(
+                &Source::Dir(dir),
+                Load::new(&manifest.permissions).config(config.clone()),
+            )
             .unwrap_or_else(|e| panic!("plugins/{name}: {e}"));
         assert!(reply.error.is_none(), "plugins/{name}: {:?}", reply.error);
         packages.pin(&specs, name).unwrap();

@@ -1,7 +1,7 @@
-"""The Plugin API's types (crates/roster-core/src/plugin/api.rs, ticket 70, decision Q89) against what
+"""The Plugin API's types (crates/roster-core/src/plugin/api/, ticket 70, decision Q89) against what
 `roster serve` really sends: a Plugin gets a Host from `hosts.list` and `host.get`, so the reference's Host,
 SshLogin, Login, Service, ServiceProblem, Group, HostList and InventoryInfo must list exactly the fields serve
-gives. A field added on either side fails here: change api.rs, then run
+gives. A field added on either side fails here: change plugin/api, then run
 `cargo run -p roster-core --example gen_plugin_api`."""
 import json
 from pathlib import Path
@@ -39,7 +39,7 @@ def test_a_host_from_serve_has_exactly_the_documented_fields(serve, write_config
     listing = s.call("hosts.list")["result"]
     host = listing["hosts"][0]
     assert set(listing) == fields("HostList")
-    assert set(host) == fields("Host"), "change Host in crates/roster-core/src/plugin/api.rs"
+    assert set(host) == fields("Host"), "change Host in crates/roster-core/src/plugin/api/"
     assert s.call("host.get", {"name": "esx-02"})["result"] == host
     assert set(host["ssh"]) == fields("SshLogin")
     assert set(host["login"]) == fields("Login")

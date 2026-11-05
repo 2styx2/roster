@@ -20,22 +20,37 @@
 //! for the methods its permissions name ([`permission`]); none of those touches a password, a
 //! vault session or an askpass token.
 //!
-//! Where a folder comes from is the caller's business: a local folder (`:plugins install PATH`),
-//! or a Package's clone (ticket 24, [`crate::package`]), which loads through
-//! [`PluginHost::load_with`] to get its settings from init.lua.
+//! A Plugin path as the app keeps it ([`PluginPath`]) is `builtin:NAME`, `package:NAME` (a
+//! Package's clone, ticket 24, [`crate::package`], loaded with its settings from init.lua as
+//! [`Load::config`]) or a folder (`:plugins install PATH`).
+
+/// A function `f(lua, shared, args)` in a `roster` module table: `func!(lua, shared, table, "name",
+/// |lua, s, args: Type| { … })`, where `s` is the Plugin's `Shared` in the body.
+macro_rules! func {
+    ($l:ident, $shared:ident, $table:expr, $name:expr, |$lua:ident, $s:ident, $args:tt : $ty:ty| $body:block) => {{
+        let $s = std::rc::Rc::clone($shared);
+        $table.raw_set(
+            $name,
+            $l.create_function(move |$lua, $args: $ty| {
+                let $s: &Shared = &$s;
+                $body
+            })?,
+        )?;
+    }};
+}
 
 pub mod api;
 pub mod demo;
 pub mod fair;
 pub mod folder;
 pub mod network;
+pub mod op;
 pub mod permission;
 pub(crate) mod runtime;
 
 use crate::config::lua;
 pub use demo::DemoHost;
 pub use permission::Permission;
-pub use runtime::EVENTS;
 use serde::Serialize;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,6 +63,34 @@ use std::time::{Duration, Instant};
 /// The version of the `roster` Lua module (`roster.api_version`). init.lua's table shows it too;
 /// init.lua's own version is `roster.config_version` (decision Q165).
 pub use crate::API_VERSION;
+
+/// The prefix of a built-in Plugin's path (`builtin:hosts`).
+pub const BUILTIN_PREFIX: &str = "builtin:";
+/// The prefix of a Package's Plugin path (`package:recent-alerts`, ticket 24).
+pub const PACKAGE_PREFIX: &str = "package:";
+
+/// A Plugin path as the app keeps it in its State and hands back to load it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginPath<'a> {
+    /// `builtin:NAME`: one of [`BUNDLED`].
+    Builtin(&'a str),
+    /// `package:NAME`: the clone of a Package init.lua names.
+    Package(&'a str),
+    /// Anything else: a folder, as [`resolve_dir`] reads it.
+    Folder(&'a str),
+}
+
+impl<'a> PluginPath<'a> {
+    pub fn parse(text: &'a str) -> Self {
+        if let Some(name) = text.strip_prefix(BUILTIN_PREFIX) {
+            PluginPath::Builtin(name)
+        } else if let Some(name) = text.strip_prefix(PACKAGE_PREFIX) {
+            PluginPath::Package(name)
+        } else {
+            PluginPath::Folder(text)
+        }
+    }
+}
 
 /// Where a Plugin's code comes from. A Package (ticket 24) is a [`Source::Dir`] too: its clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +123,7 @@ pub const BUNDLED: &[Bundled] = &[
     },
 ];
 
-/// The keys a manifest may have (api.rs's `Manifest` documents each).
+/// The keys a manifest may have (plugin/api's `Manifest` documents each).
 pub const MANIFEST_FIELDS: &[&str] = &["name", "version", "description", "author", "api", "permissions"];
 
 /// The manifest's file name, in the Plugin's folder.
@@ -94,7 +137,7 @@ pub trait Serve: Send + Sync {
     fn call(&self, method: &str, params: Json) -> Result<Json, String>;
 }
 
-/// Something that happened in the app, for the Plugins that listen ([`EVENTS`]).
+/// Something that happened in the app, for the Plugins that listen ([`api::EVENTS`]).
 #[derive(Debug, Clone)]
 pub struct Event {
     pub name: String,
@@ -155,7 +198,7 @@ pub struct Reply {
     pub error: Option<PluginError>,
     /// Set when the Plugin is now disabled, with why: the frontend takes its UI away.
     pub disabled: Option<String>,
-    /// The events the Plugin listens for now, in [`EVENTS`]' order, when that's news to the app:
+    /// The events the Plugin listens for now, in [`api::EVENTS`]' order, when that's news to the app:
     /// always at load, then only after a call, event or answer that changed it (#223, decision
     /// Q185: the app keeps a command's output for `command_done` only while a Plugin listens).
     pub listens: Option<Vec<String>>,
@@ -229,6 +272,55 @@ impl Default for Limits {
     }
 }
 
+/// What a load hands the Plugin besides its code ([`PluginHost::load`]).
+#[derive(Debug, Clone)]
+pub struct Load<'a> {
+    /// What the user granted: it runs with those its manifest asks for.
+    pub grants: &'a [Permission],
+    /// `roster.plugin.config`: a Package's settings from init.lua, a built-in Plugin's from the
+    /// app; `null` gives an empty table.
+    pub config: Json,
+    /// The user's proxy for its requests to public names (`plugin_proxy`, decision Q116);
+    /// [`PluginHost::set_proxy`] changes it later.
+    pub proxy: Option<network::Proxy>,
+}
+
+impl<'a> Load<'a> {
+    pub fn new(grants: &'a [Permission]) -> Self {
+        Load {
+            grants,
+            config: Json::Null,
+            proxy: None,
+        }
+    }
+
+    pub fn config(self, config: Json) -> Self {
+        Load { config, ..self }
+    }
+
+    pub fn proxy(self, proxy: Option<network::Proxy>) -> Self {
+        Load { proxy, ..self }
+    }
+}
+
+impl<'a> From<&'a [Permission]> for Load<'a> {
+    fn from(grants: &'a [Permission]) -> Self {
+        Load::new(grants)
+    }
+}
+
+impl<'a> From<&'a Vec<Permission>> for Load<'a> {
+    fn from(grants: &'a Vec<Permission>) -> Self {
+        Load::new(grants)
+    }
+}
+
+impl<'a, const N: usize> From<&'a [Permission; N]> for Load<'a> {
+    fn from(grants: &'a [Permission; N]) -> Self {
+        Load::new(grants)
+    }
+}
+
 /// A Plugin as `:plugins` lists it.
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
@@ -272,7 +364,6 @@ struct Slot {
     disabled: Option<String>,
     /// Which load this is: an answer to a request made before a reload is dropped.
     generation: u64,
-    /// How long its thread has waited for roster serve.
     serving: Arc<ServeWait>,
     /// Its proxy setting, which its client reads at each request.
     proxy: Arc<network::ProxyCell>,
@@ -346,19 +437,19 @@ impl PluginHost {
         self
     }
 
-    /// The app's built-in commands (every `:` command roster itself registers), at the start and
-    /// whenever one registers later: none of them is a Plugin's own to run with `roster.cmd` or a
-    /// `run` line, whatever the Plugin named its commands (issue #184). Each replaces the last and
-    /// reaches the Plugins running at once. Until the app has said them once, no Plugin's own
-    /// command runs that way either (api.rs's
-    /// [`api::ROSTER_ONLY`](crate::plugin::api::ROSTER_ONLY) are refused all the same).
+    /// The app's built-in commands (every `:` command roster itself registers; the app's shell
+    /// sets them from each load, call and event): none of them is a Plugin's own to run with
+    /// `roster.cmd` or a `run` line, whatever the Plugin named its commands (issue #184). Each
+    /// replaces the last and reaches the Plugins running at once, a request's answer included.
+    /// Until a host has been told them once, no Plugin's own command runs that way either
+    /// ([`api::ROSTER_ONLY`](crate::plugin::api::ROSTER_ONLY) are refused all the same).
     pub fn set_builtins(&self, names: impl IntoIterator<Item = String>) {
         *self.builtins.write().expect("builtin commands") = Some(names.into_iter().collect());
     }
 
     /// A new proxy setting (`plugin_proxy` in init.lua changed, decision Q116) for every Plugin
     /// running: each one's next request uses it; one already going finishes as it began. A
-    /// Plugin loaded later gets the setting it's handed ([`PluginHost::load_with_proxy`]).
+    /// Plugin loaded later gets the setting it's handed ([`Load::proxy`]).
     pub fn set_proxy(&self, proxy: Option<network::Proxy>) {
         for slot in self.slots.lock().expect("plugin slots").values() {
             slot.proxy.set(proxy.clone());
@@ -395,33 +486,12 @@ impl PluginHost {
         *self.listener.lock().expect("plugin listener") = Some(listener);
     }
 
-    /// Loads (or reloads) the Plugin from `source` with what the user granted. It runs with only
-    /// the permissions its manifest asks for and `grants` contains. An error in the manifest
-    /// loads nothing; an error in its code leaves it listed, disabled.
-    pub fn load(&self, source: &Source, grants: &[Permission]) -> Result<(Manifest, Reply), PluginError> {
-        self.load_with(source, grants, &Json::Null)
-    }
-
-    /// [`PluginHost::load`], handing the Plugin `config` as `roster.plugin.config` (a Package's
-    /// settings from init.lua; `null` gives an empty table).
-    pub fn load_with(
-        &self,
-        source: &Source,
-        grants: &[Permission],
-        config: &Json,
-    ) -> Result<(Manifest, Reply), PluginError> {
-        self.load_with_proxy(source, grants, config, None)
-    }
-
-    /// [`PluginHost::load_with`], with the user's proxy for its requests to public names
-    /// (`plugin_proxy`, decision Q116). [`PluginHost::set_proxy`] changes it later.
-    pub fn load_with_proxy(
-        &self,
-        source: &Source,
-        grants: &[Permission],
-        config: &Json,
-        proxy: Option<network::Proxy>,
-    ) -> Result<(Manifest, Reply), PluginError> {
+    /// Loads (or reloads) the Plugin from `source` with what the user granted ([`Load`]; a list of
+    /// grants is a load with nothing else). It runs with only the permissions its manifest asks
+    /// for and the grants contain. An error in the manifest loads nothing; an error in its code
+    /// leaves it listed, disabled.
+    pub fn load<'a>(&self, source: &Source, how: impl Into<Load<'a>>) -> Result<(Manifest, Reply), PluginError> {
+        let Load { grants, config, proxy } = how.into();
         let (manifest, dir, code) = match source {
             Source::Dir(dir) => {
                 let manifest = read_manifest_within(dir, self.limits)?;
@@ -466,15 +536,7 @@ impl PluginHost {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let serving = Arc::new(ServeWait::default());
         let proxy = Arc::new(network::ProxyCell::new(proxy));
-        let jobs = self.spawn(
-            &manifest,
-            &dir,
-            grants.clone(),
-            config.clone(),
-            generation,
-            &serving,
-            &proxy,
-        );
+        let jobs = self.spawn(&manifest, &dir, grants.clone(), config, generation, &serving, &proxy);
         // In the slots before init.lua runs: a request it makes may answer while it still loads.
         self.slots.lock().expect("plugin slots").insert(
             name.clone(),
@@ -808,9 +870,9 @@ impl PluginHost {
                         },
                     };
                     let listens = match &runtime {
-                        Ok(rt) => EVENTS
+                        Ok(rt) => api::EVENTS
                             .iter()
-                            .map(|(n, _)| *n)
+                            .map(|e| e.name)
                             .filter(|n| rt.listens(n))
                             .map(String::from)
                             .collect(),
@@ -1203,6 +1265,11 @@ fn parse_manifest(v: &Json) -> Result<Manifest, String> {
         api: api as u32,
         permissions,
     })
+}
+
+/// This computer's home folder, which `~/` means in a Plugin path.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
 
 /// The folder `:plugins install PATH` means: `~/…` under `home`, an absolute path as it is, and

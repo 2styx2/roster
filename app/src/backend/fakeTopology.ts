@@ -24,7 +24,7 @@ const keys = (o: unknown) => Object.keys((o ?? {}) as Obj).sort();
 /** Leaves out what's nil, as a Lua table does. */
 const plain = <T extends Obj>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null)) as T;
 
-export function settingsOf(config: Obj): { settings: { leader: string; refresh: number }; problems: string[] } {
+function settingsOf(config: Obj): { settings: { leader: string; refresh: number }; problems: string[] } {
   const settings = { leader: "T", refresh: 60 };
   const problems: string[] = [];
   if (config.leader !== undefined) {
@@ -64,7 +64,7 @@ interface Structure {
 
 const bump = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
 
-export function structure(hosts: readonly Host[], groups: Record<string, { title?: string }>, mesh: Obj | null): Structure {
+function structure(hosts: readonly Host[], groups: Record<string, { title?: string }>, mesh: Obj | null): Structure {
   const s: Structure = {
     hosts: new Map(),
     order: [],
@@ -291,7 +291,7 @@ export function structure(hosts: readonly Host[], groups: Record<string, { title
   return s;
 }
 
-export function graphOf(s: Structure, live: Map<string, Set<number>>, down: Map<string, string>, ended: Set<string>) {
+function graphOf(s: Structure, live: Map<string, Set<number>>, down: Map<string, string>, ended: Set<string>) {
   const mesh = s.mesh ?? {};
   const cutPending = (mesh.cut_pending ?? {}) as Record<string, string[]>;
   const pending = (mesh.pending ?? {}) as Record<string, string>;
@@ -360,7 +360,7 @@ export function textOf(s: Structure, why: { reads: boolean; mesh: boolean; error
   return lines.join("\n\n");
 }
 
-export function detailsOf(s: Structure, name: string): Obj | null {
+function detailsOf(s: Structure, name: string): Obj | null {
   const m = s.mesh;
   if (!m) return null;
   const excluded = (m.excluded as Record<string, string> | undefined)?.[name];
@@ -396,7 +396,7 @@ function diff(before: Map<string, string> | null, items: Obj[]): [Obj[], string[
   return [changed, gone, now];
 }
 
-export function groupClusters(s: Structure, word: string): string[] {
+function groupClusters(s: Structure, word: string): string[] {
   const w = word.toLowerCase();
   let base: string | undefined;
   for (const c of s.clusters) {

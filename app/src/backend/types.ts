@@ -3,6 +3,7 @@
 // uses the Tauri one (tauri.ts). Shapes follow roster's `roster serve` API, version 1 or newer
 // (2 adds `host.check` and the Login/askpass/network codes 30-48: `:check` needs it).
 import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
+import { CORE } from "../plugins/core.gen";
 import type { QuickTarget } from "../quick/target";
 import {
   CHECK_STEPS,
@@ -1101,17 +1102,21 @@ export interface Backend {
    * `types/roster.lua` in the Plugin folder at `path`; resolves to the file's path. */
   pluginTypes(path: string): Promise<string>;
   /** Loads (or reloads) a Plugin with what the user granted (`builtin:NAME` for a built-in one).
-   * Rejects when its manifest can't be used; an error in its code comes back in `reply`. */
-  pluginLoad(path: string, grants: readonly string[], settings?: Record<string, unknown> | null): Promise<{ manifest: PluginManifest; dir: string; reply: PluginReply }>;
+   * Rejects when its manifest can't be used; an error in its code comes back in `reply`, and each
+   * grant this core no longer takes in `refused` ("NAME: why"). `builtins`, here and in
+   * `pluginCall` and `pluginEvent`: the app's built-in commands (issue #184), none of which is a
+   * Plugin's own to run with `roster.cmd` or a `run` line; the core keeps the last list it was
+   * given for what a Plugin does when a request answers. */
+  pluginLoad(path: string, grants: readonly string[], settings?: Record<string, unknown> | null, builtins?: readonly string[]): Promise<PluginLoaded>;
   /** Calls a function the Plugin handed over (`{handler}` in its ops). `user` (default true): the
    * user chose it; `"carried"` for the Plugin's own command its `roster.cmd` ran from the user's
    * call (that call carried one hop: nothing made in it carries it further, issue #183); false for
    * what the app runs on its own (a finder's items, a `:check`, a timer, a question's cancel
    * because another took its place, a command a carried run's `roster.cmd` named), which is never
    * the user's call. */
-  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCaller): Promise<PluginReply>;
+  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCaller, builtins?: readonly string[]): Promise<PluginReply>;
   /** Tells every Plugin that listens and may hear it; the ones that changed something or failed answer. */
-  pluginEvent(name: PluginEventName, payload: Record<string, unknown>): Promise<PluginReply[]>;
+  pluginEvent(name: PluginEventName, payload: Record<string, unknown>, builtins?: readonly string[]): Promise<PluginReply[]>;
   /** The Sessions open now, in the order the app saw them open: the whole list, which replaces
    * the core's (`roster.sessions.list()`, ticket 96, decision Q127). */
   pluginSessions(open: OpenSession[]): Promise<void>;
@@ -1120,9 +1125,6 @@ export interface Backend {
   /** Removes a Plugin's data folder with everything in it (decision Q93), when the Plugin is
    * removed: `:plugins remove`, `:packages clean`. True if it had one. */
   pluginForget(plugin: string): Promise<boolean>;
-  /** The app's built-in commands (issue #184), at the start and when one registers later: none is
-   * a Plugin's own to run with `roster.cmd` or a `run` line, whatever it named its commands. */
-  pluginBuiltins(names: readonly string[]): Promise<void>;
   /** Each loaded Plugin's network requests by site since the app started, by its name (decision
    * Q116), for `:plugins`. */
   pluginRequests(): Promise<Record<string, SiteRequests[]>>;
@@ -1181,7 +1183,7 @@ export interface PackageStatus {
 }
 
 /** The demo's Plugin host (`Backend.demoPlugins`): the Plugin methods, on the demo's own host. */
-export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "pluginLoad" | "pluginCall" | "pluginEvent" | "pluginSessions" | "pluginUnload" | "pluginForget" | "pluginBuiltins" | "onPluginReply"> & {
+export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "pluginLoad" | "pluginCall" | "pluginEvent" | "pluginSessions" | "pluginUnload" | "pluginForget" | "onPluginReply"> & {
   close(): Promise<void>;
 };
 
@@ -1259,6 +1261,15 @@ export interface SiteRequests {
  * `problem`: it can't be counted (it's a link, or it can't be read). */
 export type PluginData = { state: "none" } | { state: "used"; files: number; bytes: number } | { state: "problem"; message: string };
 
+/** What `pluginLoad` gives back. */
+export interface PluginLoaded {
+  manifest: PluginManifest;
+  dir: string;
+  reply: PluginReply;
+  /** The grants the core no longer takes, each with why ("serve:x.y: …"): it runs without them. */
+  refused?: string[];
+}
+
 export interface PluginReply {
   plugin: string;
   result: unknown;
@@ -1270,18 +1281,8 @@ export interface PluginReply {
   listens?: PluginEventName[] | null;
 }
 
-/** The events a Plugin can listen for (roster-core's plugin::EVENTS). */
-export const PLUGIN_EVENTS = [
-  "lock",
-  "unlock",
-  "host_selected",
-  "session_open",
-  "session_exit",
-  "inventory_changed",
-  "terminal_output",
-  "command_done",
-  "job_progress",
-] as const;
+/** The events a Plugin can listen for, in the core's order. */
+export const PLUGIN_EVENTS: readonly PluginEventName[] = CORE.events.map((e) => e.name);
 /** An open Session as the core's `roster.sessions.list()` gets it: a Quick Connect Session's host is null. */
 export interface OpenSession {
   session: number;
@@ -1290,4 +1291,4 @@ export interface OpenSession {
   cwd?: string | null;
 }
 
-export type PluginEventName = (typeof PLUGIN_EVENTS)[number];
+export type PluginEventName = (typeof CORE.events)[number]["name"];

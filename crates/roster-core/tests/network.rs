@@ -4,7 +4,7 @@
 
 mod common;
 
-use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -297,7 +297,10 @@ fn load_within(
     let grants: Vec<Permission> = permissions.iter().map(|p| Permission::parse(p).unwrap()).collect();
     let folder = plugin_dir(test, permissions, init);
     let (_, reply) = host
-        .load_with(&Source::Dir(folder.to_path_buf()), &grants, &config)
+        .load(
+            &Source::Dir(folder.to_path_buf()),
+            Load::new(&grants).config(config.clone()),
+        )
         .unwrap();
     (host, reply, rx, folder)
 }
@@ -1368,11 +1371,11 @@ fn load_proxied_with(
     let grants: Vec<Permission> = permissions.iter().map(|p| Permission::parse(p).unwrap()).collect();
     let folder = plugin_dir(test, permissions, FETCH);
     let (_, reply) = host
-        .load_with_proxy(
+        .load(
             &Source::Dir(folder.to_path_buf()),
-            &grants,
-            &json!({ "url": url, "req": req }),
-            proxy,
+            Load::new(&grants)
+                .config(json!({ "url": url, "req": req }))
+                .proxy(proxy),
         )
         .unwrap();
     (reply, rx, host, folder)
@@ -1852,11 +1855,9 @@ fn load_on_lock(test: &str, host: &PluginHost, permissions: &[&str], url: &str, 
     let folder = plugin_dir(test, permissions, init);
     let proxy = proxy.map(|p| roster_core::plugin::network::Proxy::parse(p).unwrap());
     let (_, reply) = host
-        .load_with_proxy(
+        .load(
             &Source::Dir(folder.to_path_buf()),
-            &grants,
-            &json!({ "url": url }),
-            proxy,
+            Load::new(&grants).config(json!({ "url": url })).proxy(proxy),
         )
         .unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);

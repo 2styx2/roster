@@ -235,13 +235,12 @@ export function tauriBackend(): Backend {
     // Plugins (ticket 23): they run in the core; only data comes back.
     pluginManifest: (path) => call("plugin_manifest", { path }),
     pluginTypes: (path) => call<string>("plugin_types", { path }),
-    pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null }),
-    pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried" }),
-    pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload }),
+    pluginLoad: (path, grants, settings, builtins) => call("plugin_load", { path, grants, settings: settings ?? null, builtins: builtins ?? null }),
+    pluginCall: (plugin, handler, args, user, builtins) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", builtins: builtins ?? null }),
+    pluginEvent: (name, payload, builtins) => call<PluginReply[]>("plugin_event", { name, payload, builtins: builtins ?? null }),
     pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg) }).then(() => undefined),
     pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin }),
     pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin }),
-    pluginBuiltins: (names) => call<null>("plugin_builtins", { names }).then(() => undefined),
     pluginRequests: () => call<Record<string, SiteRequests[]>>("plugin_requests"),
     pluginData: (names) => call<Record<string, PluginData>>("plugin_data", { names }),
     onPluginReply(onReply) {
@@ -256,13 +255,13 @@ export function tauriBackend(): Backend {
       return {
         pluginManifest: (path) => call("plugin_manifest", { path }),
         pluginTypes: (path) => call<string>("plugin_types", { path }),
-        pluginLoad: (path, grants, settings) => call("plugin_load", { path, grants, settings: settings ?? null, onDemo }),
-        pluginCall: (plugin, handler, args, user) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", onDemo }),
-        pluginEvent: (name, payload) => call<PluginReply[]>("plugin_event", { name, payload, onDemo }),
+        pluginLoad: (path, grants, settings, builtins) => call("plugin_load", { path, grants, settings: settings ?? null, builtins: builtins ?? null, onDemo }),
+        pluginCall: (plugin, handler, args, user, builtins) =>
+          call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", builtins: builtins ?? null, onDemo }),
+        pluginEvent: (name, payload, builtins) => call<PluginReply[]>("plugin_event", { name, payload, builtins: builtins ?? null, onDemo }),
         pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg), onDemo }).then(() => undefined),
         pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),
         pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin, onDemo }),
-        pluginBuiltins: (names) => call<null>("plugin_builtins", { names, onDemo }).then(() => undefined),
         onPluginReply(onReply) {
           const stop = listen<{ demo: number; reply: PluginReply }>("plugin-demo-reply", (e) => {
             if (e.payload.demo === id) onReply(e.payload.reply);

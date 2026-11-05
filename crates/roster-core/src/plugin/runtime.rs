@@ -4,14 +4,16 @@
 //! the Plugin asks of the UI during a call comes back as that call's ops (data, never HTML); a
 //! Lua function inside them is kept here and sent as `{ "handler": N }`.
 
+use super::api::EVENTS;
 use super::folder::Storage;
 use super::network::{self, Answer, Net};
+use super::op::Op;
 use super::{Builtins, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
+use crate::config::Os;
 use crate::config::lua::{self, Budget, Clock};
-use crate::config::{Os, ThemeDef};
 use mlua::chunk::ChunkMode;
-use mlua::{Function, Lua, Table, Value, Variadic};
-use serde_json::{Map, Value as Json, json};
+use mlua::{Function, Lua, Table, Value};
+use serde_json::{Value as Json, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -20,7 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const HANDLERS: &str = "roster.plugin.handlers";
-const LISTENERS: &str = "roster.plugin.listeners";
+pub(super) const LISTENERS: &str = "roster.plugin.listeners";
 /// The functions waiting for a `roster.http` or `roster.serve.request` answer, by request id.
 const REQUESTS: &str = "roster.plugin.requests";
 /// What the Plugin has added, by kind and id, as copies of what it gave (ticket 145): what the
@@ -29,13 +31,13 @@ const OWN: &str = "roster.plugin.own";
 /// The `roster.api_version` from which taking away what the Plugin never added, or naming a key
 /// context that isn't one, is an error (ticket 145, decision Q134): a Plugin written for an older
 /// one keeps the quiet removals it was written against.
-const COMPLETE_API: u32 = 5;
+pub(crate) const COMPLETE_API: u32 = 5;
 /// Where a Plugin's key bindings work (`KeyContext`).
-const KEY_CONTEXTS: &[&str] = &["leader", "list", "list_vim"];
+pub(crate) const KEY_CONTEXTS: &[&str] = &["leader", "list", "list_vim"];
 /// How deep a copy of a Plugin's table goes: past this it's a loop, or nothing a UI needs.
 const MAX_COPY_DEPTH: usize = 64;
 /// The keys `roster.http.request` takes.
-const REQUEST_KEYS: &[&str] = &["url", "method", "headers", "body", "timeout"];
+pub(super) const REQUEST_KEYS: &[&str] = &["url", "method", "headers", "body", "timeout"];
 /// How many `roster.serve.request` calls one Plugin may have waiting at once (decision Q103).
 pub(crate) const MAX_SERVE_REQUESTS: usize = 8;
 /// The most times one call (a load, an event, an answer) may wait for roster serve
@@ -49,7 +51,7 @@ pub(crate) const MAX_SERVE_WAIT: Duration = Duration::from_secs(300);
 /// The most UI ops one call may produce.
 pub(crate) const MAX_OPS: usize = 1000;
 /// The most text `roster.clipboard.copy` takes.
-const MAX_COPY: usize = 64 * 1024;
+pub(crate) const MAX_COPY: usize = 64 * 1024;
 /// The most Lua functions a Plugin may have handed over at once.
 const MAX_HANDLERS: usize = 10_000;
 /// The most timers a Plugin may have waiting at once.
@@ -59,7 +61,7 @@ pub(crate) const MAX_TIMERS: usize = 100;
 pub(crate) const DEFER_MIN_MS: u64 = 50;
 pub(crate) const EVERY_MIN_MS: u64 = 1000;
 /// The longest a timer may wait (the most a browser's setTimeout takes).
-const TIMER_MAX_MS: f64 = 2_147_483_647.0;
+pub(crate) const TIMER_MAX_MS: f64 = 2_147_483_647.0;
 
 /// `pairs` for Plugins: number keys in order, then string keys in order, then the rest, so the
 /// same state makes the same ops in the same order (decision Q96). A table's `__pairs` still wins.
@@ -105,23 +107,6 @@ pairs = function(t)
 end
 "#;
 
-/// The events a Plugin can subscribe to, and the permissions that let it (any one of them, as a
-/// manifest writes it; none listed means every Plugin may).
-pub const EVENTS: &[(&str, &[&str])] = &[
-    ("lock", &[]),
-    ("unlock", &[]),
-    ("host_selected", &["inventory.read", "terminal.read"]),
-    ("session_open", &["inventory.read", "terminal.read"]),
-    ("session_exit", &["inventory.read", "terminal.read"]),
-    ("inventory_changed", &["inventory.read"]),
-    ("terminal_output", &["terminal.read"]),
-    ("command_done", &["terminal.read"]),
-    (
-        "job_progress",
-        &["serve:mesh.job", "serve:discover.status", "serve:host.check_job"],
-    ),
-];
-
 /// The kinds of serve's jobs a `job_progress` event can be about, and the permission that lets a
 /// Plugin hear one (decision Q112f): the method it would ask about that job with anyway, so the
 /// event tells it nothing a poll wouldn't. A Host's check (ticket 108) is heard with the read
@@ -135,14 +120,14 @@ pub const JOB_KINDS: &[(&str, &str)] = &[
 /// Whether a Plugin with `grants` may get `event`.
 pub(crate) fn may_hear(event: &str, grants: &BTreeSet<Permission>) -> Result<(), String> {
     let granted = |p: &str| grants.iter().any(|g| g.to_string() == p);
-    match EVENTS.iter().find(|(name, _)| *name == event) {
+    match EVENTS.iter().find(|e| e.name == event).map(|e| e.needs) {
         None => Err(format!(
             "there's no event {event:?} (there's {})",
-            EVENTS.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+            EVENTS.iter().map(|e| e.name).collect::<Vec<_>>().join(", ")
         )),
-        Some((_, [])) => Ok(()),
-        Some((_, needs)) if needs.iter().any(|p| granted(p)) => Ok(()),
-        Some((_, needs)) => Err(format!("the {event} event needs the {} permission", needs.join(" or "))),
+        Some([]) => Ok(()),
+        Some(needs) if needs.iter().any(|p| granted(p)) => Ok(()),
+        Some(needs) => Err(format!("the {event} event needs the {} permission", needs.join(" or "))),
     }
 }
 
@@ -176,21 +161,21 @@ pub(crate) fn may_hear_this(event: &str, payload: &Json, grants: &BTreeSet<Permi
 
 /// The Inventory write methods `inventory.write` gives, by their Lua name: every one of them
 /// lands as a Pending change; Publish is never one of them.
-const WRITES: &[(&str, &str, &[&str])] = &[
+pub(super) const WRITES: &[(&str, &str, &[&str])] = &[
     ("update", "host.update", &["host", "changes"]),
     ("rename", "host.rename", &["host", "to"]),
     ("move", "host.move", &["host", "group"]),
     ("review", "host.review", &["host", "reviewed"]),
 ];
 
-struct Shared {
+pub(super) struct Shared {
     plugin: String,
     /// The `roster.api_version` its manifest says it was written for.
     api: u32,
     /// During a run, what each change to [`OWN`] replaced (kind, id, what was there), so a failed
     /// run puts it back, as its ops never reach the app.
     own_journal: RefCell<Option<Vec<(String, String, Value)>>>,
-    grants: BTreeSet<Permission>,
+    pub(super) grants: BTreeSet<Permission>,
     serve: Arc<dyn Serve>,
     clock: Rc<Clock>,
     ops: RefCell<Vec<Json>>,
@@ -198,9 +183,9 @@ struct Shared {
     handlers: RefCell<Handlers>,
     /// Whether the run is a call the user started (an action, a command, a finder item): only
     /// then may the Plugin put text on the clipboard, ask a question or run a command line.
-    user_call: Cell<bool>,
+    pub(super) user_call: Cell<bool>,
     /// The commands the Plugin added (`roster.commands.add`): `roster.cmd` may run them.
-    commands: RefCell<BTreeSet<String>>,
+    pub(super) commands: RefCell<BTreeSet<String>>,
     /// The app's built-in commands ([`super::PluginHost::set_builtins`]): never the Plugin's own.
     builtins: Builtins,
     /// Its HTTP client, with a `network:` grant (network.rs).
@@ -214,12 +199,12 @@ struct Shared {
     serving_requests: RefCell<HashMap<u64, (String, bool)>>,
     /// Whether the run carries the user's call one hop (a request's answer, or a command
     /// `roster.cmd` ran): a request or a command line made in it doesn't carry the call further.
-    carried: Cell<bool>,
+    pub(super) carried: Cell<bool>,
     /// The timers waiting, by their handler: whether each repeats.
-    timers: RefCell<HashMap<u64, bool>>,
+    pub(super) timers: RefCell<HashMap<u64, bool>>,
     /// The handlers that run as the app asks, not as the user's call: a command's `complete`, a
     /// finder's `items`, a `:check` section's `check`.
-    quiet: RefCell<BTreeSet<u64>>,
+    pub(super) quiet: RefCell<BTreeSet<u64>>,
     /// Its data folder (`roster.storage`, decision Q93): None when the host has no data folder.
     storage: Option<Result<Storage, String>>,
     /// How long this thread has waited for roster serve: the host doesn't count it.
@@ -230,7 +215,7 @@ struct Shared {
     /// This run's calls into roster serve so far, and how long they waited in all.
     served: Cell<(u32, Duration)>,
     /// The Sessions open now (`roster.sessions.list`), the host's.
-    sessions: Arc<OpenSessions>,
+    pub(super) sessions: Arc<OpenSessions>,
     /// This run's `hosts.list` answer, once a `roster.inventory` read has asked for it: the
     /// other reads of the run use it rather than ask again (decision Q127). A write forgets it.
     host_list: RefCell<Option<Json>>,
@@ -654,7 +639,7 @@ fn root_cause(e: &mlua::Error) -> &mlua::Error {
 /// A Lua value as UI data: functions become `{ "handler": N }`, owned by `owner` (handing over
 /// data for the same owner again drops its earlier functions). Errors start with `what`, the
 /// function it was handed to.
-fn data(lua: &Lua, shared: &Shared, what: &str, value: &Value, owner: &str) -> mlua::Result<Json> {
+pub(super) fn data(lua: &Lua, shared: &Shared, what: &str, value: &Value, owner: &str) -> mlua::Result<Json> {
     let handlers: Table = lua.named_registry_value(HANDLERS)?;
     let old = shared.handlers.borrow_mut().owners.remove(owner).unwrap_or_default();
     for id in &old {
@@ -681,7 +666,7 @@ fn data(lua: &Lua, shared: &Shared, what: &str, value: &Value, owner: &str) -> m
 
 /// Drops the functions every owner `which` picks handed over (a view or a Host-details section
 /// taken away).
-fn drop_owners(lua: &Lua, shared: &Shared, which: impl Fn(&str) -> bool) -> mlua::Result<()> {
+pub(super) fn drop_owners(lua: &Lua, shared: &Shared, which: impl Fn(&str) -> bool) -> mlua::Result<()> {
     let ids: Vec<u64> = {
         let mut h = shared.handlers.borrow_mut();
         let owners: Vec<String> = h.owners.keys().filter(|k| which(k)).cloned().collect();
@@ -697,7 +682,7 @@ fn drop_owners(lua: &Lua, shared: &Shared, which: impl Fn(&str) -> bool) -> mlua
 
 /// A view's spec without its table's `actions`, and those actions (`nil` for none). The
 /// Plugin's own tables are copied, not changed.
-fn table_actions(lua: &Lua, spec: &Table) -> mlua::Result<(Table, Value)> {
+pub(super) fn table_actions(lua: &Lua, spec: &Table) -> mlua::Result<(Table, Value)> {
     let Ok(Value::Table(table)) = spec.raw_get::<Value>("table") else {
         return Ok((spec.clone(), Value::Nil));
     };
@@ -721,7 +706,7 @@ fn table_actions(lua: &Lua, spec: &Table) -> mlua::Result<(Table, Value)> {
 }
 
 /// A Lua value as data for roster serve: no functions.
-fn plain(shared: &Shared, what: &str, v: &Value) -> mlua::Result<Json> {
+pub(super) fn plain(shared: &Shared, what: &str, v: &Value) -> mlua::Result<Json> {
     lua::to_json(v, &shared.budget).map_err(|e| convert_error(what, &e))
 }
 
@@ -743,7 +728,7 @@ fn convert_error(what: &str, e: &lua::ConvertError) -> mlua::Error {
 }
 
 /// Takes timer `id` out (and its function, returned): it won't run again.
-fn take_timer(lua: &Lua, shared: &Shared, id: u64) -> mlua::Result<Option<Function>> {
+pub(super) fn take_timer(lua: &Lua, shared: &Shared, id: u64) -> mlua::Result<Option<Function>> {
     shared.timers.borrow_mut().remove(&id);
     let f: Option<Function> = lua.named_registry_value::<Table>(HANDLERS)?.raw_get(id)?;
     {
@@ -757,7 +742,14 @@ fn take_timer(lua: &Lua, shared: &Shared, id: u64) -> mlua::Result<Option<Functi
 }
 
 /// Adds a timer that runs `f` after `ms` (again every `ms` when `every`); its id is its handler.
-fn add_timer(lua: &Lua, shared: &Shared, what: &str, ms: f64, f: Function, every: bool) -> mlua::Result<u64> {
+pub(super) fn add_timer(
+    lua: &Lua,
+    shared: &Shared,
+    what: &str,
+    ms: f64,
+    f: Function,
+    every: bool,
+) -> mlua::Result<u64> {
     if !ms.is_finite() || !(0.0..=TIMER_MAX_MS).contains(&ms) {
         return Err(mlua::Error::runtime(format!(
             "{what}: ms must be a number of milliseconds from 0 to {TIMER_MAX_MS}"
@@ -792,23 +784,28 @@ fn add_timer(lua: &Lua, shared: &Shared, what: &str, ms: f64, f: Function, every
     shared.timers.borrow_mut().insert(id, every);
     push(
         shared,
-        json!({ "op": "timer", "id": id.to_string(), "ms": ms, "every": every, "run": { "handler": id } }),
+        Op::Timer {
+            id: id.to_string(),
+            ms,
+            every,
+            run: json!({ "handler": id }),
+        },
     )?;
     Ok(id)
 }
 
-fn push(shared: &Shared, op: Json) -> mlua::Result<()> {
+pub(super) fn push(shared: &Shared, op: Op) -> mlua::Result<()> {
     let mut ops = shared.ops.borrow_mut();
     if ops.len() >= MAX_OPS {
         return Err(mlua::Error::runtime(format!(
             "more than {MAX_OPS} UI changes in one go"
         )));
     }
-    ops.push(op);
+    ops.push(serde_json::to_value(op).map_err(mlua::Error::external)?);
     Ok(())
 }
 
-fn check_id(what: &str, id: &str) -> mlua::Result<()> {
+pub(super) fn check_id(what: &str, id: &str) -> mlua::Result<()> {
     let ok = !id.is_empty()
         && id.len() <= 64
         && id
@@ -824,7 +821,7 @@ fn check_id(what: &str, id: &str) -> mlua::Result<()> {
 }
 
 /// The table of what the Plugin has of one kind (`"status"`, `"key:leader"`, `"details:reach"`).
-fn own_kind(lua: &Lua, kind: &str) -> mlua::Result<Table> {
+pub(super) fn own_kind(lua: &Lua, kind: &str) -> mlua::Result<Table> {
     let own: Table = lua.named_registry_value(OWN)?;
     if let Some(t) = own.raw_get::<Option<Table>>(kind)? {
         return Ok(t);
@@ -835,7 +832,7 @@ fn own_kind(lua: &Lua, kind: &str) -> mlua::Result<Table> {
 }
 
 /// Records that the Plugin has `value` as `kind` `id` (nil: it has none now), undone if the run fails.
-fn own_put(lua: &Lua, s: &Shared, kind: &str, id: &str, value: Value) -> mlua::Result<()> {
+pub(super) fn own_put(lua: &Lua, s: &Shared, kind: &str, id: &str, value: Value) -> mlua::Result<()> {
     let t = own_kind(lua, kind)?;
     let before: Value = t.raw_get(id)?;
     if let Some(j) = s.own_journal.borrow_mut().as_mut() {
@@ -845,12 +842,12 @@ fn own_put(lua: &Lua, s: &Shared, kind: &str, id: &str, value: Value) -> mlua::R
 }
 
 /// What the Plugin has as `kind` `id`, as it was recorded (nil: none).
-fn own_get(lua: &Lua, kind: &str, id: &str) -> mlua::Result<Value> {
+pub(super) fn own_get(lua: &Lua, kind: &str, id: &str) -> mlua::Result<Value> {
     own_kind(lua, kind)?.raw_get(id)
 }
 
 /// The ids the Plugin has of `kind`, sorted.
-fn own_ids(lua: &Lua, kind: &str) -> mlua::Result<Vec<String>> {
+pub(super) fn own_ids(lua: &Lua, kind: &str) -> mlua::Result<Vec<String>> {
     let mut ids = Vec::new();
     for pair in own_kind(lua, kind)?.pairs::<String, Value>() {
         ids.push(pair?.0);
@@ -870,7 +867,7 @@ fn unjournal(lua: &Lua, journal: Vec<(String, String, Value)>) -> mlua::Result<(
 /// A copy of a Plugin's value: tables copied all the way down (without metatables), so neither
 /// what it changes later in the one it gave nor in one a read gave back reaches the other.
 /// Functions stay the same functions.
-fn copy(lua: &Lua, v: &Value) -> mlua::Result<Value> {
+pub(super) fn copy(lua: &Lua, v: &Value) -> mlua::Result<Value> {
     fn go(lua: &Lua, v: &Value, depth: usize) -> mlua::Result<Value> {
         let Value::Table(t) = v else { return Ok(v.clone()) };
         if depth > MAX_COPY_DEPTH {
@@ -890,7 +887,7 @@ fn copy(lua: &Lua, v: &Value) -> mlua::Result<Value> {
 
 /// For something the Plugin never added: an error at the caller's line from api 5 on; for a
 /// Plugin written for an older one, nothing (its removal goes on and does nothing, as it did).
-fn not_had(s: &Shared, what: &str, why: String) -> mlua::Result<()> {
+pub(super) fn not_had(s: &Shared, what: &str, why: String) -> mlua::Result<()> {
     if s.api >= COMPLETE_API {
         Err(mlua::Error::runtime(format!("{what}: {why}")))
     } else {
@@ -899,7 +896,15 @@ fn not_had(s: &Shared, what: &str, why: String) -> mlua::Result<()> {
 }
 
 /// Whether the Plugin has `kind` `id`; if not, [`not_had`] says so, naming the collection.
-fn must_have(lua: &Lua, s: &Shared, what: &str, module: &str, noun: &str, kind: &str, id: &str) -> mlua::Result<()> {
+pub(super) fn must_have(
+    lua: &Lua,
+    s: &Shared,
+    what: &str,
+    module: &str,
+    noun: &str,
+    kind: &str,
+    id: &str,
+) -> mlua::Result<()> {
     if own_get(lua, kind, id)?.is_nil() {
         not_had(
             s,
@@ -912,7 +917,7 @@ fn must_have(lua: &Lua, s: &Shared, what: &str, module: &str, noun: &str, kind: 
 
 /// Takes the Plugin's binding of `keys` in `context` off its record; one it never set is
 /// [`not_had`].
-fn unbind(lua: &Lua, s: &Shared, what: &str, context: &str, keys: &str) -> mlua::Result<()> {
+pub(super) fn unbind(lua: &Lua, s: &Shared, what: &str, context: &str, keys: &str) -> mlua::Result<()> {
     let kind = format!("key:{context}");
     if own_get(lua, &kind, keys)?.is_nil() {
         not_had(
@@ -925,7 +930,7 @@ fn unbind(lua: &Lua, s: &Shared, what: &str, context: &str, keys: &str) -> mlua:
 }
 
 /// Takes the Plugin's badge on `host` off its record; one it never put on is [`not_had`].
-fn unbadge(lua: &Lua, s: &Shared, what: &str, host: &str) -> mlua::Result<()> {
+pub(super) fn unbadge(lua: &Lua, s: &Shared, what: &str, host: &str) -> mlua::Result<()> {
     if own_get(lua, "badge", host)?.is_nil() {
         not_had(
             s,
@@ -937,7 +942,7 @@ fn unbadge(lua: &Lua, s: &Shared, what: &str, host: &str) -> mlua::Result<()> {
 }
 
 /// The ids of the Host-details sections the Plugin has on at least one Host, sorted.
-fn details_ids(lua: &Lua) -> mlua::Result<Vec<String>> {
+pub(super) fn details_ids(lua: &Lua) -> mlua::Result<Vec<String>> {
     let own: Table = lua.named_registry_value(OWN)?;
     let mut ids = Vec::new();
     for pair in own.pairs::<String, Table>() {
@@ -954,7 +959,7 @@ fn details_ids(lua: &Lua) -> mlua::Result<Vec<String>> {
 
 /// A key context: always checked by the reads, and by `set` and `del` from api 5 (for an older
 /// Plugin the app refuses one with a notice, as it did). False: not one, and not an error.
-fn key_context(s: &Shared, what: &str, context: &str, always: bool) -> mlua::Result<bool> {
+pub(super) fn key_context(s: &Shared, what: &str, context: &str, always: bool) -> mlua::Result<bool> {
     if KEY_CONTEXTS.contains(&context) {
         return Ok(true);
     }
@@ -970,7 +975,7 @@ fn key_context(s: &Shared, what: &str, context: &str, always: bool) -> mlua::Res
 const USER_ONLY: &str = "only while the user runs one of your actions, commands or finder items";
 
 /// Errors unless the run is a call the user started (an action, a command, a finder item).
-fn user_only(shared: &Shared, what: &str) -> mlua::Result<()> {
+pub(super) fn user_only(shared: &Shared, what: &str) -> mlua::Result<()> {
     if shared.user_call.get() {
         Ok(())
     } else {
@@ -980,7 +985,7 @@ fn user_only(shared: &Shared, what: &str) -> mlua::Result<()> {
 
 /// `opts.quiet`, when a Plugin gives it (`roster.echo`, `roster.notify`; api 4): true, false or
 /// left out.
-fn quiet_opt(opts: Option<&Table>, what: &str) -> mlua::Result<Option<bool>> {
+pub(super) fn quiet_opt(opts: Option<&Table>, what: &str) -> mlua::Result<Option<bool>> {
     let Some(t) = opts else { return Ok(None) };
     match t.raw_get::<Value>("quiet")? {
         Value::Nil => Ok(None),
@@ -993,7 +998,7 @@ fn quiet_opt(opts: Option<&Table>, what: &str) -> mlua::Result<Option<bool>> {
 /// the app says it has ([`Shared::builtins`]), one of roster's a Plugin may run
 /// ([`super::api::COMMANDS`], which keep the permission they need), nor one that changes trust or
 /// writes ([`super::api::ROSTER_ONLY`], refused even before the app has said).
-fn own_command(s: &Shared, word: &str) -> bool {
+pub(super) fn own_command(s: &Shared, word: &str) -> bool {
     s.commands.borrow().contains(word)
         && !super::api::ROSTER_ONLY.contains(&word)
         && !super::api::COMMANDS.iter().any(|c| c.name == word)
@@ -1005,7 +1010,7 @@ fn own_command(s: &Shared, word: &str) -> bool {
 /// Why `word`, a command the Plugin added, can't run yet: the app hasn't told the core its
 /// built-in commands, so it can't tell the Plugin's own from roster's (issue #184). None once it
 /// has, or for a word that isn't the Plugin's or is one of roster's either way.
-fn not_yet(s: &Shared, word: &str) -> Option<String> {
+pub(super) fn not_yet(s: &Shared, word: &str) -> Option<String> {
     let unknown = s.builtins.read().map_or(true, |b| b.is_none());
     (unknown
         && s.commands.borrow().contains(word)
@@ -1014,7 +1019,7 @@ fn not_yet(s: &Shared, word: &str) -> Option<String> {
     .then(|| format!(":{word} can't run yet: the app hasn't told roster its own commands"))
 }
 
-/// Whether a Plugin with `grants` may run roster's command `word` (api.rs's COMMANDS). Its own
+/// Whether a Plugin with `grants` may run roster's command `word` (plugin/api's COMMANDS). Its own
 /// commands are the caller's to allow.
 pub(crate) fn command_allowed(word: &str, grants: &BTreeSet<Permission>) -> Result<(), String> {
     let Some(rule) = super::api::COMMANDS.iter().find(|c| c.name == word) else {
@@ -1036,7 +1041,7 @@ pub(crate) fn command_allowed(word: &str, grants: &BTreeSet<Permission>) -> Resu
     }
 }
 
-fn need(shared: &Shared, p: &Permission, what: &str) -> mlua::Result<()> {
+pub(super) fn need(shared: &Shared, p: &Permission, what: &str) -> mlua::Result<()> {
     if shared.grants.contains(p) {
         Ok(())
     } else {
@@ -1045,13 +1050,13 @@ fn need(shared: &Shared, p: &Permission, what: &str) -> mlua::Result<()> {
 }
 
 /// Calls roster serve, giving the time spent waiting back to the Plugin's run.
-fn serve(lua: &Lua, shared: &Shared, what: &str, method: &str, params: Json) -> mlua::Result<Value> {
+pub(super) fn serve(lua: &Lua, shared: &Shared, what: &str, method: &str, params: Json) -> mlua::Result<Value> {
     answer(lua, what, ask_serve(shared, method, params))
 }
 
 /// roster serve's answer, before it's Lua. A method that acts on the network or the Inventory
 /// (`roster.serve.call`'s and `inventory.write`'s alike) is asked only in the user's call (Q100).
-fn ask_serve(shared: &Shared, method: &str, params: Json) -> Result<Json, String> {
+pub(super) fn ask_serve(shared: &Shared, method: &str, params: Json) -> Result<Json, String> {
     if super::permission::serve_user_only(method) && !shared.user_call.get() {
         return Err(USER_ONLY.into());
     }
@@ -1203,7 +1208,11 @@ fn redact_text(text: &str) -> Option<String> {
 
 /// `read` of serve's `hosts.list`, asked once a run: `roster.inventory.hosts()` and `.groups()` in
 /// one call are one read (decision Q127). An error names `what`.
-fn with_host_list<T>(shared: &Shared, what: &str, read: impl FnOnce(&Json) -> mlua::Result<T>) -> mlua::Result<T> {
+pub(super) fn with_host_list<T>(
+    shared: &Shared,
+    what: &str,
+    read: impl FnOnce(&Json) -> mlua::Result<T>,
+) -> mlua::Result<T> {
     if shared.host_list.borrow().is_none() {
         let list =
             ask_serve(shared, "hosts.list", json!({})).map_err(|m| mlua::Error::runtime(format!("{what}: {m}")))?;
@@ -1217,7 +1226,7 @@ fn with_host_list<T>(shared: &Shared, what: &str, read: impl FnOnce(&Json) -> ml
 }
 
 /// roster serve's answer as Lua, or an error naming `what` called it.
-fn answer(lua: &Lua, what: &str, result: Result<Json, String>) -> mlua::Result<Value> {
+pub(super) fn answer(lua: &Lua, what: &str, result: Result<Json, String>) -> mlua::Result<Value> {
     match result {
         Ok(v) => to_lua(lua, &v),
         Err(message) => Err(mlua::Error::runtime(format!("{what}: {message}"))),
@@ -1226,7 +1235,11 @@ fn answer(lua: &Lua, what: &str, result: Result<Json, String>) -> mlua::Result<V
 
 /// Runs `work` on the Plugin's data folder, giving the time the disk took back to its run (like
 /// waiting for roster serve); an error names `what`.
-fn on_disk<T>(shared: &Shared, what: &str, work: impl FnOnce(&Storage) -> Result<T, String>) -> mlua::Result<T> {
+pub(super) fn on_disk<T>(
+    shared: &Shared,
+    what: &str,
+    work: impl FnOnce(&Storage) -> Result<T, String>,
+) -> mlua::Result<T> {
     let storage = match &shared.storage {
         None => {
             return Err(mlua::Error::runtime(format!(
@@ -1244,7 +1257,7 @@ fn on_disk<T>(shared: &Shared, what: &str, work: impl FnOnce(&Storage) -> Result
 
 /// Checks and starts a request for `roster.http`; `done` gets the answer later.
 #[allow(clippy::too_many_arguments)] // the request's parts, as Lua gave them
-fn request(
+pub(super) fn request(
     lua: &Lua,
     s: &Shared,
     what: &str,
@@ -1277,7 +1290,13 @@ fn request(
 
 /// Checks and starts `roster.serve.request`: roster serve is asked on a thread of its own, and
 /// `done` gets the answer later on the Plugin's thread. The same rules as `roster.serve.call`.
-fn serve_request(lua: &Lua, s: &Shared, method: String, params: Option<Value>, done: Function) -> mlua::Result<()> {
+pub(super) fn serve_request(
+    lua: &Lua,
+    s: &Shared,
+    method: String,
+    params: Option<Value>,
+    done: Function,
+) -> mlua::Result<()> {
     let what = format!("roster.serve.request {method}");
     need(s, &Permission::Serve(method.clone()), "roster.serve.request")?;
     if super::permission::serve_user_only(&method) {
@@ -1296,7 +1315,14 @@ fn serve_request(lua: &Lua, s: &Shared, method: String, params: Option<Value>, d
 
 /// Asks roster serve `method` on a thread of its own; `done` gets the answer later on the Plugin's
 /// thread, `(result)` or `(nil, "WHAT: why")`. At most [`MAX_SERVE_REQUESTS`] wait at once.
-fn ask_later(lua: &Lua, s: &Shared, what: String, method: String, params: Json, done: Function) -> mlua::Result<()> {
+pub(super) fn ask_later(
+    lua: &Lua,
+    s: &Shared,
+    what: String,
+    method: String,
+    params: Json,
+    done: Function,
+) -> mlua::Result<()> {
     let Some(post) = &s.post else {
         return Err(mlua::Error::runtime(format!("{what}: not granted (serve:{method})")));
     };
@@ -1326,7 +1352,7 @@ fn ask_later(lua: &Lua, s: &Shared, what: String, method: String, params: Json, 
 
 /// A collection's reads (api 5): `get(id)`, a copy of what the Plugin gave as `kind` `id` (nil:
 /// none); `has(id)`; `list()`, its ids, sorted.
-fn reads(lua: &Lua, t: &Table, module: &str, kind: &str) -> mlua::Result<()> {
+pub(super) fn reads(lua: &Lua, t: &Table, module: &str, kind: &str) -> mlua::Result<()> {
     let (getting, having) = (format!("roster.{module}.get"), format!("roster.{module}.has"));
     let k = kind.to_string();
     t.raw_set(
@@ -1373,836 +1399,44 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     me.raw_set("config", config)?;
     roster.raw_set("plugin", me)?;
 
-    // A function `f(lua, shared, args)` in the module.
-    macro_rules! func {
-        ($table:expr, $name:expr, |$lua:ident, $s:ident, $args:tt : $ty:ty| $body:block) => {{
-            let $s = Rc::clone(shared);
-            $table.raw_set(
-                $name,
-                lua.create_function(move |$lua, $args: $ty| {
-                    let $s: &Shared = &$s;
-                    $body
-                })?,
-            )?;
-        }};
-    }
-
-    // Commands: `:NAME ARGS` runs `run({ args = "ARGS", words = {…} })`, or a command line.
-    let commands = lua.create_table()?;
-    func!(commands, "add", |lua, s, (name, spec): (String, Table)| {
-        check_id("roster.commands.add", &name)?;
-        let given = Value::Table(spec.clone());
-        let spec = data(
-            lua,
-            s,
-            "roster.commands.add",
-            &Value::Table(spec),
-            &format!("command:{name}"),
-        )?;
-        let desc = spec.get("desc").and_then(Json::as_str).unwrap_or("").to_string();
-        let Some(run) = spec.get("run").filter(|r| r.is_string() || r.get("handler").is_some()) else {
-            return Err(mlua::Error::runtime(
-                "roster.commands.add: `run` must be a function or a command line",
-            ));
-        };
-        let mut op = json!({ "op": "command", "name": name, "desc": desc, "run": run });
-        // `complete` (api 3): a function the app calls as the user types, never a user's call.
-        match spec.get("complete") {
-            None => {}
-            Some(c) => match c.get("handler").and_then(Json::as_u64) {
-                Some(id) => {
-                    s.quiet.borrow_mut().insert(id);
-                    op["complete"] = c.clone();
-                }
-                None => {
-                    return Err(mlua::Error::runtime(
-                        "roster.commands.add: `complete` must be a function: fun(arg: string): string[]",
-                    ));
-                }
-            },
-        }
-        s.commands.borrow_mut().insert(name.clone());
-        own_put(lua, s, "command", &name, copy(lua, &given)?)?;
-        push(s, op)
-    });
-    func!(commands, "remove", |lua, s, name: String| {
-        let what = "roster.commands.remove";
-        check_id(what, &name)?;
-        must_have(lua, s, what, "commands", "command", "command", &name)?;
-        s.commands.borrow_mut().remove(&name);
-        own_put(lua, s, "command", &name, Value::Nil)?;
-        push(s, json!({ "op": "remove", "kind": "command", "id": name }))
-    });
-    reads(lua, &commands, "commands", "command")?;
-    roster.raw_set("commands", commands)?;
-
-    // Key bindings, as init.lua's: the action is a command line (one of the Plugin's commands).
-    let keymap = lua.create_table()?;
-    func!(
-        keymap,
-        "set",
-        |lua, s, (context, keys, action): (String, String, Value)| {
-            let what = "roster.keymap.set";
-            let known = key_context(s, what, &context, false)?;
-            let action = match action {
-                Value::String(a) => Json::String(a.to_str()?.to_string()),
-                // `false` is `del`'s old spelling (api 3), and checked as `del` is.
-                Value::Boolean(false) => {
-                    if known {
-                        unbind(lua, s, what, &context, &keys)?;
-                    }
-                    Json::Bool(false)
-                }
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "roster.keymap.set: the action is a command line such as \"alerts\" (add a command for a function)",
-                    ));
-                }
-            };
-            if known && let Json::String(a) = &action {
-                own_put(
-                    lua,
-                    s,
-                    &format!("key:{context}"),
-                    &keys,
-                    Value::String(lua.create_string(a)?),
-                )?;
-            }
-            push(
-                s,
-                json!({ "op": "key", "context": context, "keys": keys, "action": action }),
-            )
-        }
-    );
-    // Takes the Plugin's own binding off (api 3); `set(…, false)` did the same before it.
-    func!(keymap, "del", |lua, s, (context, keys): (String, String)| {
-        if key_context(s, "roster.keymap.del", &context, false)? {
-            unbind(lua, s, "roster.keymap.del", &context, &keys)?;
-        }
-        push(
-            s,
-            json!({ "op": "key", "context": context, "keys": keys, "action": false }),
-        )
-    });
-    // Its own bindings (api 5), as init.lua's `roster.keymap` reads the Config's.
-    func!(keymap, "get", |lua, s, (context, keys): (String, String)| {
-        key_context(s, "roster.keymap.get", &context, true)?;
-        own_get(lua, &format!("key:{context}"), &keys)
-    });
-    func!(keymap, "has", |lua, s, (context, keys): (String, String)| {
-        key_context(s, "roster.keymap.has", &context, true)?;
-        Ok(!own_get(lua, &format!("key:{context}"), &keys)?.is_nil())
-    });
-    func!(keymap, "list", |lua, s, context: String| {
-        key_context(s, "roster.keymap.list", &context, true)?;
-        copy(lua, &Value::Table(own_kind(lua, &format!("key:{context}"))?))
-    });
-    roster.raw_set("keymap", keymap)?;
-
-    // Themes, checked as init.lua's `themes` are.
-    let themes = lua.create_table()?;
-    func!(themes, "define", |lua, s, (id, theme): (String, Table)| {
-        check_id("roster.themes.define", &id)?;
-        let given = Value::Table(theme.clone());
-        let value = data(lua, s, "roster.themes.define", &Value::Table(theme), "theme")?;
-        let def: ThemeDef = serde_json::from_value(value)
-            .map_err(|e| mlua::Error::runtime(format!("roster.themes.define {id:?}: {e}")))?;
-        let def = serde_json::to_value(def).map_err(mlua::Error::external)?;
-        own_put(lua, s, "theme", &id, copy(lua, &given)?)?;
-        push(s, json!({ "op": "theme", "id": id, "theme": def }))
-    });
-    func!(themes, "remove", |lua, s, id: String| {
-        let what = "roster.themes.remove";
-        check_id(what, &id)?;
-        if own_get(lua, "theme", &id)?.is_nil() {
-            not_had(
-                s,
-                what,
-                format!(
-                    "the Plugin has no Theme {id:?} (roster.themes.list() names its own; roster.themes.define adds one)"
-                ),
-            )?;
-        }
-        own_put(lua, s, "theme", &id, Value::Nil)?;
-        push(s, json!({ "op": "remove", "kind": "theme", "id": id }))
-    });
-    reads(lua, &themes, "themes", "theme")?;
-    roster.raw_set("themes", themes)?;
-
-    // UI pieces the core draws: a Sidebar section, a status segment, a finder source, a help
-    // page, a `:check` section, a tutorial (`:tutor`), a toolbar control, a progress (ticket 78). `set` adds or replaces one; `remove` takes it away.
-    for (module, kind, noun) in [
-        ("sidebar", "section", "Sidebar section"),
-        ("status", "status", "status segment"),
-        ("finders", "finder", "finder"),
-        ("help", "help", "help page"),
-        ("health", "health", "`:check` section"),
-        ("tutor", "tutor", "tutorial"),
-        ("toolbar", "toolbar", "toolbar control"),
-        ("progress", "progress", "progress"),
-    ] {
-        let t = lua.create_table()?;
-        let what = format!("roster.{module}.set");
-        func!(t, "set", |lua, s, (id, spec): (String, Table)| {
-            check_id(&what, &id)?;
-            let given = Value::Table(spec.clone());
-            let spec = data(lua, s, &what, &Value::Table(spec), &format!("{kind}:{id}"))?;
-            // What the app runs on its own, never the user's choice: a finder's `items` as it
-            // opens (whoever opened it, another Plugin's `roster.cmd` included) and a `:check`
-            // section's `check`.
-            let unasked = match kind {
-                "finder" => spec.get("items"),
-                "health" => spec.get("check"),
-                _ => None,
-            };
-            if let Some(id) = unasked.and_then(|f| f.get("handler")).and_then(Json::as_u64) {
-                s.quiet.borrow_mut().insert(id);
-            }
-            let mut op = Map::new();
-            op.insert("op".into(), kind.into());
-            own_put(lua, s, kind, &id, copy(lua, &given)?)?;
-            op.insert("id".into(), id.into());
-            op.insert("spec".into(), spec);
-            push(s, Json::Object(op))
-        });
-        let removing = format!("roster.{module}.remove");
-        func!(t, "remove", |lua, s, id: String| {
-            check_id(&removing, &id)?;
-            must_have(lua, s, &removing, module, noun, kind, &id)?;
-            own_put(lua, s, kind, &id, Value::Nil)?;
-            push(s, json!({ "op": "remove", "kind": kind, "id": id }))
-        });
-        reads(lua, &t, module, kind)?;
-        roster.raw_set(module, t)?;
-    }
-
-    // A `:check` section's lines for a run whose `check` returned "later" (decision Q112h): from a
-    // request's answer, so the check never waits for serve on the Plugin's thread.
-    {
-        let health: Table = roster.raw_get("health")?;
-        func!(health, "answer", |_lua, s, (check, lines): (u64, Value)| {
-            let checks = plain(s, "roster.health.answer: lines", &lines)?;
-            push(s, json!({ "op": "health_answer", "check": check, "checks": checks }))
-        });
-    }
-
-    // A badge on a Host's rows ("2 alerts"); `remove` (or `set` with nil, its old spelling, checked
-    // as `remove` is) takes it off. Its own badges read back by Host (api 5, #262).
-    let badges = lua.create_table()?;
-    func!(
-        badges,
-        "set",
-        |lua, s, (host, text): (String, Option<mlua::LuaString>)| {
-            let text = text.map(|t| t.to_string_lossy());
-            match &text {
-                Some(t) => own_put(lua, s, "badge", &host, Value::String(lua.create_string(t)?))?,
-                None => unbadge(lua, s, "roster.badges.set", &host)?,
-            }
-            push(s, json!({ "op": "badge", "host": host, "text": text }))
-        }
-    );
-    func!(badges, "remove", |lua, s, host: String| {
-        unbadge(lua, s, "roster.badges.remove", &host)?;
-        push(s, json!({ "op": "badge", "host": host, "text": null }))
-    });
-    func!(badges, "get", |lua, _s, host: String| { own_get(lua, "badge", &host) });
-    func!(badges, "has", |lua, _s, host: String| {
-        Ok(!own_get(lua, "badge", &host)?.is_nil())
-    });
-    func!(badges, "list", |lua, _s, (): ()| {
-        lua.create_sequence_from(own_ids(lua, "badge")?)
-    });
-    roster.raw_set("badges", badges)?;
-
-    // A floating window over the terminal: a title and lines of text; `close` hides it.
-    let float = lua.create_table()?;
-    func!(float, "open", |lua, s, spec: Table| {
-        let spec = data(lua, s, "roster.float.open", &Value::Table(spec), "float")?;
-        push(s, json!({ "op": "float", "spec": spec }))
-    });
-    func!(float, "close", |_lua, s, (): ()| {
-        push(s, json!({ "op": "float", "spec": null }))
-    });
-    roster.raw_set("float", float)?;
-
-    // Views (ticket 76): a side panel or a full view of text, facts and a table, which the app
-    // draws. Rows are plain data; a table's actions are functions that get the row. Opening one
-    // is the user's call (an action, a command, a finder item), never the Plugin's on its own.
-    let views = lua.create_table()?;
-    func!(views, "set", |lua, s, (id, spec): (String, Table)| {
-        check_id("roster.views.set", &id)?;
-        // A table's actions are owned apart from the rest (its `open`), as an update's are, so an
-        // update that replaces them drops their functions at once (ticket 85).
-        let (spec, actions) = table_actions(lua, &spec)?;
-        let mut spec = data(lua, s, "roster.views.set", &Value::Table(spec), &format!("view:{id}"))?;
-        let actions = data(
-            lua,
-            s,
-            "roster.views.set: table.actions",
-            &actions,
-            &format!("view:{id}:actions"),
-        )?;
-        if !actions.is_null()
-            && let Some(table) = spec.get_mut("table").and_then(Json::as_object_mut)
-        {
-            table.insert("actions".into(), actions);
-        }
-        own_put(lua, s, "view", &id, Value::Boolean(true))?;
-        push(s, json!({ "op": "view", "id": id, "spec": spec }))
-    });
-    func!(views, "update", |lua, s, (id, changes): (String, Table)| {
-        check_id("roster.views.update", &id)?;
-        must_have(lua, s, "roster.views.update", "views", "view", "view", &id)?;
-        // Plain data, but for the table's `actions` (ticket 78), whose functions replace the ones
-        // the set or an earlier update gave; `open` stays the set's.
-        let rest = lua.create_table()?;
-        let mut actions = None;
-        for pair in changes.pairs::<Value, Value>() {
-            let (k, v) = pair?;
-            if matches!(&k, Value::String(k) if k.as_bytes().as_ref() == b"actions") {
-                actions = Some(v);
-            } else {
-                rest.raw_set(k, v)?;
-            }
-        }
-        let mut changes = plain(s, &format!("roster.views.update {id:?}"), &Value::Table(rest)).map_err(|e| {
-            mlua::Error::runtime(format!(
-                "{} (an update is plain data: functions go in roster.views.set, or a table's actions)",
-                lua::error_text(&e)
-            ))
-        })?;
-        if let Some(actions) = actions {
-            let actions = data(lua, s, "roster.views.update", &actions, &format!("view:{id}:actions"))?;
-            if let Json::Object(m) = &mut changes {
-                m.insert("actions".into(), actions);
-            } else {
-                changes = json!({ "actions": actions });
-            }
-        }
-        push(s, json!({ "op": "view_update", "id": id, "changes": changes }))
-    });
-    func!(views, "open", |lua, s, (id, opts): (String, Value)| {
-        check_id("roster.views.open", &id)?;
-        must_have(lua, s, "roster.views.open", "views", "view", "view", &id)?;
-        if !s.user_call.get() {
-            return Err(mlua::Error::runtime(
-                "roster.views.open: only while the user runs one of your actions, commands or finder items",
-            ));
-        }
-        let mut op = json!({ "op": "view_open", "id": id });
-        // At a node of its graph or a row of its table (T99, api 4).
-        let opts = match opts {
-            Value::Nil => None,
-            Value::Table(t) => Some(t),
-            _ => {
-                return Err(mlua::Error::runtime(
-                    "roster.views.open: opts is a table, as { select = ID }",
-                ));
-            }
-        };
-        if let Some(opts) = opts {
-            match opts.raw_get::<Value>("select")? {
-                Value::Nil => {}
-                Value::String(v) => op["select"] = Json::String(v.to_string_lossy().to_string()),
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "roster.views.open: select is the id of a node or row (a string)",
-                    ));
-                }
-            }
-        }
-        push(s, op)
-    });
-    func!(views, "close", |lua, s, id: String| {
-        check_id("roster.views.close", &id)?;
-        must_have(lua, s, "roster.views.close", "views", "view", "view", &id)?;
-        push(s, json!({ "op": "view_close", "id": id }))
-    });
-    func!(views, "remove", |lua, s, id: String| {
-        check_id("roster.views.remove", &id)?;
-        must_have(lua, s, "roster.views.remove", "views", "view", "view", &id)?;
-        let (owner, actions) = (format!("view:{id}"), format!("view:{id}:actions"));
-        drop_owners(lua, s, |k| k == owner || k == actions)?;
-        own_put(lua, s, "view", &id, Value::Nil)?;
-        push(s, json!({ "op": "remove", "kind": "view", "id": id }))
-    });
-    // Which views it has (api 5). A view's `get` waits for the core to keep each view as its
-    // updates leave it (a follow-up of ticket 145).
-    func!(views, "has", |lua, _s, id: String| {
-        check_id("roster.views.has", &id)?;
-        Ok(!own_get(lua, "view", &id)?.is_nil())
-    });
-    func!(views, "list", |lua, _s, (): ()| {
-        lua.create_sequence_from(own_ids(lua, "view")?)
-    });
-    roster.raw_set("views", views)?;
-
-    // Sections of a Host's details (ticket 76), set per Host; nil takes one Host's away.
-    let details = lua.create_table()?;
-    func!(
-        details,
-        "set",
-        |lua, s, (id, host, spec): (String, String, Option<Table>)| {
-            check_id("roster.details.set", &id)?;
-            let owner = format!("details:{id}@{host}");
-            let kind = format!("details:{id}");
-            let spec = match spec {
-                Some(t) => {
-                    let given = Value::Table(t.clone());
-                    let spec = data(lua, s, "roster.details.set", &Value::Table(t), &owner)?;
-                    own_put(lua, s, &kind, &host, copy(lua, &given)?)?;
-                    spec
-                }
-                None => {
-                    drop_owners(lua, s, |k| k == owner)?;
-                    own_put(lua, s, &kind, &host, Value::Nil)?;
-                    Json::Null
-                }
-            };
-            push(s, json!({ "op": "details", "id": id, "host": host, "spec": spec }))
-        }
-    );
-    func!(details, "remove", |lua, s, id: String| {
-        let what = "roster.details.remove";
-        check_id(what, &id)?;
-        let kind = format!("details:{id}");
-        let hosts = own_ids(lua, &kind)?;
-        if hosts.is_empty() {
-            not_had(
-                s,
-                what,
-                format!("the Plugin has no Host-details section {id:?} (roster.details.list() names its own)"),
-            )?;
-        }
-        let prefix = format!("details:{id}@");
-        drop_owners(lua, s, |k| k.starts_with(&prefix))?;
-        for host in hosts {
-            own_put(lua, s, &kind, &host, Value::Nil)?;
-        }
-        push(s, json!({ "op": "remove", "kind": "details", "id": id }))
-    });
-    // Its sections (api 5): one Host's, whether it has one (on a Host, or on any), and which.
-    func!(details, "get", |lua, _s, (id, host): (String, String)| {
-        check_id("roster.details.get", &id)?;
-        copy(lua, &own_get(lua, &format!("details:{id}"), &host)?)
-    });
-    func!(details, "has", |lua, _s, (id, host): (String, Option<String>)| {
-        check_id("roster.details.has", &id)?;
-        let kind = format!("details:{id}");
-        Ok(match host {
-            Some(h) => !own_get(lua, &kind, &h)?.is_nil(),
-            None => !own_ids(lua, &kind)?.is_empty(),
-        })
-    });
-    func!(details, "list", |lua, _s, id: Option<String>| {
-        let names = match id {
-            None => details_ids(lua)?,
-            Some(id) => {
-                check_id("roster.details.list", &id)?;
-                own_ids(lua, &format!("details:{id}"))?
-            }
-        };
-        lua.create_sequence_from(names)
-    });
-    roster.raw_set("details", details)?;
-
-    // The clipboard: only while the user runs one of the Plugin's actions, commands or finder
-    // items, never on its own (at load, on an event), so it can't swap what you copied.
-    let clipboard = lua.create_table()?;
-    func!(clipboard, "copy", |_lua, s, text: mlua::LuaString| {
-        let text = text.to_string_lossy();
-        if !s.user_call.get() {
-            return Err(mlua::Error::runtime(
-                "roster.clipboard.copy: only while the user runs one of your actions, commands or finder items",
-            ));
-        }
-        if text.len() > MAX_COPY {
-            return Err(mlua::Error::runtime(format!(
-                "roster.clipboard.copy: the text is over {MAX_COPY} bytes"
-            )));
-        }
-        push(s, json!({ "op": "copy", "text": text }))
-    });
-    roster.raw_set("clipboard", clipboard)?;
-
-    // A question the app draws and the user answers (ticket 78): `run` is called only when they
-    // confirm, `cancel` when they don't. Only in a call the user started, so a question never
-    // comes up on its own; the Plugin can't draw one itself or answer it.
-    func!(roster, "confirm", |lua, s, spec: Table| {
-        user_only(s, "roster.confirm")?;
-        let spec = data(lua, s, "roster.confirm", &Value::Table(spec), "confirm")?;
-        if spec.get("run").and_then(|r| r.get("handler")).is_none() {
-            return Err(mlua::Error::runtime(
-                "roster.confirm: `run` must be a function: what happens when the user confirms",
-            ));
-        }
-        push(s, json!({ "op": "confirm", "spec": spec }))
-    });
-
-    // A command line, as typed after `:` (ticket 78): the Plugin's own commands and the few of
-    // roster's that api.rs's COMMANDS lists, each only with the permission it needs there. Only
-    // in a call the user started.
-    func!(roster, "cmd", |_lua, s, line: mlua::LuaString| {
-        user_only(s, "roster.cmd")?;
-        let line = line.to_string_lossy();
-        let line = line.trim();
-        let Some(word) = line.split_whitespace().next() else {
-            return Err(mlua::Error::runtime(
-                "roster.cmd: which command? (a line such as \"finder alerts\")",
-            ));
-        };
-        if line.len() > 500 {
-            return Err(mlua::Error::runtime("roster.cmd: the line is over 500 characters"));
-        }
-        if let Some(why) = not_yet(s, word) {
-            return Err(mlua::Error::runtime(format!("roster.cmd: {why}")));
-        }
-        if !own_command(s, word) {
-            command_allowed(word, &s.grants).map_err(|m| mlua::Error::runtime(format!("roster.cmd: {m}")))?;
-        }
-        // Made in a run that carries the user's call already (issue #183): the app runs the
-        // Plugin's own command it names as the app's call, so a chain stops after one hop.
-        if s.carried.get() {
-            return push(s, json!({ "op": "cmd", "line": line, "user": false }));
-        }
-        push(s, json!({ "op": "cmd", "line": line }))
-    });
-
-    // A line on the message line, as roster's own commands answer (api 3): only in a call the
-    // user started, so it always answers something they did. `quiet = true` (api 4) marks a
-    // routine confirmation, which follows `ui.messages` as roster's own do (ticket 118).
-    func!(
-        roster,
-        "echo",
-        |_lua, s, (text, opts): (mlua::LuaString, Option<Table>)| {
-            user_only(s, "roster.echo")?;
-            let text = text.to_string_lossy();
-            let mut op = json!({ "op": "echo", "text": text });
-            if quiet_opt(opts.as_ref(), "roster.echo")? == Some(true) {
-                op["quiet"] = Json::Bool(true);
-            }
-            push(s, op)
-        }
-    );
-
-    // Opens the command line with text typed in (api 3), for the user to finish: only the
-    // Plugin's own commands, and only in a call the user started.
-    func!(roster, "cmdline", |_lua, s, text: mlua::LuaString| {
-        user_only(s, "roster.cmdline")?;
-        let text = text.to_string_lossy();
-        if text.len() > 500 {
-            return Err(mlua::Error::runtime("roster.cmdline: the line is over 500 characters"));
-        }
-        let word = text.split_whitespace().next().unwrap_or("");
-        if let Some(why) = not_yet(s, word) {
-            return Err(mlua::Error::runtime(format!("roster.cmdline: {why}")));
-        }
-        if !own_command(s, word) {
-            return Err(mlua::Error::runtime(format!(
-                "roster.cmdline: {word:?} isn't one of your commands (a line such as \"alerts \")"
-            )));
-        }
-        push(s, json!({ "op": "cmdline", "text": text }))
-    });
-
-    func!(roster, "notify", |_lua,
-                             s,
-                             (text, level, opts): (
-        mlua::LuaString,
-        Option<String>,
-        Option<Table>
-    )| {
-        let text = text.to_string_lossy();
-        let level = level.unwrap_or_else(|| "info".into());
-        if !matches!(level.as_str(), "info" | "warn" | "error") {
-            return Err(mlua::Error::runtime(
-                "roster.notify: the level is \"info\", \"warn\" or \"error\"",
-            ));
-        }
-        // Buttons on the notice (ticket 91): plain data, each a command line the user's click
-        // runs (`view mesh-plan`), so a notice holds no function that would outlive it.
-        let actions = match opts {
-            Some(ref t) => {
-                let v: Value = t.raw_get("actions")?;
-                if v.is_nil() {
-                    Json::Null
-                } else {
-                    plain(s, "roster.notify: actions", &v).map_err(|e| {
-                        mlua::Error::runtime(format!(
-                            "{} (a notice's action runs a command line, not a function)",
-                            lua::error_text(&e)
-                        ))
-                    })?
-                }
-            }
-            None => Json::Null,
-        };
-        let mut op = json!({ "op": "notify", "text": text, "level": level });
-        if !actions.is_null() {
-            op["actions"] = actions;
-        }
-        // Whether an info notice follows `ui.messages` (api 4, ticket 117): the app decides,
-        // so only what the Plugin said is passed on.
-        if let Some(q) = quiet_opt(opts.as_ref(), "roster.notify")? {
-            op["quiet"] = Json::Bool(q);
-        }
-        push(s, op)
-    });
-
-    // Timers: the app keeps the clock and runs the function in the Plugin when it's time.
-    func!(roster, "defer", |lua, s, (ms, f): (f64, Function)| {
-        add_timer(lua, s, "roster.defer", ms, f, false)
-    });
-    func!(roster, "every", |lua, s, (ms, f): (f64, Function)| {
-        add_timer(lua, s, "roster.every", ms, f, true)
-    });
-    func!(roster, "cancel", |lua, s, id: Value| {
-        let id = match id {
-            Value::Integer(i) if i > 0 => i as u64,
-            _ => {
-                return Err(mlua::Error::runtime(
-                    "roster.cancel: a timer, as roster.defer or roster.every returned it",
-                ));
-            }
-        };
-        if !s.timers.borrow().contains_key(&id) {
-            return Ok(());
-        }
-        take_timer(lua, s, id)?;
-        push(s, json!({ "op": "remove", "kind": "timer", "id": id.to_string() }))
-    });
-
-    // Whether a permission was granted: one that can't be (`network`, a serve method that
-    // isn't allowed) is just false, so a Plugin can ask about what a newer roster has.
-    func!(roster, "has", |_lua, s, name: String| {
-        match Permission::parse(&name) {
-            Ok(p) => Ok(s.grants.contains(&p)),
-            // Any site: whether `roster.http` is there.
-            Err(_) if name == "network" => Ok(s.grants.iter().any(|g| matches!(g, Permission::Network(_)))),
-            Err(_) if name.starts_with("serve:") || name.starts_with("network:") => Ok(false),
-            Err(e) => Err(mlua::Error::runtime(format!("roster.has: {e}"))),
-        }
-    });
-
-    // Events: `roster.on("session_open", function(e) … end)`.
-    func!(roster, "on", |lua, s, (event, f): (String, Function)| {
-        may_hear(&event, &s.grants).map_err(|m| mlua::Error::runtime(format!("roster.on: {m}")))?;
-        let listeners: Table = lua.named_registry_value(LISTENERS)?;
-        let list = match listeners.raw_get::<Option<Table>>(event.as_str())? {
-            Some(l) => l,
-            None => {
-                let l = lua.create_table()?;
-                listeners.raw_set(event.as_str(), l.clone())?;
-                l
-            }
-        };
-        list.raw_push(f)
-    });
-
-    // The Plugin's own data folder (decision Q93): files by plain name, never a path. Every
-    // Plugin has it; nothing outside its folder is reachable through it.
-    let storage = lua.create_table()?;
-    func!(storage, "read", |lua, s, name: String| {
-        let bytes = on_disk(s, "roster.storage.read", |st| st.read(&name))?;
-        match bytes {
-            Some(b) => Ok(Value::String(lua.create_string(b)?)),
-            None => Ok(Value::Nil),
-        }
-    });
-    func!(storage, "write", |_lua, s, (name, text): (String, mlua::LuaString)| {
-        let bytes = text.as_bytes().to_vec();
-        on_disk(s, "roster.storage.write", |st| st.write(&name, &bytes))
-    });
-    func!(storage, "list", |lua, s, (): ()| {
-        let names = on_disk(s, "roster.storage.list", Storage::list)?;
-        lua.create_sequence_from(names)
-    });
-    func!(storage, "remove", |_lua, s, name: String| {
-        on_disk(s, "roster.storage.remove", |st| st.remove(&name))
-    });
-    func!(storage, "read_json", |lua, s, name: String| {
-        let what = "roster.storage.read_json";
-        let Some(bytes) = on_disk(s, what, |st| st.read(&name))? else {
-            return Ok(Value::Nil);
-        };
-        let value: Json = serde_json::from_slice(&bytes)
-            .map_err(|e| mlua::Error::runtime(format!("{what}: {name} isn't JSON ({e})")))?;
-        to_lua(lua, &value)
-    });
-    func!(storage, "write_json", |_lua, s, (name, value): (String, Value)| {
-        let what = "roster.storage.write_json";
-        let value = plain(s, what, &value)?;
-        let mut text =
-            serde_json::to_string_pretty(&value).map_err(|e| mlua::Error::runtime(format!("{what}: {e}")))?;
-        text.push('\n');
-        on_disk(s, what, |st| st.write(&name, text.as_bytes()))
-    });
-    roster.raw_set("storage", storage)?;
-
-    // What the grants add. Without a grant the function isn't there at all (decision Q81).
-    let g = &shared.grants;
-    if g.contains(&Permission::InventoryRead) || g.contains(&Permission::InventoryWrite) {
-        let inventory = lua.create_table()?;
-        if g.contains(&Permission::InventoryRead) {
-            func!(inventory, "hosts", |lua, s, (): ()| {
-                need(s, &Permission::InventoryRead, "roster.inventory.hosts")?;
-                with_host_list(s, "roster.inventory.hosts", |list| to_lua(lua, &list["hosts"]))
-            });
-            func!(inventory, "groups", |lua, s, (): ()| {
-                need(s, &Permission::InventoryRead, "roster.inventory.groups")?;
-                with_host_list(s, "roster.inventory.groups", |list| match &list["groups"] {
-                    groups @ Json::Object(_) => to_lua(lua, groups),
-                    _ => Ok(Value::Table(lua.create_table()?)),
-                })
-            });
-            // The whole Inventory without waiting (decision Q127): serve's `hosts.list`, as
-            // `roster.serve.request` asks.
-            func!(inventory, "request", |lua, s, done: Function| {
-                need(s, &Permission::InventoryRead, "roster.inventory.request")?;
-                ask_later(
-                    lua,
-                    s,
-                    "roster.inventory.request".into(),
-                    "hosts.list".into(),
-                    json!({}),
-                    done,
-                )
-            });
-            // An unknown name is `nil` (api 3): serve's code 2 for host.get.
-            func!(inventory, "host", |lua, s, name: String| {
-                need(s, &Permission::InventoryRead, "roster.inventory.host")?;
-                match ask_serve(s, "host.get", json!({ "name": name })) {
-                    Err(message) if message.ends_with("(code 2)") => Ok(Value::Nil),
-                    result => answer(lua, "roster.inventory.host", result),
-                }
-            });
-        }
-        if g.contains(&Permission::InventoryWrite) {
-            for (name, method, params) in WRITES {
-                let what = format!("roster.inventory.{name}");
-                func!(inventory, *name, |lua, s, args: Variadic<Value>| {
-                    need(s, &Permission::InventoryWrite, &what)?;
-                    let mut p = Map::new();
-                    for (key, v) in params.iter().zip(args.iter()) {
-                        p.insert((*key).into(), plain(s, &what, v)?);
-                    }
-                    serve(lua, s, &what, method, Json::Object(p))
-                });
-            }
-        }
-        roster.raw_set("inventory", inventory)?;
-    }
-    // Sessions: going to one (ticket 78) needs nothing but the user's call; opening one needs
-    // sessions.open.
-    let sessions = lua.create_table()?;
-    func!(
-        sessions,
-        "show",
-        |_lua, s, (session, line): (u64, Option<mlua::LuaString>)| {
-            user_only(s, "roster.sessions.show")?;
-            let line = line.map(|l| l.to_string_lossy());
-            push(s, json!({ "op": "session_show", "session": session, "line": line }))
-        }
-    );
-    // The Sessions open now (decision Q127): the sum of what `session_open` and `session_exit`
-    // say, so there for whoever may hear them (api.rs's `Needs::Hears`).
-    if may_hear("session_open", g).is_ok() {
-        func!(sessions, "list", |lua, s, (): ()| {
-            let list = lua.create_table()?;
-            // The folder is what the Session printed (OSC 7): terminal.read's, as the output is.
-            let reads = s.grants.contains(&Permission::TerminalRead);
-            for open in s.sessions.list() {
-                let one = lua.create_table()?;
-                one.raw_set("session", open.session)?;
-                one.raw_set("host", open.host)?;
-                if reads {
-                    one.raw_set("cwd", open.cwd)?;
-                }
-                list.raw_push(one)?;
-            }
-            Ok(list)
-        });
-    }
-    if g.contains(&Permission::SessionsOpen) {
-        func!(sessions, "open", |_lua, s, host: String| {
-            need(s, &Permission::SessionsOpen, "roster.sessions.open")?;
-            push(s, json!({ "op": "open", "host": host }))
-        });
-    }
-    roster.raw_set("sessions", sessions)?;
-    if g.contains(&Permission::TerminalWrite) {
-        let terminal = lua.create_table()?;
-        func!(terminal, "send", |_lua, s, (session, text): (u64, String)| {
-            need(s, &Permission::TerminalWrite, "roster.terminal.send")?;
-            push(s, json!({ "op": "send", "session": session, "text": text }))
-        });
-        roster.raw_set("terminal", terminal)?;
-    }
-    if g.iter().any(|p| matches!(p, Permission::Serve(_))) {
-        let t = lua.create_table()?;
-        func!(t, "call", |lua, s, (method, params): (String, Option<Value>)| {
-            need(s, &Permission::Serve(method.clone()), "roster.serve.call")?;
-            let params = match params {
-                Some(v) => plain(s, "roster.serve.call", &v)?,
-                None => json!({}),
-            };
-            serve(lua, s, &format!("roster.serve.call {method}"), &method, params)
-        });
-        // The same call, without waiting (decision Q103): `done(result)` or `done(nil, why)`.
-        func!(t, "request", |lua,
-                             s,
-                             (method, params, done): (
-            String,
-            Option<Value>,
-            Function
-        )| { serve_request(lua, s, method, params, done) });
-        roster.raw_set("serve", t)?;
-    }
-    if g.iter().any(|p| matches!(p, Permission::Network(_))) {
-        let http = lua.create_table()?;
-        func!(http, "request", |lua, s, (req, done): (Table, Function)| {
-            let what = "roster.http.request";
-            for pair in req.pairs::<Value, Value>() {
-                let (k, _) = pair?;
-                let key = match &k {
-                    Value::String(k) => k.to_string_lossy(),
-                    _ => String::new(),
-                };
-                if !REQUEST_KEYS.contains(&key.as_str()) {
-                    return Err(mlua::Error::runtime(format!(
-                        "{what}: {key:?} isn't a key of a request (there's {})",
-                        REQUEST_KEYS.join(", ")
-                    )));
-                }
-            }
-            let url: String = req
-                .raw_get::<Option<String>>("url")?
-                .ok_or_else(|| mlua::Error::runtime(format!("{what}: `url` is missing")))?;
-            let method = req.raw_get::<Option<String>>("method")?.unwrap_or_else(|| "GET".into());
-            let mut headers = Vec::new();
-            if let Some(h) = req.raw_get::<Option<Table>>("headers")? {
-                for pair in h.pairs::<String, mlua::LuaString>() {
-                    let (k, v) = pair.map_err(|_| {
-                        mlua::Error::runtime(format!("{what}: `headers` is a table of names to strings"))
-                    })?;
-                    headers.push((k, v.to_str()?.to_string()));
-                }
-            }
-            let body = req
-                .raw_get::<Option<mlua::LuaString>>("body")?
-                .map(|b| b.as_bytes().to_vec());
-            let timeout = req.raw_get::<Option<f64>>("timeout")?;
-            request(lua, s, what, &method, &url, headers, body, timeout, done)
-        });
-        func!(http, "get", |lua, s, (url, done): (String, Function)| {
-            request(lua, s, "roster.http.get", "GET", &url, Vec::new(), None, None, done)
-        });
-        roster.raw_set("http", http)?;
-    }
+    crate::plugin::api::commands::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::keymap::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::themes::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::pieces::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::badges::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::float::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::views::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::details::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::clipboard::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::roster::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::storage::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::inventory::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::sessions::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::terminal::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::serve::binding::bind(lua, shared, &roster)?;
+    crate::plugin::api::http::binding::bind(lua, shared, &roster)?;
     Ok(roster)
 }
 
 pub(crate) use crate::config::lua::to_lua;
+
+/// What the modules' bindings (plugin/api/MODULE.rs) use of the runtime, in one import.
+pub(super) mod prelude {
+    pub(in crate::plugin) use super::{
+        LISTENERS, MAX_COPY, REQUEST_KEYS, Shared, WRITES, add_timer, answer, ask_later, ask_serve, check_id,
+        command_allowed, copy, data, details_ids, drop_owners, key_context, may_hear, must_have, need, not_had,
+        not_yet, on_disk, own_command, own_get, own_ids, own_kind, own_put, plain, push, quiet_opt, reads, request,
+        serve, serve_request, table_actions, take_timer, to_lua, unbadge, unbind, user_only, with_host_list,
+    };
+    pub(in crate::plugin) use crate::config::ThemeDef;
+    pub(in crate::plugin) use crate::config::lua;
+    pub(in crate::plugin) use crate::plugin::folder::Storage;
+    pub(in crate::plugin) use crate::plugin::op::{self, Op, Removable};
+    pub(in crate::plugin) use crate::plugin::permission::Permission;
+    pub(in crate::plugin) use mlua::{Function, Lua, Table, Value, Variadic};
+    pub(in crate::plugin) use serde_json::{Map, Value as Json, json};
+    pub(in crate::plugin) use std::rc::Rc;
+}
 
 #[cfg(test)]
 mod tests {
