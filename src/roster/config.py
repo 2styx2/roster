@@ -98,7 +98,7 @@ def inventory_problem(message, path=None):
     line it's at."""
     from .errors import INVENTORY_ERROR, PATH_NOT_REPEATED, Problem
     m = re.search(r"line (\d+)", message)
-    shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated (#484 M1)
+    shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated
     data = {"path": (shown or PATH_NOT_REPEATED) if path else None} | ({"line": int(m.group(1))} if m else {})
     where = (shown or f"the roster.yml at {HIDDEN_PATH}" if path else "roster.yml") + (f" at line {data['line']}" if m else "")
     return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
@@ -195,7 +195,7 @@ def parse_inventory(text, path):
                 die(f"host {hname!r}: mesh: must be true or false")
             m["os"] = host_os(hname, first(layers, "os"))
             m["key_type"] = key_type(f"host {hname!r}: key_type", first(layers, "key_type")) or box_type
-            # The app sends this Host's shell its hook line (ticket 121); roster only checks it.
+            # The app sends this Host's shell its hook line; roster only checks it.
             if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
                 die(f"host {hname!r}: shell_hooks: must be true or false")
             m["mesh_dir"] = mesh_dir(hname, first(layers, "mesh_dir"))
@@ -212,12 +212,12 @@ def parse_inventory(text, path):
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
         die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
     key = Path(os.path.expanduser(key_path))
-    for m in hosts.values():                # T239: each Host's key file, for its own key type (boxkeys)
+    for m in hosts.values():                # each Host's key file, for its own key type (boxkeys)
         m["key_file"] = str(boxkeys.key_file(key, box_type, m["key_type"]))
         if m["key_type"] != box_type and Path(m["key_file"]) == key:
             die(f"{path}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
                 f"(key_type: {m['key_type']}): point key_path at another file")
-    try:                                    # T240: how old this Box's key may get before check --box warns
+    try:                                    # how old this Box's key may get before check --box warns
         max_age = boxkeys.parse_age(raw.get("key_max_age", boxkeys.MAX_AGE))
     except ValueError as e:
         die(f"{path}: key_max_age: {e}")

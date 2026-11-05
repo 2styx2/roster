@@ -890,4 +890,12 @@ mod contract {
             assert!(c["methods"].get(*method).is_some(), "{method} isn't a serve method");
         }
     }
+
+    #[test]
+    fn the_shell_passes_through_only_methods_serve_has() {
+        let c = contract();
+        for method in crate::serve_api::PASS_THROUGH {
+            assert!(c["methods"].get(*method).is_some(), "{method} isn't a serve method");
+        }
+    }
 }

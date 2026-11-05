@@ -35,7 +35,7 @@ HOST_VIEW = ("group", "ip", "title", "description", "type", "product", "enroll",
              "services")
 
 
-# Which repo git works on is roster.yml's folder's, never one the environment names (a dotfiles GIT_DIR, #409 S3)
+# Which repo git works on is roster.yml's folder's, never one the environment names (a dotfiles GIT_DIR)
 GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
                 "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
 
@@ -55,7 +55,7 @@ def git(repo, *args, timeout=GIT_TIMEOUT, floor=1):
     env = git_env()
     env.update({**NO_PROMPTS, "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"})
     env.setdefault("GIT_SSH_COMMAND", BATCH_SSH)
-    # a repo's own config never runs a program for roster's reads: core.fsmonitor runs on reading the index (#409 S3)
+    # a repo's own config never runs a program for roster's reads: core.fsmonitor runs on reading the index
     argv = [git_program(), "-C", str(repo), "-c", "core.fsmonitor=false", *args]
     timeout = round(time_left(timeout, floor), 1)          # held to serve's deadline for the whole request
     try:

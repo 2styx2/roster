@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..common import find_program
 from . import (
+    LOOKUP_FLOOR,
     PROVIDERS,
     ItemExists,
     ItemNotFound,
@@ -198,7 +199,7 @@ def _keepassxc(spec, ctx):
     return value
 
 
-# ---- writing: "Save to vault" (ticket 13). `add -p` reads the entry's password as the line after the master
+# ---- writing: "Save to vault". `add -p` reads the entry's password as the line after the master
 # password, so neither is ever an argument. An entry's id is its path (GROUP/TITLE): KeePassXC's CLI doesn't print
 # UUIDs, and the path is what `rm` takes.
 
@@ -209,7 +210,7 @@ def _scrub(text, *values):
     return text
 
 
-# ---- where it goes (ticket 35): the top level, or a group. The default is save_to (init.lua's, then roster.yml's),
+# ---- where it goes: the top level, or a group. The default is save_to (init.lua's, then roster.yml's),
 # else roster.yml's older `group:`.
 
 TOP = {"id": "personal", "kind": "personal", "label": "Top level", "save_to": "personal"}
@@ -264,9 +265,6 @@ def _create(item, ctx):
     return {"id": path, "name": name, "target": target}
 
 
-LOOKUP_FLOOR = 7            # s for the look-up after a create timed out, even past serve's deadline
-
-
 def _created_anyway(ctx, name, path):
     """`keepassxc-cli add` timed out. Nothing had that title before (checked just before), so an entry at PATH now
     is this one: it counts as made (and can be undone). None: nothing was saved. Can't tell: says so, naming it."""
@@ -291,7 +289,7 @@ def _delete(item_id, ctx):
 
 # ---- every entry, never its password (Q191): `ls -R -f`'s paths, and nothing more. Not `show -a UserName -a URL`:
 # keepassxc-cli resolves placeholders in what it prints for -a ({PASSWORD}, {REF:P@I:...}), so a URL or user name
-# written that way would print a password (review of #439, M2). The walk asks for the address and user. An entry whose
+# written that way would print a password. The walk asks for the address and user. An entry whose
 # path starts with '-' is left out, as a name like that is never handed to a vault CLI.
 
 def _items(ctx, mapped):

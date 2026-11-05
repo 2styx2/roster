@@ -175,7 +175,7 @@ def ssh(cfg):
                          "set box_name: in roster.yml to a name no other Box uses, then run `roster setup` (on a Box "
                          "already set up, it re-tags this Box's key under the new name where it works; a same-named "
                          "Box whose key was taken runs `roster setup` again)", "E222"))
-    for key in boxkeys.in_use(cfg, hosts):          # one per key type its key Hosts use (T239)
+    for key in boxkeys.in_use(cfg, hosts):          # one per key type its key Hosts use
         what = "this Box's key" if key.type.name == boxkeys.DEFAULT else f"this Box's {key.type.name} key"
         if key.key.exists():
             out.append(check("ssh", "ok", f"{what}: {key.key}"))
@@ -219,7 +219,7 @@ def key_age(cfg, key, what):
 def rotation_pending(cfg):
     """T240: the Box key rotation isn't finished: the old Box key is still on these Hosts (#471's LOW-5)."""
     waiting = rotation.pending(cfg)
-    # #482's review LOW-1, LOW-2: an unreadable record, a kept old key
+    # the record unreadable, an old key kept: said even when no Host waits
     out = [check("ssh", "warn", message, fix, "E268") for message, fix in rotation.problems(cfg)]
     if not waiting:
         return out

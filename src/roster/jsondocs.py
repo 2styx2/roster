@@ -15,23 +15,18 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from .models import Group, Host, Resource
-
-
-class Part(BaseModel, frozen=True):
-    """A document or a part of one: read-only, unknown keys refused, no value in a validation error."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True, populate_by_name=True)
+from .servemodels import Result as Part  # a document or a part of one: serve's results' rules
+from .servemodels import dump
 
 
 def plain(doc: object) -> dict[str, Any]:
-    """DOC as the command prints it (before `version` and the cut): roster.yml's own key names (`from`), the optional
-    fields that aren't set left out. A Host or resource has every field set, so it dumps whole."""
+    """DOC as the command prints it (before `version` and the cut), as serve sends a result (servemodels.dump)."""
     if not isinstance(doc, BaseModel):
         raise TypeError(f"a --json document is a model in roster.jsondocs, not {type(doc).__name__}")
-    return doc.model_dump(by_alias=True, exclude_unset=True)
+    return dump(doc)
 
 
 # ---------------------------------------------------------------- the Inventory: hosts, info, resources
@@ -133,8 +128,8 @@ class CheckDoc(Part, frozen=True):
 
     hosts: list[HostCheck]
     mesh: MeshPlanDoc | None
-    rotation_pending: dict[str, str] = Field(default_factory=dict)    # T240: Box key rotation, host: why
-    rotation_problems: list[str] = Field(default_factory=list)        # T240: its record or key files, each said
+    rotation_pending: dict[str, str] = Field(default_factory=dict)    # the Box key rotation: host: why
+    rotation_problems: list[str] = Field(default_factory=list)        # the rotation's record or key files, each said
     ok: bool
 
 
@@ -166,7 +161,7 @@ class BoxCheck(Part, frozen=True):
     message: str = Field(repr=False)
     fix: str | None = None
     topic: str | None = None
-    saved_session: Literal["none", "working", "expired", "ignored", "unknown"] | None = None   # a vault's saved session (T241)
+    saved_session: Literal["none", "working", "expired", "ignored", "unknown"] | None = None   # a vault's saved session
 
 
 class BoxCheckDoc(Part, frozen=True):

@@ -10,7 +10,6 @@ import sys
 from typing import Any
 
 from . import __version__, clihelp, jsonout
-from .discover import DEFAULT_SCAN_PORTS
 from .errors import ROSTER_ERROR
 
 SHELLS = ("bash", "zsh", "fish", "powershell")
@@ -43,7 +42,7 @@ class Parser(argparse.ArgumentParser):
 
     def error(self, message):
         # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
-        # password or a session token: no usage error repeats one (#402 N3, T235 #460)
+        # password or a session token: no usage error repeats one
         root = Parser.root or self
         message = clihelp.usage_error(message, Parser.typed, root.names(), self.all_options())
         if Parser.json_errors:
@@ -199,7 +198,7 @@ def build_parser():
                    "to name and review (default: preview only)")
     values(s.add_argument("--group", metavar="NAME", help="group name for new hosts (default: discovered-YYYYMMDD)"),
            GROUPS)
-    s.add_argument("--ports", default=DEFAULT_SCAN_PORTS, help="TCP ports to scan (default: common server, "
+    s.add_argument("--ports", help="TCP ports to scan (default: common server, "
                    "web, database, remote-admin and network-gear ports)")
     s.add_argument("--top-ports", type=int, metavar="N", help="nmap only: scan nmap's N most common ports instead")
     s.add_argument("--no-ping", action="store_true", help="nmap only: scan hosts that don't answer ping (slower)")

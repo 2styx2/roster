@@ -12,9 +12,9 @@ LEGACY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still re
 TAGS = (TAG, *LEGACY_TAGS)
 BOX_CHARS = "A-Za-z0-9_-"               # what a Box name in a tag is made of
 # the end of a key line's ERE: spaces or a CR may follow the tag (a file edited on Windows), and sshd still reads
-# the line (T226, #435). POSIX only: .NET has no [[:space:]], so winhost's script trims each line first (powershell)
+# the line. POSIX only: .NET has no [[:space:]], so winhost's script trims each line first (powershell)
 TRAIL = "[[:space:]]*$"
-# TRAIL for awk, with no bracket class (#442's M2: mawk 1.3.3, Debian 10's and Ubuntu 18.04's awk, has no
+# TRAIL for awk, with no bracket class (mawk 1.3.3, Debian 10's and Ubuntu 18.04's awk, has no
 # [[:space:]] and reads it as a set of letters): a space, tab or CR. In awk's own regex literal as escapes; through
 # ENVIRON (where awk may not read escapes) as the characters, which the shell makes ($W)
 AWK_TRAIL_LITERAL = "[ \\t\\r]*$"
@@ -76,8 +76,8 @@ def powershell(ere: str) -> str:
 OK = "ROSTER_OK"            # done (the last line)
 NAMED = "ROSTER_TAG"        # remove: a line it took, by its tag's name
 NONE = "ROSTER_NONE"        # re-tag: no line of this key there (then the key file it looked in)
-TAKEN = "ROSTER_TAKEN"      # another key's line is under the new name there: nothing changed (T226)
-OTHERS = "ROSTER_OTHERS"    # add: this Box's line of another key is there too (T239)
+TAKEN = "ROSTER_TAKEN"      # another key's line is under the new name there: nothing changed
+OTHERS = "ROSTER_OTHERS"    # add: this Box's line of another key is there too
 
 
 @dataclass

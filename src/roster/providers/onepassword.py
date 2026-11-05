@@ -80,7 +80,7 @@ def _onepassword(spec, ctx):
         data = None
     if isinstance(data, list):
         data = data[0] if data else {}
-    if not isinstance(data, dict):                          # valid JSON of another shape too (#492, T250)
+    if not isinstance(data, dict):                          # valid JSON of another shape too
         raise SecretError("couldn't read `op item get` output")
     val = data.get("value")
     if not val:
@@ -142,7 +142,7 @@ def _op_ref_item(spec):
     return split_field(spec)[0]
 
 
-# ---- one item's address and user, never its password (T223, #432, Q197). op has no field-only read of an item's URL
+# ---- one item's address and user, never its password (Q197). op has no field-only read of an item's URL
 # (`--fields` reads fields; a Login's website is in its overview's `urls`), so: every item's overview from
 # `op item list` (id, title, vault, URLs and a subtitle roster ignores; no concealed value, as Q191's listing), the one ITEM names found there (by id, or
 # by title in any case; several fail closed, as bw's do), its URL with no user:password@ (no_userinfo), and then its

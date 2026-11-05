@@ -29,7 +29,7 @@ from .errors import (
 )
 
 HOWS = ("blank", "file", "repo", "ssh-config")
-ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports (#409 L3)
+ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports
 SSH_CONFIG_MAX = 1024 * 1024            # ... and ssh config
 GROUP = "servers"                       # the blank one's empty group
 IMPORTED = "imported"                   # the group Hosts from an ssh config go in
@@ -64,7 +64,7 @@ def parse_how(text):
         if how == "repo" and value.startswith("-"):
             raise ValueError("repo: a git URL can't start with '-'")
         return how, value
-    # never the text itself: it may be a clone URL with a token in it (T235)
+    # never the text itself: it may be a clone URL with a token in it
     raise ValueError("not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]")
 
 
@@ -90,13 +90,6 @@ def name_new(path, name, use=False):
                       {"path": str(path)}, fix=f"`roster inv add NAME {path}` in a terminal") from None
 
 
-def create_named(path, how, value, name, use=False, interactive=True, stop=None):
-    """create(), then name_new(): serve's inventory.create in one call."""
-    made = create(path, how, value, interactive=interactive, stop=stop)
-    name_new(made.path, name, use)
-    return made
-
-
 def create(path, how, value=None, interactive=True, stop=None):
     """Make the Inventory at PATH (a roster.yml that isn't there yet) the HOW way. INTERACTIVE: a clone may ask for
     a passphrase on this terminal (serve's never does). Returns Made; raises Problem with nothing left half-made,
@@ -114,8 +107,8 @@ def create(path, how, value=None, interactive=True, stop=None):
         text, made = imported(path, value)
     else:
         raise ValueError(how)
-    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private (#409 S2);
-    # O_BINARY: no CRLF on Windows, so it's the same bytes on every OS (#409 N4)
+    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private;
+    # O_BINARY: no CRLF on Windows, so it's the same bytes on every OS
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,7 +123,7 @@ def create(path, how, value=None, interactive=True, stop=None):
 
 
 def there(path):
-    shown = shown_path(path)                        # #484 L2b, #489 L2: named the way every other message names it
+    shown = shown_path(path)                        # named the way every other message names it
     return Problem(INVENTORY_THERE, f"{shown or HIDDEN_PATH} already exists, so roster kept it as it is",
                    {"path": shown or "(not repeated)"},
                    fix="use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
@@ -173,7 +166,7 @@ def copied(path, source):
                        "give the path of an existing roster.yml (file:PATH)")
     try:
         raw = yaml.safe_load(text)
-    except yaml.YAMLError as e:                     # where, never PyYAML's snippet of the file: it may be secrets (#417 L2)
+    except yaml.YAMLError as e:                     # where, never PyYAML's snippet of the file: it may be secrets
         mark = getattr(e, "problem_mark", None)
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
         raise Problem(NOT_AN_INVENTORY, f"{src} doesn't load (it isn't valid YAML: "
@@ -185,7 +178,7 @@ def copied(path, source):
                                         "groups:), so nothing was written", {"path": str(src)},
                       fix="give the path of a roster.yml (file:PATH); for an ssh config: ssh-config:PATH")
     groups = (raw or {}).get("groups")
-    if not isinstance(groups, dict) or not groups:   # empty, a typo'd groups:, another YAML file (#409 C2)
+    if not isinstance(groups, dict) or not groups:   # empty, a typo'd groups:, another YAML file
         raise Problem(NOT_AN_INVENTORY, f"{src} has no groups: (no Hosts at all), so it isn't a roster.yml to "
                                         "import; nothing was written", {"path": str(src)},
                       fix="check the file, or start a new one: --inventory blank")
@@ -282,7 +275,7 @@ def ssh_hosts(text):
     return hosts, skipped
 
 
-# Credentials in a clone URL (#409 L4, N2; #417 M2). For http(s) and ssh the whole userinfo goes, up to the last @
+# Credentials in a clone URL. For http(s) and ssh the whole userinfo goes, up to the last @
 # before the host: a token as the user (https://ghp_TOKEN@github.com/...) and a password with an @ in it. Elsewhere
 # (file://) only a password. By pattern, not a URL parser: one that can't parse the rest (a Windows path after
 # file://) would show it all. scp-style git@host:path has no secret, and isn't touched.
@@ -396,11 +389,11 @@ def host_line(name, h):
         fields["auth"] = "agent"
     line = f"      {scalar(name)}: {{" + ", ".join(f"{k}: {scalar(v)}" for k, v in fields.items()) + "}"
     if h.get("identityfile"):
-        line += f"     # IdentityFile {oneline(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
+        line += f"     # IdentityFile {no_controls(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
     return line
 
 
-def oneline(text):
+def no_controls(text):
     """TEXT with every control character (a newline above all) taken out, for a comment."""
     return re.sub(r"[\x00-\x1f\x7f]", "", text)
 
@@ -434,7 +427,7 @@ def imported(path, source):
         head.append(f"    user: {scalar(user)}                # ssh's own default for a Host with no User: your login name")
     head.append("    hosts:")
     lines, kept = [], []
-    for n, h in hosts.items():                      # each Host on its own: one roster can't take is skipped (L2)
+    for n, h in hosts.items():                      # each Host on its own: one roster can't take is skipped
         line = host_line(n, h)
         try:
             load_config_text("\n".join([*head, line]) + "\n", path)

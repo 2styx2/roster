@@ -37,9 +37,10 @@ class Params(BaseModel, frozen=True):
 
 
 class Result(BaseModel, frozen=True):
-    """A method's result: read-only, unknown keys refused, no value in a repr or a validation error."""
+    """A method's result (and a --json document, jsondocs.py): read-only, unknown keys refused, no value in a repr or
+    a validation error."""
 
-    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True, populate_by_name=True)
 
 
 class NoParams(Params, frozen=True):

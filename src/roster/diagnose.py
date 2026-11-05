@@ -22,12 +22,9 @@ from .sshops import (
     fingerprint,
     handshake,
     host_block,
-    in_ssh_config,
-    left_out,
-    not_reached,
+    not_in_ssh_config,
     recorded_host_keys,
     start_transport,
-    sync_fix,
 )
 
 STEPS = ("inventory", "ssh-config", "provider", "vault-item", "dns", "tcp", "host-key", "auth")
@@ -185,16 +182,10 @@ def step_ssh_config(ctx):
         raise Problem(errors.NOT_SET_UP, "no ssh client on this box's PATH",
                       fix="install OpenSSH (openssh-client)")
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
-    if not in_ssh_config(h["name"]):
-        why = left_out(h["name"])
-        if why:
-            raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
-                                                       "Inventory the active one (`roster inv use`)")
-        why = not_reached(h["name"])
-        if why:                         # another roster.yml's, or this Inventory isn't synced here
-            raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
-        raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
-    # mid-rotation, the block offers the old key too (T240)
+    problem = not_in_ssh_config(h["name"], f"{h['name']} isn't in this box's ssh config yet", fix=sync)
+    if problem:
+        raise problem
+    # mid-rotation, the block offers the old key too
     want = host_block(ctx["cfg"], h["name"], h, rotation.config_waiting(ctx["cfg"]))
     have = sshconfig.written_block(current().ssh_config, h["name"]) or []
     if have != want:
@@ -230,7 +221,7 @@ def step_dns(ctx):
     except (socket.gaierror, UnicodeError) as e:
         raise Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({h['name']})",
                       fix=f"fix ip: for {h['name']} in roster.yml", details=str(e)) from None
-    ctx["resolved"] = list(dict.fromkeys(str(a[4][0]) for a in found))     # for unreachable_fix (#420)
+    ctx["resolved"] = list(dict.fromkeys(str(a[4][0]) for a in found))     # for unreachable_fix
     return f"{h['ip']} resolves"
 
 
@@ -281,7 +272,7 @@ def step_host_key(ctx):
     sock, ctx["sock"] = ctx["sock"], None
     try:
         key, kex = handshake(sock, list(recorded), timeout=CONNECT_TIMEOUT)
-        # T239: no curve25519 kex and no Ed25519 host key (recorded or offered): what a FIPS-mode Host offers
+        # no curve25519 kex and no Ed25519 host key (recorded or offered): what a FIPS-mode Host offers
         ctx["nist_only"] = kex.startswith("ecdh-sha2-nistp") and "ssh-ed25519" not in {*recorded, key.get_name()}
     except (paramiko.SSHException, OSError, EOFError) as e:
         if not isinstance(e, paramiko.SSHException) or "Incompatible" not in str(e):
@@ -427,7 +418,7 @@ STEP_FNS = {"inventory": step_inventory, "ssh-config": step_ssh_config, "provide
             "auth": step_auth}
 
 
-# ---------------------------------------------------------------- host.verify_login (ticket 10, decision Q43)
+# ---------------------------------------------------------------- host.verify_login (decision Q43)
 
 VERIFY_STEPS = ("user", "provider", "vault-item", "dns", "tcp", "host-key", "auth")
 

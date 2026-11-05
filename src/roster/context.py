@@ -38,20 +38,20 @@ class File(NamedTuple):
     folder: Callable[[], Path]
     unnamed: str
     named: str
-    on_remove: str      # "delete" or "set aside"
+    on_remove: str
 
 
 FILES = {
     # Not in config.d: a user's `Include ~/.ssh/config.d/*` would read it beside the index, and a Host the index
-    # leaves out (a name clash) would add its IdentityFile again (PR #335's review, N3).
+    # leaves out (a name clash) would add its IdentityFile again.
     "ssh_config": File(ssh_dir, "config.d/roster", "roster-inventories/{}", "delete"),
     "known_hosts": File(ssh_dir, "roster_known_hosts", "roster_known_hosts-{}", "set aside"),
-    "mesh_state": File(user_config_dir, "mesh.json", "mesh-{}.json", "set aside"),          # T182
-    # the Box name this Box's key lines on the Inventory's Hosts were last all tagged with (T217)
+    "mesh_state": File(user_config_dir, "mesh.json", "mesh-{}.json", "set aside"),
+    # the Box name this Box's key lines on the Inventory's Hosts were last all tagged with
     "key_name": File(user_config_dir, "key-name", "key-name-{}", "delete"),
-    # the Box key rotation's pending record (T240): the Hosts not finished yet
+    # the Box key rotation's pending record: the Hosts not finished yet
     "rotation": File(user_config_dir, "key-rotation", "key-rotation-{}", "set aside"),
-    # the Box-wide lock (boxlock, T240)
+    # the Box-wide lock (boxlock)
     "lock": File(user_config_dir, "run.lock", "run-{}.lock", "delete"),
 }
 

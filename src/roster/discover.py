@@ -278,6 +278,8 @@ def cmd_discover(args):
     JSON document (discover.plan's numbers and discover.status's Found records) and say()'s lines are dropped."""
     from .config import inventory_problem
     from .errors import TOO_MANY_ADDRESSES, Problem
+    if args.ports is None:
+        args.ports = DEFAULT_SCAN_PORTS
     nets = []
     for t in args.targets:
         try:
@@ -391,13 +393,13 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
         if backup is not None:
             say(f"backup       {backup}")
         say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
-    if path.exists():                             # T212: saved as serve's edits are (store.py), repo or plain file
+    if path.exists():                             # saved as serve's edits are (store.py), repo or plain file
         _, synced = store.at(path).write(text, new_text, then=wrote)
-    else:                                         # a new one is private (0600), as `roster init`'s (#409 S2)
+    else:                                         # a new one is private (0600), as `roster init`'s
         replace_file(path, new_text, 0o600, follow=False)
         wrote()
         synced = boxsync.sync_file(path)
-    boxsync.warn(synced)                          # T153: this Box follows, as after serve's changes
+    boxsync.warn(synced)
     say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")
     say("             set the login user, move hosts into the right groups if you like,")
     say(f"             then set `reviewed: true` and run:  roster setup --only {group}")

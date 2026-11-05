@@ -5,7 +5,7 @@ import ipaddress
 import re
 from typing import Any
 
-from .providers import NO_PASSWORD
+NO_PASSWORD = ("agent", "key", "none")      # Logins with no password behind them (auth: agent, key, none)
 
 PLACEHOLDER_USER = "CHANGE-ME"      # discover's: no SSH user set yet
 

@@ -167,7 +167,7 @@ class Inventory(Model, frozen=True):
     tag: str
     tag_re: str
     key: Path
-    key_type: str = boxkeys.DEFAULT     # the top-level key_type: this Box's own key's (T239)
+    key_type: str = boxkeys.DEFAULT     # the top-level key_type: this Box's own key's
     pub: Path
     workers: int = Field(ge=1)
     inline_limit: int = Field(ge=1)
@@ -177,8 +177,8 @@ class Inventory(Model, frozen=True):
     links: list[Link]
     providers: dict[str, Any] = Field(repr=False)
     provider_dirs: list[str]
-    rate_limited: list[str] = Field(default_factory=list)    # networks with an SSH rate limiter (T191, Q180)
-    # days before check --box warns the Box key is due a rotation; None: off (T240)
+    rate_limited: list[str] = Field(default_factory=list)    # networks with an SSH rate limiter (Q180)
+    # days before check --box warns the Box key is due a rotation; None: off
     key_max_age: int | None = boxkeys.parse_age(boxkeys.MAX_AGE)
 
     def as_config(self) -> dict[str, Any]:

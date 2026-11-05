@@ -652,13 +652,13 @@ def test_a_description_starting_with_from_doesnt_confuse_the_index(two, capsys, 
     run(capsys, "inv", "add", "home", str(two["home"]))
     run(capsys, "sync")
     run(capsys, "--inv", "home", "sync")
-    from roster.sshops import in_ssh_config
+    from roster.named import reachable_hosts
     main(["hosts"])                                        # this process now uses work's files
     capsys.readouterr()
-    assert in_ssh_config("esx") and in_ssh_config("build-pi")
+    assert {"esx", "build-pi"} <= (reachable_hosts() or set())
     main(["--inv", "home", "hosts"])
     capsys.readouterr()
-    assert in_ssh_config("pi")
+    assert "pi" in (reachable_hosts() or set())
 
 
 def test_a_stale_index_is_rebuilt(two, capsys, isolated):

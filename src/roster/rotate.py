@@ -360,7 +360,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             write(recs[ctx], ctx)
 
     if starting:
-        # the record first (MED-1): which key files this rotation makes .new and .old of, before either exists
+        # the record first: which key files this rotation makes .new and .old of, before either exists
         for key, slot in slots.items():
             old = boxkeys.public_words(pub_of(key)) if key.exists() else None
             entries[str(key)] = {"type": slot.type.name, "old": " ".join(old[:2]) if old else None, "new": None,
@@ -383,7 +383,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         entry = entries[str(key)]
         slot.done = swap_done(key, entry)
         if not slot.done and not new_of(key).exists():
-            # P1: stopped before ssh-keygen wrote it (or it was moved away): make it again, never take KEY for it
+            # stopped before ssh-keygen wrote it (or it was moved away): make it again, never take KEY for it
             if entry.get("new"):
                 say(f"rotation     the rotation's new key {new_of(key)} isn't there any more: making another (a "
                     "line of the one gone may be left on a Host it reached; it can't log in, its private key is "
@@ -394,7 +394,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         elif not slot.done and not entry.get("new") and own_pair(new_of(key), None):
             entry["new"] = " ".join((boxkeys.public_words(pub_of(new_of(key))) or [])[:2])     # stopped right after making it
             save_all()
-        # P2: the line that goes on the Hosts is the key's own (derived from its private key), and it must be the
+        # the line that goes on the Hosts is the key's own (derived from its private key), and it must be the
         # one the record names: a record edited since never puts another key on a Host
         have = (boxkeys.derived(slot.new) or [])[:2]
         if not have or have != str(entry.get("new") or "").split()[:2]:

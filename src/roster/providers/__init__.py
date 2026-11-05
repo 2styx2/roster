@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from ..hosts import NO_PASSWORD  # noqa: F401 (providers.NO_PASSWORD: what its callers read)
 from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
     AlreadyLoggedIn,
     ApiKeyRejected,
@@ -24,6 +25,7 @@ from .problems import (  # noqa: F401 (what a provider or plugin raises: provide
     LoginError,
     MethodUnsupported,
     NoField,
+    NoItemFields,
     NoSession,
     NotLoggedIn,
     NotSignedIn,
@@ -92,25 +94,34 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                      out then (one more CLI call each, for op and kp)
 #             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
-#             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box (T241,
-#                              bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
+#             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box
+#                              (bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
 BOX_SETTINGS = {}         # name -> this Box's own settings, from the app's init.lua (`roster serve`'s vault.configure):
                           #   paths and choices only, never a secret. They win over roster.yml's.
 PROVIDER_STATE = {}       # name -> per-run scratch space (e.g. "already unlocked")
-NO_PASSWORD = ("agent", "key", "none")
 MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no session file, no BW_PASSWORD, no prompt
-JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr (T241)
+JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr
 _secrets = {}
 _secret_lock = threading.Lock()
 
 
+LOOKUP_FLOOR = 7            # s for each look-up after a create timed out (did it get there?), even past serve's deadline
+
+
+def bad_name(name):
+    """Why NAME can't be a provider's name, or None."""
+    if not re.match(r"^[a-z0-9_-]+$", name):
+        return f"provider name {name!r} must be lowercase letters, digits, _ or -"
+    return None
+
+
 def register(name, help="", tool=""):
     """Decorator for provider functions:  @register("vault", help="...", tool="vault")"""
-    if not re.match(r"^[a-z0-9_-]+$", name):
-        raise ValueError(f"provider name {name!r} must be lowercase letters, digits, _ or -")
+    if why := bad_name(name):
+        raise ValueError(why)
 
     def deco(fn):
         PROVIDERS[name] = {"get": fn, "help": help, "tool": tool,
@@ -402,7 +413,7 @@ def lock(name, cli=True):
             fn(Ctx(name, None))
 
 
-# ---- this Box's own settings (ticket 41): from the app's init.lua, through `roster serve`'s vault.configure
+# ---- this Box's own settings: from the app's init.lua, through `roster serve`'s vault.configure
 
 def setting_name(ctx, key):
     """Where a person changes setting KEY of CTX's provider: `vault.kp.database in init.lua`, or roster.yml's."""
@@ -435,7 +446,7 @@ def configure_box(settings):
     return locked
 
 
-# ---- where a Vault item goes (ticket 35): `save_to`, the same shape in roster.yml, init.lua and a save's choice
+# ---- where a Vault item goes: `save_to`, the same shape in roster.yml, init.lua and a save's choice
 
 PERSONAL = "personal"
 SAVE_TO_SHAPES = '"personal", {organization, collection} (Bitwarden, by name or id) or {group} (KeePassXC)'
@@ -506,7 +517,7 @@ def default_target(name):
     return {"setting": setting, "from": source or "default"}
 
 
-# ---- writing Vault items (ticket 13)
+# ---- writing Vault items
 
 def can_write(name):
     """Can provider NAME create Vault items (and undo a create)?"""
@@ -550,12 +561,12 @@ def delete_item(provider, item_id):
 def login_fields(provider, spec, interactive=True):
     """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
     None when the item has none. Only a provider that can read them without the password reaching roster has this
-    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
-    asks, not even for a master password."""
+    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is NoItemFields.
+    INTERACTIVE=False (`roster add -y`): never asks, not even for a master password."""
     fn = _vault_op(provider, "login_fields")
     if not fn:
-        raise Unsupported(f"provider '{provider}' can't give an item's address and username without roster reading "
-                          "its password too, so roster doesn't ask it")
+        raise NoItemFields(f"provider '{provider}' can't give an item's address and username without roster reading "
+                           "its password too, so roster doesn't ask it", provider)
     name, _ = split_field(spec)
     if not name:
         raise SecretError(f"{provider}: needs an item name or id")
@@ -672,8 +683,8 @@ def setup_providers(cfg):
             die(f"providers.{name} in roster.yml must be a mapping")
         PROVIDER_SETTINGS[name] = {**conf, "_base": base}     # _base: where relative paths in it start
         if conf.get("command"):
-            if not re.match(r"^[a-z0-9_-]+$", name):
-                die(f"provider name {name!r} must be lowercase letters, digits, _ or -")
+            if why := bad_name(name):
+                die(why)
             add_template_provider(name, conf)
 
 

@@ -24,7 +24,7 @@ from .common import UTC_TIME, die, program_argv, replace_file, say, utc_now
 from .context import key_created_file
 
 DEFAULT = "ed25519"
-# key_max_age:'s default (T240, decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
+# key_max_age:'s default (decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
 # private authentication key ("no more than one or two years", §5.3.6 item 4; Table 1: 1 to 2 years)
 MAX_AGE = "365d"
 MAX_AGE_LIMIT = 3650        # days: the most key_max_age: takes (10 years); `off` is how to turn the warning off
@@ -173,25 +173,26 @@ def ensure_key(key: BoxKey, tag: str) -> None:
         if key.type.name != "ed25519":
             have = (key.pub.read_text().split() or ["nothing"])[0]
             if have != key.type.public_word:
-                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is an {have} key, not {key.type.name} "
-                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}")
+                die(f"{key.key} is an {have} key, not {key.type.name} "
+                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}",
+                    code=KEY_TYPE_MISMATCH)
             bits = rsa_bits(key.pub) if key.type.algorithm == "rsa" else None
-            if bits is not None and key.type.bits is not None and bits < key.type.bits:     # #471's review LOW-2
-                die(f"[{KEY_TYPE_MISMATCH}] {key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
-                    f"key_type: {key.type.name} asks for: {fix}")
-        # #471's review (NIT): a .pub that isn't this key's would go on the Hosts and never log in. Checked only when
+            if bits is not None and key.type.bits is not None and bits < key.type.bits:
+                die(f"{key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
+                    f"key_type: {key.type.name} asks for: {fix}", code=KEY_TYPE_MISMATCH)
+        # A .pub that isn't this key's would go on the Hosts and never log in. Checked only when
         # ssh-keygen can read the key without a passphrase (a key of the user's own may have one, as before)
         have_words, words = derived(key.key), public_words(key.pub)
         if have_words is not None and have_words != words:
-            die(f"[{KEY_TYPE_MISMATCH}] {key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
-                f"{fix}")
+            die(f"{key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
+                f"{fix}", code=KEY_TYPE_MISMATCH)
         say(f"key          {key.key} ({key.type.name}, existing)")
         return
     try:
         generate(key.type, key.key, tag)
     except subprocess.CalledProcessError as e:
         die(f"ssh-keygen couldn't make {key.key}: {(e.stderr or b'').decode(errors='replace').strip() or e}")
-    stamp(key.key)                          # its age counts from now (key_max_age:, T240)
+    stamp(key.key)                          # its age counts from now (key_max_age:)
     say(f"key          {key.key} ({key.type.name}, created)")
 
 
@@ -242,12 +243,12 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
         except ValueError:
             continue
         # only the canonical names roster itself writes, and only a key this Box holds: its private key (this user's,
-        # no one else's to read) gives that very .pub (#471's review LOW-3). A stray .pub (another Box's copied here),
+        # no one else's to read) gives that very .pub. A stray .pub (another Box's copied here),
         # an empty or foreign file beside it, never widens what setup and revoke take
         if kt.file_name + ".pub" == pub.name and owned(pub.with_suffix("")) and matches(pub.with_suffix("")):
             keys.setdefault(kt.name, BoxKey(kt, key_file(cfg["key"], cfg["key_type"], kt.name)))
     out = list(keys.values())
-    # T240: mid-rotation, each key's new one (KEY.new) and kept old one (KEY.old) are this Box's too, so revoke takes
+    # Mid-rotation, each key's new one (KEY.new) and kept old one (KEY.old) are this Box's too, so revoke takes
     # (and names) both, and a renamed Box finds their lines. The same test as above: this user's, its .pub its own
     for k in list(out):
         for suffix in (".new", ".old"):
@@ -257,7 +258,7 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
     return out
 
 
-# ---------------------------------------------------------------- the key's age (T240, key_max_age:)
+# ---------------------------------------------------------------- the key's age (key_max_age:)
 
 def stamp(key: Path) -> None:
     """Record that roster made (or rotated) KEY now (context.key_created_file): its age is counted from this."""
@@ -297,7 +298,7 @@ def parse_age(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         days = value
     else:
-        # ASCII digits only (#482's review: `\d` takes any script's digits)
+        # ASCII digits only: `\d` takes any script's digits
         m = re.fullmatch(r"([0-9]{1,6})\s*([dwy]?)", value.strip().lower(), re.ASCII) if isinstance(value, str) else None
         if m is None:
             raise ValueError(f"{value!r} isn't an age: write days as 365d (or 52w, 1y), or off")

@@ -46,23 +46,22 @@ from . import (
     inventories,
     jobs,
     mesh,
+    named,
     providers,
     store,
 )
 from .common import (
     current_deadline,
-    current_inventory,
     deadline,
     deadline_at,
     failure_text,
     find_program,
-    known_hosts_label,
     never_look_in_the_current_folder,
     not_reviewed,
-    ssh_config_file,
     ssh_path,
 )
 from .config import find_config, inventory_problem, load_config, load_inventory, locate_config
+from .context import current
 from .errors import (
     ALREADY_SIGNED_OUT,
     BUSY,
@@ -74,7 +73,6 @@ from .errors import (
     INVALID_EDIT,
     INVALID_PARAMS,
     INVALID_REQUEST,
-    INVENTORIES_UNREADABLE,
     INVENTORY_THERE,
     LOGIN_NOT_SEEN,
     MESH_BUSY,
@@ -108,12 +106,9 @@ from .providers import PROVIDERS, setup_providers
 from .servemodels import HostGetParams, HostsListResult, InventoryError, NoParams, dump
 from .sshops import (
     fingerprint,
-    in_ssh_config,
-    left_out,
-    not_reached,
+    not_in_ssh_config,
     record_host_key,
     recorded_host_keys,
-    sync_fix,
 )
 
 API_VERSION = 30            # bump when a method or result changes in a way the app has to know about
@@ -225,7 +220,7 @@ class State:
         self.created = {}                   # item id -> provider, for the items vault.create_item made (undo)
         self.jobs = jobs.Jobs(log=log_line)  # background work: Mesh runs and scans (its notify is serve's)
         self.verified = {}                  # host.verify_login successes: login_key -> (time, host key to pin)
-        self.held = {}                      # typed passwords held for "Save to vault", by id: Held (T15, T16)
+        self.held = {}                      # typed passwords held for "Save to vault", by id: Held
         # state.held is also changed on the askpass channel's threads (a login report), so it has a lock of its own:
         # never a resource lock, which a long request holds for up to its deadline and would hold up askpass's answers.
         self.held_lock = threading.RLock()
@@ -374,7 +369,7 @@ def text_param(params, key):
     return v
 
 
-# ---------------------------------------------------------------- sessions (ticket 05; ADR 0002)
+# ---------------------------------------------------------------- sessions (ADR 0002)
 
 @method("session.prepare", locks=SHARES_VAULT)
 def session_prepare(state, params):
@@ -409,16 +404,10 @@ def session_prepare(state, params):
     ssh = find_program("ssh")         # absolute: the app spawns it with `wsl.exe --exec`, where PATH is thin
     if ssh is None:
         raise Problem(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
-    if not in_ssh_config(h["name"]):
-        why = left_out(h["name"])
-        if why:
-            raise Problem(NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this Inventory the "
-                                                "active one (`roster inv use`)")
-        why = not_reached(h["name"])
-        if why:                         # another roster.yml's, or this Inventory isn't synced here
-            raise Problem(NOT_SET_UP, why, fix=sync_fix())
-        raise Problem(NOT_SET_UP, f"{h['name']} isn't in this box's ssh config ({ssh_config_file()}) - "
-                                   "run `roster sync`, or `roster setup` if this box isn't set up yet")
+    problem = not_in_ssh_config(h["name"], f"{h['name']} isn't in this box's ssh config ({current().ssh_config}) - "
+                                           "run `roster sync`, or `roster setup` if this box isn't set up yet")
+    if problem:
+        raise problem
     # What the Session connects to (API 25): the core sends it back with a prompt fill, so a Host edited since isn't
     # filled into this Session (session.fill).
     login = {"login": {"address": h["ip"], "port": h["ssh"]["port"], "user": h["ssh"]["user"]}}
@@ -715,13 +704,9 @@ def inventories_list(state, params):
     Errors: 143
     Since: API 27
     """
-    try:
-        inv = inventories.load()
-    except SystemExit as e:
-        raise Problem(INVENTORIES_UNREADABLE, die_message(e),
-                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    inv = named.load()
     path = state.path.expanduser().resolve() if state.path else None
-    return {**inv.view(), "name": current_inventory(), "path": str(path) if path else None}
+    return {**inv.view(), "name": current().name, "path": str(path) if path else None}
 
 
 @method("inventories.use")
@@ -738,11 +723,7 @@ def inventories_use(state, params):
     name = params.get("name")
     if not isinstance(name, str) or not name:
         raise Problem(INVALID_PARAMS, "params.name: the named Inventory to make the active one")
-    try:
-        inv = inventories.load()
-    except SystemExit as e:
-        raise Problem(INVENTORIES_UNREADABLE, die_message(e),
-                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    inv = named.load()
     chosen = inv.get(name)
     if chosen is None:
         names = [x.name for x in inv.inventories]
@@ -799,35 +780,26 @@ def inventory_create(state, params):
         except ValueError as e:
             raise Problem(INVALID_PARAMS, f"params.source: {e}") from None
     name = params.get("name") or folder.name
-    if not isinstance(name, str) or inventories.name_problem(name):
-        raise Problem(INVALID_PARAMS, f"params.name: {inventories.name_problem(str(name))}")
-    try:
-        inv = inventories.load()
-    except SystemExit as e:
-        raise Problem(INVENTORIES_UNREADABLE, die_message(e),
-                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
-    taken = [x.name for x in inv.inventories if inventories.same_name(x.name, name)]
-    if taken:                                       # the field to change, for the app's form (#417 L4)
+    if not isinstance(name, str) or named.name_problem(name):
+        raise Problem(INVALID_PARAMS, f"params.name: {named.name_problem(str(name))}")
+    inv = named.load()
+    taken = [x.name for x in inv.inventories if named.same_name(x.name, name)]
+    if taken:                                       # the field to change, for the app's form
         raise Problem(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
                        {"field": "name", "name": taken[0]},
                        fix="give it another name, or pick another folder (its name names the Inventory); "
                            f"`roster inv remove {taken[0]}` forgets the other one")
     target = folder / "roster.yml"
     stop = threading.Event()
-    on_cancel(stop.set)                             # the app's Cancel: a clone under way stops (#417 L5)
-    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve (#417 L3)
+    on_cancel(stop.set)                             # the app's Cancel: a clone under way stops
+    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve
         if state.path is not None:                  # another create got here first
             raise Problem(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
         made = newinventory.create(target, how, source, interactive=False, stop=stop)
         state.path = made.path.resolve()            # this serve makes no other
-        try:
-            inventories.add(name, made.path)
-            inventories.use(name)
-        except SystemExit as e:
-            raise Problem(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
-                           {"path": str(made.path)}, fix=f"`roster inv add NAME {made.path}` in a terminal") from None
+        newinventory.name_new(made.path, name, use=True)
     hosts = len(load_config(made.path)["hosts"])
-    return {"path": str(made.path.resolve()), "name": inventories.canonical(name), "how": how, "hosts": hosts,
+    return {"path": str(made.path.resolve()), "name": named.canonical(name), "how": how, "hosts": hosts,
             "restart": True}
 
 
@@ -875,7 +847,7 @@ def first_run_lock():
 
 
 
-# ---------------------------------------------------------------- editing: Pending changes (ticket 10)
+# ---------------------------------------------------------------- editing: Pending changes
 
 VERIFIED_FOR = 600          # s: how long a successful host.verify_login lets host.update make that change
 
@@ -954,7 +926,7 @@ def host_verify_login(state, params):
     # The vault only now, after the reload: roster.yml before the vault, always (the claims' order), or a write holding
     # roster.yml and waiting behind a vault.lock that waits for this request would never end.
     with claimed(state, SHARES_VAULT, "host.verify_login"):
-        # the Host's own key type's key (T239), as its ssh config gives it
+        # the Host's own key type's key, as its ssh config gives it
         result = diagnose.verify_login(new, Path(new["key_file"]), previous=h, limited=rate_limited(state))
     if result["ok"]:
         state.verified[login_key(new)] = (time.monotonic(), result.pop("host_key", None))
@@ -986,18 +958,19 @@ def host_update(state, params):
                            fix="test the login (host.verify_login) with these values, then save again")
     repo = store.at(state.path)
     old_text, new_text, _ = edit.edited(repo.path, h["name"], wanted)
-    backup = repo.save(old_text, new_text)
-    state.verified.pop(key, None)
     warnings = []
-    if pin:                     # it moved: the key it was verified with is now recorded for its new address
-        try:
-            record_host_key(new, pin["type"], pin["base64"])
-        except Exception as e:
-            warnings.append(f"{h['name']} was changed, but its host key couldn't be recorded for {new['ip']} "
-                            f"({failure_text(e)}) - test the login again before connecting")
-    state.reload()
-    return {"changed": True, "host": state.inventory()["hosts"][h["name"]], "backup": str(backup),
-            "warnings": warnings, "sync": sync_box(state)}
+
+    def recorded(_):
+        state.verified.pop(key, None)
+        if pin:                 # it moved: the key it was verified with is now recorded for its new address
+            try:
+                record_host_key(new, pin["type"], pin["base64"])
+            except Exception as e:
+                warnings.append(f"{h['name']} was changed, but its host key couldn't be recorded for {new['ip']} "
+                                f"({failure_text(e)}) - test the login again before connecting")
+    written = write_edit(state, old_text, new_text, repo, then=recorded)
+    return {"changed": True, "host": state.inventory()["hosts"][h["name"]], "backup": written["backup"],
+            "warnings": warnings, "sync": written["sync"]}
 
 
 @method("changes.diff", locks=WRITES_INVENTORY)
@@ -1078,7 +1051,13 @@ def sync_box(state):
         return boxsync.sync(loaded)
 
 
-# ---------------------------------------------------------------- adding a Host (ticket 11, decision Q43)
+def resynced(state):
+    """After serve wrote roster.yml: load it again, then sync_box."""
+    state.reload()
+    return sync_box(state)
+
+
+# ---------------------------------------------------------------- adding a Host (decision Q43)
 
 ADD_PARAMS = {"address": "ip", "user": "user", "port": "port", "auth": "auth", "enroll": "enroll", "type": "type",
               "title": "title", "description": "description"}
@@ -1200,12 +1179,12 @@ def still_offered(asked, key, label, outcome, who, again):
     return offered
 
 
-# ---------------------------------------------------------------- Quick Connect (ticket 14)
+# ---------------------------------------------------------------- Quick Connect
 # A Session to user@address[:port], a box that isn't in the Inventory. The app shows the key host.scan_key
 # {address, port} fetched; quick.prepare fetches it again and goes on only if it's still exactly that one. The key
 # is trusted for this Session only: it goes into serve's own known-hosts file (in the askpass channel's private
 # directory, gone when serve exits) under an alias of its own, never into roster's known hosts, so a box nobody
-# added stays unknown to every Host-to-be at that address (T15's "Save to vault" records it, after the login).
+# added stays unknown to every Host-to-be at that address ("Save to vault" records it, after the login).
 # A typed password goes to ssh through the askpass channel, exactly like a vault password: once, within 60 s,
 # and forgotten by vault.lock. Nothing is written to roster.yml.
 
@@ -1270,7 +1249,7 @@ def quick_prepare(state, params):
     if recorded == "changed":
         p = diagnose.changed_key(h, recorded_host_keys(h), key)
         fix = ("don't accept it blindly: compare the new fingerprint with the box's console or owner. If "
-               f"the change is expected (reinstall), delete its line in {known_hosts_label()}")
+               f"the change is expected (reinstall), delete its line in {current().known_hosts_label}")
         p.data = {**(p.data or {}), "fix": fix}
         raise p
     offered = still_offered(asked, key, label, "not connecting", "box", "Quick Connect again")
@@ -1281,7 +1260,7 @@ def quick_prepare(state, params):
     with os.fdopen(fd, "a") as f:
         f.write(f"{alias} {key.get_name()} {key.get_base64()}\n")
     quick = {"user": user, "address": address, "port": port, "key_type": key.get_name(), "fingerprint": offered,
-             "base64": key.get_base64()}        # what quick.save needs, kept only with a held password (T15)
+             "base64": key.get_base64()}        # what quick.save needs, kept only with a held password
     argv = [ssh, *STRICT, "-o", f"UserKnownHostsFile={ssh_value(ssh_path(known))}", "-o", "GlobalKnownHostsFile=/dev/null",
             "-o", f"HostKeyAlias={alias}", "-o", "UpdateHostKeys=no", "-o", "ControlPath=none",
             "-o", "ConnectTimeout=10"]
@@ -1304,7 +1283,7 @@ def quick_prepare(state, params):
             "port": port, "key_type": key.get_name(), "fingerprint": offered, **held}
 
 
-# ---------------------------------------------------------------- "Save to vault" after the Session's login (T15, T16)
+# ---------------------------------------------------------------- "Save to vault" after the Session's login
 # Q43 says a password enters the vault only after a login with exactly it succeeded. For a Session that's that
 # Session's own login: with save: true, serve keeps the typed password in memory, bound to an id (the Quick Connect's,
 # or the Host Session's), and ssh runs askpass's logged-in script as its LocalCommand, which ssh does only once it has
@@ -1456,7 +1435,7 @@ def save_held(state, repo, hid, password, item, change, what):
     return made, backup
 
 
-# Making or deleting a Vault item, one at a time per provider (ticket 108): bw keeps its local cache in one data.json
+# Making or deleting a Vault item, one at a time per provider: bw keeps its local cache in one data.json
 # and pass commits each insert to a git repo, so neither is known to take two writes at once, and two creations of one
 # name would both pass the "no item by that name" check. Inside the shared vault lock (after roster.yml and the vault in
 # Q112's order); it waits at most what's left of the request's deadline (LOCK_WAIT without one), then 4.
@@ -1548,11 +1527,11 @@ def quick_save(state, params):
     try:                                        # the key the user confirmed for this Session, never a fresh scan
         record_host_key(h, q["key_type"], q["base64"])
     except Exception as e:
-        warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
+        warnings.append(f"{name} was added, but its host key couldn't be recorded in {current().known_hosts_label} "
                         f"({failure_text(e)}) - the first Session to it will ask about the key")
-    state.reload()
+    synced = resynced(state)
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
-            "warnings": warnings, "sync": sync_box(state)}
+            "warnings": warnings, "sync": synced}
 
 
 @method("host.save_login", deadline=45, locks=WRITES_INVENTORY + SHARES_VAULT, sensitive="saving the Login")
@@ -1590,9 +1569,9 @@ def host_save_login(state, params):
                              {"provider": provider, "item": item, "user": h["ssh"]["user"], "address": h["ip"],
                               "port": h["ssh"]["port"], "save_to": save_to},
                              lambda path: edit.edited(path, name, wanted)[:2], f"{name}'s Login wasn't changed")
-    state.reload()
+    synced = resynced(state)
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
-            "warnings": [], "sync": sync_box(state)}
+            "warnings": [], "sync": synced}
 
 
 def quick_label(user, address, port):
@@ -1663,10 +1642,9 @@ def host_add(state, params):
             try:
                 record_host_key(h, k["type"], k["base64"])
             except Exception as e:
-                warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
+                warnings.append(f"{name} was added, but its host key couldn't be recorded in {current().known_hosts_label} "
                                 f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
-        state.reload()
-        return sync_box(state)
+        return resynced(state)
 
     written_in = []                             # set once the Host is in roster.yml: then the item stays
 
@@ -1741,24 +1719,21 @@ def host_review(state, params):
         return {"changed": False, "host": h, "backup": None}
     repo = store.at(state.path)
     old_text, new_text, _ = edit.reviewed(repo.path, name, wanted)
-    backup = repo.save(old_text, new_text)
-    state.reload()
-    return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "sync": sync_box(state)}
+    written = write_edit(state, old_text, new_text, repo)
+    return {"changed": True, "host": state.inventory()["hosts"][name], **written}
 
 
-# ---------------------------------------------------------------- the Live Inventory (ticket 28, decision Q45)
+# ---------------------------------------------------------------- the Live Inventory (decision Q45)
 # Removing, renaming and moving Hosts, and adding, renaming and deleting groups: each a text edit of roster.yml
-# (edit.py) written as a Pending change, like host.update (saved straight to a plain file: store.py, T212). Removing a
+# (edit.py) written as a Pending change, like host.update (saved straight to a plain file: store.py). Removing a
 # Host never touches the vault.
 
-def write_edit(state, old_text, new_text):
-    """Write an edit of roster.yml (a Pending change in a repo, saved in place in a plain file: store.py), keeping what
-    it replaced as the backup; load it again and
-    sync this Box (T150). Returns `{backup, sync}`, for the result."""
-    repo = store.at(state.path)
-    backup = repo.save(old_text, new_text)
-    state.reload()
-    return {"backup": str(backup), "sync": sync_box(state)}
+def write_edit(state, old_text, new_text, repo=None, then=None):
+    """Write an edit of roster.yml through REPO (default: store.at, a Pending change in a repo, saved in place in a
+    plain file), keeping what it replaced as the backup; THEN(the backup's path); load it again and sync this Box
+    (T150). Returns `{backup, sync}`, for the result."""
+    backup, synced = (repo or store.at(state.path)).write(old_text, new_text, then=then, sync=lambda: resynced(state))
+    return {"backup": str(backup), "sync": synced}
 
 
 def name_param(params, key):
@@ -1930,7 +1905,7 @@ class Watcher(threading.Thread):
         super().__init__(daemon=True, name="roster-watch")
         self.state, self.stop = state, threading.Event()
         # The first look is taken here, before inventory.watch answers: taken when the thread got to run, it could
-        # see an edit saved in between as how the file already was, and never apply it (T151).
+        # see an edit saved in between as how the file already was, and never apply it.
         self.first = self.look(state.path)
 
     @staticmethod
@@ -2050,7 +2025,7 @@ def vault_status(state, params):
     main = provider_status(lockable) if lockable else {"provider": None, "status": "unsupported",
                                                        "can_write": False, "can_sign_out": False}
     others = [main if n == main["provider"] else provider_status(n) for n in sorted(names)]
-    if main["can_write"]:                       # where "Save to vault" goes by default (ticket 35), as set
+    if main["can_write"]:                       # where "Save to vault" goes by default, as set
         main = {**main, "save_to": providers.default_target(lockable)}
     return {**main, "providers": others}
 
@@ -2204,7 +2179,7 @@ def sign_out_error(e):
 
 
 
-# ---------------------------------------------------------------- vault.configure: this Box's settings (ticket 41)
+# ---------------------------------------------------------------- vault.configure: this Box's settings
 # The app sends what its init.lua says about the vault at start and after every `:source`. They're this Box's own
 # (a local KeePassXC database is personal, not team Inventory) and win over roster.yml's. Paths and choices only:
 # a key that isn't one of these is refused, so nothing else (a secret above all) can ride along. A value roster can't
@@ -2279,7 +2254,7 @@ def vault_configure(state, params):
 
 
 
-# ---------------------------------------------------------------- vault.create_item: "Save to vault" (ticket 13)
+# ---------------------------------------------------------------- vault.create_item: "Save to vault"
 # Q43's order is verify, create the Vault item, add the Pending change; if the add fails, vault.undo_create takes
 # the item back out. It only deletes items this serve created, so it can't be pointed at anything else.
 
@@ -2384,7 +2359,7 @@ def vault_item_fields(state, params):
 
 
 
-# ---------------------------------------------------------------- vault.login: signing in (ticket 31)
+# ---------------------------------------------------------------- vault.login: signing in
 
 SIGN_IN_IDLE = 600          # s: a sign-in nobody answers for this long is ended (and forgets the password it held)
 SIGN_IN_METHODS = {"password": ("email", "password"), "apikey": ("client_id", "client_secret"), "sso": ()}
@@ -2533,8 +2508,8 @@ def closing(state, login):
 
 
 
-# ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
-# Host-to-Host access set up from this Box (mesh.py). The app's controls for it are a first-party Plugin (T50).
+# ---------------------------------------------------------------- the Mesh (decision Q63)
+# Host-to-Host access set up from this Box (mesh.py). The app's controls for it are a first-party Plugin.
 
 def rotate_param(params):
     v = params.get("rotate", [])
@@ -2677,10 +2652,7 @@ def mesh_cut(state, params):
         result = mesh.cut(cfg, name, cfg["workers"], progress=job.progress, stopped=job.halted.is_set)
         try:                                    # roster.yml's lock, as any other write, waited for only so long
             with claimed(state, WRITES_INVENTORY, "mesh.cut"):
-                result["change"] = mesh.write_cut(state.fresh(), name)
-                state.reload()
-                if result["change"]["written"]:
-                    result["change"]["sync"] = sync_box(state)
+                result["change"] = mesh.write_cut(state.fresh(), name, sync=lambda: resynced(state))
         except Problem as e:
             if e.code != BUSY:
                 raise
@@ -2751,7 +2723,7 @@ def mesh_status(state, params):
 
 
 
-# ---------------------------------------------------------------- Discover (ticket 44, decisions Q80 and Q100)
+# ---------------------------------------------------------------- Discover (decisions Q80 and Q100)
 # `roster discover` for the app: a scan that runs here, on a thread of its own (discover.Scan), never in the app or
 # a Plugin. discover.start answers at once; discover.status says how far it has got and what it found, discover.stop
 # ends it, and discover.add writes the Hosts the user picked as a Pending change, unreviewed, as `roster discover
@@ -2928,7 +2900,7 @@ def discover_add(state, params):
 
 
 
-# ---------------------------------------------------------------- jobs (ticket 101, decision Q112)
+# ---------------------------------------------------------------- jobs (decision Q112)
 
 @method("jobs.list", lane="quick")
 def jobs_list(state, params):
@@ -2962,7 +2934,7 @@ def jobs_stop(state, params):
 
 
 
-# ---------------------------------------------------------------- locks (ticket 101, decision Q112)
+# ---------------------------------------------------------------- locks (decision Q112)
 
 class Lock:
     """A resource's lock: held alone (a write), or shared by readers. Reentrant for the thread holding it alone, so a
@@ -3067,7 +3039,7 @@ class claimed:
             self.held.pop().release()
 
 
-# ---------------------------------------------------------------- cancelling a request (ticket 108, decision Q112 (p))
+# ---------------------------------------------------------------- cancelling a request (decision Q112 (p))
 # `$/cancel {id}` (the core sends it when it gives up waiting) stops a request that hasn't done anything yet: still
 # queued, or waiting for a lock or for an unlock asked before it. It's answered "cancelled" (5) and nothing was done.
 # Once a request runs, only a method with cancel="running" stops (the waiting forms of jobs: their job stops at its
@@ -3392,7 +3364,7 @@ class Server:
 
 
 def serve(config_arg, inv=None):
-    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd (#424)
+    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
     for stream in (sys.stdin, sys.stdout):

@@ -452,7 +452,7 @@ class Channel:
         token = secrets.token_urlsafe(32)
         with self.lock:
             now = time.monotonic()
-            self.tokens = {t: v for t, v in self.tokens.items() if v[2] > now}   # drop expired ones
+            self.tokens = {t: v for t, v in self.tokens.items() if v[2] > now}
             self.tokens[token] = (login, label, now + self.ttl)
             self.labels = {t: v for t, v in self.labels.items() if v[1] > now}
             self.labels[token] = (label, now + 2 * self.ttl)
@@ -599,7 +599,7 @@ class Channel:
         if not request:                         # no token at all: most likely a starting serve's sweep checking that
             self.log("askpass: a connection hung up without a request (another serve checking this one is "
                      "alive, most likely) - ignored")
-            return b""                          # nothing to answer; not a refused token (#222)
+            return b""                          # nothing to answer; not a refused token
         found = self.redeem(request)
         if found is None:
             self.log("askpass: refused a token that is unknown, used, expired or cleared by vault.lock")

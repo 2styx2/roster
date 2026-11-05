@@ -19,19 +19,6 @@ from .errors import ROSTER_ERROR, Exit, Problem, die_message  # noqa: F401 (die_
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 
 
-# serve.py's names for this run's Inventory, until it reads context.current() itself
-def current_inventory() -> str | None:
-    return current().name
-
-
-def ssh_config_file() -> Path:
-    return current().ssh_config
-
-
-def known_hosts_label() -> str:
-    return current().known_hosts_label
-
-
 class NotPrivate(Exception):
     """read_private: the file is there, but it isn't only yours (the message says how)."""
 
@@ -170,7 +157,7 @@ def find_program(name: str) -> str | None:
     NAME with a folder in it is taken as named."""
     if not WINDOWS or "/" in name or "\\" in name:
         return shutil.which(name)
-    # only what CreateProcess can start: PATHEXT also lists .JS, .VBS, .MSC, .PY... (#424 L2)
+    # only what CreateProcess can start: PATHEXT also lists .JS, .VBS, .MSC, .PY...
     exts = [e for e in (x.strip() for x in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";"))
             if e.lower() in RUNNABLE]
     names = [name] if name.lower().endswith(RUNNABLE) else [name + e for e in exts]
@@ -216,7 +203,7 @@ def kill_tree(p):
     """Kill P and everything it started. On Windows a tool is often a batch file (npm's bw.cmd) whose real program is
     its child, which would outlive a plain kill and keep the output pipes open."""
     if WINDOWS:
-        # Windows' own, by its full path: PATH may lack System32 (#424 L4)
+        # Windows' own, by its full path: PATH may lack System32
         taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
         try:
             subprocess.run([taskkill, "/F", "/T", "/PID", str(p.pid)], capture_output=True)
@@ -361,6 +348,12 @@ def die(msg: str, code: int = ROSTER_ERROR, fix: str | None = None, data: dict[s
     """Refuse: `error: MSG` on stderr and exit 1 (`error: [CODE] MSG` for a CODE of its own, unless not TAG:
     errors.Exit). serve and --json answer with CODE, MSG, FIX and DATA."""
     raise Exit(Problem(code, msg, data, fix=fix), tag)
+
+
+def refuse(problem: Problem, tag: bool = True) -> NoReturn:
+    """Refuse with a library's PROBLEM: `error: [CODE] MESSAGE (DETAILS) - FIX` on stderr (no `[CODE] ` unless TAG)
+    and exit 1; serve and --json answer with the Problem as it is."""
+    raise Exit(problem, tag, full=True)
 
 
 # ---------------------------------------------------------------- what looks like a token, not a name

@@ -54,7 +54,7 @@ def check_value(field, v):
         raise ValueError(f"{field} must be a string")
     if "\n" in v or "\r" in v:
         raise ValueError(f"{field} must be one line")
-    v = " ".join(v.split())                 # as roster.yml's loader reads text (oneline)
+    v = oneline(v)                          # as roster.yml's loader reads text
     if field in ("ip", "user") and (not v or re.search(r"\s", v)):
         raise ValueError(f"{field} can't be empty or contain spaces")
     return v
@@ -334,7 +334,7 @@ def reviewed(path, name, flag):
     return edited(path, name, {"reviewed": flag})
 
 
-# ---------------------------------------------------------------- adding a Host (ticket 11)
+# ---------------------------------------------------------------- adding a Host
 
 def check_new(field, v):
     """A value from the app for a new Host's FIELD, or a ValueError (check_value's, plus the flags)."""
@@ -478,7 +478,7 @@ def good_address(v):
     return "%" not in v and ":" not in v and bool(HOSTNAME_RE.match(v)) and not re.fullmatch(r"[\d.]+", v)
 
 
-# ---------------------------------------------------------------- the Live Inventory (ticket 28)
+# ---------------------------------------------------------------- the Live Inventory
 # Removing, renaming and moving a Host, and adding, renaming and deleting a group, as text like the edits above:
 # only the entry's own lines change (an entry's lines are its key's line through its value's last line, comments on
 # them included), everything else stays byte for byte, and the result must load to exactly what was asked.
@@ -731,8 +731,8 @@ def own_keys(text, group, name):
 
 # What a move writes on the Host to keep it. A Host with no mesh: (or mesh_dir:) anywhere has nothing to keep: it
 # takes the Mesh setting of the group it moves to, as any new member would (decision Q77). An unset os: is posix
-# (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198). Its sudo: (ticket
-# 119) is kept too, as `sudo: null` when it had none and the new group gives one.
+# (Q174), so a posix Host moving into a group that sets os: windows is written `os: posix` (Q198). Its sudo: is kept
+# too, as `sudo: null` when it had none and the new group gives one.
 PINNED = ("user", "port", "auth", "enroll", "reviewed", "mesh", "mesh_dir", "os", "key_type", "sudo", *TEXT)
 UNSET_JOINS = ("mesh", "mesh_dir")
 POSIX = "posix"
